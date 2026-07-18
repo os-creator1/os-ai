@@ -102,4 +102,12 @@ class EloquentBusinessRepository extends EloquentBaseRepository implements Busin
 
         return $business;
     }
+
+    public function updateCanonicalDomain(Business $business, ?string $canonicalDomain): Business
+    {
+        $business->canonical_domain = $canonicalDomain;
+        $business->save();
+
+        return $business;
+    }
 }
