@@ -5,6 +5,7 @@
     use App\Exceptions\GeneralException;
     use App\Helpers\Helper;
     use App\Library\aamarPay;
+    use App\Library\Business\OnboardingManager;
     use App\Library\CoinPayments;
     use App\Library\Flutterwave;
     use App\Library\LiqPay;
@@ -120,6 +121,10 @@
                 $customer->postcode = $input['postcode'];
                 $customer->country  = $input['country'];
                 $customer->save();
+
+                if (config('business.onboarding.enabled') && config('business.onboarding.require_for_new_customers')) {
+                    app(OnboardingManager::class)->start($customer, required: true);
+                }
             }
 
             Notifications::create([
