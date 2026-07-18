@@ -53,7 +53,7 @@
             /*
              * User Dashboard Specific
              */
-            Route::get('/dashboard', 'UserController@index')->name('home');
+            Route::get('/dashboard', 'UserController@index')->middleware('business.onboarding')->name('home');
 
             /*
              * switch view

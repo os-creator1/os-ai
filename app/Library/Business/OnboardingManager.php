@@ -5,6 +5,7 @@ namespace App\Library\Business;
 use App\Enums\Business\OnboardingStep;
 use App\Events\Business\CustomerOnboardingStarted;
 use App\Events\Business\CustomerOnboardingStepCompleted;
+use App\Models\Business;
 use App\Models\Customer;
 use App\Models\CustomerOnboarding;
 use App\Repositories\Contracts\BusinessRepository;
@@ -160,6 +161,93 @@ class OnboardingManager
 
             return $this->completeStep($onboarding, OnboardingStep::Business, OnboardingStep::Location);
         });
+    }
+
+    /**
+     * Save the goals step (primary_goals) and advance to Business — the one
+     * onboarding step with no BusinessManager involvement, since goals live
+     * on the onboarding row itself, not the Business aggregate.
+     */
+    public function saveGoalsStep(CustomerOnboarding $onboarding, Customer $customer, array $goals): CustomerOnboarding
+    {
+        $this->assertOwnership($customer, $onboarding);
+
+        return DB::transaction(function () use ($onboarding, $goals) {
+            $onboarding = $this->onboardingRepository->updatePrimaryGoals($onboarding, $goals);
+
+            return $this->completeStep($onboarding, OnboardingStep::Goals, OnboardingStep::Business);
+        });
+    }
+
+    /**
+     * Save the location step through BusinessManager and advance to
+     * Services, atomically. Requires the business step to already be done.
+     */
+    public function saveLocationStep(CustomerOnboarding $onboarding, Customer $customer, array $attributes): CustomerOnboarding
+    {
+        $this->assertOwnership($customer, $onboarding);
+
+        return DB::transaction(function () use ($onboarding, $customer, $attributes) {
+            $business = $this->resolveOwnedBusiness($onboarding, $customer);
+
+            $this->businessManager->upsertPrimaryLocation($customer, $business, $attributes);
+
+            return $this->completeStep($onboarding, OnboardingStep::Location, OnboardingStep::Services);
+        });
+    }
+
+    /**
+     * Save the services step through BusinessManager and advance to Assets,
+     * atomically. Requires the business step to already be done.
+     */
+    public function saveServicesStep(CustomerOnboarding $onboarding, Customer $customer, array $services): CustomerOnboarding
+    {
+        $this->assertOwnership($customer, $onboarding);
+
+        return DB::transaction(function () use ($onboarding, $customer, $services) {
+            $business = $this->resolveOwnedBusiness($onboarding, $customer);
+
+            $this->businessManager->syncServices($customer, $business, $services);
+
+            return $this->completeStep($onboarding, OnboardingStep::Services, OnboardingStep::Assets);
+        });
+    }
+
+    /**
+     * Save the assets step (public profile URLs, via BusinessManager's
+     * identity update) and advance to Analysis, atomically. Requires the
+     * business step to already be done.
+     */
+    public function saveAssetsStep(CustomerOnboarding $onboarding, Customer $customer, array $attributes): CustomerOnboarding
+    {
+        $this->assertOwnership($customer, $onboarding);
+
+        return DB::transaction(function () use ($onboarding, $customer, $attributes) {
+            $business = $this->resolveOwnedBusiness($onboarding, $customer);
+
+            $this->businessManager->updateBusiness($customer, $business, $attributes);
+
+            return $this->completeStep($onboarding, OnboardingStep::Assets, OnboardingStep::Analysis);
+        });
+    }
+
+    /**
+     * @throws InvalidArgumentException if the business step hasn't been completed yet.
+     * @throws AuthorizationException if the attached business doesn't belong to $customer.
+     */
+    private function resolveOwnedBusiness(CustomerOnboarding $onboarding, Customer $customer): Business
+    {
+        if ($onboarding->business_id === null) {
+            throw new InvalidArgumentException('The business step must be completed before this step.');
+        }
+
+        $business = $this->businessRepository->findOwnedByCustomer($onboarding->business_id, $customer->user_id);
+
+        if ($business === null) {
+            throw new AuthorizationException('The onboarding record references a business that does not belong to this customer.');
+        }
+
+        return $business;
     }
 
     private function assertValidStepCompletion(CustomerOnboarding $onboarding, OnboardingStep $completed, OnboardingStep $next): void

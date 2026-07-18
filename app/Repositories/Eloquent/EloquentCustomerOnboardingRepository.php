@@ -54,6 +54,15 @@ class EloquentCustomerOnboardingRepository extends EloquentBaseRepository implem
         return $onboarding;
     }
 
+    public function updatePrimaryGoals(CustomerOnboarding $onboarding, array $goals): CustomerOnboarding
+    {
+        $onboarding->primary_goals = array_values($goals);
+        $onboarding->last_activity_at = now();
+        $onboarding->save();
+
+        return $onboarding;
+    }
+
     public function markStepComplete(CustomerOnboarding $onboarding, OnboardingStep $step, OnboardingStep $nextStep): CustomerOnboarding
     {
         $steps = $onboarding->completed_steps ?? [];

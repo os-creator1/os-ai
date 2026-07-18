@@ -499,3 +499,25 @@
     });
 
 
+    /*
+    |--------------------------------------------------------------------------
+    | Business Onboarding (RFC-001)
+    |--------------------------------------------------------------------------
+    */
+
+    Route::prefix('onboarding')->name('onboarding.')->group(function () {
+        Route::get('/{step?}', 'BusinessOnboardingController@show')->name('show');
+        Route::post('/goals', 'BusinessOnboardingController@storeGoals')->name('goals.store');
+        Route::post('/business', 'BusinessOnboardingController@storeBusiness')->name('business.store');
+        Route::post('/location', 'BusinessOnboardingController@storeLocation')->name('location.store');
+        Route::post('/services', 'BusinessOnboardingController@storeServices')->name('services.store');
+        Route::post('/assets', 'BusinessOnboardingController@storeAssets')->name('assets.store');
+        Route::post('/assets/skip', 'BusinessOnboardingController@skipAssets')->name('assets.skip');
+    });
+
+    Route::prefix('business')->name('business.')->group(function () {
+        Route::get('/', 'BusinessController@edit')->name('edit');
+        Route::put('/', 'BusinessController@update')->name('update');
+    });
+
+

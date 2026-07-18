@@ -19,6 +19,11 @@ interface CustomerOnboardingRepository extends BaseRepository
 
     public function attachBusiness(CustomerOnboarding $onboarding, Business $business): CustomerOnboarding;
 
+    /**
+     * @param  array<int, string>  $goals  BusinessGoal values, max two (RFC-001 §17).
+     */
+    public function updatePrimaryGoals(CustomerOnboarding $onboarding, array $goals): CustomerOnboarding;
+
     public function markStepComplete(CustomerOnboarding $onboarding, OnboardingStep $step, OnboardingStep $nextStep): CustomerOnboarding;
 
     public function startAnalysis(CustomerOnboarding $onboarding, int $version): CustomerOnboarding;

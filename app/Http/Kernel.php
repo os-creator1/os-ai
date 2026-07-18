@@ -8,6 +8,7 @@
     use App\Http\Middleware\CheckForMaintenanceMode;
     use App\Http\Middleware\CheckPasswordChanged;
     use App\Http\Middleware\EncryptCookies;
+    use App\Http\Middleware\EnsureRequiredBusinessOnboardingIsComplete;
     use App\Http\Middleware\ForceJsonResponse;
     use App\Http\Middleware\LocaleMiddleware;
     use App\Http\Middleware\PreventRequestsDuringMaintenance;
@@ -112,6 +113,7 @@
             'install'           => canInstall::class,
             'update'            => canUpdate::class,
             'customer.sub_only' => SubAccountRestriction::class,
+            'business.onboarding' => EnsureRequiredBusinessOnboardingIsComplete::class,
 
 
         ];
