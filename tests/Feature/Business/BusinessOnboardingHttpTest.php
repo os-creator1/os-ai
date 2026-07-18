@@ -4,13 +4,19 @@ namespace Tests\Feature\Business;
 
 use App\Enums\Business\OnboardingStatus;
 use App\Enums\Business\OnboardingStep;
+use App\Jobs\Business\BuildInitialBusinessSnapshot;
+use App\Library\Business\InitialBusinessSnapshotBuilder;
 use App\Library\Business\OnboardingManager;
 use App\Models\AppConfig;
 use App\Models\Business;
 use App\Models\Customer;
 use App\Models\CustomerOnboarding;
+use App\Repositories\Contracts\BusinessLocationRepository;
+use App\Repositories\Contracts\BusinessRepository;
+use App\Repositories\Contracts\BusinessServiceRepository;
 use App\Repositories\Contracts\CustomerOnboardingRepository;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Bus;
 use Tests\Feature\Business\Concerns\CreatesBusinessTestData;
 use Tests\TestCase;
 
@@ -204,7 +210,16 @@ class BusinessOnboardingHttpTest extends TestCase
         $this->assertSame(OnboardingStep::Analysis, $onboarding->current_step);
     }
 
-    public function test_resume_at_analysis_step_renders_the_placeholder(): void
+    /**
+     * Milestone 5 replaced the Milestone 4 static "isn't available yet"
+     * placeholder with the real status-branching analysis screen
+     * (resources/views/customer/onboarding/steps/analysis.blade.php). A
+     * freshly-resumed onboarding at this step has no analysis run yet
+     * (status stays whatever start() set it to, not analysis_pending/
+     * results_ready/failed), so the view's default branch — the
+     * "ready to run" state — is what should render here.
+     */
+    public function test_resume_at_analysis_step_renders_the_analysis_start_screen(): void
     {
         $customer = $this->actingAsHttpCustomer();
         $onboarding = app(OnboardingManager::class)->start($customer);
@@ -212,9 +227,22 @@ class BusinessOnboardingHttpTest extends TestCase
         $onboarding->completed_steps = ['goals', 'business', 'location', 'services', 'assets'];
         $onboarding->save();
 
-        $this->get(route('customer.onboarding.show'))
-            ->assertOk()
-            ->assertSee("isn't available yet", false);
+        $response = $this->get(route('customer.onboarding.show'))->assertOk();
+
+        // The status region the polling script targets.
+        $response->assertSee('id="analysis-status"', false);
+        // The customer-facing readiness copy for the "not started yet" state.
+        $response->assertSee("Your business profile is saved. Ready to see how complete it is?");
+        $response->assertSee('Run analysis');
+        $response->assertSee('action="' . route('customer.onboarding.analysis.request') . '"', false);
+
+        // No other state's content — in particular, no fabricated analysis
+        // result — is shown before an analysis has actually run.
+        $response->assertDontSee("We're analyzing your business profile", false);
+        $response->assertDontSee('Your analysis is ready');
+        $response->assertDontSee('View results');
+        $response->assertDontSee('Profile completeness');
+        $response->assertDontSee('Retry analysis');
     }
 
     public function test_repeating_location_and_services_submissions_does_not_duplicate_records(): void
@@ -334,6 +362,270 @@ class BusinessOnboardingHttpTest extends TestCase
         $this->actingAsHttpCustomer();
 
         $this->get(route('customer.onboarding.show'))->assertOk();
+    }
+
+    public function test_guest_cannot_request_analysis(): void
+    {
+        $this->post(route('customer.onboarding.analysis.request'))->assertUnauthorized();
+    }
+
+    public function test_authenticated_owner_can_request_analysis(): void
+    {
+        Bus::fake();
+        [$onboarding, $customer] = $this->httpOnboardingAtAnalysisStep();
+
+        $this->post(route('customer.onboarding.analysis.request'))
+            ->assertRedirect(route('customer.onboarding.show', ['step' => 'analysis']));
+
+        $onboarding->refresh();
+        $this->assertSame(1, $onboarding->analysis_version);
+        $this->assertSame(OnboardingStatus::AnalysisPending, $onboarding->status);
+        Bus::assertDispatched(BuildInitialBusinessSnapshot::class, fn ($job) => $job->onboardingId === $onboarding->id && $job->expectedVersion === 1);
+    }
+
+    public function test_requesting_analysis_before_prerequisites_are_met_redirects_with_an_error(): void
+    {
+        Bus::fake();
+        $customer = $this->actingAsHttpCustomer();
+        app(OnboardingManager::class)->start($customer);
+
+        $this->post(route('customer.onboarding.analysis.request'))
+            ->assertRedirect(route('customer.onboarding.show', ['step' => 'goals']))
+            ->assertSessionHasErrors('onboarding');
+
+        Bus::assertNotDispatched(BuildInitialBusinessSnapshot::class);
+    }
+
+    public function test_repeated_analysis_requests_increment_the_version(): void
+    {
+        Bus::fake();
+        [$onboarding] = $this->httpOnboardingAtAnalysisStep();
+
+        $this->post(route('customer.onboarding.analysis.request'));
+        $this->post(route('customer.onboarding.analysis.request'));
+
+        $onboarding->refresh();
+        $this->assertSame(2, $onboarding->analysis_version);
+    }
+
+    public function test_analysis_status_endpoint_reports_pending_state_safely(): void
+    {
+        Bus::fake();
+        [$onboarding] = $this->httpOnboardingAtAnalysisStep();
+        $this->post(route('customer.onboarding.analysis.request'));
+
+        $response = $this->get(route('customer.onboarding.analysis.status'))->assertOk();
+
+        $response->assertJson([
+            'status' => 'analysis_pending',
+            'analysis_version' => 1,
+            'current_step' => 'analysis',
+            'completed' => false,
+            'redirect_url' => null,
+            'error' => null,
+        ]);
+        $this->assertSame(
+            ['status', 'analysis_version', 'current_step', 'completed', 'redirect_url', 'error'],
+            array_keys($response->json())
+        );
+    }
+
+    public function test_analysis_status_endpoint_reports_ready_state_with_a_redirect_url(): void
+    {
+        [$onboarding] = $this->httpOnboardingAtAnalysisStep();
+        app(CustomerOnboardingRepository::class)->completeAnalysis($onboarding, 0, [
+            'version' => 1, 'generated_at' => now()->toIso8601String(), 'profile_completeness_percent' => 80,
+            'facts' => [], 'findings' => [],
+        ]);
+
+        $response = $this->get(route('customer.onboarding.analysis.status'))->assertOk();
+
+        $response->assertJson([
+            'status' => 'results_ready',
+            'completed' => true,
+            'redirect_url' => route('customer.onboarding.show', ['step' => 'results']),
+        ]);
+    }
+
+    public function test_analysis_status_endpoint_reports_failed_state_with_only_a_safe_error(): void
+    {
+        [$onboarding] = $this->httpOnboardingAtAnalysisStep();
+        app(CustomerOnboardingRepository::class)->failAnalysis($onboarding, 0, 'We could not finish the analysis. Please retry.');
+
+        $response = $this->get(route('customer.onboarding.analysis.status'))->assertOk();
+
+        $response->assertJson([
+            'status' => 'failed',
+            'completed' => false,
+            'error' => 'We could not finish the analysis. Please retry.',
+        ]);
+    }
+
+    public function test_results_page_renders_the_stored_analysis_payload(): void
+    {
+        [$onboarding] = $this->httpOnboardingAtAnalysisStep();
+        app(CustomerOnboardingRepository::class)->completeAnalysis($onboarding, 0, [
+            'version' => 1,
+            'generated_at' => now()->toIso8601String(),
+            'profile_completeness_percent' => 72,
+            'facts' => [],
+            'findings' => [[
+                'fingerprint' => 'business:1:missing_phone',
+                'title' => 'Add your business phone number',
+                'reason' => 'Customers need a reliable way to contact the business.',
+                'impact' => 'medium',
+                'effort' => 'low',
+                'confidence' => 1.0,
+                'worker_key' => 'business_advisor',
+                'can_ai_prepare' => false,
+                'action_key' => 'add_phone',
+                'action_step' => 'business',
+            ]],
+        ]);
+
+        $this->get(route('customer.onboarding.show', ['step' => 'results']))
+            ->assertOk()
+            ->assertSee('72%', false)
+            ->assertSee('Add your business phone number');
+    }
+
+    public function test_direct_navigation_to_results_before_analysis_is_ready_is_prevented(): void
+    {
+        [$onboarding] = $this->httpOnboardingAtAnalysisStep();
+
+        $this->get(route('customer.onboarding.show', ['step' => 'results']))
+            ->assertRedirect(route('customer.onboarding.show', ['step' => 'analysis']));
+    }
+
+    public function test_completing_an_inline_action_updates_business_data_and_advances_to_complete(): void
+    {
+        [$onboarding, $customer, $business] = $this->httpOnboardingAtAnalysisStep(['phone' => null]);
+        $fingerprint = $this->seedRealAnalysisPayloadAndGetFingerprint($onboarding, $business, 'add_phone');
+
+        $this->post(route('customer.onboarding.action.complete'), [
+            'fingerprint' => $fingerprint,
+            'action_key' => 'add_phone',
+            'value' => '+15551234567',
+        ])->assertRedirect(route('customer.onboarding.show', ['step' => 'complete']));
+
+        $onboarding->refresh();
+        $this->assertSame('add_phone', $onboarding->first_value_action_key);
+        $freshBusiness = app(BusinessRepository::class)->findOwnedByCustomer($business->id, $customer->user_id);
+        $this->assertSame('+15551234567', $freshBusiness->phone);
+    }
+
+    public function test_completing_an_action_with_an_unknown_key_is_rejected_by_validation(): void
+    {
+        $this->httpOnboardingAtAnalysisStep();
+
+        $this->post(route('customer.onboarding.action.complete'), [
+            'fingerprint' => 'business:1:missing_phone',
+            'action_key' => 'delete_everything',
+        ])->assertSessionHasErrors('action_key');
+    }
+
+    public function test_completing_an_action_with_a_fingerprint_not_in_the_persisted_payload_is_rejected(): void
+    {
+        [$onboarding, $customer, $business] = $this->httpOnboardingAtAnalysisStep(['phone' => null]);
+        $this->seedRealAnalysisPayloadAndGetFingerprint($onboarding, $business, 'add_phone');
+
+        $this->post(route('customer.onboarding.action.complete'), [
+            'fingerprint' => 'business:999999999:missing_phone',
+            'action_key' => 'add_phone',
+            'value' => '+15551234567',
+        ])->assertRedirect(route('customer.onboarding.show', ['step' => 'results']))
+            ->assertSessionHasErrors('action');
+
+        $onboarding->refresh();
+        $this->assertNull($onboarding->first_value_action_key);
+        $freshBusiness = app(BusinessRepository::class)->findOwnedByCustomer($business->id, $customer->user_id);
+        $this->assertNull($freshBusiness->phone);
+    }
+
+    public function test_complete_endpoint_redirects_to_the_dashboard_on_success(): void
+    {
+        [$onboarding] = $this->httpOnboardingAtAnalysisStep();
+        app(CustomerOnboardingRepository::class)->completeAnalysis($onboarding, 0, [
+            'version' => 1, 'generated_at' => now()->toIso8601String(), 'profile_completeness_percent' => 100,
+            'facts' => [], 'findings' => [],
+        ]);
+
+        $this->post(route('customer.onboarding.complete'))
+            ->assertRedirect(route('user.home'));
+
+        $onboarding->refresh();
+        $this->assertSame(OnboardingStatus::Completed, $onboarding->status);
+    }
+
+    public function test_complete_endpoint_redirects_back_with_an_error_when_prerequisites_are_missing(): void
+    {
+        $this->httpOnboardingAtAnalysisStep();
+
+        $this->post(route('customer.onboarding.complete'))
+            ->assertRedirect(route('customer.onboarding.show', ['step' => 'results']))
+            ->assertSessionHasErrors('onboarding');
+    }
+
+    public function test_completed_onboarding_does_not_loop_back_from_the_dashboard(): void
+    {
+        config(['business.onboarding.enabled' => true]);
+
+        [$onboarding, $customer] = $this->httpOnboardingAtAnalysisStep();
+        app(CustomerOnboardingRepository::class)->completeAnalysis($onboarding, 0, [
+            'version' => 1, 'generated_at' => now()->toIso8601String(), 'profile_completeness_percent' => 100,
+            'facts' => [], 'findings' => [],
+        ]);
+        $this->post(route('customer.onboarding.complete'));
+
+        $this->get(route('user.home'))->assertOk();
+    }
+
+    /**
+     * A logged-in customer with a complete business (primary location + one
+     * active primary service) whose onboarding is bookmarked at the Analysis
+     * step — the shared starting point for every Milestone 5 HTTP test.
+     *
+     * @param  array<string, mixed>  $businessOverrides
+     * @return array{0: CustomerOnboarding, 1: Customer, 2: Business}
+     */
+    private function httpOnboardingAtAnalysisStep(array $businessOverrides = []): array
+    {
+        $customer = $this->actingAsHttpCustomer();
+        $business = app(BusinessRepository::class)->createForCustomer($customer, array_merge(
+            $this->businessAttributes(),
+            $businessOverrides
+        ));
+
+        app(BusinessLocationRepository::class)->upsertPrimary($business, $this->locationAttributes());
+        app(BusinessServiceRepository::class)->syncForBusiness($business, [
+            ['name' => 'Digital Photo Booth', 'is_primary' => true],
+        ]);
+
+        $onboardingRepository = app(CustomerOnboardingRepository::class);
+        $onboarding = $onboardingRepository->startForCustomer($customer, true);
+        $onboarding = $onboardingRepository->attachBusiness($onboarding, $business);
+        $onboarding->current_step = OnboardingStep::Analysis;
+        $onboarding->completed_steps = ['goals', 'business', 'location', 'services', 'assets'];
+        $onboarding->save();
+
+        return [$onboarding, $customer, $business];
+    }
+
+    /**
+     * Runs the real snapshot builder against $business, persists the result
+     * as the onboarding's analysis_payload (ResultsReady), and returns the
+     * fingerprint of the finding whose action_key is $actionKey — so tests
+     * submit a fingerprint the executor will actually recognize as current.
+     */
+    private function seedRealAnalysisPayloadAndGetFingerprint(CustomerOnboarding $onboarding, Business $business, string $actionKey): string
+    {
+        $snapshot = app(InitialBusinessSnapshotBuilder::class)->build($business, $onboarding->primary_goals ?? []);
+        app(CustomerOnboardingRepository::class)->completeAnalysis($onboarding, 0, $snapshot);
+
+        $finding = collect($snapshot['findings'])->firstWhere('action_key', $actionKey);
+        $this->assertNotNull($finding, "Expected a seeded finding for action_key [{$actionKey}].");
+
+        return $finding['fingerprint'];
     }
 
     /**

@@ -12,7 +12,7 @@
                     </div>
                     <div class="card-body">
                         <ul class="nav nav-pills mb-2 text-uppercase">
-                            @foreach (['goals' => 'Goals', 'business' => 'Business', 'location' => 'Location', 'services' => 'Services', 'assets' => 'Assets', 'analysis' => 'Analysis'] as $stepValue => $label)
+                            @foreach (['goals' => 'Goals', 'business' => 'Business', 'location' => 'Location', 'services' => 'Services', 'assets' => 'Assets', 'analysis' => 'Analysis', 'results' => 'Results', 'complete' => 'Complete'] as $stepValue => $label)
                                 <li class="nav-item">
                                     <span class="nav-link {{ $step->value === $stepValue ? 'active' : '' }}">{{ $label }}</span>
                                 </li>

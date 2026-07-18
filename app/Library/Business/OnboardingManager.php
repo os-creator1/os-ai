@@ -2,9 +2,14 @@
 
 namespace App\Library\Business;
 
+use App\Enums\Business\BusinessServiceStatus;
+use App\Enums\Business\OnboardingStatus;
 use App\Enums\Business\OnboardingStep;
+use App\Events\Business\CustomerOnboardingCompleted;
 use App\Events\Business\CustomerOnboardingStarted;
 use App\Events\Business\CustomerOnboardingStepCompleted;
+use App\Events\Business\InitialBusinessAnalysisRequested;
+use App\Jobs\Business\BuildInitialBusinessSnapshot;
 use App\Models\Business;
 use App\Models\Customer;
 use App\Models\CustomerOnboarding;
@@ -229,6 +234,108 @@ class OnboardingManager
 
             return $this->completeStep($onboarding, OnboardingStep::Assets, OnboardingStep::Analysis);
         });
+    }
+
+    /**
+     * Request a new analysis run. Increments analysis_version so any
+     * already-queued job for an older version safely no-ops when it runs
+     * (BuildInitialBusinessSnapshot re-checks the version itself).
+     *
+     * @throws InvalidArgumentException if the prior onboarding steps (business
+     *                                   through assets) aren't done yet.
+     */
+    public function requestAnalysis(CustomerOnboarding $onboarding, Customer $customer): CustomerOnboarding
+    {
+        $this->assertOwnership($customer, $onboarding);
+
+        if ($this->stepIndex($onboarding->current_step) < $this->stepIndex(OnboardingStep::Analysis)) {
+            throw new InvalidArgumentException('Complete the earlier onboarding steps before requesting analysis.');
+        }
+
+        return DB::transaction(function () use ($onboarding) {
+            $version = $onboarding->analysis_version + 1;
+            $updated = $this->onboardingRepository->startAnalysis($onboarding, $version);
+
+            InitialBusinessAnalysisRequested::dispatch($updated->id, $version);
+            BuildInitialBusinessSnapshot::dispatch($updated->id, $version);
+
+            return $updated;
+        });
+    }
+
+    /**
+     * Thin persistence step — OnboardingActionExecutor is responsible for
+     * deciding *whether* an action should be recorded (RFC-001 §14); this
+     * method just performs the recording once that decision is made.
+     */
+    public function recordFirstValueAction(CustomerOnboarding $onboarding, Customer $customer, string $actionKey): CustomerOnboarding
+    {
+        $this->assertOwnership($customer, $onboarding);
+
+        return $this->onboardingRepository->recordFirstValueAction($onboarding, $actionKey);
+    }
+
+    /**
+     * Idempotent: a repeat call on an already-completed onboarding returns it
+     * unchanged and dispatches nothing, so resubmission can never double-fire
+     * CustomerOnboardingCompleted.
+     *
+     * @throws InvalidArgumentException if any completion prerequisite (RFC-001 §32) isn't met.
+     */
+    public function complete(CustomerOnboarding $onboarding, Customer $customer): CustomerOnboarding
+    {
+        $this->assertOwnership($customer, $onboarding);
+
+        if ($onboarding->status === OnboardingStatus::Completed) {
+            return $onboarding;
+        }
+
+        $this->assertCompletionPrerequisites($onboarding, $customer);
+
+        return DB::transaction(function () use ($onboarding, $customer) {
+            $updated = $this->onboardingRepository->complete($onboarding);
+
+            CustomerOnboardingCompleted::dispatch($updated->id, $customer->user_id);
+
+            return $updated;
+        });
+    }
+
+    /**
+     * Exact-cardinality checks against ownership-scoped queries on the
+     * attached Business — a has-one relation (primaryLocation/primaryService)
+     * can only prove "at least one exists", never "exactly one", since
+     * nothing stops inconsistent data (e.g. a repository bug, or a direct
+     * write outside BusinessManager) from leaving two rows flagged primary.
+     *
+     * @throws InvalidArgumentException if a prerequisite is missing.
+     * @throws AuthorizationException if the attached business doesn't belong to $customer.
+     */
+    private function assertCompletionPrerequisites(CustomerOnboarding $onboarding, Customer $customer): void
+    {
+        $business = $this->resolveOwnedBusiness($onboarding, $customer);
+
+        if ($business->locations()->where('is_primary', true)->count() !== 1) {
+            throw new InvalidArgumentException('Exactly one primary location is required before onboarding can be completed.');
+        }
+
+        if ($business->services()->where('status', BusinessServiceStatus::Active)->count() < 1) {
+            throw new InvalidArgumentException('At least one active service is required before onboarding can be completed.');
+        }
+
+        if ($business->services()->where('status', BusinessServiceStatus::Active)->where('is_primary', true)->count() !== 1) {
+            throw new InvalidArgumentException('Exactly one active primary service is required before onboarding can be completed.');
+        }
+
+        if ($onboarding->analysis_payload === null) {
+            throw new InvalidArgumentException('The initial analysis must complete before onboarding can be completed.');
+        }
+
+        $findings = $onboarding->analysis_payload['findings'] ?? [];
+
+        if ($findings !== [] && $onboarding->first_value_action_key === null) {
+            throw new InvalidArgumentException('Complete a first-value action before finishing onboarding.');
+        }
     }
 
     /**

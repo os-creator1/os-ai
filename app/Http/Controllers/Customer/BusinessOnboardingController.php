@@ -2,17 +2,21 @@
 
 namespace App\Http\Controllers\Customer;
 
+use App\Enums\Business\OnboardingStatus;
 use App\Enums\Business\OnboardingStep;
+use App\Http\Requests\Business\CompleteOnboardingActionRequest;
 use App\Http\Requests\Business\SyncBusinessServicesRequest;
 use App\Http\Requests\Business\UpdateBusinessAssetsRequest;
 use App\Http\Requests\Business\UpdateOnboardingGoalsRequest;
 use App\Http\Requests\Business\UpsertBusinessIdentityRequest;
 use App\Http\Requests\Business\UpsertBusinessLocationRequest;
+use App\Library\Business\OnboardingActionExecutor;
 use App\Library\Business\OnboardingManager;
 use App\Models\Customer;
 use App\Models\CustomerOnboarding;
 use Closure;
 use Illuminate\Contracts\View\View;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -26,8 +30,10 @@ use InvalidArgumentException;
  */
 class BusinessOnboardingController extends CustomerBaseController
 {
-    public function __construct(private readonly OnboardingManager $onboarding)
-    {
+    public function __construct(
+        private readonly OnboardingManager $onboarding,
+        private readonly OnboardingActionExecutor $actions,
+    ) {
     }
 
     public function show(Request $request, ?string $step = null): View|RedirectResponse
@@ -118,6 +124,81 @@ class BusinessOnboardingController extends CustomerBaseController
         return $this->saveStep(
             fn (CustomerOnboarding $onboarding) => $this->onboarding->skipStep($onboarding, OnboardingStep::Assets)
         );
+    }
+
+    public function requestAnalysis(): RedirectResponse
+    {
+        $onboarding = $this->currentOnboarding();
+        $customer = $this->customer();
+
+        try {
+            $this->onboarding->requestAnalysis($onboarding, $customer);
+        } catch (InvalidArgumentException) {
+            return redirect()
+                ->route('customer.onboarding.show', ['step' => $this->onboarding->resolveStep($onboarding)->value])
+                ->withErrors(['onboarding' => 'Complete the earlier steps before requesting analysis.']);
+        }
+
+        return redirect()->route('customer.onboarding.show', ['step' => 'analysis']);
+    }
+
+    /**
+     * Returns only the state the polling UI needs (RFC-001 §28) — never a
+     * stack trace or raw exception message, and never another customer's data
+     * since it's always resolved through the authenticated customer.
+     */
+    public function analysisStatus(): JsonResponse
+    {
+        $onboarding = $this->currentOnboarding();
+        $completed = $onboarding->status === OnboardingStatus::ResultsReady;
+
+        return response()->json([
+            'status' => $onboarding->status->value,
+            'analysis_version' => $onboarding->analysis_version,
+            'current_step' => $onboarding->current_step->value,
+            'completed' => $completed,
+            'redirect_url' => $completed ? route('customer.onboarding.show', ['step' => 'results']) : null,
+            'error' => $onboarding->status === OnboardingStatus::Failed ? $onboarding->analysis_error : null,
+        ]);
+    }
+
+    public function completeAction(CompleteOnboardingActionRequest $request): RedirectResponse
+    {
+        $onboarding = $this->currentOnboarding();
+        $customer = $this->customer();
+
+        try {
+            $result = $this->actions->execute(
+                $onboarding,
+                $customer,
+                $request->validated('fingerprint'),
+                $request->validated('action_key'),
+                $request->validated('value')
+            );
+        } catch (InvalidArgumentException) {
+            return redirect()
+                ->route('customer.onboarding.show', ['step' => 'results'])
+                ->withInput()
+                ->withErrors(['action' => 'We could not save that. Please check your entry and try again.']);
+        }
+
+        return redirect()->route('customer.onboarding.show', ['step' => $result['step']->value]);
+    }
+
+    public function complete(): RedirectResponse
+    {
+        $onboarding = $this->currentOnboarding();
+        $customer = $this->customer();
+
+        try {
+            $this->onboarding->complete($onboarding, $customer);
+        } catch (InvalidArgumentException) {
+            return redirect()
+                ->route('customer.onboarding.show', ['step' => 'results'])
+                ->withErrors(['onboarding' => 'Finish the required steps before completing onboarding.']);
+        }
+
+        return redirect()->route('user.home');
     }
 
     /**

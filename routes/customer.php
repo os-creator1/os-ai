@@ -513,6 +513,10 @@
         Route::post('/services', 'BusinessOnboardingController@storeServices')->name('services.store');
         Route::post('/assets', 'BusinessOnboardingController@storeAssets')->name('assets.store');
         Route::post('/assets/skip', 'BusinessOnboardingController@skipAssets')->name('assets.skip');
+        Route::post('/analysis', 'BusinessOnboardingController@requestAnalysis')->middleware('throttle:5,60')->name('analysis.request');
+        Route::get('/analysis/status', 'BusinessOnboardingController@analysisStatus')->middleware('throttle:60,1')->name('analysis.status');
+        Route::post('/action', 'BusinessOnboardingController@completeAction')->name('action.complete');
+        Route::post('/complete', 'BusinessOnboardingController@complete')->name('complete');
     });
 
     Route::prefix('business')->name('business.')->group(function () {
