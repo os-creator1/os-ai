@@ -855,4 +855,15 @@
             'category'     => 'Topbar Settings',
         ],
 
+        // Business Module (RFC-001)
+        'view business' => [
+            'display_name' => 'read',
+            'category'     => 'Business',
+        ],
+
+        'edit business' => [
+            'display_name' => 'update',
+            'category'     => 'Business',
+        ],
+
     ];

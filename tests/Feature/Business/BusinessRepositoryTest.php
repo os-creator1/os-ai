@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Business;
 
+use App\Enums\Business\BusinessIndustry;
 use App\Enums\Business\BusinessStatus;
 use App\Repositories\Contracts\BusinessRepository;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -126,5 +127,105 @@ class BusinessRepositoryTest extends TestCase
         $this->assertNotNull($first->uid);
         $this->assertNotNull($second->uid);
         $this->assertNotSame($first->uid, $second->uid);
+    }
+
+    /**
+     * paginateForAdmin() is the one deliberately cross-tenant method on this
+     * contract (RFC-001 §19 admin index — Milestone 6); every other method
+     * above is tenant-scoped by design.
+     */
+    public function test_paginate_for_admin_returns_businesses_across_tenants(): void
+    {
+        $repository = app(BusinessRepository::class);
+        $customerA = $this->createCustomer();
+        $customerB = $this->createCustomer();
+        $repository->createForCustomer($customerA, $this->businessAttributes(['name' => 'Booth Co A']));
+        $repository->createForCustomer($customerB, $this->businessAttributes(['name' => 'Booth Co B']));
+
+        $page = $repository->paginateForAdmin([], 25);
+
+        $this->assertSame(2, $page->total());
+    }
+
+    public function test_paginate_for_admin_filters_by_search(): void
+    {
+        $repository = app(BusinessRepository::class);
+        $customer = $this->createCustomer();
+        $repository->createForCustomer($customer, $this->businessAttributes(['name' => 'Snap Booth Co']));
+        $repository->createForCustomer($customer, $this->businessAttributes(['name' => 'Totally Different']));
+
+        $page = $repository->paginateForAdmin(['search' => 'Snap'], 25);
+
+        $this->assertSame(1, $page->total());
+        $this->assertSame('Snap Booth Co', $page->first()->name);
+    }
+
+    public function test_paginate_for_admin_filters_by_status(): void
+    {
+        $repository = app(BusinessRepository::class);
+        $customer = $this->createCustomer();
+        $active = $repository->createForCustomer($customer, $this->businessAttributes(['name' => 'Active Co']));
+        $repository->updateStatus($active, BusinessStatus::Active);
+        $repository->createForCustomer($customer, $this->businessAttributes(['name' => 'Draft Co']));
+
+        $page = $repository->paginateForAdmin(['status' => BusinessStatus::Active->value], 25);
+
+        $this->assertSame(1, $page->total());
+        $this->assertSame('Active Co', $page->first()->name);
+    }
+
+    public function test_paginate_for_admin_filters_by_industry(): void
+    {
+        $repository = app(BusinessRepository::class);
+        $customer = $this->createCustomer();
+        $repository->createForCustomer($customer, $this->businessAttributes([
+            'name' => 'Photographer Co',
+            'industry' => BusinessIndustry::Photographer->value,
+        ]));
+        $repository->createForCustomer($customer, $this->businessAttributes([
+            'name' => 'Booth Co',
+            'industry' => BusinessIndustry::PhotoBoothService->value,
+        ]));
+
+        $page = $repository->paginateForAdmin(['industry' => BusinessIndustry::Photographer->value], 25);
+
+        $this->assertSame(1, $page->total());
+        $this->assertSame('Photographer Co', $page->first()->name);
+    }
+
+    public function test_paginate_for_admin_ignores_unknown_filter_keys(): void
+    {
+        $repository = app(BusinessRepository::class);
+        $customer = $this->createCustomer();
+        $repository->createForCustomer($customer, $this->businessAttributes());
+
+        // 'customer_id' is not an allowed filter — passing it must not
+        // narrow (or otherwise change) the query.
+        $page = $repository->paginateForAdmin(['customer_id' => $customer->user_id + 999], 25);
+
+        $this->assertSame(1, $page->total());
+    }
+
+    public function test_paginate_for_admin_caps_per_page_to_a_safe_maximum(): void
+    {
+        $repository = app(BusinessRepository::class);
+        $customer = $this->createCustomer();
+        $repository->createForCustomer($customer, $this->businessAttributes());
+
+        $page = $repository->paginateForAdmin([], 9999);
+
+        $this->assertLessThanOrEqual(100, $page->perPage());
+    }
+
+    public function test_paginate_for_admin_orders_deterministically_newest_first(): void
+    {
+        $repository = app(BusinessRepository::class);
+        $customer = $this->createCustomer();
+        $first = $repository->createForCustomer($customer, $this->businessAttributes(['name' => 'First Co']));
+        $second = $repository->createForCustomer($customer, $this->businessAttributes(['name' => 'Second Co']));
+
+        $page = $repository->paginateForAdmin([], 25);
+
+        $this->assertSame([$second->id, $first->id], $page->pluck('id')->all());
     }
 }

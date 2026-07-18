@@ -1,5 +1,7 @@
 <?php
 
+    use App\Http\Middleware\EnsureUserIsAdministrator;
+
     /*
      * All routes for admin portal
      *
@@ -573,4 +575,28 @@
     */
     Route::get('ai-settings', 'SettingsController@aiSettings')->name('settings.ai-settings');
     Route::post('ai-settings', 'SettingsController@postAiSettings');
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | Business module (RFC-001)
+    |--------------------------------------------------------------------------
+    |
+    | Admin-only, intentionally cross-tenant Business management. No create
+    | or delete route — the RFC does not permit either from the admin surface.
+    |
+    | EnsureUserIsAdministrator is an explicit, independent admin-account-type
+    | boundary layered on top of the group's blanket 'can:access backend'
+    | gate — defense in depth so cross-tenant Business data can never be
+    | reached by a non-admin account regardless of what any permission
+    | string resolves to. Applied to every action (index/show/edit/update/
+    | status) so it cannot be accidentally omitted from one route.
+    |
+    */
+    Route::middleware(EnsureUserIsAdministrator::class)->group(function () {
+        Route::resource('businesses', 'BusinessController', [
+            'only' => ['index', 'show', 'edit', 'update'],
+        ]);
+        Route::patch('businesses/{business}/status', 'BusinessController@updateStatus')->name('businesses.status.update');
+    });
     Route::post('ai-settings-toggle', 'SettingsController@toggleAiSettings')->name('settings.ai-settings.toggle');

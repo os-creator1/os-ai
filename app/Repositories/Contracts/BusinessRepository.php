@@ -5,6 +5,7 @@ namespace App\Repositories\Contracts;
 use App\Enums\Business\BusinessStatus;
 use App\Models\Business;
 use App\Models\Customer;
+use Illuminate\Pagination\LengthAwarePaginator;
 
 /**
  * All $customerId parameters refer to the tenant key stored in businesses.customer_id,
@@ -31,4 +32,15 @@ interface BusinessRepository extends BaseRepository
      * written through this narrow method rather than the guarded generic update() path.
      */
     public function updateCanonicalDomain(Business $business, ?string $canonicalDomain): Business;
+
+    /**
+     * Admin-only cross-tenant listing (RFC-001 §19 admin index; Milestone 6). Every
+     * other method on this contract is intentionally tenant-scoped — this is the one
+     * deliberate exception, for authorized backend administrators only. Never bind
+     * this to a customer-facing route or controller.
+     *
+     * @param  array{search?: ?string, status?: ?string, industry?: ?string}  $filters  Only
+     *   'search', 'status', and 'industry' are read; any other key is ignored.
+     */
+    public function paginateForAdmin(array $filters, int $perPage): LengthAwarePaginator;
 }
