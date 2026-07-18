@@ -1,0 +1,21 @@
+// ================================================================================================
+//  File Name: ext-component-media-player.scss
+//  Description: Media Player SCSS.
+//  ----------------------------------------------------------------------------------------------
+//  Item Name: Ultimate SMS - Bulk SMS Application For Marketing
+//  Author: Codeglen
+//  Author URL: https://codecanyon.net/user/codeglen
+// ================================================================================================
+
+// to remove outline on focus
+.audio-player {
+  &:focus {
+    outline: 0;
+  }
+}
+.plyr__controls {
+  justify-content: flex-start;
+}
+.plyr__progress {
+  flex-grow: 1;
+}

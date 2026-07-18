@@ -1,0 +1,23 @@
+// ================================================================================================
+//  File Name: app-invoice-list.scss
+//  Description: Invoice Layout page layouts SCSS.
+//  ----------------------------------------------------------------------------------------------
+//  Item Name: Ultimate SMS - Bulk SMS Application For Marketing
+//  Author: Codeglen
+//  Author URL: https://codecanyon.net/user/codeglen
+// ================================================================================================
+
+@import '../bootstrap-extended/include'; // Bootstrap includes
+@import '../components/include'; // Components includes
+
+.invoice-list-wrapper {
+  @media (max-width: 470px) {
+    .invoice_status {
+      margin-top: 1rem;
+      width: 100%;
+      select {
+        margin-left: 0 !important;
+      }
+    }
+  }
+}

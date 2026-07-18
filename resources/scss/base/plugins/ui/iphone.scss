@@ -1,0 +1,654 @@
+#apple-logo {
+	position: absolute;
+	margin-left: auto;
+	margin-right: auto;
+	margin-top: 10px;
+	padding-top: 20px;
+	text-align: center;
+	width: 100%;
+	font-size: 40px;
+	color: #222;
+}
+
+#overlay {
+	position: fixed;
+	z-index: 999;
+	opacity: 0.5;
+	margin-left: -4000px;
+	margin-top: -5px;
+	border: 1px solid black;
+	opacity: 0;
+}
+
+.outer-button {
+	background: -webkit-gradient(left top, right top, color-stop(0%, rgba(76, 76, 76, 1)), color-stop(12%, rgba(89, 89, 89, 1)), color-stop(25%, rgba(102, 102, 102, 1)), color-stop(39%, rgba(71, 71, 71, 1)), color-stop(50%, rgba(44, 44, 44, 1)), color-stop(51%, rgba(0, 0, 0, 1)), color-stop(60%, rgba(17, 17, 17, 1)), color-stop(76%, rgba(43, 43, 43, 1)), color-stop(91%, rgba(28, 28, 28, 1)), color-stop(100%, rgba(19, 19, 19, 1)));
+	background: -webkit-linear-gradient(left, rgba(76, 76, 76, 1) 0%, rgba(89, 89, 89, 1) 12%, rgba(102, 102, 102, 1) 25%, rgba(71, 71, 71, 1) 39%, rgba(44, 44, 44, 1) 50%, rgba(0, 0, 0, 1) 51%, rgba(17, 17, 17, 1) 60%, rgba(43, 43, 43, 1) 76%, rgba(28, 28, 28, 1) 91%, rgba(19, 19, 19, 1) 100%);
+	background: -o-linear-gradient(left, rgba(76, 76, 76, 1) 0%, rgba(89, 89, 89, 1) 12%, rgba(102, 102, 102, 1) 25%, rgba(71, 71, 71, 1) 39%, rgba(44, 44, 44, 1) 50%, rgba(0, 0, 0, 1) 51%, rgba(17, 17, 17, 1) 60%, rgba(43, 43, 43, 1) 76%, rgba(28, 28, 28, 1) 91%, rgba(19, 19, 19, 1) 100%);
+	background: -ms-linear-gradient(left, rgba(76, 76, 76, 1) 0%, rgba(89, 89, 89, 1) 12%, rgba(102, 102, 102, 1) 25%, rgba(71, 71, 71, 1) 39%, rgba(44, 44, 44, 1) 50%, rgba(0, 0, 0, 1) 51%, rgba(17, 17, 17, 1) 60%, rgba(43, 43, 43, 1) 76%, rgba(28, 28, 28, 1) 91%, rgba(19, 19, 19, 1) 100%);
+	background: linear-gradient(to right, rgba(76, 76, 76, 1) 0%, rgba(89, 89, 89, 1) 12%, rgba(102, 102, 102, 1) 25%, rgba(71, 71, 71, 1) 39%, rgba(44, 44, 44, 1) 50%, rgba(0, 0, 0, 1) 51%, rgba(17, 17, 17, 1) 60%, rgba(43, 43, 43, 1) 76%, rgba(28, 28, 28, 1) 91%, rgba(19, 19, 19, 1) 100%);
+	filter: progid:DXImageTransform.Microsoft.gradient(startColorstr='#4c4c4c', endColorstr='#131313', GradientType=1);
+}
+
+.outer-button-reversed {
+	background: rgba(19, 19, 19, 1);
+	background: -moz-linear-gradient(left, rgba(19, 19, 19, 1) 0%, rgba(28, 28, 28, 1) 9%, rgba(43, 43, 43, 1) 24%, rgba(17, 17, 17, 1) 40%, rgba(0, 0, 0, 1) 49%, rgba(44, 44, 44, 1) 50%, rgba(71, 71, 71, 1) 61%, rgba(102, 102, 102, 1) 75%, rgba(89, 89, 89, 1) 88%, rgba(76, 76, 76, 1) 100%);
+	background: -webkit-gradient(left top, right top, color-stop(0%, rgba(19, 19, 19, 1)), color-stop(9%, rgba(28, 28, 28, 1)), color-stop(24%, rgba(43, 43, 43, 1)), color-stop(40%, rgba(17, 17, 17, 1)), color-stop(49%, rgba(0, 0, 0, 1)), color-stop(50%, rgba(44, 44, 44, 1)), color-stop(61%, rgba(71, 71, 71, 1)), color-stop(75%, rgba(102, 102, 102, 1)), color-stop(88%, rgba(89, 89, 89, 1)), color-stop(100%, rgba(76, 76, 76, 1)));
+	background: -webkit-linear-gradient(left, rgba(19, 19, 19, 1) 0%, rgba(28, 28, 28, 1) 9%, rgba(43, 43, 43, 1) 24%, rgba(17, 17, 17, 1) 40%, rgba(0, 0, 0, 1) 49%, rgba(44, 44, 44, 1) 50%, rgba(71, 71, 71, 1) 61%, rgba(102, 102, 102, 1) 75%, rgba(89, 89, 89, 1) 88%, rgba(76, 76, 76, 1) 100%);
+	background: -o-linear-gradient(left, rgba(19, 19, 19, 1) 0%, rgba(28, 28, 28, 1) 9%, rgba(43, 43, 43, 1) 24%, rgba(17, 17, 17, 1) 40%, rgba(0, 0, 0, 1) 49%, rgba(44, 44, 44, 1) 50%, rgba(71, 71, 71, 1) 61%, rgba(102, 102, 102, 1) 75%, rgba(89, 89, 89, 1) 88%, rgba(76, 76, 76, 1) 100%);
+	background: -ms-linear-gradient(left, rgba(19, 19, 19, 1) 0%, rgba(28, 28, 28, 1) 9%, rgba(43, 43, 43, 1) 24%, rgba(17, 17, 17, 1) 40%, rgba(0, 0, 0, 1) 49%, rgba(44, 44, 44, 1) 50%, rgba(71, 71, 71, 1) 61%, rgba(102, 102, 102, 1) 75%, rgba(89, 89, 89, 1) 88%, rgba(76, 76, 76, 1) 100%);
+	background: linear-gradient(to right, rgba(19, 19, 19, 1) 0%, rgba(28, 28, 28, 1) 9%, rgba(43, 43, 43, 1) 24%, rgba(17, 17, 17, 1) 40%, rgba(0, 0, 0, 1) 49%, rgba(44, 44, 44, 1) 50%, rgba(71, 71, 71, 1) 61%, rgba(102, 102, 102, 1) 75%, rgba(89, 89, 89, 1) 88%, rgba(76, 76, 76, 1) 100%);
+	filter: progid:DXImageTransform.Microsoft.gradient(startColorstr='#131313', endColorstr='#4c4c4c', GradientType=1);
+}
+
+.iphone-shadow {
+	margin-top: -20px;
+	margin-left: -80px;
+	width: 500px;
+	height: 100px;
+	background: rgba(18, 18, 18, 0.24);
+	background: -moz-radial-gradient(center, ellipse cover, rgba(18, 18, 18, 0.64) 0%, rgba(18, 18, 18, 0.44) 22%, rgba(64, 64, 64, 0.05) 64%, rgba(64, 64, 64, 0) 70%);
+	background: -webkit-gradient(radial, center center, 0px, center center, 100%, color-stop(0%, rgba(18, 18, 18, 0.64)), color-stop(22%, rgba(18, 18, 18, 0.44)), color-stop(64%, rgba(64, 64, 64, 0.05)), color-stop(70%, rgba(64, 64, 64, 0)));
+	background: -webkit-radial-gradient(center, ellipse cover, rgba(18, 18, 18, 0.64) 0%, rgba(18, 18, 18, 0.44) 22%, rgba(64, 64, 64, 0.05) 64%, rgba(64, 64, 64, 0) 70%);
+	background: -o-radial-gradient(center, ellipse cover, rgba(18, 18, 18, 0.64) 0%, rgba(18, 18, 18, 0.44) 22%, rgba(64, 64, 64, 0.05) 64%, rgba(64, 64, 64, 0) 70%);
+	background: -ms-radial-gradient(center, ellipse cover, rgba(18, 18, 18, 0.64) 0%, rgba(18, 18, 18, 0.44) 22%, rgba(64, 64, 64, 0.05) 64%, rgba(64, 64, 64, 0) 70%);
+	background: radial-gradient(ellipse at center, rgba(18, 18, 18, 0.64) 0%, rgba(18, 18, 18, 0.44) 22%, rgba(64, 64, 64, 0.05) 64%, rgba(64, 64, 64, 0) 70%);
+	filter: progid:DXImageTransform.Microsoft.gradient(startColorstr='#121212', endColorstr='#404040', GradientType=1);
+}
+
+#centered-container {
+	display: flex;
+	justify-content: center;
+	position: relative;
+	top: 0;
+	left: 0;
+	bottom: 0;
+	right: 0;
+	width: 90%;
+	height: 100%;
+	border: 0px solid #e8e8e8;
+	padding: 0px;
+	background: rgba(255, 255, 255, .0);
+	transition: 0.5s;
+}
+
+/* Extra small devices (phones, 600px and down) */
+@media only screen and (max-height: 600px) {
+	#centered-container {
+		transform: scale(0.5);
+		transform-origin: 0 0;
+	}
+}
+
+@media only screen and (max-width: 600px) {
+	#centered-container {
+		transform: scale(0.5);
+		transform-origin: 0 0;
+	}
+}
+
+/* Small devices (portrait tablets and large phones, 600px and up) */
+@media only screen and (min-width: 600px) {
+	#centered-container {
+		transform: scale(0.6);
+		transform-origin: 0 0;
+	}
+}
+
+/* Medium devices (landscape tablets, 768px and up) */
+@media only screen and (min-width: 768px) {
+	#centered-container {
+		transform: scale(0.7);
+		transform-origin: 0 0;
+	}
+}
+
+/* Large devices (laptops/desktops, 992px and up) */
+@media only screen and (min-width: 992px) {
+	#centered-container {
+		transform: scale(1.0);
+		transform-origin: 0 0;
+	}
+}
+
+/* Extra large devices (large laptops and desktops, 1200px and up) */
+@media only screen and (min-width: 1200px) {
+	#centered-container {
+		transform: scale(1.0);
+		transform-origin: 0 0;
+	}
+}
+
+.iphone {
+	display: block;
+	float: left;
+	border: solid 10px #000;
+	width: 336px;
+	min-height: 75vh;
+	max-height: 80vh;
+	margin: 1rem 2rem;
+	padding: 0px;
+	border-radius: 50px;
+	background: #fff;
+	-webkit-box-shadow: 0px 0px 0px 5px #131313;
+	-moz-box-shadow: 0px 0px 0px 5px #131313;
+	box-shadow: 0px 0px 0px 5px #131313;
+	overflow-y: hidden;
+}
+
+.silence-switch {
+	position: absolute;
+	margin-left: -19px;
+	margin-top: 90px;
+	width: 4px;
+	height: 30px;
+	border-bottom-left-radius: 10px;
+	border-top-left-radius: 10px;
+}
+
+.volume-rocker-top {
+	position: absolute;
+	margin-left: -19px;
+	margin-top: 140px;
+	width: 4px;
+	height: 50px;
+	border-bottom-left-radius: 10px;
+	border-top-left-radius: 10px;
+}
+
+.volume-rocker-bottom {
+	position: absolute;
+	margin-left: -19px;
+	margin-top: 200px;
+	width: 4px;
+	height: 50px;
+	border-bottom-left-radius: 10px;
+	border-top-left-radius: 10px;
+}
+
+.power-button {
+	position: absolute;
+	margin-left: 333px;
+	margin-top: 130px;
+	width: 4px;
+	height: 70px;
+	border-bottom-right-radius: 10px;
+	border-top-right-radius: 10px;
+}
+
+.top-section {
+	background: #f6f6f7;
+	height: 100px;
+	margin: 0px;
+	border-top-right-radius: 40px;
+	border-top-left-radius: 40px;
+	border-bottom: #e6e6e6 1px solid;
+}
+
+.top-section-time {
+	position: absolute;
+	margin-left: 15px;
+	margin-top: 16px;
+	font-size: 12px;
+	font-weight: bold;
+}
+
+.top-section-middle {
+	margin: auto;
+	width: 180px;
+	background: black;
+	height: 20px;
+	border-bottom-left-radius: 20px;
+	border-bottom-right-radius: 20px;
+	padding-top: 5px;
+}
+
+.top-section-user-pic {
+	margin: auto;
+	margin-top: 20px;
+	width: 30px;
+	height: 40px;
+	border-radius: 100%;
+	background-color: none;
+	font-size: 40px;
+	color: #999999;
+}
+
+.clip-circle {
+	clip-path: circle(20px at center);
+}
+
+.top-section-user-name {
+	margin: auto;
+	margin-top: 10px;
+	background: none;
+	height: 10px;
+	width: 100px;
+	font-size: 10px;
+	font-weight: bold;
+	color: var(--bs-dark);
+	text-align: center;
+}
+
+.speaker {
+	width: 60px;
+	height: 8px;
+	background: #2e2e2e;
+	margin-left: 55px;
+	border-radius: 10px;
+}
+
+.front-camera {
+	height: 8px;
+	width: 8px;
+	background: #005063;
+	border-radius: 100%;
+	margin-left: 70px;
+}
+
+.top-section-symbols {
+	position: absolute;
+	margin-left: 245px;
+	margin-top: 10px;
+	font-size: 12px;
+}
+
+.symbols {
+	height: 14px;
+	margin-left: -10px;
+}
+
+.arrow {
+	position: absolute;
+	border: solid #3478f6;
+	border-width: 0 3px 3px 0;
+	display: inline-block;
+	padding: 5px;
+	margin-top: 45px;
+	margin-left: 13px;
+	border-radius: 2px;
+	opacity: 0.9;
+}
+
+.arrow:hover {
+	cursor: pointer;
+	opacity: 1;
+}
+
+.left {
+	transform: rotate(135deg);
+	-webkit-transform: rotate(135deg);
+}
+
+/**
+ * Just for fun: Wifi icon with pure CSS
+ */
+
+.wifi {
+	padding: 1px;
+	width: 10px;
+	height: 10px;
+}
+
+.wifi,
+.wifi:before {
+	display: inline-block;
+	border: 10px double transparent;
+	border-top-color: currentColor;
+	border-radius: 50%;
+}
+
+.wifi:before {
+	content: '';
+	width: 0;
+	height: 0;
+}
+
+.battery-icon {
+	position: absolute;
+	width: 10px;
+	height: 5px;
+	border-radius: 2px;
+	border: 2px solid #000;
+	top: 50%;
+	left: 100%;
+	transform: translate(-50%, -50%);
+}
+
+.battery-icon:before {
+	content: '';
+	position: absolute;
+	right: -4px;
+	top: 50%;
+	transform: translateY(-50%);
+	width: 1px;
+	height: 2px;
+	border-radius: 2px;
+	background: #000;
+}
+
+.battery-icon:after {
+	content: '';
+	position: absolute;
+	left: 0px;
+	top: 0px;
+	width: 70%;
+	height: 4px;
+	background-color: #000;
+	border-radius: 2px;
+}
+
+.messages-section {
+	margin-top: 1rem;
+	background: #fff;
+	height: calc(80vh - 220px - 3rem);
+	overflow: scroll;
+	font-size: 13px;
+	font-weight: 600;
+}
+
+.messages-section::-webkit-scrollbar {
+	display: none;
+}
+
+.keyboard-section {
+	background: #d1d3d9;
+	height: 90px;
+	border-bottom-left-radius: 40px;
+	border-bottom-right-radius: 40px;
+	border-top: #e6e6e6 1px solid;
+}
+
+.keyboard-above {
+	background: white;
+	height: 50px;
+	padding: 0 0.5rem;
+}
+
+
+.keyboardinput {
+	border-radius: 20px;
+	border: 1px solid #c4c4c6;
+	padding: 8px;
+	width: auto;
+	height: calc(50px - 1rem);
+	overflow: scroll;
+	caret-color: #3478f6;
+	resize: none;
+
+}
+
+.key-add-ons {
+	color: #999999;
+	font-size: 25px;
+}
+
+.app-store {
+	background: none;
+	margin-left: 10px;
+	background: #999999;
+	padding-left: 5px;
+	padding-right: 5px;
+	padding-top: 0px;
+	padding-bottom: 0px;
+	border-radius: 20px;
+}
+
+.keyboard-apps {
+	width: 386px;
+	position: absolute;
+	background: none;
+	margin-top: 2px;
+	margin-left: 0px;
+	height: 30px;
+	overflow: hidden;
+}
+
+.keyboard-app-icon {
+	display: inline-block;
+	width: 23px;
+	padding: 5px;
+	margin: 3px;
+	height: 13px;
+	border-radius: 60px;
+}
+
+.keyboard-bottom-symbols {
+	margin-left: auto;
+	margin-right: auto;
+	margin-top: 230px;
+	width: 336px;
+	font-size: 25px;
+	color: #54585e;
+}
+
+.globe-symbol {
+	position: absolute;
+	padding-left: 20px;
+}
+
+.mic-symbol {
+	position: relative;
+	margin-left: 300px;
+
+}
+
+.keyboard-keys {
+	position: absolute;
+	margin-top: 65px;
+	padding-left: 7px;
+	background: #d1d3d9;
+	width: 329px;
+	height: 190px;
+	padding-top: 16px;
+	user-select: none;
+	text-align: center;
+}
+
+
+.keyboard-keys a:hover {
+	cursor: pointer;
+	background: #8f929c;
+}
+
+.keyboard-spacer {
+	width: 336px;
+	height: 8px;
+}
+
+.white-key {
+	position: relative;
+	display: inline-block;
+	background: #fff;
+	border-radius: 6px;
+	margin: 0px;
+	padding: 9px;
+	width: 11px;
+	height: 18px;
+	text-align: center;
+	font-weight: 600;
+	border-bottom: 1px solid #88898d;
+}
+
+.invisible-key {
+	position: relative;
+	background: #fff;
+	border-radius: 6px;
+	margin: 0px;
+	padding: 2px;
+	width: 4px;
+	height: 18px;
+	text-align: center;
+	font-weight: 600;
+	border-bottom: 1px solid #88898d;
+	opacity: 0;
+}
+
+.space-bar {
+	position: relative;
+	display: inline-block;
+	background: #fff;
+	border-radius: 6px;
+	margin: 1px;
+	padding: 9px;
+	width: 142px;
+	height: 18px;
+	text-align: center;
+	font-weight: 600;
+	border-bottom: 1px solid #88898d;
+	font-size: 13px;
+}
+
+.back_space {
+	height: 10px;
+	padding: 2px;
+}
+
+.back_space>i {
+	font-size: 14px;
+}
+
+.grey-key {
+	position: relative;
+	display: inline-block;
+	background: #abafba;
+	border-radius: 6px;
+	margin: 0px;
+	padding: 9px;
+	width: auto;
+	height: 18px;
+	text-align: center;
+	font-weight: 600;
+	border-bottom: 1px solid #88898d;
+	font-size: 13px;
+}
+
+.grey-key:hover {
+	background: #8f929c;
+}
+
+.home-screen-button {
+	position: relative;
+	margin-left: auto;
+	margin-right: auto;
+	margin-top: 15px;
+	border-radius: 50px;
+	width: 125px;
+	height: 5px;
+	background: #000;
+}
+
+.inside-input {
+	height: 25px;
+	margin-left: calc(-2rem - 10px);
+	color: #3478f6;
+}
+
+.inside-input:hover {
+	opacity: 1;
+	cursor: pointer;
+}
+
+.inside-input:active {
+	opacity: 0.8;
+}
+
+.message {
+	border-radius: 20px 20px 20px 20px;
+	margin: 0 15px 10px;
+	padding: 10px 15px;
+	position: relative;
+	animation-name: fadeInOpacity;
+	animation-iteration-count: 1;
+	animation-timing-function: ease-in;
+	animation-duration: 0.4s;
+}
+
+@keyframes fadeInOpacity {
+	0% {
+		opacity: 0;
+	}
+
+	100% {
+		opacity: 1;
+	}
+}
+
+.message.to {
+	background-color: var(--bs-primary); 
+	color: #fff;
+	margin-left: 50px;
+	transition: width 2s;
+	white-space: pre-wrap;
+}
+
+.message.to > a{
+	color: var(--bs-info);
+}
+
+.message.from {
+	background-color: #e9e9ea;
+	color: #363636;
+	margin-right: 80px;
+}
+
+.message.to:before {
+	content: "";
+	width: 0;
+	height: 0;
+	left: 93%;
+	top: 30%;
+	position: absolute;
+	border-top: 13px solid transparent;
+	border-left: 26px solid var(--bs-primary);
+	border-bottom: 13px solid transparent;
+	border-radius: 40px;
+	-ms-transform: rotate(40deg);
+	/* IE 9 */
+	transform: rotate(40deg);
+}
+
+.message.from:before {
+	content: "";
+	width: 0;
+	height: 0;
+	right: 93%;
+	top: 60%;
+	position: absolute;
+	border-top: 13px solid transparent;
+	border-right: 26px solid #e9e9ea;
+	border-bottom: 13px solid transparent;
+	border-radius: 40px;
+	-ms-transform: rotate(-40deg);
+	/* IE 9 */
+	transform: rotate(-40deg);
+}
+
+.selectDisable {
+	-webkit-user-select: none;
+	-khtml-user-select: none;
+	-moz-user-select: none;
+	-o-user-select: none;
+	user-select: none;
+}
+
+.selectEnable {
+	-webkit-user-select: text;
+	-khtml-user-select: text;
+	-moz-user-select: text;
+	-o-user-select: text;
+	user-select: text;
+}
+
+textarea:focus,
+input:focus {
+	outline: none;
+}
+
+.pressed {
+	background: #abafba;
+}
+
+.pressed123 {
+	background: #abafba;
+	font-size: 11px;
+}
