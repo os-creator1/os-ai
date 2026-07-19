@@ -11,6 +11,7 @@ use App\Enums\Opportunity\OpportunityStatus;
 use App\Enums\Opportunity\OpportunityTransitionActorType;
 use App\Enums\Opportunity\OpportunityTransitionCategory;
 use App\Enums\Opportunity\OpportunityWorkerKey;
+use App\Events\Opportunity\OpportunityApprovalRequested;
 use App\Events\Opportunity\OpportunityBecameCurrent;
 use App\Events\Opportunity\OpportunityCreated;
 use App\Events\Opportunity\OpportunityDismissed;
@@ -27,6 +28,7 @@ use App\Library\Opportunity\Exceptions\ImmutableCandidateIdentityMismatchExcepti
 use App\Library\Opportunity\Exceptions\InvalidOpportunityCandidateException;
 use App\Library\Opportunity\Exceptions\InvalidOpportunityStateException;
 use App\Library\Opportunity\Exceptions\InvalidSnoozeUntilException;
+use App\Library\Opportunity\Exceptions\OpportunityApprovalNotRequiredException;
 use App\Library\Opportunity\Exceptions\OpportunityEvidenceValidationException;
 use App\Library\Opportunity\Exceptions\RunAbandonedException;
 use App\Library\Opportunity\Exceptions\RunAlreadyActiveException;
@@ -517,6 +519,57 @@ class OpportunityManager
             ]);
 
             OpportunityReopened::dispatch($locked->id, $locked->business_id, $customer->user_id, $fromStatus->value, $reasonCode);
+
+            return $updated;
+        });
+    }
+
+    /**
+     * Customer-initiated approval request (RFC-002 §17, §30). Valid only
+     * from `open` — an already-awaiting-approval Opportunity throws rather
+     * than being absorbed as a no-op. Eligibility comes exclusively from
+     * the locked Opportunity's own persisted recommended_action — never
+     * from caller-supplied data — since that JSON is always registry-
+     * derived and immutable outside OpportunityManager itself; no fresh
+     * OpportunityActionRegistry lookup is needed to re-derive it.
+     */
+    public function requestApproval(Opportunity $opportunity, Customer $customer): Opportunity
+    {
+        return DB::transaction(function () use ($opportunity, $customer) {
+            $locked = $this->opportunityRepository->findOwnedForUpdate($opportunity->id, $opportunity->business_id);
+
+            $locked = $this->assertOpportunityOwnership($customer, $locked);
+
+            if ($locked->status !== OpportunityStatus::Open) {
+                throw new InvalidOpportunityStateException(
+                    "Opportunity [{$locked->id}] cannot request approval from status [{$locked->status->value}]."
+                );
+            }
+
+            if (! is_array($locked->recommended_action) || ($locked->recommended_action['approval_required'] ?? null) !== true) {
+                throw new OpportunityApprovalNotRequiredException(
+                    "Opportunity [{$locked->id}] has no current action requiring approval."
+                );
+            }
+
+            $updated = $this->opportunityRepository->update($locked, [
+                'status' => OpportunityStatus::AwaitingApproval->value,
+            ]);
+
+            $this->transitionRepository->create([
+                'opportunity_id' => $locked->id,
+                'category' => OpportunityTransitionCategory::Workflow->value,
+                'from_status' => OpportunityStatus::Open->value,
+                'to_status' => OpportunityStatus::AwaitingApproval->value,
+                'actor_type' => OpportunityTransitionActorType::Customer->value,
+                'actor_user_id' => $customer->user_id,
+                'opportunity_run_id' => null,
+                'action_execution_id' => null,
+                'reason_code' => 'customer_requested_approval',
+                'safe_note' => null,
+            ]);
+
+            OpportunityApprovalRequested::dispatch($locked->id, $locked->business_id, $customer->user_id, $locked->recommended_action_hash);
 
             return $updated;
         });
