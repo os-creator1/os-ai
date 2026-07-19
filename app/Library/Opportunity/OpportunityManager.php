@@ -14,7 +14,9 @@ use App\Library\Opportunity\Exceptions\ImmutableCandidateIdentityMismatchExcepti
 use App\Library\Opportunity\Exceptions\InvalidOpportunityCandidateException;
 use App\Library\Opportunity\Exceptions\RunAbandonedException;
 use App\Library\Opportunity\Exceptions\RunAlreadyActiveException;
+use App\Library\Opportunity\Exceptions\RunAlreadySucceededException;
 use App\Library\Opportunity\Exceptions\RunNotActiveException;
+use App\Library\Opportunity\Exceptions\RunNotFoundException;
 use App\Library\Opportunity\Exceptions\UnsupportedOpportunityTypeException;
 use App\Models\Business;
 use App\Models\OpportunityRun;
@@ -234,6 +236,44 @@ class OpportunityManager
             $this->runRepository->update($locked, ['heartbeat_at' => $now]);
 
             return $candidate;
+        });
+    }
+
+    /**
+     * Explicit failure of a running run (RFC-002 §23), symmetric with
+     * beginRun()'s abandonment path but never itself abandonment: no
+     * abandoned_at, no reason_code, and heartbeat_at is left untouched.
+     * Idempotent only for an already-failed run — its original
+     * completed_at/safe_error_summary/abandoned_at/reason_code are never
+     * overwritten. Throws for an already-succeeded run; a succeeded run can
+     * never be retroactively marked failed.
+     */
+    public function failRun(OpportunityRun $run, string $safeErrorSummary): void
+    {
+        DB::transaction(function () use ($run, $safeErrorSummary) {
+            $locked = $this->runRepository->findForUpdate($run->id);
+
+            if ($locked === null) {
+                throw new RunNotFoundException("Run [{$run->id}] does not exist.");
+            }
+
+            if ($locked->status === OpportunityRunStatus::Failed) {
+                return;
+            }
+
+            if ($locked->status === OpportunityRunStatus::Succeeded) {
+                throw new RunAlreadySucceededException("Run [{$locked->id}] has already succeeded and cannot be marked failed.");
+            }
+
+            $now = now();
+
+            $this->runRepository->update($locked, [
+                'status' => OpportunityRunStatus::Failed->value,
+                'completed_at' => $now,
+                'safe_error_summary' => $safeErrorSummary,
+            ]);
+
+            OpportunityRunFailed::dispatch($locked->id, $locked->business_id, $locked->worker_key->value, $safeErrorSummary);
         });
     }
 
