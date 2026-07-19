@@ -15,6 +15,14 @@ interface CustomerOnboardingRepository extends BaseRepository
 {
     public function findByCustomer(Customer $customer): ?CustomerOnboarding;
 
+    /**
+     * customer_onboardings.business_id carries no unique database
+     * constraint (only customer_id does), so if more than one row is ever
+     * schema-permitted to reference the same Business, this deterministically
+     * returns the most recently created one — never an unordered first().
+     */
+    public function findByBusiness(Business $business): ?CustomerOnboarding;
+
     public function startForCustomer(Customer $customer, bool $required): CustomerOnboarding;
 
     public function attachBusiness(CustomerOnboarding $onboarding, Business $business): CustomerOnboarding;

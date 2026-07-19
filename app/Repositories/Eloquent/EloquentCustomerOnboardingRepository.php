@@ -22,6 +22,24 @@ class EloquentCustomerOnboardingRepository extends EloquentBaseRepository implem
         return $this->query()->where('customer_id', $customer->user_id)->first();
     }
 
+    /**
+     * business_id has no unique database constraint — only customer_id does
+     * (see the class-level migration) — so this orders by id descending
+     * (mirroring EloquentBusinessRepository::paginateForAdmin()'s existing
+     * "newest first, ties impossible since id is a unique monotonic key"
+     * convention) to deterministically return the most recently created
+     * onboarding row for the given Business, rather than an unordered
+     * first(), in case more than one row is ever schema-permitted to
+     * reference the same business_id.
+     */
+    public function findByBusiness(Business $business): ?CustomerOnboarding
+    {
+        return $this->query()
+            ->where('business_id', $business->id)
+            ->orderByDesc('id')
+            ->first();
+    }
+
     public function startForCustomer(Customer $customer, bool $required): CustomerOnboarding
     {
         return DB::transaction(function () use ($customer, $required) {

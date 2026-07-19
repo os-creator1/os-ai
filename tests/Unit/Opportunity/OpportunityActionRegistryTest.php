@@ -71,16 +71,17 @@ class OpportunityActionRegistryTest extends TestCase
     }
 
     /**
-     * Milestone 1 deliberately withholds execution metadata (RFC-002 §13.1):
-     * no validator, handler, or system_verification_method key may exist yet
-     * — not even as null — since those are added in Milestones 2 and 4.
+     * Milestone 2 Phase 2A adds only `parameter_rules` — a trusted,
+     * declarative array, not a class-name/callable. No validator, handler,
+     * or system_verification_method key may exist yet — not even as null —
+     * since those are still added only in Milestone 4.
      */
     public function test_registry_exposes_no_execution_metadata_keys(): void
     {
-        $expectedKeys = ['schema_version', 'mutates_business_data', 'approval_required', 'completion_policy'];
+        $expectedKeys = ['schema_version', 'mutates_business_data', 'approval_required', 'completion_policy', 'parameter_rules'];
 
         foreach (OpportunityActionRegistry::all() as $actionKey => $definition) {
-            $this->assertSame($expectedKeys, array_keys($definition), "Action [{$actionKey}] should expose only Milestone 1 metadata keys.");
+            $this->assertSame($expectedKeys, array_keys($definition), "Action [{$actionKey}] should expose only Milestone 1 + Phase 2A metadata keys.");
             $this->assertArrayNotHasKey('validator', $definition);
             $this->assertArrayNotHasKey('handler', $definition);
             $this->assertArrayNotHasKey('system_verification_method', $definition);
@@ -88,9 +89,23 @@ class OpportunityActionRegistryTest extends TestCase
     }
 
     /**
+     * None of RFC-002's 11 business_advisor actions accept any worker-
+     * supplied parameter yet — every entry's parameter_rules must be
+     * exactly an empty array, so any non-empty actionParameters payload is
+     * rejected by the future staging boundary.
+     */
+    public function test_every_action_has_an_empty_parameter_rules_array(): void
+    {
+        foreach (OpportunityActionRegistry::all() as $actionKey => $definition) {
+            $this->assertArrayHasKey('parameter_rules', $definition, "Action [{$actionKey}] should declare parameter_rules.");
+            $this->assertSame([], $definition['parameter_rules'], "Action [{$actionKey}] should accept no parameters yet.");
+        }
+    }
+
+    /**
      * Every value in this registry must be a closed, source-controlled
-     * scalar/enum — never a class name, callable, route, or command string
-     * that could be resolved dynamically.
+     * scalar/enum/array — never a class name, callable, route, or command
+     * string that could be resolved dynamically.
      */
     public function test_registry_contains_no_dynamically_resolvable_values(): void
     {
@@ -100,6 +115,8 @@ class OpportunityActionRegistryTest extends TestCase
             $this->assertIsBool($definition['approval_required']);
             $this->assertInstanceOf(OpportunityCompletionPolicy::class, $definition['completion_policy']);
             $this->assertFalse(is_callable($definition['completion_policy']), "Action [{$actionKey}] completion_policy must not be callable.");
+            $this->assertIsArray($definition['parameter_rules']);
+            $this->assertFalse(is_callable($definition['parameter_rules']), "Action [{$actionKey}] parameter_rules must not be callable.");
         }
     }
 }

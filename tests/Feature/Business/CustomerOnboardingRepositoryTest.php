@@ -39,6 +39,78 @@ class CustomerOnboardingRepositoryTest extends TestCase
         $this->assertSame($business->id, $onboarding->fresh()->business_id);
     }
 
+    public function test_find_by_business_returns_the_owning_onboarding(): void
+    {
+        $customer = $this->createCustomer();
+        $business = app(BusinessRepository::class)->createForCustomer($customer, $this->businessAttributes());
+        $repository = app(CustomerOnboardingRepository::class);
+        $onboarding = $repository->startForCustomer($customer, true);
+        $repository->attachBusiness($onboarding, $business);
+
+        $found = $repository->findByBusiness($business);
+
+        $this->assertNotNull($found);
+        $this->assertSame($onboarding->id, $found->id);
+    }
+
+    public function test_find_by_business_does_not_return_another_businesss_onboarding(): void
+    {
+        $customerA = $this->createCustomer();
+        $businessA = app(BusinessRepository::class)->createForCustomer($customerA, $this->businessAttributes());
+        $repository = app(CustomerOnboardingRepository::class);
+        $onboardingA = $repository->startForCustomer($customerA, true);
+        $repository->attachBusiness($onboardingA, $businessA);
+
+        $customerB = $this->createCustomer();
+        $businessB = app(BusinessRepository::class)->createForCustomer($customerB, $this->businessAttributes(['name' => 'Second Business']));
+        $onboardingB = $repository->startForCustomer($customerB, true);
+        $repository->attachBusiness($onboardingB, $businessB);
+
+        $found = $repository->findByBusiness($businessA);
+
+        $this->assertNotNull($found);
+        $this->assertSame($onboardingA->id, $found->id);
+        $this->assertNotSame($onboardingB->id, $found->id);
+    }
+
+    public function test_find_by_business_returns_null_when_none_exists(): void
+    {
+        $customer = $this->createCustomer();
+        $business = app(BusinessRepository::class)->createForCustomer($customer, $this->businessAttributes());
+        $repository = app(CustomerOnboardingRepository::class);
+
+        // No onboarding row has been attached to this business at all.
+        $this->assertNull($repository->findByBusiness($business));
+    }
+
+    /**
+     * customer_onboardings.business_id carries no unique database
+     * constraint (only customer_id does) — this directly exercises that
+     * schema-permitted case (two rows referencing the same business_id,
+     * created outside the normal attachBusiness() flow) and proves
+     * findByBusiness() resolves it deterministically (most recently
+     * created row, i.e. highest id) rather than an unordered first().
+     */
+    public function test_find_by_business_is_deterministic_when_multiple_rows_reference_the_same_business(): void
+    {
+        $customer = $this->createCustomer();
+        $business = app(BusinessRepository::class)->createForCustomer($customer, $this->businessAttributes());
+        $repository = app(CustomerOnboardingRepository::class);
+
+        $otherCustomer = $this->createCustomer();
+        $older = $repository->startForCustomer($customer, true);
+        $repository->attachBusiness($older, $business);
+
+        $newer = $repository->startForCustomer($otherCustomer, true);
+        $repository->attachBusiness($newer, $business);
+
+        $this->assertGreaterThan($older->id, $newer->id);
+
+        $found = $repository->findByBusiness($business);
+
+        $this->assertSame($newer->id, $found->id);
+    }
+
     public function test_mark_step_complete_records_unique_steps_and_advances(): void
     {
         $customer = $this->createCustomer();
