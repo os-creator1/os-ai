@@ -30,6 +30,7 @@ use App\Library\Opportunity\Exceptions\InvalidOpportunityCandidateException;
 use App\Library\Opportunity\Exceptions\InvalidOpportunityStateException;
 use App\Library\Opportunity\Exceptions\InvalidSnoozeUntilException;
 use App\Library\Opportunity\Exceptions\OpportunityActionNotConfigurableException;
+use App\Library\Opportunity\Exceptions\OpportunityActionNotExecutableException;
 use App\Library\Opportunity\Exceptions\OpportunityApprovalNotRequiredException;
 use App\Library\Opportunity\Exceptions\OpportunityEvidenceValidationException;
 use App\Library\Opportunity\Exceptions\RunAbandonedException;
@@ -530,10 +531,13 @@ class OpportunityManager
      * Customer-initiated approval request (RFC-002 §17, §30). Valid only
      * from `open` — an already-awaiting-approval Opportunity throws rather
      * than being absorbed as a no-op. Eligibility comes exclusively from
-     * the locked Opportunity's own persisted recommended_action — never
-     * from caller-supplied data — since that JSON is always registry-
-     * derived and immutable outside OpportunityManager itself; no fresh
-     * OpportunityActionRegistry lookup is needed to re-derive it.
+     * the locked Opportunity's own persisted recommended_action, re-verified
+     * against the trusted OpportunityActionRegistry — never from
+     * caller-supplied data. A merely-present recommended_action is not
+     * enough: it must be a fully configured, registry-integrity-checked,
+     * hash-valid executable action (RFC-002 §13.1, §28, §45) — an initial,
+     * unconfigured action (empty `parameters`) can never reach
+     * awaiting_approval.
      */
     public function requestApproval(Opportunity $opportunity, Customer $customer): Opportunity
     {
@@ -548,11 +552,7 @@ class OpportunityManager
                 );
             }
 
-            if (! is_array($locked->recommended_action) || ($locked->recommended_action['approval_required'] ?? null) !== true) {
-                throw new OpportunityApprovalNotRequiredException(
-                    "Opportunity [{$locked->id}] has no current action requiring approval."
-                );
-            }
+            $this->assertActionIsApprovableAndExecutable($locked);
 
             $updated = $this->opportunityRepository->update($locked, [
                 'status' => OpportunityStatus::AwaitingApproval->value,
@@ -575,6 +575,102 @@ class OpportunityManager
 
             return $updated;
         });
+    }
+
+    /**
+     * Re-verifies the locked Opportunity's persisted recommended_action
+     * against the trusted OpportunityActionRegistry before requestApproval()
+     * is allowed to change status (RFC-002 §13.1, §28, §45). Never rebuilds
+     * or modifies the action — only validates the exact persisted,
+     * configured state. `approval_required=false` in the trusted registry
+     * throws OpportunityApprovalNotRequiredException; every other
+     * malformed/unconfigured/unsupported/integrity-invalid state throws
+     * OpportunityActionNotExecutableException.
+     */
+    private function assertActionIsApprovableAndExecutable(Opportunity $locked): void
+    {
+        $recommendedAction = $locked->recommended_action;
+
+        if (! is_array($recommendedAction)) {
+            throw new OpportunityActionNotExecutableException(
+                "Opportunity [{$locked->id}] has no configured action."
+            );
+        }
+
+        $expectedKeys = ['action_key', 'approval_required', 'completion_policy', 'parameters', 'schema_version'];
+        $actualKeys = array_keys($recommendedAction);
+        sort($actualKeys);
+
+        if ($actualKeys !== $expectedKeys) {
+            throw new OpportunityActionNotExecutableException(
+                "Opportunity [{$locked->id}]'s recommended_action has an unexpected structure."
+            );
+        }
+
+        $actionKey = $recommendedAction['action_key'];
+
+        if ($actionKey !== 'add_phone') {
+            throw new OpportunityActionNotExecutableException(
+                "Action [{$actionKey}] is not executable."
+            );
+        }
+
+        $actionDefinition = OpportunityActionRegistry::get($actionKey);
+
+        if ($actionDefinition === null) {
+            throw new OpportunityActionNotExecutableException(
+                "Action [{$actionKey}] has no registered action definition."
+            );
+        }
+
+        if (($actionDefinition['approval_required'] ?? null) !== true) {
+            throw new OpportunityApprovalNotRequiredException(
+                "Opportunity [{$locked->id}] has no current action requiring approval."
+            );
+        }
+
+        if (($actionDefinition['handler_identifier'] ?? null) !== 'business.update_phone'
+            || ($actionDefinition['verifier_identifier'] ?? null) !== 'business.phone_matches_parameter'
+            || ($actionDefinition['mutates_business_data'] ?? null) !== true
+        ) {
+            throw new OpportunityActionNotExecutableException(
+                "Action [{$actionKey}] is not a fully configured executable action."
+            );
+        }
+
+        if ($recommendedAction['schema_version'] !== $actionDefinition['schema_version']
+            || $locked->action_schema_version !== $actionDefinition['schema_version']
+            || $recommendedAction['approval_required'] !== $actionDefinition['approval_required']
+            || $recommendedAction['completion_policy'] !== $actionDefinition['completion_policy']->value
+        ) {
+            throw new OpportunityActionNotExecutableException(
+                "Opportunity [{$locked->id}]'s persisted action disagrees with the trusted registry."
+            );
+        }
+
+        $parameters = $recommendedAction['parameters'];
+
+        if (! is_array($parameters) || array_keys($parameters) !== ['value']) {
+            throw new OpportunityActionNotExecutableException(
+                "Opportunity [{$locked->id}]'s action parameters are not fully configured."
+            );
+        }
+
+        $value = $parameters['value'];
+
+        if (! is_string($value) || trim($value) === '' || mb_strlen($value) > 50) {
+            throw new OpportunityActionNotExecutableException(
+                "Opportunity [{$locked->id}]'s configured phone value is invalid."
+            );
+        }
+
+        $recomputedHash = $this->actionHash->compute($recommendedAction);
+
+        if (! is_string($locked->recommended_action_hash) || $recomputedHash !== $locked->recommended_action_hash) {
+            throw new OpportunityActionNotExecutableException(
+                "Opportunity [{$locked->id}]'s recommended_action_hash does not match its persisted action."
+            );
+        }
     }
 
     /**

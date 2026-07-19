@@ -10,7 +10,8 @@ use App\Enums\Opportunity\OpportunityWorkerKey;
 use App\Events\Opportunity\OpportunityApprovalRequested;
 use App\Library\Opportunity\CanonicalJson;
 use App\Library\Opportunity\Exceptions\InvalidOpportunityStateException;
-use App\Library\Opportunity\Exceptions\OpportunityApprovalNotRequiredException;
+use App\Library\Opportunity\Exceptions\OpportunityActionNotExecutableException;
+use App\Library\Opportunity\OpportunityActionHash;
 use App\Library\Opportunity\OpportunityManager;
 use App\Models\Business;
 use App\Models\Opportunity;
@@ -27,15 +28,25 @@ use RuntimeException;
 use Tests\Feature\Opportunity\Concerns\CreatesOpportunityTestData;
 use Tests\TestCase;
 
+/**
+ * RFC-002 Phase 4B.2B note: tests for a registry with a missing
+ * handler_identifier/verifier_identifier, mutates_business_data=false, or
+ * approval_required=false are intentionally omitted. OpportunityActionRegistry
+ * is a closed, static, source-controlled class (RFC-002 §13.1) called
+ * directly by OpportunityManager — there is no container-binding or
+ * repository seam to substitute alternate registry metadata without either
+ * modifying the production registry or adding a new indirection layer, both
+ * out of scope for this phase.
+ */
 class OpportunityManagerRequestApprovalTest extends TestCase
 {
     use RefreshDatabase;
     use CreatesOpportunityTestData;
 
-    public function test_open_opportunity_with_approval_required_becomes_awaiting_approval(): void
+    public function test_fully_configured_add_phone_becomes_awaiting_approval(): void
     {
         $business = $this->createBusinessForOpportunities();
-        $opportunity = $this->approvableOpportunity($business);
+        $opportunity = $this->configuredApprovableOpportunity($business);
         $manager = app(OpportunityManager::class);
 
         $updated = $manager->requestApproval($opportunity, $business->customer);
@@ -43,10 +54,10 @@ class OpportunityManagerRequestApprovalTest extends TestCase
         $this->assertSame(OpportunityStatus::AwaitingApproval, $updated->status);
     }
 
-    public function test_recommended_action_and_hash_remain_unchanged(): void
+    public function test_configured_action_and_hash_remain_unchanged(): void
     {
         $business = $this->createBusinessForOpportunities();
-        $opportunity = $this->approvableOpportunity($business);
+        $opportunity = $this->configuredApprovableOpportunity($business);
         $originalAction = $opportunity->recommended_action;
         $originalHash = $opportunity->recommended_action_hash;
         $manager = app(OpportunityManager::class);
@@ -63,7 +74,7 @@ class OpportunityManagerRequestApprovalTest extends TestCase
     public function test_freshness_and_unrelated_fields_remain_unchanged(): void
     {
         $business = $this->createBusinessForOpportunities();
-        $opportunity = $this->approvableOpportunity($business, [
+        $opportunity = $this->configuredApprovableOpportunity($business, [
             'freshness' => OpportunityFreshness::Stale->value,
             'occurrence_number' => 2,
             'stale_at' => now()->subDay(),
@@ -96,7 +107,7 @@ class OpportunityManagerRequestApprovalTest extends TestCase
     public function test_exact_transition_fields(): void
     {
         $business = $this->createBusinessForOpportunities();
-        $opportunity = $this->approvableOpportunity($business);
+        $opportunity = $this->configuredApprovableOpportunity($business);
         $manager = app(OpportunityManager::class);
 
         $manager->requestApproval($opportunity, $business->customer);
@@ -114,12 +125,12 @@ class OpportunityManagerRequestApprovalTest extends TestCase
         $this->assertNull($transition->safe_note);
     }
 
-    public function test_event_has_correct_scalar_payloads(): void
+    public function test_event_has_correct_scalar_payloads_including_the_configured_action_hash(): void
     {
         Event::fake([OpportunityApprovalRequested::class]);
 
         $business = $this->createBusinessForOpportunities();
-        $opportunity = $this->approvableOpportunity($business);
+        $opportunity = $this->configuredApprovableOpportunity($business);
         $manager = app(OpportunityManager::class);
 
         $manager->requestApproval($opportunity, $business->customer);
@@ -137,7 +148,7 @@ class OpportunityManagerRequestApprovalTest extends TestCase
         Event::fake([OpportunityApprovalRequested::class]);
 
         $business = $this->createBusinessForOpportunities();
-        $opportunity = $this->approvableOpportunity($business);
+        $opportunity = $this->configuredApprovableOpportunity($business);
         $manager = app(OpportunityManager::class);
 
         $manager->requestApproval($opportunity, $business->customer);
@@ -156,7 +167,7 @@ class OpportunityManagerRequestApprovalTest extends TestCase
         Event::fake([OpportunityApprovalRequested::class]);
 
         $business = $this->createBusinessForOpportunities();
-        $opportunity = $this->approvableOpportunity($business);
+        $opportunity = $this->configuredApprovableOpportunity($business);
 
         $real = app(OpportunityRepository::class);
 
@@ -249,56 +260,168 @@ class OpportunityManagerRequestApprovalTest extends TestCase
         Event::assertNotDispatched(OpportunityApprovalRequested::class);
     }
 
-    public function test_approval_required_false_rejects_atomically(): void
+    public function test_initial_add_phone_action_with_empty_parameters_rejects_atomically(): void
     {
         $business = $this->createBusinessForOpportunities();
-        $opportunity = $this->approvableOpportunity($business, [
-            'recommended_action' => [
-                'schema_version' => 1,
-                'action_key' => 'add_phone',
-                'parameters' => [],
-                'approval_required' => false,
-                'completion_policy' => 'system_verified',
-            ],
+        $opportunity = $this->opportunityWithAction($business, [
+            'schema_version' => 1,
+            'action_key' => 'add_phone',
+            'parameters' => [],
+            'approval_required' => true,
+            'completion_policy' => 'system_verified',
         ]);
-        $manager = app(OpportunityManager::class);
 
-        $this->assertRejectsAtomically($opportunity, $business, OpportunityApprovalNotRequiredException::class);
+        $this->assertRejectsAtomically($opportunity, $business, OpportunityActionNotExecutableException::class);
     }
 
-    public function test_missing_recommended_action_rejects_atomically(): void
+    public function test_missing_parameters_value_rejects(): void
     {
         $business = $this->createBusinessForOpportunities();
-        $opportunity = $this->approvableOpportunity($business, [
-            'recommended_action' => null,
-            'recommended_action_hash' => null,
-            'action_schema_version' => null,
+        $opportunity = $this->opportunityWithAction($business, [
+            'schema_version' => 1,
+            'action_key' => 'add_phone',
+            'parameters' => ['other' => 'x'],
+            'approval_required' => true,
+            'completion_policy' => 'system_verified',
         ]);
 
-        $this->assertRejectsAtomically($opportunity, $business, OpportunityApprovalNotRequiredException::class);
+        $this->assertRejectsAtomically($opportunity, $business, OpportunityActionNotExecutableException::class);
     }
 
-    public function test_malformed_recommended_action_rejects_atomically(): void
+    public function test_null_value_rejects(): void
     {
         $business = $this->createBusinessForOpportunities();
-        // approval_required present but not strictly boolean true.
-        $opportunity = $this->approvableOpportunity($business, [
-            'recommended_action' => [
-                'schema_version' => 1,
-                'action_key' => 'add_phone',
-                'parameters' => [],
-                'approval_required' => 'true',
-                'completion_policy' => 'system_verified',
-            ],
-        ]);
+        $opportunity = $this->opportunityWithAction($business, $this->validAddPhoneAction(null));
 
-        $this->assertRejectsAtomically($opportunity, $business, OpportunityApprovalNotRequiredException::class);
+        $this->assertRejectsAtomically($opportunity, $business, OpportunityActionNotExecutableException::class);
+    }
+
+    public function test_non_string_value_rejects(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $opportunity = $this->opportunityWithAction($business, $this->validAddPhoneAction(5551234567));
+
+        $this->assertRejectsAtomically($opportunity, $business, OpportunityActionNotExecutableException::class);
+    }
+
+    public function test_blank_value_rejects(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $opportunity = $this->opportunityWithAction($business, $this->validAddPhoneAction('    '));
+
+        $this->assertRejectsAtomically($opportunity, $business, OpportunityActionNotExecutableException::class);
+    }
+
+    public function test_value_longer_than_50_characters_rejects(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $opportunity = $this->opportunityWithAction($business, $this->validAddPhoneAction(str_repeat('1', 51)));
+
+        $this->assertRejectsAtomically($opportunity, $business, OpportunityActionNotExecutableException::class);
+    }
+
+    public function test_unexpected_parameter_key_rejects(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $recommendedAction = $this->validAddPhoneAction();
+        $recommendedAction['parameters']['label'] = 'mobile';
+
+        $opportunity = $this->opportunityWithAction($business, $recommendedAction);
+
+        $this->assertRejectsAtomically($opportunity, $business, OpportunityActionNotExecutableException::class);
+    }
+
+    public function test_unexpected_top_level_recommended_action_key_rejects(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $recommendedAction = $this->validAddPhoneAction();
+        $recommendedAction['unexpected_key'] = 'x';
+
+        $opportunity = $this->opportunityWithAction($business, $recommendedAction);
+
+        $this->assertRejectsAtomically($opportunity, $business, OpportunityActionNotExecutableException::class);
+    }
+
+    public function test_missing_expected_top_level_key_rejects(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $recommendedAction = $this->validAddPhoneAction();
+        unset($recommendedAction['completion_policy']);
+
+        $opportunity = $this->opportunityWithAction($business, $recommendedAction);
+
+        $this->assertRejectsAtomically($opportunity, $business, OpportunityActionNotExecutableException::class);
+    }
+
+    public function test_unsupported_action_key_rejects(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $recommendedAction = $this->validAddPhoneAction();
+        $recommendedAction['action_key'] = 'add_email';
+
+        $opportunity = $this->opportunityWithAction($business, $recommendedAction);
+
+        $this->assertRejectsAtomically($opportunity, $business, OpportunityActionNotExecutableException::class);
+    }
+
+    public function test_persisted_schema_version_mismatch_rejects(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $recommendedAction = $this->validAddPhoneAction();
+        $recommendedAction['schema_version'] = 2;
+
+        $opportunity = $this->opportunityWithAction($business, $recommendedAction);
+
+        $this->assertRejectsAtomically($opportunity, $business, OpportunityActionNotExecutableException::class);
+    }
+
+    public function test_opportunity_action_schema_version_mismatch_rejects(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $opportunity = $this->opportunityWithAction($business, $this->validAddPhoneAction(), ['action_schema_version' => 2]);
+
+        $this->assertRejectsAtomically($opportunity, $business, OpportunityActionNotExecutableException::class);
+    }
+
+    public function test_persisted_approval_required_mismatch_rejects(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $recommendedAction = $this->validAddPhoneAction();
+        $recommendedAction['approval_required'] = false;
+
+        $opportunity = $this->opportunityWithAction($business, $recommendedAction);
+
+        $this->assertRejectsAtomically($opportunity, $business, OpportunityActionNotExecutableException::class);
+    }
+
+    public function test_persisted_completion_policy_mismatch_rejects(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $recommendedAction = $this->validAddPhoneAction();
+        $recommendedAction['completion_policy'] = 'customer_attested';
+
+        $opportunity = $this->opportunityWithAction($business, $recommendedAction);
+
+        $this->assertRejectsAtomically($opportunity, $business, OpportunityActionNotExecutableException::class);
+    }
+
+    public function test_recommended_action_hash_mismatch_rejects(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $opportunity = $this->opportunityWithAction(
+            $business,
+            $this->validAddPhoneAction(),
+            [],
+            hash('sha256', 'a-hash-that-does-not-match')
+        );
+
+        $this->assertRejectsAtomically($opportunity, $business, OpportunityActionNotExecutableException::class);
     }
 
     public function test_another_customers_opportunity_rejects_atomically(): void
     {
         $business = $this->createBusinessForOpportunities();
-        $opportunity = $this->approvableOpportunity($business);
+        $opportunity = $this->configuredApprovableOpportunity($business);
 
         $strangerBusiness = $this->createBusinessForOpportunities();
         $manager = app(OpportunityManager::class);
@@ -317,7 +440,7 @@ class OpportunityManagerRequestApprovalTest extends TestCase
     public function test_a_mismatched_supplied_business_id_cannot_bypass_ownership(): void
     {
         $business = $this->createBusinessForOpportunities();
-        $opportunity = $this->approvableOpportunity($business);
+        $opportunity = $this->configuredApprovableOpportunity($business);
 
         $strangerBusiness = $this->createBusinessForOpportunities();
         $opportunity->business_id = $strangerBusiness->id;
@@ -332,7 +455,7 @@ class OpportunityManagerRequestApprovalTest extends TestCase
     public function test_missing_opportunity_rejects_safely(): void
     {
         $business = $this->createBusinessForOpportunities();
-        $opportunity = $this->approvableOpportunity($business);
+        $opportunity = $this->configuredApprovableOpportunity($business);
         $opportunity->delete();
 
         $manager = app(OpportunityManager::class);
@@ -370,7 +493,7 @@ class OpportunityManagerRequestApprovalTest extends TestCase
     public function test_no_action_execution_row_is_created(): void
     {
         $business = $this->createBusinessForOpportunities();
-        $opportunity = $this->approvableOpportunity($business);
+        $opportunity = $this->configuredApprovableOpportunity($business);
         $manager = app(OpportunityManager::class);
 
         $manager->requestApproval($opportunity, $business->customer);
@@ -383,7 +506,7 @@ class OpportunityManagerRequestApprovalTest extends TestCase
         Queue::fake();
 
         $business = $this->createBusinessForOpportunities();
-        $opportunity = $this->approvableOpportunity($business);
+        $opportunity = $this->configuredApprovableOpportunity($business);
         $manager = app(OpportunityManager::class);
 
         $manager->requestApproval($opportunity, $business->customer);
@@ -391,24 +514,39 @@ class OpportunityManagerRequestApprovalTest extends TestCase
         Queue::assertNothingPushed();
     }
 
-    private function approvableOpportunity(Business $business, array $overrides = []): Opportunity
+    /**
+     * @return array<string, mixed>
+     */
+    private function validAddPhoneAction(mixed $value = '+15551234567'): array
+    {
+        return [
+            'schema_version' => 1,
+            'action_key' => 'add_phone',
+            'parameters' => ['value' => $value],
+            'approval_required' => true,
+            'completion_policy' => 'system_verified',
+        ];
+    }
+
+    private function opportunityWithAction(Business $business, array $recommendedAction, array $overrides = [], ?string $hashOverride = null): Opportunity
     {
         return $this->createOpportunity($business, array_merge([
             'status' => OpportunityStatus::Open->value,
-            'recommended_action' => [
-                'schema_version' => 1,
-                'action_key' => 'add_phone',
-                'parameters' => [],
-                'approval_required' => true,
-                'completion_policy' => 'system_verified',
-            ],
-            'recommended_action_hash' => hash('sha256', 'test-action-' . uniqid('', true)),
+            'recommended_action' => $recommendedAction,
+            'recommended_action_hash' => $hashOverride ?? (new OpportunityActionHash())->compute($recommendedAction),
             'action_schema_version' => 1,
         ], $overrides));
     }
 
+    private function configuredApprovableOpportunity(Business $business, array $overrides = []): Opportunity
+    {
+        return $this->opportunityWithAction($business, $this->validAddPhoneAction(), $overrides);
+    }
+
     private function assertRejectsAtomically(Opportunity $opportunity, Business $business, string $exceptionClass): void
     {
+        $originalAction = $opportunity->recommended_action;
+        $originalHash = $opportunity->recommended_action_hash;
         $manager = app(OpportunityManager::class);
 
         try {
@@ -418,6 +556,11 @@ class OpportunityManagerRequestApprovalTest extends TestCase
         } finally {
             $opportunity->refresh();
             $this->assertSame(OpportunityStatus::Open, $opportunity->status);
+            $this->assertSame(
+                CanonicalJson::encode($originalAction),
+                CanonicalJson::encode($opportunity->recommended_action),
+            );
+            $this->assertSame($originalHash, $opportunity->recommended_action_hash);
             $this->assertSame(0, OpportunityTransition::where('opportunity_id', $opportunity->id)->count());
             $this->assertSame(0, OpportunityActionExecution::where('opportunity_id', $opportunity->id)->count());
         }
@@ -426,7 +569,7 @@ class OpportunityManagerRequestApprovalTest extends TestCase
     private function assertStatusRejects(OpportunityStatus $status): void
     {
         $business = $this->createBusinessForOpportunities();
-        $opportunity = $this->approvableOpportunity($business, ['status' => $status->value]);
+        $opportunity = $this->configuredApprovableOpportunity($business, ['status' => $status->value]);
         $manager = app(OpportunityManager::class);
 
         try {
