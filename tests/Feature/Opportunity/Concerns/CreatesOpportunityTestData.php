@@ -174,6 +174,21 @@ trait CreatesOpportunityTestData
         return OpportunityCandidateData::fromArray($this->opportunityCandidateDataAttributes($overrides));
     }
 
+    /**
+     * A single raw evidence-item payload for the given fact_key, retrieved
+     * "now" — always safely in the past relative to any later scored_at.
+     */
+    protected function opportunityEvidenceItemFor(string $factKey, string $sourceIdentifier = 'business:1:x'): array
+    {
+        return [[
+            'source_type' => 'business_profile',
+            'source_identifier' => $sourceIdentifier,
+            'fact_key' => $factKey,
+            'observed_value' => null,
+            'retrieved_at' => now()->toIso8601String(),
+        ]];
+    }
+
     protected function opportunityActionExecutionAttributes(Opportunity $opportunity, User $user, array $overrides = []): array
     {
         $idempotencyKey = $overrides['idempotency_key'] ?? hash('sha256', 'execution-' . uniqid('', true));

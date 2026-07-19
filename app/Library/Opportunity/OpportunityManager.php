@@ -5,34 +5,52 @@ declare(strict_types=1);
 namespace App\Library\Opportunity;
 
 use App\Enums\Business\BusinessGoal;
+use App\Enums\Opportunity\OpportunityFreshness;
 use App\Enums\Opportunity\OpportunityRunStatus;
+use App\Enums\Opportunity\OpportunityStatus;
+use App\Enums\Opportunity\OpportunityTransitionActorType;
+use App\Enums\Opportunity\OpportunityTransitionCategory;
 use App\Enums\Opportunity\OpportunityWorkerKey;
+use App\Events\Opportunity\OpportunityBecameCurrent;
+use App\Events\Opportunity\OpportunityCreated;
+use App\Events\Opportunity\OpportunityMarkedStale;
+use App\Events\Opportunity\OpportunityReaffirmed;
 use App\Events\Opportunity\OpportunityRunFailed;
 use App\Events\Opportunity\OpportunityRunStarted;
+use App\Events\Opportunity\OpportunityRunSucceeded;
 use App\Library\Opportunity\Exceptions\CandidateLimitExceededException;
+use App\Library\Opportunity\Exceptions\CrossWorkerFingerprintCollisionException;
 use App\Library\Opportunity\Exceptions\ImmutableCandidateIdentityMismatchException;
 use App\Library\Opportunity\Exceptions\InvalidOpportunityCandidateException;
+use App\Library\Opportunity\Exceptions\OpportunityEvidenceValidationException;
 use App\Library\Opportunity\Exceptions\RunAbandonedException;
 use App\Library\Opportunity\Exceptions\RunAlreadyActiveException;
+use App\Library\Opportunity\Exceptions\RunAlreadyFailedException;
 use App\Library\Opportunity\Exceptions\RunAlreadySucceededException;
 use App\Library\Opportunity\Exceptions\RunNotActiveException;
 use App\Library\Opportunity\Exceptions\RunNotFoundException;
 use App\Library\Opportunity\Exceptions\UnsupportedOpportunityTypeException;
 use App\Models\Business;
+use App\Models\Opportunity;
 use App\Models\OpportunityRun;
 use App\Models\OpportunityRunCandidate;
 use App\Repositories\Contracts\BusinessRepository;
 use App\Repositories\Contracts\CustomerOnboardingRepository;
+use App\Repositories\Contracts\OpportunityActionExecutionRepository;
+use App\Repositories\Contracts\OpportunityRepository;
 use App\Repositories\Contracts\OpportunityRunCandidateRepository;
 use App\Repositories\Contracts\OpportunityRunRepository;
+use App\Repositories\Contracts\OpportunityTransitionRepository;
+use Illuminate\Support\Arr;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
 
 /**
  * Owns every transaction and invariant of the Opportunity Engine run
- * protocol (RFC-002 §37). This pass implements beginRun() and
- * stageCandidate(); every other method (finalizeSuccessfulRun, failRun, and
- * the customer/admin workflow methods) is added in later phases.
+ * protocol (RFC-002 §37). This pass implements beginRun(), stageCandidate(),
+ * finalizeSuccessfulRun(), and failRun(); the customer/admin workflow
+ * methods are added in later phases.
  */
 class OpportunityManager
 {
@@ -49,6 +67,9 @@ class OpportunityManager
         private readonly OpportunityActionHash $actionHash,
         private readonly OpportunityEvidenceValidator $evidenceValidator,
         private readonly OpportunityScorer $scorer,
+        private readonly OpportunityRepository $opportunityRepository,
+        private readonly OpportunityTransitionRepository $transitionRepository,
+        private readonly OpportunityActionExecutionRepository $actionExecutionRepository,
     ) {
     }
 
@@ -240,6 +261,60 @@ class OpportunityManager
     }
 
     /**
+     * Applies every staged candidate to live Opportunities atomically
+     * (RFC-002 §22): every persisted candidate is fully revalidated before
+     * any Opportunity is touched, so a single corrupted candidate rolls
+     * back the entire finalization — nothing is ever partially applied. A
+     * zero-candidate run is valid and simply stales everything this
+     * business/worker previously confirmed as current.
+     */
+    public function finalizeSuccessfulRun(OpportunityRun $run): void
+    {
+        DB::transaction(function () use ($run) {
+            $lockedRun = $this->runRepository->findForUpdate($run->id);
+
+            if ($lockedRun === null) {
+                throw new RunNotFoundException("Run [{$run->id}] does not exist.");
+            }
+
+            if ($lockedRun->status === OpportunityRunStatus::Succeeded) {
+                return;
+            }
+
+            if ($lockedRun->status === OpportunityRunStatus::Failed) {
+                throw new RunAlreadyFailedException("Run [{$lockedRun->id}] has already failed and cannot be finalized.");
+            }
+
+            $now = now();
+
+            $candidates = $this->candidateRepository->orderedForRun($lockedRun->id);
+
+            // Revalidate every candidate before applying any of them — a
+            // corrupted candidate discovered halfway through must never
+            // leave earlier candidates already applied (the enclosing
+            // transaction alone would prevent that too, but validating
+            // first avoids even attempting a lock/write we might undo).
+            foreach ($candidates as $candidate) {
+                $this->revalidateCandidateIntegrity($candidate, $lockedRun);
+            }
+
+            foreach ($candidates as $candidate) {
+                $this->applyCandidateToOpportunity($candidate, $lockedRun, $now);
+            }
+
+            $this->staleMissingOpportunities($lockedRun, $now);
+
+            $this->runRepository->update($lockedRun, [
+                'status' => OpportunityRunStatus::Succeeded->value,
+                'completed_at' => $now,
+                'heartbeat_at' => $now,
+            ]);
+
+            OpportunityRunSucceeded::dispatch($lockedRun->id, $lockedRun->business_id, $lockedRun->worker_key->value);
+        });
+    }
+
+    /**
      * Explicit failure of a running run (RFC-002 §23), symmetric with
      * beginRun()'s abandonment path but never itself abandonment: no
      * abandoned_at, no reason_code, and heartbeat_at is left untouched.
@@ -401,5 +476,409 @@ class OpportunityManager
         $recommendedActionHash = $this->actionHash->compute($recommendedAction);
 
         return [$recommendedAction, $recommendedActionHash, $actionDefinition['schema_version']];
+    }
+
+    /**
+     * Re-derives every trusted value a persisted candidate claims and
+     * throws the moment any of them disagrees — a staged row is trusted
+     * data at rest, not an assumption (RFC-002 §22). Never mutates the
+     * candidate; finalization only ever reads from it.
+     */
+    private function revalidateCandidateIntegrity(OpportunityRunCandidate $candidate, OpportunityRun $lockedRun): void
+    {
+        if ($candidate->opportunity_run_id !== $lockedRun->id) {
+            throw new InvalidOpportunityCandidateException(
+                "Candidate [{$candidate->id}] does not belong to run [{$lockedRun->id}]."
+            );
+        }
+
+        $typeDefinition = OpportunityTypeRegistry::get($lockedRun->worker_key->value, $candidate->type);
+
+        if ($typeDefinition === null) {
+            throw new InvalidOpportunityCandidateException(
+                "Candidate [{$candidate->id}] has an unregistered (worker_key, type) pair."
+            );
+        }
+
+        $fingerprintVersion = (int) config('opportunity.fingerprint_version', 1);
+
+        if ($candidate->fingerprint_version !== $fingerprintVersion) {
+            throw new InvalidOpportunityCandidateException(
+                "Candidate [{$candidate->id}] fingerprint_version does not match the current configuration."
+            );
+        }
+
+        if ($candidate->context_key !== null) {
+            throw new InvalidOpportunityCandidateException(
+                "Candidate [{$candidate->id}] context_key must be null for the current RFC-002 types."
+            );
+        }
+
+        if ($candidate->title !== $typeDefinition['title_template'] || $candidate->summary !== $typeDefinition['summary_template']) {
+            throw new InvalidOpportunityCandidateException(
+                "Candidate [{$candidate->id}] title/summary does not match its registry template."
+            );
+        }
+
+        $this->assertRankInRange($candidate->impact, 'impact', $candidate->id);
+        $this->assertRankInRange($candidate->urgency, 'urgency', $candidate->id);
+        $this->assertRankInRange($candidate->effort, 'effort', $candidate->id);
+        $this->assertRankInRange($candidate->goal_relevance_rank, 'goal_relevance_rank', $candidate->id);
+        $this->assertRankInRange($candidate->evidence_freshness_rank, 'evidence_freshness_rank', $candidate->id);
+
+        $confidence = (float) $candidate->confidence;
+
+        if (! is_finite($confidence) || $confidence < 0.0 || $confidence > 1.0) {
+            throw new InvalidOpportunityCandidateException("Candidate [{$candidate->id}] confidence is out of range.");
+        }
+
+        if ($candidate->scored_at === null) {
+            throw new InvalidOpportunityCandidateException("Candidate [{$candidate->id}] is missing scored_at.");
+        }
+
+        if ((int) $candidate->scoring_version !== (int) config('opportunity.scoring_version', 1)) {
+            throw new InvalidOpportunityCandidateException(
+                "Candidate [{$candidate->id}] scoring_version does not match the current configuration."
+            );
+        }
+
+        $recomputedFingerprint = $this->fingerprint->compute(
+            $lockedRun->business_id,
+            $lockedRun->worker_key,
+            $candidate->type,
+            null,
+            $fingerprintVersion,
+        );
+
+        if ($recomputedFingerprint !== $candidate->fingerprint) {
+            throw new InvalidOpportunityCandidateException(
+                "Candidate [{$candidate->id}] fingerprint does not match its recomputed value."
+            );
+        }
+
+        // Persisted evidence carries a registry-rendered `summary` the
+        // hydration DTO structurally refuses — strip it back out before
+        // re-hydrating, then let the validator re-render and re-check it.
+        $evidenceFacts = array_map(
+            fn (array $item): OpportunityEvidenceFactData => OpportunityEvidenceFactData::fromArray(Arr::except($item, ['summary'])),
+            $candidate->evidence
+        );
+
+        $revalidatedEvidence = $this->evidenceValidator->validate($evidenceFacts, $typeDefinition, $candidate->scored_at);
+
+        if (CanonicalJson::encode($revalidatedEvidence) !== CanonicalJson::encode($candidate->evidence)) {
+            throw new OpportunityEvidenceValidationException(
+                "Candidate [{$candidate->id}] evidence does not match its revalidated value."
+            );
+        }
+
+        $recomputedEvidenceFreshnessRank = $this->scorer->scoreEvidenceFreshness($revalidatedEvidence, $candidate->scored_at);
+
+        if ($recomputedEvidenceFreshnessRank !== $candidate->evidence_freshness_rank) {
+            throw new InvalidOpportunityCandidateException(
+                "Candidate [{$candidate->id}] evidence_freshness_rank does not match its recomputed value."
+            );
+        }
+
+        $recomputedPriorityScore = $this->scorer->computePriorityScore(
+            $candidate->impact,
+            $candidate->urgency,
+            $candidate->goal_relevance_rank,
+            $confidence,
+            $recomputedEvidenceFreshnessRank,
+            $candidate->effort,
+        );
+
+        if ($recomputedPriorityScore !== $candidate->priority_score) {
+            throw new InvalidOpportunityCandidateException(
+                "Candidate [{$candidate->id}] priority_score does not match its recomputed value."
+            );
+        }
+
+        $this->assertRecommendedActionMatches($candidate, $typeDefinition);
+    }
+
+    private function assertRankInRange(int $value, string $field, int $candidateId): void
+    {
+        if ($value < 0 || $value > 5) {
+            throw new InvalidOpportunityCandidateException(
+                "Candidate [{$candidateId}] [{$field}] is out of the supported 0-5 range."
+            );
+        }
+    }
+
+    /**
+     * Rebuilds the authoritative recommended_action exactly as
+     * stageCandidate() does (via the same buildRecommendedAction()) and
+     * requires the persisted candidate to match it byte-for-byte.
+     */
+    private function assertRecommendedActionMatches(OpportunityRunCandidate $candidate, array $typeDefinition): void
+    {
+        $actionKey = $typeDefinition['action_key'] ?? null;
+
+        if ($actionKey === null) {
+            if ($candidate->recommended_action !== null
+                || $candidate->recommended_action_hash !== null
+                || $candidate->action_schema_version !== null) {
+                throw new InvalidOpportunityCandidateException(
+                    "Candidate [{$candidate->id}] has action fields set but its type has no action_key."
+                );
+            }
+
+            return;
+        }
+
+        [$recommendedAction, $recommendedActionHash, $actionSchemaVersion] = $this->buildRecommendedAction($typeDefinition);
+
+        if (CanonicalJson::encode($candidate->recommended_action) !== CanonicalJson::encode($recommendedAction)
+            || $candidate->recommended_action_hash !== $recommendedActionHash
+            || $candidate->action_schema_version !== $actionSchemaVersion) {
+            throw new InvalidOpportunityCandidateException(
+                "Candidate [{$candidate->id}] recommended_action does not match its recomputed representation."
+            );
+        }
+    }
+
+    private function applyCandidateToOpportunity(OpportunityRunCandidate $candidate, OpportunityRun $lockedRun, Carbon $now): void
+    {
+        $existing = $this->opportunityRepository->findByFingerprintForUpdate($candidate->fingerprint);
+
+        if ($existing === null) {
+            $this->createOpportunityFromCandidate($candidate, $lockedRun, $now);
+
+            return;
+        }
+
+        $this->assertExistingOpportunityIdentityMatches($existing, $candidate, $lockedRun);
+        $this->reaffirmExistingOpportunity($existing, $candidate, $lockedRun, $now);
+    }
+
+    private function assertExistingOpportunityIdentityMatches(Opportunity $existing, OpportunityRunCandidate $candidate, OpportunityRun $lockedRun): void
+    {
+        if ($existing->business_id !== $lockedRun->business_id
+            || $existing->worker_key !== $lockedRun->worker_key
+            || $existing->type !== $candidate->type
+            || $existing->fingerprint_version !== $candidate->fingerprint_version
+            || $existing->fingerprint !== $candidate->fingerprint
+            || $existing->context_key !== $candidate->context_key) {
+            throw new CrossWorkerFingerprintCollisionException(
+                "Opportunity [{$existing->id}] identity does not match candidate [{$candidate->id}] for run [{$lockedRun->id}]."
+            );
+        }
+    }
+
+    private function createOpportunityFromCandidate(OpportunityRunCandidate $candidate, OpportunityRun $lockedRun, Carbon $now): void
+    {
+        $opportunity = $this->opportunityRepository->create([
+            'business_id' => $lockedRun->business_id,
+            'worker_key' => $lockedRun->worker_key->value,
+            'type' => $candidate->type,
+            'fingerprint_version' => $candidate->fingerprint_version,
+            'fingerprint' => $candidate->fingerprint,
+            'context_key' => $candidate->context_key,
+            'title' => $candidate->title,
+            'summary' => $candidate->summary,
+            'status' => OpportunityStatus::Open->value,
+            'freshness' => OpportunityFreshness::Current->value,
+            'impact' => $candidate->impact,
+            'urgency' => $candidate->urgency,
+            'effort' => $candidate->effort,
+            'confidence' => $candidate->confidence,
+            'goal_relevance_rank' => $candidate->goal_relevance_rank,
+            'evidence_freshness_rank' => $candidate->evidence_freshness_rank,
+            'priority_score' => $candidate->priority_score,
+            'scoring_version' => $candidate->scoring_version,
+            'scored_at' => $candidate->scored_at,
+            'evidence' => $candidate->evidence,
+            'recommended_action' => $candidate->recommended_action,
+            'recommended_action_hash' => $candidate->recommended_action_hash,
+            'action_schema_version' => $candidate->action_schema_version,
+            'occurrence_number' => 1,
+            'last_confirmed_run_id' => $lockedRun->id,
+            'last_confirmed_at' => $now,
+            'first_detected_at' => $now,
+            'snoozed_until' => null,
+            'completed_at' => null,
+            'dismissed_at' => null,
+            'stale_at' => null,
+        ]);
+
+        // No initial transition is written — there is no previous state to
+        // transition from (§41).
+        OpportunityCreated::dispatch(
+            $opportunity->id,
+            $lockedRun->business_id,
+            $lockedRun->id,
+            $lockedRun->worker_key->value,
+            $candidate->type,
+            $candidate->fingerprint,
+        );
+    }
+
+    /**
+     * Applies a matching candidate to an already-live Opportunity (RFC-002
+     * §22, §29): evidence/scoring/title/summary and freshness always
+     * update; only the workflow-status branch below decides whether the
+     * action revision and status/occurrence_number themselves change.
+     */
+    private function reaffirmExistingOpportunity(Opportunity $existing, OpportunityRunCandidate $candidate, OpportunityRun $lockedRun, Carbon $now): void
+    {
+        $wasStale = $existing->freshness === OpportunityFreshness::Stale;
+
+        $updates = [
+            'title' => $candidate->title,
+            'summary' => $candidate->summary,
+            'impact' => $candidate->impact,
+            'urgency' => $candidate->urgency,
+            'effort' => $candidate->effort,
+            'confidence' => $candidate->confidence,
+            'goal_relevance_rank' => $candidate->goal_relevance_rank,
+            'evidence_freshness_rank' => $candidate->evidence_freshness_rank,
+            'priority_score' => $candidate->priority_score,
+            'scoring_version' => $candidate->scoring_version,
+            'scored_at' => $candidate->scored_at,
+            'evidence' => $candidate->evidence,
+            'recommended_action' => $candidate->recommended_action,
+            'recommended_action_hash' => $candidate->recommended_action_hash,
+            'action_schema_version' => $candidate->action_schema_version,
+            'freshness' => OpportunityFreshness::Current->value,
+            'last_confirmed_run_id' => $lockedRun->id,
+            'last_confirmed_at' => $now,
+            'stale_at' => null,
+        ];
+
+        $isRecurrence = false;
+        $isActionRevision = false;
+
+        if ($existing->status === OpportunityStatus::InProgress) {
+            $activeExecution = $this->actionExecutionRepository->findActiveForOpportunity($existing->id);
+
+            if ($activeExecution === null) {
+                throw new InvalidOpportunityCandidateException(
+                    "Opportunity [{$existing->id}] is in_progress with no active execution — integrity failure."
+                );
+            }
+
+            // Preserve the in-flight execution's bound action revision.
+            unset($updates['recommended_action'], $updates['recommended_action_hash'], $updates['action_schema_version']);
+        } elseif ($existing->status === OpportunityStatus::Completed && $wasStale) {
+            $isRecurrence = true;
+            $updates['status'] = OpportunityStatus::Open->value;
+            $updates['occurrence_number'] = $existing->occurrence_number + 1;
+            $updates['completed_at'] = null;
+        } elseif ($existing->status === OpportunityStatus::AwaitingApproval
+            && $existing->recommended_action_hash !== $candidate->recommended_action_hash) {
+            // Hash changed underneath a pending approval (§29): apply the
+            // new action revision (already in $updates) and kick the
+            // customer back to open — they must restart approval. A hash
+            // that has not changed simply falls through to the untouched
+            // branch below and stays awaiting_approval.
+            $isActionRevision = true;
+            $updates['status'] = OpportunityStatus::Open->value;
+        }
+        // open / awaiting_approval with an unchanged hash / snoozed /
+        // dismissed / continuously-current completed: status,
+        // snoozed_until, dismissed_at, completed_at, and occurrence_number
+        // are simply never included in $updates above.
+
+        $updated = $this->opportunityRepository->update($existing, $updates);
+
+        if ($isRecurrence) {
+            $this->transitionRepository->create([
+                'opportunity_id' => $existing->id,
+                'category' => OpportunityTransitionCategory::Workflow->value,
+                'from_status' => OpportunityStatus::Completed->value,
+                'to_status' => OpportunityStatus::Open->value,
+                'actor_type' => OpportunityTransitionActorType::Worker->value,
+                'actor_user_id' => null,
+                'opportunity_run_id' => $lockedRun->id,
+                'action_execution_id' => null,
+                'reason_code' => 'recurrence_detected',
+                'safe_note' => null,
+            ]);
+        }
+
+        if ($isActionRevision) {
+            $this->transitionRepository->create([
+                'opportunity_id' => $existing->id,
+                'category' => OpportunityTransitionCategory::Workflow->value,
+                'from_status' => OpportunityStatus::AwaitingApproval->value,
+                'to_status' => OpportunityStatus::Open->value,
+                'actor_type' => OpportunityTransitionActorType::Worker->value,
+                'actor_user_id' => null,
+                'opportunity_run_id' => $lockedRun->id,
+                'action_execution_id' => null,
+                'reason_code' => 'action_revised',
+                'safe_note' => null,
+            ]);
+        }
+
+        if ($wasStale) {
+            $this->transitionRepository->create([
+                'opportunity_id' => $existing->id,
+                'category' => OpportunityTransitionCategory::Freshness->value,
+                'from_status' => OpportunityFreshness::Stale->value,
+                'to_status' => OpportunityFreshness::Current->value,
+                'actor_type' => OpportunityTransitionActorType::Worker->value,
+                'actor_user_id' => null,
+                'opportunity_run_id' => $lockedRun->id,
+                'action_execution_id' => null,
+                'reason_code' => 'confirmed_in_successful_run',
+                'safe_note' => null,
+            ]);
+
+            OpportunityBecameCurrent::dispatch(
+                $existing->id,
+                $lockedRun->business_id,
+                $lockedRun->id,
+                $lockedRun->worker_key->value,
+                $updated->occurrence_number,
+            );
+        }
+
+        OpportunityReaffirmed::dispatch($existing->id, $lockedRun->business_id, $lockedRun->id, $lockedRun->worker_key->value);
+    }
+
+    /**
+     * Staleness sweep (RFC-002 §22): every Opportunity still freshness=current
+     * that this run did not reconfirm becomes stale — including, with zero
+     * staged candidates, every currently-current Opportunity for this
+     * business/worker.
+     */
+    private function staleMissingOpportunities(OpportunityRun $lockedRun, Carbon $now): void
+    {
+        $missing = $this->opportunityRepository->currentMissingFromRunForUpdate(
+            $lockedRun->business_id,
+            $lockedRun->worker_key,
+            $lockedRun->id,
+        );
+
+        foreach ($missing as $opportunity) {
+            if ($opportunity->business_id !== $lockedRun->business_id || $opportunity->worker_key !== $lockedRun->worker_key) {
+                throw new InvalidOpportunityCandidateException(
+                    "Staleness sweep returned Opportunity [{$opportunity->id}] outside this run's business/worker scope."
+                );
+            }
+
+            $this->opportunityRepository->update($opportunity, [
+                'freshness' => OpportunityFreshness::Stale->value,
+                'stale_at' => $now,
+            ]);
+
+            $this->transitionRepository->create([
+                'opportunity_id' => $opportunity->id,
+                'category' => OpportunityTransitionCategory::Freshness->value,
+                'from_status' => OpportunityFreshness::Current->value,
+                'to_status' => OpportunityFreshness::Stale->value,
+                'actor_type' => OpportunityTransitionActorType::Worker->value,
+                'actor_user_id' => null,
+                'opportunity_run_id' => $lockedRun->id,
+                'action_execution_id' => null,
+                'reason_code' => 'missing_from_successful_run',
+                'safe_note' => null,
+            ]);
+
+            OpportunityMarkedStale::dispatch($opportunity->id, $lockedRun->business_id, $lockedRun->id, $lockedRun->worker_key->value);
+        }
     }
 }
