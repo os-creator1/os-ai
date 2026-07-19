@@ -83,6 +83,50 @@ class InitialBusinessSnapshotBuilder
         ];
     }
 
+    /**
+     * The complete, uncapped RFC-002 Opportunity-candidate condition set —
+     * every business_advisor evidence fact_key mapped to whether it
+     * currently holds true for this Business. Unlike build()'s `findings`
+     * (impact-sorted and capped at MAX_FINDINGS for the onboarding results
+     * UI), this reports all eleven conditions with no truncation, and is
+     * the single authoritative implementation buildFindings() itself reads
+     * from below — never recomputed twice.
+     *
+     * @return array<string, bool>
+     */
+    public function opportunityFacts(Business $business): array
+    {
+        $location = $business->primaryLocation;
+        $activeServices = $business->services
+            ->filter(fn (BusinessService $service) => $service->status === BusinessServiceStatus::Active)
+            ->values();
+        $primaryService = $business->primaryService;
+
+        return $this->collectOpportunityFacts($business, $location, $activeServices, $primaryService);
+    }
+
+    /**
+     * @return array<string, bool>
+     */
+    private function collectOpportunityFacts(Business $business, ?BusinessLocation $location, Collection $activeServices, ?BusinessService $primaryService): array
+    {
+        $instagramIndustries = [BusinessIndustry::EventServices, BusinessIndustry::Photographer, BusinessIndustry::WeddingVendor];
+
+        return [
+            'phone_blank' => blank($business->phone),
+            'email_blank' => blank($business->email),
+            'website_url_blank' => blank($business->website_url),
+            'description_too_short' => mb_strlen(trim((string) $business->description)) < 50,
+            'primary_location_missing' => $location === null,
+            'primary_location_incomplete' => $location !== null && ! $this->locationMeetsServiceModeRequirements($location),
+            'active_services_missing' => $activeServices->isEmpty(),
+            'primary_service_missing' => $activeServices->isNotEmpty() && $primaryService === null,
+            'gbp_url_blank' => blank($business->google_business_profile_url),
+            'facebook_url_blank' => blank($business->facebook_url),
+            'instagram_url_blank' => blank($business->instagram_url) && in_array($business->industry, $instagramIndustries, true),
+        ];
+    }
+
     private function score(array $facts): int
     {
         $total = 0;
@@ -116,9 +160,10 @@ class InitialBusinessSnapshotBuilder
      */
     private function buildFindings(Business $business, ?BusinessLocation $location, Collection $activeServices, ?BusinessService $primaryService, array $primaryGoals): array
     {
+        $facts = $this->collectOpportunityFacts($business, $location, $activeServices, $primaryService);
         $candidates = [];
 
-        if (blank($business->phone)) {
+        if ($facts['phone_blank']) {
             $candidates[] = $this->finding(
                 $business,
                 'missing_phone',
@@ -132,7 +177,7 @@ class InitialBusinessSnapshotBuilder
             );
         }
 
-        if (blank($business->email)) {
+        if ($facts['email_blank']) {
             $candidates[] = $this->finding(
                 $business,
                 'missing_email',
@@ -146,7 +191,7 @@ class InitialBusinessSnapshotBuilder
             );
         }
 
-        if (blank($business->website_url)) {
+        if ($facts['website_url_blank']) {
             $websiteGoalRelevant = $this->goalsInclude($primaryGoals, [BusinessGoal::LocalSeo, BusinessGoal::WebsiteConversion]);
             $candidates[] = $this->finding(
                 $business,
@@ -161,7 +206,7 @@ class InitialBusinessSnapshotBuilder
             );
         }
 
-        if (mb_strlen(trim((string) $business->description)) < 50) {
+        if ($facts['description_too_short']) {
             $candidates[] = $this->finding(
                 $business,
                 'missing_description',
@@ -175,7 +220,7 @@ class InitialBusinessSnapshotBuilder
             );
         }
 
-        if ($location === null) {
+        if ($facts['primary_location_missing']) {
             $candidates[] = $this->finding(
                 $business,
                 'missing_primary_location',
@@ -187,7 +232,7 @@ class InitialBusinessSnapshotBuilder
                 'location',
                 false
             );
-        } elseif (! $this->locationMeetsServiceModeRequirements($location)) {
+        } elseif ($facts['primary_location_incomplete']) {
             $candidates[] = $this->finding(
                 $business,
                 'incomplete_primary_location',
@@ -201,7 +246,7 @@ class InitialBusinessSnapshotBuilder
             );
         }
 
-        if ($activeServices->isEmpty()) {
+        if ($facts['active_services_missing']) {
             $candidates[] = $this->finding(
                 $business,
                 'missing_services',
@@ -213,7 +258,7 @@ class InitialBusinessSnapshotBuilder
                 'services',
                 false
             );
-        } elseif ($primaryService === null) {
+        } elseif ($facts['primary_service_missing']) {
             $candidates[] = $this->finding(
                 $business,
                 'missing_primary_service',
@@ -227,7 +272,7 @@ class InitialBusinessSnapshotBuilder
             );
         }
 
-        if (blank($business->google_business_profile_url)) {
+        if ($facts['gbp_url_blank']) {
             // The missing field alone is what proves this finding — goal selection
             // may only raise its impact/relevance, never suppress it (AD-006).
             $gbpGoalRelevant = $this->goalsInclude($primaryGoals, [BusinessGoal::LocalSeo, BusinessGoal::Reputation]);
@@ -246,7 +291,7 @@ class InitialBusinessSnapshotBuilder
             );
         }
 
-        if (blank($business->facebook_url)) {
+        if ($facts['facebook_url_blank']) {
             $candidates[] = $this->finding(
                 $business,
                 'missing_facebook_url',
@@ -260,8 +305,7 @@ class InitialBusinessSnapshotBuilder
             );
         }
 
-        $instagramIndustries = [BusinessIndustry::EventServices, BusinessIndustry::Photographer, BusinessIndustry::WeddingVendor];
-        if (blank($business->instagram_url) && in_array($business->industry, $instagramIndustries, true)) {
+        if ($facts['instagram_url_blank']) {
             $candidates[] = $this->finding(
                 $business,
                 'missing_instagram_url',

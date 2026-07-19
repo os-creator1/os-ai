@@ -501,6 +501,83 @@ class InitialBusinessSnapshotBuilderTest extends TestCase
         }
     }
 
+    public function test_opportunity_facts_returns_every_condition_without_truncation(): void
+    {
+        $business = $this->makeBusiness([
+            'name' => null,
+            'industry' => BusinessIndustry::EventServices,
+            'email' => null,
+            'phone' => null,
+            'website_url' => null,
+            'description' => null,
+            'country_code' => null,
+            'timezone' => null,
+            'google_business_profile_url' => null,
+            'facebook_url' => null,
+            'instagram_url' => null,
+        ]);
+
+        $facts = $this->builder->opportunityFacts($business);
+
+        $this->assertSame([
+            'phone_blank' => true,
+            'email_blank' => true,
+            'website_url_blank' => true,
+            'description_too_short' => true,
+            'primary_location_missing' => true,
+            'primary_location_incomplete' => false,
+            'active_services_missing' => true,
+            'primary_service_missing' => false,
+            'gbp_url_blank' => true,
+            'facebook_url_blank' => true,
+            'instagram_url_blank' => true,
+        ], $facts);
+
+        // primary_location_incomplete and primary_service_missing are
+        // structurally false here (their "missing" sibling is true instead)
+        // — every one of the other 9 true conditions is still reported, well
+        // past the onboarding MAX_FINDINGS=5 cap, proving no truncation.
+        $this->assertGreaterThan(5, count(array_filter($facts)));
+    }
+
+    public function test_opportunity_facts_is_false_for_a_fully_complete_business(): void
+    {
+        $business = $this->completeBusiness();
+
+        $facts = $this->builder->opportunityFacts($business);
+
+        $this->assertSame(array_fill_keys(array_keys($facts), false), $facts);
+    }
+
+    /**
+     * The MAX_FINDINGS=5 onboarding cap must survive routing buildFindings()
+     * through the new, uncapped opportunityFacts() — this is the same
+     * fixture as test_findings_are_capped_at_five_..., cross-checked against
+     * opportunityFacts() reporting strictly more true conditions than the cap.
+     */
+    public function test_build_remains_capped_at_five_findings_even_though_opportunity_facts_reports_more_true_conditions(): void
+    {
+        $business = $this->makeBusiness([
+            'name' => null,
+            'industry' => BusinessIndustry::EventServices,
+            'email' => null,
+            'phone' => null,
+            'website_url' => null,
+            'description' => null,
+            'country_code' => null,
+            'timezone' => null,
+            'google_business_profile_url' => null,
+            'facebook_url' => null,
+            'instagram_url' => null,
+        ]);
+
+        $trueFactCount = count(array_filter($this->builder->opportunityFacts($business)));
+        $findings = $this->builder->build($business, [BusinessGoal::LocalSeo->value])['findings'];
+
+        $this->assertGreaterThan(5, $trueFactCount);
+        $this->assertCount(5, $findings);
+    }
+
     /**
      * A fully complete business (all 11 weighted facts true, no outstanding
      * findings for facebook/gbp/instagram either) that individual test cases
