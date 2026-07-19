@@ -10,6 +10,7 @@ use App\Enums\Opportunity\OpportunityStatus;
 use App\Enums\Opportunity\OpportunityTransitionActorType;
 use App\Enums\Opportunity\OpportunityTransitionCategory;
 use App\Enums\Opportunity\OpportunityWorkerKey;
+use App\Library\Opportunity\OpportunityCandidateData;
 use App\Models\Business;
 use App\Models\Opportunity;
 use App\Models\OpportunityActionExecution;
@@ -137,6 +138,40 @@ trait CreatesOpportunityTestData
     protected function createOpportunityRunCandidate(OpportunityRun $run, array $overrides = []): OpportunityRunCandidate
     {
         return OpportunityRunCandidate::create($this->opportunityRunCandidateAttributes($run, $overrides));
+    }
+
+    /**
+     * Raw fromArray()-shaped payload for a valid, staging-ready
+     * OpportunityCandidateData — defaults to a single-item, business_advisor
+     * missing_phone candidate. Evidence's retrieved_at defaults to "now" at
+     * call time, which is always safely in the past relative to the later
+     * scored_at captured inside stageCandidate().
+     */
+    protected function opportunityCandidateDataAttributes(array $overrides = []): array
+    {
+        return array_merge([
+            'type' => 'missing_phone',
+            'context' => null,
+            'templateParameters' => [],
+            'impact' => 3,
+            'urgency' => 3,
+            'effort' => 1,
+            'confidence' => 0.90,
+            'relevantGoalKeys' => [],
+            'evidence' => [[
+                'source_type' => 'business_profile',
+                'source_identifier' => 'business:1:phone',
+                'fact_key' => 'phone_blank',
+                'observed_value' => null,
+                'retrieved_at' => now()->toIso8601String(),
+            ]],
+            'actionParameters' => null,
+        ], $overrides);
+    }
+
+    protected function createOpportunityCandidateData(array $overrides = []): OpportunityCandidateData
+    {
+        return OpportunityCandidateData::fromArray($this->opportunityCandidateDataAttributes($overrides));
     }
 
     protected function opportunityActionExecutionAttributes(Opportunity $opportunity, User $user, array $overrides = []): array
