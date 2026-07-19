@@ -25,9 +25,11 @@ use App\Events\Opportunity\OpportunitySnoozed;
 use App\Library\Opportunity\Exceptions\CandidateLimitExceededException;
 use App\Library\Opportunity\Exceptions\CrossWorkerFingerprintCollisionException;
 use App\Library\Opportunity\Exceptions\ImmutableCandidateIdentityMismatchException;
+use App\Library\Opportunity\Exceptions\InvalidOpportunityActionParametersException;
 use App\Library\Opportunity\Exceptions\InvalidOpportunityCandidateException;
 use App\Library\Opportunity\Exceptions\InvalidOpportunityStateException;
 use App\Library\Opportunity\Exceptions\InvalidSnoozeUntilException;
+use App\Library\Opportunity\Exceptions\OpportunityActionNotConfigurableException;
 use App\Library\Opportunity\Exceptions\OpportunityApprovalNotRequiredException;
 use App\Library\Opportunity\Exceptions\OpportunityEvidenceValidationException;
 use App\Library\Opportunity\Exceptions\RunAbandonedException;
@@ -576,6 +578,118 @@ class OpportunityManager
     }
 
     /**
+     * Customer-initiated action configuration (RFC-002 §13.1, §28, §45).
+     * Only `add_phone` is configurable in this phase. The action_key is
+     * read exclusively from the locked Opportunity's own persisted
+     * recommended_action — never accepted from the caller — and the
+     * rebuilt recommended_action's registry-owned fields (schema_version,
+     * approval_required, completion_policy) always come from
+     * OpportunityActionRegistry, never from caller-supplied data. Valid
+     * only from `open`. A rebuilt action whose hash matches the current
+     * recommended_action_hash is a no-op: nothing is written.
+     */
+    public function configureAction(Opportunity $opportunity, Customer $customer, array $parameters): Opportunity
+    {
+        return DB::transaction(function () use ($opportunity, $customer, $parameters) {
+            $locked = $this->opportunityRepository->findOwnedForUpdate($opportunity->id, $opportunity->business_id);
+
+            $locked = $this->assertOpportunityOwnership($customer, $locked);
+
+            if ($locked->status !== OpportunityStatus::Open) {
+                throw new InvalidOpportunityStateException(
+                    "Opportunity [{$locked->id}] cannot be configured from status [{$locked->status->value}]."
+                );
+            }
+
+            $actionKey = is_array($locked->recommended_action) ? ($locked->recommended_action['action_key'] ?? null) : null;
+
+            if ($actionKey !== 'add_phone') {
+                throw new OpportunityActionNotConfigurableException(
+                    "Opportunity [{$locked->id}] has no configurable action."
+                );
+            }
+
+            $actionDefinition = OpportunityActionRegistry::get($actionKey);
+
+            if ($actionDefinition === null
+                || ! isset($actionDefinition['parameter_rules']['value'])
+                || ! isset($actionDefinition['handler_identifier'])
+                || ! isset($actionDefinition['verifier_identifier'])
+            ) {
+                throw new OpportunityActionNotConfigurableException(
+                    "Action [{$actionKey}] is not configurable."
+                );
+            }
+
+            $value = $this->assertValidActionValueParameter($parameters, $actionDefinition['parameter_rules']['value']);
+
+            $rebuiltRecommendedAction = [
+                'schema_version' => $actionDefinition['schema_version'],
+                'action_key' => $actionKey,
+                'parameters' => ['value' => $value],
+                'approval_required' => $actionDefinition['approval_required'],
+                'completion_policy' => $actionDefinition['completion_policy']->value,
+            ];
+
+            $newHash = $this->actionHash->compute($rebuiltRecommendedAction);
+
+            if ($newHash === $locked->recommended_action_hash) {
+                return $locked;
+            }
+
+            $updated = $this->opportunityRepository->update($locked, [
+                'recommended_action' => $rebuiltRecommendedAction,
+                'recommended_action_hash' => $newHash,
+            ]);
+
+            $this->transitionRepository->create([
+                'opportunity_id' => $locked->id,
+                'category' => OpportunityTransitionCategory::Workflow->value,
+                'from_status' => OpportunityStatus::Open->value,
+                'to_status' => OpportunityStatus::Open->value,
+                'actor_type' => OpportunityTransitionActorType::Customer->value,
+                'actor_user_id' => $customer->user_id,
+                'opportunity_run_id' => null,
+                'action_execution_id' => null,
+                'reason_code' => 'customer_configured_action',
+                'safe_note' => null,
+            ]);
+
+            return $updated;
+        });
+    }
+
+    /**
+     * Validates a single-parameter `value` payload against a registry
+     * parameter_rules entry (RFC-002 §45 — reject, never clamp). Exactly
+     * one key, `value`, is accepted; unexpected or missing keys reject.
+     * Trimming is used only to test blankness — the returned string is
+     * always the caller-supplied value, untouched.
+     */
+    private function assertValidActionValueParameter(array $parameters, array $rule): string
+    {
+        if (array_keys($parameters) !== ['value']) {
+            throw new InvalidOpportunityActionParametersException('Parameters must contain exactly one key: value.');
+        }
+
+        $value = $parameters['value'];
+
+        if (! is_string($value)) {
+            throw new InvalidOpportunityActionParametersException('Parameter [value] must be a string.');
+        }
+
+        if ($rule['allow_blank'] === false && trim($value) === '') {
+            throw new InvalidOpportunityActionParametersException('Parameter [value] cannot be blank.');
+        }
+
+        if (mb_strlen($value) > $rule['max_length']) {
+            throw new InvalidOpportunityActionParametersException('Parameter [value] exceeds the maximum length.');
+        }
+
+        return $value;
+    }
+
+    /**
      * Re-validates ownership against the freshly locked row's own Business
      * relationship — never the caller-supplied, possibly stale $opportunity
      * — matching BusinessManager::assertOwnership()'s exact convention
@@ -700,10 +814,6 @@ class OpportunityManager
 
         if ($actionDefinition === null) {
             throw new InvalidOpportunityCandidateException("Type action_key [{$actionKey}] has no registered action definition.");
-        }
-
-        if ($actionDefinition['parameter_rules'] !== []) {
-            throw new InvalidOpportunityCandidateException("Action [{$actionKey}] declares parameter_rules but Milestone 2B.2 supports none.");
         }
 
         $recommendedAction = [

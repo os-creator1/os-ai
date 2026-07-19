@@ -33,7 +33,16 @@ final class OpportunityActionRegistry
             'mutates_business_data' => true,
             'approval_required' => true,
             'completion_policy' => OpportunityCompletionPolicy::SystemVerified,
-            'parameter_rules' => [],
+            'parameter_rules' => [
+                'value' => [
+                    'required' => true,
+                    'type' => 'string',
+                    'max_length' => 50,
+                    'allow_blank' => false,
+                ],
+            ],
+            'handler_identifier' => 'business.update_phone',
+            'verifier_identifier' => 'business.phone_matches_parameter',
         ],
         'add_email' => [
             'schema_version' => 1,
