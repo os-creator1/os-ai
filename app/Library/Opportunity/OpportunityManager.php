@@ -19,11 +19,13 @@ use App\Events\Opportunity\OpportunityReaffirmed;
 use App\Events\Opportunity\OpportunityRunFailed;
 use App\Events\Opportunity\OpportunityRunStarted;
 use App\Events\Opportunity\OpportunityRunSucceeded;
+use App\Events\Opportunity\OpportunitySnoozed;
 use App\Library\Opportunity\Exceptions\CandidateLimitExceededException;
 use App\Library\Opportunity\Exceptions\CrossWorkerFingerprintCollisionException;
 use App\Library\Opportunity\Exceptions\ImmutableCandidateIdentityMismatchException;
 use App\Library\Opportunity\Exceptions\InvalidOpportunityCandidateException;
 use App\Library\Opportunity\Exceptions\InvalidOpportunityStateException;
+use App\Library\Opportunity\Exceptions\InvalidSnoozeUntilException;
 use App\Library\Opportunity\Exceptions\OpportunityEvidenceValidationException;
 use App\Library\Opportunity\Exceptions\RunAbandonedException;
 use App\Library\Opportunity\Exceptions\RunAlreadyActiveException;
@@ -44,6 +46,8 @@ use App\Repositories\Contracts\OpportunityRepository;
 use App\Repositories\Contracts\OpportunityRunCandidateRepository;
 use App\Repositories\Contracts\OpportunityRunRepository;
 use App\Repositories\Contracts\OpportunityTransitionRepository;
+use Carbon\CarbonImmutable;
+use Carbon\CarbonInterface;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Carbon;
@@ -398,6 +402,70 @@ class OpportunityManager
             ]);
 
             OpportunityDismissed::dispatch($locked->id, $locked->business_id, $customer->user_id, $fromStatus->value);
+
+            return $updated;
+        });
+    }
+
+    /**
+     * Customer-initiated snooze (RFC-002 §17). Valid only from `open` or
+     * `awaiting_approval` — every other status, including an
+     * already-snoozed Opportunity, throws and leaves the row untouched;
+     * this is deliberately not an idempotent no-op. $until is copied into
+     * an immutable value before validation, so a mutable Carbon instance
+     * the caller continues to hold cannot change the operation afterward.
+     * Never touches freshness, action fields, or any evidence/scoring
+     * field.
+     */
+    public function snooze(Opportunity $opportunity, Customer $customer, CarbonInterface $until): Opportunity
+    {
+        return DB::transaction(function () use ($opportunity, $customer, $until) {
+            $locked = $this->opportunityRepository->findOwnedForUpdate($opportunity->id, $opportunity->business_id);
+
+            $locked = $this->assertOpportunityOwnership($customer, $locked);
+
+            if (! in_array($locked->status, [OpportunityStatus::Open, OpportunityStatus::AwaitingApproval], true)) {
+                throw new InvalidOpportunityStateException(
+                    "Opportunity [{$locked->id}] cannot be snoozed from status [{$locked->status->value}]."
+                );
+            }
+
+            $now = now();
+            $snoozedUntil = CarbonImmutable::instance($until);
+
+            if ($snoozedUntil->lessThanOrEqualTo($now)) {
+                throw new InvalidSnoozeUntilException(
+                    'snoozedUntil must be strictly later than the current operation timestamp.'
+                );
+            }
+
+            $fromStatus = $locked->status;
+
+            $updated = $this->opportunityRepository->update($locked, [
+                'status' => OpportunityStatus::Snoozed->value,
+                'snoozed_until' => $snoozedUntil,
+            ]);
+
+            $this->transitionRepository->create([
+                'opportunity_id' => $locked->id,
+                'category' => OpportunityTransitionCategory::Workflow->value,
+                'from_status' => $fromStatus->value,
+                'to_status' => OpportunityStatus::Snoozed->value,
+                'actor_type' => OpportunityTransitionActorType::Customer->value,
+                'actor_user_id' => $customer->user_id,
+                'opportunity_run_id' => null,
+                'action_execution_id' => null,
+                'reason_code' => 'customer_snoozed',
+                'safe_note' => null,
+            ]);
+
+            OpportunitySnoozed::dispatch(
+                $locked->id,
+                $locked->business_id,
+                $customer->user_id,
+                $fromStatus->value,
+                $snoozedUntil->toIso8601String(),
+            );
 
             return $updated;
         });
