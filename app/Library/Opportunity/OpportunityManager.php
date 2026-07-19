@@ -13,6 +13,7 @@ use App\Enums\Opportunity\OpportunityTransitionCategory;
 use App\Enums\Opportunity\OpportunityWorkerKey;
 use App\Events\Opportunity\OpportunityBecameCurrent;
 use App\Events\Opportunity\OpportunityCreated;
+use App\Events\Opportunity\OpportunityDismissed;
 use App\Events\Opportunity\OpportunityMarkedStale;
 use App\Events\Opportunity\OpportunityReaffirmed;
 use App\Events\Opportunity\OpportunityRunFailed;
@@ -22,6 +23,7 @@ use App\Library\Opportunity\Exceptions\CandidateLimitExceededException;
 use App\Library\Opportunity\Exceptions\CrossWorkerFingerprintCollisionException;
 use App\Library\Opportunity\Exceptions\ImmutableCandidateIdentityMismatchException;
 use App\Library\Opportunity\Exceptions\InvalidOpportunityCandidateException;
+use App\Library\Opportunity\Exceptions\InvalidOpportunityStateException;
 use App\Library\Opportunity\Exceptions\OpportunityEvidenceValidationException;
 use App\Library\Opportunity\Exceptions\RunAbandonedException;
 use App\Library\Opportunity\Exceptions\RunAlreadyActiveException;
@@ -31,6 +33,7 @@ use App\Library\Opportunity\Exceptions\RunNotActiveException;
 use App\Library\Opportunity\Exceptions\RunNotFoundException;
 use App\Library\Opportunity\Exceptions\UnsupportedOpportunityTypeException;
 use App\Models\Business;
+use App\Models\Customer;
 use App\Models\Opportunity;
 use App\Models\OpportunityRun;
 use App\Models\OpportunityRunCandidate;
@@ -41,6 +44,7 @@ use App\Repositories\Contracts\OpportunityRepository;
 use App\Repositories\Contracts\OpportunityRunCandidateRepository;
 use App\Repositories\Contracts\OpportunityRunRepository;
 use App\Repositories\Contracts\OpportunityTransitionRepository;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -350,6 +354,71 @@ class OpportunityManager
 
             OpportunityRunFailed::dispatch($locked->id, $locked->business_id, $locked->worker_key->value, $safeErrorSummary);
         });
+    }
+
+    /**
+     * Customer-initiated dismissal (RFC-002 §17). Valid only from `open` or
+     * `awaiting_approval` — every other status, including an
+     * already-dismissed Opportunity, throws and leaves the row untouched;
+     * this is deliberately not an idempotent no-op. Never touches
+     * freshness, action fields, or any evidence/scoring field.
+     */
+    public function dismiss(Opportunity $opportunity, Customer $customer): Opportunity
+    {
+        return DB::transaction(function () use ($opportunity, $customer) {
+            $locked = $this->opportunityRepository->findOwnedForUpdate($opportunity->id, $opportunity->business_id);
+
+            $locked = $this->assertOpportunityOwnership($customer, $locked);
+
+            if (! in_array($locked->status, [OpportunityStatus::Open, OpportunityStatus::AwaitingApproval], true)) {
+                throw new InvalidOpportunityStateException(
+                    "Opportunity [{$locked->id}] cannot be dismissed from status [{$locked->status->value}]."
+                );
+            }
+
+            $now = now();
+            $fromStatus = $locked->status;
+
+            $updated = $this->opportunityRepository->update($locked, [
+                'status' => OpportunityStatus::Dismissed->value,
+                'dismissed_at' => $now,
+            ]);
+
+            $this->transitionRepository->create([
+                'opportunity_id' => $locked->id,
+                'category' => OpportunityTransitionCategory::Workflow->value,
+                'from_status' => $fromStatus->value,
+                'to_status' => OpportunityStatus::Dismissed->value,
+                'actor_type' => OpportunityTransitionActorType::Customer->value,
+                'actor_user_id' => $customer->user_id,
+                'opportunity_run_id' => null,
+                'action_execution_id' => null,
+                'reason_code' => 'customer_dismissed',
+                'safe_note' => null,
+            ]);
+
+            OpportunityDismissed::dispatch($locked->id, $locked->business_id, $customer->user_id, $fromStatus->value);
+
+            return $updated;
+        });
+    }
+
+    /**
+     * Re-validates ownership against the freshly locked row's own Business
+     * relationship — never the caller-supplied, possibly stale $opportunity
+     * — matching BusinessManager::assertOwnership()'s exact convention
+     * (customer_id compared against Customer::$user_id). A missing locked
+     * row is treated identically to a wrong-owner row: both simply mean
+     * this customer has no legitimate access to it, and neither should be
+     * distinguishable to the caller.
+     */
+    private function assertOpportunityOwnership(Customer $customer, ?Opportunity $opportunity): Opportunity
+    {
+        if ($opportunity === null || (int) $opportunity->business->customer_id !== (int) $customer->user_id) {
+            throw new AuthorizationException('This opportunity does not belong to the given customer.');
+        }
+
+        return $opportunity;
     }
 
     private function assertCandidateRanges(OpportunityCandidateData $data): void
