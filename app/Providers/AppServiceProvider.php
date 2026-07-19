@@ -24,6 +24,11 @@
     use App\Repositories\Contracts\CustomerRepository;
     use App\Repositories\Contracts\KeywordRepository;
     use App\Repositories\Contracts\LanguageRepository;
+    use App\Repositories\Contracts\OpportunityActionExecutionRepository;
+    use App\Repositories\Contracts\OpportunityRepository;
+    use App\Repositories\Contracts\OpportunityRunCandidateRepository;
+    use App\Repositories\Contracts\OpportunityRunRepository;
+    use App\Repositories\Contracts\OpportunityTransitionRepository;
     use App\Repositories\Contracts\PhoneNumberRepository;
     use App\Repositories\Contracts\PlanRepository;
     use App\Repositories\Contracts\PluginsRepository;
@@ -53,6 +58,11 @@
     use App\Repositories\Eloquent\EloquentCustomerRepository;
     use App\Repositories\Eloquent\EloquentKeywordRepository;
     use App\Repositories\Eloquent\EloquentLanguageRepository;
+    use App\Repositories\Eloquent\EloquentOpportunityActionExecutionRepository;
+    use App\Repositories\Eloquent\EloquentOpportunityRepository;
+    use App\Repositories\Eloquent\EloquentOpportunityRunCandidateRepository;
+    use App\Repositories\Eloquent\EloquentOpportunityRunRepository;
+    use App\Repositories\Eloquent\EloquentOpportunityTransitionRepository;
     use App\Repositories\Eloquent\EloquentPhoneNumberRepository;
     use App\Repositories\Eloquent\EloquentPlanRepository;
     use App\Repositories\Eloquent\EloquentPluginsRepository;
@@ -122,6 +132,11 @@
                 BusinessLocationRepository::class => EloquentBusinessLocationRepository::class,
                 BusinessServiceRepository::class  => EloquentBusinessServiceRepository::class,
                 CustomerOnboardingRepository::class => EloquentCustomerOnboardingRepository::class,
+                OpportunityRunRepository::class => EloquentOpportunityRunRepository::class,
+                OpportunityRepository::class => EloquentOpportunityRepository::class,
+                OpportunityRunCandidateRepository::class => EloquentOpportunityRunCandidateRepository::class,
+                OpportunityActionExecutionRepository::class => EloquentOpportunityActionExecutionRepository::class,
+                OpportunityTransitionRepository::class => EloquentOpportunityTransitionRepository::class,
             ];
 
             foreach ($bindings as $interface => $implementation) {

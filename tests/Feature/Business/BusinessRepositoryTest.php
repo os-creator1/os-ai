@@ -116,6 +116,28 @@ class BusinessRepositoryTest extends TestCase
         $this->assertNotNull($business->activated_at);
     }
 
+    public function test_find_for_update_returns_the_correct_business(): void
+    {
+        $customer = $this->createCustomer();
+        $repository = app(BusinessRepository::class);
+
+        $business = $repository->createForCustomer($customer, $this->businessAttributes());
+        $other = $repository->createForCustomer($customer, $this->businessAttributes(['name' => 'Second Business']));
+
+        $found = $repository->findForUpdate($business->id);
+
+        $this->assertNotNull($found);
+        $this->assertSame($business->id, $found->id);
+        $this->assertNotSame($other->id, $found->id);
+    }
+
+    public function test_find_for_update_returns_null_for_unknown_id(): void
+    {
+        $repository = app(BusinessRepository::class);
+
+        $this->assertNull($repository->findForUpdate(999999));
+    }
+
     public function test_uid_is_automatically_generated_and_unique(): void
     {
         $customer = $this->createCustomer();

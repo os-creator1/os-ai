@@ -15,6 +15,13 @@ interface BusinessRepository extends BaseRepository
 {
     public function findById(int $id): ?Business;
 
+    /**
+     * Row-locking variant of findById(), for callers that must hold the row
+     * lock for the duration of a transaction (RFC-002 Opportunity Engine
+     * run/read-modify-write flows).
+     */
+    public function findForUpdate(int $id): ?Business;
+
     public function findOwnedByCustomer(int $businessId, int $customerId): ?Business;
 
     public function findPrimaryByCustomer(int $customerId): ?Business;

@@ -65,4 +65,14 @@ class Business extends Model
             ->where('is_primary', true)
             ->where('status', BusinessServiceStatus::Active);
     }
+
+    public function opportunityRuns(): HasMany
+    {
+        return $this->hasMany(OpportunityRun::class);
+    }
+
+    public function opportunities(): HasMany
+    {
+        return $this->hasMany(Opportunity::class);
+    }
 }

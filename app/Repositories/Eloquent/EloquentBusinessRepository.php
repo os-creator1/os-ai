@@ -29,6 +29,11 @@ class EloquentBusinessRepository extends EloquentBaseRepository implements Busin
         return $this->query()->find($id);
     }
 
+    public function findForUpdate(int $id): ?Business
+    {
+        return $this->query()->whereKey($id)->lockForUpdate()->first();
+    }
+
     /**
      * @param  int  $customerId  The tenant key stored in businesses.customer_id, i.e. users.id (Customer::$user_id).
      */
