@@ -18,6 +18,7 @@ use App\Events\Opportunity\OpportunityMarkedStale;
 use App\Events\Opportunity\OpportunityReaffirmed;
 use App\Events\Opportunity\OpportunityRunFailed;
 use App\Events\Opportunity\OpportunityRunStarted;
+use App\Events\Opportunity\OpportunityReopened;
 use App\Events\Opportunity\OpportunityRunSucceeded;
 use App\Events\Opportunity\OpportunitySnoozed;
 use App\Library\Opportunity\Exceptions\CandidateLimitExceededException;
@@ -466,6 +467,56 @@ class OpportunityManager
                 $fromStatus->value,
                 $snoozedUntil->toIso8601String(),
             );
+
+            return $updated;
+        });
+    }
+
+    /**
+     * Explicit customer reopen (RFC-002 §17). Valid only from `snoozed`,
+     * `dismissed`, or `completed` — an already-open Opportunity throws
+     * rather than being absorbed as a no-op. Clears all three
+     * workflow-state timestamps (snoozed_until/dismissed_at/completed_at)
+     * so the resulting open row never retains a stale one. Never increments
+     * occurrence_number — that belongs exclusively to automatic recurrence
+     * inside finalizeSuccessfulRun(), never to an explicit customer reopen.
+     */
+    public function reopen(Opportunity $opportunity, Customer $customer, string $reasonCode): Opportunity
+    {
+        return DB::transaction(function () use ($opportunity, $customer, $reasonCode) {
+            $locked = $this->opportunityRepository->findOwnedForUpdate($opportunity->id, $opportunity->business_id);
+
+            $locked = $this->assertOpportunityOwnership($customer, $locked);
+
+            if (! in_array($locked->status, [OpportunityStatus::Snoozed, OpportunityStatus::Dismissed, OpportunityStatus::Completed], true)) {
+                throw new InvalidOpportunityStateException(
+                    "Opportunity [{$locked->id}] cannot be reopened from status [{$locked->status->value}]."
+                );
+            }
+
+            $fromStatus = $locked->status;
+
+            $updated = $this->opportunityRepository->update($locked, [
+                'status' => OpportunityStatus::Open->value,
+                'snoozed_until' => null,
+                'dismissed_at' => null,
+                'completed_at' => null,
+            ]);
+
+            $this->transitionRepository->create([
+                'opportunity_id' => $locked->id,
+                'category' => OpportunityTransitionCategory::Workflow->value,
+                'from_status' => $fromStatus->value,
+                'to_status' => OpportunityStatus::Open->value,
+                'actor_type' => OpportunityTransitionActorType::Customer->value,
+                'actor_user_id' => $customer->user_id,
+                'opportunity_run_id' => null,
+                'action_execution_id' => null,
+                'reason_code' => $reasonCode,
+                'safe_note' => null,
+            ]);
+
+            OpportunityReopened::dispatch($locked->id, $locked->business_id, $customer->user_id, $fromStatus->value, $reasonCode);
 
             return $updated;
         });
