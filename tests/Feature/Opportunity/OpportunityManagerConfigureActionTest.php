@@ -462,6 +462,11 @@ class OpportunityManagerConfigureActionTest extends TestCase
                 return $this->real->findOwnedForUpdate($id, $businessId);
             }
 
+            public function findOwned(int $id, int $businessId): ?Opportunity
+            {
+                return $this->real->findOwned($id, $businessId);
+            }
+
             public function currentMissingFromRunForUpdate(int $businessId, OpportunityWorkerKey $workerKey, int $excludeRunId): Collection
             {
                 return $this->real->currentMissingFromRunForUpdate($businessId, $workerKey, $excludeRunId);

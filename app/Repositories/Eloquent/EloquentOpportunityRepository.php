@@ -65,6 +65,14 @@ class EloquentOpportunityRepository extends EloquentBaseRepository implements Op
             ->first();
     }
 
+    public function findOwned(int $id, int $businessId): ?Opportunity
+    {
+        return $this->query()
+            ->where('id', $id)
+            ->where('business_id', $businessId)
+            ->first();
+    }
+
     public function currentMissingFromRunForUpdate(int $businessId, OpportunityWorkerKey $workerKey, int $excludeRunId): Collection
     {
         return $this->query()
@@ -102,6 +110,8 @@ class EloquentOpportunityRepository extends EloquentBaseRepository implements Op
         }
 
         return $query
+            ->orderByRaw('CASE WHEN freshness = ? THEN 0 ELSE 1 END', ['current'])
+            ->orderByRaw('CASE WHEN status IN (?, ?, ?) THEN 0 ELSE 1 END', ['open', 'awaiting_approval', 'in_progress'])
             ->orderByDesc('priority_score')
             ->orderByDesc('impact')
             ->orderByDesc('urgency')

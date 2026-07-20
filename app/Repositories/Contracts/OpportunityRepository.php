@@ -15,6 +15,13 @@ interface OpportunityRepository extends BaseRepository
     public function findOwnedForUpdate(int $id, int $businessId): ?Opportunity;
 
     /**
+     * Unlocked equivalent of findOwnedForUpdate() for a safe read-only
+     * fetch (e.g. a customer "show" GET) — same id/business_id ownership
+     * predicate, no lockForUpdate(), no transaction.
+     */
+    public function findOwned(int $id, int $businessId): ?Opportunity;
+
+    /**
      * The same-business/same-worker staleness-sweep candidate set (RFC-002
      * §22): every Opportunity still freshness=current whose
      * last_confirmed_run_id is NULL or differs from the given run id.
