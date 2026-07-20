@@ -104,6 +104,198 @@ class OpportunityActionExecutionRepositoryTest extends TestCase
         $this->assertSame(2, $repository->nextAttemptNumberForUpdate($opportunity->id));
     }
 
+    public function test_find_latest_failed_matching_returns_the_matching_execution(): void
+    {
+        [$repository, $opportunity, $user] = $this->retryRepositoryFixture();
+
+        $failed = $this->createOpportunityActionExecution($opportunity, $user, array_merge(
+            $this->matchingAttempt(),
+            ['idempotency_key' => hash('sha256', 'match-1'), 'status' => OpportunityActionExecutionStatus::Failed->value]
+        ));
+
+        $found = $repository->findLatestFailedMatching($opportunity->id, 1, $this->matchingHash(), 1, 'add_phone');
+
+        $this->assertNotNull($found);
+        $this->assertSame($failed->id, $found->id);
+    }
+
+    public function test_find_latest_failed_matching_orders_by_attempt_number_descending(): void
+    {
+        [$repository, $opportunity, $user] = $this->retryRepositoryFixture();
+
+        $this->createOpportunityActionExecution($opportunity, $user, array_merge(
+            $this->matchingAttempt(),
+            ['idempotency_key' => hash('sha256', 'attempt-1'), 'attempt_number' => 1, 'status' => OpportunityActionExecutionStatus::Failed->value]
+        ));
+        $latest = $this->createOpportunityActionExecution($opportunity, $user, array_merge(
+            $this->matchingAttempt(),
+            ['idempotency_key' => hash('sha256', 'attempt-2'), 'attempt_number' => 2, 'status' => OpportunityActionExecutionStatus::Failed->value]
+        ));
+
+        $found = $repository->findLatestFailedMatching($opportunity->id, 1, $this->matchingHash(), 1, 'add_phone');
+
+        $this->assertSame($latest->id, $found->id);
+    }
+
+    public function test_find_latest_failed_matching_uses_id_descending_as_a_deterministic_tie_breaker(): void
+    {
+        [$repository, $opportunity, $user] = $this->retryRepositoryFixture();
+
+        // Two rows deliberately share the same attempt_number (only possible
+        // because they are never both real attempts of the same Opportunity
+        // in production — this purely exercises the tie-breaker itself).
+        $this->createOpportunityActionExecution($opportunity, $user, array_merge(
+            $this->matchingAttempt(),
+            ['idempotency_key' => hash('sha256', 'tie-1'), 'attempt_number' => 1, 'status' => OpportunityActionExecutionStatus::Failed->value]
+        ));
+        $secondCreated = $this->createOpportunityActionExecution($opportunity, $user, array_merge(
+            $this->matchingAttempt(),
+            ['idempotency_key' => hash('sha256', 'tie-2'), 'attempt_number' => 1, 'status' => OpportunityActionExecutionStatus::Failed->value]
+        ));
+
+        $found = $repository->findLatestFailedMatching($opportunity->id, 1, $this->matchingHash(), 1, 'add_phone');
+
+        $this->assertSame($secondCreated->id, $found->id);
+    }
+
+    public function test_find_latest_failed_matching_excludes_pending(): void
+    {
+        [$repository, $opportunity, $user] = $this->retryRepositoryFixture();
+
+        $this->createOpportunityActionExecution($opportunity, $user, array_merge(
+            $this->matchingAttempt(),
+            ['idempotency_key' => hash('sha256', 'pending-excluded'), 'status' => OpportunityActionExecutionStatus::Pending->value]
+        ));
+
+        $this->assertNull($repository->findLatestFailedMatching($opportunity->id, 1, $this->matchingHash(), 1, 'add_phone'));
+    }
+
+    public function test_find_latest_failed_matching_excludes_running(): void
+    {
+        [$repository, $opportunity, $user] = $this->retryRepositoryFixture();
+
+        $this->createOpportunityActionExecution($opportunity, $user, array_merge(
+            $this->matchingAttempt(),
+            ['idempotency_key' => hash('sha256', 'running-excluded'), 'status' => OpportunityActionExecutionStatus::Running->value]
+        ));
+
+        $this->assertNull($repository->findLatestFailedMatching($opportunity->id, 1, $this->matchingHash(), 1, 'add_phone'));
+    }
+
+    public function test_find_latest_failed_matching_excludes_succeeded(): void
+    {
+        [$repository, $opportunity, $user] = $this->retryRepositoryFixture();
+
+        $this->createOpportunityActionExecution($opportunity, $user, array_merge(
+            $this->matchingAttempt(),
+            ['idempotency_key' => hash('sha256', 'succeeded-excluded'), 'status' => OpportunityActionExecutionStatus::Succeeded->value]
+        ));
+
+        $this->assertNull($repository->findLatestFailedMatching($opportunity->id, 1, $this->matchingHash(), 1, 'add_phone'));
+    }
+
+    public function test_find_latest_failed_matching_excludes_another_opportunity(): void
+    {
+        [$repository, $opportunity, $user] = $this->retryRepositoryFixture();
+        $otherOpportunity = $this->createOpportunity($opportunity->business, ['fingerprint' => hash('sha256', 'retry-other-opportunity')]);
+
+        $this->createOpportunityActionExecution($otherOpportunity, $user, array_merge(
+            $this->matchingAttempt(),
+            ['idempotency_key' => hash('sha256', 'other-opportunity'), 'status' => OpportunityActionExecutionStatus::Failed->value, 'opportunity_id' => $otherOpportunity->id]
+        ));
+
+        $this->assertNull($repository->findLatestFailedMatching($opportunity->id, 1, $this->matchingHash(), 1, 'add_phone'));
+    }
+
+    public function test_find_latest_failed_matching_excludes_another_occurrence_number(): void
+    {
+        [$repository, $opportunity, $user] = $this->retryRepositoryFixture();
+
+        $this->createOpportunityActionExecution($opportunity, $user, array_merge(
+            $this->matchingAttempt(),
+            ['idempotency_key' => hash('sha256', 'other-occurrence'), 'status' => OpportunityActionExecutionStatus::Failed->value, 'occurrence_number' => 2]
+        ));
+
+        $this->assertNull($repository->findLatestFailedMatching($opportunity->id, 1, $this->matchingHash(), 1, 'add_phone'));
+    }
+
+    public function test_find_latest_failed_matching_excludes_another_recommended_action_hash(): void
+    {
+        [$repository, $opportunity, $user] = $this->retryRepositoryFixture();
+
+        $this->createOpportunityActionExecution($opportunity, $user, array_merge(
+            $this->matchingAttempt(),
+            ['idempotency_key' => hash('sha256', 'other-hash'), 'status' => OpportunityActionExecutionStatus::Failed->value, 'recommended_action_hash' => hash('sha256', 'a-different-hash')]
+        ));
+
+        $this->assertNull($repository->findLatestFailedMatching($opportunity->id, 1, $this->matchingHash(), 1, 'add_phone'));
+    }
+
+    public function test_find_latest_failed_matching_excludes_another_action_schema_version(): void
+    {
+        [$repository, $opportunity, $user] = $this->retryRepositoryFixture();
+
+        $this->createOpportunityActionExecution($opportunity, $user, array_merge(
+            $this->matchingAttempt(),
+            ['idempotency_key' => hash('sha256', 'other-schema'), 'status' => OpportunityActionExecutionStatus::Failed->value, 'action_schema_version' => 2]
+        ));
+
+        $this->assertNull($repository->findLatestFailedMatching($opportunity->id, 1, $this->matchingHash(), 1, 'add_phone'));
+    }
+
+    public function test_find_latest_failed_matching_excludes_another_action_key(): void
+    {
+        [$repository, $opportunity, $user] = $this->retryRepositoryFixture();
+
+        $this->createOpportunityActionExecution($opportunity, $user, array_merge(
+            $this->matchingAttempt(),
+            ['idempotency_key' => hash('sha256', 'other-action-key'), 'status' => OpportunityActionExecutionStatus::Failed->value, 'action_key' => 'add_email']
+        ));
+
+        $this->assertNull($repository->findLatestFailedMatching($opportunity->id, 1, $this->matchingHash(), 1, 'add_phone'));
+    }
+
+    public function test_find_latest_failed_matching_returns_null_when_no_match_exists(): void
+    {
+        [$repository, $opportunity] = $this->retryRepositoryFixture();
+
+        $this->assertNull($repository->findLatestFailedMatching($opportunity->id, 1, $this->matchingHash(), 1, 'add_phone'));
+    }
+
+    /**
+     * @return array{0: string}
+     */
+    private function matchingHash(): string
+    {
+        return hash('sha256', 'retry-matching-recommended-action-hash');
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function matchingAttempt(): array
+    {
+        return [
+            'action_key' => 'add_phone',
+            'recommended_action_hash' => $this->matchingHash(),
+            'action_schema_version' => 1,
+            'occurrence_number' => 1,
+        ];
+    }
+
+    /**
+     * @return array{0: OpportunityActionExecutionRepository, 1: Opportunity, 2: \App\Models\User}
+     */
+    private function retryRepositoryFixture(): array
+    {
+        $business = $this->createBusinessForOpportunities();
+        $user = $this->createUser();
+        $opportunity = $this->createOpportunity($business, ['fingerprint' => hash('sha256', 'retry-repo-' . uniqid('', true))]);
+        $repository = app(OpportunityActionExecutionRepository::class);
+
+        return [$repository, $opportunity, $user];
+    }
+
     public function test_find_for_update_returns_the_correct_execution(): void
     {
         $business = $this->createBusinessForOpportunities();

@@ -45,6 +45,7 @@ use App\Library\Opportunity\Exceptions\OpportunityApprovalNotRequiredException;
 use App\Library\Opportunity\Exceptions\OpportunityAttestationNotAvailableException;
 use App\Library\Opportunity\Exceptions\OpportunityEngineDisabledException;
 use App\Library\Opportunity\Exceptions\OpportunityEvidenceValidationException;
+use App\Library\Opportunity\Exceptions\OpportunityExecutionRetryNotAvailableException;
 use App\Library\Opportunity\Exceptions\RunAbandonedException;
 use App\Library\Opportunity\Exceptions\RunAlreadyActiveException;
 use App\Library\Opportunity\Exceptions\RunAlreadyFailedException;
@@ -780,6 +781,27 @@ class OpportunityManager
      */
     private function assertActionIsApprovableAndExecutable(Opportunity $locked): void
     {
+        $actionDefinition = $this->assertActionIsExecutable($locked);
+
+        if (($actionDefinition['approval_required'] ?? null) !== true) {
+            throw new OpportunityApprovalNotRequiredException(
+                "Opportunity [{$locked->id}] has no current action requiring approval."
+            );
+        }
+    }
+
+    /**
+     * The action-integrity core shared by requestApproval()/confirmApproval()
+     * (via assertActionIsApprovableAndExecutable(), which additionally
+     * requires approval_required=true) and retryFailedExecution() (which
+     * deliberately does not, since a retried execution may eventually have
+     * originated from either confirmApproval() or beginTrustedAction()).
+     * Never checks approval_required itself.
+     *
+     * @return array{schema_version: int, mutates_business_data: bool, approval_required: bool, completion_policy: OpportunityCompletionPolicy, parameter_rules: array<string, mixed>, handler_identifier?: string, verifier_identifier?: string}
+     */
+    private function assertActionIsExecutable(Opportunity $locked): array
+    {
         $recommendedAction = $locked->recommended_action;
 
         if (! is_array($recommendedAction)) {
@@ -814,12 +836,6 @@ class OpportunityManager
             );
         }
 
-        if (($actionDefinition['approval_required'] ?? null) !== true) {
-            throw new OpportunityApprovalNotRequiredException(
-                "Opportunity [{$locked->id}] has no current action requiring approval."
-            );
-        }
-
         if (($actionDefinition['handler_identifier'] ?? null) !== 'business.update_phone'
             || ($actionDefinition['verifier_identifier'] ?? null) !== 'business.phone_matches_parameter'
             || ($actionDefinition['mutates_business_data'] ?? null) !== true
@@ -836,6 +852,12 @@ class OpportunityManager
         ) {
             throw new OpportunityActionNotExecutableException(
                 "Opportunity [{$locked->id}]'s persisted action disagrees with the trusted registry."
+            );
+        }
+
+        if ($actionDefinition['completion_policy']->value !== 'system_verified') {
+            throw new OpportunityActionNotExecutableException(
+                "Action [{$actionKey}] is not a system_verified executable action."
             );
         }
 
@@ -862,6 +884,8 @@ class OpportunityManager
                 "Opportunity [{$locked->id}]'s recommended_action_hash does not match its persisted action."
             );
         }
+
+        return $actionDefinition;
     }
 
     /**
@@ -967,6 +991,110 @@ class OpportunityManager
     }
 
     /**
+     * Customer-initiated explicit retry of a failed execution (RFC-002
+     * §17, §31). Valid only from `open` with no active execution and a
+     * `failed` execution matching the live action exactly — or from
+     * `in_progress`, which idempotently returns the existing active
+     * attempt. Deliberately does not require approval_required=true
+     * (assertActionIsExecutable(), not assertActionIsApprovableAndExecutable())
+     * since a retried execution may eventually have originated from either
+     * confirmApproval() or beginTrustedAction(). The prior failed execution
+     * is never mutated; only a genuinely new pending execution is created,
+     * using the same idempotency-key formula and creation shape as
+     * confirmApproval().
+     */
+    public function retryFailedExecution(Opportunity $opportunity, Customer $customer): OpportunityActionExecution
+    {
+        if (! config('opportunity.enabled', false)) {
+            throw new OpportunityEngineDisabledException();
+        }
+
+        return DB::transaction(function () use ($opportunity, $customer) {
+            $lockedOpportunity = $this->opportunityRepository->findOwnedForUpdate($opportunity->id, $opportunity->business_id);
+
+            $lockedOpportunity = $this->assertOpportunityOwnership($customer, $lockedOpportunity);
+
+            if ($lockedOpportunity->status === OpportunityStatus::InProgress) {
+                return $this->resolveDuplicateActiveExecutionForRetry($lockedOpportunity);
+            }
+
+            if ($lockedOpportunity->status !== OpportunityStatus::Open) {
+                throw new OpportunityExecutionRetryNotAvailableException();
+            }
+
+            if ($this->actionExecutionRepository->findActiveForOpportunity($lockedOpportunity->id) !== null) {
+                throw new OpportunityExecutionRetryNotAvailableException();
+            }
+
+            $this->assertActionIsExecutable($lockedOpportunity);
+
+            $actionKey = $lockedOpportunity->recommended_action['action_key'];
+
+            $failedExecution = $this->actionExecutionRepository->findLatestFailedMatching(
+                $lockedOpportunity->id,
+                $lockedOpportunity->occurrence_number,
+                $lockedOpportunity->recommended_action_hash,
+                $lockedOpportunity->action_schema_version,
+                $actionKey,
+            );
+
+            if ($failedExecution === null) {
+                throw new OpportunityExecutionRetryNotAvailableException();
+            }
+
+            $attemptNumber = $this->actionExecutionRepository->nextAttemptNumberForUpdate($lockedOpportunity->id);
+
+            $idempotencyKey = hash(
+                'sha256',
+                $lockedOpportunity->id . ':' . $lockedOpportunity->occurrence_number . ':' . $lockedOpportunity->recommended_action_hash . ':' . $attemptNumber
+            );
+
+            $execution = $this->actionExecutionRepository->create([
+                'opportunity_id' => $lockedOpportunity->id,
+                'action_key' => $actionKey,
+                'recommended_action_hash' => $lockedOpportunity->recommended_action_hash,
+                'action_schema_version' => $lockedOpportunity->action_schema_version,
+                'occurrence_number' => $lockedOpportunity->occurrence_number,
+                'attempt_number' => $attemptNumber,
+                'idempotency_key' => $idempotencyKey,
+                'status' => OpportunityActionExecutionStatus::Pending->value,
+                'initiated_by_user_id' => $customer->user_id,
+                'initiated_by_type' => 'customer',
+                'completion_policy' => OpportunityCompletionPolicy::SystemVerified->value,
+            ]);
+
+            $this->opportunityRepository->update($lockedOpportunity, [
+                'status' => OpportunityStatus::InProgress->value,
+            ]);
+
+            $this->transitionRepository->create([
+                'opportunity_id' => $lockedOpportunity->id,
+                'category' => OpportunityTransitionCategory::Workflow->value,
+                'from_status' => OpportunityStatus::Open->value,
+                'to_status' => OpportunityStatus::InProgress->value,
+                'actor_type' => OpportunityTransitionActorType::Customer->value,
+                'actor_user_id' => $customer->user_id,
+                'opportunity_run_id' => null,
+                'action_execution_id' => $execution->id,
+                'reason_code' => 'customer_retried_execution',
+                'safe_note' => null,
+            ]);
+
+            OpportunityExecutionStarted::dispatch(
+                $lockedOpportunity->id,
+                $lockedOpportunity->business_id,
+                $customer->user_id,
+                $execution->id,
+                $actionKey,
+            );
+
+            ExecuteOpportunityAction::dispatch($execution->id);
+
+            return $execution;
+        });
+    }
+
+    /**
      * Resolves a duplicate confirmApproval() call against an Opportunity
      * that is already in_progress (RFC-002 §31) — the normal path for a
      * committed duplicate submission. Requires a genuinely active
@@ -1014,6 +1142,38 @@ class OpportunityManager
                 "Execution [{$execution->id}] no longer matches Opportunity [{$lockedOpportunity->id}]'s live action."
             );
         }
+    }
+
+    /**
+     * The retryFailedExecution() analogue of resolveDuplicateActiveExecution()
+     * — same identity cross-check (opportunity_id/action_key/hash/schema
+     * version/occurrence_number/completion_policy), inlined rather than
+     * reusing assertExecutionMatchesLockedOpportunity() so that "no active
+     * execution" and "an active execution that no longer matches" both
+     * reject identically with OpportunityExecutionRetryNotAvailableException
+     * — the single "no matching active execution" case the RFC describes —
+     * rather than the InvalidOpportunityExecutionStateException
+     * confirmApproval()'s own path uses. Validates via
+     * assertActionIsExecutable() (no approval_required requirement).
+     */
+    private function resolveDuplicateActiveExecutionForRetry(Opportunity $lockedOpportunity): OpportunityActionExecution
+    {
+        $active = $this->actionExecutionRepository->findActiveForOpportunity($lockedOpportunity->id);
+
+        if ($active === null
+            || $active->opportunity_id !== $lockedOpportunity->id
+            || $active->action_key !== 'add_phone'
+            || $active->recommended_action_hash !== $lockedOpportunity->recommended_action_hash
+            || $active->action_schema_version !== $lockedOpportunity->action_schema_version
+            || $active->occurrence_number !== $lockedOpportunity->occurrence_number
+            || $active->completion_policy !== OpportunityCompletionPolicy::SystemVerified
+        ) {
+            throw new OpportunityExecutionRetryNotAvailableException();
+        }
+
+        $this->assertActionIsExecutable($lockedOpportunity);
+
+        return $active;
     }
 
     /**

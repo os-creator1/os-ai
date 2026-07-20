@@ -56,6 +56,25 @@ class EloquentOpportunityActionExecutionRepository extends EloquentBaseRepositor
         return ($maxAttempt ?? 0) + 1;
     }
 
+    public function findLatestFailedMatching(
+        int $opportunityId,
+        int $occurrenceNumber,
+        string $recommendedActionHash,
+        int $actionSchemaVersion,
+        string $actionKey
+    ): ?OpportunityActionExecution {
+        return $this->query()
+            ->where('opportunity_id', $opportunityId)
+            ->where('status', 'failed')
+            ->where('occurrence_number', $occurrenceNumber)
+            ->where('recommended_action_hash', $recommendedActionHash)
+            ->where('action_schema_version', $actionSchemaVersion)
+            ->where('action_key', $actionKey)
+            ->orderByDesc('attempt_number')
+            ->orderByDesc('id')
+            ->first();
+    }
+
     public function create(array $attributes): OpportunityActionExecution
     {
         /** @var OpportunityActionExecution $execution */
