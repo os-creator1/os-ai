@@ -29,6 +29,7 @@ use App\Events\Opportunity\OpportunityRunStarted;
 use App\Events\Opportunity\OpportunityReopened;
 use App\Events\Opportunity\OpportunityRunSucceeded;
 use App\Events\Opportunity\OpportunitySnoozed;
+use App\Events\Opportunity\OpportunitySnoozeExpired;
 use App\Jobs\Opportunity\ExecuteOpportunityAction;
 use App\Library\Opportunity\Exceptions\CandidateLimitExceededException;
 use App\Library\Opportunity\Exceptions\CrossWorkerFingerprintCollisionException;
@@ -69,7 +70,9 @@ use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Arr;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use RuntimeException;
+use Throwable;
 
 /**
  * Owns every transaction and invariant of the Opportunity Engine run
@@ -560,6 +563,81 @@ class OpportunityManager
 
             return $updated;
         });
+    }
+
+    /**
+     * Reopens expired snoozes in bounded batches, one transaction per
+     * Opportunity (RFC-002 §33) — never reopen(), which is a customer
+     * workflow with different ownership, actor, and reason semantics. Each
+     * unlocked candidate is re-locked and independently re-checked before
+     * being written, guarding a race with a concurrent explicit un-snooze.
+     * A single row's failure is isolated, logged internally, and never
+     * blocks the rest of the batch or counts toward the returned total.
+     */
+    public function sweepExpiredSnoozes(int $limit): int
+    {
+        if (! config('opportunity.enabled', false)) {
+            throw new OpportunityEngineDisabledException();
+        }
+
+        $candidates = $this->opportunityRepository->expiredSnoozesBatch($limit);
+
+        $reopenedCount = 0;
+
+        foreach ($candidates as $candidate) {
+            try {
+                $wasReopened = DB::transaction(function () use ($candidate) {
+                    $locked = $this->opportunityRepository->findOwnedForUpdate($candidate->id, $candidate->business_id);
+
+                    if ($locked === null) {
+                        return false;
+                    }
+
+                    $now = CarbonImmutable::now();
+
+                    if ($locked->status !== OpportunityStatus::Snoozed
+                        || $locked->snoozed_until === null
+                        || $locked->snoozed_until->gt($now)
+                    ) {
+                        return false;
+                    }
+
+                    $this->opportunityRepository->update($locked, [
+                        'status' => OpportunityStatus::Open->value,
+                        'snoozed_until' => null,
+                    ]);
+
+                    $this->transitionRepository->create([
+                        'opportunity_id' => $locked->id,
+                        'category' => OpportunityTransitionCategory::Workflow->value,
+                        'from_status' => OpportunityStatus::Snoozed->value,
+                        'to_status' => OpportunityStatus::Open->value,
+                        'actor_type' => OpportunityTransitionActorType::System->value,
+                        'actor_user_id' => null,
+                        'opportunity_run_id' => null,
+                        'action_execution_id' => null,
+                        'reason_code' => 'snooze_expired',
+                        'safe_note' => null,
+                    ]);
+
+                    OpportunitySnoozeExpired::dispatch($locked->id, $locked->business_id);
+
+                    return true;
+                });
+
+                if ($wasReopened) {
+                    $reopenedCount++;
+                }
+            } catch (Throwable $e) {
+                Log::error('OpportunityManager::sweepExpiredSnoozes failed to reopen an expired snooze', [
+                    'opportunity_id' => $candidate->id,
+                    'business_id' => $candidate->business_id,
+                    'exception' => $e,
+                ]);
+            }
+        }
+
+        return $reopenedCount;
     }
 
     /**

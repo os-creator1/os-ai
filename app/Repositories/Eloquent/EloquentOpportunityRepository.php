@@ -93,6 +93,8 @@ class EloquentOpportunityRepository extends EloquentBaseRepository implements Op
             ->where('status', 'snoozed')
             ->whereNotNull('snoozed_until')
             ->where('snoozed_until', '<=', now())
+            ->orderBy('snoozed_until')
+            ->orderBy('id')
             ->limit($limit)
             ->get();
     }

@@ -213,6 +213,75 @@ class OpportunityRepositoryTest extends TestCase
         $this->assertSame($due->id, $result->first()->id);
     }
 
+    public function test_expired_snoozes_batch_excludes_null_snoozed_until(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $repository = app(OpportunityRepository::class);
+
+        $this->createOpportunity($business, [
+            'fingerprint' => hash('sha256', 'snoozed-without-until'),
+            'status' => OpportunityStatus::Snoozed->value,
+            'snoozed_until' => null,
+        ]);
+
+        $result = $repository->expiredSnoozesBatch(10);
+
+        $this->assertCount(0, $result);
+    }
+
+    public function test_expired_snoozes_batch_respects_the_limit(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $repository = app(OpportunityRepository::class);
+
+        for ($i = 0; $i < 3; $i++) {
+            $this->createOpportunity($business, [
+                'fingerprint' => hash('sha256', "limited-snooze-{$i}"),
+                'status' => OpportunityStatus::Snoozed->value,
+                'snoozed_until' => now()->subMinutes($i + 1),
+            ]);
+        }
+
+        $result = $repository->expiredSnoozesBatch(2);
+
+        $this->assertCount(2, $result);
+    }
+
+    public function test_expired_snoozes_batch_orders_by_snoozed_until_then_id(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $repository = app(OpportunityRepository::class);
+        $sharedUntil = now()->subMinutes(5);
+
+        $earliestExpired = $this->createOpportunity($business, [
+            'fingerprint' => hash('sha256', 'order-earliest'),
+            'status' => OpportunityStatus::Snoozed->value,
+            'snoozed_until' => now()->subDay(),
+        ]);
+        $tiedFirstCreated = $this->createOpportunity($business, [
+            'fingerprint' => hash('sha256', 'order-tied-first'),
+            'status' => OpportunityStatus::Snoozed->value,
+            'snoozed_until' => $sharedUntil,
+        ]);
+        $tiedSecondCreated = $this->createOpportunity($business, [
+            'fingerprint' => hash('sha256', 'order-tied-second'),
+            'status' => OpportunityStatus::Snoozed->value,
+            'snoozed_until' => $sharedUntil,
+        ]);
+        $latestExpired = $this->createOpportunity($business, [
+            'fingerprint' => hash('sha256', 'order-latest'),
+            'status' => OpportunityStatus::Snoozed->value,
+            'snoozed_until' => now()->subMinute(),
+        ]);
+
+        $result = $repository->expiredSnoozesBatch(10);
+
+        $this->assertSame(
+            [$earliestExpired->id, $tiedFirstCreated->id, $tiedSecondCreated->id, $latestExpired->id],
+            $result->pluck('id')->all()
+        );
+    }
+
     public function test_update_ignores_immutable_identity_fields(): void
     {
         $business = $this->createBusinessForOpportunities();
