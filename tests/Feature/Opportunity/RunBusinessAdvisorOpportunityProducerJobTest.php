@@ -4,6 +4,8 @@ namespace Tests\Feature\Opportunity;
 
 use App\Enums\Opportunity\OpportunityRunStatus;
 use App\Enums\Opportunity\OpportunityWorkerKey;
+use App\Events\Opportunity\OpportunityRunFailed;
+use App\Events\Opportunity\OpportunityRunStarted;
 use App\Jobs\Opportunity\RunBusinessAdvisorOpportunityProducer;
 use App\Models\Business;
 use App\Models\Opportunity;
@@ -16,6 +18,7 @@ use App\Repositories\Contracts\OpportunityRunRepository;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Contracts\Queue\ShouldQueueAfterCommit;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Queue;
 use RuntimeException;
@@ -26,6 +29,13 @@ class RunBusinessAdvisorOpportunityProducerJobTest extends TestCase
 {
     use RefreshDatabase;
     use CreatesOpportunityTestData;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        config()->set('opportunity.enabled', true);
+    }
 
     public function test_job_implements_should_queue_and_should_queue_after_commit(): void
     {
@@ -138,6 +148,28 @@ class RunBusinessAdvisorOpportunityProducerJobTest extends TestCase
         app()->call([$job, 'handle']);
 
         $this->assertSame(0, OpportunityRun::where('business_id', 999999999)->count());
+    }
+
+    public function test_handle_while_disabled_is_a_safe_no_op(): void
+    {
+        config()->set('opportunity.enabled', false);
+        Log::spy();
+        Event::fake([OpportunityRunStarted::class, OpportunityRunFailed::class]);
+
+        $business = $this->createBusinessForOpportunities();
+
+        $job = new RunBusinessAdvisorOpportunityProducer($business->id);
+        app()->call([$job, 'handle']);
+
+        $this->assertSame(0, OpportunityRun::where('business_id', $business->id)->count());
+        $this->assertSame(0, Opportunity::where('business_id', $business->id)->count());
+
+        Log::shouldHaveReceived('info')->once();
+        Log::shouldNotHaveReceived('warning');
+        Log::shouldNotHaveReceived('error');
+
+        Event::assertNotDispatched(OpportunityRunStarted::class);
+        Event::assertNotDispatched(OpportunityRunFailed::class);
     }
 
     public function test_running_the_job_twice_after_success_reaffirms_rather_than_duplicates(): void

@@ -39,6 +39,13 @@ class OpportunityManagerFinalizeSuccessfulRunTest extends TestCase
     use RefreshDatabase;
     use CreatesOpportunityTestData;
 
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        config()->set('opportunity.enabled', true);
+    }
+
     public function test_finalizing_a_running_run_marks_it_succeeded_with_one_captured_timestamp(): void
     {
         $business = $this->createBusinessForOpportunities();

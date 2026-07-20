@@ -26,6 +26,7 @@ use App\Jobs\Opportunity\ExecuteOpportunityAction;
 use App\Library\Opportunity\Exceptions\InvalidOpportunityExecutionStateException;
 use App\Library\Opportunity\Exceptions\InvalidOpportunityStateException;
 use App\Library\Opportunity\Exceptions\OpportunityActionNotExecutableException;
+use App\Library\Opportunity\Exceptions\OpportunityEngineDisabledException;
 use App\Library\Opportunity\OpportunityActionHash;
 use App\Library\Opportunity\OpportunityManager;
 use App\Models\Business;
@@ -60,6 +61,7 @@ class OpportunityManagerConfirmApprovalTest extends TestCase
     {
         parent::setUp();
 
+        config()->set('opportunity.enabled', true);
         Queue::fake([ExecuteOpportunityAction::class]);
     }
 
@@ -80,6 +82,34 @@ class OpportunityManagerConfirmApprovalTest extends TestCase
         OpportunityRunSucceeded::class,
         OpportunitySnoozed::class,
     ];
+
+    public function test_confirm_approval_while_disabled_throws_and_creates_nothing(): void
+    {
+        Event::fake(self::KNOWN_EVENTS);
+
+        $business = $this->createBusinessForOpportunities();
+        $opportunity = $this->awaitingApprovalOpportunity($business);
+        $originalPhone = $business->phone;
+
+        config()->set('opportunity.enabled', false);
+
+        $manager = app(OpportunityManager::class);
+
+        try {
+            $this->expectException(OpportunityEngineDisabledException::class);
+
+            $manager->confirmApproval($opportunity, $business->customer);
+        } finally {
+            $opportunity->refresh();
+            $this->assertSame(OpportunityStatus::AwaitingApproval, $opportunity->status);
+            $this->assertSame(0, OpportunityActionExecution::where('opportunity_id', $opportunity->id)->count());
+            $this->assertSame(0, OpportunityTransition::where('opportunity_id', $opportunity->id)->count());
+            $this->assertSame($originalPhone, $business->fresh()->phone);
+
+            Event::assertNotDispatched(OpportunityExecutionStarted::class);
+            Queue::assertNothingPushed();
+        }
+    }
 
     public function test_awaiting_approval_creates_a_pending_execution(): void
     {

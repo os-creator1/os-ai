@@ -54,6 +54,14 @@ class RunBusinessAdvisorOpportunityProducer implements ShouldQueue, ShouldQueueA
         BusinessAdvisorOpportunityProducer $producer,
         OpportunityManager $manager,
     ): void {
+        if (! config('opportunity.enabled', false)) {
+            Log::info('RunBusinessAdvisorOpportunityProducer skipped — the opportunity engine is disabled', [
+                'business_id' => $this->businessId,
+            ]);
+
+            return;
+        }
+
         $business = $businessRepository->findById($this->businessId);
 
         if ($business === null) {

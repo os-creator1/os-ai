@@ -5,6 +5,9 @@ namespace Tests\Feature\Opportunity;
 use App\Enums\Opportunity\OpportunityActionExecutionStatus;
 use App\Enums\Opportunity\OpportunityCompletionPolicy;
 use App\Enums\Opportunity\OpportunityStatus;
+use App\Events\Opportunity\OpportunityCompleted;
+use App\Events\Opportunity\OpportunityExecutionFailed;
+use App\Events\Opportunity\OpportunityExecutionSucceeded;
 use App\Jobs\Opportunity\ExecuteOpportunityAction;
 use App\Library\Business\BusinessManager;
 use App\Library\Business\UrlNormalizer;
@@ -22,6 +25,8 @@ use App\Repositories\Contracts\BusinessServiceRepository;
 use App\Repositories\Contracts\OpportunityTransitionRepository;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Log;
 use RuntimeException;
 use Tests\Feature\Opportunity\Concerns\CreatesOpportunityTestData;
 use Tests\TestCase;
@@ -30,6 +35,40 @@ class ExecuteOpportunityActionJobTest extends TestCase
 {
     use RefreshDatabase;
     use CreatesOpportunityTestData;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        config()->set('opportunity.enabled', true);
+    }
+
+    public function test_handle_while_disabled_is_a_safe_no_op(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        [$opportunity, $execution] = $this->pendingOpportunityWithExecution($business);
+        $originalPhone = $business->phone;
+
+        config()->set('opportunity.enabled', false);
+        Log::spy();
+        Event::fake([OpportunityExecutionSucceeded::class, OpportunityExecutionFailed::class, OpportunityCompleted::class]);
+
+        $job = new ExecuteOpportunityAction($execution->id);
+        $job->handle(app(OpportunityManager::class), app(OpportunityActionExecutor::class));
+
+        $this->assertSame(OpportunityActionExecutionStatus::Pending, $execution->fresh()->status);
+        $this->assertSame(OpportunityStatus::InProgress, $opportunity->fresh()->status);
+        $this->assertSame($originalPhone, $business->fresh()->phone);
+        $this->assertSame(0, OpportunityTransition::where('opportunity_id', $opportunity->id)->count());
+
+        Log::shouldHaveReceived('info')->once();
+        Log::shouldNotHaveReceived('warning');
+        Log::shouldNotHaveReceived('error');
+
+        Event::assertNotDispatched(OpportunityExecutionSucceeded::class);
+        Event::assertNotDispatched(OpportunityExecutionFailed::class);
+        Event::assertNotDispatched(OpportunityCompleted::class);
+    }
 
     public function test_missing_execution_is_a_safe_no_op(): void
     {

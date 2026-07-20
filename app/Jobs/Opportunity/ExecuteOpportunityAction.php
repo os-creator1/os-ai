@@ -63,6 +63,14 @@ class ExecuteOpportunityAction implements ShouldQueue, ShouldQueueAfterCommit
 
     public function handle(OpportunityManager $manager, OpportunityActionExecutor $executor): void
     {
+        if (! config('opportunity.enabled', false)) {
+            Log::info('ExecuteOpportunityAction skipped — the opportunity engine is disabled', [
+                'execution_id' => $this->executionId,
+            ]);
+
+            return;
+        }
+
         $execution = OpportunityActionExecution::find($this->executionId);
 
         if ($execution === null) {

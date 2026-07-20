@@ -34,6 +34,13 @@ class OpportunityManagerConcurrencyTest extends TestCase
 
     private const MYSQL_LOCK_WAIT_TIMEOUT_ERROR_CODE = 1205;
 
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        config()->set('opportunity.enabled', true);
+    }
+
     public function test_business_row_lock_serializes_begin_run(): void
     {
         $probe = $this->setUpProbeConnection();

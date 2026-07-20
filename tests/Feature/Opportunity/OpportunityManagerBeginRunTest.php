@@ -6,6 +6,7 @@ use App\Enums\Opportunity\OpportunityRunStatus;
 use App\Enums\Opportunity\OpportunityWorkerKey;
 use App\Events\Opportunity\OpportunityRunFailed;
 use App\Events\Opportunity\OpportunityRunStarted;
+use App\Library\Opportunity\Exceptions\OpportunityEngineDisabledException;
 use App\Library\Opportunity\Exceptions\RunAlreadyActiveException;
 use App\Library\Opportunity\OpportunityManager;
 use App\Models\OpportunityRun;
@@ -21,6 +22,35 @@ class OpportunityManagerBeginRunTest extends TestCase
 {
     use RefreshDatabase;
     use CreatesOpportunityTestData;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        config()->set('opportunity.enabled', true);
+    }
+
+    public function test_begin_run_while_disabled_throws_and_creates_nothing(): void
+    {
+        config()->set('opportunity.enabled', false);
+
+        Event::fake([OpportunityRunFailed::class, OpportunityRunStarted::class]);
+
+        $business = $this->createBusinessForOpportunities();
+        $originalName = $business->name;
+        $manager = app(OpportunityManager::class);
+
+        $this->expectException(OpportunityEngineDisabledException::class);
+
+        try {
+            $manager->beginRun($business, OpportunityWorkerKey::BusinessAdvisor, 1);
+        } finally {
+            $this->assertSame(0, OpportunityRun::where('business_id', $business->id)->count());
+            $this->assertSame($originalName, $business->fresh()->name);
+            Event::assertNotDispatched(OpportunityRunStarted::class);
+            Event::assertNotDispatched(OpportunityRunFailed::class);
+        }
+    }
 
     public function test_begin_run_creates_a_running_run_with_correct_fields(): void
     {

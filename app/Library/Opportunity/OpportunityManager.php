@@ -41,6 +41,7 @@ use App\Library\Opportunity\Exceptions\InvalidSnoozeUntilException;
 use App\Library\Opportunity\Exceptions\OpportunityActionNotConfigurableException;
 use App\Library\Opportunity\Exceptions\OpportunityActionNotExecutableException;
 use App\Library\Opportunity\Exceptions\OpportunityApprovalNotRequiredException;
+use App\Library\Opportunity\Exceptions\OpportunityEngineDisabledException;
 use App\Library\Opportunity\Exceptions\OpportunityEvidenceValidationException;
 use App\Library\Opportunity\Exceptions\RunAbandonedException;
 use App\Library\Opportunity\Exceptions\RunAlreadyActiveException;
@@ -130,6 +131,10 @@ class OpportunityManager
      */
     public function beginRun(Business $business, OpportunityWorkerKey $workerKey, int $producerVersion): OpportunityRun
     {
+        if (! config('opportunity.enabled', false)) {
+            throw new OpportunityEngineDisabledException();
+        }
+
         return DB::transaction(function () use ($business, $workerKey, $producerVersion) {
             $now = now();
 
@@ -714,6 +719,10 @@ class OpportunityManager
      */
     public function confirmApproval(Opportunity $opportunity, Customer $customer): OpportunityActionExecution
     {
+        if (! config('opportunity.enabled', false)) {
+            throw new OpportunityEngineDisabledException();
+        }
+
         return DB::transaction(function () use ($opportunity, $customer) {
             $locked = $this->opportunityRepository->findOwnedForUpdate($opportunity->id, $opportunity->business_id);
 
