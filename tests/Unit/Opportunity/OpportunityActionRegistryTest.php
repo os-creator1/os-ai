@@ -71,34 +71,62 @@ class OpportunityActionRegistryTest extends TestCase
     }
 
     /**
-     * Milestone 2 Phase 2A adds only `parameter_rules` — a trusted,
-     * declarative array, not a class-name/callable. No validator, handler,
-     * or system_verification_method key may exist yet — not even as null —
-     * since those are still added only in Milestone 4.
+     * `add_phone` was intentionally made executable (RFC-002 Phase 4B.2A):
+     * it alone carries the trusted, fixed scalar identifiers
+     * `handler_identifier`/`verifier_identifier` that a future
+     * OpportunityActionExecutor matches via a closed match() — never a
+     * class name, callable, or other dynamically resolvable value. Every
+     * other action still exposes only the Milestone 1 + Phase 2A metadata
+     * keys. No action may ever expose a legacy callback-style key.
      */
-    public function test_registry_exposes_no_execution_metadata_keys(): void
+    public function test_registry_exposes_only_the_trusted_execution_metadata_boundary(): void
     {
-        $expectedKeys = ['schema_version', 'mutates_business_data', 'approval_required', 'completion_policy', 'parameter_rules'];
+        $baseKeys = ['schema_version', 'mutates_business_data', 'approval_required', 'completion_policy', 'parameter_rules'];
+        $addPhoneKeys = [...$baseKeys, 'handler_identifier', 'verifier_identifier'];
+        $forbiddenKeys = ['validator', 'handler', 'verifier', 'callback', 'handler_class', 'verifier_class', 'system_verification_method'];
 
         foreach (OpportunityActionRegistry::all() as $actionKey => $definition) {
-            $this->assertSame($expectedKeys, array_keys($definition), "Action [{$actionKey}] should expose only Milestone 1 + Phase 2A metadata keys.");
-            $this->assertArrayNotHasKey('validator', $definition);
-            $this->assertArrayNotHasKey('handler', $definition);
-            $this->assertArrayNotHasKey('system_verification_method', $definition);
+            $expectedKeys = $actionKey === 'add_phone' ? $addPhoneKeys : $baseKeys;
+
+            $this->assertSame($expectedKeys, array_keys($definition), "Action [{$actionKey}] should expose exactly its trusted metadata keys.");
+
+            foreach ($forbiddenKeys as $forbiddenKey) {
+                $this->assertArrayNotHasKey($forbiddenKey, $definition, "Action [{$actionKey}] must not expose the legacy key [{$forbiddenKey}].");
+            }
         }
+
+        $addPhone = OpportunityActionRegistry::get('add_phone');
+        $this->assertSame('business.update_phone', $addPhone['handler_identifier']);
+        $this->assertSame('business.phone_matches_parameter', $addPhone['verifier_identifier']);
     }
 
     /**
-     * None of RFC-002's 11 business_advisor actions accept any worker-
-     * supplied parameter yet — every entry's parameter_rules must be
-     * exactly an empty array, so any non-empty actionParameters payload is
-     * rejected by the future staging boundary.
+     * `add_phone` alone accepts a customer-configured parameter (RFC-002
+     * Phase 4B.2A) — its parameter_rules declares the exact trusted `value`
+     * rule shape used by OpportunityManager::configureAction(). Every other
+     * of RFC-002's 11 business_advisor actions still accepts no worker- or
+     * customer-supplied parameter, so their parameter_rules must remain
+     * exactly an empty array.
      */
-    public function test_every_action_has_an_empty_parameter_rules_array(): void
+    public function test_every_action_has_its_exact_trusted_parameter_rules(): void
     {
+        $addPhoneParameterRules = [
+            'value' => [
+                'required' => true,
+                'type' => 'string',
+                'max_length' => 50,
+                'allow_blank' => false,
+            ],
+        ];
+
         foreach (OpportunityActionRegistry::all() as $actionKey => $definition) {
             $this->assertArrayHasKey('parameter_rules', $definition, "Action [{$actionKey}] should declare parameter_rules.");
-            $this->assertSame([], $definition['parameter_rules'], "Action [{$actionKey}] should accept no parameters yet.");
+
+            if ($actionKey === 'add_phone') {
+                $this->assertSame($addPhoneParameterRules, $definition['parameter_rules'], "Action [{$actionKey}] should declare its exact trusted parameter_rules.");
+            } else {
+                $this->assertSame([], $definition['parameter_rules'], "Action [{$actionKey}] should accept no parameters.");
+            }
         }
     }
 
