@@ -4,7 +4,10 @@ declare(strict_types=1);
 
 namespace App\Library\Opportunity;
 
+use App\DTO\Opportunity\OpportunityExecutionAttempt;
 use App\Enums\Business\BusinessGoal;
+use App\Enums\Opportunity\OpportunityActionExecutionStatus;
+use App\Enums\Opportunity\OpportunityCompletionPolicy;
 use App\Enums\Opportunity\OpportunityFreshness;
 use App\Enums\Opportunity\OpportunityRunStatus;
 use App\Enums\Opportunity\OpportunityStatus;
@@ -13,8 +16,12 @@ use App\Enums\Opportunity\OpportunityTransitionCategory;
 use App\Enums\Opportunity\OpportunityWorkerKey;
 use App\Events\Opportunity\OpportunityApprovalRequested;
 use App\Events\Opportunity\OpportunityBecameCurrent;
+use App\Events\Opportunity\OpportunityCompleted;
 use App\Events\Opportunity\OpportunityCreated;
 use App\Events\Opportunity\OpportunityDismissed;
+use App\Events\Opportunity\OpportunityExecutionFailed;
+use App\Events\Opportunity\OpportunityExecutionStarted;
+use App\Events\Opportunity\OpportunityExecutionSucceeded;
 use App\Events\Opportunity\OpportunityMarkedStale;
 use App\Events\Opportunity\OpportunityReaffirmed;
 use App\Events\Opportunity\OpportunityRunFailed;
@@ -22,11 +29,13 @@ use App\Events\Opportunity\OpportunityRunStarted;
 use App\Events\Opportunity\OpportunityReopened;
 use App\Events\Opportunity\OpportunityRunSucceeded;
 use App\Events\Opportunity\OpportunitySnoozed;
+use App\Jobs\Opportunity\ExecuteOpportunityAction;
 use App\Library\Opportunity\Exceptions\CandidateLimitExceededException;
 use App\Library\Opportunity\Exceptions\CrossWorkerFingerprintCollisionException;
 use App\Library\Opportunity\Exceptions\ImmutableCandidateIdentityMismatchException;
 use App\Library\Opportunity\Exceptions\InvalidOpportunityActionParametersException;
 use App\Library\Opportunity\Exceptions\InvalidOpportunityCandidateException;
+use App\Library\Opportunity\Exceptions\InvalidOpportunityExecutionStateException;
 use App\Library\Opportunity\Exceptions\InvalidOpportunityStateException;
 use App\Library\Opportunity\Exceptions\InvalidSnoozeUntilException;
 use App\Library\Opportunity\Exceptions\OpportunityActionNotConfigurableException;
@@ -43,6 +52,7 @@ use App\Library\Opportunity\Exceptions\UnsupportedOpportunityTypeException;
 use App\Models\Business;
 use App\Models\Customer;
 use App\Models\Opportunity;
+use App\Models\OpportunityActionExecution;
 use App\Models\OpportunityRun;
 use App\Models\OpportunityRunCandidate;
 use App\Repositories\Contracts\BusinessRepository;
@@ -71,6 +81,26 @@ class OpportunityManager
     private const HEARTBEAT_TIMEOUT_REASON_CODE = 'heartbeat_timeout';
 
     private const HEARTBEAT_TIMEOUT_SAFE_SUMMARY = 'This run stopped responding and was marked failed.';
+
+    /**
+     * The one safe summary permitted when recordExecutionResult() records a
+     * failure whose live action no longer matches the execution it was
+     * bound to (RFC-002 §30.1 step 3, §47) — the only allowlisted string
+     * that is ever accepted for a state-mismatch failure, regardless of
+     * which other allowlisted strings exist for the matching-action case.
+     */
+    private const STATE_MISMATCH_SAFE_SUMMARY = 'Opportunity action state no longer matched the approved action.';
+
+    /**
+     * Fixed, source-controlled customer-safe failure summaries for
+     * recordExecutionResult() (RFC-002 §47) — never a raw exception
+     * message, SQL fragment, stack trace, or file path.
+     */
+    private const ALLOWED_FAILURE_SUMMARIES = [
+        'Opportunity action could not be completed.',
+        self::STATE_MISMATCH_SAFE_SUMMARY,
+        'Business update could not be verified.',
+    ];
 
     public function __construct(
         private readonly BusinessRepository $businessRepository,
@@ -674,6 +704,154 @@ class OpportunityManager
     }
 
     /**
+     * Customer-initiated explicit confirmation (RFC-002 §17, §30.1, §31,
+     * §37). Valid only from `awaiting_approval` (creates a new pending
+     * execution) or `in_progress` (idempotently returns the existing
+     * matching active execution) — every other status rejects. Reuses
+     * requestApproval()'s own executable-action validation unchanged, so
+     * eligibility is always re-derived from the locked Opportunity's own
+     * persisted state, never trusted from the caller.
+     */
+    public function confirmApproval(Opportunity $opportunity, Customer $customer): OpportunityActionExecution
+    {
+        return DB::transaction(function () use ($opportunity, $customer) {
+            $locked = $this->opportunityRepository->findOwnedForUpdate($opportunity->id, $opportunity->business_id);
+
+            $locked = $this->assertOpportunityOwnership($customer, $locked);
+
+            if ($locked->status === OpportunityStatus::InProgress) {
+                return $this->resolveDuplicateActiveExecution($locked);
+            }
+
+            if ($locked->status !== OpportunityStatus::AwaitingApproval) {
+                throw new InvalidOpportunityStateException(
+                    "Opportunity [{$locked->id}] cannot confirm approval from status [{$locked->status->value}]."
+                );
+            }
+
+            $this->assertActionIsApprovableAndExecutable($locked);
+
+            $attemptNumber = $this->actionExecutionRepository->nextAttemptNumberForUpdate($locked->id);
+
+            $idempotencyKey = hash(
+                'sha256',
+                $locked->id . ':' . $locked->occurrence_number . ':' . $locked->recommended_action_hash . ':' . $attemptNumber
+            );
+
+            $existing = $this->actionExecutionRepository->findByIdempotencyKey($idempotencyKey);
+
+            if ($existing !== null) {
+                // Defense-in-depth only — normal committed duplicates are
+                // resolved by the in_progress branch above, since a
+                // successful confirmation always leaves the Opportunity
+                // in_progress before any second caller could reach here.
+                $this->assertExecutionMatchesLockedOpportunity($existing, $locked);
+
+                if (! in_array($existing->status, [OpportunityActionExecutionStatus::Pending, OpportunityActionExecutionStatus::Running], true)) {
+                    throw new InvalidOpportunityExecutionStateException(
+                        "Execution [{$existing->id}] is no longer active."
+                    );
+                }
+
+                return $existing;
+            }
+
+            $execution = $this->actionExecutionRepository->create([
+                'opportunity_id' => $locked->id,
+                'action_key' => 'add_phone',
+                'recommended_action_hash' => $locked->recommended_action_hash,
+                'action_schema_version' => $locked->action_schema_version,
+                'occurrence_number' => $locked->occurrence_number,
+                'attempt_number' => $attemptNumber,
+                'idempotency_key' => $idempotencyKey,
+                'status' => OpportunityActionExecutionStatus::Pending->value,
+                'initiated_by_user_id' => $customer->user_id,
+                'initiated_by_type' => 'customer',
+                'completion_policy' => OpportunityCompletionPolicy::SystemVerified->value,
+            ]);
+
+            $this->opportunityRepository->update($locked, [
+                'status' => OpportunityStatus::InProgress->value,
+            ]);
+
+            $this->transitionRepository->create([
+                'opportunity_id' => $locked->id,
+                'category' => OpportunityTransitionCategory::Workflow->value,
+                'from_status' => OpportunityStatus::AwaitingApproval->value,
+                'to_status' => OpportunityStatus::InProgress->value,
+                'actor_type' => OpportunityTransitionActorType::Customer->value,
+                'actor_user_id' => $customer->user_id,
+                'opportunity_run_id' => null,
+                'action_execution_id' => $execution->id,
+                'reason_code' => 'customer_confirmed_approval',
+                'safe_note' => null,
+            ]);
+
+            OpportunityExecutionStarted::dispatch(
+                $locked->id,
+                $locked->business_id,
+                $customer->user_id,
+                $execution->id,
+                'add_phone',
+            );
+
+            ExecuteOpportunityAction::dispatch($execution->id);
+
+            return $execution;
+        });
+    }
+
+    /**
+     * Resolves a duplicate confirmApproval() call against an Opportunity
+     * that is already in_progress (RFC-002 §31) — the normal path for a
+     * committed duplicate submission. Requires a genuinely active
+     * (pending/running — findActiveForOpportunity() is already scoped to
+     * those two statuses) execution that still matches the live Opportunity
+     * action exactly, and that the live action itself is still valid.
+     * Never creates a transition, event, or job, and never increments
+     * attempt_number.
+     */
+    private function resolveDuplicateActiveExecution(Opportunity $lockedOpportunity): OpportunityActionExecution
+    {
+        $active = $this->actionExecutionRepository->findActiveForOpportunity($lockedOpportunity->id);
+
+        if ($active === null) {
+            throw new InvalidOpportunityExecutionStateException(
+                "Opportunity [{$lockedOpportunity->id}] is in_progress but has no active execution."
+            );
+        }
+
+        $this->assertExecutionMatchesLockedOpportunity($active, $lockedOpportunity);
+
+        $this->assertActionIsApprovableAndExecutable($lockedOpportunity);
+
+        return $active;
+    }
+
+    /**
+     * Cross-validates an already-persisted execution against the live
+     * locked Opportunity's action (RFC-002 §31) — used by both the
+     * in_progress duplicate-resolution path and the idempotency-key
+     * defense-in-depth path, since neither findActiveForOpportunity() nor
+     * findByIdempotencyKey() itself scopes by opportunity_id or the live
+     * action's identity.
+     */
+    private function assertExecutionMatchesLockedOpportunity(OpportunityActionExecution $execution, Opportunity $lockedOpportunity): void
+    {
+        if ($execution->opportunity_id !== $lockedOpportunity->id
+            || $execution->action_key !== 'add_phone'
+            || $execution->recommended_action_hash !== $lockedOpportunity->recommended_action_hash
+            || $execution->action_schema_version !== $lockedOpportunity->action_schema_version
+            || $execution->occurrence_number !== $lockedOpportunity->occurrence_number
+            || $execution->completion_policy !== OpportunityCompletionPolicy::SystemVerified
+        ) {
+            throw new InvalidOpportunityExecutionStateException(
+                "Execution [{$execution->id}] no longer matches Opportunity [{$lockedOpportunity->id}]'s live action."
+            );
+        }
+    }
+
+    /**
      * Customer-initiated action configuration (RFC-002 §13.1, §28, §45).
      * Only `add_phone` is configurable in this phase. The action_key is
      * read exclusively from the locked Opportunity's own persisted
@@ -783,6 +961,393 @@ class OpportunityManager
         }
 
         return $value;
+    }
+
+    /**
+     * Called only by ExecuteOpportunityAction (RFC-002 §30.1 steps 1-4).
+     * Never trusts the supplied $execution model's mutable attributes —
+     * both the Opportunity and the execution are re-locked and
+     * independently revalidated. Redelivery of an already
+     * running/succeeded/failed execution is a safe no-op (null, no writes);
+     * only a genuinely pending execution is validated and transitioned to
+     * running. Performs no Business mutation of its own.
+     */
+    public function beginExecutionAttempt(OpportunityActionExecution $execution): ?OpportunityExecutionAttempt
+    {
+        return DB::transaction(function () use ($execution) {
+            $unlockedOpportunity = $execution->opportunity;
+
+            if ($unlockedOpportunity === null) {
+                throw new InvalidOpportunityExecutionStateException(
+                    "Execution [{$execution->id}] has no associated Opportunity."
+                );
+            }
+
+            $lockedOpportunity = $this->opportunityRepository->findOwnedForUpdate($execution->opportunity_id, $unlockedOpportunity->business_id);
+
+            if ($lockedOpportunity === null) {
+                throw new InvalidOpportunityExecutionStateException(
+                    "Opportunity [{$execution->opportunity_id}] no longer exists."
+                );
+            }
+
+            $lockedExecution = $this->actionExecutionRepository->findForUpdate($execution->id);
+
+            if ($lockedExecution === null) {
+                throw new InvalidOpportunityExecutionStateException(
+                    "Execution [{$execution->id}] no longer exists."
+                );
+            }
+
+            if ($lockedExecution->id !== $execution->id || $lockedExecution->opportunity_id !== $lockedOpportunity->id) {
+                throw new InvalidOpportunityExecutionStateException(
+                    "Execution [{$execution->id}] does not belong to Opportunity [{$lockedOpportunity->id}]."
+                );
+            }
+
+            // OpportunityActionExecutionStatus is exhaustive (pending,
+            // running, succeeded, failed) — every non-pending case is a
+            // redelivered job for an execution already past this step, and
+            // is a safe no-op, never silently absorbed into a new outcome.
+            if ($lockedExecution->status !== OpportunityActionExecutionStatus::Pending) {
+                return null;
+            }
+
+            $this->assertPendingExecutionAttemptIsValid($lockedOpportunity, $lockedExecution);
+
+            $runningExecution = $this->actionExecutionRepository->update($lockedExecution, [
+                'status' => OpportunityActionExecutionStatus::Running->value,
+            ]);
+
+            return new OpportunityExecutionAttempt($lockedOpportunity, $runningExecution);
+        });
+    }
+
+    /**
+     * Independently re-validates a pending execution's bound action against
+     * the live Opportunity and the trusted OpportunityActionRegistry
+     * (RFC-002 §30.1 step 3) before it may be transitioned to running.
+     * Mirrors OpportunityActionExecutor::assertExecutable()'s invariants
+     * exactly (that class cannot be called from here — it owns no lock of
+     * its own and is invoked later, only once running) and
+     * requestApproval()'s registry-integrity checks, but always throws
+     * OpportunityActionNotExecutableException — never
+     * OpportunityApprovalNotRequiredException — since every pending-row
+     * mismatch here is a not-executable state, not an approval routing
+     * decision.
+     */
+    private function assertPendingExecutionAttemptIsValid(Opportunity $lockedOpportunity, OpportunityActionExecution $lockedExecution): void
+    {
+        if ($lockedOpportunity->status !== OpportunityStatus::InProgress) {
+            throw new OpportunityActionNotExecutableException(
+                "Opportunity [{$lockedOpportunity->id}] is not in_progress."
+            );
+        }
+
+        $recommendedAction = $lockedOpportunity->recommended_action;
+
+        if (! is_array($recommendedAction)) {
+            throw new OpportunityActionNotExecutableException(
+                "Opportunity [{$lockedOpportunity->id}] has no configured action."
+            );
+        }
+
+        $expectedKeys = ['action_key', 'approval_required', 'completion_policy', 'parameters', 'schema_version'];
+        $actualKeys = array_keys($recommendedAction);
+        sort($actualKeys);
+
+        if ($actualKeys !== $expectedKeys) {
+            throw new OpportunityActionNotExecutableException(
+                "Opportunity [{$lockedOpportunity->id}]'s recommended_action has an unexpected structure."
+            );
+        }
+
+        $actionKey = $recommendedAction['action_key'];
+
+        if ($actionKey !== 'add_phone') {
+            throw new OpportunityActionNotExecutableException(
+                "Action [{$actionKey}] is not executable."
+            );
+        }
+
+        $actionDefinition = OpportunityActionRegistry::get($actionKey);
+
+        if ($actionDefinition === null) {
+            throw new OpportunityActionNotExecutableException(
+                "Action [{$actionKey}] has no registered action definition."
+            );
+        }
+
+        if (($actionDefinition['handler_identifier'] ?? null) !== 'business.update_phone'
+            || ($actionDefinition['verifier_identifier'] ?? null) !== 'business.phone_matches_parameter'
+            || ($actionDefinition['mutates_business_data'] ?? null) !== true
+            || ($actionDefinition['approval_required'] ?? null) !== true
+            || ! isset($actionDefinition['completion_policy'])
+            || $actionDefinition['completion_policy']->value !== 'system_verified'
+        ) {
+            throw new OpportunityActionNotExecutableException(
+                "Action [{$actionKey}] is not a fully supported executable action."
+            );
+        }
+
+        if ($recommendedAction['schema_version'] !== $actionDefinition['schema_version']
+            || $recommendedAction['approval_required'] !== $actionDefinition['approval_required']
+            || $recommendedAction['completion_policy'] !== $actionDefinition['completion_policy']->value
+        ) {
+            throw new OpportunityActionNotExecutableException(
+                "Opportunity [{$lockedOpportunity->id}]'s persisted action disagrees with the trusted registry."
+            );
+        }
+
+        if ($lockedOpportunity->action_schema_version !== $actionDefinition['schema_version']) {
+            throw new OpportunityActionNotExecutableException(
+                "Opportunity [{$lockedOpportunity->id}]'s action_schema_version disagrees with the trusted registry."
+            );
+        }
+
+        $recomputedHash = $this->actionHash->compute($recommendedAction);
+
+        if (! is_string($lockedOpportunity->recommended_action_hash) || $recomputedHash !== $lockedOpportunity->recommended_action_hash) {
+            throw new OpportunityActionNotExecutableException(
+                "Opportunity [{$lockedOpportunity->id}]'s recommended_action_hash does not match its persisted action."
+            );
+        }
+
+        if ($lockedExecution->action_key !== $actionKey
+            || $lockedExecution->recommended_action_hash !== $lockedOpportunity->recommended_action_hash
+            || $lockedExecution->action_schema_version !== $lockedOpportunity->action_schema_version
+            || $lockedExecution->occurrence_number !== $lockedOpportunity->occurrence_number
+            || $lockedExecution->completion_policy->value !== $recommendedAction['completion_policy']
+        ) {
+            throw new OpportunityActionNotExecutableException(
+                "Execution [{$lockedExecution->id}] no longer matches the live Opportunity/action."
+            );
+        }
+
+        $parameters = $recommendedAction['parameters'];
+
+        if (! is_array($parameters) || array_keys($parameters) !== ['value']) {
+            throw new OpportunityActionNotExecutableException(
+                "Opportunity [{$lockedOpportunity->id}]'s action parameters are not fully configured."
+            );
+        }
+
+        $value = $parameters['value'];
+
+        if (! is_string($value) || trim($value) === '' || mb_strlen($value) > 50) {
+            throw new OpportunityActionNotExecutableException(
+                "Opportunity [{$lockedOpportunity->id}]'s configured phone value is invalid."
+            );
+        }
+    }
+
+    /**
+     * Called only by ExecuteOpportunityAction (RFC-002 §30.1 step 5, §30.2,
+     * §37). Never trusts the supplied $execution model's mutable
+     * attributes — both the Opportunity and the execution are re-locked and
+     * independently revalidated against each other and against the trusted
+     * OpportunityActionRegistry-derived state before anything is written.
+     * Performs no Business mutation or verification of its own — that
+     * already happened in OpportunityActionExecutor before this is called.
+     */
+    public function recordExecutionResult(OpportunityActionExecution $execution, bool $succeeded, ?string $safeSummary): Opportunity
+    {
+        return DB::transaction(function () use ($execution, $succeeded, $safeSummary) {
+            $unlockedOpportunity = $execution->opportunity;
+
+            if ($unlockedOpportunity === null) {
+                throw new InvalidOpportunityExecutionStateException(
+                    "Execution [{$execution->id}] has no associated Opportunity."
+                );
+            }
+
+            $lockedOpportunity = $this->opportunityRepository->findOwnedForUpdate($execution->opportunity_id, $unlockedOpportunity->business_id);
+
+            if ($lockedOpportunity === null) {
+                throw new InvalidOpportunityExecutionStateException(
+                    "Opportunity [{$execution->opportunity_id}] no longer exists."
+                );
+            }
+
+            $lockedExecution = $this->actionExecutionRepository->findForUpdate($execution->id);
+
+            if ($lockedExecution === null) {
+                throw new InvalidOpportunityExecutionStateException(
+                    "Execution [{$execution->id}] no longer exists."
+                );
+            }
+
+            $this->assertCommonExecutionResultInvariants($lockedOpportunity, $lockedExecution, $execution->id, $succeeded);
+
+            $liveActionMatches = $this->executionMatchesLiveAction($lockedOpportunity, $lockedExecution);
+
+            $now = CarbonImmutable::now();
+
+            if ($succeeded) {
+                if (! $liveActionMatches) {
+                    throw new InvalidOpportunityExecutionStateException(
+                        "Execution [{$execution->id}] no longer matches a recordable Opportunity state."
+                    );
+                }
+
+                $safeSummary = $this->assertValidSuccessSummary($safeSummary);
+
+                $this->actionExecutionRepository->update($lockedExecution, [
+                    'status' => OpportunityActionExecutionStatus::Succeeded->value,
+                    'completed_at' => $now,
+                    'safe_result_summary' => $safeSummary,
+                    'safe_error_summary' => null,
+                ]);
+
+                $updatedOpportunity = $this->opportunityRepository->update($lockedOpportunity, [
+                    'status' => OpportunityStatus::Completed->value,
+                    'completed_at' => $now,
+                ]);
+
+                $this->transitionRepository->create([
+                    'opportunity_id' => $lockedOpportunity->id,
+                    'category' => OpportunityTransitionCategory::Workflow->value,
+                    'from_status' => OpportunityStatus::InProgress->value,
+                    'to_status' => OpportunityStatus::Completed->value,
+                    'actor_type' => OpportunityTransitionActorType::System->value,
+                    'actor_user_id' => null,
+                    'opportunity_run_id' => null,
+                    'action_execution_id' => $lockedExecution->id,
+                    'reason_code' => 'execution_succeeded',
+                    'safe_note' => null,
+                ]);
+
+                OpportunityExecutionSucceeded::dispatch(
+                    $lockedOpportunity->id,
+                    $lockedOpportunity->business_id,
+                    $lockedExecution->initiated_by_user_id,
+                    $lockedExecution->id,
+                    $lockedExecution->action_key,
+                );
+
+                OpportunityCompleted::dispatch(
+                    $lockedOpportunity->id,
+                    $lockedOpportunity->business_id,
+                    $lockedExecution->initiated_by_user_id,
+                    $lockedExecution->id,
+                    $lockedExecution->completion_policy->value,
+                );
+
+                return $updatedOpportunity;
+            }
+
+            if ($liveActionMatches) {
+                $safeSummary = $this->assertValidFailureSummary($safeSummary);
+            } elseif ($safeSummary !== self::STATE_MISMATCH_SAFE_SUMMARY) {
+                throw new InvalidOpportunityExecutionStateException(
+                    "Execution [{$execution->id}]'s failure summary does not match its recorded state."
+                );
+            }
+
+            $this->actionExecutionRepository->update($lockedExecution, [
+                'status' => OpportunityActionExecutionStatus::Failed->value,
+                'completed_at' => $now,
+                'safe_error_summary' => $safeSummary,
+                'safe_result_summary' => null,
+            ]);
+
+            $updatedOpportunity = $this->opportunityRepository->update($lockedOpportunity, [
+                'status' => OpportunityStatus::Open->value,
+                'completed_at' => null,
+            ]);
+
+            $this->transitionRepository->create([
+                'opportunity_id' => $lockedOpportunity->id,
+                'category' => OpportunityTransitionCategory::Workflow->value,
+                'from_status' => OpportunityStatus::InProgress->value,
+                'to_status' => OpportunityStatus::Open->value,
+                'actor_type' => OpportunityTransitionActorType::System->value,
+                'actor_user_id' => null,
+                'opportunity_run_id' => null,
+                'action_execution_id' => $lockedExecution->id,
+                'reason_code' => 'execution_failed',
+                'safe_note' => null,
+            ]);
+
+            OpportunityExecutionFailed::dispatch(
+                $lockedOpportunity->id,
+                $lockedOpportunity->business_id,
+                $lockedExecution->initiated_by_user_id,
+                $lockedExecution->id,
+                $lockedExecution->action_key,
+                $safeSummary,
+            );
+
+            return $updatedOpportunity;
+        });
+    }
+
+    /**
+     * Identity/workflow invariants required regardless of outcome or live
+     * action state (RFC-002 §31): the locked rows genuinely belong to each
+     * other and to this call, the Opportunity is in_progress, and the
+     * execution is in a status the given outcome may legally be recorded
+     * from. A successful outcome may only be recorded for a running
+     * execution; a failure may be recorded for a running execution (a
+     * post-invocation handler/verification failure) or a still-pending one
+     * (a pre-invocation §30.1 step 3 mismatch that never reached running).
+     * Terminal (succeeded/failed) executions always reject. This never
+     * inspects the live action itself — see executionMatchesLiveAction().
+     */
+    private function assertCommonExecutionResultInvariants(Opportunity $lockedOpportunity, OpportunityActionExecution $lockedExecution, int $suppliedExecutionId, bool $succeeded): void
+    {
+        $validExecutionStatus = $succeeded
+            ? $lockedExecution->status === OpportunityActionExecutionStatus::Running
+            : in_array($lockedExecution->status, [OpportunityActionExecutionStatus::Running, OpportunityActionExecutionStatus::Pending], true);
+
+        if ($lockedExecution->id !== $suppliedExecutionId
+            || $lockedExecution->opportunity_id !== $lockedOpportunity->id
+            || ! $validExecutionStatus
+            || $lockedOpportunity->status !== OpportunityStatus::InProgress
+        ) {
+            throw new InvalidOpportunityExecutionStateException(
+                "Execution [{$suppliedExecutionId}] no longer matches a recordable Opportunity state."
+            );
+        }
+    }
+
+    /**
+     * Whether the locked execution's bound action still exactly matches the
+     * live Opportunity's current recommended_action (RFC-002 §31) — a
+     * malformed/missing live recommended_action is treated as a mismatch,
+     * not a separate case, since the execution's action_key can never equal
+     * a null/absent live action_key. Success requires this to be true;
+     * failure may be recorded either way (§30.1 step 3), with a different
+     * safe-summary requirement for each (see recordExecutionResult()).
+     */
+    private function executionMatchesLiveAction(Opportunity $lockedOpportunity, OpportunityActionExecution $lockedExecution): bool
+    {
+        $recommendedAction = $lockedOpportunity->recommended_action;
+        $liveActionKey = is_array($recommendedAction) ? ($recommendedAction['action_key'] ?? null) : null;
+
+        return $lockedExecution->action_key === $liveActionKey
+            && $lockedExecution->recommended_action_hash === $lockedOpportunity->recommended_action_hash
+            && $lockedExecution->action_schema_version === $lockedOpportunity->action_schema_version
+            && $lockedExecution->occurrence_number === $lockedOpportunity->occurrence_number
+            && $lockedExecution->completion_policy === OpportunityCompletionPolicy::SystemVerified;
+    }
+
+    private function assertValidSuccessSummary(?string $safeSummary): string
+    {
+        if (! is_string($safeSummary) || trim($safeSummary) === '' || mb_strlen($safeSummary) > 255) {
+            throw new InvalidOpportunityExecutionStateException('A valid success summary is required.');
+        }
+
+        return $safeSummary;
+    }
+
+    private function assertValidFailureSummary(?string $safeSummary): string
+    {
+        if (! is_string($safeSummary) || ! in_array($safeSummary, self::ALLOWED_FAILURE_SUMMARIES, true)) {
+            throw new InvalidOpportunityExecutionStateException('A valid failure summary is required.');
+        }
+
+        return $safeSummary;
     }
 
     /**
