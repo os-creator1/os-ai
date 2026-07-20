@@ -48,6 +48,25 @@ final class OpportunityActionExecutor
     ) {
     }
 
+    /**
+     * Pure executor-capability predicate (RFC-002 §13.1, §30) — answers only
+     * "do I have working handler/verifier code for this action_key and
+     * completion_policy," never whether the action should require approval
+     * or whether it mutates Business data (those are OpportunityManager's
+     * own workflow-eligibility concerns, not executor capability). Performs
+     * no database query and never throws; an unrecognized combination
+     * simply returns false. Reused by assertExecutable() below so this
+     * class has exactly one source of truth for what it can run.
+     */
+    public function supports(string $actionKey, array $actionDefinition): bool
+    {
+        return $actionKey === self::SUPPORTED_ACTION_KEY
+            && ($actionDefinition['handler_identifier'] ?? null) === self::SUPPORTED_HANDLER_IDENTIFIER
+            && ($actionDefinition['verifier_identifier'] ?? null) === self::SUPPORTED_VERIFIER_IDENTIFIER
+            && isset($actionDefinition['completion_policy'])
+            && $actionDefinition['completion_policy']->value === self::SUPPORTED_COMPLETION_POLICY;
+    }
+
     public function execute(Opportunity $opportunity, OpportunityActionExecution $execution): string
     {
         $value = $this->assertExecutable($opportunity, $execution);
@@ -134,12 +153,9 @@ final class OpportunityActionExecutor
             );
         }
 
-        if (($actionDefinition['handler_identifier'] ?? null) !== self::SUPPORTED_HANDLER_IDENTIFIER
-            || ($actionDefinition['verifier_identifier'] ?? null) !== self::SUPPORTED_VERIFIER_IDENTIFIER
+        if (! $this->supports($actionKey, $actionDefinition)
             || ($actionDefinition['mutates_business_data'] ?? null) !== true
             || ($actionDefinition['approval_required'] ?? null) !== true
-            || ! isset($actionDefinition['completion_policy'])
-            || $actionDefinition['completion_policy']->value !== self::SUPPORTED_COMPLETION_POLICY
         ) {
             throw new OpportunityActionNotExecutableException(
                 "Action [{$actionKey}] is not a fully supported executable action."

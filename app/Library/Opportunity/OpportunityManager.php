@@ -42,6 +42,7 @@ use App\Library\Opportunity\Exceptions\InvalidSnoozeUntilException;
 use App\Library\Opportunity\Exceptions\OpportunityActionNotConfigurableException;
 use App\Library\Opportunity\Exceptions\OpportunityActionNotExecutableException;
 use App\Library\Opportunity\Exceptions\OpportunityApprovalNotRequiredException;
+use App\Library\Opportunity\Exceptions\OpportunityApprovalRequiredException;
 use App\Library\Opportunity\Exceptions\OpportunityAttestationNotAvailableException;
 use App\Library\Opportunity\Exceptions\OpportunityEngineDisabledException;
 use App\Library\Opportunity\Exceptions\OpportunityEvidenceValidationException;
@@ -120,6 +121,7 @@ class OpportunityManager
         private readonly OpportunityRepository $opportunityRepository,
         private readonly OpportunityTransitionRepository $transitionRepository,
         private readonly OpportunityActionExecutionRepository $actionExecutionRepository,
+        private readonly OpportunityActionExecutor $opportunityActionExecutor,
     ) {
     }
 
@@ -1174,6 +1176,282 @@ class OpportunityManager
         $this->assertActionIsExecutable($lockedOpportunity);
 
         return $active;
+    }
+
+    /**
+     * Customer-initiated approval-free execution start for a trusted,
+     * non-mutating action (RFC-002 §17, §30, §30.1, §37). Valid only from
+     * `open` — freshness is never checked: §17's `open → in_progress` row
+     * carries no freshness qualifier (unlike the `customer_attested` row,
+     * which explicitly requires `freshness=current`), and §18 states
+     * freshness is fully orthogonal to workflow status. A duplicate call
+     * while already `in_progress` idempotently returns the matching active
+     * execution; an `open` Opportunity that already has an active execution
+     * is a genuine inconsistency, not a duplicate, and rejects instead.
+     */
+    public function beginTrustedAction(Opportunity $opportunity, Customer $customer): OpportunityActionExecution
+    {
+        if (! config('opportunity.enabled', false)) {
+            throw new OpportunityEngineDisabledException();
+        }
+
+        return DB::transaction(function () use ($opportunity, $customer) {
+            $lockedOpportunity = $this->opportunityRepository->findOwnedForUpdate($opportunity->id, $opportunity->business_id);
+
+            $lockedOpportunity = $this->assertOpportunityOwnership($customer, $lockedOpportunity);
+
+            if ($lockedOpportunity->status === OpportunityStatus::InProgress) {
+                return $this->resolveDuplicateActiveTrustedExecution($lockedOpportunity);
+            }
+
+            if ($lockedOpportunity->status !== OpportunityStatus::Open) {
+                throw new InvalidOpportunityStateException(
+                    "Opportunity [{$lockedOpportunity->id}] cannot begin a trusted action from status [{$lockedOpportunity->status->value}]."
+                );
+            }
+
+            if ($this->actionExecutionRepository->findActiveForOpportunity($lockedOpportunity->id) !== null) {
+                throw new InvalidOpportunityExecutionStateException(
+                    "Opportunity [{$lockedOpportunity->id}] is open but already has an active execution."
+                );
+            }
+
+            $this->assertTrustedActionIsExecutable($lockedOpportunity);
+
+            $actionKey = $lockedOpportunity->recommended_action['action_key'];
+
+            $attemptNumber = $this->actionExecutionRepository->nextAttemptNumberForUpdate($lockedOpportunity->id);
+
+            $idempotencyKey = hash(
+                'sha256',
+                $lockedOpportunity->id . ':' . $lockedOpportunity->occurrence_number . ':' . $lockedOpportunity->recommended_action_hash . ':' . $attemptNumber
+            );
+
+            $execution = $this->actionExecutionRepository->create([
+                'opportunity_id' => $lockedOpportunity->id,
+                'action_key' => $actionKey,
+                'recommended_action_hash' => $lockedOpportunity->recommended_action_hash,
+                'action_schema_version' => $lockedOpportunity->action_schema_version,
+                'occurrence_number' => $lockedOpportunity->occurrence_number,
+                'attempt_number' => $attemptNumber,
+                'idempotency_key' => $idempotencyKey,
+                'status' => OpportunityActionExecutionStatus::Pending->value,
+                'initiated_by_user_id' => $customer->user_id,
+                'initiated_by_type' => 'customer',
+                'completion_policy' => OpportunityCompletionPolicy::SystemVerified->value,
+            ]);
+
+            $this->opportunityRepository->update($lockedOpportunity, [
+                'status' => OpportunityStatus::InProgress->value,
+            ]);
+
+            $this->transitionRepository->create([
+                'opportunity_id' => $lockedOpportunity->id,
+                'category' => OpportunityTransitionCategory::Workflow->value,
+                'from_status' => OpportunityStatus::Open->value,
+                'to_status' => OpportunityStatus::InProgress->value,
+                'actor_type' => OpportunityTransitionActorType::Customer->value,
+                'actor_user_id' => $customer->user_id,
+                'opportunity_run_id' => null,
+                'action_execution_id' => $execution->id,
+                'reason_code' => 'customer_began_trusted_action',
+                'safe_note' => null,
+            ]);
+
+            OpportunityExecutionStarted::dispatch(
+                $lockedOpportunity->id,
+                $lockedOpportunity->business_id,
+                $customer->user_id,
+                $execution->id,
+                $actionKey,
+            );
+
+            ExecuteOpportunityAction::dispatch($execution->id);
+
+            return $execution;
+        });
+    }
+
+    /**
+     * The beginTrustedAction() analogue of resolveDuplicateActiveExecution()
+     * — cannot reuse it directly, since that helper calls
+     * assertActionIsApprovableAndExecutable(), which requires
+     * approval_required=true, the opposite of what a trusted action needs.
+     * Same identity cross-check (opportunity_id/action_key/schema
+     * version/occurrence_number/hash) as
+     * resolveDuplicateActiveExecutionForRetry(), inlined for the same
+     * reason: reusing assertExecutionMatchesLockedOpportunity() would
+     * hardcode action_key !== 'add_phone', which does not hold here.
+     */
+    private function resolveDuplicateActiveTrustedExecution(Opportunity $lockedOpportunity): OpportunityActionExecution
+    {
+        $this->assertTrustedActionIsExecutable($lockedOpportunity);
+
+        $actionKey = $lockedOpportunity->recommended_action['action_key'];
+
+        $active = $this->actionExecutionRepository->findActiveForOpportunity($lockedOpportunity->id);
+
+        if ($active === null
+            || $active->opportunity_id !== $lockedOpportunity->id
+            || $active->action_key !== $actionKey
+            || $active->action_schema_version !== $lockedOpportunity->action_schema_version
+            || $active->occurrence_number !== $lockedOpportunity->occurrence_number
+            || $active->recommended_action_hash !== $lockedOpportunity->recommended_action_hash
+        ) {
+            throw new InvalidOpportunityExecutionStateException(
+                "Opportunity [{$lockedOpportunity->id}] is in_progress but has no active execution matching its trusted action."
+            );
+        }
+
+        return $active;
+    }
+
+    /**
+     * Test seam for beginTrustedAction() only (RFC-002 §13.1) — production
+     * delegates directly to the closed, static registry. Never used by
+     * confirmApproval(), retryFailedExecution(), configureAction(), or the
+     * executor's own lookup, none of which are altered by this seam.
+     *
+     * @return array{schema_version: int, mutates_business_data: bool, approval_required: bool, completion_policy: OpportunityCompletionPolicy, parameter_rules?: array<string, mixed>, handler_identifier?: string, verifier_identifier?: string}|null
+     */
+    protected function lookupTrustedActionDefinition(string $actionKey): ?array
+    {
+        return OpportunityActionRegistry::get($actionKey);
+    }
+
+    /**
+     * Test seam for beginTrustedAction() only — production delegates
+     * directly to the real OpportunityActionExecutor's own pure capability
+     * check, so a production beginTrustedAction() call never creates and
+     * queues an execution the real executor cannot run and verify.
+     */
+    protected function trustedActionExecutorSupports(string $actionKey, array $actionDefinition): bool
+    {
+        return $this->opportunityActionExecutor->supports($actionKey, $actionDefinition);
+    }
+
+    /**
+     * The beginTrustedAction() analogue of assertActionIsExecutable() —
+     * cannot reuse it, since that method hardcodes the single mutating
+     * add_phone shape (action_key === 'add_phone', mutates_business_data
+     * === true, handler/verifier identifiers fixed to add_phone's own
+     * values). A trusted action is, by RFC-002 §13.1's own registry
+     * conformance invariant, approval_required=false and
+     * mutates_business_data=false — no such action exists in the
+     * production registry yet (§30), so the registry lookup and
+     * executor-capability check are both routed through the protected
+     * seams above, letting a test-only OpportunityManager subclass
+     * simulate a future trusted action without a fake production registry
+     * entry or executor handler. Parameter validation reuses
+     * assertValidActionValueParameter() — the same registry-`parameter_rules`
+     * -driven mechanism configureAction() already uses — rather than
+     * hardcoding add_phone's own parameter shape.
+     *
+     * @return array{schema_version: int, mutates_business_data: bool, approval_required: bool, completion_policy: OpportunityCompletionPolicy, parameter_rules?: array<string, mixed>, handler_identifier?: string, verifier_identifier?: string}
+     */
+    private function assertTrustedActionIsExecutable(Opportunity $locked): array
+    {
+        $recommendedAction = $locked->recommended_action;
+
+        if (! is_array($recommendedAction)) {
+            throw new OpportunityActionNotExecutableException(
+                "Opportunity [{$locked->id}] has no configured action."
+            );
+        }
+
+        $expectedKeys = ['action_key', 'approval_required', 'completion_policy', 'parameters', 'schema_version'];
+        $actualKeys = array_keys($recommendedAction);
+        sort($actualKeys);
+
+        if ($actualKeys !== $expectedKeys
+            || ! is_string($recommendedAction['action_key']) || $recommendedAction['action_key'] === ''
+            || ! is_array($recommendedAction['parameters'])
+            || ! is_int($recommendedAction['schema_version'])
+            || ! is_bool($recommendedAction['approval_required'])
+            || ! is_string($recommendedAction['completion_policy'])
+        ) {
+            throw new OpportunityActionNotExecutableException(
+                "Opportunity [{$locked->id}]'s recommended_action has an unexpected structure."
+            );
+        }
+
+        $actionKey = $recommendedAction['action_key'];
+
+        $actionDefinition = $this->lookupTrustedActionDefinition($actionKey);
+
+        if ($actionDefinition === null) {
+            throw new OpportunityActionNotExecutableException(
+                "Action [{$actionKey}] has no registered action definition."
+            );
+        }
+
+        if (($actionDefinition['schema_version'] ?? null) !== $recommendedAction['schema_version']
+            || $locked->action_schema_version !== ($actionDefinition['schema_version'] ?? null)
+            || ($actionDefinition['approval_required'] ?? null) !== $recommendedAction['approval_required']
+            || ! isset($actionDefinition['completion_policy'])
+            || $actionDefinition['completion_policy']->value !== $recommendedAction['completion_policy']
+        ) {
+            throw new OpportunityActionNotExecutableException(
+                "Opportunity [{$locked->id}]'s persisted action disagrees with the trusted registry."
+            );
+        }
+
+        if (($actionDefinition['approval_required'] ?? null) !== false) {
+            throw new OpportunityApprovalRequiredException();
+        }
+
+        if (($actionDefinition['mutates_business_data'] ?? null) !== false) {
+            throw new OpportunityActionNotExecutableException(
+                "Action [{$actionKey}] is not a trusted, non-mutating action."
+            );
+        }
+
+        if ($actionDefinition['completion_policy']->value !== OpportunityCompletionPolicy::SystemVerified->value) {
+            throw new OpportunityActionNotExecutableException(
+                "Action [{$actionKey}] is not a system_verified executable action."
+            );
+        }
+
+        $handlerIdentifier = $actionDefinition['handler_identifier'] ?? null;
+        $verifierIdentifier = $actionDefinition['verifier_identifier'] ?? null;
+
+        if (! is_string($handlerIdentifier) || $handlerIdentifier === ''
+            || ! is_string($verifierIdentifier) || $verifierIdentifier === ''
+        ) {
+            throw new OpportunityActionNotExecutableException(
+                "Action [{$actionKey}] is not a fully configured executable action."
+            );
+        }
+
+        if (! $this->trustedActionExecutorSupports($actionKey, $actionDefinition)) {
+            throw new OpportunityActionNotExecutableException(
+                "Action [{$actionKey}] is not supported by the action executor."
+            );
+        }
+
+        if (! isset($actionDefinition['parameter_rules']['value'])) {
+            throw new OpportunityActionNotExecutableException(
+                "Action [{$actionKey}] is not a fully configured executable action."
+            );
+        }
+
+        try {
+            $this->assertValidActionValueParameter($recommendedAction['parameters'], $actionDefinition['parameter_rules']['value']);
+        } catch (InvalidOpportunityActionParametersException) {
+            throw new OpportunityActionNotExecutableException(
+                "Opportunity [{$locked->id}]'s action parameters are not fully configured."
+            );
+        }
+
+        $recomputedHash = $this->actionHash->compute($recommendedAction);
+
+        if (! is_string($locked->recommended_action_hash) || $recomputedHash !== $locked->recommended_action_hash) {
+            throw new OpportunityActionNotExecutableException(
+                "Opportunity [{$locked->id}]'s recommended_action_hash does not match its persisted action."
+            );
+        }
+
+        return $actionDefinition;
     }
 
     /**

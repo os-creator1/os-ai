@@ -22,6 +22,7 @@ use App\Library\Opportunity\Exceptions\OpportunityActionNotExecutableException;
 use App\Library\Opportunity\Exceptions\OpportunityActionVerificationException;
 use App\Library\Opportunity\OpportunityActionExecutor;
 use App\Library\Opportunity\OpportunityActionHash;
+use App\Library\Opportunity\OpportunityActionRegistry;
 use App\Models\Business;
 use App\Models\Customer;
 use App\Models\Opportunity;
@@ -302,6 +303,84 @@ class OpportunityActionExecutorTest extends TestCase
         ]);
 
         $this->assertRejectsWithoutMutation($opportunity, $execution, $business, OpportunityActionNotExecutableException::class);
+    }
+
+    public function test_supports_returns_true_for_the_exact_add_phone_capability_mapping(): void
+    {
+        $executor = app(OpportunityActionExecutor::class);
+        $definition = OpportunityActionRegistry::get('add_phone');
+
+        $this->assertTrue($executor->supports('add_phone', $definition));
+    }
+
+    public function test_supports_returns_false_for_another_action_key(): void
+    {
+        $executor = app(OpportunityActionExecutor::class);
+        $definition = OpportunityActionRegistry::get('add_phone');
+
+        $this->assertFalse($executor->supports('add_email', $definition));
+    }
+
+    public function test_supports_returns_false_for_another_handler_identifier(): void
+    {
+        $executor = app(OpportunityActionExecutor::class);
+        $definition = array_merge(OpportunityActionRegistry::get('add_phone'), [
+            'handler_identifier' => 'business.update_email',
+        ]);
+
+        $this->assertFalse($executor->supports('add_phone', $definition));
+    }
+
+    public function test_supports_returns_false_for_another_verifier_identifier(): void
+    {
+        $executor = app(OpportunityActionExecutor::class);
+        $definition = array_merge(OpportunityActionRegistry::get('add_phone'), [
+            'verifier_identifier' => 'business.email_matches_parameter',
+        ]);
+
+        $this->assertFalse($executor->supports('add_phone', $definition));
+    }
+
+    public function test_supports_returns_false_for_another_completion_policy(): void
+    {
+        $executor = app(OpportunityActionExecutor::class);
+        $definition = array_merge(OpportunityActionRegistry::get('add_phone'), [
+            'completion_policy' => OpportunityCompletionPolicy::CustomerAttested,
+        ]);
+
+        $this->assertFalse($executor->supports('add_phone', $definition));
+    }
+
+    public function test_supports_result_is_unaffected_by_approval_required(): void
+    {
+        $executor = app(OpportunityActionExecutor::class);
+        $definition = array_merge(OpportunityActionRegistry::get('add_phone'), [
+            'approval_required' => false,
+        ]);
+
+        $this->assertTrue($executor->supports('add_phone', $definition));
+    }
+
+    public function test_supports_result_is_unaffected_by_mutates_business_data(): void
+    {
+        $executor = app(OpportunityActionExecutor::class);
+        $definition = array_merge(OpportunityActionRegistry::get('add_phone'), [
+            'mutates_business_data' => false,
+        ]);
+
+        $this->assertTrue($executor->supports('add_phone', $definition));
+    }
+
+    public function test_supports_performs_no_business_mutation(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $originalPhone = $business->phone;
+        $executor = app(OpportunityActionExecutor::class);
+        $definition = OpportunityActionRegistry::get('add_phone');
+
+        $executor->supports('add_phone', $definition);
+
+        $this->assertSame($originalPhone, $business->fresh()->phone);
     }
 
     public function test_missing_owning_customer_rejects_safely(): void
