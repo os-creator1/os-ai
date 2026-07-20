@@ -4,29 +4,50 @@
 
     use App\Http\Controllers\Controller;
     use App\Models\Reports;
+    use App\Repositories\Contracts\BusinessRepository;
+    use App\Repositories\Contracts\OpportunityRepository;
     use App\Repositories\Contracts\UserRepository;
     use ArielMejiaDev\LarapexCharts\LarapexChart;
     use Carbon\Carbon;
+    use Illuminate\Support\Collection;
     use Illuminate\Support\Facades\Auth;
     use Illuminate\Support\Facades\DB;
     use Illuminate\Support\Facades\Cache;
 
     class UserController extends Controller
     {
+        /**
+         * Fixed, source-controlled top-N count for the dashboard Opportunity
+         * panel (RFC-002 §43) — matches the existing userAnnouncements
+         * ->take(5) convention already used in this same method, never
+         * request input.
+         */
+        private const OPPORTUNITY_PANEL_LIMIT = 5;
+
         protected UserRepository $users;
+
+        protected BusinessRepository $businessRepository;
+
+        protected OpportunityRepository $opportunityRepository;
 
         /**
          * UserController constructor.
          */
-        public function __construct(UserRepository $users)
-        {
+        public function __construct(
+            UserRepository $users,
+            BusinessRepository $businessRepository,
+            OpportunityRepository $opportunityRepository
+        ) {
             $this->users = $users;
+            $this->businessRepository = $businessRepository;
+            $this->opportunityRepository = $opportunityRepository;
         }
 
 
         public function index()
         {
             $userId = Auth::id();
+            $opportunities = $this->opportunityPanel();
 
             $breadcrumbs = [
                 ['link' => url('dashboard'), 'name' => __('locale.menu.Dashboard')],
@@ -152,8 +173,34 @@
                 'total_sms_sent',
                 'deliveredCount',
                 'undeliveredCount',
-                'charts'
+                'charts',
+                'opportunities'
             ));
+        }
+
+        /**
+         * The bounded top-N actionable Opportunity list for the dashboard
+         * panel (RFC-002 §43) — null whenever the panel must not render at
+         * all: the feature is disabled, or the authenticated Customer has no
+         * primary Business yet. Never queries Opportunities (or Business,
+         * for this panel) when disabled — the config check is this method's
+         * first statement.
+         */
+        private function opportunityPanel(): ?Collection
+        {
+            if (! config('opportunity.enabled', false)) {
+                return null;
+            }
+
+            $customer = Auth::user()->customer;
+
+            $business = $this->businessRepository->findPrimaryByCustomer($customer->user_id);
+
+            if ($business === null) {
+                return null;
+            }
+
+            return $this->opportunityRepository->topForCustomer($business, self::OPPORTUNITY_PANEL_LIMIT);
         }
 
         public function createLineChart($title, $subtitle, $data)

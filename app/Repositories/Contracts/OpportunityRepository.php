@@ -37,6 +37,18 @@ interface OpportunityRepository extends BaseRepository
 
     public function paginateForCustomer(Business $business, array $filters): LengthAwarePaginator;
 
+    /**
+     * The bounded top-N actionable Opportunities for a customer's dashboard
+     * panel (RFC-002 §43) — always freshness=current and status in
+     * (open, awaiting_approval, in_progress), ordered identically to
+     * paginateForCustomer()'s own §35 ordering. An internal bounded read:
+     * the only production caller supplies a fixed private constant, so
+     * $limit is never validated here.
+     *
+     * @return Collection<int, Opportunity>
+     */
+    public function topForCustomer(Business $business, int $limit): Collection;
+
     public function paginateForAdmin(array $filters): LengthAwarePaginator;
 
     public function create(array $attributes): Opportunity;

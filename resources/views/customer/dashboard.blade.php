@@ -180,6 +180,38 @@
 
         </div>
 
+        @if($opportunities !== null)
+            <div class="row match-height">
+                <div class="col-12">
+                    <div class="card">
+                        <div class="card-header d-flex justify-content-between align-items-center">
+                            <h4 class="card-title">Opportunities</h4>
+                            <a href="{{ route('customer.opportunities.index') }}" class="btn btn-sm btn-outline-primary">
+                                View all opportunities
+                            </a>
+                        </div>
+                        <div class="card-body">
+                            @forelse($opportunities as $opportunity)
+                                <div class="d-flex justify-content-between align-items-center py-1 border-bottom">
+                                    <div>
+                                        <a href="{{ route('customer.opportunities.show', $opportunity->id) }}">{{ $opportunity->title }}</a>
+                                        <div class="text-muted small">
+                                            {{ ucwords(str_replace('_', ' ', $opportunity->status->value)) }}
+                                            @if ($opportunity->first_detected_at)
+                                                &middot; {{ $opportunity->first_detected_at->format('M j, Y') }}
+                                            @endif
+                                        </div>
+                                    </div>
+                                </div>
+                            @empty
+                                <p class="text-muted mb-0">No opportunities are available right now.</p>
+                            @endforelse
+                        </div>
+                    </div>
+                </div>
+            </div>
+        @endif
+
         <div class="row match-height">
 
             <div class="col-lg-3 col-sm-6 col-12">

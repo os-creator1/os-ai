@@ -298,6 +298,11 @@ class OpportunityManagerSweepExpiredSnoozesTest extends TestCase
                 return $this->real->paginateForCustomer($business, $filters);
             }
 
+            public function topForCustomer(Business $business, int $limit): Collection
+            {
+                return $this->real->topForCustomer($business, $limit);
+            }
+
             public function paginateForAdmin(array $filters): LengthAwarePaginator
             {
                 return $this->real->paginateForAdmin($filters);
@@ -406,6 +411,11 @@ class OpportunityManagerSweepExpiredSnoozesTest extends TestCase
             public function paginateForCustomer(Business $business, array $filters): LengthAwarePaginator
             {
                 return $this->real->paginateForCustomer($business, $filters);
+            }
+
+            public function topForCustomer(Business $business, int $limit): Collection
+            {
+                return $this->real->topForCustomer($business, $limit);
             }
 
             public function paginateForAdmin(array $filters): LengthAwarePaginator

@@ -9,6 +9,7 @@ use App\Repositories\Contracts\OpportunityRepository;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Tests\Feature\Opportunity\Concerns\CreatesOpportunityTestData;
 use Tests\TestCase;
@@ -544,6 +545,190 @@ class OpportunityRepositoryTest extends TestCase
         $this->assertLessThan(array_search($lowerUrgency->id, $ids), array_search($higherUrgency->id, $ids));
         $this->assertLessThan(array_search($later->id, $ids), array_search($earlier->id, $ids));
         $this->assertLessThan(array_search($secondCreated->id, $ids), array_search($firstCreated->id, $ids));
+    }
+
+    public function test_top_for_customer_is_scoped_to_the_business(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $otherBusiness = $this->createBusinessForOpportunities();
+        $mine = $this->createOpportunity($business, ['fingerprint' => hash('sha256', 'top-mine')]);
+        $this->createOpportunity($otherBusiness, ['fingerprint' => hash('sha256', 'top-not-mine')]);
+        $repository = app(OpportunityRepository::class);
+
+        $ids = $repository->topForCustomer($business, 5)->pluck('id')->all();
+
+        $this->assertSame([$mine->id], $ids);
+    }
+
+    public function test_top_for_customer_excludes_stale(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $this->createOpportunity($business, [
+            'fingerprint' => hash('sha256', 'top-stale'),
+            'freshness' => OpportunityFreshness::Stale->value,
+        ]);
+        $repository = app(OpportunityRepository::class);
+
+        $this->assertCount(0, $repository->topForCustomer($business, 5));
+    }
+
+    public function test_top_for_customer_includes_open(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $open = $this->createOpportunity($business, [
+            'fingerprint' => hash('sha256', 'top-open'),
+            'status' => OpportunityStatus::Open->value,
+        ]);
+        $repository = app(OpportunityRepository::class);
+
+        $this->assertSame([$open->id], $repository->topForCustomer($business, 5)->pluck('id')->all());
+    }
+
+    public function test_top_for_customer_includes_awaiting_approval(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $awaitingApproval = $this->createOpportunity($business, [
+            'fingerprint' => hash('sha256', 'top-awaiting-approval'),
+            'status' => OpportunityStatus::AwaitingApproval->value,
+        ]);
+        $repository = app(OpportunityRepository::class);
+
+        $this->assertSame([$awaitingApproval->id], $repository->topForCustomer($business, 5)->pluck('id')->all());
+    }
+
+    public function test_top_for_customer_includes_in_progress(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $inProgress = $this->createOpportunity($business, [
+            'fingerprint' => hash('sha256', 'top-in-progress'),
+            'status' => OpportunityStatus::InProgress->value,
+        ]);
+        $repository = app(OpportunityRepository::class);
+
+        $this->assertSame([$inProgress->id], $repository->topForCustomer($business, 5)->pluck('id')->all());
+    }
+
+    public function test_top_for_customer_excludes_snoozed(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $this->createOpportunity($business, [
+            'fingerprint' => hash('sha256', 'top-snoozed'),
+            'status' => OpportunityStatus::Snoozed->value,
+        ]);
+        $repository = app(OpportunityRepository::class);
+
+        $this->assertCount(0, $repository->topForCustomer($business, 5));
+    }
+
+    public function test_top_for_customer_excludes_completed(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $this->createOpportunity($business, [
+            'fingerprint' => hash('sha256', 'top-completed'),
+            'status' => OpportunityStatus::Completed->value,
+        ]);
+        $repository = app(OpportunityRepository::class);
+
+        $this->assertCount(0, $repository->topForCustomer($business, 5));
+    }
+
+    public function test_top_for_customer_excludes_dismissed(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $this->createOpportunity($business, [
+            'fingerprint' => hash('sha256', 'top-dismissed'),
+            'status' => OpportunityStatus::Dismissed->value,
+        ]);
+        $repository = app(OpportunityRepository::class);
+
+        $this->assertCount(0, $repository->topForCustomer($business, 5));
+    }
+
+    /**
+     * Mirrors paginateForCustomer()'s own exact tie-break sequence test —
+     * topForCustomer() reuses the identical ordering clauses.
+     */
+    public function test_top_for_customer_preserves_priority_impact_urgency_and_first_detected_at_ordering(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $repository = app(OpportunityRepository::class);
+        $now = now();
+
+        $higherImpact = $this->createOpportunity($business, [
+            'fingerprint' => hash('sha256', 'top-tie-impact-high'),
+            'priority_score' => 50, 'impact' => 5, 'urgency' => 1, 'first_detected_at' => $now,
+        ]);
+        $lowerImpact = $this->createOpportunity($business, [
+            'fingerprint' => hash('sha256', 'top-tie-impact-low'),
+            'priority_score' => 50, 'impact' => 3, 'urgency' => 5, 'first_detected_at' => $now,
+        ]);
+
+        $higherUrgency = $this->createOpportunity($business, [
+            'fingerprint' => hash('sha256', 'top-tie-urgency-high'),
+            'priority_score' => 20, 'impact' => 2, 'urgency' => 5, 'first_detected_at' => $now,
+        ]);
+        $lowerUrgency = $this->createOpportunity($business, [
+            'fingerprint' => hash('sha256', 'top-tie-urgency-low'),
+            'priority_score' => 20, 'impact' => 2, 'urgency' => 1, 'first_detected_at' => (clone $now)->addMinute(),
+        ]);
+
+        $earlier = $this->createOpportunity($business, [
+            'fingerprint' => hash('sha256', 'top-tie-time-earlier'),
+            'priority_score' => 10, 'impact' => 1, 'urgency' => 1, 'first_detected_at' => (clone $now)->subDay(),
+        ]);
+        $later = $this->createOpportunity($business, [
+            'fingerprint' => hash('sha256', 'top-tie-time-later'),
+            'priority_score' => 10, 'impact' => 1, 'urgency' => 1, 'first_detected_at' => $now,
+        ]);
+
+        $ids = $repository->topForCustomer($business, 10)->pluck('id')->all();
+
+        $this->assertLessThan(array_search($lowerImpact->id, $ids), array_search($higherImpact->id, $ids));
+        $this->assertLessThan(array_search($lowerUrgency->id, $ids), array_search($higherUrgency->id, $ids));
+        $this->assertLessThan(array_search($later->id, $ids), array_search($earlier->id, $ids));
+    }
+
+    public function test_top_for_customer_uses_id_ascending_as_the_deterministic_tie_breaker(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $repository = app(OpportunityRepository::class);
+        $sharedTimestamp = now();
+
+        $firstCreated = $this->createOpportunity($business, [
+            'fingerprint' => hash('sha256', 'top-tie-id-first'),
+            'priority_score' => 5, 'impact' => 1, 'urgency' => 1, 'first_detected_at' => $sharedTimestamp,
+        ]);
+        $secondCreated = $this->createOpportunity($business, [
+            'fingerprint' => hash('sha256', 'top-tie-id-second'),
+            'priority_score' => 5, 'impact' => 1, 'urgency' => 1, 'first_detected_at' => $sharedTimestamp,
+        ]);
+
+        $ids = $repository->topForCustomer($business, 10)->pluck('id')->all();
+
+        $this->assertSame([$firstCreated->id, $secondCreated->id], $ids);
+    }
+
+    public function test_top_for_customer_enforces_the_hard_limit(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $repository = app(OpportunityRepository::class);
+
+        for ($i = 0; $i < 8; $i++) {
+            $this->createOpportunity($business, ['fingerprint' => hash('sha256', 'top-limit-' . $i)]);
+        }
+
+        $this->assertCount(5, $repository->topForCustomer($business, 5));
+    }
+
+    public function test_top_for_customer_returns_an_empty_collection_when_none_are_eligible(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $repository = app(OpportunityRepository::class);
+
+        $result = $repository->topForCustomer($business, 5);
+
+        $this->assertInstanceOf(Collection::class, $result);
+        $this->assertCount(0, $result);
     }
 
     public function test_paginate_for_admin_returns_across_tenants(): void

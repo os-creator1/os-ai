@@ -2,6 +2,8 @@
 
 namespace App\Repositories\Eloquent;
 
+use App\Enums\Opportunity\OpportunityFreshness;
+use App\Enums\Opportunity\OpportunityStatus;
 use App\Enums\Opportunity\OpportunityWorkerKey;
 use App\Models\Business;
 use App\Models\Opportunity;
@@ -120,6 +122,28 @@ class EloquentOpportunityRepository extends EloquentBaseRepository implements Op
             ->orderBy('first_detected_at')
             ->orderBy('id')
             ->paginate(self::MAX_PER_PAGE);
+    }
+
+    public function topForCustomer(Business $business, int $limit): Collection
+    {
+        $actionableStatuses = [
+            OpportunityStatus::Open->value,
+            OpportunityStatus::AwaitingApproval->value,
+            OpportunityStatus::InProgress->value,
+        ];
+
+        return $this->query()
+            ->where('business_id', $business->id)
+            ->where('freshness', OpportunityFreshness::Current->value)
+            ->whereIn('status', $actionableStatuses)
+            ->orderByRaw('CASE WHEN status IN (?, ?, ?) THEN 0 ELSE 1 END', $actionableStatuses)
+            ->orderByDesc('priority_score')
+            ->orderByDesc('impact')
+            ->orderByDesc('urgency')
+            ->orderBy('first_detected_at')
+            ->orderBy('id')
+            ->limit($limit)
+            ->get();
     }
 
     public function paginateForAdmin(array $filters): LengthAwarePaginator
