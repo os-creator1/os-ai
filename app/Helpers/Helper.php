@@ -909,6 +909,14 @@
                         'icon'   => 'home',
                         'access' => 'access_backend',
                     ],
+                    ...(config('opportunity.enabled', false) ? [[
+                        'url'    => url('opportunities'),
+                        'slug'   => 'opportunities',
+                        'name'   => 'Opportunities',
+                        'i18n'   => 'Opportunities',
+                        'icon'   => 'target',
+                        'access' => 'access_backend',
+                    ]] : []),
                     [
                         'url'     => '',
                         'name'    => 'Sending',

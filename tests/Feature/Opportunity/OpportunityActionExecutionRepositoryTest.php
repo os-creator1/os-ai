@@ -104,6 +104,122 @@ class OpportunityActionExecutionRepositoryTest extends TestCase
         $this->assertSame(2, $repository->nextAttemptNumberForUpdate($opportunity->id));
     }
 
+    public function test_find_latest_for_opportunity_returns_the_highest_attempt_number(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $user = $this->createUser();
+        $opportunity = $this->createOpportunity($business, ['fingerprint' => hash('sha256', 'exec-latest-1')]);
+        $repository = app(OpportunityActionExecutionRepository::class);
+
+        $this->createOpportunityActionExecution($opportunity, $user, [
+            'idempotency_key' => hash('sha256', 'latest-attempt-1'),
+            'attempt_number' => 1,
+            'status' => OpportunityActionExecutionStatus::Failed->value,
+        ]);
+        $latest = $this->createOpportunityActionExecution($opportunity, $user, [
+            'idempotency_key' => hash('sha256', 'latest-attempt-2'),
+            'attempt_number' => 2,
+            'status' => OpportunityActionExecutionStatus::Pending->value,
+        ]);
+
+        $found = $repository->findLatestForOpportunity($opportunity->id);
+
+        $this->assertNotNull($found);
+        $this->assertSame($latest->id, $found->id);
+    }
+
+    public function test_find_latest_for_opportunity_uses_id_descending_as_a_deterministic_tie_breaker(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $user = $this->createUser();
+        $opportunity = $this->createOpportunity($business, ['fingerprint' => hash('sha256', 'exec-latest-2')]);
+        $repository = app(OpportunityActionExecutionRepository::class);
+
+        $this->createOpportunityActionExecution($opportunity, $user, [
+            'idempotency_key' => hash('sha256', 'latest-tie-1'),
+            'attempt_number' => 1,
+            'status' => OpportunityActionExecutionStatus::Failed->value,
+        ]);
+        $secondCreated = $this->createOpportunityActionExecution($opportunity, $user, [
+            'idempotency_key' => hash('sha256', 'latest-tie-2'),
+            'attempt_number' => 1,
+            'status' => OpportunityActionExecutionStatus::Failed->value,
+        ]);
+
+        $found = $repository->findLatestForOpportunity($opportunity->id);
+
+        $this->assertSame($secondCreated->id, $found->id);
+    }
+
+    public function test_find_latest_for_opportunity_is_eligible_regardless_of_status(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $user = $this->createUser();
+        $repository = app(OpportunityActionExecutionRepository::class);
+
+        foreach ([
+            OpportunityActionExecutionStatus::Pending,
+            OpportunityActionExecutionStatus::Running,
+            OpportunityActionExecutionStatus::Failed,
+            OpportunityActionExecutionStatus::Succeeded,
+        ] as $status) {
+            $opportunity = $this->createOpportunity($business, ['fingerprint' => hash('sha256', 'exec-latest-status-' . $status->value)]);
+            $execution = $this->createOpportunityActionExecution($opportunity, $user, [
+                'idempotency_key' => hash('sha256', 'latest-status-' . $status->value),
+                'status' => $status->value,
+            ]);
+
+            $found = $repository->findLatestForOpportunity($opportunity->id);
+
+            $this->assertNotNull($found);
+            $this->assertSame($execution->id, $found->id);
+        }
+    }
+
+    public function test_find_latest_for_opportunity_excludes_another_opportunity(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $user = $this->createUser();
+        $opportunity = $this->createOpportunity($business, ['fingerprint' => hash('sha256', 'exec-latest-3')]);
+        $otherOpportunity = $this->createOpportunity($business, ['fingerprint' => hash('sha256', 'exec-latest-3-other')]);
+        $repository = app(OpportunityActionExecutionRepository::class);
+
+        $this->createOpportunityActionExecution($otherOpportunity, $user, [
+            'idempotency_key' => hash('sha256', 'latest-other-opportunity'),
+        ]);
+
+        $this->assertNull($repository->findLatestForOpportunity($opportunity->id));
+    }
+
+    public function test_find_latest_for_opportunity_returns_null_when_none_exists(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $opportunity = $this->createOpportunity($business, ['fingerprint' => hash('sha256', 'exec-latest-4')]);
+        $repository = app(OpportunityActionExecutionRepository::class);
+
+        $this->assertNull($repository->findLatestForOpportunity($opportunity->id));
+    }
+
+    public function test_find_latest_for_opportunity_does_not_modify_the_returned_execution(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $user = $this->createUser();
+        $opportunity = $this->createOpportunity($business, ['fingerprint' => hash('sha256', 'exec-latest-5')]);
+        $repository = app(OpportunityActionExecutionRepository::class);
+
+        $execution = $this->createOpportunityActionExecution($opportunity, $user, [
+            'idempotency_key' => hash('sha256', 'latest-untouched'),
+            'status' => OpportunityActionExecutionStatus::Failed->value,
+        ]);
+        $originalUpdatedAt = $execution->updated_at;
+
+        $found = $repository->findLatestForOpportunity($opportunity->id);
+
+        $this->assertNotNull($found);
+        $this->assertTrue($originalUpdatedAt->equalTo($found->updated_at));
+        $this->assertSame($execution->status, $found->status);
+    }
+
     public function test_find_latest_failed_matching_returns_the_matching_execution(): void
     {
         [$repository, $opportunity, $user] = $this->retryRepositoryFixture();

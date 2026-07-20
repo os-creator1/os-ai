@@ -524,4 +524,15 @@
         Route::put('/', 'BusinessController@update')->name('update');
     });
 
+    /*
+    |--------------------------------------------------------------------------
+    | Opportunity queue (RFC-002)
+    |--------------------------------------------------------------------------
+    */
+
+    Route::prefix('opportunities')->name('opportunities.')->group(function () {
+        Route::get('/', 'OpportunityController@index')->name('index');
+        Route::get('/{opportunity}', 'OpportunityController@show')->name('show')->whereNumber('opportunity');
+    });
+
 

@@ -13,6 +13,15 @@ interface OpportunityActionExecutionRepository extends BaseRepository
      */
     public function findActiveForOpportunity(int $opportunityId): ?OpportunityActionExecution;
 
+    /**
+     * The most recent execution for this Opportunity regardless of status
+     * (pending/running/succeeded/failed) — for customer-facing read display
+     * only. Ordered by attempt_number descending, then id descending as a
+     * deterministic tie-breaker. Unlocked: this is a display read, never
+     * mutated by the caller.
+     */
+    public function findLatestForOpportunity(int $opportunityId): ?OpportunityActionExecution;
+
     public function findByIdempotencyKey(string $key): ?OpportunityActionExecution;
 
     public function nextAttemptNumberForUpdate(int $opportunityId): int;

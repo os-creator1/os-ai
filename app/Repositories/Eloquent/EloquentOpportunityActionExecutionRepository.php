@@ -41,6 +41,15 @@ class EloquentOpportunityActionExecutionRepository extends EloquentBaseRepositor
             ->first();
     }
 
+    public function findLatestForOpportunity(int $opportunityId): ?OpportunityActionExecution
+    {
+        return $this->query()
+            ->where('opportunity_id', $opportunityId)
+            ->orderByDesc('attempt_number')
+            ->orderByDesc('id')
+            ->first();
+    }
+
     public function findByIdempotencyKey(string $key): ?OpportunityActionExecution
     {
         return $this->query()->where('idempotency_key', $key)->first();
