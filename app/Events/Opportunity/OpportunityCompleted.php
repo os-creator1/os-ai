@@ -15,7 +15,7 @@ class OpportunityCompleted implements ShouldDispatchAfterCommit
         public readonly int $opportunityId,
         public readonly int $businessId,
         public readonly int $actorUserId,
-        public readonly int $actionExecutionId,
+        public readonly ?int $actionExecutionId,
         public readonly string $completionPolicy,
     ) {
     }

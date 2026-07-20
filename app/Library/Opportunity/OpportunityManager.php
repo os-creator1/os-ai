@@ -42,6 +42,7 @@ use App\Library\Opportunity\Exceptions\InvalidSnoozeUntilException;
 use App\Library\Opportunity\Exceptions\OpportunityActionNotConfigurableException;
 use App\Library\Opportunity\Exceptions\OpportunityActionNotExecutableException;
 use App\Library\Opportunity\Exceptions\OpportunityApprovalNotRequiredException;
+use App\Library\Opportunity\Exceptions\OpportunityAttestationNotAvailableException;
 use App\Library\Opportunity\Exceptions\OpportunityEngineDisabledException;
 use App\Library\Opportunity\Exceptions\OpportunityEvidenceValidationException;
 use App\Library\Opportunity\Exceptions\RunAbandonedException;
@@ -638,6 +639,83 @@ class OpportunityManager
         }
 
         return $reopenedCount;
+    }
+
+    /**
+     * Customer self-report completion (RFC-002 §17, §32) — a distinct,
+     * lighter-weight path from the `add_phone` executable-action machinery:
+     * it only rechecks ownership and the locked Opportunity's own persisted
+     * `recommended_action.completion_policy`, never a full hash/registry
+     * re-derivation, since no handler is ever invoked and no Business data
+     * is ever touched. Policy validation runs before the completed-state
+     * no-op check, so a completed system_verified/external_verified
+     * Opportunity is never silently absorbed as a customer_attested
+     * duplicate. Never creates an OpportunityActionExecution row.
+     */
+    public function attestComplete(Opportunity $opportunity, Customer $customer): Opportunity
+    {
+        if (! config('opportunity.enabled', false)) {
+            throw new OpportunityEngineDisabledException();
+        }
+
+        return DB::transaction(function () use ($opportunity, $customer) {
+            $lockedOpportunity = $this->opportunityRepository->findOwnedForUpdate($opportunity->id, $opportunity->business_id);
+
+            $lockedOpportunity = $this->assertOpportunityOwnership($customer, $lockedOpportunity);
+
+            $recommendedAction = $lockedOpportunity->recommended_action;
+
+            if (! is_array($recommendedAction)
+                || ! array_key_exists('completion_policy', $recommendedAction)
+                || $recommendedAction['completion_policy'] !== 'customer_attested'
+            ) {
+                throw new OpportunityAttestationNotAvailableException();
+            }
+
+            if ($lockedOpportunity->status === OpportunityStatus::Completed) {
+                return $lockedOpportunity;
+            }
+
+            if ($lockedOpportunity->status !== OpportunityStatus::Open || $lockedOpportunity->freshness !== OpportunityFreshness::Current) {
+                throw new OpportunityAttestationNotAvailableException();
+            }
+
+            $activeExecution = $this->actionExecutionRepository->findActiveForOpportunity($lockedOpportunity->id);
+
+            if ($activeExecution !== null) {
+                throw new OpportunityAttestationNotAvailableException();
+            }
+
+            $now = CarbonImmutable::now();
+
+            $updated = $this->opportunityRepository->update($lockedOpportunity, [
+                'status' => OpportunityStatus::Completed->value,
+                'completed_at' => $now,
+            ]);
+
+            $this->transitionRepository->create([
+                'opportunity_id' => $lockedOpportunity->id,
+                'category' => OpportunityTransitionCategory::Workflow->value,
+                'from_status' => OpportunityStatus::Open->value,
+                'to_status' => OpportunityStatus::Completed->value,
+                'actor_type' => OpportunityTransitionActorType::Customer->value,
+                'actor_user_id' => $customer->user_id,
+                'opportunity_run_id' => null,
+                'action_execution_id' => null,
+                'reason_code' => 'customer_attested',
+                'safe_note' => 'Marked complete by the customer; not independently verified.',
+            ]);
+
+            OpportunityCompleted::dispatch(
+                $lockedOpportunity->id,
+                $lockedOpportunity->business_id,
+                $customer->user_id,
+                null,
+                'customer_attested',
+            );
+
+            return $updated;
+        });
     }
 
     /**
