@@ -91,7 +91,35 @@
                 $schedule->command('automation:run')->everyFiveMinutes();
                 $schedule->command('app:clean-database')->monthly();
                 // $schedule->command('jobs:cleanup-monitors')->everyThirtyMinutes();
+
+                // Registered unconditionally (RFC-002 §33) — the command
+                // itself owns opportunity.enabled no-op behavior, not the
+                // scheduler.
+                $schedule->command('opportunity:sweep-expired-snoozes')
+                    ->cron('*/' . $this->opportunitySnoozeSweepCronMinutes() . ' * * * *');
             }
+        }
+
+        /**
+         * Normalizes opportunity.snooze_sweep_minutes into a safe cron
+         * step value (RFC-002 §14, §33): an integer or digit-only string
+         * from 1 through 59, otherwise the RFC's own documented default.
+         */
+        private function opportunitySnoozeSweepCronMinutes(): int
+        {
+            $configured = config('opportunity.snooze_sweep_minutes', 15);
+
+            if (! is_int($configured) && ! (is_string($configured) && ctype_digit($configured))) {
+                return 15;
+            }
+
+            $minutes = (int) $configured;
+
+            if ($minutes < 1 || $minutes > 59) {
+                return 15;
+            }
+
+            return $minutes;
         }
 
         /**
