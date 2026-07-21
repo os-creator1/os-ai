@@ -146,6 +146,38 @@
                             </form>
                         @endif
 
+                        @if (in_array($opportunity->status->value, ['open', 'awaiting_approval'], true))
+                            <hr>
+
+                            <form method="POST" action="{{ route('customer.opportunities.snooze', $opportunity->id) }}" class="mb-2">
+                                @csrf
+                                <label class="form-label" for="duration">Snooze for</label>
+                                <div class="d-flex flex-wrap gap-1">
+                                    <select class="form-control" style="max-width: 200px;" id="duration" name="duration">
+                                        <option value="1_day" @selected(old('duration') === '1_day')>1 day</option>
+                                        <option value="3_days" @selected(old('duration') === '3_days')>3 days</option>
+                                        <option value="1_week" @selected(old('duration') === '1_week')>1 week</option>
+                                    </select>
+                                    <button type="submit" class="btn btn-outline-secondary">Snooze opportunity</button>
+                                </div>
+                            </form>
+
+                            <form method="POST" action="{{ route('customer.opportunities.dismiss', $opportunity->id) }}" class="mb-2">
+                                @csrf
+                                <p class="text-muted small mb-1">Dismissing removes this opportunity from your actionable queue.</p>
+                                <button type="submit" class="btn btn-outline-danger">Dismiss opportunity</button>
+                            </form>
+                        @endif
+
+                        @if (in_array($opportunity->status->value, ['snoozed', 'dismissed', 'completed'], true))
+                            <hr>
+
+                            <form method="POST" action="{{ route('customer.opportunities.reopen', $opportunity->id) }}" class="mb-2">
+                                @csrf
+                                <button type="submit" class="btn btn-outline-primary">Reopen opportunity</button>
+                            </form>
+                        @endif
+
                         <hr>
 
                         <h5>Latest execution</h5>

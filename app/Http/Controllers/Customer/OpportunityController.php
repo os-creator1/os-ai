@@ -5,9 +5,11 @@ namespace App\Http\Controllers\Customer;
 use App\Http\Controllers\Controller;
 use App\Enums\Opportunity\OpportunityStatus;
 use App\Http\Requests\Opportunity\ConfigureOpportunityActionRequest;
+use App\Http\Requests\Opportunity\SnoozeOpportunityRequest;
 use App\Library\Opportunity\Exceptions\InvalidOpportunityActionParametersException;
 use App\Library\Opportunity\Exceptions\InvalidOpportunityExecutionStateException;
 use App\Library\Opportunity\Exceptions\InvalidOpportunityStateException;
+use App\Library\Opportunity\Exceptions\InvalidSnoozeUntilException;
 use App\Library\Opportunity\Exceptions\OpportunityActionNotConfigurableException;
 use App\Library\Opportunity\Exceptions\OpportunityActionNotExecutableException;
 use App\Library\Opportunity\Exceptions\OpportunityApprovalNotRequiredException;
@@ -201,6 +203,80 @@ class OpportunityController extends Controller
         return redirect()->route('customer.opportunities.show', $ownedOpportunity->id)->with([
             'status' => 'success',
             'message' => 'Approval confirmed. The action has started.',
+        ]);
+    }
+
+    public function snooze(SnoozeOpportunityRequest $request, int $opportunity): RedirectResponse
+    {
+        $this->ensureOpportunityEngineEnabled();
+
+        [$customer, $ownedOpportunity, $redirect] = $this->resolveMutationTarget($opportunity);
+
+        if ($redirect !== null) {
+            return $redirect;
+        }
+
+        // A fixed, server-computed instant — never a client-supplied
+        // timestamp — mapped from the validated duration key only.
+        $until = match ($request->validated('duration')) {
+            '1_day' => now()->addDay(),
+            '3_days' => now()->addDays(3),
+            '1_week' => now()->addWeek(),
+        };
+
+        try {
+            $this->opportunityManager->snooze($ownedOpportunity, $customer, $until);
+        } catch (InvalidOpportunityStateException|InvalidSnoozeUntilException) {
+            return $this->safeErrorRedirect("This action isn't available for this opportunity right now.");
+        }
+
+        return redirect()->route('customer.opportunities.show', $ownedOpportunity->id)->with([
+            'status' => 'success',
+            'message' => 'Opportunity snoozed.',
+        ]);
+    }
+
+    public function dismiss(int $opportunity): RedirectResponse
+    {
+        $this->ensureOpportunityEngineEnabled();
+
+        [$customer, $ownedOpportunity, $redirect] = $this->resolveMutationTarget($opportunity);
+
+        if ($redirect !== null) {
+            return $redirect;
+        }
+
+        try {
+            $this->opportunityManager->dismiss($ownedOpportunity, $customer);
+        } catch (InvalidOpportunityStateException) {
+            return $this->safeErrorRedirect("This action isn't available for this opportunity right now.");
+        }
+
+        return redirect()->route('customer.opportunities.show', $ownedOpportunity->id)->with([
+            'status' => 'success',
+            'message' => 'Opportunity dismissed.',
+        ]);
+    }
+
+    public function reopen(int $opportunity): RedirectResponse
+    {
+        $this->ensureOpportunityEngineEnabled();
+
+        [$customer, $ownedOpportunity, $redirect] = $this->resolveMutationTarget($opportunity);
+
+        if ($redirect !== null) {
+            return $redirect;
+        }
+
+        try {
+            $this->opportunityManager->reopen($ownedOpportunity, $customer, 'customer_reopened');
+        } catch (InvalidOpportunityStateException) {
+            return $this->safeErrorRedirect("This action isn't available for this opportunity right now.");
+        }
+
+        return redirect()->route('customer.opportunities.show', $ownedOpportunity->id)->with([
+            'status' => 'success',
+            'message' => 'Opportunity reopened.',
         ]);
     }
 

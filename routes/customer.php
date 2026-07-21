@@ -545,6 +545,18 @@
         Route::post('/{opportunity}/confirm-approval', 'OpportunityController@confirmApproval')
             ->whereNumber('opportunity')
             ->name('confirm-approval');
+
+        Route::post('/{opportunity}/snooze', 'OpportunityController@snooze')
+            ->whereNumber('opportunity')
+            ->name('snooze');
+
+        Route::post('/{opportunity}/dismiss', 'OpportunityController@dismiss')
+            ->whereNumber('opportunity')
+            ->name('dismiss');
+
+        Route::post('/{opportunity}/reopen', 'OpportunityController@reopen')
+            ->whereNumber('opportunity')
+            ->name('reopen');
     });
 
 
