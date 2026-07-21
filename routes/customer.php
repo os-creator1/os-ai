@@ -533,6 +533,18 @@
     Route::prefix('opportunities')->name('opportunities.')->group(function () {
         Route::get('/', 'OpportunityController@index')->name('index');
         Route::get('/{opportunity}', 'OpportunityController@show')->name('show')->whereNumber('opportunity');
+
+        Route::post('/{opportunity}/configure-action', 'OpportunityController@configureAction')
+            ->whereNumber('opportunity')
+            ->name('configure-action');
+
+        Route::post('/{opportunity}/request-approval', 'OpportunityController@requestApproval')
+            ->whereNumber('opportunity')
+            ->name('request-approval');
+
+        Route::post('/{opportunity}/confirm-approval', 'OpportunityController@confirmApproval')
+            ->whereNumber('opportunity')
+            ->name('confirm-approval');
     });
 
 

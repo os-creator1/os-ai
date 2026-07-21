@@ -4,6 +4,15 @@ namespace App\Http\Controllers\Customer;
 
 use App\Http\Controllers\Controller;
 use App\Enums\Opportunity\OpportunityStatus;
+use App\Http\Requests\Opportunity\ConfigureOpportunityActionRequest;
+use App\Library\Opportunity\Exceptions\InvalidOpportunityActionParametersException;
+use App\Library\Opportunity\Exceptions\InvalidOpportunityExecutionStateException;
+use App\Library\Opportunity\Exceptions\InvalidOpportunityStateException;
+use App\Library\Opportunity\Exceptions\OpportunityActionNotConfigurableException;
+use App\Library\Opportunity\Exceptions\OpportunityActionNotExecutableException;
+use App\Library\Opportunity\Exceptions\OpportunityApprovalNotRequiredException;
+use App\Library\Opportunity\Exceptions\OpportunityEngineDisabledException;
+use App\Library\Opportunity\OpportunityManager;
 use App\Models\Customer;
 use App\Models\Opportunity;
 use App\Models\OpportunityActionExecution;
@@ -16,9 +25,12 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 
 /**
- * Read-only customer Opportunity queue and detail pages (RFC-002 Milestone 4
- * §43, HTTP Slice 1). No mutations exist yet — OpportunityManager is
- * deliberately not a dependency here.
+ * Customer Opportunity queue, detail, and — as of Slice 2A — the
+ * configure/request-approval/confirm-approval mutations for the real
+ * production add_phone action (RFC-002 Milestone 4 §43). Every mutation
+ * only validates input, resolves the tenant-scoped Opportunity, invokes
+ * OpportunityManager, and maps the outcome to a redirect — no workflow
+ * eligibility logic lives here; OpportunityManager remains authoritative.
  */
 class OpportunityController extends Controller
 {
@@ -44,6 +56,7 @@ class OpportunityController extends Controller
         private readonly OpportunityRepository $opportunityRepository,
         private readonly OpportunityActionExecutionRepository $actionExecutionRepository,
         private readonly BusinessRepository $businessRepository,
+        private readonly OpportunityManager $opportunityManager,
     ) {
     }
 
@@ -107,8 +120,129 @@ class OpportunityController extends Controller
         ]);
     }
 
+    public function configureAction(ConfigureOpportunityActionRequest $request, int $opportunity): RedirectResponse
+    {
+        $this->ensureOpportunityEngineEnabled();
+
+        [$customer, $ownedOpportunity, $redirect] = $this->resolveMutationTarget($opportunity);
+
+        if ($redirect !== null) {
+            return $redirect;
+        }
+
+        try {
+            $this->opportunityManager->configureAction($ownedOpportunity, $customer, [
+                'value' => $request->validated('value'),
+            ]);
+        } catch (InvalidOpportunityActionParametersException) {
+            return redirect()->back()->withInput()->withErrors([
+                'value' => 'Enter a valid value.',
+            ]);
+        } catch (OpportunityActionNotConfigurableException) {
+            return $this->safeErrorRedirect("This opportunity's action can't be configured right now.");
+        } catch (InvalidOpportunityStateException) {
+            return $this->safeErrorRedirect("This action isn't available for this opportunity right now.");
+        }
+
+        return redirect()->route('customer.opportunities.show', $ownedOpportunity->id)->with([
+            'status' => 'success',
+            'message' => 'Phone number saved.',
+        ]);
+    }
+
+    public function requestApproval(int $opportunity): RedirectResponse
+    {
+        $this->ensureOpportunityEngineEnabled();
+
+        [$customer, $ownedOpportunity, $redirect] = $this->resolveMutationTarget($opportunity);
+
+        if ($redirect !== null) {
+            return $redirect;
+        }
+
+        try {
+            $this->opportunityManager->requestApproval($ownedOpportunity, $customer);
+        } catch (InvalidOpportunityStateException) {
+            return $this->safeErrorRedirect("This action isn't available for this opportunity right now.");
+        } catch (OpportunityActionNotExecutableException) {
+            return $this->safeErrorRedirect("This opportunity's action isn't ready for that step yet.");
+        } catch (OpportunityApprovalNotRequiredException) {
+            return $this->safeErrorRedirect('This action doesn\'t require approval.');
+        }
+
+        return redirect()->route('customer.opportunities.show', $ownedOpportunity->id)->with([
+            'status' => 'success',
+            'message' => 'Approval requested.',
+        ]);
+    }
+
+    public function confirmApproval(int $opportunity): RedirectResponse
+    {
+        $this->ensureOpportunityEngineEnabled();
+
+        [$customer, $ownedOpportunity, $redirect] = $this->resolveMutationTarget($opportunity);
+
+        if ($redirect !== null) {
+            return $redirect;
+        }
+
+        try {
+            $this->opportunityManager->confirmApproval($ownedOpportunity, $customer);
+        } catch (InvalidOpportunityStateException) {
+            return $this->safeErrorRedirect("This action isn't available for this opportunity right now.");
+        } catch (OpportunityActionNotExecutableException) {
+            return $this->safeErrorRedirect("This opportunity's action isn't ready for that step yet.");
+        } catch (InvalidOpportunityExecutionStateException) {
+            return $this->safeErrorRedirect('This opportunity\'s execution state has changed. Please refresh and try again.');
+        } catch (OpportunityEngineDisabledException) {
+            return $this->safeErrorRedirect("This action isn't available for this opportunity right now.");
+        }
+
+        return redirect()->route('customer.opportunities.show', $ownedOpportunity->id)->with([
+            'status' => 'success',
+            'message' => 'Approval confirmed. The action has started.',
+        ]);
+    }
+
     /**
-     * First executable line of both actions above — no query runs before it.
+     * Shared tenant-safe lookup for every mutation: feature-flag guard has
+     * already run by the time this is called. Resolves Customer → primary
+     * Business → the ownership-scoped Opportunity, exactly mirroring
+     * index()/show()'s own resolution — never trusts a request-supplied
+     * business_id, never fetches the Opportunity globally first.
+     *
+     * @return array{0: Customer, 1: Opportunity, 2: null}|array{0: null, 1: null, 2: RedirectResponse}
+     */
+    private function resolveMutationTarget(int $opportunityId): array
+    {
+        $customer = $this->customer();
+        $business = $this->businessRepository->findPrimaryByCustomer($customer->user_id);
+
+        if ($business === null) {
+            return [null, null, redirect()->route('customer.onboarding.show')];
+        }
+
+        $ownedOpportunity = $this->opportunityRepository->findOwned($opportunityId, $business->id);
+
+        if ($ownedOpportunity === null) {
+            abort(404);
+        }
+
+        return [$customer, $ownedOpportunity, null];
+    }
+
+    /**
+     * The fixed-message redirect every non-validation domain exception maps
+     * to (RFC-002 §47) — never the raw exception message, which always
+     * interpolates an internal Opportunity ID.
+     */
+    private function safeErrorRedirect(string $message): RedirectResponse
+    {
+        return redirect()->back()->withErrors(['opportunity' => $message]);
+    }
+
+    /**
+     * First executable line of every action above — no query runs before it.
      */
     private function ensureOpportunityEngineEnabled(): void
     {

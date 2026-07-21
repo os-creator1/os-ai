@@ -12,6 +12,20 @@
             </div>
 
             <div class="col-12">
+                @if (session('status') === 'success')
+                    <div class="alert alert-success">{{ session('message') }}</div>
+                @endif
+
+                @if ($errors->any())
+                    <div class="alert alert-danger">
+                        <ul class="mb-0">
+                            @foreach ($errors->all() as $error)
+                                <li>{{ $error }}</li>
+                            @endforeach
+                        </ul>
+                    </div>
+                @endif
+
                 <div class="card">
                     <div class="card-header">
                         <h4 class="card-title">{{ $opportunity->title }}</h4>
@@ -95,6 +109,42 @@
                             <p class="mb-1"><strong>Configured value:</strong> {{ $configuredValue }}</p>
                         @endif
                         <p class="mb-0"><strong>Completion policy:</strong> {{ $completionPolicyLabel }}</p>
+
+                        @if ($opportunity->status->value === 'open')
+                            <hr>
+
+                            <form method="POST" action="{{ route('customer.opportunities.configure-action', $opportunity->id) }}" class="mb-2">
+                                @csrf
+                                <label class="form-label" for="value">Phone number</label>
+                                <div class="d-flex flex-wrap gap-1">
+                                    <input
+                                        type="text"
+                                        class="form-control"
+                                        style="max-width: 260px;"
+                                        id="value"
+                                        name="value"
+                                        maxlength="50"
+                                        value="{{ old('value', $configuredValue) }}"
+                                    >
+                                    <button type="submit" class="btn btn-primary">Save phone number</button>
+                                </div>
+                            </form>
+                        @endif
+
+                        @if ($opportunity->status->value === 'open' && $configuredValue !== null)
+                            <form method="POST" action="{{ route('customer.opportunities.request-approval', $opportunity->id) }}" class="mb-2">
+                                @csrf
+                                <button type="submit" class="btn btn-outline-primary">Request approval</button>
+                            </form>
+                        @endif
+
+                        @if ($opportunity->status->value === 'awaiting_approval')
+                            <form method="POST" action="{{ route('customer.opportunities.confirm-approval', $opportunity->id) }}" class="mb-2">
+                                @csrf
+                                <p class="text-muted small mb-1">Confirming will start the approved action.</p>
+                                <button type="submit" class="btn btn-success">Confirm and start</button>
+                            </form>
+                        @endif
 
                         <hr>
 
