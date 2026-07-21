@@ -14,6 +14,7 @@ use App\Library\Opportunity\Exceptions\OpportunityActionNotConfigurableException
 use App\Library\Opportunity\Exceptions\OpportunityActionNotExecutableException;
 use App\Library\Opportunity\Exceptions\OpportunityApprovalNotRequiredException;
 use App\Library\Opportunity\Exceptions\OpportunityEngineDisabledException;
+use App\Library\Opportunity\Exceptions\OpportunityExecutionRetryNotAvailableException;
 use App\Library\Opportunity\OpportunityManager;
 use App\Models\Customer;
 use App\Models\Opportunity;
@@ -119,6 +120,7 @@ class OpportunityController extends Controller
             'configuredValue' => $this->configuredValue($ownedOpportunity),
             'completionPolicyLabel' => $this->completionPolicyLabel($ownedOpportunity),
             'execution' => $this->safeExecution($latestExecution),
+            'canRetry' => $this->canRetry($ownedOpportunity),
         ]);
     }
 
@@ -277,6 +279,28 @@ class OpportunityController extends Controller
         return redirect()->route('customer.opportunities.show', $ownedOpportunity->id)->with([
             'status' => 'success',
             'message' => 'Opportunity reopened.',
+        ]);
+    }
+
+    public function retry(int $opportunity): RedirectResponse
+    {
+        $this->ensureOpportunityEngineEnabled();
+
+        [$customer, $ownedOpportunity, $redirect] = $this->resolveMutationTarget($opportunity);
+
+        if ($redirect !== null) {
+            return $redirect;
+        }
+
+        try {
+            $this->opportunityManager->retryFailedExecution($ownedOpportunity, $customer);
+        } catch (OpportunityExecutionRetryNotAvailableException|OpportunityActionNotExecutableException|OpportunityEngineDisabledException) {
+            return $this->safeErrorRedirect("This action isn't available for this opportunity right now.");
+        }
+
+        return redirect()->route('customer.opportunities.show', $ownedOpportunity->id)->with([
+            'status' => 'success',
+            'message' => 'Retry started.',
         ]);
     }
 
@@ -442,5 +466,50 @@ class OpportunityController extends Controller
             'completed_at' => $execution->completed_at,
             'attempt_number' => $execution->attempt_number,
         ];
+    }
+
+    /**
+     * Display-only retry eligibility (RFC-002 §31) — deliberately does not
+     * use findLatestForOpportunity()/the already-computed $execution array:
+     * OpportunityManager::retryFailedExecution() looks for the latest
+     * *failed* execution matching the Opportunity's *current* action
+     * snapshot exactly, which is not necessarily the latest execution
+     * overall (a newer, non-matching failed attempt — e.g. after the action
+     * was reconfigured and reconfigured back — would otherwise cause a
+     * false negative here). The manager remains fully authoritative
+     * regardless of what this returns; a wrong guess here only affects
+     * whether the button renders, never whether a retry can actually
+     * succeed.
+     */
+    private function canRetry(Opportunity $opportunity): bool
+    {
+        if ($opportunity->status->value !== 'open') {
+            return false;
+        }
+
+        $recommendedAction = $opportunity->recommended_action;
+        $actionKey = is_array($recommendedAction) ? ($recommendedAction['action_key'] ?? null) : null;
+
+        if (! is_string($actionKey) || $actionKey === '') {
+            return false;
+        }
+
+        $hash = $opportunity->recommended_action_hash;
+
+        if (! is_string($hash) || $hash === '') {
+            return false;
+        }
+
+        if ($opportunity->action_schema_version === null) {
+            return false;
+        }
+
+        return $this->actionExecutionRepository->findLatestFailedMatching(
+            $opportunity->id,
+            $opportunity->occurrence_number,
+            $hash,
+            $opportunity->action_schema_version,
+            $actionKey,
+        ) !== null;
     }
 }

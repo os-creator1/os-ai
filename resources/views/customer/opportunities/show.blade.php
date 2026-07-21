@@ -218,6 +218,14 @@
                                 @endif
                             </div>
                         @endif
+
+                        @if ($canRetry)
+                            <form method="POST" action="{{ route('customer.opportunities.retry', $opportunity->id) }}" class="mt-2">
+                                @csrf
+                                <p class="text-muted small mb-1">This will attempt the action again.</p>
+                                <button type="submit" class="btn btn-outline-primary">Retry</button>
+                            </form>
+                        @endif
                     </div>
                 </div>
             </div>

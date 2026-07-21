@@ -557,6 +557,10 @@
         Route::post('/{opportunity}/reopen', 'OpportunityController@reopen')
             ->whereNumber('opportunity')
             ->name('reopen');
+
+        Route::post('/{opportunity}/retry', 'OpportunityController@retry')
+            ->whereNumber('opportunity')
+            ->name('retry');
     });
 
 
