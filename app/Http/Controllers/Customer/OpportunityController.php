@@ -123,6 +123,7 @@ class OpportunityController extends Controller
             'execution' => $this->safeExecution($latestExecution),
             'canRetry' => $this->canRetry($ownedOpportunity),
             'shouldPollExecution' => $this->shouldPollExecution($ownedOpportunity, $latestExecution),
+            'canConfigureAction' => $this->canConfigureAction($ownedOpportunity),
         ]);
     }
 
@@ -546,6 +547,32 @@ class OpportunityController extends Controller
             $opportunity->action_schema_version,
             $actionKey,
         ) !== null;
+    }
+
+    /**
+     * Display-only capability hint (RFC-002 §43 hardening) — answers only
+     * "does the persisted recommended_action's action_key match the one
+     * action this UI currently knows how to configure," purely from data
+     * already loaded onto $opportunity. Never queries another repository,
+     * never calls OpportunityManager, never reads request input, and never
+     * exposes the action_key itself to the view. configureAction() remains
+     * the sole authority on whether a configuration attempt actually
+     * succeeds — a false positive here only means a form renders that the
+     * manager would still safely reject; a false negative only hides a form
+     * that would have worked. Extended only as new actions become
+     * configurable.
+     */
+    private function canConfigureAction(Opportunity $opportunity): bool
+    {
+        $recommendedAction = $opportunity->recommended_action;
+
+        if (! is_array($recommendedAction)) {
+            return false;
+        }
+
+        $actionKey = $recommendedAction['action_key'] ?? null;
+
+        return is_string($actionKey) && $actionKey !== '' && $actionKey === 'add_phone';
     }
 
     /**

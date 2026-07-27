@@ -110,7 +110,7 @@
                         @endif
                         <p class="mb-0"><strong>Completion policy:</strong> {{ $completionPolicyLabel }}</p>
 
-                        @if ($opportunity->status->value === 'open')
+                        @if ($opportunity->status->value === 'open' && $canConfigureAction)
                             <hr>
 
                             <form method="POST" action="{{ route('customer.opportunities.configure-action', $opportunity->id) }}" class="mb-2">

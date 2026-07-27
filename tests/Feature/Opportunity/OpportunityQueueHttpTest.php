@@ -505,6 +505,74 @@ class OpportunityQueueHttpTest extends TestCase
         $response->assertDontSee('not_a_real_policy');
     }
 
+    public function test_add_phone_open_opportunity_displays_the_configure_form(): void
+    {
+        $business = $this->actingAsCustomerWithBusiness();
+        $opportunity = $this->createOpportunity($business, $this->addPhoneAttributes());
+
+        $response = $this->get(route('customer.opportunities.show', $opportunity->id));
+
+        $response->assertOk();
+        $response->assertSee(route('customer.opportunities.configure-action', $opportunity->id), false);
+        $response->assertSee('name="value"', false);
+        $response->assertSee('Save phone number');
+    }
+
+    public function test_add_email_open_opportunity_hides_the_configure_form(): void
+    {
+        $business = $this->actingAsCustomerWithBusiness();
+        $opportunity = $this->createOpportunity($business, $this->unsupportedActionAttributes('add_email'));
+
+        $response = $this->get(route('customer.opportunities.show', $opportunity->id));
+
+        $response->assertOk();
+        $response->assertDontSee(route('customer.opportunities.configure-action', $opportunity->id), false);
+        $response->assertDontSee('name="value"', false);
+        $response->assertDontSee('Save phone number');
+    }
+
+    public function test_add_website_open_opportunity_hides_the_configure_form(): void
+    {
+        $business = $this->actingAsCustomerWithBusiness();
+        $opportunity = $this->createOpportunity($business, $this->unsupportedActionAttributes('add_website'));
+
+        $response = $this->get(route('customer.opportunities.show', $opportunity->id));
+
+        $response->assertOk();
+        $response->assertDontSee(route('customer.opportunities.configure-action', $opportunity->id), false);
+        $response->assertDontSee('name="value"', false);
+        $response->assertDontSee('Save phone number');
+    }
+
+    public function test_unsupported_action_detail_still_renders_its_safe_title_and_summary(): void
+    {
+        $business = $this->actingAsCustomerWithBusiness();
+        $opportunity = $this->createOpportunity($business, array_merge(
+            $this->unsupportedActionAttributes('add_email'),
+            [
+                'title' => 'Add a business email address',
+                'summary' => 'Customers need a reliable way to email the business.',
+            ],
+        ));
+
+        $response = $this->get(route('customer.opportunities.show', $opportunity->id));
+
+        $response->assertOk();
+        $response->assertSee('Add a business email address');
+        $response->assertSee('Customers need a reliable way to email the business.');
+    }
+
+    public function test_unsupported_unconfigured_action_has_no_request_approval_form_either(): void
+    {
+        $business = $this->actingAsCustomerWithBusiness();
+        $opportunity = $this->createOpportunity($business, $this->unsupportedActionAttributes('add_email'));
+
+        $response = $this->get(route('customer.opportunities.show', $opportunity->id));
+
+        $response->assertOk();
+        $response->assertDontSee(route('customer.opportunities.request-approval', $opportunity->id), false);
+    }
+
     /**
      * @return array<string, mixed>
      */
@@ -514,6 +582,31 @@ class OpportunityQueueHttpTest extends TestCase
             'schema_version' => 1,
             'action_key' => 'add_phone',
             'parameters' => ['value' => '+15551234567'],
+            'approval_required' => true,
+            'completion_policy' => OpportunityCompletionPolicy::SystemVerified->value,
+        ];
+
+        return [
+            'recommended_action' => $recommendedAction,
+            'recommended_action_hash' => (new OpportunityActionHash())->compute($recommendedAction),
+            'action_schema_version' => 1,
+        ];
+    }
+
+    /**
+     * A real, registered production action_key (e.g. add_email/add_website)
+     * that has no handler/verifier and is therefore never configurable —
+     * persisted exactly as buildRecommendedAction() would leave it prior to
+     * any configuration attempt (empty parameters).
+     *
+     * @return array<string, mixed>
+     */
+    private function unsupportedActionAttributes(string $actionKey): array
+    {
+        $recommendedAction = [
+            'schema_version' => 1,
+            'action_key' => $actionKey,
+            'parameters' => [],
             'approval_required' => true,
             'completion_policy' => OpportunityCompletionPolicy::SystemVerified->value,
         ];
