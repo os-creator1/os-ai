@@ -185,9 +185,15 @@
                             <p class="text-muted mb-0">No execution has been started for this opportunity yet.</p>
                         @else
                             @if (in_array($execution['status'], ['pending', 'running'], true))
-                                <p aria-live="polite" class="mb-1">
+                                <p id="execution-status-text" role="status" aria-live="polite" class="mb-1">
                                     This action is currently {{ $execution['status'] === 'pending' ? 'queued' : 'in progress' }}.
                                 </p>
+
+                                @if ($shouldPollExecution)
+                                    <p class="mb-1">
+                                        <a href="{{ route('customer.opportunities.show', $opportunity->id) }}">Refresh status</a>
+                                    </p>
+                                @endif
                             @else
                                 <p class="mb-1">
                                     <strong>Status:</strong> {{ ucfirst($execution['status']) }}
@@ -217,6 +223,130 @@
                                     </div>
                                 @endif
                             </div>
+                        @endif
+
+                        @if ($shouldPollExecution)
+                            <script id="opportunity-execution-poller">
+                                (function () {
+                                    var statusUrl = @json(route('customer.opportunities.execution-status', $opportunity->id));
+                                    var statusEl = document.getElementById('execution-status-text');
+                                    var delays = [2000, 4000, 8000, 15000];
+                                    var attempt = 1;
+                                    var consecutiveFailures = 0;
+                                    var maxConsecutiveFailures = 3;
+                                    var stoppedMessage = 'Automatic status updates stopped. Refresh this page to try again.';
+                                    var timerId = null;
+                                    var requestInFlight = false;
+                                    var pendingResume = false;
+
+                                    function setStatusText(text) {
+                                        if (statusEl && statusEl.textContent !== text) {
+                                            statusEl.textContent = text;
+                                        }
+                                    }
+
+                                    function nextDelay() {
+                                        var delay = delays[Math.min(attempt, delays.length - 1)];
+                                        attempt++;
+                                        return delay;
+                                    }
+
+                                    function scheduleNext(delay) {
+                                        timerId = setTimeout(poll, delay);
+                                    }
+
+                                    function stopPolling() {
+                                        if (timerId !== null) {
+                                            clearTimeout(timerId);
+                                            timerId = null;
+                                        }
+                                        setStatusText(stoppedMessage);
+                                    }
+
+                                    function isValidPayload(data) {
+                                        return !!data
+                                            && typeof data.message === 'string'
+                                            && typeof data.is_terminal === 'boolean'
+                                            && typeof data.opportunity_status === 'string'
+                                            && (data.execution_status === null || typeof data.execution_status === 'string');
+                                    }
+
+                                    function handleFailure() {
+                                        consecutiveFailures++;
+
+                                        if (consecutiveFailures >= maxConsecutiveFailures) {
+                                            stopPolling();
+                                            return;
+                                        }
+
+                                        scheduleNext(15000);
+                                    }
+
+                                    function poll() {
+                                        if (document.hidden) {
+                                            pendingResume = true;
+                                            return;
+                                        }
+
+                                        requestInFlight = true;
+
+                                        fetch(statusUrl, {
+                                            headers: {
+                                                'Accept': 'application/json',
+                                                'X-Requested-With': 'XMLHttpRequest'
+                                            }
+                                        }).then(function (response) {
+                                            if (response.status === 401 || response.status === 403 || response.status === 404) {
+                                                requestInFlight = false;
+                                                stopPolling();
+                                                return;
+                                            }
+
+                                            if (!response.ok) {
+                                                requestInFlight = false;
+                                                handleFailure();
+                                                return;
+                                            }
+
+                                            response.json().then(function (data) {
+                                                requestInFlight = false;
+
+                                                if (!isValidPayload(data)) {
+                                                    handleFailure();
+                                                    return;
+                                                }
+
+                                                consecutiveFailures = 0;
+                                                setStatusText(data.message);
+
+                                                if (data.is_terminal) {
+                                                    setTimeout(function () {
+                                                        window.location.reload();
+                                                    }, 1000);
+                                                    return;
+                                                }
+
+                                                scheduleNext(nextDelay());
+                                            }).catch(function () {
+                                                requestInFlight = false;
+                                                handleFailure();
+                                            });
+                                        }).catch(function () {
+                                            requestInFlight = false;
+                                            handleFailure();
+                                        });
+                                    }
+
+                                    document.addEventListener('visibilitychange', function () {
+                                        if (!document.hidden && pendingResume && !requestInFlight) {
+                                            pendingResume = false;
+                                            poll();
+                                        }
+                                    });
+
+                                    scheduleNext(delays[0]);
+                                })();
+                            </script>
                         @endif
 
                         @if ($canRetry)

@@ -561,6 +561,11 @@
         Route::post('/{opportunity}/retry', 'OpportunityController@retry')
             ->whereNumber('opportunity')
             ->name('retry');
+
+        Route::get('/{opportunity}/execution-status', 'OpportunityController@executionStatus')
+            ->whereNumber('opportunity')
+            ->middleware('throttle:60,1')
+            ->name('execution-status');
     });
 
 

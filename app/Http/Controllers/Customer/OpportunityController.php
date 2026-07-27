@@ -23,6 +23,7 @@ use App\Repositories\Contracts\BusinessRepository;
 use App\Repositories\Contracts\OpportunityActionExecutionRepository;
 use App\Repositories\Contracts\OpportunityRepository;
 use Illuminate\Contracts\View\View;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -121,7 +122,41 @@ class OpportunityController extends Controller
             'completionPolicyLabel' => $this->completionPolicyLabel($ownedOpportunity),
             'execution' => $this->safeExecution($latestExecution),
             'canRetry' => $this->canRetry($ownedOpportunity),
+            'shouldPollExecution' => $this->shouldPollExecution($ownedOpportunity, $latestExecution),
         ]);
+    }
+
+    /**
+     * Customer-safe, read-only execution-status poll (RFC-002 §43) — no
+     * write of any kind occurs here. Every field is allowlisted; see
+     * executionStatusMessage()/shouldPollExecution() for the exact source
+     * of truth.
+     */
+    public function executionStatus(int $opportunity): JsonResponse
+    {
+        $this->ensureOpportunityEngineEnabled();
+
+        $business = $this->businessRepository->findPrimaryByCustomer($this->customer()->user_id);
+
+        if ($business === null) {
+            abort(404);
+        }
+
+        $ownedOpportunity = $this->opportunityRepository->findOwned($opportunity, $business->id);
+
+        if ($ownedOpportunity === null) {
+            abort(404);
+        }
+
+        $latestExecution = $this->actionExecutionRepository->findLatestForOpportunity($ownedOpportunity->id);
+        $isTerminal = ! $this->shouldPollExecution($ownedOpportunity, $latestExecution);
+
+        return response()->json([
+            'opportunity_status' => $ownedOpportunity->status->value,
+            'execution_status' => $latestExecution?->status->value,
+            'message' => $this->executionStatusMessage($ownedOpportunity, $latestExecution),
+            'is_terminal' => $isTerminal,
+        ])->header('Cache-Control', 'no-store');
     }
 
     public function configureAction(ConfigureOpportunityActionRequest $request, int $opportunity): RedirectResponse
@@ -511,5 +546,61 @@ class OpportunityController extends Controller
             $opportunity->action_schema_version,
             $actionKey,
         ) !== null;
+    }
+
+    /**
+     * The single source of truth for both the detail page's polling-script
+     * activation gate and the JSON endpoint's is_terminal flag (RFC-002
+     * §43) — deliberately requires both the Opportunity's own status AND
+     * the latest execution's status, not execution status alone. Since a
+     * pending/running execution can only legitimately coexist with
+     * status=in_progress (every execution-creating manager method sets
+     * both in the same transaction), a Opportunity that is not in_progress
+     * paired with a pending/running execution is inconsistent — this
+     * returns false for it, which both stops polling and prevents the
+     * reloaded page from ever restarting it.
+     */
+    private function shouldPollExecution(Opportunity $opportunity, ?OpportunityActionExecution $execution): bool
+    {
+        return $opportunity->status->value === 'in_progress'
+            && $execution !== null
+            && in_array($execution->status->value, ['pending', 'running'], true);
+    }
+
+    /**
+     * Never the raw exception/internal state — succeeded/failed always
+     * prefer the execution's own safe_result_summary/safe_error_summary
+     * (RFC-002 §47, already guaranteed customer-safe), falling back to a
+     * fixed generic sentence only when absent. The "status changed"
+     * message is reserved for the one genuinely inconsistent case: a
+     * pending/running execution whose Opportunity is no longer in_progress
+     * (e.g. a stale tab polling after another tab reopened/dismissed it).
+     */
+    private function executionStatusMessage(Opportunity $opportunity, ?OpportunityActionExecution $execution): string
+    {
+        if ($execution === null) {
+            return 'No execution is currently in progress.';
+        }
+
+        if ($execution->status->value === 'succeeded') {
+            return filled($execution->safe_result_summary)
+                ? $execution->safe_result_summary
+                : 'This action completed successfully.';
+        }
+
+        if ($execution->status->value === 'failed') {
+            return filled($execution->safe_error_summary)
+                ? $execution->safe_error_summary
+                : 'This action could not be completed.';
+        }
+
+        // $execution->status is pending or running here.
+        if ($opportunity->status->value !== 'in_progress') {
+            return 'The opportunity status changed. Refreshing this page.';
+        }
+
+        return $execution->status->value === 'pending'
+            ? 'This action is currently queued.'
+            : 'This action is currently in progress.';
     }
 }
