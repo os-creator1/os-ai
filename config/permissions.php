@@ -866,4 +866,15 @@
             'category'     => 'Business',
         ],
 
+        // Opportunity Module (RFC-002)
+        'view opportunities' => [
+            'display_name' => 'read',
+            'category'     => 'Opportunities',
+        ],
+
+        'edit opportunities' => [
+            'display_name' => 'update',
+            'category'     => 'Opportunities',
+        ],
+
     ];

@@ -600,3 +600,21 @@
         Route::patch('businesses/{business}/status', 'BusinessController@updateStatus')->name('businesses.status.update');
     });
     Route::post('ai-settings-toggle', 'SettingsController@toggleAiSettings')->name('settings.ai-settings.toggle');
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | Opportunity module (RFC-002)
+    |--------------------------------------------------------------------------
+    |
+    | Admin-only, intentionally cross-tenant Opportunity inspection. Read-only
+    | index in this slice — no show/mutation route exists yet.
+    |
+    | EnsureUserIsAdministrator is the same independent, explicit admin-account-
+    | type boundary layered on top of the group's blanket 'can:access backend'
+    | gate as the Business module above (defense in depth).
+    |
+    */
+    Route::middleware(EnsureUserIsAdministrator::class)->group(function () {
+        Route::get('opportunities', 'OpportunityController@index')->name('opportunities.index');
+    });
