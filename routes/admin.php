@@ -607,9 +607,12 @@
     | Opportunity module (RFC-002)
     |--------------------------------------------------------------------------
     |
-    | Admin-only, intentionally cross-tenant Opportunity inspection. Read-only
-    | index, detail, and run/candidate inspection — no mutation route exists
-    | yet.
+    | Admin-only, intentionally cross-tenant Opportunity inspection plus
+    | snooze/dismiss/reopen mutation on the customer's behalf. Read-only
+    | index, detail, and run/candidate inspection routes require 'view
+    | opportunities'; the three mutation routes require 'edit opportunities'.
+    | No approval/configuration/execution/retry/attestation/create/delete
+    | route exists.
     |
     | EnsureUserIsAdministrator is the same independent, explicit admin-account-
     | type boundary layered on top of the group's blanket 'can:access backend'
@@ -632,4 +635,14 @@
         Route::get('opportunities/{opportunity}', 'OpportunityController@show')
             ->whereNumber('opportunity')
             ->name('opportunities.show');
+
+        Route::post('opportunities/{opportunity}/snooze', 'OpportunityController@snooze')
+            ->whereNumber('opportunity')
+            ->name('opportunities.snooze');
+        Route::post('opportunities/{opportunity}/dismiss', 'OpportunityController@dismiss')
+            ->whereNumber('opportunity')
+            ->name('opportunities.dismiss');
+        Route::post('opportunities/{opportunity}/reopen', 'OpportunityController@reopen')
+            ->whereNumber('opportunity')
+            ->name('opportunities.reopen');
     });

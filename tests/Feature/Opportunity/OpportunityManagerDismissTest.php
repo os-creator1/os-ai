@@ -394,4 +394,113 @@ class OpportunityManagerDismissTest extends TestCase
             $this->assertSame(0, OpportunityTransition::where('opportunity_id', $opportunity->id)->count());
         }
     }
+
+    public function test_admin_can_dismiss_another_customers_opportunity(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $opportunity = $this->createOpportunity($business, ['status' => OpportunityStatus::Open->value]);
+        $admin = $this->createAdminUser();
+        $manager = app(OpportunityManager::class);
+
+        $updated = $manager->dismissAsAdmin($opportunity, $admin);
+
+        $this->assertSame(OpportunityStatus::Dismissed, $updated->status);
+        $this->assertNotNull($updated->dismissed_at);
+    }
+
+    public function test_admin_dismiss_exact_transition_fields(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $opportunity = $this->createOpportunity($business, ['status' => OpportunityStatus::Open->value]);
+        $admin = $this->createAdminUser();
+        $manager = app(OpportunityManager::class);
+
+        $manager->dismissAsAdmin($opportunity, $admin);
+
+        $this->assertSame(1, OpportunityTransition::where('opportunity_id', $opportunity->id)->count());
+        $transition = OpportunityTransition::where('opportunity_id', $opportunity->id)->first();
+        $this->assertSame('open', $transition->from_status);
+        $this->assertSame('dismissed', $transition->to_status);
+        $this->assertSame(OpportunityTransitionActorType::Admin, $transition->actor_type);
+        $this->assertSame($admin->id, $transition->actor_user_id);
+        $this->assertSame('admin_dismissed', $transition->reason_code);
+    }
+
+    public function test_admin_dismiss_event_carries_the_correct_scalar_payload(): void
+    {
+        Event::fake([OpportunityDismissed::class]);
+
+        $business = $this->createBusinessForOpportunities();
+        $opportunity = $this->createOpportunity($business, ['status' => OpportunityStatus::Open->value]);
+        $admin = $this->createAdminUser();
+        $manager = app(OpportunityManager::class);
+
+        $manager->dismissAsAdmin($opportunity, $admin);
+
+        Event::assertDispatched(OpportunityDismissed::class, function (OpportunityDismissed $event) use ($opportunity, $business, $admin) {
+            return $event->opportunityId === $opportunity->id
+                && $event->businessId === $business->id
+                && $event->actorUserId === $admin->id
+                && $event->previousStatus === 'open';
+        });
+        Event::assertDispatched(OpportunityDismissed::class, 1);
+    }
+
+    public function test_admin_dismiss_invalid_source_status_is_rejected_atomically(): void
+    {
+        Event::fake([OpportunityDismissed::class]);
+
+        $business = $this->createBusinessForOpportunities();
+        $opportunity = $this->createOpportunity($business, ['status' => OpportunityStatus::Snoozed->value]);
+        $admin = $this->createAdminUser();
+        $manager = app(OpportunityManager::class);
+
+        try {
+            $this->expectException(InvalidOpportunityStateException::class);
+
+            $manager->dismissAsAdmin($opportunity, $admin);
+        } finally {
+            $opportunity->refresh();
+            $this->assertSame(OpportunityStatus::Snoozed, $opportunity->status);
+            $this->assertSame(0, OpportunityTransition::where('opportunity_id', $opportunity->id)->count());
+            Event::assertNotDispatched(OpportunityDismissed::class);
+        }
+    }
+
+    public function test_admin_dismiss_creates_no_action_execution_row(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $opportunity = $this->createOpportunity($business, ['status' => OpportunityStatus::Open->value]);
+        $admin = $this->createAdminUser();
+        $manager = app(OpportunityManager::class);
+
+        $manager->dismissAsAdmin($opportunity, $admin);
+
+        $this->assertSame(0, OpportunityActionExecution::where('opportunity_id', $opportunity->id)->count());
+    }
+
+    public function test_admin_dismiss_does_not_increment_occurrence_number(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $opportunity = $this->createOpportunity($business, ['status' => OpportunityStatus::Open->value, 'occurrence_number' => 2]);
+        $admin = $this->createAdminUser();
+        $manager = app(OpportunityManager::class);
+
+        $updated = $manager->dismissAsAdmin($opportunity, $admin);
+
+        $this->assertSame(2, $updated->occurrence_number);
+    }
+
+    private function createAdminUser(): \App\Models\User
+    {
+        return \App\Models\User::create([
+            'first_name' => 'Test',
+            'last_name' => 'Admin',
+            'email' => 'admin' . uniqid('', true) . '@example.test',
+            'status' => true,
+            'is_admin' => true,
+            'is_customer' => false,
+            'active_portal' => 'admin',
+        ]);
+    }
 }

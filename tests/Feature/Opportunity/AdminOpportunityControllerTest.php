@@ -12,6 +12,8 @@ use App\Models\Customer;
 use App\Models\OpportunityActionExecution;
 use App\Models\OpportunityTransition;
 use App\Models\User;
+use DOMDocument;
+use DOMXPath;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\Route;
@@ -290,15 +292,26 @@ class AdminOpportunityControllerTest extends TestCase
         $response->assertDontSee('"action_key"', false);
     }
 
-    public function test_no_admin_opportunity_mutation_routes_exist(): void
+    public function test_admin_opportunity_routes_are_limited_to_the_approved_read_and_manual_state_controls(): void
     {
         $this->assertTrue(Route::has('admin.opportunities.index'));
         $this->assertTrue(Route::has('admin.opportunities.show'));
         $this->assertTrue(Route::has('admin.opportunities.runs.index'));
         $this->assertTrue(Route::has('admin.opportunities.runs.show'));
-        $this->assertFalse(Route::has('admin.opportunities.snooze'));
-        $this->assertFalse(Route::has('admin.opportunities.dismiss'));
-        $this->assertFalse(Route::has('admin.opportunities.reopen'));
+        $this->assertTrue(Route::has('admin.opportunities.snooze'));
+        $this->assertTrue(Route::has('admin.opportunities.dismiss'));
+        $this->assertTrue(Route::has('admin.opportunities.reopen'));
+
+        $this->assertFalse(Route::has('admin.opportunities.configure-action'));
+        $this->assertFalse(Route::has('admin.opportunities.request-approval'));
+        $this->assertFalse(Route::has('admin.opportunities.confirm-approval'));
+        $this->assertFalse(Route::has('admin.opportunities.execution-status'));
+        $this->assertFalse(Route::has('admin.opportunities.retry'));
+        $this->assertFalse(Route::has('admin.opportunities.attest-complete'));
+        $this->assertFalse(Route::has('admin.opportunities.begin-trusted-action'));
+        $this->assertFalse(Route::has('admin.opportunities.create'));
+        $this->assertFalse(Route::has('admin.opportunities.store'));
+        $this->assertFalse(Route::has('admin.opportunities.destroy'));
     }
 
     public function test_index_rows_link_to_the_detail_page(): void
@@ -630,6 +643,299 @@ class AdminOpportunityControllerTest extends TestCase
         $this->assertSame($transitionCountBefore, OpportunityTransition::where('opportunity_id', $opportunity->id)->count());
         $this->assertSame($executionCountBefore, OpportunityActionExecution::where('opportunity_id', $opportunity->id)->count());
         Queue::assertNothingPushed();
+    }
+
+    public function test_guest_cannot_mutate(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $opportunity = $this->createOpportunity($business, ['status' => OpportunityStatus::Open->value]);
+
+        $this->post(route('admin.opportunities.snooze', $opportunity->id), ['duration' => '1_day'])->assertUnauthorized();
+        $this->post(route('admin.opportunities.dismiss', $opportunity->id))->assertUnauthorized();
+        $this->post(route('admin.opportunities.reopen', $opportunity->id))->assertUnauthorized();
+    }
+
+    public function test_ordinary_customer_cannot_mutate(): void
+    {
+        $this->actingAsCustomerWithBusiness();
+        $otherBusiness = $this->createBusinessForOpportunities();
+        $opportunity = $this->createOpportunity($otherBusiness, ['status' => OpportunityStatus::Open->value]);
+
+        $this->post(route('admin.opportunities.dismiss', $opportunity->id))->assertUnauthorized();
+        $this->assertSame(OpportunityStatus::Open, $opportunity->fresh()->status);
+    }
+
+    public function test_non_admin_is_blocked_from_mutating_even_with_matching_permission_strings_in_session(): void
+    {
+        $this->actingAsCustomerWithBusiness();
+        $otherBusiness = $this->createBusinessForOpportunities();
+        $opportunity = $this->createOpportunity($otherBusiness, ['status' => OpportunityStatus::Open->value]);
+        $this->withSession(['permissions' => collect(['access backend', 'view opportunities', 'edit opportunities'])]);
+
+        $this->post(route('admin.opportunities.dismiss', $opportunity->id))->assertUnauthorized();
+        $this->assertSame(OpportunityStatus::Open, $opportunity->fresh()->status);
+    }
+
+    public function test_admin_without_backend_access_cannot_mutate(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $opportunity = $this->createOpportunity($business, ['status' => OpportunityStatus::Open->value]);
+        $this->actingAsAdmin([]);
+
+        $this->post(route('admin.opportunities.dismiss', $opportunity->id))->assertUnauthorized();
+    }
+
+    public function test_admin_with_view_opportunities_but_without_edit_opportunities_cannot_mutate(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $opportunity = $this->createOpportunity($business, ['status' => OpportunityStatus::Open->value]);
+        $this->actingAsAdmin(['access backend', 'view opportunities']);
+
+        $this->post(route('admin.opportunities.dismiss', $opportunity->id))->assertUnauthorized();
+        $this->assertSame(OpportunityStatus::Open, $opportunity->fresh()->status);
+    }
+
+    public function test_admin_with_edit_opportunities_can_mutate_another_customers_opportunity(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $opportunity = $this->createOpportunity($business, ['status' => OpportunityStatus::Open->value]);
+        $this->actingAsAdmin(['access backend', 'view opportunities', 'edit opportunities']);
+
+        $this->post(route('admin.opportunities.dismiss', $opportunity->id))->assertRedirect();
+
+        $this->assertSame(OpportunityStatus::Dismissed, $opportunity->fresh()->status);
+    }
+
+    public function test_feature_disabled_returns_404_for_all_three_mutation_routes(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $opportunity = $this->createOpportunity($business, ['status' => OpportunityStatus::Open->value]);
+        $this->actingAsAdmin(['access backend', 'view opportunities', 'edit opportunities']);
+        config()->set('opportunity.enabled', false);
+
+        $this->post(route('admin.opportunities.snooze', $opportunity->id), ['duration' => '1_day'])->assertNotFound();
+        $this->post(route('admin.opportunities.dismiss', $opportunity->id))->assertNotFound();
+        $this->post(route('admin.opportunities.reopen', $opportunity->id))->assertNotFound();
+    }
+
+    public function test_missing_opportunity_returns_404_for_mutations(): void
+    {
+        $this->actingAsAdmin(['access backend', 'view opportunities', 'edit opportunities']);
+
+        $this->post(route('admin.opportunities.dismiss', 999999))->assertNotFound();
+    }
+
+    public function test_snooze_succeeds_and_redirects_safely(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $opportunity = $this->createOpportunity($business, ['status' => OpportunityStatus::Open->value]);
+        $this->actingAsAdmin(['access backend', 'view opportunities', 'edit opportunities']);
+
+        $response = $this->post(route('admin.opportunities.snooze', $opportunity->id), ['duration' => '1_day']);
+
+        $response->assertRedirect(route('admin.opportunities.show', $opportunity->id));
+        $this->assertSame('success', session('status'));
+        $fresh = $opportunity->fresh();
+        $this->assertSame(OpportunityStatus::Snoozed, $fresh->status);
+        $this->assertNotNull($fresh->snoozed_until);
+    }
+
+    public function test_dismiss_succeeds_and_redirects_safely(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $opportunity = $this->createOpportunity($business, ['status' => OpportunityStatus::Open->value]);
+        $this->actingAsAdmin(['access backend', 'view opportunities', 'edit opportunities']);
+
+        $response = $this->post(route('admin.opportunities.dismiss', $opportunity->id));
+
+        $response->assertRedirect(route('admin.opportunities.show', $opportunity->id));
+        $this->assertSame('success', session('status'));
+        $this->assertSame(OpportunityStatus::Dismissed, $opportunity->fresh()->status);
+    }
+
+    public function test_reopen_from_snoozed_succeeds(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $opportunity = $this->createOpportunity($business, [
+            'status' => OpportunityStatus::Snoozed->value,
+            'snoozed_until' => now()->addDays(3),
+        ]);
+        $this->actingAsAdmin(['access backend', 'view opportunities', 'edit opportunities']);
+
+        $response = $this->post(route('admin.opportunities.reopen', $opportunity->id));
+
+        $response->assertRedirect(route('admin.opportunities.show', $opportunity->id));
+        $fresh = $opportunity->fresh();
+        $this->assertSame(OpportunityStatus::Open, $fresh->status);
+        $this->assertNull($fresh->snoozed_until);
+    }
+
+    public function test_reopen_from_dismissed_succeeds(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $opportunity = $this->createOpportunity($business, [
+            'status' => OpportunityStatus::Dismissed->value,
+            'dismissed_at' => now(),
+        ]);
+        $this->actingAsAdmin(['access backend', 'view opportunities', 'edit opportunities']);
+
+        $this->post(route('admin.opportunities.reopen', $opportunity->id))->assertRedirect();
+
+        $fresh = $opportunity->fresh();
+        $this->assertSame(OpportunityStatus::Open, $fresh->status);
+        $this->assertNull($fresh->dismissed_at);
+    }
+
+    public function test_reopen_from_completed_succeeds(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $opportunity = $this->createOpportunity($business, [
+            'status' => OpportunityStatus::Completed->value,
+            'completed_at' => now(),
+        ]);
+        $this->actingAsAdmin(['access backend', 'view opportunities', 'edit opportunities']);
+
+        $this->post(route('admin.opportunities.reopen', $opportunity->id))->assertRedirect();
+
+        $fresh = $opportunity->fresh();
+        $this->assertSame(OpportunityStatus::Open, $fresh->status);
+        $this->assertNull($fresh->completed_at);
+    }
+
+    public function test_invalid_snooze_duration_is_rejected_without_mutation(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $opportunity = $this->createOpportunity($business, ['status' => OpportunityStatus::Open->value]);
+        $this->actingAsAdmin(['access backend', 'view opportunities', 'edit opportunities']);
+
+        $response = $this->post(route('admin.opportunities.snooze', $opportunity->id), ['duration' => 'not-a-real-duration']);
+
+        $response->assertRedirect();
+        $response->assertSessionHasErrors('duration');
+        $this->assertSame(OpportunityStatus::Open, $opportunity->fresh()->status);
+    }
+
+    public function test_invalid_state_transition_is_handled_safely_without_raw_exception_leakage(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $opportunity = $this->createOpportunity($business, ['status' => OpportunityStatus::InProgress->value]);
+        $this->actingAsAdmin(['access backend', 'view opportunities', 'edit opportunities']);
+
+        $response = $this->post(route('admin.opportunities.dismiss', $opportunity->id));
+
+        $response->assertRedirect(route('admin.opportunities.show', $opportunity->id));
+        $response->assertSessionHasErrors(['opportunity' => "This action isn't available for this opportunity right now."]);
+        $this->assertSame(OpportunityStatus::InProgress, $opportunity->fresh()->status);
+    }
+
+    public function test_transition_records_contain_actor_type_admin_and_the_admin_user_id(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $opportunity = $this->createOpportunity($business, ['status' => OpportunityStatus::Open->value]);
+        $admin = $this->actingAsAdmin(['access backend', 'view opportunities', 'edit opportunities']);
+
+        $this->post(route('admin.opportunities.dismiss', $opportunity->id));
+
+        $transition = OpportunityTransition::where('opportunity_id', $opportunity->id)->first();
+        $this->assertNotNull($transition);
+        $this->assertSame('admin', $transition->actor_type->value);
+        $this->assertSame($admin->id, $transition->actor_user_id);
+    }
+
+    public function test_read_only_admin_detail_contains_no_mutation_forms(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $opportunity = $this->createOpportunity($business, ['status' => OpportunityStatus::Open->value]);
+        $this->actingAsAdmin(['access backend', 'view opportunities']);
+
+        $response = $this->get(route('admin.opportunities.show', $opportunity->id));
+        $response->assertOk();
+
+        $formCount = $this->countFormsInSection($response->getContent(), 'admin-opportunities-show');
+
+        $this->assertSame(0, $formCount);
+    }
+
+    public function test_edit_authorized_admin_sees_only_state_valid_forms(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $opportunity = $this->createOpportunity($business, ['status' => OpportunityStatus::Dismissed->value, 'dismissed_at' => now()]);
+        $this->actingAsAdmin(['access backend', 'view opportunities', 'edit opportunities']);
+
+        $response = $this->get(route('admin.opportunities.show', $opportunity->id));
+
+        $response->assertOk();
+        $response->assertSee(route('admin.opportunities.reopen', $opportunity->id), false);
+        $response->assertDontSee(route('admin.opportunities.snooze', $opportunity->id), false);
+        $response->assertDontSee(route('admin.opportunities.dismiss', $opportunity->id), false);
+    }
+
+    public function test_no_configure_approval_execution_retry_or_attestation_form_or_route_is_introduced(): void
+    {
+        $this->assertFalse(Route::has('admin.opportunities.configure-action'));
+        $this->assertFalse(Route::has('admin.opportunities.request-approval'));
+        $this->assertFalse(Route::has('admin.opportunities.confirm-approval'));
+        $this->assertFalse(Route::has('admin.opportunities.execute'));
+        $this->assertFalse(Route::has('admin.opportunities.retry'));
+        $this->assertFalse(Route::has('admin.opportunities.attest-complete'));
+        $this->assertFalse(Route::has('admin.opportunities.create'));
+        $this->assertFalse(Route::has('admin.opportunities.destroy'));
+
+        $business = $this->createBusinessForOpportunities();
+        $opportunity = $this->createOpportunity($business, ['status' => OpportunityStatus::Open->value]);
+        $this->actingAsAdmin(['access backend', 'view opportunities', 'edit opportunities']);
+
+        $response = $this->get(route('admin.opportunities.show', $opportunity->id));
+        $response->assertOk();
+        $response->assertDontSee('Configure');
+        $response->assertDontSee('Request approval');
+        $response->assertDontSee('Confirm and start');
+        $response->assertDontSee('Retry');
+        $response->assertDontSee('Mark complete');
+    }
+
+    public function test_no_execution_row_or_job_is_created_by_these_mutations(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $opportunity = $this->createOpportunity($business, ['status' => OpportunityStatus::Open->value]);
+        $this->actingAsAdmin(['access backend', 'view opportunities', 'edit opportunities']);
+
+        Queue::fake();
+
+        $this->post(route('admin.opportunities.dismiss', $opportunity->id));
+
+        $this->assertSame(0, OpportunityActionExecution::where('opportunity_id', $opportunity->id)->count());
+        Queue::assertNothingPushed();
+    }
+
+    public function test_existing_run_inspection_routes_remain_read_only(): void
+    {
+        $this->assertFalse(Route::has('admin.opportunities.runs.snooze'));
+        $this->assertFalse(Route::has('admin.opportunities.runs.dismiss'));
+        $this->assertFalse(Route::has('admin.opportunities.runs.reopen'));
+        $this->assertFalse(Route::has('admin.opportunities.runs.destroy'));
+    }
+
+    /**
+     * Scopes the form-count assertion to the named section only, using
+     * DOMDocument/DOMXPath — never the whole page, since the shared admin
+     * layout legitimately contains its own (unrelated) logout form.
+     */
+    private function countFormsInSection(string $html, string $sectionId): int
+    {
+        $previousLibxmlSetting = libxml_use_internal_errors(true);
+        $document = new DOMDocument();
+        $document->loadHTML($html);
+        libxml_use_internal_errors($previousLibxmlSetting);
+
+        $xpath = new DOMXPath($document);
+        $sections = $xpath->query('//*[@id="' . $sectionId . '"]');
+
+        if ($sections->length === 0) {
+            return 0;
+        }
+
+        return $xpath->query('.//form', $sections->item(0))->length;
     }
 
     /**

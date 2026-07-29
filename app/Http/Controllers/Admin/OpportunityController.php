@@ -6,18 +6,27 @@ use App\Enums\Opportunity\OpportunityFreshness;
 use App\Enums\Opportunity\OpportunityStatus;
 use App\Enums\Opportunity\OpportunityWorkerKey;
 use App\Http\Requests\Opportunity\AdminOpportunityIndexRequest;
+use App\Http\Requests\Opportunity\SnoozeOpportunityRequest;
+use App\Library\Opportunity\Exceptions\InvalidOpportunityStateException;
+use App\Library\Opportunity\Exceptions\InvalidSnoozeUntilException;
+use App\Library\Opportunity\OpportunityManager;
 use App\Models\Opportunity;
+use App\Models\User;
 use App\Repositories\Contracts\OpportunityActionExecutionRepository;
 use App\Repositories\Contracts\OpportunityRepository;
 use App\Repositories\Contracts\OpportunityTransitionRepository;
 use Illuminate\Contracts\View\View;
+use Illuminate\Http\RedirectResponse;
+use Illuminate\Support\Facades\Auth;
 
 /**
- * Admin-only, intentionally cross-tenant Opportunity inspection (RFC-002
- * §44, §51 Milestone 5, Slices 1–2). Read-only index and detail — no run/
- * candidate inspection and no mutation exists yet. Every query goes through
- * a repository contract; nothing here queries the Opportunity model (or any
- * other Eloquent model) directly.
+ * Admin-only, intentionally cross-tenant Opportunity inspection and manual
+ * state mutation (RFC-002 §44, §51 Milestone 5, Slices 1–4). Every query
+ * goes through a repository contract; every mutation goes through
+ * OpportunityManager's admin-specific methods — nothing here queries or
+ * mutates the Opportunity model (or any other Eloquent model) directly. No
+ * approval, configuration, execution, retry, or attestation control exists
+ * here — those remain customer-only.
  */
 class OpportunityController extends AdminBaseController
 {
@@ -25,6 +34,7 @@ class OpportunityController extends AdminBaseController
         private readonly OpportunityRepository $opportunityRepository,
         private readonly OpportunityTransitionRepository $transitionRepository,
         private readonly OpportunityActionExecutionRepository $actionExecutionRepository,
+        private readonly OpportunityManager $opportunityManager,
     ) {
     }
 
@@ -106,6 +116,114 @@ class OpportunityController extends AdminBaseController
             'completion_policy' => is_array($recommendedAction) ? ($recommendedAction['completion_policy'] ?? null) : null,
             'approval_required' => is_array($recommendedAction) ? ($recommendedAction['approval_required'] ?? null) : null,
         ];
+    }
+
+    /**
+     * Mirrors the customer controller's own snooze() exactly: a fixed,
+     * server-computed instant derived only from the validated duration key
+     * — never a client-supplied timestamp, never parsed in Blade, no
+     * timezone guessing (always relative to the server's own now()).
+     * SnoozeOpportunityRequest is reused unmodified — its authorize()/
+     * rules() carry no customer-specific assumption.
+     */
+    public function snooze(SnoozeOpportunityRequest $request, int $opportunity): RedirectResponse
+    {
+        $this->authorize('edit opportunities');
+
+        abort_unless(config('opportunity.enabled', false), 404);
+
+        $targetOpportunity = $this->opportunityRepository->findForAdmin($opportunity);
+
+        if ($targetOpportunity === null) {
+            abort(404);
+        }
+
+        $until = match ($request->validated('duration')) {
+            '1_day' => now()->addDay(),
+            '3_days' => now()->addDays(3),
+            '1_week' => now()->addWeek(),
+        };
+
+        try {
+            $this->opportunityManager->snoozeAsAdmin($targetOpportunity, $this->admin(), $until);
+        } catch (InvalidOpportunityStateException|InvalidSnoozeUntilException) {
+            return $this->safeErrorRedirect($targetOpportunity->id, "This action isn't available for this opportunity right now.");
+        }
+
+        return redirect()->route('admin.opportunities.show', $targetOpportunity->id)->with([
+            'status' => 'success',
+            'message' => 'Opportunity snoozed.',
+        ]);
+    }
+
+    public function dismiss(int $opportunity): RedirectResponse
+    {
+        $this->authorize('edit opportunities');
+
+        abort_unless(config('opportunity.enabled', false), 404);
+
+        $targetOpportunity = $this->opportunityRepository->findForAdmin($opportunity);
+
+        if ($targetOpportunity === null) {
+            abort(404);
+        }
+
+        try {
+            $this->opportunityManager->dismissAsAdmin($targetOpportunity, $this->admin());
+        } catch (InvalidOpportunityStateException) {
+            return $this->safeErrorRedirect($targetOpportunity->id, "This action isn't available for this opportunity right now.");
+        }
+
+        return redirect()->route('admin.opportunities.show', $targetOpportunity->id)->with([
+            'status' => 'success',
+            'message' => 'Opportunity dismissed.',
+        ]);
+    }
+
+    /**
+     * The reopen reason is always the fixed 'admin_reopened' literal — never
+     * a request-supplied value (RFC-002 §44). OpportunityManager's
+     * reopenAsAdmin() still accepts reasonCode as an explicit parameter,
+     * matching the RFC's exact signature, but this controller is the one
+     * place that must never forward request input into it.
+     */
+    public function reopen(int $opportunity): RedirectResponse
+    {
+        $this->authorize('edit opportunities');
+
+        abort_unless(config('opportunity.enabled', false), 404);
+
+        $targetOpportunity = $this->opportunityRepository->findForAdmin($opportunity);
+
+        if ($targetOpportunity === null) {
+            abort(404);
+        }
+
+        try {
+            $this->opportunityManager->reopenAsAdmin($targetOpportunity, $this->admin(), 'admin_reopened');
+        } catch (InvalidOpportunityStateException) {
+            return $this->safeErrorRedirect($targetOpportunity->id, "This action isn't available for this opportunity right now.");
+        }
+
+        return redirect()->route('admin.opportunities.show', $targetOpportunity->id)->with([
+            'status' => 'success',
+            'message' => 'Opportunity reopened.',
+        ]);
+    }
+
+    /**
+     * The fixed-message redirect every domain exception maps to (RFC-002
+     * §47) — never the raw exception message, which always interpolates an
+     * internal Opportunity ID.
+     */
+    private function safeErrorRedirect(int $opportunityId, string $message): RedirectResponse
+    {
+        return redirect()->route('admin.opportunities.show', $opportunityId)->withErrors(['opportunity' => $message]);
+    }
+
+    private function admin(): User
+    {
+        return Auth::user();
     }
 
     /**

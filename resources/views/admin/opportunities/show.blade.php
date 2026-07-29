@@ -20,6 +20,22 @@
                         <h4 class="card-title">Opportunity #{{ $opportunity->id }}</h4>
                     </div>
                     <div class="card-body">
+                        @if (session('status'))
+                            <div class="alert alert-{{ session('status') === 'success' ? 'success' : 'danger' }}">
+                                {{ session('message') }}
+                            </div>
+                        @endif
+
+                        @if ($errors->any())
+                            <div class="alert alert-danger">
+                                <ul class="mb-0">
+                                    @foreach ($errors->all() as $error)
+                                        <li>{{ $error }}</li>
+                                    @endforeach
+                                </ul>
+                            </div>
+                        @endif
+
                         <h5>Opportunity</h5>
                         <div class="row mb-2">
                             <div class="col-md-3">
@@ -132,6 +148,40 @@
                                 </div>
                             </div>
                         </div>
+
+                        @can('edit opportunities')
+                            @if (in_array($opportunity->status->value, ['open', 'awaiting_approval'], true))
+                                <hr>
+
+                                <form method="POST" action="{{ route('admin.opportunities.snooze', $opportunity->id) }}" class="mb-2">
+                                    @csrf
+                                    <label class="form-label" for="duration">Snooze for</label>
+                                    <div class="d-flex flex-wrap gap-1">
+                                        <select class="form-control" style="max-width: 200px;" id="duration" name="duration">
+                                            <option value="1_day" @selected(old('duration') === '1_day')>1 day</option>
+                                            <option value="3_days" @selected(old('duration') === '3_days')>3 days</option>
+                                            <option value="1_week" @selected(old('duration') === '1_week')>1 week</option>
+                                        </select>
+                                        <button type="submit" class="btn btn-outline-secondary">Snooze opportunity</button>
+                                    </div>
+                                </form>
+
+                                <form method="POST" action="{{ route('admin.opportunities.dismiss', $opportunity->id) }}" class="mb-2">
+                                    @csrf
+                                    <p class="text-muted small mb-1">Dismissing removes this opportunity from the customer's actionable queue.</p>
+                                    <button type="submit" class="btn btn-outline-danger">Dismiss opportunity</button>
+                                </form>
+                            @endif
+
+                            @if (in_array($opportunity->status->value, ['snoozed', 'dismissed', 'completed'], true))
+                                <hr>
+
+                                <form method="POST" action="{{ route('admin.opportunities.reopen', $opportunity->id) }}" class="mb-2">
+                                    @csrf
+                                    <button type="submit" class="btn btn-outline-primary">Reopen opportunity</button>
+                                </form>
+                            @endif
+                        @endcan
 
                         <hr>
 

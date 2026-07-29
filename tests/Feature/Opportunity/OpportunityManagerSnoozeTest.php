@@ -449,4 +449,139 @@ class OpportunityManagerSnoozeTest extends TestCase
             $this->assertSame(0, OpportunityTransition::where('opportunity_id', $opportunity->id)->count());
         }
     }
+
+    public function test_admin_can_snooze_another_customers_opportunity(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $opportunity = $this->createOpportunity($business, ['status' => OpportunityStatus::Open->value]);
+        $admin = $this->createAdminUser();
+        $manager = app(OpportunityManager::class);
+        $until = now()->addDays(3);
+        $expectedUntil = $until->copy()->startOfSecond();
+        $originalUntilIso = $until->toIso8601String();
+
+        $updated = $manager->snoozeAsAdmin($opportunity, $admin, $until);
+
+        $this->assertSame(OpportunityStatus::Snoozed, $updated->status);
+        $this->assertTrue($expectedUntil->equalTo($updated->snoozed_until));
+        $this->assertSame($originalUntilIso, $until->toIso8601String());
+    }
+
+    public function test_admin_snooze_exact_transition_fields(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $opportunity = $this->createOpportunity($business, ['status' => OpportunityStatus::Open->value]);
+        $admin = $this->createAdminUser();
+        $manager = app(OpportunityManager::class);
+
+        $manager->snoozeAsAdmin($opportunity, $admin, now()->addDays(3));
+
+        $this->assertSame(1, OpportunityTransition::where('opportunity_id', $opportunity->id)->count());
+        $transition = OpportunityTransition::where('opportunity_id', $opportunity->id)->first();
+        $this->assertSame('open', $transition->from_status);
+        $this->assertSame('snoozed', $transition->to_status);
+        $this->assertSame(OpportunityTransitionActorType::Admin, $transition->actor_type);
+        $this->assertSame($admin->id, $transition->actor_user_id);
+        $this->assertSame('admin_snoozed', $transition->reason_code);
+    }
+
+    public function test_admin_snooze_event_carries_the_correct_scalar_payload(): void
+    {
+        Event::fake([OpportunitySnoozed::class]);
+
+        $business = $this->createBusinessForOpportunities();
+        $opportunity = $this->createOpportunity($business, ['status' => OpportunityStatus::Open->value]);
+        $admin = $this->createAdminUser();
+        $manager = app(OpportunityManager::class);
+        $until = now()->addDays(3);
+
+        $manager->snoozeAsAdmin($opportunity, $admin, $until);
+
+        Event::assertDispatched(OpportunitySnoozed::class, function (OpportunitySnoozed $event) use ($opportunity, $business, $admin) {
+            return $event->opportunityId === $opportunity->id
+                && $event->businessId === $business->id
+                && $event->actorUserId === $admin->id
+                && $event->previousStatus === 'open';
+        });
+        Event::assertDispatched(OpportunitySnoozed::class, 1);
+    }
+
+    public function test_admin_snooze_past_timestamp_rejects_atomically(): void
+    {
+        Event::fake([OpportunitySnoozed::class]);
+
+        $business = $this->createBusinessForOpportunities();
+        $opportunity = $this->createOpportunity($business, ['status' => OpportunityStatus::Open->value]);
+        $admin = $this->createAdminUser();
+        $manager = app(OpportunityManager::class);
+
+        try {
+            $this->expectException(InvalidSnoozeUntilException::class);
+
+            $manager->snoozeAsAdmin($opportunity, $admin, now()->subDay());
+        } finally {
+            $opportunity->refresh();
+            $this->assertSame(OpportunityStatus::Open, $opportunity->status);
+            $this->assertSame(0, OpportunityTransition::where('opportunity_id', $opportunity->id)->count());
+            Event::assertNotDispatched(OpportunitySnoozed::class);
+        }
+    }
+
+    public function test_admin_snooze_invalid_source_status_is_rejected_atomically(): void
+    {
+        Event::fake([OpportunitySnoozed::class]);
+
+        $business = $this->createBusinessForOpportunities();
+        $opportunity = $this->createOpportunity($business, ['status' => OpportunityStatus::Completed->value]);
+        $admin = $this->createAdminUser();
+        $manager = app(OpportunityManager::class);
+
+        try {
+            $this->expectException(InvalidOpportunityStateException::class);
+
+            $manager->snoozeAsAdmin($opportunity, $admin, now()->addDays(3));
+        } finally {
+            $opportunity->refresh();
+            $this->assertSame(OpportunityStatus::Completed, $opportunity->status);
+            $this->assertSame(0, OpportunityTransition::where('opportunity_id', $opportunity->id)->count());
+            Event::assertNotDispatched(OpportunitySnoozed::class);
+        }
+    }
+
+    public function test_admin_snooze_creates_no_action_execution_row(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $opportunity = $this->createOpportunity($business, ['status' => OpportunityStatus::Open->value]);
+        $admin = $this->createAdminUser();
+        $manager = app(OpportunityManager::class);
+
+        $manager->snoozeAsAdmin($opportunity, $admin, now()->addDays(3));
+
+        $this->assertSame(0, OpportunityActionExecution::where('opportunity_id', $opportunity->id)->count());
+    }
+
+    public function test_admin_snooze_does_not_increment_occurrence_number(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $opportunity = $this->createOpportunity($business, ['status' => OpportunityStatus::Open->value, 'occurrence_number' => 2]);
+        $admin = $this->createAdminUser();
+        $manager = app(OpportunityManager::class);
+
+        $updated = $manager->snoozeAsAdmin($opportunity, $admin, now()->addDays(3));
+
+        $this->assertSame(2, $updated->occurrence_number);
+    }
+
+    private function createAdminUser(): \App\Models\User
+    {
+        return \App\Models\User::create([
+            'first_name' => 'Test',
+            'last_name' => 'Admin',
+            'email' => 'admin' . uniqid('', true) . '@example.test',
+            'status' => true,
+            'is_admin' => true,
+            'is_customer' => false,
+            'active_portal' => 'admin',
+        ]);
+    }
 }

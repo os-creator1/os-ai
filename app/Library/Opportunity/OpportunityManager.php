@@ -60,6 +60,7 @@ use App\Models\Opportunity;
 use App\Models\OpportunityActionExecution;
 use App\Models\OpportunityRun;
 use App\Models\OpportunityRunCandidate;
+use App\Models\User;
 use App\Repositories\Contracts\BusinessRepository;
 use App\Repositories\Contracts\CustomerOnboardingRepository;
 use App\Repositories\Contracts\OpportunityActionExecutionRepository;
@@ -419,40 +420,81 @@ class OpportunityManager
     {
         return DB::transaction(function () use ($opportunity, $customer) {
             $locked = $this->opportunityRepository->findOwnedForUpdate($opportunity->id, $opportunity->business_id);
-
             $locked = $this->assertOpportunityOwnership($customer, $locked);
 
-            if (! in_array($locked->status, [OpportunityStatus::Open, OpportunityStatus::AwaitingApproval], true)) {
-                throw new InvalidOpportunityStateException(
-                    "Opportunity [{$locked->id}] cannot be dismissed from status [{$locked->status->value}]."
-                );
-            }
-
-            $now = now();
-            $fromStatus = $locked->status;
-
-            $updated = $this->opportunityRepository->update($locked, [
-                'status' => OpportunityStatus::Dismissed->value,
-                'dismissed_at' => $now,
-            ]);
-
-            $this->transitionRepository->create([
-                'opportunity_id' => $locked->id,
-                'category' => OpportunityTransitionCategory::Workflow->value,
-                'from_status' => $fromStatus->value,
-                'to_status' => OpportunityStatus::Dismissed->value,
-                'actor_type' => OpportunityTransitionActorType::Customer->value,
-                'actor_user_id' => $customer->user_id,
-                'opportunity_run_id' => null,
-                'action_execution_id' => null,
-                'reason_code' => 'customer_dismissed',
-                'safe_note' => null,
-            ]);
-
-            OpportunityDismissed::dispatch($locked->id, $locked->business_id, $customer->user_id, $fromStatus->value);
-
-            return $updated;
+            return $this->transitionToDismissed(
+                $locked,
+                OpportunityTransitionActorType::Customer,
+                $customer->user_id,
+                'customer_dismissed',
+            );
         });
+    }
+
+    /**
+     * Admin-initiated dismissal on the customer's behalf (RFC-002 §37, §44
+     * — Milestone 5). Intentionally cross-tenant: no customer-ownership
+     * check runs here, only the same state-machine precondition
+     * dismiss() itself enforces. actor_type='admin', actor_user_id is the
+     * acting administrator's own user id, never the Opportunity's owning
+     * customer.
+     */
+    public function dismissAsAdmin(Opportunity $opportunity, User $admin): Opportunity
+    {
+        return DB::transaction(function () use ($opportunity, $admin) {
+            $locked = $this->opportunityRepository->findOwnedForUpdate($opportunity->id, $opportunity->business_id);
+            $locked = $this->assertOpportunityIsPresent($locked);
+
+            return $this->transitionToDismissed(
+                $locked,
+                OpportunityTransitionActorType::Admin,
+                $admin->id,
+                'admin_dismissed',
+            );
+        });
+    }
+
+    /**
+     * Shared state-machine/persistence step for dismiss()/dismissAsAdmin()
+     * — identical precondition, update, transition, and event for both
+     * actors; only actor_type/actor_user_id/reason_code vary.
+     */
+    private function transitionToDismissed(
+        Opportunity $locked,
+        OpportunityTransitionActorType $actorType,
+        int $actorUserId,
+        string $reasonCode,
+    ): Opportunity {
+        if (! in_array($locked->status, [OpportunityStatus::Open, OpportunityStatus::AwaitingApproval], true)) {
+            throw new InvalidOpportunityStateException(
+                "Opportunity [{$locked->id}] cannot be dismissed from status [{$locked->status->value}]."
+            );
+        }
+
+        $now = now();
+        $fromStatus = $locked->status;
+
+        $updated = $this->opportunityRepository->update($locked, [
+            'status' => OpportunityStatus::Dismissed->value,
+            'dismissed_at' => $now,
+        ]);
+
+        $this->transitionRepository->create([
+            'opportunity_id' => $locked->id,
+            'category' => OpportunityTransitionCategory::Workflow->value,
+            'from_status' => $fromStatus->value,
+            'to_status' => OpportunityStatus::Dismissed->value,
+            'actor_type' => $actorType->value,
+            'actor_user_id' => $actorUserId,
+            'opportunity_run_id' => null,
+            'action_execution_id' => null,
+            'reason_code' => $reasonCode,
+            'safe_note' => null,
+        ]);
+
+        OpportunityDismissed::dispatch($locked->id, $locked->business_id, $actorUserId, $fromStatus->value);
+
+        return $updated;
     }
 
     /**
@@ -469,54 +511,97 @@ class OpportunityManager
     {
         return DB::transaction(function () use ($opportunity, $customer, $until) {
             $locked = $this->opportunityRepository->findOwnedForUpdate($opportunity->id, $opportunity->business_id);
-
             $locked = $this->assertOpportunityOwnership($customer, $locked);
 
-            if (! in_array($locked->status, [OpportunityStatus::Open, OpportunityStatus::AwaitingApproval], true)) {
-                throw new InvalidOpportunityStateException(
-                    "Opportunity [{$locked->id}] cannot be snoozed from status [{$locked->status->value}]."
-                );
-            }
-
-            $now = now();
-            $snoozedUntil = CarbonImmutable::instance($until);
-
-            if ($snoozedUntil->lessThanOrEqualTo($now)) {
-                throw new InvalidSnoozeUntilException(
-                    'snoozedUntil must be strictly later than the current operation timestamp.'
-                );
-            }
-
-            $fromStatus = $locked->status;
-
-            $updated = $this->opportunityRepository->update($locked, [
-                'status' => OpportunityStatus::Snoozed->value,
-                'snoozed_until' => $snoozedUntil,
-            ]);
-
-            $this->transitionRepository->create([
-                'opportunity_id' => $locked->id,
-                'category' => OpportunityTransitionCategory::Workflow->value,
-                'from_status' => $fromStatus->value,
-                'to_status' => OpportunityStatus::Snoozed->value,
-                'actor_type' => OpportunityTransitionActorType::Customer->value,
-                'actor_user_id' => $customer->user_id,
-                'opportunity_run_id' => null,
-                'action_execution_id' => null,
-                'reason_code' => 'customer_snoozed',
-                'safe_note' => null,
-            ]);
-
-            OpportunitySnoozed::dispatch(
-                $locked->id,
-                $locked->business_id,
+            return $this->transitionToSnoozed(
+                $locked,
+                OpportunityTransitionActorType::Customer,
                 $customer->user_id,
-                $fromStatus->value,
-                $snoozedUntil->toIso8601String(),
+                'customer_snoozed',
+                $until,
             );
-
-            return $updated;
         });
+    }
+
+    /**
+     * Admin-initiated snooze on the customer's behalf (RFC-002 §37, §44 —
+     * Milestone 5). Intentionally cross-tenant: no customer-ownership
+     * check runs here, only the same state-machine precondition snooze()
+     * itself enforces. actor_type='admin', actor_user_id is the acting
+     * administrator's own user id.
+     */
+    public function snoozeAsAdmin(Opportunity $opportunity, User $admin, CarbonInterface $until): Opportunity
+    {
+        return DB::transaction(function () use ($opportunity, $admin, $until) {
+            $locked = $this->opportunityRepository->findOwnedForUpdate($opportunity->id, $opportunity->business_id);
+            $locked = $this->assertOpportunityIsPresent($locked);
+
+            return $this->transitionToSnoozed(
+                $locked,
+                OpportunityTransitionActorType::Admin,
+                $admin->id,
+                'admin_snoozed',
+                $until,
+            );
+        });
+    }
+
+    /**
+     * Shared state-machine/persistence step for snooze()/snoozeAsAdmin() —
+     * identical precondition, validation, update, transition, and event for
+     * both actors; only actor_type/actor_user_id/reason_code vary.
+     */
+    private function transitionToSnoozed(
+        Opportunity $locked,
+        OpportunityTransitionActorType $actorType,
+        int $actorUserId,
+        string $reasonCode,
+        CarbonInterface $until,
+    ): Opportunity {
+        if (! in_array($locked->status, [OpportunityStatus::Open, OpportunityStatus::AwaitingApproval], true)) {
+            throw new InvalidOpportunityStateException(
+                "Opportunity [{$locked->id}] cannot be snoozed from status [{$locked->status->value}]."
+            );
+        }
+
+        $now = now();
+        $snoozedUntil = CarbonImmutable::instance($until);
+
+        if ($snoozedUntil->lessThanOrEqualTo($now)) {
+            throw new InvalidSnoozeUntilException(
+                'snoozedUntil must be strictly later than the current operation timestamp.'
+            );
+        }
+
+        $fromStatus = $locked->status;
+
+        $updated = $this->opportunityRepository->update($locked, [
+            'status' => OpportunityStatus::Snoozed->value,
+            'snoozed_until' => $snoozedUntil,
+        ]);
+
+        $this->transitionRepository->create([
+            'opportunity_id' => $locked->id,
+            'category' => OpportunityTransitionCategory::Workflow->value,
+            'from_status' => $fromStatus->value,
+            'to_status' => OpportunityStatus::Snoozed->value,
+            'actor_type' => $actorType->value,
+            'actor_user_id' => $actorUserId,
+            'opportunity_run_id' => null,
+            'action_execution_id' => null,
+            'reason_code' => $reasonCode,
+            'safe_note' => null,
+        ]);
+
+        OpportunitySnoozed::dispatch(
+            $locked->id,
+            $locked->business_id,
+            $actorUserId,
+            $fromStatus->value,
+            $snoozedUntil->toIso8601String(),
+        );
+
+        return $updated;
     }
 
     /**
@@ -532,41 +617,86 @@ class OpportunityManager
     {
         return DB::transaction(function () use ($opportunity, $customer, $reasonCode) {
             $locked = $this->opportunityRepository->findOwnedForUpdate($opportunity->id, $opportunity->business_id);
-
             $locked = $this->assertOpportunityOwnership($customer, $locked);
 
-            if (! in_array($locked->status, [OpportunityStatus::Snoozed, OpportunityStatus::Dismissed, OpportunityStatus::Completed], true)) {
-                throw new InvalidOpportunityStateException(
-                    "Opportunity [{$locked->id}] cannot be reopened from status [{$locked->status->value}]."
-                );
-            }
-
-            $fromStatus = $locked->status;
-
-            $updated = $this->opportunityRepository->update($locked, [
-                'status' => OpportunityStatus::Open->value,
-                'snoozed_until' => null,
-                'dismissed_at' => null,
-                'completed_at' => null,
-            ]);
-
-            $this->transitionRepository->create([
-                'opportunity_id' => $locked->id,
-                'category' => OpportunityTransitionCategory::Workflow->value,
-                'from_status' => $fromStatus->value,
-                'to_status' => OpportunityStatus::Open->value,
-                'actor_type' => OpportunityTransitionActorType::Customer->value,
-                'actor_user_id' => $customer->user_id,
-                'opportunity_run_id' => null,
-                'action_execution_id' => null,
-                'reason_code' => $reasonCode,
-                'safe_note' => null,
-            ]);
-
-            OpportunityReopened::dispatch($locked->id, $locked->business_id, $customer->user_id, $fromStatus->value, $reasonCode);
-
-            return $updated;
+            return $this->transitionToOpen(
+                $locked,
+                OpportunityTransitionActorType::Customer,
+                $customer->user_id,
+                $reasonCode,
+            );
         });
+    }
+
+    /**
+     * Admin-initiated reopen on the customer's behalf (RFC-002 §37, §44 —
+     * Milestone 5). Intentionally cross-tenant: no customer-ownership check
+     * runs here, only the same state-machine precondition reopen() itself
+     * enforces. actor_type='admin', actor_user_id is the acting
+     * administrator's own user id. $reasonCode is still an explicit
+     * parameter (matching the RFC's exact signature), but the admin
+     * controller is the one place that must never forward a
+     * request-supplied value into it — it always passes the fixed
+     * 'admin_reopened' literal.
+     */
+    public function reopenAsAdmin(Opportunity $opportunity, User $admin, string $reasonCode): Opportunity
+    {
+        return DB::transaction(function () use ($opportunity, $admin, $reasonCode) {
+            $locked = $this->opportunityRepository->findOwnedForUpdate($opportunity->id, $opportunity->business_id);
+            $locked = $this->assertOpportunityIsPresent($locked);
+
+            return $this->transitionToOpen(
+                $locked,
+                OpportunityTransitionActorType::Admin,
+                $admin->id,
+                $reasonCode,
+            );
+        });
+    }
+
+    /**
+     * Shared state-machine/persistence step for reopen()/reopenAsAdmin() —
+     * identical precondition, update, transition, and event for both
+     * actors; only actor_type/actor_user_id vary. reasonCode is supplied by
+     * each public caller, not derived here.
+     */
+    private function transitionToOpen(
+        Opportunity $locked,
+        OpportunityTransitionActorType $actorType,
+        int $actorUserId,
+        string $reasonCode,
+    ): Opportunity {
+        if (! in_array($locked->status, [OpportunityStatus::Snoozed, OpportunityStatus::Dismissed, OpportunityStatus::Completed], true)) {
+            throw new InvalidOpportunityStateException(
+                "Opportunity [{$locked->id}] cannot be reopened from status [{$locked->status->value}]."
+            );
+        }
+
+        $fromStatus = $locked->status;
+
+        $updated = $this->opportunityRepository->update($locked, [
+            'status' => OpportunityStatus::Open->value,
+            'snoozed_until' => null,
+            'dismissed_at' => null,
+            'completed_at' => null,
+        ]);
+
+        $this->transitionRepository->create([
+            'opportunity_id' => $locked->id,
+            'category' => OpportunityTransitionCategory::Workflow->value,
+            'from_status' => $fromStatus->value,
+            'to_status' => OpportunityStatus::Open->value,
+            'actor_type' => $actorType->value,
+            'actor_user_id' => $actorUserId,
+            'opportunity_run_id' => null,
+            'action_execution_id' => null,
+            'reason_code' => $reasonCode,
+            'safe_note' => null,
+        ]);
+
+        OpportunityReopened::dispatch($locked->id, $locked->business_id, $actorUserId, $fromStatus->value, $reasonCode);
+
+        return $updated;
     }
 
     /**
@@ -1966,6 +2096,21 @@ class OpportunityManager
     {
         if ($opportunity === null || (int) $opportunity->business->customer_id !== (int) $customer->user_id) {
             throw new AuthorizationException('This opportunity does not belong to the given customer.');
+        }
+
+        return $opportunity;
+    }
+
+    /**
+     * Admin equivalent of assertOpportunityOwnership() — deliberately
+     * performs no customer-ownership comparison (admin access is
+     * intentionally cross-tenant, RFC-002 §44); only guards against the
+     * locked re-fetch returning null.
+     */
+    private function assertOpportunityIsPresent(?Opportunity $opportunity): Opportunity
+    {
+        if ($opportunity === null) {
+            throw new AuthorizationException('This opportunity does not exist.');
         }
 
         return $opportunity;
