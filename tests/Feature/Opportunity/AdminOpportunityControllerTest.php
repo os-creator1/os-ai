@@ -290,14 +290,15 @@ class AdminOpportunityControllerTest extends TestCase
         $response->assertDontSee('"action_key"', false);
     }
 
-    public function test_no_admin_mutation_or_run_inspection_route_exists_yet(): void
+    public function test_no_admin_opportunity_mutation_routes_exist(): void
     {
+        $this->assertTrue(Route::has('admin.opportunities.index'));
         $this->assertTrue(Route::has('admin.opportunities.show'));
+        $this->assertTrue(Route::has('admin.opportunities.runs.index'));
+        $this->assertTrue(Route::has('admin.opportunities.runs.show'));
         $this->assertFalse(Route::has('admin.opportunities.snooze'));
         $this->assertFalse(Route::has('admin.opportunities.dismiss'));
         $this->assertFalse(Route::has('admin.opportunities.reopen'));
-        $this->assertFalse(Route::has('admin.opportunities.runs.index'));
-        $this->assertFalse(Route::has('admin.opportunities.runs.show'));
     }
 
     public function test_index_rows_link_to_the_detail_page(): void

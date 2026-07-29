@@ -438,6 +438,16 @@ class RunBusinessAdvisorOpportunityProducerJobTest extends TestCase
                 return $this->real->findRunningForUpdate($businessId, $workerKey);
             }
 
+            public function paginateForBusiness(int $businessId, int $perPage): \Illuminate\Contracts\Pagination\LengthAwarePaginator
+            {
+                return $this->real->paginateForBusiness($businessId, $perPage);
+            }
+
+            public function findForAdmin(int $runId): ?OpportunityRun
+            {
+                return $this->real->findForAdmin($runId);
+            }
+
             public function create(array $attributes): OpportunityRun
             {
                 return $this->real->create($attributes);
@@ -504,6 +514,16 @@ class RunBusinessAdvisorOpportunityProducerJobTest extends TestCase
             public function findRunningForUpdate(int $businessId, OpportunityWorkerKey $workerKey): ?OpportunityRun
             {
                 return $this->real->findRunningForUpdate($businessId, $workerKey);
+            }
+
+            public function paginateForBusiness(int $businessId, int $perPage): \Illuminate\Contracts\Pagination\LengthAwarePaginator
+            {
+                return $this->real->paginateForBusiness($businessId, $perPage);
+            }
+
+            public function findForAdmin(int $runId): ?OpportunityRun
+            {
+                return $this->real->findForAdmin($runId);
             }
 
             public function create(array $attributes): OpportunityRun

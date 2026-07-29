@@ -9,6 +9,9 @@
                 <a href="{{ route('admin.opportunities.index') }}" class="btn btn-outline-secondary btn-sm">
                     &larr; Back to opportunities
                 </a>
+                <a href="{{ route('admin.opportunities.runs.index', ['business_id' => $opportunity->business_id]) }}" class="btn btn-outline-secondary btn-sm">
+                    View producer runs for this business
+                </a>
             </div>
 
             <div class="col-12">

@@ -5,6 +5,7 @@ namespace App\Repositories\Eloquent;
 use App\Enums\Opportunity\OpportunityWorkerKey;
 use App\Models\OpportunityRun;
 use App\Repositories\Contracts\OpportunityRunRepository;
+use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Arr;
 
 class EloquentOpportunityRunRepository extends EloquentBaseRepository implements OpportunityRunRepository
@@ -41,6 +42,22 @@ class EloquentOpportunityRunRepository extends EloquentBaseRepository implements
             ->where('status', 'running')
             ->lockForUpdate()
             ->first();
+    }
+
+    public function paginateForBusiness(int $businessId, int $perPage): LengthAwarePaginator
+    {
+        return $this->query()
+            ->where('business_id', $businessId)
+            ->orderByDesc('started_at')
+            ->orderByDesc('id')
+            ->paginate($perPage);
+    }
+
+    public function findForAdmin(int $runId): ?OpportunityRun
+    {
+        return $this->query()
+            ->with(['business.customer.user'])
+            ->find($runId);
     }
 
     public function create(array $attributes): OpportunityRun

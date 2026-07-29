@@ -107,4 +107,136 @@ class OpportunityRunRepositoryTest extends TestCase
         $this->assertSame($business->id, $run->business()->first()->id);
         $this->assertTrue($business->opportunityRuns->contains($run));
     }
+
+    public function test_paginate_for_business_returns_only_the_selected_businesses_runs(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $otherBusiness = $this->createBusinessForOpportunities();
+        $matching = $this->createOpportunityRun($business);
+        $this->createOpportunityRun($otherBusiness);
+        $repository = app(OpportunityRunRepository::class);
+
+        $page = $repository->paginateForBusiness($business->id, 25);
+
+        $this->assertSame(1, $page->total());
+        $this->assertSame($matching->id, $page->items()[0]->id);
+    }
+
+    public function test_paginate_for_business_includes_failed_and_abandoned_runs(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $this->createOpportunityRun($business, ['status' => OpportunityRunStatus::Failed->value]);
+        $this->createOpportunityRun($business, [
+            'status' => OpportunityRunStatus::Failed->value,
+            'abandoned_at' => now(),
+            'reason_code' => 'heartbeat_timeout',
+        ]);
+        $repository = app(OpportunityRunRepository::class);
+
+        $page = $repository->paginateForBusiness($business->id, 25);
+
+        $this->assertSame(2, $page->total());
+    }
+
+    public function test_paginate_for_business_orders_by_started_at_then_id_descending(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $repository = app(OpportunityRunRepository::class);
+
+        $older = $this->createOpportunityRun($business, ['started_at' => now()->subHour()]);
+        $newer = $this->createOpportunityRun($business, ['started_at' => now()]);
+
+        $page = $repository->paginateForBusiness($business->id, 25);
+
+        $this->assertSame($newer->id, $page->items()[0]->id);
+        $this->assertSame($older->id, $page->items()[1]->id);
+    }
+
+    public function test_paginate_for_business_is_bounded_by_per_page(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+
+        for ($i = 0; $i < 3; $i++) {
+            $this->createOpportunityRun($business, ['started_at' => now()->subMinutes($i)]);
+        }
+
+        $repository = app(OpportunityRunRepository::class);
+
+        $page = $repository->paginateForBusiness($business->id, 2);
+
+        $this->assertSame(3, $page->total());
+        $this->assertCount(2, $page->items());
+    }
+
+    public function test_paginate_for_business_performs_no_mutation(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $run = $this->createOpportunityRun($business);
+        $repository = app(OpportunityRunRepository::class);
+        $updatedAtBefore = $run->updated_at;
+
+        $repository->paginateForBusiness($business->id, 25);
+
+        $this->assertTrue($updatedAtBefore->equalTo($run->fresh()->updated_at));
+    }
+
+    public function test_find_for_admin_returns_a_cross_tenant_run(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $run = $this->createOpportunityRun($business);
+        $repository = app(OpportunityRunRepository::class);
+
+        $found = $repository->findForAdmin($run->id);
+
+        $this->assertNotNull($found);
+        $this->assertSame($run->id, $found->id);
+    }
+
+    public function test_find_for_admin_returns_null_for_a_missing_run(): void
+    {
+        $repository = app(OpportunityRunRepository::class);
+
+        $this->assertNull($repository->findForAdmin(999999));
+    }
+
+    public function test_find_for_admin_eager_loads_business_customer_and_user(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $run = $this->createOpportunityRun($business);
+        $repository = app(OpportunityRunRepository::class);
+
+        $found = $repository->findForAdmin($run->id);
+
+        $this->assertNotNull($found);
+        $this->assertTrue($found->relationLoaded('business'));
+        $this->assertTrue($found->business->relationLoaded('customer'));
+        $this->assertTrue($found->business->customer->relationLoaded('user'));
+    }
+
+    public function test_find_for_admin_does_not_exclude_a_failed_or_abandoned_run(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $failed = $this->createOpportunityRun($business, ['status' => OpportunityRunStatus::Failed->value]);
+        $abandoned = $this->createOpportunityRun($business, [
+            'status' => OpportunityRunStatus::Failed->value,
+            'abandoned_at' => now(),
+            'reason_code' => 'heartbeat_timeout',
+        ]);
+        $repository = app(OpportunityRunRepository::class);
+
+        $this->assertNotNull($repository->findForAdmin($failed->id));
+        $this->assertNotNull($repository->findForAdmin($abandoned->id));
+    }
+
+    public function test_find_for_admin_performs_no_mutation(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $run = $this->createOpportunityRun($business);
+        $repository = app(OpportunityRunRepository::class);
+        $updatedAtBefore = $run->updated_at;
+
+        $repository->findForAdmin($run->id);
+
+        $this->assertTrue($updatedAtBefore->equalTo($run->fresh()->updated_at));
+    }
 }
