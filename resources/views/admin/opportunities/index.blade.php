@@ -63,6 +63,7 @@
                                     <th>Freshness</th>
                                     <th>Priority</th>
                                     <th>First detected</th>
+                                    <th></th>
                                 </tr>
                                 </thead>
                                 <tbody>
@@ -76,10 +77,11 @@
                                         <td>{{ ucfirst($opportunity->freshness->value) }}</td>
                                         <td>{{ $opportunity->priority_score }}</td>
                                         <td>{{ optional($opportunity->first_detected_at)->format('M j, Y g:ia') ?? '—' }}</td>
+                                        <td><a href="{{ route('admin.opportunities.show', $opportunity->id) }}">View</a></td>
                                     </tr>
                                 @empty
                                     <tr>
-                                        <td colspan="8">No opportunities found.</td>
+                                        <td colspan="9">No opportunities found.</td>
                                     </tr>
                                 @endforelse
                                 </tbody>

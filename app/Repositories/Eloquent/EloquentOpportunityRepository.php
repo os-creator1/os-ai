@@ -161,6 +161,13 @@ class EloquentOpportunityRepository extends EloquentBaseRepository implements Op
         return $query->orderByDesc('id')->paginate(self::MAX_PER_PAGE);
     }
 
+    public function findForAdmin(int $opportunityId): ?Opportunity
+    {
+        return $this->query()
+            ->with(['business.customer.user'])
+            ->find($opportunityId);
+    }
+
     public function create(array $attributes): Opportunity
     {
         /** @var Opportunity $opportunity */

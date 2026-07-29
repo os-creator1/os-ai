@@ -51,6 +51,16 @@ interface OpportunityRepository extends BaseRepository
 
     public function paginateForAdmin(array $filters): LengthAwarePaginator;
 
+    /**
+     * Admin-only, intentionally cross-tenant single-Opportunity read (RFC-002
+     * §44 admin detail — Milestone 5) — no business_id ownership restriction,
+     * unlike findOwned()/findOwnedForUpdate(). Eager-loads business.customer.user
+     * so the admin detail page can render owning-business/customer identity
+     * without an N+1 query per page load. Unlocked and never mutated by the
+     * caller — a display read only.
+     */
+    public function findForAdmin(int $opportunityId): ?Opportunity;
+
     public function create(array $attributes): Opportunity;
 
     public function update(Opportunity $opportunity, array $attributes): Opportunity;

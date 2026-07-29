@@ -3,6 +3,7 @@
 namespace App\Repositories\Contracts;
 
 use App\Models\OpportunityActionExecution;
+use Illuminate\Support\Collection;
 
 interface OpportunityActionExecutionRepository extends BaseRepository
 {
@@ -21,6 +22,17 @@ interface OpportunityActionExecutionRepository extends BaseRepository
      * mutated by the caller.
      */
     public function findLatestForOpportunity(int $opportunityId): ?OpportunityActionExecution;
+
+    /**
+     * Full execution history for this Opportunity, for admin diagnostic
+     * display only (RFC-002 §44 admin detail — Milestone 5). Ordered
+     * identically to findLatestForOpportunity()'s own convention — most
+     * recent attempt first, id descending as a deterministic tie-breaker.
+     * Never mutated by the caller.
+     *
+     * @return Collection<int, OpportunityActionExecution>
+     */
+    public function allForOpportunity(int $opportunityId): Collection;
 
     public function findByIdempotencyKey(string $key): ?OpportunityActionExecution;
 

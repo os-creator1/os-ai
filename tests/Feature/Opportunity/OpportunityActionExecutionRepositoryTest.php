@@ -474,4 +474,56 @@ class OpportunityActionExecutionRepositoryTest extends TestCase
 
         $this->assertTrue($opportunity->actionExecutions->contains($execution));
     }
+
+    public function test_all_for_opportunity_returns_only_matching_executions(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $user = $this->createUser();
+        $opportunity = $this->createOpportunity($business, ['fingerprint' => hash('sha256', 'all-for-opportunity-1')]);
+        $otherOpportunity = $this->createOpportunity($business, ['fingerprint' => hash('sha256', 'all-for-opportunity-2')]);
+        $matching = $this->createOpportunityActionExecution($opportunity, $user, ['idempotency_key' => hash('sha256', 'all-for-opportunity-matching')]);
+        $this->createOpportunityActionExecution($otherOpportunity, $user, ['idempotency_key' => hash('sha256', 'all-for-opportunity-other')]);
+        $repository = app(OpportunityActionExecutionRepository::class);
+
+        $found = $repository->allForOpportunity($opportunity->id);
+
+        $this->assertCount(1, $found);
+        $this->assertSame($matching->id, $found->first()->id);
+    }
+
+    public function test_all_for_opportunity_orders_by_attempt_number_then_id_descending(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $user = $this->createUser();
+        $opportunity = $this->createOpportunity($business, ['fingerprint' => hash('sha256', 'all-for-opportunity-order')]);
+        $repository = app(OpportunityActionExecutionRepository::class);
+
+        $first = $this->createOpportunityActionExecution($opportunity, $user, [
+            'idempotency_key' => hash('sha256', 'all-for-opportunity-order-1'),
+            'attempt_number' => 1,
+            'status' => OpportunityActionExecutionStatus::Failed->value,
+        ]);
+        $second = $this->createOpportunityActionExecution($opportunity, $user, [
+            'idempotency_key' => hash('sha256', 'all-for-opportunity-order-2'),
+            'attempt_number' => 2,
+            'status' => OpportunityActionExecutionStatus::Succeeded->value,
+        ]);
+
+        $found = $repository->allForOpportunity($opportunity->id);
+
+        $this->assertCount(2, $found);
+        $this->assertSame($second->id, $found->first()->id);
+        $this->assertSame($first->id, $found->last()->id);
+    }
+
+    public function test_all_for_opportunity_returns_an_empty_collection_when_none_exist(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $opportunity = $this->createOpportunity($business, ['fingerprint' => hash('sha256', 'all-for-opportunity-empty')]);
+        $repository = app(OpportunityActionExecutionRepository::class);
+
+        $found = $repository->allForOpportunity($opportunity->id);
+
+        $this->assertTrue($found->isEmpty());
+    }
 }

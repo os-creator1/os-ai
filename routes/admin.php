@@ -608,13 +608,21 @@
     |--------------------------------------------------------------------------
     |
     | Admin-only, intentionally cross-tenant Opportunity inspection. Read-only
-    | index in this slice — no show/mutation route exists yet.
+    | index and detail in this slice — no mutation route exists yet.
     |
     | EnsureUserIsAdministrator is the same independent, explicit admin-account-
     | type boundary layered on top of the group's blanket 'can:access backend'
     | gate as the Business module above (defense in depth).
     |
+    | {opportunity} is constrained to whereNumber(), so a future literal
+    | sub-path (e.g. a runs-inspection route under opportunities/) can never
+    | be captured by this wildcard regardless of registration order — a
+    | non-numeric segment simply fails the constraint and falls through.
+    |
     */
     Route::middleware(EnsureUserIsAdministrator::class)->group(function () {
         Route::get('opportunities', 'OpportunityController@index')->name('opportunities.index');
+        Route::get('opportunities/{opportunity}', 'OpportunityController@show')
+            ->whereNumber('opportunity')
+            ->name('opportunities.show');
     });

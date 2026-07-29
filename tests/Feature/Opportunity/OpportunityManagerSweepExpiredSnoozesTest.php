@@ -308,6 +308,11 @@ class OpportunityManagerSweepExpiredSnoozesTest extends TestCase
                 return $this->real->paginateForAdmin($filters);
             }
 
+            public function findForAdmin(int $opportunityId): ?Opportunity
+            {
+                return $this->real->findForAdmin($opportunityId);
+            }
+
             public function create(array $attributes): Opportunity
             {
                 return $this->real->create($attributes);
@@ -421,6 +426,11 @@ class OpportunityManagerSweepExpiredSnoozesTest extends TestCase
             public function paginateForAdmin(array $filters): LengthAwarePaginator
             {
                 return $this->real->paginateForAdmin($filters);
+            }
+
+            public function findForAdmin(int $opportunityId): ?Opportunity
+            {
+                return $this->real->findForAdmin($opportunityId);
             }
 
             public function create(array $attributes): Opportunity

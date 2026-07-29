@@ -5,6 +5,7 @@ namespace App\Repositories\Eloquent;
 use App\Models\OpportunityActionExecution;
 use App\Repositories\Contracts\OpportunityActionExecutionRepository;
 use Illuminate\Support\Arr;
+use Illuminate\Support\Collection;
 
 class EloquentOpportunityActionExecutionRepository extends EloquentBaseRepository implements OpportunityActionExecutionRepository
 {
@@ -48,6 +49,15 @@ class EloquentOpportunityActionExecutionRepository extends EloquentBaseRepositor
             ->orderByDesc('attempt_number')
             ->orderByDesc('id')
             ->first();
+    }
+
+    public function allForOpportunity(int $opportunityId): Collection
+    {
+        return $this->query()
+            ->where('opportunity_id', $opportunityId)
+            ->orderByDesc('attempt_number')
+            ->orderByDesc('id')
+            ->get();
     }
 
     public function findByIdempotencyKey(string $key): ?OpportunityActionExecution

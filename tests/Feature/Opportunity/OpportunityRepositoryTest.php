@@ -751,4 +751,57 @@ class OpportunityRepositoryTest extends TestCase
 
         $this->assertTrue($business->opportunities->contains($opportunity));
     }
+
+    public function test_find_for_admin_returns_an_opportunity_belonging_to_another_business(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $opportunity = $this->createOpportunity($business, ['fingerprint' => hash('sha256', 'find-for-admin-1')]);
+        $repository = app(OpportunityRepository::class);
+
+        $found = $repository->findForAdmin($opportunity->id);
+
+        $this->assertNotNull($found);
+        $this->assertSame($opportunity->id, $found->id);
+        $this->assertSame($business->id, $found->business_id);
+    }
+
+    public function test_find_for_admin_returns_null_for_a_missing_opportunity(): void
+    {
+        $repository = app(OpportunityRepository::class);
+
+        $this->assertNull($repository->findForAdmin(999999));
+    }
+
+    public function test_find_for_admin_eager_loads_business_customer_and_user_without_n_plus_1(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $opportunity = $this->createOpportunity($business, ['fingerprint' => hash('sha256', 'find-for-admin-eager')]);
+        $repository = app(OpportunityRepository::class);
+
+        DB::enableQueryLog();
+        $found = $repository->findForAdmin($opportunity->id);
+
+        $this->assertNotNull($found);
+        $this->assertTrue($found->relationLoaded('business'));
+        $this->assertTrue($found->business->relationLoaded('customer'));
+        $this->assertTrue($found->business->customer->relationLoaded('user'));
+
+        $queryCountBeforeAccess = count(DB::getQueryLog());
+        $found->business->customer->user->email;
+        $this->assertCount($queryCountBeforeAccess, DB::getQueryLog());
+
+        DB::disableQueryLog();
+    }
+
+    public function test_find_for_admin_performs_no_mutation(): void
+    {
+        $business = $this->createBusinessForOpportunities();
+        $opportunity = $this->createOpportunity($business, ['fingerprint' => hash('sha256', 'find-for-admin-no-mutation')]);
+        $repository = app(OpportunityRepository::class);
+        $updatedAtBefore = $opportunity->updated_at;
+
+        $repository->findForAdmin($opportunity->id);
+
+        $this->assertTrue($updatedAtBefore->equalTo($opportunity->fresh()->updated_at));
+    }
 }

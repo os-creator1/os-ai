@@ -316,6 +316,11 @@ class OpportunityManagerSnoozeTest extends TestCase
                 return $this->real->paginateForAdmin($filters);
             }
 
+            public function findForAdmin(int $opportunityId): ?Opportunity
+            {
+                return $this->real->findForAdmin($opportunityId);
+            }
+
             public function create(array $attributes): Opportunity
             {
                 return $this->real->create($attributes);
