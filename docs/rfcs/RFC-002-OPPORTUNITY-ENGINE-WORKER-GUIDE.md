@@ -144,7 +144,7 @@ A producer must **not**:
 
 ## 14. RFC §52 acceptance evidence map
 
-Traceability only — **a fresh, complete final acceptance test run (§16) is still required before any §52 item may be treated as release-final**, regardless of what is marked `Covered` below.
+Traceability only. Following the final acceptance validation recorded in §16, every §52 row now has direct supporting evidence. This map is not itself a release decision — tagging remains subject to every gate in §15, none of which is waived by this table.
 
 | RFC §52 requirement | Implemented mechanism | Primary evidence | Status | Notes |
 |---|---|---|---|---|
@@ -163,28 +163,28 @@ Traceability only — **a fresh, complete final acceptance test run (§16) is st
 | Every evidence item's `summary` is registry-rendered, never worker/AI-supplied free text | `evidence_summary_templates` in `OpportunityTypeRegistry`; candidate staging rejects a supplied `summary` | `tests/Unit/Opportunity/OpportunityTypeRegistryTest.php`; manager staging tests for evidence-summary provenance rejection | Covered | |
 | `uid` is unique on `opportunity_runs`, `opportunities`, `opportunity_run_candidates`, `opportunity_action_executions` | `HasUid` trait + unique DB index | `OpportunityRunRepositoryTest.php`, `OpportunityRepositoryTest.php`, `OpportunityRunCandidateRepositoryTest.php`, `OpportunityActionExecutionRepositoryTest.php` (each has `test_uid_is_automatically_generated_and_unique`) | Covered | |
 | No class, route, callback, command, field, handler, or validator is ever selected from AI output, request data, environment variables, or database records | Registries (`OpportunityActionRegistry`, `OpportunityTypeRegistry`) are `final`, hardcoded; `OpportunityCandidateData::fromArray()` discards unknown keys | `tests/Unit/Opportunity/OpportunityCandidateDataTest.php::test_from_array_discards_unknown_top_level_keys_including_an_injected_priority_score`; `tests/Unit/Opportunity/OpportunityActionRegistryTest.php`, `OpportunityTypeRegistryTest.php` | Covered | |
-| Every enum backing value fits its database column (e.g. `completion_policy varchar(32)` against `customer_attested`/`external_verified`) | Migration column widths chosen to fit the longest enum value | — | **Open** | No dedicated test asserting this was found under this or any related name in `tests/Unit/Opportunity` or `tests/Feature/Opportunity`; requires either locating existing coverage or adding one narrow test before this bullet can be marked Covered |
-| Existing repository/library conventions are followed; no new generic service layer; RFC-001 is unmodified and its tests remain green | Architectural review (this and prior slices); RFC-001 test suite untouched throughout RFC-002's implementation | Targeted evidence: `tests/Unit/Business tests/Feature/Business` passing (RFC-001 unmodified). Release evidence: a fresh, complete application suite via `php artisan test --stop-on-failure` — not yet run in the current commit state | **Partially covered** | The targeted RFC-001 Business suite is a component check only; it is not the same thing as the complete application suite required for final release evidence. Requires a fresh `php artisan test --stop-on-failure` run in the current commit state (§16) — the last recorded full-suite figure predates the six Slice-1 conformance tests and is not a substitute |
+| Every enum backing value fits its database column (e.g. `completion_policy varchar(32)` against `customer_attested`/`external_verified`) | `OpportunityEnumColumnFitTest` reads live `information_schema.COLUMNS` (`TABLE_SCHEMA = DATABASE()`, live `DATA_TYPE`/`CHARACTER_MAXIMUM_LENGTH`) and checks every case of each mapped backed enum against its actual column, across all nine persisted enum-column mappings in the RFC-002 domain | `tests/Feature/Opportunity/OpportunityEnumColumnFitTest.php` | Covered | 9 tests passed, 99 assertions during final acceptance validation (§16) |
+| Existing repository/library conventions are followed; no new generic service layer; RFC-001 is unmodified and its tests remain green | Architectural review (this and prior slices); RFC-001 test suite untouched throughout RFC-002's implementation | Targeted evidence: `tests/Unit/Business tests/Feature/Business` passed. Release evidence: the fresh, complete application suite via `php artisan test --stop-on-failure` passed at 1333 tests, 4529 assertions (§16) | Covered | The targeted RFC-001 Business regression and the complete application suite are distinct checks; both passed in the current commit state (`725c0f1`), so this is no longer a partial result |
 | Feature is fully disableable without a rollback | `config('opportunity.enabled')` gates every customer/admin route, relevant manager methods, both jobs, and the sweep command | `OpportunityQueueHttpTest.php`, `AdminOpportunityControllerTest.php`, `RunBusinessAdvisorOpportunityProducerJobTest.php`, `ExecuteOpportunityActionJobTest.php`, `SweepExpiredOpportunitySnoozesCommandTest.php` (each has a disabled-flag case) | Covered | |
 
 ---
 
 ## 15. Release and tag gate
 
-`rfc-002-opportunity-engine` must **not** be applied until all of the following hold:
+`rfc-002-opportunity-engine` must **not** be applied until all of the following hold. As of this document, the executable evidence requirements below (items 2–7) are satisfied per the final acceptance validation in §16 — the remaining items (1, 8, 9, 10) still remain before tagging:
 
-1. This guide is reviewed and committed.
-2. Every §14 row is `Covered` or its `Open`/`Partially covered` status has been explicitly resolved (the enum-column-fit bullet and the RFC-001-green/full-suite bullet, as of this document).
-3. Focused producer-conformance suite passes.
-4. The Opportunity regression suite passes.
-5. A fresh, complete application test suite passes.
-6. `bootstrap/cache/config.php` is confirmed absent before PHPUnit runs, so `.env.testing` loads correctly.
-7. The disposable `ultimatesms_testing` database is confirmed as the database PHPUnit actually used.
-8. `git status` shows a clean working tree.
+1. This documentation change is reviewed and committed.
+2. Every §14 row is `Covered` — satisfied as of this document (§16 validation).
+3. Focused producer-conformance suite passes — satisfied (6 passed, 40 assertions, §16).
+4. The Opportunity regression suite passes — satisfied (1117 passed, 3966 assertions, §16).
+5. A fresh, complete application test suite passes — satisfied (1333 passed, 4529 assertions, §16).
+6. `bootstrap/cache/config.php` is confirmed absent before PHPUnit runs, so `.env.testing` loads correctly — satisfied for the §16 run.
+7. The disposable `ultimatesms_testing` database is confirmed as the database PHPUnit actually used — satisfied for the §16 run.
+8. `git status` shows a clean working tree — must be re-confirmed at the exact commit intended to be tagged, which is not necessarily this documentation-only commit.
 9. The exact commit intended to be tagged is identified.
 10. An explicit final-acceptance review approves tagging.
 
-This document does not perform that review and does not apply any tag.
+This document does not perform that review and does not apply any tag. RFC-002 is not marked tagged or released by this document.
 
 ---
 
@@ -209,7 +209,12 @@ php artisan test --stop-on-failure
 
 PHPUnit must be allowed to load `.env.testing`, and the configured testing database must be the disposable `ultimatesms_testing` database — never the production database.
 
-**Historical results** (not re-verified by this document):
+**Final acceptance validation record — 2026-07-29**, at code commit `725c0f1` (this documentation-only closure edit was made after that commit and is not itself the tag commit — see §15):
+
+- `php artisan config:clear` was run first; `bootstrap/cache/config.php` was confirmed absent before any PHPUnit run.
+- `.env.testing` used the disposable `ultimatesms_testing` database for every run below; the production-looking `jazmisuh_jasmin` database was not used.
 - Producer conformance: **6 passed, 40 assertions**.
-- Opportunity regression: **1108 passed, 3867 assertions**.
-- Full application suite, recorded **before** Milestone 6 Slice 1's six conformance tests were added — **not the final release figure**: 1318 passed, 4390 assertions.
+- Enum/database-column fit: **9 passed, 99 assertions**.
+- Opportunity regression: **1117 passed, 3966 assertions**.
+- RFC-001 Business regression: **passed** (separate assertion/test count not recorded in the completion summary this document draws from — not invented here).
+- Complete application suite: **1333 passed, 4529 assertions**.
