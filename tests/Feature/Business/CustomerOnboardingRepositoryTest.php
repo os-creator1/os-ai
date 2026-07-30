@@ -111,6 +111,41 @@ class CustomerOnboardingRepositoryTest extends TestCase
         $this->assertSame($newer->id, $found->id);
     }
 
+    public function test_find_by_customer_id_returns_the_exact_onboarding_row(): void
+    {
+        $customer = $this->createCustomer();
+        $repository = app(CustomerOnboardingRepository::class);
+        $onboarding = $repository->startForCustomer($customer, true);
+
+        $found = $repository->findByCustomerId($customer->user_id);
+
+        $this->assertNotNull($found);
+        $this->assertSame($onboarding->id, $found->id);
+    }
+
+    public function test_find_by_customer_id_returns_null_for_an_unmatched_customer_id(): void
+    {
+        $customer = $this->createCustomer();
+        $repository = app(CustomerOnboardingRepository::class);
+        $repository->startForCustomer($customer, true);
+
+        $otherCustomer = $this->createCustomer();
+
+        $this->assertNull($repository->findByCustomerId($otherCustomer->user_id));
+    }
+
+    public function test_find_by_customer_remains_unchanged_and_working(): void
+    {
+        $customer = $this->createCustomer();
+        $repository = app(CustomerOnboardingRepository::class);
+        $onboarding = $repository->startForCustomer($customer, true);
+
+        $found = $repository->findByCustomer($customer);
+
+        $this->assertNotNull($found);
+        $this->assertSame($onboarding->id, $found->id);
+    }
+
     public function test_mark_step_complete_records_unique_steps_and_advances(): void
     {
         $customer = $this->createCustomer();

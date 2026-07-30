@@ -2,6 +2,7 @@
 
 namespace App\Repositories\Contracts;
 
+use App\Models\Customer;
 use App\Models\User;
 
 /**
@@ -9,6 +10,8 @@ use App\Models\User;
  */
 interface CustomerRepository extends BaseRepository
 {
+    public function findByUserId(int $userId): ?Customer;
+
 
     /**
      * @param  array  $input

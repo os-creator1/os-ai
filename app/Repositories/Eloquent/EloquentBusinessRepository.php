@@ -9,6 +9,7 @@ use App\Models\Workspace;
 use App\Repositories\Contracts\BusinessRepository;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Arr;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
 class EloquentBusinessRepository extends EloquentBaseRepository implements BusinessRepository
@@ -55,6 +56,35 @@ class EloquentBusinessRepository extends EloquentBaseRepository implements Busin
             ->where('customer_id', $customerId)
             ->where('is_primary', true)
             ->first();
+    }
+
+    public function findFirstByCustomer(int $customerId): ?Business
+    {
+        return $this->query()
+            ->where('customer_id', $customerId)
+            ->orderBy('id')
+            ->first();
+    }
+
+    public function primaryBusinessesForCustomer(int $customerId): Collection
+    {
+        return $this->query()
+            ->where('customer_id', $customerId)
+            ->where('is_primary', true)
+            ->orderBy('id')
+            ->get();
+    }
+
+    public function workspaceIdsForCustomer(int $customerId): Collection
+    {
+        return $this->query()
+            ->where('customer_id', $customerId)
+            ->whereNotNull('workspace_id')
+            ->orderBy('id')
+            ->pluck('workspace_id')
+            ->map(fn ($workspaceId) => (int) $workspaceId)
+            ->unique()
+            ->values();
     }
 
     public function createForCustomer(Customer $customer, array $attributes): Business

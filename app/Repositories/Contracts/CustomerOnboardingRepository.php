@@ -16,6 +16,14 @@ interface CustomerOnboardingRepository extends BaseRepository
     public function findByCustomer(Customer $customer): ?CustomerOnboarding;
 
     /**
+     * Equivalent to findByCustomer(), but scoped by the raw customer_id
+     * (users.id) directly, for callers that don't already have a Customer
+     * model materialized. Relies on the same database-level uniqueness on
+     * customer_onboardings.customer_id, so at most one row is ever returned.
+     */
+    public function findByCustomerId(int $customerId): ?CustomerOnboarding;
+
+    /**
      * customer_onboardings.business_id carries no unique database
      * constraint (only customer_id does), so if more than one row is ever
      * schema-permitted to reference the same Business, this deterministically

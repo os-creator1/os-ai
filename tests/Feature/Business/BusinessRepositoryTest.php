@@ -410,4 +410,130 @@ class BusinessRepositoryTest extends TestCase
 
         $this->assertSame($workspaceCountBefore, DB::table('workspaces')->count());
     }
+
+    // 7. findFirstByCustomer returns the lowest-ID Business for that customer.
+    public function test_find_first_by_customer_returns_the_lowest_id_business(): void
+    {
+        $customer = $this->createCustomer();
+        $repository = app(BusinessRepository::class);
+        $first = $repository->createForCustomer($customer, $this->businessAttributes(['name' => 'First']));
+        $repository->createForCustomer($customer, $this->businessAttributes(['name' => 'Second']));
+
+        $found = $repository->findFirstByCustomer($customer->user_id);
+
+        $this->assertNotNull($found);
+        $this->assertSame($first->id, $found->id);
+    }
+
+    // 8. It excludes another customer's Businesses.
+    public function test_find_first_by_customer_excludes_other_customers(): void
+    {
+        $customer = $this->createCustomer();
+        $stranger = $this->createCustomer();
+        $repository = app(BusinessRepository::class);
+        $repository->createForCustomer($stranger, $this->businessAttributes());
+
+        $this->assertNull($repository->findFirstByCustomer($customer->user_id));
+    }
+
+    // 9. It returns null when none exist.
+    public function test_find_first_by_customer_returns_null_when_none_exist(): void
+    {
+        $repository = app(BusinessRepository::class);
+
+        $this->assertNull($repository->findFirstByCustomer(999999));
+    }
+
+    // 10. primaryBusinessesForCustomer returns all primary rows in ascending ID order.
+    public function test_primary_businesses_for_customer_returns_all_primary_rows_in_ascending_order(): void
+    {
+        $customer = $this->createCustomer();
+        $repository = app(BusinessRepository::class);
+        $first = $repository->createForCustomer($customer, $this->businessAttributes(['name' => 'First']));
+        $second = $repository->createForCustomer($customer, $this->businessAttributes(['name' => 'Second']));
+
+        // The schema places no unique constraint on (customer_id, is_primary);
+        // force the second row primary too, outside the normal single-primary
+        // discipline, to prove the repository surfaces both rather than one.
+        DB::table('businesses')->where('id', $second->id)->update(['is_primary' => true]);
+
+        $result = $repository->primaryBusinessesForCustomer($customer->user_id);
+
+        $this->assertSame([$first->id, $second->id], $result->pluck('id')->all());
+    }
+
+    // 11. It does not hide multiple primary Businesses.
+    public function test_primary_businesses_for_customer_does_not_hide_multiple_primary_businesses(): void
+    {
+        $customer = $this->createCustomer();
+        $repository = app(BusinessRepository::class);
+        $repository->createForCustomer($customer, $this->businessAttributes(['name' => 'First']));
+        $second = $repository->createForCustomer($customer, $this->businessAttributes(['name' => 'Second']));
+        DB::table('businesses')->where('id', $second->id)->update(['is_primary' => true]);
+
+        $result = $repository->primaryBusinessesForCustomer($customer->user_id);
+
+        $this->assertCount(2, $result);
+    }
+
+    // 12. It excludes non-primary and other-customer rows.
+    public function test_primary_businesses_for_customer_excludes_non_primary_and_other_customer_rows(): void
+    {
+        $customer = $this->createCustomer();
+        $stranger = $this->createCustomer();
+        $repository = app(BusinessRepository::class);
+        $primary = $repository->createForCustomer($customer, $this->businessAttributes(['name' => 'Primary']));
+        $repository->createForCustomer($customer, $this->businessAttributes(['name' => 'Non-Primary']));
+        $repository->createForCustomer($stranger, $this->businessAttributes(['name' => 'Stranger']));
+
+        $result = $repository->primaryBusinessesForCustomer($customer->user_id);
+
+        $this->assertSame([$primary->id], $result->pluck('id')->all());
+    }
+
+    // 13. workspaceIdsForCustomer excludes null workspace_id values.
+    public function test_workspace_ids_for_customer_excludes_null_workspace_id_values(): void
+    {
+        $customer = $this->createCustomer();
+        $workspace = $this->createWorkspaceOwnedBy($customer->user);
+        $repository = app(BusinessRepository::class);
+        $repository->createForCustomer($customer, $this->businessAttributes(['name' => 'Null WS']));
+        $repository->createForCustomerInWorkspace($customer, $workspace, $this->businessAttributes(['name' => 'Has WS']));
+
+        $ids = $repository->workspaceIdsForCustomer($customer->user_id);
+
+        $this->assertCount(1, $ids);
+        $this->assertTrue($ids->contains($workspace->id));
+    }
+
+    // 14. It returns distinct integer IDs in deterministic first-seen order.
+    public function test_workspace_ids_for_customer_returns_distinct_ids_in_first_seen_order(): void
+    {
+        $customer = $this->createCustomer();
+        $workspaceA = $this->createWorkspaceOwnedBy($customer->user, ['name' => 'WS A']);
+        $workspaceB = $this->createWorkspaceOwnedBy($customer->user, ['name' => 'WS B']);
+        $repository = app(BusinessRepository::class);
+        $repository->createForCustomerInWorkspace($customer, $workspaceA, $this->businessAttributes(['name' => 'One']));
+        $repository->createForCustomerInWorkspace($customer, $workspaceB, $this->businessAttributes(['name' => 'Two']));
+        // Same Workspace as the first Business, seen again — must not duplicate.
+        $repository->createForCustomerInWorkspace($customer, $workspaceA, $this->businessAttributes(['name' => 'Three']));
+
+        $ids = $repository->workspaceIdsForCustomer($customer->user_id);
+
+        $this->assertSame([$workspaceA->id, $workspaceB->id], $ids->values()->all());
+    }
+
+    // 15. It does not filter differently-owned or inactive Workspaces.
+    public function test_workspace_ids_for_customer_does_not_filter_by_ownership_or_activity(): void
+    {
+        $customer = $this->createCustomer();
+        $otherOwner = $this->createCustomer();
+        $inactiveWorkspace = $this->createWorkspaceOwnedBy($otherOwner->user, ['is_active' => false]);
+        $repository = app(BusinessRepository::class);
+        $repository->createForCustomerInWorkspace($customer, $inactiveWorkspace, $this->businessAttributes());
+
+        $ids = $repository->workspaceIdsForCustomer($customer->user_id);
+
+        $this->assertTrue($ids->contains($inactiveWorkspace->id));
+    }
 }

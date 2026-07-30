@@ -43,6 +43,17 @@
         }
 
         /**
+         * The model bound to this repository is User, not Customer (see the
+         * constructor above), so this reads the customers table directly —
+         * matching store()'s existing Customer::create() usage below rather
+         * than $this->query(), which resolves against User.
+         */
+        public function findByUserId(int $userId): ?Customer
+        {
+            return Customer::query()->where('user_id', $userId)->first();
+        }
+
+        /**
          * @param array $input
          * @param bool  $confirmed
          *

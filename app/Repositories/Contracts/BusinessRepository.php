@@ -7,6 +7,7 @@ use App\Models\Business;
 use App\Models\Customer;
 use App\Models\Workspace;
 use Illuminate\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Collection;
 
 /**
  * All $customerId parameters refer to the tenant key stored in businesses.customer_id,
@@ -26,6 +27,33 @@ interface BusinessRepository extends BaseRepository
     public function findOwnedByCustomer(int $businessId, int $customerId): ?Business;
 
     public function findPrimaryByCustomer(int $customerId): ?Business;
+
+    /**
+     * The earliest Business ever created for this customer_id, by id — no
+     * Workspace, primary, status or authorization filter. Used only as a
+     * deterministic naming fallback (RFC-003 §10.5-equivalent tier 3), not
+     * a tenancy or ownership lookup.
+     */
+    public function findFirstByCustomer(int $customerId): ?Business;
+
+    /**
+     * Every Business flagged primary for this customer_id, ascending by id.
+     * findPrimaryByCustomer() assumes at most one; nothing in the schema
+     * enforces that (no unique constraint on (customer_id, is_primary)), so
+     * callers that must handle a broken multi-primary state use this
+     * instead of silently taking the first row.
+     */
+    public function primaryBusinessesForCustomer(int $customerId): Collection;
+
+    /**
+     * Distinct, non-null workspace_id values across this customer_id's
+     * Businesses, in first-seen order (businesses.id ascending). No
+     * Workspace model is loaded and no ownership/activity/membership
+     * filtering is applied — this is a raw candidate-ID read only.
+     *
+     * @return Collection<int, int>
+     */
+    public function workspaceIdsForCustomer(int $customerId): Collection;
 
     public function createForCustomer(Customer $customer, array $attributes): Business;
 

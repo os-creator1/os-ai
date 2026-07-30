@@ -68,10 +68,17 @@ class LegacyBoundaryTest extends TestCase
         $this->assertFalse(class_exists(\App\Library\Workspace\WorkspaceManager::class));
     }
 
-    // 21. WorkspaceContextRequiredException does not exist.
-    public function test_workspace_context_required_exception_does_not_exist(): void
+    // 21 (updated for Slice 2A). WorkspaceContextRequiredException and its
+    // closed WorkspaceContextFailureReason enum now exist — Slice 2A
+    // explicitly introduces both. No resolver has been introduced to use
+    // them yet: WorkspaceManager remains absent (also proven independently
+    // by test_workspace_manager_does_not_exist above), so this asserts the
+    // current M1B boundary rather than the earlier M1A one.
+    public function test_workspace_context_exception_and_reason_enum_exist_with_no_resolver_yet(): void
     {
-        $this->assertFalse(class_exists(\App\Exceptions\Workspace\WorkspaceContextRequiredException::class));
+        $this->assertTrue(class_exists(\App\Exceptions\Workspace\WorkspaceContextRequiredException::class));
+        $this->assertTrue(class_exists(\App\Enums\Workspace\WorkspaceContextFailureReason::class));
+        $this->assertFalse(class_exists(\App\Library\Workspace\WorkspaceManager::class));
     }
 
     // 22. no M1B enforcement migration exists.
