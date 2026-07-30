@@ -6,6 +6,7 @@ use App\Events\Business\BusinessCreated;
 use App\Events\Business\BusinessPrimaryLocationUpdated;
 use App\Events\Business\BusinessServicesSynced;
 use App\Events\Business\BusinessUpdated;
+use App\Library\Workspace\WorkspaceManager;
 use App\Models\Business;
 use App\Models\BusinessLocation;
 use App\Models\Customer;
@@ -38,6 +39,7 @@ class BusinessManager
         private readonly BusinessLocationRepository $locationRepository,
         private readonly BusinessServiceRepository $serviceRepository,
         private readonly UrlNormalizer $urlNormalizer,
+        private readonly WorkspaceManager $workspaceManager,
     ) {
     }
 
@@ -130,9 +132,19 @@ class BusinessManager
         return DB::transaction(function () use ($customer, $business, $normalizedAttributes, $touchesWebsiteUrl) {
             $created = $business === null;
 
-            $result = $created
-                ? $this->businessRepository->createForCustomer($customer, $normalizedAttributes)
-                : $this->businessRepository->update($business, $normalizedAttributes);
+            if ($created) {
+                // The legacy onboarding path has no explicit Workspace
+                // selector of its own (RFC-003 §10.6, §13.1) — this is the
+                // one narrow compatibility resolver call that supplies it.
+                // Any WorkspaceContextRequiredException or missing-owner
+                // ModelNotFoundException from the resolver propagates
+                // uncaught, rolling back this whole transaction exactly
+                // like any other failure here.
+                $workspace = $this->workspaceManager->resolveLegacyOnboardingWorkspace($customer->user_id);
+                $result = $this->businessRepository->createForCustomerInWorkspace($customer, $workspace, $normalizedAttributes);
+            } else {
+                $result = $this->businessRepository->update($business, $normalizedAttributes);
+            }
 
             $changedFields = $created ? [] : $this->changedIdentityFields($result);
 

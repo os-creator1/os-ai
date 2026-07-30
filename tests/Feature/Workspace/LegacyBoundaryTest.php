@@ -48,18 +48,23 @@ class LegacyBoundaryTest extends TestCase
         $this->assertNull(DB::table('businesses')->where('id', $business->id)->value('workspace_id'));
     }
 
-    // 19. the existing production caller of createForCustomer() has not been replaced by a Workspace resolver.
-    public function test_business_manager_still_calls_the_legacy_creation_path(): void
+    // 19 (updated for Slice 3A). BusinessManager's legacy onboarding
+    // creation branch is now integrated with WorkspaceManager (RFC-003
+    // §13.1): a Business created through this path resolves and persists
+    // a real Workspace instead of a null workspace_id.
+    public function test_business_manager_now_resolves_a_workspace_for_the_legacy_creation_path(): void
     {
         $customer = $this->createCustomer();
         $manager = app(BusinessManager::class);
 
         $business = $manager->createOrUpdateOnboardingBusiness($customer, null, $this->businessAttributes());
 
-        // No Workspace resolver exists yet (§10.6/§13 are M1B), so a
-        // Business created through the unmodified onboarding path still
-        // has no workspace_id.
-        $this->assertNull(DB::table('businesses')->where('id', $business->id)->value('workspace_id'));
+        $workspaceId = DB::table('businesses')->where('id', $business->id)->value('workspace_id');
+        $this->assertNotNull($workspaceId);
+        $this->assertSame(
+            $workspaceId,
+            DB::table('workspaces')->where('owner_user_id', $customer->user_id)->value('id')
+        );
     }
 
     // 20 (updated for Slice 2B). WorkspaceManager now exists and exposes
@@ -80,17 +85,26 @@ class LegacyBoundaryTest extends TestCase
         $this->assertSame(\App\Models\Workspace::class, (string) $method->getReturnType());
     }
 
-    // (new for Slice 2B) WorkspaceManager exists but is not yet wired into
-    // BusinessManager — the legacy onboarding path still resolves nothing
-    // and still calls createForCustomer() directly (also proven
-    // behaviorally by test_business_manager_still_calls_the_legacy_creation_path above).
-    public function test_business_manager_does_not_yet_reference_the_workspace_resolver(): void
+    // (updated for Slice 3A) BusinessManager is now wired to the Workspace
+    // resolver: it references WorkspaceManager, calls
+    // resolveLegacyOnboardingWorkspace() and createForCustomerInWorkspace()
+    // in its creation branch, and no longer calls createForCustomer() at
+    // all (also proven behaviorally by
+    // test_business_manager_now_resolves_a_workspace_for_the_legacy_creation_path
+    // above). Source-scanned rather than behaviorally proven because "does
+    // not call a method" has no positive runtime signal to assert on.
+    public function test_business_manager_now_references_the_workspace_resolver_and_no_longer_calls_create_for_customer(): void
     {
         $source = file_get_contents(app_path('Library/Business/BusinessManager.php'));
 
-        $this->assertStringNotContainsString('WorkspaceManager', $source);
-        $this->assertStringNotContainsString('resolveLegacyOnboardingWorkspace', $source);
-        $this->assertStringNotContainsString('createForCustomerInWorkspace', $source);
+        $this->assertStringContainsString('WorkspaceManager', $source);
+        $this->assertStringContainsString('resolveLegacyOnboardingWorkspace', $source);
+        $this->assertStringContainsString('createForCustomerInWorkspace', $source);
+
+        // Must not call the plain createForCustomer(...) form anywhere
+        // (createForCustomerInWorkspace(...) legitimately contains the same
+        // substring, so match on the call signature, not a bare substring).
+        $this->assertDoesNotMatchRegularExpression('/->createForCustomer\(/', $source);
     }
 
     // (new for Slice 2B) createForCustomerInWorkspace() remains present on
@@ -110,6 +124,49 @@ class LegacyBoundaryTest extends TestCase
     {
         $this->assertTrue(class_exists(\App\Exceptions\Workspace\WorkspaceContextRequiredException::class));
         $this->assertTrue(class_exists(\App\Enums\Workspace\WorkspaceContextFailureReason::class));
+    }
+
+    // (new for Slice 3A) no production code anywhere under app/ still calls
+    // createForCustomer() — only its two declaration sites (the contract
+    // and the Eloquent implementation) may reference the method name.
+    public function test_no_production_code_still_calls_create_for_customer(): void
+    {
+        $allowedFiles = [
+            app_path('Repositories/Contracts/BusinessRepository.php'),
+            app_path('Repositories/Eloquent/EloquentBusinessRepository.php'),
+        ];
+
+        $offendingFiles = [];
+
+        foreach ($this->phpFilesUnder(app_path()) as $file) {
+            if (in_array($file, $allowedFiles, true)) {
+                continue;
+            }
+
+            if (preg_match('/->createForCustomer\(/', file_get_contents($file)) === 1) {
+                $offendingFiles[] = $file;
+            }
+        }
+
+        $this->assertSame([], $offendingFiles, 'Unexpected createForCustomer() caller(s): ' . implode(', ', $offendingFiles));
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function phpFilesUnder(string $directory): array
+    {
+        $files = [];
+
+        $iterator = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($directory));
+
+        foreach ($iterator as $fileInfo) {
+            if ($fileInfo->isFile() && $fileInfo->getExtension() === 'php') {
+                $files[] = $fileInfo->getPathname();
+            }
+        }
+
+        return $files;
     }
 
     // 22. no M1B enforcement migration exists.

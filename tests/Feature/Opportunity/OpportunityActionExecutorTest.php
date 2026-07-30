@@ -18,6 +18,7 @@ use App\Events\Opportunity\OpportunityRunSucceeded;
 use App\Events\Opportunity\OpportunitySnoozed;
 use App\Library\Business\BusinessManager;
 use App\Library\Business\UrlNormalizer;
+use App\Library\Workspace\WorkspaceManager;
 use App\Library\Opportunity\Exceptions\OpportunityActionNotExecutableException;
 use App\Library\Opportunity\Exceptions\OpportunityActionVerificationException;
 use App\Library\Opportunity\OpportunityActionExecutor;
@@ -416,6 +417,7 @@ class OpportunityActionExecutorTest extends TestCase
             app(BusinessLocationRepository::class),
             app(BusinessServiceRepository::class),
             app(UrlNormalizer::class),
+            app(WorkspaceManager::class),
         ) extends BusinessManager {
             public function updateBusiness(Customer $customer, Business $business, array $attributes): Business
             {
@@ -442,6 +444,7 @@ class OpportunityActionExecutorTest extends TestCase
             app(BusinessLocationRepository::class),
             app(BusinessServiceRepository::class),
             app(UrlNormalizer::class),
+            app(WorkspaceManager::class),
         ) extends BusinessManager {
             public function updateBusiness(Customer $customer, Business $business, array $attributes): Business
             {

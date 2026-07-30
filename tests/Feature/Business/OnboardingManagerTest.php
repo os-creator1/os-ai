@@ -20,6 +20,7 @@ use App\Models\BusinessLocation;
 use App\Models\BusinessService;
 use App\Models\CustomerOnboarding;
 use App\Models\User;
+use App\Models\Workspace;
 use App\Repositories\Contracts\AccountRepository;
 use App\Repositories\Contracts\BusinessLocationRepository;
 use App\Repositories\Contracts\BusinessRepository;
@@ -216,6 +217,10 @@ class OnboardingManagerTest extends TestCase
         $this->assertSame(OnboardingStep::Goals, $onboarding->current_step);
         $this->assertNull($onboarding->business_id);
         $this->assertSame(0, Business::where('customer_id', $customer->user_id)->count());
+        // Proves the Workspace the resolver created before the later failure
+        // is rolled back too, through the real saveBusinessStep() transaction
+        // boundary (RFC-003 §13.1) — not just the Business row.
+        $this->assertSame(0, Workspace::where('owner_user_id', $customer->user_id)->count());
 
         Event::assertNotDispatched(BusinessCreated::class);
         Event::assertNotDispatched(CustomerOnboardingStepCompleted::class);
@@ -239,6 +244,10 @@ class OnboardingManagerTest extends TestCase
         $this->assertNotNull($onboarding->business_id);
         $this->assertSame(OnboardingStep::Location, $onboarding->current_step);
         $this->assertSame(1, Business::where('customer_id', $customer->user_id)->count());
+
+        $workspaceId = Business::find($onboarding->business_id)->workspace_id;
+        $this->assertNotNull($workspaceId);
+        $this->assertSame($workspaceId, Workspace::where('owner_user_id', $customer->user_id)->value('id'));
 
         Event::assertDispatched(BusinessCreated::class, 1);
         Event::assertDispatched(CustomerOnboardingStepCompleted::class, 1);

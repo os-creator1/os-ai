@@ -3,19 +3,26 @@
 namespace Tests\Feature\Business;
 
 use App\Enums\Business\BusinessStatus;
+use App\Enums\Workspace\WorkspaceContextFailureReason;
 use App\Events\Business\BusinessCreated;
 use App\Events\Business\BusinessPrimaryLocationUpdated;
 use App\Events\Business\BusinessServicesSynced;
 use App\Events\Business\BusinessUpdated;
+use App\Exceptions\Workspace\WorkspaceContextRequiredException;
 use App\Library\Business\BusinessManager;
+use App\Library\Workspace\WorkspaceManager;
 use App\Models\Business;
+use App\Models\Customer;
+use App\Models\Workspace;
 use App\Repositories\Contracts\BusinessRepository;
 use App\Repositories\Contracts\BusinessServiceRepository;
 use Illuminate\Auth\Access\AuthorizationException;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use InvalidArgumentException;
+use ReflectionClass;
 use RuntimeException;
 use Tests\Feature\Business\Concerns\CreatesBusinessTestData;
 use Tests\TestCase;
@@ -36,10 +43,34 @@ class BusinessManagerTest extends TestCase
 
         $this->assertTrue($business->is_primary);
         $this->assertSame(BusinessStatus::Draft, $business->status);
+        $this->assertSame($customer->user_id, $business->customer_id);
+        $this->assertNotNull($business->workspace_id);
+        $this->assertSame(
+            $business->workspace_id,
+            Workspace::where('owner_user_id', $customer->user_id)->value('id')
+        );
 
         Event::assertDispatched(BusinessCreated::class, fn ($event) => $event->businessId === $business->id
             && $event->customerId === $customer->user_id);
         Event::assertNotDispatched(BusinessUpdated::class);
+    }
+
+    public function test_business_manager_is_constructed_with_a_workspace_manager_dependency(): void
+    {
+        $parameters = (new ReflectionClass(BusinessManager::class))->getConstructor()->getParameters();
+        $workspaceManagerParameter = null;
+
+        foreach ($parameters as $parameter) {
+            if ((string) $parameter->getType() === WorkspaceManager::class) {
+                $workspaceManagerParameter = $parameter;
+            }
+        }
+
+        $this->assertNotNull($workspaceManagerParameter, 'Expected a WorkspaceManager-typed constructor parameter.');
+
+        // Proves the container can actually resolve it end to end, not just
+        // that the parameter is declared.
+        $this->assertInstanceOf(BusinessManager::class, app(BusinessManager::class));
     }
 
     public function test_updating_identity_normalizes_website_url_and_derives_canonical_domain(): void
@@ -79,6 +110,21 @@ class BusinessManagerTest extends TestCase
         ]);
 
         Event::assertNotDispatched(BusinessUpdated::class);
+    }
+
+    public function test_updating_a_business_does_not_resolve_or_create_a_workspace(): void
+    {
+        $customer = $this->createCustomer();
+        $business = app(BusinessRepository::class)->createForCustomer($customer, $this->businessAttributes());
+        $this->assertNull(DB::table('businesses')->where('id', $business->id)->value('workspace_id'));
+
+        Event::fake([BusinessUpdated::class]);
+
+        $manager = app(BusinessManager::class);
+        $updated = $manager->updateBusiness($customer, $business, ['name' => 'Renamed Booth Co']);
+
+        $this->assertNull($updated->workspace_id);
+        $this->assertSame(0, Workspace::where('owner_user_id', $customer->user_id)->count());
     }
 
     public function test_update_business_throws_when_business_does_not_belong_to_customer(): void
@@ -222,6 +268,56 @@ class BusinessManagerTest extends TestCase
         }
 
         $this->assertSame(0, Business::where('customer_id', $customer->user_id)->count());
+        $this->assertSame(0, Workspace::where('owner_user_id', $customer->user_id)->count());
         Event::assertNotDispatched(BusinessCreated::class);
+    }
+
+    public function test_ambiguous_workspace_candidates_propagate_uncaught_and_roll_back_business_creation(): void
+    {
+        Event::fake([BusinessCreated::class]);
+
+        $customer = $this->createCustomer();
+        $workspaceA = Workspace::create(['name' => 'A', 'owner_user_id' => $customer->user_id, 'is_active' => true]);
+        $workspaceB = Workspace::create(['name' => 'B', 'owner_user_id' => $customer->user_id, 'is_active' => true]);
+
+        $businessA = app(BusinessRepository::class)->createForCustomer($customer, $this->businessAttributes(['name' => 'Primary A']));
+        $businessA->is_primary = true;
+        $businessA->workspace_id = $workspaceA->id;
+        $businessA->save();
+
+        $businessB = app(BusinessRepository::class)->createForCustomer($customer, $this->businessAttributes(['name' => 'Primary B']));
+        $businessB->is_primary = true;
+        $businessB->workspace_id = $workspaceB->id;
+        $businessB->save();
+
+        $manager = app(BusinessManager::class);
+
+        try {
+            $manager->createOrUpdateOnboardingBusiness($customer, null, $this->businessAttributes(['name' => 'New Business']));
+            $this->fail('Expected WorkspaceContextRequiredException was not thrown.');
+        } catch (WorkspaceContextRequiredException $e) {
+            $this->assertSame(WorkspaceContextFailureReason::MultiplePreferredCandidates, $e->reason);
+        }
+
+        $this->assertSame(2, Business::where('customer_id', $customer->user_id)->count());
+        $this->assertSame(0, Business::where('customer_id', $customer->user_id)->where('name', 'New Business')->count());
+        Event::assertNotDispatched(BusinessCreated::class);
+    }
+
+    public function test_missing_owner_user_propagates_model_not_found_uncaught(): void
+    {
+        Event::fake([BusinessCreated::class]);
+
+        $phantomCustomer = new Customer(['user_id' => 999999]);
+        $manager = app(BusinessManager::class);
+
+        $this->expectException(ModelNotFoundException::class);
+
+        try {
+            $manager->createOrUpdateOnboardingBusiness($phantomCustomer, null, $this->businessAttributes());
+        } finally {
+            $this->assertSame(0, Business::where('customer_id', 999999)->count());
+            Event::assertNotDispatched(BusinessCreated::class);
+        }
     }
 }
