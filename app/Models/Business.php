@@ -44,6 +44,11 @@ class Business extends Model
         return $this->belongsTo(Customer::class, 'customer_id', 'user_id');
     }
 
+    public function workspace(): BelongsTo
+    {
+        return $this->belongsTo(Workspace::class);
+    }
+
     public function locations(): HasMany
     {
         return $this->hasMany(BusinessLocation::class);

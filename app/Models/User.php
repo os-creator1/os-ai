@@ -10,6 +10,7 @@
     use Exception;
     use Illuminate\Contracts\Auth\MustVerifyEmail;
     use Illuminate\Database\Eloquent\Relations\BelongsToMany;
+    use Illuminate\Database\Eloquent\Relations\HasMany;
     use Illuminate\Database\Eloquent\Relations\HasOne;
     use Illuminate\Foundation\Auth\User as Authenticatable;
     use Illuminate\Http\UploadedFile;
@@ -393,6 +394,21 @@
         public function parent()
         {
             return $this->belongsTo(User::class, 'parent_id');
+        }
+
+        public function ownedWorkspaces(): HasMany
+        {
+            return $this->hasMany(Workspace::class, 'owner_user_id');
+        }
+
+        public function workspaceMemberships(): HasMany
+        {
+            return $this->hasMany(WorkspaceMembership::class, 'user_id');
+        }
+
+        public function activeWorkspaceMemberships(): HasMany
+        {
+            return $this->workspaceMemberships()->where('is_active', true);
         }
 
 
