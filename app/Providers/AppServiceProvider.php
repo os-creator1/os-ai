@@ -42,6 +42,9 @@
     use App\Repositories\Contracts\SubscriptionRepository;
     use App\Repositories\Contracts\TemplateTagsRepository;
     use App\Repositories\Contracts\UserRepository;
+    use App\Repositories\Contracts\WorkspaceMembershipBusinessRepository;
+    use App\Repositories\Contracts\WorkspaceMembershipRepository;
+    use App\Repositories\Contracts\WorkspaceRepository;
     use App\Repositories\Eloquent\EloquentAccountRepository;
     use App\Repositories\Eloquent\EloquentAnnouncementsRepository;
     use App\Repositories\Eloquent\EloquentAutomationsRepository;
@@ -76,6 +79,9 @@
     use App\Repositories\Eloquent\EloquentSubscriptionRepository;
     use App\Repositories\Eloquent\EloquentTemplateTagsRepository;
     use App\Repositories\Eloquent\EloquentUserRepository;
+    use App\Repositories\Eloquent\EloquentWorkspaceMembershipBusinessRepository;
+    use App\Repositories\Eloquent\EloquentWorkspaceMembershipRepository;
+    use App\Repositories\Eloquent\EloquentWorkspaceRepository;
     use Closure;
     use Exception;
     use Illuminate\Cache\NullStore;
@@ -137,6 +143,9 @@
                 OpportunityRunCandidateRepository::class => EloquentOpportunityRunCandidateRepository::class,
                 OpportunityActionExecutionRepository::class => EloquentOpportunityActionExecutionRepository::class,
                 OpportunityTransitionRepository::class => EloquentOpportunityTransitionRepository::class,
+                WorkspaceRepository::class => EloquentWorkspaceRepository::class,
+                WorkspaceMembershipRepository::class => EloquentWorkspaceMembershipRepository::class,
+                WorkspaceMembershipBusinessRepository::class => EloquentWorkspaceMembershipBusinessRepository::class,
             ];
 
             foreach ($bindings as $interface => $implementation) {

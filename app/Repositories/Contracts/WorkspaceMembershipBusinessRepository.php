@@ -1,0 +1,39 @@
+<?php
+
+namespace App\Repositories\Contracts;
+
+use App\Models\Business;
+use App\Models\WorkspaceMembership;
+use App\Models\WorkspaceMembershipBusiness;
+use Illuminate\Support\Collection;
+
+interface WorkspaceMembershipBusinessRepository extends BaseRepository
+{
+    public function assignedBusinessIds(WorkspaceMembership $membership): Collection;
+
+    public function isAssigned(WorkspaceMembership $membership, int $businessId): bool;
+
+    /**
+     * Must verify $business->workspace_id === $membership->workspace_id before
+     * writing, and throw CrossWorkspaceAssignmentException otherwise (RFC-003
+     * §7.5, §9.3) — no plain foreign key expresses that cross-table equality.
+     * Idempotent: assigning the same Business twice returns the existing
+     * assignment rather than surfacing a raw database exception.
+     */
+    public function assign(WorkspaceMembership $membership, Business $business): WorkspaceMembershipBusiness;
+
+    /**
+     * @param  array<int, int>  $businessIds  Every ID must belong to the
+     *   membership's Workspace (same check as assign()). Every ID is
+     *   validated (existence, then Workspace match) before any assignment
+     *   row is changed — no partial sync on one invalid ID. An empty array
+     *   removes every scoped grant for this membership.
+     */
+    public function syncForMembership(WorkspaceMembership $membership, array $businessIds): Collection;
+
+    /**
+     * Deletes an assignment (grant) row only — never the Workspace,
+     * Business, or WorkspaceMembership itself (RFC-003 §12.3, §17).
+     */
+    public function unassign(WorkspaceMembership $membership, int $businessId): void;
+}
