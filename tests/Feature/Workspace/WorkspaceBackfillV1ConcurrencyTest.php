@@ -108,4 +108,39 @@ class WorkspaceBackfillV1ConcurrencyTest extends TestCase
             DB::table('businesses')->where('id', $businessId)->value('workspace_id')
         );
     }
+
+    /**
+     * The runner process re-verifies its own resolved database connection
+     * before doing anything else — APP_ENV=testing alone isn't proof
+     * enough. Rather than pointing a child process at a real wrong
+     * database (which the instructions forbid, and which would require
+     * separate credentials), this overrides DB_DATABASE via the child's
+     * environment: Laravel's Dotenv loader is immutable, so a pre-set OS
+     * env var wins over .env.testing's value, and the resolved database
+     * name changes without ever attempting a real connection to it — the
+     * guard checks getDatabaseName() (config-only) before any query runs.
+     */
+    public function test_runner_refuses_to_execute_against_an_unexpected_resolved_database(): void
+    {
+        $runnerScript = __DIR__ . '/Support/concurrent_backfill_runner.php';
+        $phpBinary = (new PhpExecutableFinder())->find() ?: 'php';
+        $bogusDatabase = 'deliberately_wrong_test_db_does_not_exist';
+
+        $process = new Process(
+            [$phpBinary, $runnerScript, 'plain', '0'],
+            null,
+            ['DB_DATABASE' => $bogusDatabase]
+        );
+        $process->run();
+
+        $this->assertFalse($process->isSuccessful());
+        $this->assertSame(3, $process->getExitCode());
+        $this->assertStringContainsString($bogusDatabase, $process->getErrorOutput());
+        $this->assertStringContainsString('Refusing to run WorkspaceBackfillV1', $process->getErrorOutput());
+
+        // WorkspaceBackfillV1 only ever prints its "OK ..." success line
+        // after a completed run() call; an empty stdout proves the guard
+        // aborted before the action was even instantiated, let alone run.
+        $this->assertSame('', trim($process->getOutput()));
+    }
 }
