@@ -4,6 +4,7 @@ namespace Tests\Feature\Business;
 
 use App\Enums\Business\BusinessIndustry;
 use App\Enums\Business\BusinessStatus;
+use App\Models\Business;
 use App\Models\User;
 use App\Models\Workspace;
 use App\Repositories\Contracts\BusinessRepository;
@@ -34,7 +35,7 @@ class BusinessRepositoryTest extends TestCase
         $customer = $this->createCustomer();
         $repository = app(BusinessRepository::class);
 
-        $business = $repository->createForCustomer($customer, $this->businessAttributes());
+        $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
 
         $this->assertTrue($business->is_primary);
         $this->assertSame(BusinessStatus::Draft, $business->status);
@@ -45,8 +46,8 @@ class BusinessRepositoryTest extends TestCase
         $customer = $this->createCustomer();
         $repository = app(BusinessRepository::class);
 
-        $repository->createForCustomer($customer, $this->businessAttributes());
-        $second = $repository->createForCustomer($customer, $this->businessAttributes(['name' => 'Second Business']));
+        $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
+        $second = $this->createBusinessWithWorkspace($customer, $this->businessAttributes(['name' => 'Second Business']));
 
         $this->assertFalse($second->is_primary);
     }
@@ -56,8 +57,8 @@ class BusinessRepositoryTest extends TestCase
         $customer = $this->createCustomer();
         $repository = app(BusinessRepository::class);
 
-        $first = $repository->createForCustomer($customer, $this->businessAttributes());
-        $second = $repository->createForCustomer($customer, $this->businessAttributes(['name' => 'Second Business']));
+        $first = $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
+        $second = $this->createBusinessWithWorkspace($customer, $this->businessAttributes(['name' => 'Second Business']));
 
         $repository->setPrimary($second);
 
@@ -70,7 +71,7 @@ class BusinessRepositoryTest extends TestCase
         $customer = $this->createCustomer();
         $repository = app(BusinessRepository::class);
 
-        $repository->createForCustomer($customer, $this->businessAttributes());
+        $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
 
         $primary = $repository->findPrimaryByCustomer($customer->user_id);
 
@@ -84,7 +85,7 @@ class BusinessRepositoryTest extends TestCase
         $stranger = $this->createCustomer();
         $repository = app(BusinessRepository::class);
 
-        $business = $repository->createForCustomer($owner, $this->businessAttributes());
+        $business = $this->createBusinessWithWorkspace($owner, $this->businessAttributes());
 
         $this->assertNull($repository->findOwnedByCustomer($business->id, $stranger->user_id));
         $this->assertNotNull($repository->findOwnedByCustomer($business->id, $owner->user_id));
@@ -95,7 +96,7 @@ class BusinessRepositoryTest extends TestCase
         $customer = $this->createCustomer();
         $repository = app(BusinessRepository::class);
 
-        $business = $repository->createForCustomer($customer, $this->businessAttributes());
+        $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
         $otherCustomer = $this->createCustomer();
 
         $repository->update($business, [
@@ -122,7 +123,7 @@ class BusinessRepositoryTest extends TestCase
         $customer = $this->createCustomer();
         $repository = app(BusinessRepository::class);
 
-        $business = $repository->createForCustomer($customer, $this->businessAttributes());
+        $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
         $this->assertNull($business->activated_at);
 
         $repository->updateStatus($business, BusinessStatus::Active);
@@ -136,8 +137,8 @@ class BusinessRepositoryTest extends TestCase
         $customer = $this->createCustomer();
         $repository = app(BusinessRepository::class);
 
-        $business = $repository->createForCustomer($customer, $this->businessAttributes());
-        $other = $repository->createForCustomer($customer, $this->businessAttributes(['name' => 'Second Business']));
+        $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
+        $other = $this->createBusinessWithWorkspace($customer, $this->businessAttributes(['name' => 'Second Business']));
 
         $found = $repository->findForUpdate($business->id);
 
@@ -158,8 +159,8 @@ class BusinessRepositoryTest extends TestCase
         $customer = $this->createCustomer();
         $repository = app(BusinessRepository::class);
 
-        $first = $repository->createForCustomer($customer, $this->businessAttributes());
-        $second = $repository->createForCustomer($customer, $this->businessAttributes(['name' => 'Second Business']));
+        $first = $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
+        $second = $this->createBusinessWithWorkspace($customer, $this->businessAttributes(['name' => 'Second Business']));
 
         $this->assertNotNull($first->uid);
         $this->assertNotNull($second->uid);
@@ -176,8 +177,8 @@ class BusinessRepositoryTest extends TestCase
         $repository = app(BusinessRepository::class);
         $customerA = $this->createCustomer();
         $customerB = $this->createCustomer();
-        $repository->createForCustomer($customerA, $this->businessAttributes(['name' => 'Booth Co A']));
-        $repository->createForCustomer($customerB, $this->businessAttributes(['name' => 'Booth Co B']));
+        $this->createBusinessWithWorkspace($customerA, $this->businessAttributes(['name' => 'Booth Co A']));
+        $this->createBusinessWithWorkspace($customerB, $this->businessAttributes(['name' => 'Booth Co B']));
 
         $page = $repository->paginateForAdmin([], 25);
 
@@ -188,8 +189,8 @@ class BusinessRepositoryTest extends TestCase
     {
         $repository = app(BusinessRepository::class);
         $customer = $this->createCustomer();
-        $repository->createForCustomer($customer, $this->businessAttributes(['name' => 'Snap Booth Co']));
-        $repository->createForCustomer($customer, $this->businessAttributes(['name' => 'Totally Different']));
+        $this->createBusinessWithWorkspace($customer, $this->businessAttributes(['name' => 'Snap Booth Co']));
+        $this->createBusinessWithWorkspace($customer, $this->businessAttributes(['name' => 'Totally Different']));
 
         $page = $repository->paginateForAdmin(['search' => 'Snap'], 25);
 
@@ -201,9 +202,9 @@ class BusinessRepositoryTest extends TestCase
     {
         $repository = app(BusinessRepository::class);
         $customer = $this->createCustomer();
-        $active = $repository->createForCustomer($customer, $this->businessAttributes(['name' => 'Active Co']));
+        $active = $this->createBusinessWithWorkspace($customer, $this->businessAttributes(['name' => 'Active Co']));
         $repository->updateStatus($active, BusinessStatus::Active);
-        $repository->createForCustomer($customer, $this->businessAttributes(['name' => 'Draft Co']));
+        $this->createBusinessWithWorkspace($customer, $this->businessAttributes(['name' => 'Draft Co']));
 
         $page = $repository->paginateForAdmin(['status' => BusinessStatus::Active->value], 25);
 
@@ -215,11 +216,11 @@ class BusinessRepositoryTest extends TestCase
     {
         $repository = app(BusinessRepository::class);
         $customer = $this->createCustomer();
-        $repository->createForCustomer($customer, $this->businessAttributes([
+        $this->createBusinessWithWorkspace($customer, $this->businessAttributes([
             'name' => 'Photographer Co',
             'industry' => BusinessIndustry::Photographer->value,
         ]));
-        $repository->createForCustomer($customer, $this->businessAttributes([
+        $this->createBusinessWithWorkspace($customer, $this->businessAttributes([
             'name' => 'Booth Co',
             'industry' => BusinessIndustry::PhotoBoothService->value,
         ]));
@@ -234,7 +235,7 @@ class BusinessRepositoryTest extends TestCase
     {
         $repository = app(BusinessRepository::class);
         $customer = $this->createCustomer();
-        $repository->createForCustomer($customer, $this->businessAttributes());
+        $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
 
         // 'customer_id' is not an allowed filter — passing it must not
         // narrow (or otherwise change) the query.
@@ -247,7 +248,7 @@ class BusinessRepositoryTest extends TestCase
     {
         $repository = app(BusinessRepository::class);
         $customer = $this->createCustomer();
-        $repository->createForCustomer($customer, $this->businessAttributes());
+        $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
 
         $page = $repository->paginateForAdmin([], 9999);
 
@@ -258,8 +259,8 @@ class BusinessRepositoryTest extends TestCase
     {
         $repository = app(BusinessRepository::class);
         $customer = $this->createCustomer();
-        $first = $repository->createForCustomer($customer, $this->businessAttributes(['name' => 'First Co']));
-        $second = $repository->createForCustomer($customer, $this->businessAttributes(['name' => 'Second Co']));
+        $first = $this->createBusinessWithWorkspace($customer, $this->businessAttributes(['name' => 'First Co']));
+        $second = $this->createBusinessWithWorkspace($customer, $this->businessAttributes(['name' => 'Second Co']));
 
         $page = $repository->paginateForAdmin([], 25);
 
@@ -383,18 +384,17 @@ class BusinessRepositoryTest extends TestCase
         $this->assertFalse($second->is_primary);
     }
 
-    // 11. Existing createForCustomer() still exists and still creates workspace_id = null under the
-    // current M1A schema.
-    public function test_create_for_customer_still_exists_and_still_produces_a_null_workspace_id(): void
+    // 11 (updated for Slice 3B). createForCustomer() has been removed entirely — it can no
+    // longer be used to produce a workspace_id = null Business (RFC-003 §10.6 step 2, §12.4).
+    public function test_create_for_customer_no_longer_exists(): void
     {
-        $customer = $this->createCustomer();
-        $repository = app(BusinessRepository::class);
-
-        $this->assertTrue(method_exists($repository, 'createForCustomer'));
-
-        $business = $repository->createForCustomer($customer, $this->businessAttributes());
-
-        $this->assertNull(DB::table('businesses')->where('id', $business->id)->value('workspace_id'));
+        $this->assertFalse(
+            (new ReflectionClass(BusinessRepository::class))->hasMethod('createForCustomer')
+        );
+        $this->assertFalse(
+            (new ReflectionClass(EloquentBusinessRepository::class))->hasMethod('createForCustomer')
+        );
+        $this->assertFalse(method_exists(app(BusinessRepository::class), 'createForCustomer'));
     }
 
     // 12. No Workspace is inferred or created by the new method.
@@ -416,8 +416,8 @@ class BusinessRepositoryTest extends TestCase
     {
         $customer = $this->createCustomer();
         $repository = app(BusinessRepository::class);
-        $first = $repository->createForCustomer($customer, $this->businessAttributes(['name' => 'First']));
-        $repository->createForCustomer($customer, $this->businessAttributes(['name' => 'Second']));
+        $first = $this->createBusinessWithWorkspace($customer, $this->businessAttributes(['name' => 'First']));
+        $this->createBusinessWithWorkspace($customer, $this->businessAttributes(['name' => 'Second']));
 
         $found = $repository->findFirstByCustomer($customer->user_id);
 
@@ -431,7 +431,7 @@ class BusinessRepositoryTest extends TestCase
         $customer = $this->createCustomer();
         $stranger = $this->createCustomer();
         $repository = app(BusinessRepository::class);
-        $repository->createForCustomer($stranger, $this->businessAttributes());
+        $this->createBusinessWithWorkspace($stranger, $this->businessAttributes());
 
         $this->assertNull($repository->findFirstByCustomer($customer->user_id));
     }
@@ -449,8 +449,8 @@ class BusinessRepositoryTest extends TestCase
     {
         $customer = $this->createCustomer();
         $repository = app(BusinessRepository::class);
-        $first = $repository->createForCustomer($customer, $this->businessAttributes(['name' => 'First']));
-        $second = $repository->createForCustomer($customer, $this->businessAttributes(['name' => 'Second']));
+        $first = $this->createBusinessWithWorkspace($customer, $this->businessAttributes(['name' => 'First']));
+        $second = $this->createBusinessWithWorkspace($customer, $this->businessAttributes(['name' => 'Second']));
 
         // The schema places no unique constraint on (customer_id, is_primary);
         // force the second row primary too, outside the normal single-primary
@@ -467,8 +467,8 @@ class BusinessRepositoryTest extends TestCase
     {
         $customer = $this->createCustomer();
         $repository = app(BusinessRepository::class);
-        $repository->createForCustomer($customer, $this->businessAttributes(['name' => 'First']));
-        $second = $repository->createForCustomer($customer, $this->businessAttributes(['name' => 'Second']));
+        $this->createBusinessWithWorkspace($customer, $this->businessAttributes(['name' => 'First']));
+        $second = $this->createBusinessWithWorkspace($customer, $this->businessAttributes(['name' => 'Second']));
         DB::table('businesses')->where('id', $second->id)->update(['is_primary' => true]);
 
         $result = $repository->primaryBusinessesForCustomer($customer->user_id);
@@ -482,22 +482,28 @@ class BusinessRepositoryTest extends TestCase
         $customer = $this->createCustomer();
         $stranger = $this->createCustomer();
         $repository = app(BusinessRepository::class);
-        $primary = $repository->createForCustomer($customer, $this->businessAttributes(['name' => 'Primary']));
-        $repository->createForCustomer($customer, $this->businessAttributes(['name' => 'Non-Primary']));
-        $repository->createForCustomer($stranger, $this->businessAttributes(['name' => 'Stranger']));
+        $primary = $this->createBusinessWithWorkspace($customer, $this->businessAttributes(['name' => 'Primary']));
+        $this->createBusinessWithWorkspace($customer, $this->businessAttributes(['name' => 'Non-Primary']));
+        $this->createBusinessWithWorkspace($stranger, $this->businessAttributes(['name' => 'Stranger']));
 
         $result = $repository->primaryBusinessesForCustomer($customer->user_id);
 
         $this->assertSame([$primary->id], $result->pluck('id')->all());
     }
 
-    // 13. workspaceIdsForCustomer excludes null workspace_id values.
+    // 13. workspaceIdsForCustomer excludes null workspace_id values. createForCustomer()
+    // is removed (Slice 3B), so the null-workspace_id row is constructed directly —
+    // this is not an ordinary fixture, it deliberately needs the legacy-shape null
+    // value this method's exclusion logic is being proven against.
     public function test_workspace_ids_for_customer_excludes_null_workspace_id_values(): void
     {
         $customer = $this->createCustomer();
         $workspace = $this->createWorkspaceOwnedBy($customer->user);
         $repository = app(BusinessRepository::class);
-        $repository->createForCustomer($customer, $this->businessAttributes(['name' => 'Null WS']));
+        $nullWorkspaceBusiness = new Business($this->businessAttributes(['name' => 'Null WS']));
+        $nullWorkspaceBusiness->customer_id = $customer->user_id;
+        $nullWorkspaceBusiness->status = BusinessStatus::Draft;
+        $nullWorkspaceBusiness->save();
         $repository->createForCustomerInWorkspace($customer, $workspace, $this->businessAttributes(['name' => 'Has WS']));
 
         $ids = $repository->workspaceIdsForCustomer($customer->user_id);

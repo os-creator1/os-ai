@@ -4,7 +4,6 @@ namespace Tests\Feature\Business;
 
 use App\Enums\Business\OnboardingStatus;
 use App\Enums\Business\OnboardingStep;
-use App\Repositories\Contracts\BusinessRepository;
 use App\Repositories\Contracts\CustomerOnboardingRepository;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\Feature\Business\Concerns\CreatesBusinessTestData;
@@ -30,7 +29,7 @@ class CustomerOnboardingRepositoryTest extends TestCase
     public function test_attach_business_links_the_onboarding_row(): void
     {
         $customer = $this->createCustomer();
-        $business = app(BusinessRepository::class)->createForCustomer($customer, $this->businessAttributes());
+        $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
         $repository = app(CustomerOnboardingRepository::class);
 
         $onboarding = $repository->startForCustomer($customer, true);
@@ -42,7 +41,7 @@ class CustomerOnboardingRepositoryTest extends TestCase
     public function test_find_by_business_returns_the_owning_onboarding(): void
     {
         $customer = $this->createCustomer();
-        $business = app(BusinessRepository::class)->createForCustomer($customer, $this->businessAttributes());
+        $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
         $repository = app(CustomerOnboardingRepository::class);
         $onboarding = $repository->startForCustomer($customer, true);
         $repository->attachBusiness($onboarding, $business);
@@ -56,13 +55,13 @@ class CustomerOnboardingRepositoryTest extends TestCase
     public function test_find_by_business_does_not_return_another_businesss_onboarding(): void
     {
         $customerA = $this->createCustomer();
-        $businessA = app(BusinessRepository::class)->createForCustomer($customerA, $this->businessAttributes());
+        $businessA = $this->createBusinessWithWorkspace($customerA, $this->businessAttributes());
         $repository = app(CustomerOnboardingRepository::class);
         $onboardingA = $repository->startForCustomer($customerA, true);
         $repository->attachBusiness($onboardingA, $businessA);
 
         $customerB = $this->createCustomer();
-        $businessB = app(BusinessRepository::class)->createForCustomer($customerB, $this->businessAttributes(['name' => 'Second Business']));
+        $businessB = $this->createBusinessWithWorkspace($customerB, $this->businessAttributes(['name' => 'Second Business']));
         $onboardingB = $repository->startForCustomer($customerB, true);
         $repository->attachBusiness($onboardingB, $businessB);
 
@@ -76,7 +75,7 @@ class CustomerOnboardingRepositoryTest extends TestCase
     public function test_find_by_business_returns_null_when_none_exists(): void
     {
         $customer = $this->createCustomer();
-        $business = app(BusinessRepository::class)->createForCustomer($customer, $this->businessAttributes());
+        $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
         $repository = app(CustomerOnboardingRepository::class);
 
         // No onboarding row has been attached to this business at all.
@@ -94,7 +93,7 @@ class CustomerOnboardingRepositoryTest extends TestCase
     public function test_find_by_business_is_deterministic_when_multiple_rows_reference_the_same_business(): void
     {
         $customer = $this->createCustomer();
-        $business = app(BusinessRepository::class)->createForCustomer($customer, $this->businessAttributes());
+        $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
         $repository = app(CustomerOnboardingRepository::class);
 
         $otherCustomer = $this->createCustomer();

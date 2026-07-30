@@ -12,47 +12,49 @@ use Tests\Feature\Business\Concerns\CreatesBusinessTestData;
 use Tests\TestCase;
 
 /**
- * Proves the temporary M1A architectural boundary is still intact: the
- * legacy Business-creation path is untouched, workspace_id is still
- * nullable with no enforcement, and M1B's WorkspaceManager/exception/
- * enforcement migration do not exist yet (RFC-003 §10.2, §10.6, §23).
+ * Proves the post-Slice-3B, pre-migration-6 architectural boundary (RFC-003
+ * §10.6, §12.4, §23): the legacy createForCustomer() write path has been
+ * removed entirely (no declaration, no implementation, no caller anywhere
+ * in app/ or tests/), createForCustomerInWorkspace() is the sole supported
+ * creation method, BusinessManager's legacy onboarding branch uses it via
+ * WorkspaceManager's resolver, and businesses.workspace_id is still
+ * nullable with no FK/indexes/enforcement — that final step is Slice 4.
+ * Historical M1A backfill tests (WorkspaceBackfillV1Test,
+ * WorkspaceBackfillMigrationTest, BackfillWorkspacesCommandTest,
+ * WorkspaceBackfillV1ConcurrencyTest) intentionally continue constructing
+ * null-workspace_id Business rows directly — they are out of this file's
+ * scope and are not converted.
  */
 class LegacyBoundaryTest extends TestCase
 {
     use RefreshDatabase;
     use CreatesBusinessTestData;
 
-    // 16. BusinessRepository::createForCustomer() still exists.
-    public function test_business_repository_contract_still_declares_create_for_customer(): void
+    // 5/6. createForCustomer() is declared on neither the contract nor the
+    // Eloquent implementation (RFC-003 §10.6 step 2, §12.4).
+    public function test_create_for_customer_is_absent_from_contract_and_implementation(): void
     {
-        $this->assertTrue((new ReflectionClass(BusinessRepository::class))->hasMethod('createForCustomer'));
+        $this->assertFalse((new ReflectionClass(BusinessRepository::class))->hasMethod('createForCustomer'));
+        $this->assertFalse((new ReflectionClass(EloquentBusinessRepository::class))->hasMethod('createForCustomer'));
+        $this->assertFalse(method_exists(app(BusinessRepository::class), 'createForCustomer'));
     }
 
-    // 17. EloquentBusinessRepository still implements createForCustomer().
-    public function test_eloquent_business_repository_still_implements_create_for_customer(): void
+    // 7. createForCustomerInWorkspace() remains declared and implemented —
+    // the sole supported creation method from Slice 3B onward.
+    public function test_create_for_customer_in_workspace_remains_declared_and_implemented(): void
     {
-        $method = (new ReflectionClass(EloquentBusinessRepository::class))->getMethod('createForCustomer');
+        $this->assertTrue(
+            (new ReflectionClass(BusinessRepository::class))->hasMethod('createForCustomerInWorkspace')
+        );
 
+        $method = (new ReflectionClass(EloquentBusinessRepository::class))->getMethod('createForCustomerInWorkspace');
         $this->assertTrue($method->isPublic());
         $this->assertFalse($method->isAbstract());
     }
 
-    // 18. the current legacy Business-creation behavior can still create a Business with workspace_id = null.
-    public function test_legacy_creation_path_still_produces_a_null_workspace_id(): void
-    {
-        $customer = $this->createCustomer();
-        $repository = app(BusinessRepository::class);
-
-        $business = $repository->createForCustomer($customer, $this->businessAttributes());
-
-        $this->assertNull(DB::table('businesses')->where('id', $business->id)->value('workspace_id'));
-    }
-
-    // 19 (updated for Slice 3A). BusinessManager's legacy onboarding
-    // creation branch is now integrated with WorkspaceManager (RFC-003
-    // §13.1): a Business created through this path resolves and persists
-    // a real Workspace instead of a null workspace_id.
-    public function test_business_manager_now_resolves_a_workspace_for_the_legacy_creation_path(): void
+    // 2/3. BusinessManager's legacy onboarding creation branch resolves and
+    // persists a real Workspace via WorkspaceManager + createForCustomerInWorkspace().
+    public function test_business_manager_resolves_and_persists_a_workspace_for_the_legacy_creation_path(): void
     {
         $customer = $this->createCustomer();
         $manager = app(BusinessManager::class);
@@ -67,8 +69,7 @@ class LegacyBoundaryTest extends TestCase
         );
     }
 
-    // 20 (updated for Slice 2B). WorkspaceManager now exists and exposes
-    // the approved resolver signature — Slice 2B explicitly introduces it.
+    // 1. WorkspaceManager exists and exposes the approved resolver signature.
     public function test_workspace_manager_exists_with_the_approved_resolver_signature(): void
     {
         $this->assertTrue(class_exists(\App\Library\Workspace\WorkspaceManager::class));
@@ -85,51 +86,32 @@ class LegacyBoundaryTest extends TestCase
         $this->assertSame(\App\Models\Workspace::class, (string) $method->getReturnType());
     }
 
-    // (updated for Slice 3A) BusinessManager is now wired to the Workspace
-    // resolver: it references WorkspaceManager, calls
-    // resolveLegacyOnboardingWorkspace() and createForCustomerInWorkspace()
-    // in its creation branch, and no longer calls createForCustomer() at
-    // all (also proven behaviorally by
-    // test_business_manager_now_resolves_a_workspace_for_the_legacy_creation_path
-    // above). Source-scanned rather than behaviorally proven because "does
-    // not call a method" has no positive runtime signal to assert on.
-    public function test_business_manager_now_references_the_workspace_resolver_and_no_longer_calls_create_for_customer(): void
+    // 2/3 (source-scanned). BusinessManager references WorkspaceManager and
+    // calls both resolveLegacyOnboardingWorkspace() and
+    // createForCustomerInWorkspace() — behaviorally proven above too.
+    public function test_business_manager_source_references_the_workspace_resolver_and_the_workspace_scoped_creator(): void
     {
         $source = file_get_contents(app_path('Library/Business/BusinessManager.php'));
 
         $this->assertStringContainsString('WorkspaceManager', $source);
         $this->assertStringContainsString('resolveLegacyOnboardingWorkspace', $source);
         $this->assertStringContainsString('createForCustomerInWorkspace', $source);
-
-        // Must not call the plain createForCustomer(...) form anywhere
-        // (createForCustomerInWorkspace(...) legitimately contains the same
-        // substring, so match on the call signature, not a bare substring).
-        $this->assertDoesNotMatchRegularExpression('/->createForCustomer\(/', $source);
     }
 
-    // (new for Slice 2B) createForCustomerInWorkspace() remains present on
-    // the repository contract, alongside the still-unremoved createForCustomer().
-    public function test_business_repository_contract_still_declares_create_for_customer_in_workspace(): void
-    {
-        $this->assertTrue(
-            (new ReflectionClass(BusinessRepository::class))->hasMethod('createForCustomerInWorkspace')
-        );
-    }
-
-    // 21 (updated for Slice 2A/2B). WorkspaceContextRequiredException and
-    // its closed WorkspaceContextFailureReason enum exist — Slice 2A
-    // introduced both. WorkspaceManager's own existence and BusinessManager's
-    // non-integration are proven independently above.
     public function test_workspace_context_exception_and_reason_enum_exist(): void
     {
         $this->assertTrue(class_exists(\App\Exceptions\Workspace\WorkspaceContextRequiredException::class));
         $this->assertTrue(class_exists(\App\Enums\Workspace\WorkspaceContextFailureReason::class));
     }
 
-    // (new for Slice 3A) no production code anywhere under app/ still calls
-    // createForCustomer() — only its two declaration sites (the contract
-    // and the Eloquent implementation) may reference the method name.
-    public function test_no_production_code_still_calls_create_for_customer(): void
+    // 4/8. No source file anywhere under app/ or tests/ still calls or
+    // declares createForCustomer() — not a production caller, not a test
+    // fixture, not a mock expectation, not an anonymous-class override.
+    // Matches only real call/declaration syntax (->, ::, or a function
+    // declaration immediately followed by '('), so createForCustomerInWorkspace(
+    // calls and prose comments/strings naming the old method for
+    // documentation or reflection purposes never false-positive here.
+    public function test_no_source_file_still_calls_or_declares_create_for_customer(): void
     {
         $allowedFiles = [
             app_path('Repositories/Contracts/BusinessRepository.php'),
@@ -137,18 +119,19 @@ class LegacyBoundaryTest extends TestCase
         ];
 
         $offendingFiles = [];
+        $pattern = '/(->|::|function\s+)createForCustomer\(/';
 
-        foreach ($this->phpFilesUnder(app_path()) as $file) {
+        foreach ([...$this->phpFilesUnder(app_path()), ...$this->phpFilesUnder(base_path('tests'))] as $file) {
             if (in_array($file, $allowedFiles, true)) {
                 continue;
             }
 
-            if (preg_match('/->createForCustomer\(/', file_get_contents($file)) === 1) {
+            if (preg_match($pattern, file_get_contents($file)) === 1) {
                 $offendingFiles[] = $file;
             }
         }
 
-        $this->assertSame([], $offendingFiles, 'Unexpected createForCustomer() caller(s): ' . implode(', ', $offendingFiles));
+        $this->assertSame([], $offendingFiles, 'Unexpected createForCustomer() caller/declaration site(s): ' . implode(', ', $offendingFiles));
     }
 
     /**
@@ -169,7 +152,7 @@ class LegacyBoundaryTest extends TestCase
         return $files;
     }
 
-    // 22. no M1B enforcement migration exists.
+    // 11. no M1B enforcement migration exists yet (Slice 4).
     public function test_no_enforcement_migration_exists(): void
     {
         $matches = glob(database_path('migrations/*enforce_business_workspace_constraint*'));
@@ -177,7 +160,7 @@ class LegacyBoundaryTest extends TestCase
         $this->assertSame([], $matches);
     }
 
-    // 23. businesses.workspace_id remains nullable with no FK and no final Workspace indexes.
+    // 9/10. businesses.workspace_id remains nullable with no FK and no final Workspace indexes.
     public function test_businesses_workspace_id_remains_nullable_with_no_fk_or_final_indexes(): void
     {
         $column = DB::selectOne(

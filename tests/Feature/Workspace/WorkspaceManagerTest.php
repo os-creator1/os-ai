@@ -589,13 +589,15 @@ class WorkspaceManagerTest extends TestCase
         $this->assertStringNotContainsString('WorkspaceBackfillV1', $source);
     }
 
-    // 32. createForCustomer() and createForCustomerInWorkspace() remain untouched and unused by the resolver.
+    // 32. createForCustomerInWorkspace() (the sole remaining Business-creation
+    // method, Slice 3B) is never called by the resolver — it only resolves
+    // a Workspace, and never persists a Business itself.
     public function test_resolver_never_calls_business_creation_methods(): void
     {
         $source = file_get_contents(app_path('Library/Workspace/WorkspaceManager.php'));
 
-        // Matches both createForCustomer( and createForCustomerInWorkspace(
-        // as a shared prefix — neither is referenced anywhere in this file.
+        // 'createForCustomer' as a shared prefix also catches
+        // createForCustomerInWorkspace( — neither is referenced here.
         $this->assertStringNotContainsString('createForCustomer', $source);
     }
 }

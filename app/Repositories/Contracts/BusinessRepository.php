@@ -55,8 +55,6 @@ interface BusinessRepository extends BaseRepository
      */
     public function workspaceIdsForCustomer(int $customerId): Collection;
 
-    public function createForCustomer(Customer $customer, array $attributes): Business;
-
     /**
      * Persists explicit customer_id and workspace_id context only — no
      * inference, no ownership/membership check between $customer and

@@ -4,7 +4,6 @@ namespace Tests\Feature\Business;
 
 use App\Enums\Business\BusinessServiceStatus;
 use App\Models\Business;
-use App\Repositories\Contracts\BusinessRepository;
 use App\Repositories\Contracts\BusinessServiceRepository;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use InvalidArgumentException;
@@ -20,7 +19,7 @@ class BusinessServiceRepositoryTest extends TestCase
     {
         $customer = $this->createCustomer();
 
-        return app(BusinessRepository::class)->createForCustomer($customer, $this->businessAttributes());
+        return $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
     }
 
     public function test_sync_creates_new_services_with_unique_slugs(): void

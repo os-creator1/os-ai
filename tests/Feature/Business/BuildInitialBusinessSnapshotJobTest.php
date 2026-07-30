@@ -10,7 +10,6 @@ use App\Jobs\Business\BuildInitialBusinessSnapshot;
 use App\Models\Customer;
 use App\Models\CustomerOnboarding;
 use App\Repositories\Contracts\BusinessLocationRepository;
-use App\Repositories\Contracts\BusinessRepository;
 use App\Repositories\Contracts\BusinessServiceRepository;
 use App\Repositories\Contracts\CustomerOnboardingRepository;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -159,7 +158,7 @@ class BuildInitialBusinessSnapshotJobTest extends TestCase
 
         [$onboarding, $customer] = $this->readyOnboarding();
         $stranger = $this->createCustomer();
-        $strangerBusiness = app(BusinessRepository::class)->createForCustomer($stranger, $this->businessAttributes());
+        $strangerBusiness = $this->createBusinessWithWorkspace($stranger, $this->businessAttributes());
 
         // Simulate a data-integrity edge case (never reachable through
         // OnboardingManager's own ownership checks) where the onboarding row
@@ -269,7 +268,7 @@ class BuildInitialBusinessSnapshotJobTest extends TestCase
     private function readyOnboarding(): array
     {
         $customer = $this->createCustomer();
-        $business = app(BusinessRepository::class)->createForCustomer($customer, $this->businessAttributes());
+        $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
 
         app(BusinessLocationRepository::class)->upsertPrimary($business, [
             'service_mode' => 'storefront',

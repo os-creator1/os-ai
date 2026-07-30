@@ -214,7 +214,7 @@ class OnboardingActionExecutorTest extends TestCase
     private function onboardingWithBusiness(): array
     {
         $customer = $this->createCustomer();
-        $business = app(BusinessRepository::class)->createForCustomer($customer, $this->businessAttributes());
+        $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
 
         $onboardingRepository = app(CustomerOnboardingRepository::class);
         $onboarding = $onboardingRepository->startForCustomer($customer, true);

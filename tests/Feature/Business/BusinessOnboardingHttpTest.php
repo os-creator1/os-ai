@@ -591,7 +591,7 @@ class BusinessOnboardingHttpTest extends TestCase
     private function httpOnboardingAtAnalysisStep(array $businessOverrides = []): array
     {
         $customer = $this->actingAsHttpCustomer();
-        $business = app(BusinessRepository::class)->createForCustomer($customer, array_merge(
+        $business = $this->createBusinessWithWorkspace($customer, array_merge(
             $this->businessAttributes(),
             $businessOverrides
         ));

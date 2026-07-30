@@ -18,7 +18,6 @@ use App\Models\OpportunityRun;
 use App\Models\OpportunityRunCandidate;
 use App\Models\OpportunityTransition;
 use App\Models\User;
-use App\Repositories\Contracts\BusinessRepository;
 use Tests\Feature\Business\Concerns\CreatesBusinessTestData;
 
 trait CreatesOpportunityTestData
@@ -28,9 +27,8 @@ trait CreatesOpportunityTestData
     protected function createBusinessForOpportunities(): Business
     {
         $customer = $this->createCustomer();
-        $repository = app(BusinessRepository::class);
 
-        return $repository->createForCustomer($customer, $this->businessAttributes());
+        return $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
     }
 
     protected function createUser(): User

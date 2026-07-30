@@ -4,7 +4,6 @@ namespace Tests\Feature\Business;
 
 use App\Models\Business;
 use App\Repositories\Contracts\BusinessLocationRepository;
-use App\Repositories\Contracts\BusinessRepository;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\Feature\Business\Concerns\CreatesBusinessTestData;
 use Tests\TestCase;
@@ -18,7 +17,7 @@ class BusinessLocationRepositoryTest extends TestCase
     {
         $customer = $this->createCustomer();
 
-        return app(BusinessRepository::class)->createForCustomer($customer, $this->businessAttributes());
+        return $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
     }
 
     public function test_upsert_primary_creates_a_single_primary_location(): void

@@ -87,26 +87,6 @@ class EloquentBusinessRepository extends EloquentBaseRepository implements Busin
             ->values();
     }
 
-    public function createForCustomer(Customer $customer, array $attributes): Business
-    {
-        return DB::transaction(function () use ($customer, $attributes) {
-            $isFirst = ! $this->query()->where('customer_id', $customer->user_id)->exists();
-
-            $attributes = Arr::except($attributes, [
-                'customer_id', 'is_primary', 'canonical_domain', 'status', 'activated_at',
-            ]);
-
-            /** @var Business $business */
-            $business = $this->make($attributes);
-            $business->customer_id = $customer->user_id;
-            $business->is_primary = $isFirst;
-            $business->status = BusinessStatus::Draft;
-            $business->save();
-
-            return $business;
-        });
-    }
-
     public function createForCustomerInWorkspace(Customer $customer, Workspace $workspace, array $attributes): Business
     {
         return DB::transaction(function () use ($customer, $workspace, $attributes) {

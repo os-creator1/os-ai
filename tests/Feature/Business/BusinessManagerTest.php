@@ -14,7 +14,6 @@ use App\Library\Workspace\WorkspaceManager;
 use App\Models\Business;
 use App\Models\Customer;
 use App\Models\Workspace;
-use App\Repositories\Contracts\BusinessRepository;
 use App\Repositories\Contracts\BusinessServiceRepository;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
@@ -76,7 +75,7 @@ class BusinessManagerTest extends TestCase
     public function test_updating_identity_normalizes_website_url_and_derives_canonical_domain(): void
     {
         $customer = $this->createCustomer();
-        $business = app(BusinessRepository::class)->createForCustomer($customer, $this->businessAttributes());
+        $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
 
         Event::fake([BusinessUpdated::class]);
 
@@ -100,7 +99,7 @@ class BusinessManagerTest extends TestCase
     public function test_update_with_no_meaningful_change_does_not_dispatch_business_updated(): void
     {
         $customer = $this->createCustomer();
-        $business = app(BusinessRepository::class)->createForCustomer($customer, $this->businessAttributes());
+        $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
 
         Event::fake([BusinessUpdated::class]);
 
@@ -115,23 +114,24 @@ class BusinessManagerTest extends TestCase
     public function test_updating_a_business_does_not_resolve_or_create_a_workspace(): void
     {
         $customer = $this->createCustomer();
-        $business = app(BusinessRepository::class)->createForCustomer($customer, $this->businessAttributes());
-        $this->assertNull(DB::table('businesses')->where('id', $business->id)->value('workspace_id'));
+        $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
+        $originalWorkspaceId = $business->workspace_id;
+        $this->assertNotNull($originalWorkspaceId);
 
         Event::fake([BusinessUpdated::class]);
 
         $manager = app(BusinessManager::class);
         $updated = $manager->updateBusiness($customer, $business, ['name' => 'Renamed Booth Co']);
 
-        $this->assertNull($updated->workspace_id);
-        $this->assertSame(0, Workspace::where('owner_user_id', $customer->user_id)->count());
+        $this->assertSame($originalWorkspaceId, $updated->workspace_id);
+        $this->assertSame(1, Workspace::where('owner_user_id', $customer->user_id)->count());
     }
 
     public function test_update_business_throws_when_business_does_not_belong_to_customer(): void
     {
         $owner = $this->createCustomer();
         $stranger = $this->createCustomer();
-        $business = app(BusinessRepository::class)->createForCustomer($owner, $this->businessAttributes());
+        $business = $this->createBusinessWithWorkspace($owner, $this->businessAttributes());
 
         $manager = app(BusinessManager::class);
 
@@ -146,7 +146,7 @@ class BusinessManagerTest extends TestCase
 
         $customer = $this->createCustomer();
         $otherCustomer = $this->createCustomer();
-        $business = app(BusinessRepository::class)->createForCustomer($customer, $this->businessAttributes());
+        $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
 
         $manager = app(BusinessManager::class);
 
@@ -173,7 +173,7 @@ class BusinessManagerTest extends TestCase
         Event::fake([BusinessPrimaryLocationUpdated::class]);
 
         $customer = $this->createCustomer();
-        $business = app(BusinessRepository::class)->createForCustomer($customer, $this->businessAttributes());
+        $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
         $manager = app(BusinessManager::class);
 
         $first = $manager->upsertPrimaryLocation($customer, $business, [
@@ -204,7 +204,7 @@ class BusinessManagerTest extends TestCase
         Event::fake([BusinessServicesSynced::class]);
 
         $customer = $this->createCustomer();
-        $business = app(BusinessRepository::class)->createForCustomer($customer, $this->businessAttributes());
+        $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
         $manager = app(BusinessManager::class);
 
         $synced = $manager->syncServices($customer, $business, [
@@ -223,10 +223,10 @@ class BusinessManagerTest extends TestCase
         Event::fake([BusinessServicesSynced::class]);
 
         $customer = $this->createCustomer();
-        $business = app(BusinessRepository::class)->createForCustomer($customer, $this->businessAttributes());
+        $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
 
         $otherCustomer = $this->createCustomer();
-        $otherBusiness = app(BusinessRepository::class)->createForCustomer($otherCustomer, $this->businessAttributes());
+        $otherBusiness = $this->createBusinessWithWorkspace($otherCustomer, $this->businessAttributes());
         $foreignService = app(BusinessServiceRepository::class)->syncForBusiness($otherBusiness, [
             ['name' => 'Foreign Service', 'is_primary' => true],
         ])->first();
@@ -280,14 +280,18 @@ class BusinessManagerTest extends TestCase
         $workspaceA = Workspace::create(['name' => 'A', 'owner_user_id' => $customer->user_id, 'is_active' => true]);
         $workspaceB = Workspace::create(['name' => 'B', 'owner_user_id' => $customer->user_id, 'is_active' => true]);
 
-        $businessA = app(BusinessRepository::class)->createForCustomer($customer, $this->businessAttributes(['name' => 'Primary A']));
+        $businessA = new Business($this->businessAttributes(['name' => 'Primary A']));
+        $businessA->customer_id = $customer->user_id;
         $businessA->is_primary = true;
         $businessA->workspace_id = $workspaceA->id;
+        $businessA->status = BusinessStatus::Draft;
         $businessA->save();
 
-        $businessB = app(BusinessRepository::class)->createForCustomer($customer, $this->businessAttributes(['name' => 'Primary B']));
+        $businessB = new Business($this->businessAttributes(['name' => 'Primary B']));
+        $businessB->customer_id = $customer->user_id;
         $businessB->is_primary = true;
         $businessB->workspace_id = $workspaceB->id;
+        $businessB->status = BusinessStatus::Draft;
         $businessB->save();
 
         $manager = app(BusinessManager::class);

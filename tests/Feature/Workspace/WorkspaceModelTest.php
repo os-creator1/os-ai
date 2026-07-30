@@ -41,15 +41,10 @@ class WorkspaceModelTest extends TestCase
 
     private function createBusinessForCustomer(int $customerId, ?int $workspaceId = null): Business
     {
-        $business = Business::create(array_merge(
-            $this->businessAttributes(),
-            ['customer_id' => $customerId]
-        ));
-
-        if ($workspaceId !== null) {
-            $business->workspace_id = $workspaceId;
-            $business->save();
-        }
+        $business = new Business($this->businessAttributes());
+        $business->customer_id = $customerId;
+        $business->workspace_id = $workspaceId;
+        $business->save();
 
         return $business;
     }

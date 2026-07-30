@@ -7,7 +7,6 @@ use App\Events\Business\BusinessUpdated;
 use App\Models\AppConfig;
 use App\Models\Business;
 use App\Models\User;
-use App\Repositories\Contracts\BusinessRepository;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Event;
 use Tests\Feature\Business\Concerns\CreatesBusinessTestData;
@@ -41,7 +40,7 @@ class AdminBusinessControllerTest extends TestCase
     public function test_ordinary_customer_cannot_access_admin_business_routes(): void
     {
         $customer = $this->createCustomer();
-        $business = app(BusinessRepository::class)->createForCustomer($customer, $this->businessAttributes());
+        $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
         $this->actingAs($customer->user);
 
         $this->get(route('admin.businesses.index'))->assertUnauthorized();
@@ -67,7 +66,7 @@ class AdminBusinessControllerTest extends TestCase
     public function test_a_non_admin_account_is_blocked_even_with_business_permissions_in_session(): void
     {
         $customer = $this->createCustomer();
-        $business = app(BusinessRepository::class)->createForCustomer($customer, $this->businessAttributes());
+        $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
         $this->withSession(['permissions' => collect(['access backend', 'view business', 'edit business'])]);
         $this->actingAs($customer->user);
 
@@ -97,7 +96,7 @@ class AdminBusinessControllerTest extends TestCase
     public function test_admin_with_backend_access_but_no_business_permission_cannot_view_show(): void
     {
         $customer = $this->createCustomer();
-        $business = app(BusinessRepository::class)->createForCustomer($customer, $this->businessAttributes());
+        $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
         $this->actingAsAdmin(['access backend']);
 
         $this->get(route('admin.businesses.show', $business))->assertUnauthorized();
@@ -106,7 +105,7 @@ class AdminBusinessControllerTest extends TestCase
     public function test_view_only_admin_can_view_index_and_show(): void
     {
         $customer = $this->createCustomer();
-        $business = app(BusinessRepository::class)->createForCustomer($customer, $this->businessAttributes());
+        $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
         $this->actingAsAdmin(['access backend', 'view business']);
 
         $this->get(route('admin.businesses.index'))->assertOk()->assertSee($business->name);
@@ -116,7 +115,7 @@ class AdminBusinessControllerTest extends TestCase
     public function test_view_only_admin_cannot_open_edit_form(): void
     {
         $customer = $this->createCustomer();
-        $business = app(BusinessRepository::class)->createForCustomer($customer, $this->businessAttributes());
+        $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
         $this->actingAsAdmin(['access backend', 'view business']);
 
         $this->get(route('admin.businesses.edit', $business))->assertUnauthorized();
@@ -125,7 +124,7 @@ class AdminBusinessControllerTest extends TestCase
     public function test_view_only_admin_cannot_submit_an_update(): void
     {
         $customer = $this->createCustomer();
-        $business = app(BusinessRepository::class)->createForCustomer($customer, $this->businessAttributes());
+        $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
         $this->actingAsAdmin(['access backend', 'view business']);
 
         $this->put(route('admin.businesses.update', $business), $this->adminIdentityPayload())
@@ -137,7 +136,7 @@ class AdminBusinessControllerTest extends TestCase
     public function test_view_only_admin_cannot_change_status(): void
     {
         $customer = $this->createCustomer();
-        $business = app(BusinessRepository::class)->createForCustomer($customer, $this->businessAttributes());
+        $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
         $this->actingAsAdmin(['access backend', 'view business']);
 
         $this->patch(route('admin.businesses.status.update', $business), ['status' => BusinessStatus::Active->value])
@@ -154,7 +153,7 @@ class AdminBusinessControllerTest extends TestCase
     public function test_edit_authorized_admin_can_update_any_business_across_tenants(): void
     {
         $customer = $this->createCustomer();
-        $business = app(BusinessRepository::class)->createForCustomer($customer, $this->businessAttributes());
+        $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
         $this->actingAsAdmin(['access backend', 'view business', 'edit business']);
 
         $this->put(route('admin.businesses.update', $business), $this->adminIdentityPayload(['name' => 'Renamed By Admin']))
@@ -167,7 +166,7 @@ class AdminBusinessControllerTest extends TestCase
     {
         $owner = $this->createCustomer();
         $stranger = $this->createCustomer();
-        $business = app(BusinessRepository::class)->createForCustomer($owner, $this->businessAttributes());
+        $business = $this->createBusinessWithWorkspace($owner, $this->businessAttributes());
         $this->actingAsAdmin(['access backend', 'view business', 'edit business']);
 
         $this->put(route('admin.businesses.update', $business), $this->adminIdentityPayload([
@@ -180,7 +179,7 @@ class AdminBusinessControllerTest extends TestCase
     public function test_admin_update_cannot_set_other_protected_fields(): void
     {
         $customer = $this->createCustomer();
-        $business = app(BusinessRepository::class)->createForCustomer($customer, $this->businessAttributes());
+        $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
         $this->actingAsAdmin(['access backend', 'view business', 'edit business']);
 
         $this->put(route('admin.businesses.update', $business), $this->adminIdentityPayload([
@@ -203,7 +202,7 @@ class AdminBusinessControllerTest extends TestCase
     public function test_admin_update_does_not_persist_partial_changes_on_validation_failure(): void
     {
         $customer = $this->createCustomer();
-        $business = app(BusinessRepository::class)->createForCustomer($customer, $this->businessAttributes());
+        $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
         $this->actingAsAdmin(['access backend', 'view business', 'edit business']);
 
         $payload = $this->adminIdentityPayload([
@@ -229,7 +228,7 @@ class AdminBusinessControllerTest extends TestCase
     {
         Event::fake([BusinessUpdated::class]);
         $customer = $this->createCustomer();
-        $business = app(BusinessRepository::class)->createForCustomer($customer, $this->businessAttributes());
+        $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
         $this->actingAsAdmin(['access backend', 'view business', 'edit business']);
 
         $this->put(route('admin.businesses.update', $business), $this->adminIdentityPayload(['name' => 'Orchestrated Name']));
@@ -241,7 +240,7 @@ class AdminBusinessControllerTest extends TestCase
     public function test_admin_can_update_status_via_the_dedicated_route(): void
     {
         $customer = $this->createCustomer();
-        $business = app(BusinessRepository::class)->createForCustomer($customer, $this->businessAttributes());
+        $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
         $this->actingAsAdmin(['access backend', 'view business', 'edit business']);
 
         $this->patch(route('admin.businesses.status.update', $business), ['status' => BusinessStatus::Active->value])
@@ -255,7 +254,7 @@ class AdminBusinessControllerTest extends TestCase
     public function test_status_update_does_not_accept_activated_at_from_the_request(): void
     {
         $customer = $this->createCustomer();
-        $business = app(BusinessRepository::class)->createForCustomer($customer, $this->businessAttributes());
+        $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
         $this->actingAsAdmin(['access backend', 'view business', 'edit business']);
 
         $forgedTimestamp = now()->subYears(5)->toDateTimeString();
@@ -277,7 +276,7 @@ class AdminBusinessControllerTest extends TestCase
     public function test_status_update_does_not_change_identity_fields(): void
     {
         $customer = $this->createCustomer();
-        $business = app(BusinessRepository::class)->createForCustomer($customer, $this->businessAttributes());
+        $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
         $this->actingAsAdmin(['access backend', 'view business', 'edit business']);
 
         $this->patch(route('admin.businesses.status.update', $business), [
@@ -291,9 +290,8 @@ class AdminBusinessControllerTest extends TestCase
     public function test_index_filter_query_params_are_wired_through_to_the_repository(): void
     {
         $customer = $this->createCustomer();
-        $repository = app(BusinessRepository::class);
-        $matching = $repository->createForCustomer($customer, $this->businessAttributes(['name' => 'Snap Booth Co']));
-        $repository->createForCustomer($customer, $this->businessAttributes(['name' => 'Unrelated Co']));
+        $matching = $this->createBusinessWithWorkspace($customer, $this->businessAttributes(['name' => 'Snap Booth Co']));
+        $this->createBusinessWithWorkspace($customer, $this->businessAttributes(['name' => 'Unrelated Co']));
         $this->actingAsAdmin(['access backend', 'view business']);
 
         $this->get(route('admin.businesses.index', ['search' => 'Snap Booth']))
@@ -308,8 +306,8 @@ class AdminBusinessControllerTest extends TestCase
     {
         $customerA = $this->createCustomer();
         $customerB = $this->createCustomer();
-        app(BusinessRepository::class)->createForCustomer($customerA, $this->businessAttributes(['name' => 'Customer A Co']));
-        $businessB = app(BusinessRepository::class)->createForCustomer($customerB, $this->businessAttributes(['name' => 'Customer B Co']));
+        $this->createBusinessWithWorkspace($customerA, $this->businessAttributes(['name' => 'Customer A Co']));
+        $businessB = $this->createBusinessWithWorkspace($customerB, $this->businessAttributes(['name' => 'Customer B Co']));
 
         $customerA->permissions = \App\Models\Customer::customerPermissions();
         $customerA->save();

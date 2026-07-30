@@ -10,6 +10,7 @@ use App\Models\Business;
 use App\Models\Customer;
 use App\Models\OpportunityRun;
 use App\Models\User;
+use App\Models\Workspace;
 use Illuminate\Database\Connection;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
@@ -219,7 +220,7 @@ class OpportunityManagerConcurrencyTest extends TestCase
      * cannot rely on RefreshDatabase — every created row is returned here so
      * the caller can delete it explicitly afterward.
      *
-     * @return array{business: Business, customer: Customer, user: User}
+     * @return array{business: Business, customer: Customer, user: User, workspace: Workspace}
      */
     private function createFixtureBusiness(): array
     {
@@ -235,8 +236,14 @@ class OpportunityManagerConcurrencyTest extends TestCase
 
         $customer = Customer::create(['user_id' => $user->id]);
 
-        // Constructed the same way EloquentBusinessRepository::createForCustomer()
-        // does: is_primary/status are set as direct properties, not mass-assigned.
+        $workspace = Workspace::create([
+            'name' => 'Concurrency Test Workspace',
+            'owner_user_id' => $user->id,
+            'is_active' => true,
+        ]);
+
+        // Constructed the same way EloquentBusinessRepository::createForCustomerInWorkspace()
+        // does: is_primary/status/workspace_id are set as direct properties, not mass-assigned.
         $business = new Business([
             'name' => 'Concurrency Test Co',
             'industry' => 'photo_booth_service',
@@ -245,15 +252,16 @@ class OpportunityManagerConcurrencyTest extends TestCase
             'currency_code' => 'USD',
         ]);
         $business->customer_id = $user->id;
+        $business->workspace_id = $workspace->id;
         $business->is_primary = true;
         $business->status = BusinessStatus::Draft;
         $business->save();
 
-        return ['business' => $business, 'customer' => $customer, 'user' => $user];
+        return ['business' => $business, 'customer' => $customer, 'user' => $user, 'workspace' => $workspace];
     }
 
     /**
-     * @param  array{business: Business, customer: Customer, user: User}  $fixture
+     * @param  array{business: Business, customer: Customer, user: User, workspace: Workspace}  $fixture
      * @param  array<int, int>  $runIds
      */
     private function cleanUpFixture(array $fixture, array $runIds = []): void
@@ -263,6 +271,7 @@ class OpportunityManagerConcurrencyTest extends TestCase
         }
 
         $fixture['business']->delete();
+        $fixture['workspace']->delete();
         $fixture['customer']->delete();
         $fixture['user']->delete();
     }

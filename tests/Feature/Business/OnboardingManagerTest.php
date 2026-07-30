@@ -23,7 +23,6 @@ use App\Models\User;
 use App\Models\Workspace;
 use App\Repositories\Contracts\AccountRepository;
 use App\Repositories\Contracts\BusinessLocationRepository;
-use App\Repositories\Contracts\BusinessRepository;
 use App\Repositories\Contracts\BusinessServiceRepository;
 use App\Repositories\Contracts\CustomerOnboardingRepository;
 use Illuminate\Auth\Access\AuthorizationException;
@@ -475,7 +474,7 @@ class OnboardingManagerTest extends TestCase
     public function test_complete_throws_without_a_primary_location(): void
     {
         $customer = $this->createCustomer();
-        $business = app(BusinessRepository::class)->createForCustomer($customer, $this->businessAttributes());
+        $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
         $manager = app(OnboardingManager::class);
         $onboarding = $manager->start($customer, true);
         $onboarding = app(CustomerOnboardingRepository::class)->attachBusiness($onboarding, $business);
@@ -635,7 +634,7 @@ class OnboardingManagerTest extends TestCase
     private function onboardingAtAnalysisStep(): array
     {
         $customer = $this->createCustomer();
-        $business = app(BusinessRepository::class)->createForCustomer($customer, $this->businessAttributes());
+        $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
 
         app(BusinessLocationRepository::class)->upsertPrimary($business, [
             'service_mode' => 'storefront',
