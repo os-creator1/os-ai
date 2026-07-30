@@ -5,6 +5,7 @@ namespace App\Repositories\Eloquent;
 use App\Enums\Business\BusinessStatus;
 use App\Models\Business;
 use App\Models\Customer;
+use App\Models\Workspace;
 use App\Repositories\Contracts\BusinessRepository;
 use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Arr;
@@ -68,6 +69,27 @@ class EloquentBusinessRepository extends EloquentBaseRepository implements Busin
             /** @var Business $business */
             $business = $this->make($attributes);
             $business->customer_id = $customer->user_id;
+            $business->is_primary = $isFirst;
+            $business->status = BusinessStatus::Draft;
+            $business->save();
+
+            return $business;
+        });
+    }
+
+    public function createForCustomerInWorkspace(Customer $customer, Workspace $workspace, array $attributes): Business
+    {
+        return DB::transaction(function () use ($customer, $workspace, $attributes) {
+            $isFirst = ! $this->query()->where('customer_id', $customer->user_id)->exists();
+
+            $attributes = Arr::except($attributes, [
+                'customer_id', 'workspace_id', 'is_primary', 'canonical_domain', 'status', 'activated_at',
+            ]);
+
+            /** @var Business $business */
+            $business = $this->make($attributes);
+            $business->customer_id = $customer->user_id;
+            $business->workspace_id = $workspace->id;
             $business->is_primary = $isFirst;
             $business->status = BusinessStatus::Draft;
             $business->save();

@@ -5,6 +5,7 @@ namespace App\Repositories\Contracts;
 use App\Enums\Business\BusinessStatus;
 use App\Models\Business;
 use App\Models\Customer;
+use App\Models\Workspace;
 use Illuminate\Pagination\LengthAwarePaginator;
 
 /**
@@ -27,6 +28,17 @@ interface BusinessRepository extends BaseRepository
     public function findPrimaryByCustomer(int $customerId): ?Business;
 
     public function createForCustomer(Customer $customer, array $attributes): Business;
+
+    /**
+     * Persists explicit customer_id and workspace_id context only — no
+     * inference, no ownership/membership check between $customer and
+     * $workspace (they are independent per RFC-003 §11.2: a Business's
+     * direct owner is not required to be the Workspace owner), no
+     * Workspace creation, and no is_active check on $workspace. All of
+     * that is Milestone 2 orchestration; this method's only job is to
+     * write the two explicit foreign keys it was handed.
+     */
+    public function createForCustomerInWorkspace(Customer $customer, Workspace $workspace, array $attributes): Business;
 
     public function update(Business $business, array $attributes): Business;
 
