@@ -62,23 +62,54 @@ class LegacyBoundaryTest extends TestCase
         $this->assertNull(DB::table('businesses')->where('id', $business->id)->value('workspace_id'));
     }
 
-    // 20. WorkspaceManager does not exist.
-    public function test_workspace_manager_does_not_exist(): void
+    // 20 (updated for Slice 2B). WorkspaceManager now exists and exposes
+    // the approved resolver signature — Slice 2B explicitly introduces it.
+    public function test_workspace_manager_exists_with_the_approved_resolver_signature(): void
     {
-        $this->assertFalse(class_exists(\App\Library\Workspace\WorkspaceManager::class));
+        $this->assertTrue(class_exists(\App\Library\Workspace\WorkspaceManager::class));
+
+        $method = (new ReflectionClass(\App\Library\Workspace\WorkspaceManager::class))
+            ->getMethod('resolveLegacyOnboardingWorkspace');
+
+        $this->assertTrue($method->isPublic());
+
+        $parameters = $method->getParameters();
+        $this->assertCount(1, $parameters);
+        $this->assertSame('ownerUserId', $parameters[0]->getName());
+        $this->assertSame('int', (string) $parameters[0]->getType());
+        $this->assertSame(\App\Models\Workspace::class, (string) $method->getReturnType());
     }
 
-    // 21 (updated for Slice 2A). WorkspaceContextRequiredException and its
-    // closed WorkspaceContextFailureReason enum now exist — Slice 2A
-    // explicitly introduces both. No resolver has been introduced to use
-    // them yet: WorkspaceManager remains absent (also proven independently
-    // by test_workspace_manager_does_not_exist above), so this asserts the
-    // current M1B boundary rather than the earlier M1A one.
-    public function test_workspace_context_exception_and_reason_enum_exist_with_no_resolver_yet(): void
+    // (new for Slice 2B) WorkspaceManager exists but is not yet wired into
+    // BusinessManager — the legacy onboarding path still resolves nothing
+    // and still calls createForCustomer() directly (also proven
+    // behaviorally by test_business_manager_still_calls_the_legacy_creation_path above).
+    public function test_business_manager_does_not_yet_reference_the_workspace_resolver(): void
+    {
+        $source = file_get_contents(app_path('Library/Business/BusinessManager.php'));
+
+        $this->assertStringNotContainsString('WorkspaceManager', $source);
+        $this->assertStringNotContainsString('resolveLegacyOnboardingWorkspace', $source);
+        $this->assertStringNotContainsString('createForCustomerInWorkspace', $source);
+    }
+
+    // (new for Slice 2B) createForCustomerInWorkspace() remains present on
+    // the repository contract, alongside the still-unremoved createForCustomer().
+    public function test_business_repository_contract_still_declares_create_for_customer_in_workspace(): void
+    {
+        $this->assertTrue(
+            (new ReflectionClass(BusinessRepository::class))->hasMethod('createForCustomerInWorkspace')
+        );
+    }
+
+    // 21 (updated for Slice 2A/2B). WorkspaceContextRequiredException and
+    // its closed WorkspaceContextFailureReason enum exist — Slice 2A
+    // introduced both. WorkspaceManager's own existence and BusinessManager's
+    // non-integration are proven independently above.
+    public function test_workspace_context_exception_and_reason_enum_exist(): void
     {
         $this->assertTrue(class_exists(\App\Exceptions\Workspace\WorkspaceContextRequiredException::class));
         $this->assertTrue(class_exists(\App\Enums\Workspace\WorkspaceContextFailureReason::class));
-        $this->assertFalse(class_exists(\App\Library\Workspace\WorkspaceManager::class));
     }
 
     // 22. no M1B enforcement migration exists.
