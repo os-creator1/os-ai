@@ -6,16 +6,22 @@
  * concurrency test exercises two genuinely independent database
  * connections racing for the same users-row lock — something a single
  * PHPUnit process cannot do on its own. Boots the app in the testing
- * environment so it shares the same ultimatesms_testing database and
- * .env.testing credentials as the parent PHPUnit process.
+ * environment so it shares the same database and .env.testing credentials
+ * as the parent PHPUnit process — which, since RFC-003 M1B Slice 4A, is
+ * either the primary ultimatesms_testing database (when this script is
+ * exercised directly) or a generated ultimatesms_testing_historical_*
+ * database (when the parent test runs inside the isolated historical
+ * suite) — never an arbitrary caller-supplied value.
  *
  * Before doing anything else, this process independently re-verifies its
- * own resolved database connection name — APP_ENV=testing alone is not
- * proof enough, since a stale bootstrap/cache/config.php would make
- * Laravel skip .env resolution entirely and silently reuse whatever
- * database was baked into that cache. The parent PHPUnit process asserts
- * its own connection separately, but that assertion cannot see what a
- * wholly independent child process resolves for itself.
+ * own resolved database connection name against EXPECTED_TEST_DATABASE,
+ * forwarded explicitly by the parent test's own already-verified
+ * environment — APP_ENV=testing alone is not proof enough, since a stale
+ * bootstrap/cache/config.php would make Laravel skip .env resolution
+ * entirely and silently reuse whatever database was baked into that
+ * cache. The parent PHPUnit process asserts its own connection
+ * separately, but that assertion cannot see what a wholly independent
+ * child process resolves for itself.
  *
  * Usage: php concurrent_backfill_runner.php <plain|slow> <holdSeconds> <customerId>
  */
@@ -29,16 +35,38 @@ $_SERVER['APP_ENV'] = 'testing';
 $app = require __DIR__ . '/../../../../bootstrap/app.php';
 $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
 
-const EXPECTED_DATABASE = 'ultimatesms_testing';
+use Tests\Feature\Workspace\Support\TemporaryTestDatabase;
+
 const WRONG_DATABASE_EXIT_CODE = 3;
+
+const PRIMARY_TEST_DATABASE = 'ultimatesms_testing';
+
+$expectedDatabase = getenv('EXPECTED_TEST_DATABASE');
+
+if ($expectedDatabase === false || $expectedDatabase === '') {
+    fwrite(STDERR, "Refusing to run WorkspaceBackfillV1: EXPECTED_TEST_DATABASE is not set. Aborting before any database write.\n");
+    exit(WRONG_DATABASE_EXIT_CODE);
+}
+
+$isPrimaryTestDatabase = $expectedDatabase === PRIMARY_TEST_DATABASE;
+$isHistoricalTemporaryDatabase = TemporaryTestDatabase::isValidHistoricalName($expectedDatabase);
+
+if (! $isPrimaryTestDatabase && ! $isHistoricalTemporaryDatabase) {
+    fwrite(STDERR, sprintf(
+        "Refusing to run WorkspaceBackfillV1: EXPECTED_TEST_DATABASE [%s] is neither [%s] nor a valid historical temporary database name. Aborting before any database write.\n",
+        $expectedDatabase,
+        PRIMARY_TEST_DATABASE
+    ));
+    exit(WRONG_DATABASE_EXIT_CODE);
+}
 
 $resolvedDatabase = Illuminate\Support\Facades\DB::connection()->getDatabaseName();
 
-if ($resolvedDatabase !== EXPECTED_DATABASE) {
+if ($resolvedDatabase !== $expectedDatabase) {
     fwrite(STDERR, sprintf(
         "Refusing to run WorkspaceBackfillV1: resolved database is [%s], expected [%s]. Aborting before any database write.\n",
         $resolvedDatabase,
-        EXPECTED_DATABASE
+        $expectedDatabase
     ));
     exit(WRONG_DATABASE_EXIT_CODE);
 }

@@ -5,11 +5,11 @@ namespace Tests\Feature\Workspace;
 use App\Exceptions\Workspace\WorkspaceBackfillConflictException;
 use App\Models\Business;
 use App\Models\User;
-use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
-use Tests\TestCase;
+use PHPUnit\Framework\Attributes\Group;
+use Tests\Feature\Workspace\Support\HistoricalWorkspaceTestCase;
 
 /**
  * Loads and invokes the actual migration 5 class (RFC-003 §10.1), not a
@@ -17,10 +17,9 @@ use Tests\TestCase;
  * — the same mechanism Laravel's migrator uses for anonymous-class
  * migrations.
  */
-class WorkspaceBackfillMigrationTest extends TestCase
+#[Group('historical-m1a')]
+class WorkspaceBackfillMigrationTest extends HistoricalWorkspaceTestCase
 {
-    use RefreshDatabase;
-
     private const MIGRATION_PATH = 'migrations/2026_07_30_120005_backfill_business_workspaces.php';
 
     private function migrationInstance(): object

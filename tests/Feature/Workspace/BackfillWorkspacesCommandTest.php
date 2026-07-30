@@ -9,17 +9,16 @@ use App\Library\Workspace\Migration\WorkspaceBackfillV1;
 use App\Models\Business;
 use App\Models\User;
 use Illuminate\Console\Command;
-use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Mockery;
+use PHPUnit\Framework\Attributes\Group;
 use RuntimeException;
-use Tests\TestCase;
+use Tests\Feature\Workspace\Support\HistoricalWorkspaceTestCase;
 
-class BackfillWorkspacesCommandTest extends TestCase
+#[Group('historical-m1a')]
+class BackfillWorkspacesCommandTest extends HistoricalWorkspaceTestCase
 {
-    use RefreshDatabase;
-
     private function createUser(array $overrides = []): User
     {
         return User::create(array_merge([

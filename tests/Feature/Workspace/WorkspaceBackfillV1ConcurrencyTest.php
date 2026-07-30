@@ -4,9 +4,10 @@ namespace Tests\Feature\Workspace;
 
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
+use PHPUnit\Framework\Attributes\Group;
 use Symfony\Component\Process\PhpExecutableFinder;
 use Symfony\Component\Process\Process;
-use Tests\TestCase;
+use Tests\Feature\Workspace\Support\HistoricalWorkspaceConcurrencyTestCase;
 
 /**
  * Real cross-process concurrency test for WorkspaceBackfillV1 (RFC-003
@@ -14,14 +15,15 @@ use Tests\TestCase;
  * customer_id serialize on the users-row lock and produce exactly one
  * Workspace, never two.
  *
- * Deliberately does NOT use RefreshDatabase. A genuine cross-process test
- * requires the fixture rows to be visible to a second, wholly independent
- * PHP process and database connection — an open, never-committed
- * RefreshDatabase transaction would hide them from it entirely. Fixture
- * rows are inserted directly (auto-committed) and explicitly removed in
- * tearDown().
+ * Deliberately does NOT use DatabaseTransactions/RefreshDatabase. A
+ * genuine cross-process test requires the fixture rows to be visible to a
+ * second, wholly independent PHP process and database connection — an
+ * open, never-committed transaction would hide them from it entirely.
+ * Fixture rows are inserted directly (auto-committed) and explicitly
+ * removed in tearDown().
  */
-class WorkspaceBackfillV1ConcurrencyTest extends TestCase
+#[Group('historical-m1a')]
+class WorkspaceBackfillV1ConcurrencyTest extends HistoricalWorkspaceConcurrencyTestCase
 {
     private array $createdUserIds = [];
     private array $createdBusinessIds = [];
@@ -42,7 +44,8 @@ class WorkspaceBackfillV1ConcurrencyTest extends TestCase
 
     public function test_two_concurrent_attempts_for_the_same_legacy_customer_create_exactly_one_workspace(): void
     {
-        $this->assertSame('ultimatesms_testing', DB::connection()->getDatabaseName());
+        $expectedDatabase = getenv('EXPECTED_TEST_DATABASE');
+        $this->assertSame($expectedDatabase, DB::connection()->getDatabaseName());
 
         $userId = DB::table('users')->insertGetId([
             'uid' => (string) Str::uuid(),
@@ -78,7 +81,16 @@ class WorkspaceBackfillV1ConcurrencyTest extends TestCase
         $phpBinary = (new PhpExecutableFinder())->find() ?: 'php';
         $holdSeconds = '2';
 
-        $slow = new Process([$phpBinary, $runnerScript, 'slow', $holdSeconds]);
+        // Forward this already-verified historical environment explicitly
+        // rather than relying on ambient process-env inheritance — the
+        // sub-child must resolve the same historical database this test
+        // itself is running against, never ultimatesms_testing.
+        $childEnv = [
+            'DB_DATABASE' => getenv('DB_DATABASE'),
+            'EXPECTED_TEST_DATABASE' => $expectedDatabase,
+        ];
+
+        $slow = new Process([$phpBinary, $runnerScript, 'slow', $holdSeconds], null, $childEnv);
         $slow->start();
 
         // Give the slow process enough time to connect and acquire the
@@ -86,7 +98,7 @@ class WorkspaceBackfillV1ConcurrencyTest extends TestCase
         usleep(500_000);
 
         $start = microtime(true);
-        $fast = new Process([$phpBinary, $runnerScript, 'plain', '0']);
+        $fast = new Process([$phpBinary, $runnerScript, 'plain', '0'], null, $childEnv);
         $fast->run();
         $elapsed = microtime(true) - $start;
 
@@ -115,10 +127,14 @@ class WorkspaceBackfillV1ConcurrencyTest extends TestCase
      * enough. Rather than pointing a child process at a real wrong
      * database (which the instructions forbid, and which would require
      * separate credentials), this overrides DB_DATABASE via the child's
-     * environment: Laravel's Dotenv loader is immutable, so a pre-set OS
-     * env var wins over .env.testing's value, and the resolved database
-     * name changes without ever attempting a real connection to it — the
-     * guard checks getDatabaseName() (config-only) before any query runs.
+     * environment while forwarding this test's own real, already-verified
+     * EXPECTED_TEST_DATABASE: Laravel's Dotenv loader is immutable, so a
+     * pre-set OS env var wins over .env.testing's value, and the resolved
+     * database name changes without ever attempting a real connection to
+     * it — the guard checks getDatabaseName() (config-only) against the
+     * genuinely expected value before any query runs, so the mismatch
+     * between the bogus DB_DATABASE and the real EXPECTED_TEST_DATABASE is
+     * exactly what triggers the refusal.
      */
     public function test_runner_refuses_to_execute_against_an_unexpected_resolved_database(): void
     {
@@ -129,7 +145,7 @@ class WorkspaceBackfillV1ConcurrencyTest extends TestCase
         $process = new Process(
             [$phpBinary, $runnerScript, 'plain', '0'],
             null,
-            ['DB_DATABASE' => $bogusDatabase]
+            ['DB_DATABASE' => $bogusDatabase, 'EXPECTED_TEST_DATABASE' => getenv('EXPECTED_TEST_DATABASE')]
         );
         $process->run();
 

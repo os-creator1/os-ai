@@ -9,21 +9,20 @@ use App\Library\Workspace\Migration\WorkspaceBackfillV1;
 use App\Models\Business;
 use App\Models\Customer;
 use App\Models\User;
-use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Str;
+use PHPUnit\Framework\Attributes\Group;
 use ReflectionClass;
 use RuntimeException;
 use Tests\Feature\Workspace\Support\ConcurrentInsertWorkspaceBackfillV1;
 use Tests\Feature\Workspace\Support\FailingWorkspaceBackfillV1;
+use Tests\Feature\Workspace\Support\HistoricalWorkspaceTestCase;
 use Tests\Feature\Workspace\Support\SmallPageWorkspaceBackfillV1;
-use Tests\TestCase;
 
-class WorkspaceBackfillV1Test extends TestCase
+#[Group('historical-m1a')]
+class WorkspaceBackfillV1Test extends HistoricalWorkspaceTestCase
 {
-    use RefreshDatabase;
-
     private function createUser(array $overrides = []): User
     {
         return User::create(array_merge([
