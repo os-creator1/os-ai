@@ -45,6 +45,7 @@
     use App\Repositories\Contracts\WorkspaceMembershipBusinessRepository;
     use App\Repositories\Contracts\WorkspaceMembershipRepository;
     use App\Repositories\Contracts\WorkspaceRepository;
+    use App\Repositories\Contracts\WorkspaceTransitionRepository;
     use App\Repositories\Eloquent\EloquentAccountRepository;
     use App\Repositories\Eloquent\EloquentAnnouncementsRepository;
     use App\Repositories\Eloquent\EloquentAutomationsRepository;
@@ -82,6 +83,7 @@
     use App\Repositories\Eloquent\EloquentWorkspaceMembershipBusinessRepository;
     use App\Repositories\Eloquent\EloquentWorkspaceMembershipRepository;
     use App\Repositories\Eloquent\EloquentWorkspaceRepository;
+    use App\Repositories\Eloquent\EloquentWorkspaceTransitionRepository;
     use Closure;
     use Exception;
     use Illuminate\Cache\NullStore;
@@ -146,6 +148,7 @@
                 WorkspaceRepository::class => EloquentWorkspaceRepository::class,
                 WorkspaceMembershipRepository::class => EloquentWorkspaceMembershipRepository::class,
                 WorkspaceMembershipBusinessRepository::class => EloquentWorkspaceMembershipBusinessRepository::class,
+                WorkspaceTransitionRepository::class => EloquentWorkspaceTransitionRepository::class,
             ];
 
             foreach ($bindings as $interface => $implementation) {

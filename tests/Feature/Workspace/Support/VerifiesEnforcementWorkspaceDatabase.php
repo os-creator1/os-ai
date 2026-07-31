@@ -19,6 +19,16 @@ use RuntimeException;
  */
 trait VerifiesEnforcementWorkspaceDatabase
 {
+    /**
+     * Migration 6 is no longer guaranteed to be the newest migration in the
+     * chain (RFC-003 Milestone 2 adds workspace_transitions after it), so a
+     * fixed `--step=1` rollback can no longer be trusted to undo exactly
+     * this migration. rollbackToPostMigrationFive() below computes the
+     * exact step count instead, by name, so this stays correct regardless
+     * of how many later migrations exist.
+     */
+    private const MIGRATION_SIX_NAME = '2026_07_30_120006_enforce_business_workspace_constraint';
+
     protected function prepareEnforcementDatabase(): void
     {
         $expected = getenv('EXPECTED_TEST_DATABASE');
@@ -44,13 +54,63 @@ trait VerifiesEnforcementWorkspaceDatabase
         }
 
         Artisan::call('migrate:fresh', ['--force' => true]);
-        Artisan::call('migrate:rollback', ['--step' => 1, '--force' => true]);
+
+        $this->rollbackToPostMigrationFive();
 
         $this->verifyPreEnforcementSchema();
     }
 
+    /**
+     * Rolls back every migration from the newest down through migration 6
+     * (inclusive), landing on the exact post-migration-5 schema regardless
+     * of how many migrations were added after migration 6. The step count
+     * is computed from the migrations table itself — never hard-coded —
+     * since a hard-coded --step=1 silently stops being "migration 6" the
+     * moment a later migration exists.
+     */
+    private function rollbackToPostMigrationFive(): void
+    {
+        $migrationSix = DB::table('migrations')->where('migration', self::MIGRATION_SIX_NAME)->first();
+
+        if ($migrationSix === null) {
+            throw new RuntimeException(
+                'Refusing to prepare the enforcement database: migration ['
+                . self::MIGRATION_SIX_NAME . '] is not applied.'
+            );
+        }
+
+        $migrationSixCount = DB::table('migrations')->where('migration', self::MIGRATION_SIX_NAME)->count();
+
+        if ($migrationSixCount !== 1) {
+            throw new RuntimeException(
+                'Refusing to prepare the enforcement database: migration [' . self::MIGRATION_SIX_NAME
+                . "] appears {$migrationSixCount} times in the migrations table."
+            );
+        }
+
+        $stepCount = DB::table('migrations')->where('id', '>=', $migrationSix->id)->count();
+
+        if ($stepCount < 1) {
+            throw new RuntimeException(
+                'Refusing to prepare the enforcement database: computed an invalid rollback step count.'
+            );
+        }
+
+        Artisan::call('migrate:rollback', ['--step' => $stepCount, '--force' => true]);
+    }
+
     private function verifyPreEnforcementSchema(): void
     {
+        $migrationFiveApplied = DB::table('migrations')
+            ->where('migration', 'like', '%backfill_business_workspaces%')
+            ->exists();
+
+        if (! $migrationFiveApplied) {
+            throw new RuntimeException(
+                'Refusing to run: backfill_business_workspaces is not applied after rollback.'
+            );
+        }
+
         $migrationSixApplied = DB::table('migrations')
             ->where('migration', 'like', '%enforce_business_workspace_constraint%')
             ->exists();
@@ -58,6 +118,17 @@ trait VerifiesEnforcementWorkspaceDatabase
         if ($migrationSixApplied) {
             throw new RuntimeException(
                 'Refusing to run: enforce_business_workspace_constraint is still applied after rollback.'
+            );
+        }
+
+        $newerMigrationsCount = DB::table('migrations')
+            ->where('migration', '>', self::MIGRATION_SIX_NAME)
+            ->count();
+
+        if ($newerMigrationsCount > 0) {
+            throw new RuntimeException(
+                "Refusing to run: {$newerMigrationsCount} migration(s) newer than "
+                . 'enforce_business_workspace_constraint are still applied after rollback.'
             );
         }
 

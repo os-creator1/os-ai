@@ -94,6 +94,22 @@ class EloquentWorkspaceMembershipBusinessRepository extends EloquentBaseReposito
             ->delete();
     }
 
+    public function removeAllForBusinessInWorkspace(int $businessId, int $sourceWorkspaceId): Collection
+    {
+        $grants = $this->query()
+            ->where('business_id', $businessId)
+            ->whereHas('membership', fn ($query) => $query->where('workspace_id', $sourceWorkspaceId))
+            ->get();
+
+        if ($grants->isEmpty()) {
+            return $grants;
+        }
+
+        $this->query()->whereIn('id', $grants->pluck('id'))->delete();
+
+        return $grants;
+    }
+
     private function guardSameWorkspace(WorkspaceMembership $membership, Business $business): void
     {
         if ((int) $business->workspace_id !== (int) $membership->workspace_id) {

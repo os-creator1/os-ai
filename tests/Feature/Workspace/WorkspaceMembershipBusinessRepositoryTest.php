@@ -287,4 +287,98 @@ class WorkspaceMembershipBusinessRepositoryTest extends TestCase
 
         $this->assertFalse($repository->isAssigned($membership, $business->id));
     }
+
+    // 21/22. removeAllForBusinessInWorkspace() removes only the source-Workspace's grants for the Business
+    // and returns the removed models (needed for later event payloads — workspace_membership_id/business_id).
+    public function test_remove_all_for_business_in_workspace_removes_and_returns_source_workspace_grants(): void
+    {
+        $owner = $this->createCustomer();
+        $repository = app(WorkspaceMembershipBusinessRepository::class);
+        $sourceWorkspace = $this->createWorkspace($owner->user);
+        $business = $this->createBusinessForCustomer($owner->user_id, $sourceWorkspace->id);
+
+        $membershipA = $this->createMembership($sourceWorkspace, $this->createCustomer()->user, [
+            'business_access_scope' => WorkspaceBusinessAccessScope::Selected,
+        ]);
+        $membershipB = $this->createMembership($sourceWorkspace, $this->createCustomer()->user, [
+            'business_access_scope' => WorkspaceBusinessAccessScope::Selected,
+        ]);
+        $repository->assign($membershipA, $business);
+        $repository->assign($membershipB, $business);
+
+        $removed = $repository->removeAllForBusinessInWorkspace($business->id, $sourceWorkspace->id);
+
+        $this->assertCount(2, $removed);
+        $removedMembershipIds = collect($removed)->pluck('workspace_membership_id')->sort()->values();
+        $this->assertSame(
+            collect([$membershipA->id, $membershipB->id])->sort()->values()->all(),
+            $removedMembershipIds->all()
+        );
+        $this->assertTrue(collect($removed)->every(fn ($grant) => $grant->business_id === $business->id));
+
+        $this->assertFalse($repository->isAssigned($membershipA, $business->id));
+        $this->assertFalse($repository->isAssigned($membershipB, $business->id));
+        $this->assertSame(
+            0,
+            WorkspaceMembershipBusiness::where('business_id', $business->id)->count()
+        );
+    }
+
+    // 23. idempotent — a second call with nothing left to remove returns an empty Collection.
+    public function test_remove_all_for_business_in_workspace_is_idempotent(): void
+    {
+        $owner = $this->createCustomer();
+        $repository = app(WorkspaceMembershipBusinessRepository::class);
+        $sourceWorkspace = $this->createWorkspace($owner->user);
+        $business = $this->createBusinessForCustomer($owner->user_id, $sourceWorkspace->id);
+        $membership = $this->createMembership($sourceWorkspace, $this->createCustomer()->user, [
+            'business_access_scope' => WorkspaceBusinessAccessScope::Selected,
+        ]);
+        $repository->assign($membership, $business);
+
+        $first = $repository->removeAllForBusinessInWorkspace($business->id, $sourceWorkspace->id);
+        $second = $repository->removeAllForBusinessInWorkspace($business->id, $sourceWorkspace->id);
+
+        $this->assertCount(1, $first);
+        $this->assertCount(0, $second);
+    }
+
+    public function test_remove_all_for_business_in_workspace_with_nothing_assigned_returns_empty_collection(): void
+    {
+        $owner = $this->createCustomer();
+        $repository = app(WorkspaceMembershipBusinessRepository::class);
+        $workspace = $this->createWorkspace($owner->user);
+        $business = $this->createBusinessForCustomer($owner->user_id, $workspace->id);
+
+        $removed = $repository->removeAllForBusinessInWorkspace($business->id, $workspace->id);
+
+        $this->assertCount(0, $removed);
+    }
+
+    // 24. a grant belonging to another Workspace's membership is never touched.
+    public function test_remove_all_for_business_in_workspace_never_touches_another_workspaces_grants(): void
+    {
+        $owner = $this->createCustomer();
+        $repository = app(WorkspaceMembershipBusinessRepository::class);
+        $sourceWorkspace = $this->createWorkspace($owner->user);
+        $otherWorkspace = $this->createWorkspace($this->createCustomer()->user);
+
+        $business = $this->createBusinessForCustomer($owner->user_id, $sourceWorkspace->id);
+        $membershipInSource = $this->createMembership($sourceWorkspace, $this->createCustomer()->user, [
+            'business_access_scope' => WorkspaceBusinessAccessScope::Selected,
+        ]);
+        $repository->assign($membershipInSource, $business);
+
+        // A grant on an unrelated Business, inside the unrelated Workspace, must survive untouched.
+        $otherOwner = $this->createCustomer();
+        $otherBusiness = $this->createBusinessForCustomer($otherOwner->user_id, $otherWorkspace->id);
+        $membershipInOther = $this->createMembership($otherWorkspace, $this->createCustomer()->user, [
+            'business_access_scope' => WorkspaceBusinessAccessScope::Selected,
+        ]);
+        $repository->assign($membershipInOther, $otherBusiness);
+
+        $repository->removeAllForBusinessInWorkspace($business->id, $sourceWorkspace->id);
+
+        $this->assertTrue($repository->isAssigned($membershipInOther, $otherBusiness->id));
+    }
 }

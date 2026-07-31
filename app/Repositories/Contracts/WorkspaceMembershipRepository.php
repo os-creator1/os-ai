@@ -12,7 +12,23 @@ interface WorkspaceMembershipRepository extends BaseRepository
 {
     public function findById(int $id): ?WorkspaceMembership;
 
+    /**
+     * Row-locking variant of findById(), for callers that must hold the
+     * row lock for the duration of a transaction (RFC-003 Milestone 2
+     * domain contract, corrected report §8).
+     */
+    public function findForUpdate(int $id): ?WorkspaceMembership;
+
     public function findByWorkspaceAndUser(Workspace $workspace, int $userId): ?WorkspaceMembership;
+
+    /**
+     * Row-locking variant of findByWorkspaceAndUser(), for callers that
+     * must hold the row lock for the duration of a transaction (RFC-003
+     * Milestone 2 domain contract, corrected report §5/§8) — used by
+     * transferOwnership() to lock both the incoming and previous owner's
+     * membership rows deterministically.
+     */
+    public function findByWorkspaceAndUserForUpdate(int $workspaceId, int $userId): ?WorkspaceMembership;
 
     public function activeForWorkspace(Workspace $workspace): Collection;
 

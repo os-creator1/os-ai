@@ -17,9 +17,13 @@
  * Since Slice 4B, migration 6 exists and participates in every full
  * migration chain, so this runner migrates the temporary database all the
  * way through (proving migration 6 itself still applies cleanly to a
- * fresh database) and then rolls back exactly that one migration — never
- * assuming the rollback worked without independently re-verifying the
- * resulting schema shape.
+ * fresh database) and then rolls back every migration from the newest down
+ * through migration 6 inclusive (rollbackToPostMigrationFive() — migration
+ * 6 is no longer guaranteed to be the newest migration once RFC-003
+ * Milestone 2 adds workspace_transitions after it, so the rollback step
+ * count is computed by name, never hard-coded) — never assuming the
+ * rollback worked without independently re-verifying the resulting schema
+ * shape.
  *
  * The primary ultimatesms_testing database is only ever read to verify it
  * is the resolved base connection — it is never migrated, migrated
@@ -45,6 +49,58 @@ use Tests\Feature\Workspace\Support\TemporaryTestDatabase;
 
 const WRONG_DATABASE_EXIT_CODE = 3;
 const SETUP_OR_CLEANUP_FAILURE_EXIT_CODE = 5;
+
+/**
+ * Migration 6 is no longer guaranteed to be the newest migration in the
+ * chain (RFC-003 Milestone 2 adds workspace_transitions after it), so a
+ * fixed `--step=1` rollback can no longer be trusted to undo exactly this
+ * migration. rollbackToPostMigrationFive() below computes the exact step
+ * count instead, by name, so this stays correct regardless of how many
+ * later migrations exist.
+ */
+const MIGRATION_SIX_NAME = '2026_07_30_120006_enforce_business_workspace_constraint';
+
+/**
+ * Rolls back every migration from the newest down through migration 6
+ * (inclusive), landing on the exact post-migration-5 schema regardless of
+ * how many migrations were added after migration 6. The step count is
+ * computed from the migrations table itself — never hard-coded.
+ */
+function rollbackToPostMigrationFive(string $connectionName): void
+{
+    $connection = DB::connection($connectionName);
+
+    $migrationSix = $connection->table('migrations')->where('migration', MIGRATION_SIX_NAME)->first();
+
+    if ($migrationSix === null) {
+        throw new RuntimeException(
+            'Refusing to prepare the historical database: migration [' . MIGRATION_SIX_NAME . '] is not applied.'
+        );
+    }
+
+    $migrationSixCount = $connection->table('migrations')->where('migration', MIGRATION_SIX_NAME)->count();
+
+    if ($migrationSixCount !== 1) {
+        throw new RuntimeException(
+            'Refusing to prepare the historical database: migration [' . MIGRATION_SIX_NAME
+            . "] appears {$migrationSixCount} times in the migrations table."
+        );
+    }
+
+    $stepCount = $connection->table('migrations')->where('id', '>=', $migrationSix->id)->count();
+
+    if ($stepCount < 1) {
+        throw new RuntimeException(
+            'Refusing to prepare the historical database: computed an invalid rollback step count.'
+        );
+    }
+
+    Artisan::call('migrate:rollback', [
+        '--database' => $connectionName,
+        '--step' => $stepCount,
+        '--force' => true,
+    ]);
+}
 
 function assertHistoricalSchemaState(string $connectionName, string $databaseName): void
 {
@@ -78,12 +134,31 @@ function assertHistoricalSchemaState(string $connectionName, string $databaseNam
         throw new RuntimeException('Prepared historical database unexpectedly already has final Workspace FK/index constraints.');
     }
 
+    $migrationFiveApplied = $connection->table('migrations')
+        ->where('migration', 'like', '%backfill_business_workspaces%')
+        ->exists();
+
+    if (! $migrationFiveApplied) {
+        throw new RuntimeException('Prepared historical database is missing backfill_business_workspaces.');
+    }
+
     $migrationSixApplied = $connection->table('migrations')
         ->where('migration', 'like', '%enforce_business_workspace_constraint%')
         ->exists();
 
     if ($migrationSixApplied) {
         throw new RuntimeException('Prepared historical database unexpectedly already has enforce_business_workspace_constraint applied.');
+    }
+
+    $newerMigrationsCount = $connection->table('migrations')
+        ->where('migration', '>', MIGRATION_SIX_NAME)
+        ->count();
+
+    if ($newerMigrationsCount > 0) {
+        throw new RuntimeException(
+            "Prepared historical database still has {$newerMigrationsCount} migration(s) newer than "
+            . 'enforce_business_workspace_constraint applied.'
+        );
     }
 }
 
@@ -114,17 +189,17 @@ try {
                 '--force' => true,
             ]);
 
-            // Step 3: roll back exactly the latest migration (6) on this
-            // temporary database only — ultimatesms_testing is never
-            // touched by this call, since $connectionName always points
-            // at the generated temporary database.
-            Artisan::call('migrate:rollback', [
-                '--database' => $connectionName,
-                '--step' => 1,
-                '--force' => true,
-            ]);
+            // Step 3: roll back every migration from the newest down
+            // through migration 6 (inclusive) on this temporary database
+            // only — ultimatesms_testing is never touched by this call,
+            // since $connectionName always points at the generated
+            // temporary database. The step count is computed by name
+            // (rollbackToPostMigrationFive()), never hard-coded, so this
+            // stays correct regardless of how many migrations exist after
+            // migration 6.
+            rollbackToPostMigrationFive($connectionName);
 
-            // Step 4: never assume --step=1 worked — independently
+            // Step 4: never assume the rollback worked — independently
             // re-verify the exact resulting schema shape.
             assertHistoricalSchemaState($connectionName, $databaseName);
 

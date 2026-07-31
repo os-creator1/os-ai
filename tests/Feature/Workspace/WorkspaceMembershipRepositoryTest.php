@@ -8,6 +8,7 @@ use App\Models\WorkspaceMembership;
 use App\Repositories\Contracts\WorkspaceMembershipRepository;
 use App\Repositories\Eloquent\EloquentWorkspaceMembershipRepository;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use ReflectionMethod;
 use Tests\Feature\Business\Concerns\CreatesBusinessTestData;
 use Tests\Feature\Workspace\Concerns\CreatesWorkspaceTestData;
@@ -153,5 +154,73 @@ class WorkspaceMembershipRepositoryTest extends TestCase
         $repository->setActive($membership, false);
 
         $this->assertFalse($membership->fresh()->is_active);
+    }
+
+    // 20. findForUpdate() returns the exact row and issues a locking (FOR UPDATE) query.
+    public function test_find_for_update_returns_the_exact_row_using_lock_for_update(): void
+    {
+        $repository = app(WorkspaceMembershipRepository::class);
+        $workspace = $this->createWorkspace($this->createCustomer()->user);
+        $membership = $this->createMembership($workspace, $this->createCustomer()->user);
+        $otherMembership = $this->createMembership($this->createWorkspace($this->createCustomer()->user), $this->createCustomer()->user);
+
+        $queries = [];
+        DB::listen(function ($query) use (&$queries) {
+            $queries[] = $query->sql;
+        });
+
+        $found = DB::transaction(function () use ($repository, $membership) {
+            return $repository->findForUpdate($membership->id);
+        });
+
+        $this->assertNotNull($found);
+        $this->assertTrue($found->is($membership));
+        $this->assertFalse($found->is($otherMembership));
+        $this->assertTrue(
+            collect($queries)->contains(fn ($sql) => str_contains(strtolower($sql), 'for update')),
+            'Expected findForUpdate() to issue a query containing "for update".'
+        );
+    }
+
+    public function test_find_for_update_returns_null_for_a_missing_id(): void
+    {
+        $repository = app(WorkspaceMembershipRepository::class);
+
+        $found = DB::transaction(function () use ($repository) {
+            return $repository->findForUpdate(999999);
+        });
+
+        $this->assertNull($found);
+    }
+
+    // 20. findByWorkspaceAndUserForUpdate() returns the exact row, scoped correctly, using lockForUpdate.
+    public function test_find_by_workspace_and_user_for_update_returns_the_exact_row_using_lock_for_update(): void
+    {
+        $repository = app(WorkspaceMembershipRepository::class);
+        $member = $this->createCustomer()->user;
+
+        $workspaceA = $this->createWorkspace($this->createCustomer()->user);
+        $workspaceB = $this->createWorkspace($this->createCustomer()->user);
+        $this->createMembership($workspaceB, $member);
+
+        $queries = [];
+        DB::listen(function ($query) use (&$queries) {
+            $queries[] = $query->sql;
+        });
+
+        $foundInA = DB::transaction(function () use ($repository, $workspaceA, $member) {
+            return $repository->findByWorkspaceAndUserForUpdate($workspaceA->id, $member->id);
+        });
+        $foundInB = DB::transaction(function () use ($repository, $workspaceB, $member) {
+            return $repository->findByWorkspaceAndUserForUpdate($workspaceB->id, $member->id);
+        });
+
+        $this->assertNull($foundInA);
+        $this->assertNotNull($foundInB);
+        $this->assertSame($workspaceB->id, $foundInB->workspace_id);
+        $this->assertTrue(
+            collect($queries)->contains(fn ($sql) => str_contains(strtolower($sql), 'for update')),
+            'Expected findByWorkspaceAndUserForUpdate() to issue a query containing "for update".'
+        );
     }
 }

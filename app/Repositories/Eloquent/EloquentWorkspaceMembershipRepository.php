@@ -21,11 +21,25 @@ class EloquentWorkspaceMembershipRepository extends EloquentBaseRepository imple
         return $this->query()->find($id);
     }
 
+    public function findForUpdate(int $id): ?WorkspaceMembership
+    {
+        return $this->query()->whereKey($id)->lockForUpdate()->first();
+    }
+
     public function findByWorkspaceAndUser(Workspace $workspace, int $userId): ?WorkspaceMembership
     {
         return $this->query()
             ->where('workspace_id', $workspace->id)
             ->where('user_id', $userId)
+            ->first();
+    }
+
+    public function findByWorkspaceAndUserForUpdate(int $workspaceId, int $userId): ?WorkspaceMembership
+    {
+        return $this->query()
+            ->where('workspace_id', $workspaceId)
+            ->where('user_id', $userId)
+            ->lockForUpdate()
             ->first();
     }
 

@@ -36,4 +36,19 @@ interface WorkspaceMembershipBusinessRepository extends BaseRepository
      * Business, or WorkspaceMembership itself (RFC-003 §12.3, §17).
      */
     public function unassign(WorkspaceMembership $membership, int $businessId): void;
+
+    /**
+     * Removes every scoped-assignment grant for $businessId, restricted to
+     * memberships belonging to $sourceWorkspaceId (RFC-003 Milestone 2
+     * domain contract, corrected report §5 — reassignBusiness() cleanup
+     * only; the general per-membership sync path remains
+     * syncForMembership()). Idempotent: returns an empty Collection when
+     * no matching grants exist. Never removes a grant belonging to another
+     * Workspace. WorkspaceManager must never delete from
+     * workspace_membership_businesses directly — this is the only
+     * sanctioned path for a reassignment-triggered bulk removal.
+     *
+     * @return Collection<int, WorkspaceMembershipBusiness>
+     */
+    public function removeAllForBusinessInWorkspace(int $businessId, int $sourceWorkspaceId): Collection;
 }
