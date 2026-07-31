@@ -577,12 +577,37 @@ class WorkspaceManagerTest extends TestCase
     // 32. createForCustomerInWorkspace() (the sole remaining Business-creation
     // method, Slice 3B) is never called by the resolver — it only resolves
     // a Workspace, and never persists a Business itself.
+    // Scoped to the legacy resolver's own methods only (RFC-003 Milestone
+    // 2 Slice 2C adds createWorkspace(), a different public method, which
+    // legitimately calls createForCustomerInWorkspace() when an explicit
+    // first-Business payload is supplied — that is not a resolver call and
+    // must not trip this guard).
     public function test_resolver_never_calls_business_creation_methods(): void
     {
-        $source = file_get_contents(app_path('Library/Workspace/WorkspaceManager.php'));
+        $resolverMethods = [
+            'resolveLegacyOnboardingWorkspace',
+            'lockOwnerRow',
+            'collectPreferredCandidateIds',
+            'collectFallbackCandidateIds',
+            'verifyWorkspaceIds',
+            'provisionWorkspaceRecord',
+            'resolveWorkspaceName',
+            'isNonBlank',
+        ];
 
-        // 'createForCustomer' as a shared prefix also catches
-        // createForCustomerInWorkspace( — neither is referenced here.
-        $this->assertStringNotContainsString('createForCustomer', $source);
+        $lines = file(app_path('Library/Workspace/WorkspaceManager.php'));
+
+        foreach ($resolverMethods as $methodName) {
+            $reflection = new \ReflectionMethod(WorkspaceManager::class, $methodName);
+            $body = implode('', array_slice($lines, $reflection->getStartLine() - 1, $reflection->getEndLine() - $reflection->getStartLine() + 1));
+
+            // 'createForCustomer' as a shared prefix also catches
+            // createForCustomerInWorkspace( — neither is referenced here.
+            $this->assertStringNotContainsString(
+                'createForCustomer',
+                $body,
+                "Resolver method [{$methodName}] must never call a Business-creation method."
+            );
+        }
     }
 }

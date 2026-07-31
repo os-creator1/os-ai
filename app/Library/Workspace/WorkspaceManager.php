@@ -2,10 +2,21 @@
 
 namespace App\Library\Workspace;
 
+use App\DTO\Workspace\WorkspaceFirstBusinessInput;
 use App\Enums\Workspace\WorkspaceBusinessAccessScope;
 use App\Enums\Workspace\WorkspaceContextFailureReason;
+use App\Enums\Workspace\WorkspaceMembershipRole;
+use App\Events\Workspace\BusinessAssignedToWorkspace;
+use App\Events\Workspace\WorkspaceCreated;
+use App\Events\Workspace\WorkspaceDeactivated;
+use App\Events\Workspace\WorkspaceReactivated;
+use App\Events\Workspace\WorkspaceRenamed;
+use App\Exceptions\Workspace\InactiveWorkspaceMutationException;
+use App\Exceptions\Workspace\UnauthorizedWorkspaceManagementException;
 use App\Exceptions\Workspace\WorkspaceAccessDeniedException;
 use App\Exceptions\Workspace\WorkspaceContextRequiredException;
+use App\Exceptions\Workspace\WorkspaceNotFoundException;
+use App\Exceptions\Workspace\WorkspaceOwnerNotFoundException;
 use App\Models\Business;
 use App\Models\User;
 use App\Models\Workspace;
@@ -107,6 +118,196 @@ class WorkspaceManager
         }
     }
 
+    /**
+     * Creates a new Workspace, optionally with its first Business in the
+     * same transaction (RFC-003 §16.1, Milestone 2 domain contract §1).
+     * The owner User row is locked first via the same proven pattern as
+     * resolveLegacyOnboardingWorkspace() (§13.1 step 2, §18) — there is no
+     * Workspace row to lock yet. $firstBusiness's Customer is always used
+     * as supplied; Business.customer_id is never inferred from
+     * $ownerUserId. No workspace_transitions row is written — durable
+     * audit is limited to ownership transfer and cross-Workspace Business
+     * reassignment.
+     */
+    public function createWorkspace(
+        int $ownerUserId,
+        string $name,
+        ?WorkspaceFirstBusinessInput $firstBusiness = null,
+    ): Workspace {
+        return DB::transaction(function () use ($ownerUserId, $name, $firstBusiness) {
+            try {
+                $userRow = $this->lockOwnerRow($ownerUserId);
+
+                if ($userRow === null) {
+                    throw (new ModelNotFoundException())->setModel(User::class, [$ownerUserId]);
+                }
+            } catch (ModelNotFoundException) {
+                // Typed Workspace-domain boundary exception (Milestone 2
+                // domain contract) — scoped to createWorkspace() only;
+                // resolveLegacyOnboardingWorkspace()'s own
+                // ModelNotFoundException behavior is untouched.
+                throw new WorkspaceOwnerNotFoundException($ownerUserId);
+            }
+
+            $workspace = $this->workspaceRepository->create([
+                'owner_user_id' => $ownerUserId,
+                'name' => trim($name),
+                'is_active' => true,
+            ]);
+
+            $business = null;
+
+            if ($firstBusiness !== null) {
+                $business = $this->businessRepository->createForCustomerInWorkspace(
+                    $firstBusiness->customer,
+                    $workspace,
+                    $firstBusiness->businessAttributes,
+                );
+            }
+
+            WorkspaceCreated::dispatch($workspace->id, $ownerUserId);
+
+            if ($business !== null) {
+                BusinessAssignedToWorkspace::dispatch($business->id, $workspace->id, $ownerUserId);
+            }
+
+            return $workspace;
+        });
+    }
+
+    /**
+     * Renames a Workspace (Milestone 2 domain contract). Requires
+     * owner-or-active-admin authority and an active Workspace. Re-locks
+     * and reloads the Workspace rather than trusting the caller's
+     * possibly-stale $workspace for owner_user_id, is_active or the
+     * current name. An unchanged (post-trim) name is an authorized no-op:
+     * no write, no event.
+     */
+    public function renameWorkspace(int $actorUserId, Workspace $workspace, string $name): Workspace
+    {
+        return DB::transaction(function () use ($actorUserId, $workspace, $name) {
+            $locked = $this->workspaceRepository->findForUpdate($workspace->id);
+
+            if ($locked === null) {
+                throw new WorkspaceNotFoundException($workspace->id);
+            }
+
+            if (! $locked->is_active) {
+                throw new InactiveWorkspaceMutationException($locked->id);
+            }
+
+            $this->assertActorIsOwnerOrActiveAdmin($actorUserId, $locked);
+
+            $normalizedName = trim($name);
+
+            if ($normalizedName === $locked->name) {
+                return $locked;
+            }
+
+            $previousName = $locked->name;
+            $updated = $this->workspaceRepository->update($locked, ['name' => $normalizedName]);
+
+            WorkspaceRenamed::dispatch($locked->id, $actorUserId, $previousName, $normalizedName);
+
+            return $updated;
+        });
+    }
+
+    /**
+     * Deactivates a Workspace (Milestone 2 domain contract). Requires
+     * owner authority — a duplicate deactivation on an already-inactive
+     * Workspace is an authorized no-op, but authority is still checked
+     * before that no-op is returned.
+     */
+    public function deactivateWorkspace(int $actorUserId, Workspace $workspace): Workspace
+    {
+        return DB::transaction(function () use ($actorUserId, $workspace) {
+            $locked = $this->workspaceRepository->findForUpdate($workspace->id);
+
+            if ($locked === null) {
+                throw new WorkspaceNotFoundException($workspace->id);
+            }
+
+            $this->assertActorIsOwner($actorUserId, $locked);
+
+            if (! $locked->is_active) {
+                return $locked;
+            }
+
+            $updated = $this->workspaceRepository->setActive($locked, false);
+
+            WorkspaceDeactivated::dispatch($locked->id, $actorUserId);
+
+            return $updated;
+        });
+    }
+
+    /**
+     * Reactivates a Workspace (Milestone 2 domain contract) — the only
+     * normal mutation permitted to change an inactive Workspace back to
+     * active. Requires owner authority; a duplicate reactivation on an
+     * already-active Workspace is an authorized no-op, checked after
+     * authority.
+     */
+    public function reactivateWorkspace(int $actorUserId, Workspace $workspace): Workspace
+    {
+        return DB::transaction(function () use ($actorUserId, $workspace) {
+            $locked = $this->workspaceRepository->findForUpdate($workspace->id);
+
+            if ($locked === null) {
+                throw new WorkspaceNotFoundException($workspace->id);
+            }
+
+            $this->assertActorIsOwner($actorUserId, $locked);
+
+            if ($locked->is_active) {
+                return $locked;
+            }
+
+            $updated = $this->workspaceRepository->setActive($locked, true);
+
+            WorkspaceReactivated::dispatch($locked->id, $actorUserId);
+
+            return $updated;
+        });
+    }
+
+    /**
+     * Owner-only authority assertion (Milestone 2 domain contract §8). No
+     * platform-administrator bypass; users.parent_id is never consulted.
+     */
+    private function assertActorIsOwner(int $actorUserId, Workspace $workspace): void
+    {
+        if ((int) $workspace->owner_user_id !== $actorUserId) {
+            throw new UnauthorizedWorkspaceManagementException($actorUserId, $workspace->id);
+        }
+    }
+
+    /**
+     * Owner-or-active-admin authority assertion (Milestone 2 domain
+     * contract §8). An active Workspace-membership row with role Admin
+     * grants authority; an inactive admin membership or any staff
+     * membership does not. No platform-administrator bypass; users.parent_id
+     * is never consulted.
+     */
+    private function assertActorIsOwnerOrActiveAdmin(int $actorUserId, Workspace $workspace): void
+    {
+        if ((int) $workspace->owner_user_id === $actorUserId) {
+            return;
+        }
+
+        $membership = $this->membershipRepository->findByWorkspaceAndUser($workspace, $actorUserId);
+
+        if ($membership !== null
+            && $membership->is_active
+            && $membership->role === WorkspaceMembershipRole::Admin
+        ) {
+            return;
+        }
+
+        throw new UnauthorizedWorkspaceManagementException($actorUserId, $workspace->id);
+    }
+
     public function resolveLegacyOnboardingWorkspace(int $ownerUserId): Workspace
     {
         return DB::transaction(function () use ($ownerUserId) {
@@ -135,7 +336,7 @@ class WorkspaceManager
             $fallbackIds = $this->collectFallbackCandidateIds($ownerUserId);
 
             if ($fallbackIds->isEmpty()) {
-                return $this->createWorkspace($ownerUserId, $userRow);
+                return $this->provisionWorkspaceRecord($ownerUserId, $userRow);
             }
 
             $workspaces = $this->verifyWorkspaceIds($ownerUserId, $fallbackIds);
@@ -255,7 +456,15 @@ class WorkspaceManager
         return $workspaces;
     }
 
-    private function createWorkspace(int $ownerUserId, object $userRow): Workspace
+    /**
+     * Renamed from createWorkspace() (RFC-003 Milestone 2 Slice 2C) to
+     * avoid colliding with the new public createWorkspace() below — this
+     * remains the legacy resolver's own narrow, deterministically-named
+     * Workspace provisioning step, used only by
+     * resolveLegacyOnboardingWorkspace(); its candidate selection,
+     * locking, naming and exceptions are unchanged.
+     */
+    private function provisionWorkspaceRecord(int $ownerUserId, object $userRow): Workspace
     {
         return $this->workspaceRepository->create([
             'owner_user_id' => $ownerUserId,
