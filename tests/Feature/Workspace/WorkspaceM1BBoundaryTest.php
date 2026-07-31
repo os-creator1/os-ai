@@ -321,6 +321,13 @@ class WorkspaceM1BBoundaryTest extends TestCase
     // other Milestone 2 method (membership lifecycle, Business-access
     // scope mutation, Business orchestration, ownership transfer) appears
     // ahead of its own approved slice.
+    // RFC-003 Milestone 2 Slice 2D adds exactly the membership lifecycle
+    // methods (addMember(), changeMemberRole(), deactivateMember(),
+    // reactivateMember()) — this boundary is updated to admit those four
+    // in addition to Slice 2B's two and Slice 2C's four, and still fails
+    // the moment any other Milestone 2 method (Business-access scope
+    // mutation, Business orchestration, ownership transfer) appears ahead
+    // of its own approved slice.
     public function test_workspace_manager_has_no_unapproved_milestone_2_methods(): void
     {
         $methods = array_map(
@@ -337,6 +344,10 @@ class WorkspaceM1BBoundaryTest extends TestCase
             'renameWorkspace',
             'deactivateWorkspace',
             'reactivateWorkspace',
+            'addMember',
+            'changeMemberRole',
+            'deactivateMember',
+            'reactivateMember',
         ], $methods);
     }
 

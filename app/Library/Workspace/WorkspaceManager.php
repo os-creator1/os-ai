@@ -9,17 +9,29 @@ use App\Enums\Workspace\WorkspaceMembershipRole;
 use App\Events\Workspace\BusinessAssignedToWorkspace;
 use App\Events\Workspace\WorkspaceCreated;
 use App\Events\Workspace\WorkspaceDeactivated;
+use App\Events\Workspace\WorkspaceMembershipBusinessAssigned;
+use App\Events\Workspace\WorkspaceMembershipCreated;
+use App\Events\Workspace\WorkspaceMembershipDeactivated;
+use App\Events\Workspace\WorkspaceMembershipReactivated;
+use App\Events\Workspace\WorkspaceMembershipRoleChanged;
 use App\Events\Workspace\WorkspaceReactivated;
 use App\Events\Workspace\WorkspaceRenamed;
+use App\Exceptions\Workspace\InactiveWorkspaceMembershipMutationException;
 use App\Exceptions\Workspace\InactiveWorkspaceMutationException;
+use App\Exceptions\Workspace\InvalidBusinessAccessScopeAssignmentException;
+use App\Exceptions\Workspace\OwnerCannotBeMemberException;
 use App\Exceptions\Workspace\UnauthorizedWorkspaceManagementException;
 use App\Exceptions\Workspace\WorkspaceAccessDeniedException;
 use App\Exceptions\Workspace\WorkspaceContextRequiredException;
+use App\Exceptions\Workspace\WorkspaceMembershipAlreadyExistsException;
+use App\Exceptions\Workspace\WorkspaceMembershipNotFoundException;
+use App\Exceptions\Workspace\WorkspaceMembershipWorkspaceMismatchException;
 use App\Exceptions\Workspace\WorkspaceNotFoundException;
 use App\Exceptions\Workspace\WorkspaceOwnerNotFoundException;
 use App\Models\Business;
 use App\Models\User;
 use App\Models\Workspace;
+use App\Models\WorkspaceMembership;
 use App\Repositories\Contracts\BusinessRepository;
 use App\Repositories\Contracts\CustomerOnboardingRepository;
 use App\Repositories\Contracts\CustomerRepository;
@@ -306,6 +318,310 @@ class WorkspaceManager
         }
 
         throw new UnauthorizedWorkspaceManagementException($actorUserId, $workspace->id);
+    }
+
+    /**
+     * Adds a new active WorkspaceMembership (Milestone 2 domain contract).
+     * The Workspace owner never receives a membership row (§7.3) —
+     * memberUserId equal to owner_user_id is always rejected. An existing
+     * active membership that exactly matches the requested role, scope,
+     * and normalized selected Business-ID set is an authorized no-op; any
+     * other existing row (active-but-different, or inactive) throws
+     * rather than silently overwriting it.
+     */
+    public function addMember(
+        int $actorUserId,
+        Workspace $workspace,
+        int $memberUserId,
+        WorkspaceMembershipRole $role,
+        WorkspaceBusinessAccessScope $scope,
+        array $businessIds = [],
+    ): WorkspaceMembership {
+        return DB::transaction(function () use ($actorUserId, $workspace, $memberUserId, $role, $scope, $businessIds) {
+            $lockedWorkspace = $this->workspaceRepository->findForUpdate($workspace->id);
+
+            if ($lockedWorkspace === null) {
+                throw new WorkspaceNotFoundException($workspace->id);
+            }
+
+            if (! $lockedWorkspace->is_active) {
+                throw new InactiveWorkspaceMutationException($lockedWorkspace->id);
+            }
+
+            $this->assertHasAuthorityOverRole($actorUserId, $lockedWorkspace, $role);
+
+            if ($memberUserId === (int) $lockedWorkspace->owner_user_id) {
+                throw new OwnerCannotBeMemberException($lockedWorkspace->id, $memberUserId);
+            }
+
+            if ($scope === WorkspaceBusinessAccessScope::All && $businessIds !== []) {
+                throw new InvalidBusinessAccessScopeAssignmentException($scope, count($businessIds));
+            }
+
+            $normalizedIds = $this->normalizeBusinessIds($businessIds);
+
+            $existing = $this->membershipRepository->findByWorkspaceAndUserForUpdate($lockedWorkspace->id, $memberUserId);
+
+            if ($existing !== null) {
+                if (! $existing->is_active) {
+                    throw new WorkspaceMembershipAlreadyExistsException($lockedWorkspace->id, $memberUserId, false);
+                }
+
+                $idsMatch = true;
+
+                if ($existing->business_access_scope === $scope && $scope === WorkspaceBusinessAccessScope::Selected) {
+                    $currentIds = $this->normalizeBusinessIds(
+                        $this->membershipBusinessRepository->assignedBusinessIds($existing)->all()
+                    );
+                    $idsMatch = $currentIds === $normalizedIds;
+                }
+
+                if ($existing->role === $role && $existing->business_access_scope === $scope && $idsMatch) {
+                    return $existing;
+                }
+
+                throw new WorkspaceMembershipAlreadyExistsException($lockedWorkspace->id, $memberUserId, true);
+            }
+
+            $membership = $this->membershipRepository->create($lockedWorkspace, $memberUserId, $role, $scope);
+
+            if ($scope === WorkspaceBusinessAccessScope::Selected && $normalizedIds !== []) {
+                $this->membershipBusinessRepository->syncForMembership($membership, $normalizedIds);
+            }
+
+            WorkspaceMembershipCreated::dispatch(
+                $membership->id,
+                $lockedWorkspace->id,
+                $memberUserId,
+                $actorUserId,
+                $role->value,
+                $scope->value,
+            );
+
+            if ($scope === WorkspaceBusinessAccessScope::Selected) {
+                foreach ($normalizedIds as $businessId) {
+                    WorkspaceMembershipBusinessAssigned::dispatch($membership->id, $lockedWorkspace->id, $businessId, $actorUserId);
+                }
+            }
+
+            return $membership;
+        });
+    }
+
+    /**
+     * Changes a WorkspaceMembership's role (Milestone 2 domain contract).
+     * Owner-only — an active Admin cannot promote, demote, or otherwise
+     * change any membership's role, its own included. The Workspace owner
+     * itself never holds a membership row (§7.3); this method only ever
+     * operates on genuine member rows.
+     *
+     * Slice 2D correction: the Workspace lock uses the caller-supplied
+     * Membership's workspace_id, and the Membership is separately locked by
+     * ID — these are two independent lookups, so once both rows are locked
+     * their relationship is re-verified rather than assumed. A caller that
+     * mutated $membership->workspace_id in memory cannot borrow authority
+     * from a Workspace that doesn't actually own the locked Membership.
+     */
+    public function changeMemberRole(int $actorUserId, WorkspaceMembership $membership, WorkspaceMembershipRole $role): WorkspaceMembership
+    {
+        return DB::transaction(function () use ($actorUserId, $membership, $role) {
+            $expectedWorkspaceId = (int) $membership->workspace_id;
+
+            $lockedWorkspace = $this->workspaceRepository->findForUpdate($expectedWorkspaceId);
+
+            if ($lockedWorkspace === null) {
+                throw new WorkspaceNotFoundException($expectedWorkspaceId);
+            }
+
+            $lockedMembership = $this->membershipRepository->findForUpdate($membership->id);
+
+            if ($lockedMembership === null) {
+                throw new WorkspaceMembershipNotFoundException($lockedWorkspace->id, $membership->user_id);
+            }
+
+            if ((int) $lockedMembership->workspace_id !== (int) $lockedWorkspace->id) {
+                throw new WorkspaceMembershipWorkspaceMismatchException(
+                    $lockedMembership->id,
+                    (int) $lockedWorkspace->id,
+                    (int) $lockedMembership->workspace_id,
+                );
+            }
+
+            if (! $lockedWorkspace->is_active) {
+                throw new InactiveWorkspaceMutationException($lockedWorkspace->id);
+            }
+
+            if (! $lockedMembership->is_active) {
+                throw new InactiveWorkspaceMembershipMutationException($lockedMembership->id);
+            }
+
+            $this->assertActorIsOwner($actorUserId, $lockedWorkspace);
+
+            if ($lockedMembership->role === $role) {
+                return $lockedMembership;
+            }
+
+            $previousRole = $lockedMembership->role;
+            $updated = $this->membershipRepository->updateRole($lockedMembership, $role);
+
+            WorkspaceMembershipRoleChanged::dispatch(
+                $lockedMembership->id,
+                $lockedWorkspace->id,
+                $lockedMembership->user_id,
+                $actorUserId,
+                $previousRole->value,
+                $role->value,
+            );
+
+            return $updated;
+        });
+    }
+
+    /**
+     * Deactivates a WorkspaceMembership (Milestone 2 domain contract).
+     * Authority depends on the target membership's current role — Admin
+     * targets require the Workspace owner; Staff targets accept the owner
+     * or any active Admin, applied identically regardless of whether the
+     * actor is deactivating themselves. Every workspace_membership_businesses
+     * row is retained (never cleared) — deactivation only flips is_active.
+     *
+     * Slice 2D correction: the Workspace lock uses the caller-supplied
+     * Membership's workspace_id, and the Membership is separately locked by
+     * ID — these are two independent lookups, so once both rows are locked
+     * their relationship is re-verified rather than assumed. A caller that
+     * mutated $membership->workspace_id in memory cannot borrow authority
+     * from a Workspace that doesn't actually own the locked Membership.
+     */
+    public function deactivateMember(int $actorUserId, WorkspaceMembership $membership): WorkspaceMembership
+    {
+        return DB::transaction(function () use ($actorUserId, $membership) {
+            $expectedWorkspaceId = (int) $membership->workspace_id;
+
+            $lockedWorkspace = $this->workspaceRepository->findForUpdate($expectedWorkspaceId);
+
+            if ($lockedWorkspace === null) {
+                throw new WorkspaceNotFoundException($expectedWorkspaceId);
+            }
+
+            $lockedMembership = $this->membershipRepository->findForUpdate($membership->id);
+
+            if ($lockedMembership === null) {
+                throw new WorkspaceMembershipNotFoundException($lockedWorkspace->id, $membership->user_id);
+            }
+
+            if ((int) $lockedMembership->workspace_id !== (int) $lockedWorkspace->id) {
+                throw new WorkspaceMembershipWorkspaceMismatchException(
+                    $lockedMembership->id,
+                    (int) $lockedWorkspace->id,
+                    (int) $lockedMembership->workspace_id,
+                );
+            }
+
+            if (! $lockedWorkspace->is_active) {
+                throw new InactiveWorkspaceMutationException($lockedWorkspace->id);
+            }
+
+            $this->assertHasAuthorityOverRole($actorUserId, $lockedWorkspace, $lockedMembership->role);
+
+            if (! $lockedMembership->is_active) {
+                return $lockedMembership;
+            }
+
+            $updated = $this->membershipRepository->setActive($lockedMembership, false);
+
+            WorkspaceMembershipDeactivated::dispatch($lockedMembership->id, $lockedWorkspace->id, $lockedMembership->user_id, $actorUserId);
+
+            return $updated;
+        });
+    }
+
+    /**
+     * Reactivates a WorkspaceMembership (Milestone 2 domain contract).
+     * Same target-role authority rule as deactivateMember(). Every
+     * workspace_membership_businesses row was retained through
+     * deactivation, so flipping is_active back to true alone restores
+     * effective access — §14.1 re-reads membership state fresh on every
+     * evaluation, so no separate assignment-row restoration step exists.
+     *
+     * Slice 2D correction: the Workspace lock uses the caller-supplied
+     * Membership's workspace_id, and the Membership is separately locked by
+     * ID — these are two independent lookups, so once both rows are locked
+     * their relationship is re-verified rather than assumed. A caller that
+     * mutated $membership->workspace_id in memory cannot borrow authority
+     * from a Workspace that doesn't actually own the locked Membership.
+     */
+    public function reactivateMember(int $actorUserId, WorkspaceMembership $membership): WorkspaceMembership
+    {
+        return DB::transaction(function () use ($actorUserId, $membership) {
+            $expectedWorkspaceId = (int) $membership->workspace_id;
+
+            $lockedWorkspace = $this->workspaceRepository->findForUpdate($expectedWorkspaceId);
+
+            if ($lockedWorkspace === null) {
+                throw new WorkspaceNotFoundException($expectedWorkspaceId);
+            }
+
+            $lockedMembership = $this->membershipRepository->findForUpdate($membership->id);
+
+            if ($lockedMembership === null) {
+                throw new WorkspaceMembershipNotFoundException($lockedWorkspace->id, $membership->user_id);
+            }
+
+            if ((int) $lockedMembership->workspace_id !== (int) $lockedWorkspace->id) {
+                throw new WorkspaceMembershipWorkspaceMismatchException(
+                    $lockedMembership->id,
+                    (int) $lockedWorkspace->id,
+                    (int) $lockedMembership->workspace_id,
+                );
+            }
+
+            if (! $lockedWorkspace->is_active) {
+                throw new InactiveWorkspaceMutationException($lockedWorkspace->id);
+            }
+
+            $this->assertHasAuthorityOverRole($actorUserId, $lockedWorkspace, $lockedMembership->role);
+
+            if ($lockedMembership->is_active) {
+                return $lockedMembership;
+            }
+
+            $updated = $this->membershipRepository->setActive($lockedMembership, true);
+
+            WorkspaceMembershipReactivated::dispatch($lockedMembership->id, $lockedWorkspace->id, $lockedMembership->user_id, $actorUserId);
+
+            return $updated;
+        });
+    }
+
+    /**
+     * Shared authority rule for addMember() (against the requested role)
+     * and deactivateMember()/reactivateMember() (against the target
+     * membership's current role) — Admin requires the Workspace owner;
+     * every other role accepts the owner or an active Admin.
+     */
+    private function assertHasAuthorityOverRole(int $actorUserId, Workspace $workspace, WorkspaceMembershipRole $role): void
+    {
+        if ($role === WorkspaceMembershipRole::Admin) {
+            $this->assertActorIsOwner($actorUserId, $workspace);
+
+            return;
+        }
+
+        $this->assertActorIsOwnerOrActiveAdmin($actorUserId, $workspace);
+    }
+
+    /**
+     * @param  array<int, mixed>  $businessIds
+     * @return array<int, int>
+     */
+    private function normalizeBusinessIds(array $businessIds): array
+    {
+        return collect($businessIds)
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->sort()
+            ->values()
+            ->all();
     }
 
     public function resolveLegacyOnboardingWorkspace(int $ownerUserId): Workspace
