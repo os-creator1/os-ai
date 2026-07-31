@@ -1017,17 +1017,14 @@ class WorkspaceMembershipLifecycleTest extends TestCase
         Event::assertNotDispatched(WorkspaceMembershipReactivated::class);
     }
 
-    // 57. No Slice 2F/2G methods are added. Slice 2E's own three methods
-    // (changeMemberBusinessAccessScope(), assignBusinessToMember(),
-    // unassignBusinessFromMember()) are removed from this forbidden list
-    // now that Slice 2E implements them — covered instead by
-    // WorkspaceMembershipBusinessAccessTest's own later-milestone boundary
-    // assertion.
+    // 57. No Slice 2G method is added. Slice 2E's and Slice 2F's own
+    // methods are removed from this forbidden list now that they're
+    // implemented — covered instead by WorkspaceMembershipBusinessAccessTest's
+    // and WorkspaceBusinessOrchestrationTest's own later-milestone boundary
+    // assertions.
     public function test_no_later_milestone_2_methods_exist(): void
     {
         foreach ([
-            'createBusinessInWorkspace',
-            'reassignBusiness',
             'transferOwnership',
         ] as $method) {
             $this->assertFalse(

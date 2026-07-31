@@ -59,6 +59,7 @@ $manager = $mode === 'slow'
         $app->make(App\Repositories\Contracts\CustomerRepository::class),
         $app->make(App\Repositories\Contracts\WorkspaceMembershipRepository::class),
         $app->make(App\Repositories\Contracts\WorkspaceMembershipBusinessRepository::class),
+        $app->make(App\Repositories\Contracts\WorkspaceTransitionRepository::class),
         (float) $holdSeconds
     )
     : $app->make(App\Library\Workspace\WorkspaceManager::class);

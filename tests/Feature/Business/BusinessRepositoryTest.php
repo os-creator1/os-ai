@@ -552,4 +552,76 @@ class BusinessRepositoryTest extends TestCase
 
         $this->assertTrue($ids->contains($inactiveWorkspace->id));
     }
+
+    // 16. reassignWorkspace() updates only workspace_id.
+    public function test_reassign_workspace_updates_only_workspace_id(): void
+    {
+        $customer = $this->createCustomer();
+        $workspaceA = $this->createWorkspaceOwnedBy($customer->user, ['name' => 'WS A']);
+        $workspaceB = $this->createWorkspaceOwnedBy($customer->user, ['name' => 'WS B']);
+        $repository = app(BusinessRepository::class);
+        $business = $repository->createForCustomerInWorkspace($customer, $workspaceA, $this->businessAttributes());
+
+        $updated = $repository->reassignWorkspace($business, $workspaceB);
+
+        $this->assertSame($workspaceB->id, $updated->workspace_id);
+        $this->assertSame($workspaceB->id, $business->fresh()->workspace_id);
+    }
+
+    // 17. reassignWorkspace() never changes customer_id.
+    public function test_reassign_workspace_never_changes_customer_id(): void
+    {
+        $customer = $this->createCustomer();
+        $workspaceA = $this->createWorkspaceOwnedBy($customer->user, ['name' => 'WS A']);
+        $workspaceB = $this->createWorkspaceOwnedBy($customer->user, ['name' => 'WS B']);
+        $repository = app(BusinessRepository::class);
+        $business = $repository->createForCustomerInWorkspace($customer, $workspaceA, $this->businessAttributes());
+
+        $repository->reassignWorkspace($business, $workspaceB);
+
+        $this->assertSame($customer->user_id, $business->fresh()->customer_id);
+    }
+
+    // 18. reassignWorkspace() saves and returns the same refreshed Business instance.
+    public function test_reassign_workspace_returns_the_refreshed_business(): void
+    {
+        $customer = $this->createCustomer();
+        $workspaceA = $this->createWorkspaceOwnedBy($customer->user, ['name' => 'WS A']);
+        $workspaceB = $this->createWorkspaceOwnedBy($customer->user, ['name' => 'WS B']);
+        $repository = app(BusinessRepository::class);
+        $business = $repository->createForCustomerInWorkspace($customer, $workspaceA, $this->businessAttributes());
+
+        $updated = $repository->reassignWorkspace($business, $workspaceB);
+
+        $this->assertTrue($updated->is($business));
+        $this->assertTrue($updated->exists);
+        $this->assertSame($workspaceB->id, $business->fresh()->workspace_id);
+    }
+
+    // 19. reassignWorkspace() leaves unrelated Business fields untouched.
+    public function test_reassign_workspace_leaves_unrelated_fields_untouched(): void
+    {
+        $customer = $this->createCustomer();
+        $workspaceA = $this->createWorkspaceOwnedBy($customer->user, ['name' => 'WS A']);
+        $workspaceB = $this->createWorkspaceOwnedBy($customer->user, ['name' => 'WS B']);
+        $repository = app(BusinessRepository::class);
+        $business = $repository->createForCustomerInWorkspace($customer, $workspaceA, $this->businessAttributes());
+        $originalName = $business->name;
+        $originalPrimary = $business->is_primary;
+        $originalStatus = $business->status;
+
+        $repository->reassignWorkspace($business, $workspaceB);
+        $fresh = $business->fresh();
+
+        $this->assertSame($originalName, $fresh->name);
+        $this->assertSame($originalPrimary, $fresh->is_primary);
+        $this->assertSame($originalStatus, $fresh->status);
+    }
+
+    // 20. BusinessRepository contract declares reassignWorkspace().
+    public function test_business_repository_contract_declares_reassign_workspace(): void
+    {
+        $this->assertTrue((new ReflectionClass(BusinessRepository::class))->hasMethod('reassignWorkspace'));
+        $this->assertTrue((new ReflectionClass(EloquentBusinessRepository::class))->hasMethod('reassignWorkspace'));
+    }
 }

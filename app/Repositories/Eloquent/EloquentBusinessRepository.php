@@ -120,6 +120,14 @@ class EloquentBusinessRepository extends EloquentBaseRepository implements Busin
         return $business;
     }
 
+    public function reassignWorkspace(Business $business, Workspace $workspace): Business
+    {
+        $business->workspace_id = $workspace->id;
+        $business->save();
+
+        return $business;
+    }
+
     public function setPrimary(Business $business): Business
     {
         return DB::transaction(function () use ($business) {

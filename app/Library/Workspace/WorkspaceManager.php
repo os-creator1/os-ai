@@ -6,7 +6,9 @@ use App\DTO\Workspace\WorkspaceFirstBusinessInput;
 use App\Enums\Workspace\WorkspaceBusinessAccessScope;
 use App\Enums\Workspace\WorkspaceContextFailureReason;
 use App\Enums\Workspace\WorkspaceMembershipRole;
+use App\Enums\Workspace\WorkspaceTransitionType;
 use App\Events\Workspace\BusinessAssignedToWorkspace;
+use App\Events\Workspace\BusinessReassignedToWorkspace;
 use App\Events\Workspace\WorkspaceCreated;
 use App\Events\Workspace\WorkspaceDeactivated;
 use App\Events\Workspace\WorkspaceMembershipBusinessAccessScopeChanged;
@@ -19,6 +21,7 @@ use App\Events\Workspace\WorkspaceMembershipRoleChanged;
 use App\Events\Workspace\WorkspaceReactivated;
 use App\Events\Workspace\WorkspaceRenamed;
 use App\Exceptions\Workspace\BusinessAssignmentRequiresSelectedScopeException;
+use App\Exceptions\Workspace\BusinessWorkspaceMismatchException;
 use App\Exceptions\Workspace\CrossWorkspaceAssignmentException;
 use App\Exceptions\Workspace\InactiveWorkspaceMembershipMutationException;
 use App\Exceptions\Workspace\InactiveWorkspaceMutationException;
@@ -34,6 +37,7 @@ use App\Exceptions\Workspace\WorkspaceMembershipWorkspaceMismatchException;
 use App\Exceptions\Workspace\WorkspaceNotFoundException;
 use App\Exceptions\Workspace\WorkspaceOwnerNotFoundException;
 use App\Models\Business;
+use App\Models\Customer;
 use App\Models\User;
 use App\Models\Workspace;
 use App\Models\WorkspaceMembership;
@@ -44,6 +48,7 @@ use App\Repositories\Contracts\CustomerRepository;
 use App\Repositories\Contracts\WorkspaceMembershipBusinessRepository;
 use App\Repositories\Contracts\WorkspaceMembershipRepository;
 use App\Repositories\Contracts\WorkspaceRepository;
+use App\Repositories\Contracts\WorkspaceTransitionRepository;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -65,6 +70,7 @@ class WorkspaceManager
         private readonly CustomerRepository $customerRepository,
         private readonly WorkspaceMembershipRepository $membershipRepository,
         private readonly WorkspaceMembershipBusinessRepository $membershipBusinessRepository,
+        private readonly WorkspaceTransitionRepository $transitionRepository,
     ) {
     }
 
@@ -892,6 +898,167 @@ class WorkspaceManager
             $this->membershipBusinessRepository->unassign($lockedMembership, $lockedBusiness->id);
 
             WorkspaceMembershipBusinessUnassigned::dispatch($lockedMembership->id, $lockedWorkspace->id, $lockedBusiness->id, $actorUserId);
+        });
+    }
+
+    /**
+     * Creates a Business inside an explicit target Workspace (RFC-003
+     * §16.1, Milestone 2 Slice 2F). Owner-or-active-Admin authority (same
+     * rule as renameWorkspace()/changeMemberBusinessAccessScope()). The
+     * Workspace is re-locked and reloaded rather than trusting the
+     * caller's possibly-stale $workspace. $customer is always the explicit
+     * caller-supplied Customer — never inferred from $workspace's
+     * owner_user_id or from $actorUserId — so Business.customer_id stays
+     * fully independent of Workspace ownership (§11.2), matching
+     * createWorkspace()'s existing WorkspaceFirstBusinessInput posture.
+     * createForCustomerInWorkspace() sets workspace_id before its single
+     * insert, so the created row never has a null workspace_id window.
+     * No workspace_transitions row is written — durable audit is limited
+     * to cross-Workspace reassignment and (future) ownership transfer.
+     */
+    public function createBusinessInWorkspace(
+        int $actorUserId,
+        Customer $customer,
+        Workspace $workspace,
+        array $businessAttributes,
+    ): Business {
+        return DB::transaction(function () use ($actorUserId, $customer, $workspace, $businessAttributes) {
+            $expectedWorkspaceId = (int) $workspace->id;
+
+            $lockedWorkspace = $this->workspaceRepository->findForUpdate($expectedWorkspaceId);
+
+            if ($lockedWorkspace === null) {
+                throw new WorkspaceNotFoundException($expectedWorkspaceId);
+            }
+
+            if (! $lockedWorkspace->is_active) {
+                throw new InactiveWorkspaceMutationException($lockedWorkspace->id);
+            }
+
+            $this->assertActorIsOwnerOrActiveAdmin($actorUserId, $lockedWorkspace);
+
+            $business = $this->businessRepository->createForCustomerInWorkspace($customer, $lockedWorkspace, $businessAttributes);
+
+            BusinessAssignedToWorkspace::dispatch($business->id, $lockedWorkspace->id, $actorUserId);
+
+            return $business;
+        });
+    }
+
+    /**
+     * Reassigns an existing Business to a different Workspace (RFC-003
+     * §16.2, Milestone 2 Slice 2F) — an explicit operation, never an
+     * implicit side effect of another one. Locks every distinct Workspace
+     * involved (source and target — one row when they're the same) in
+     * ascending ID order before locking the Business, so two concurrent
+     * reassignments moving Businesses in opposite directions between the
+     * same two Workspaces can never acquire those locks in reverse order
+     * relative to each other (§18). The Business is then locked by ID and
+     * its authoritative workspace_id re-verified against the caller-
+     * supplied Business's expected source — a stale/mutated caller model
+     * cannot borrow authority from a Workspace the Business no longer (or
+     * never did) belong to. Authority and active-state are required over
+     * both Workspaces independently; authority over only one is
+     * insufficient. A same-target call is an authorized no-op evaluated
+     * only after every lock/consistency/authority/active-state check has
+     * already passed — it still performs no cleanup, write, transition or
+     * event. Only workspace_id changes; customer_id is never touched
+     * (BusinessRepository::reassignWorkspace()'s own narrow contract).
+     * Scoped assignment grants against the old Workspace's memberships are
+     * removed first (§9.3's Workspace-equality rule), then exactly one
+     * workspace_transitions row is written before any event dispatch.
+     */
+    public function reassignBusiness(
+        int $actorUserId,
+        Business $business,
+        Workspace $targetWorkspace,
+    ): Business {
+        return DB::transaction(function () use ($actorUserId, $business, $targetWorkspace) {
+            $expectedSourceWorkspaceId = (int) $business->workspace_id;
+            $targetWorkspaceId = (int) $targetWorkspace->id;
+
+            $workspaceIdsToLock = collect([$expectedSourceWorkspaceId, $targetWorkspaceId])
+                ->unique()
+                ->sort()
+                ->values();
+
+            $lockedWorkspaces = [];
+
+            foreach ($workspaceIdsToLock as $workspaceId) {
+                $locked = $this->workspaceRepository->findForUpdate($workspaceId);
+
+                if ($locked === null) {
+                    throw new WorkspaceNotFoundException($workspaceId);
+                }
+
+                $lockedWorkspaces[$workspaceId] = $locked;
+            }
+
+            $lockedBusiness = $this->businessRepository->findForUpdate($business->id);
+
+            if ($lockedBusiness === null) {
+                throw new WorkspaceBusinessNotFoundException($business->id);
+            }
+
+            if ((int) $lockedBusiness->workspace_id !== $expectedSourceWorkspaceId) {
+                throw new BusinessWorkspaceMismatchException(
+                    $lockedBusiness->id,
+                    $expectedSourceWorkspaceId,
+                    (int) $lockedBusiness->workspace_id,
+                );
+            }
+
+            $lockedSourceWorkspace = $lockedWorkspaces[$expectedSourceWorkspaceId];
+            $lockedTargetWorkspace = $lockedWorkspaces[$targetWorkspaceId];
+
+            $this->assertActorIsOwnerOrActiveAdmin($actorUserId, $lockedSourceWorkspace);
+            $this->assertActorIsOwnerOrActiveAdmin($actorUserId, $lockedTargetWorkspace);
+
+            if (! $lockedSourceWorkspace->is_active) {
+                throw new InactiveWorkspaceMutationException($lockedSourceWorkspace->id);
+            }
+
+            if (! $lockedTargetWorkspace->is_active) {
+                throw new InactiveWorkspaceMutationException($lockedTargetWorkspace->id);
+            }
+
+            if ($expectedSourceWorkspaceId === $targetWorkspaceId) {
+                return $lockedBusiness;
+            }
+
+            $removedGrants = $this->membershipBusinessRepository
+                ->removeAllForBusinessInWorkspace($lockedBusiness->id, $lockedSourceWorkspace->id)
+                ->sortBy([
+                    ['workspace_membership_id', 'asc'],
+                    ['id', 'asc'],
+                ])
+                ->values();
+
+            $updated = $this->businessRepository->reassignWorkspace($lockedBusiness, $lockedTargetWorkspace);
+
+            $this->transitionRepository->create([
+                'workspace_id' => $lockedTargetWorkspace->id,
+                'transition_type' => WorkspaceTransitionType::BusinessReassigned,
+                'actor_user_id' => $actorUserId,
+                'from_owner_user_id' => null,
+                'to_owner_user_id' => null,
+                'previous_owner_disposition' => null,
+                'business_id' => $updated->id,
+                'from_workspace_id' => $lockedSourceWorkspace->id,
+            ]);
+
+            foreach ($removedGrants as $grant) {
+                WorkspaceMembershipBusinessUnassigned::dispatch(
+                    $grant->workspace_membership_id,
+                    $lockedSourceWorkspace->id,
+                    $updated->id,
+                    $actorUserId,
+                );
+            }
+
+            BusinessReassignedToWorkspace::dispatch($updated->id, $lockedSourceWorkspace->id, $lockedTargetWorkspace->id, $actorUserId);
+
+            return $updated;
         });
     }
 

@@ -68,6 +68,17 @@ interface BusinessRepository extends BaseRepository
 
     public function update(Business $business, array $attributes): Business;
 
+    /**
+     * Reassigns a Business to a different Workspace by updating only
+     * workspace_id (RFC-003 §16.2, Milestone 2 domain contract) — never
+     * customer_id — mirroring updateCanonicalDomain()'s narrow single-field
+     * mutation convention rather than the guarded generic update() path.
+     * Accepts no arbitrary attribute array. Dispatches no event and writes
+     * no workspace_transitions row; that is
+     * WorkspaceManager::reassignBusiness()'s responsibility.
+     */
+    public function reassignWorkspace(Business $business, Workspace $workspace): Business;
+
     public function setPrimary(Business $business): Business;
 
     public function updateStatus(Business $business, BusinessStatus $status): Business;

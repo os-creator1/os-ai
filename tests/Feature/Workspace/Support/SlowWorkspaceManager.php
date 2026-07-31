@@ -9,6 +9,7 @@ use App\Repositories\Contracts\CustomerRepository;
 use App\Repositories\Contracts\WorkspaceMembershipBusinessRepository;
 use App\Repositories\Contracts\WorkspaceMembershipRepository;
 use App\Repositories\Contracts\WorkspaceRepository;
+use App\Repositories\Contracts\WorkspaceTransitionRepository;
 
 /**
  * Test-only subclass that holds the users-row lock open for a controlled
@@ -27,6 +28,7 @@ class SlowWorkspaceManager extends WorkspaceManager
         CustomerRepository $customerRepository,
         WorkspaceMembershipRepository $membershipRepository,
         WorkspaceMembershipBusinessRepository $membershipBusinessRepository,
+        WorkspaceTransitionRepository $transitionRepository,
         private readonly float $holdSeconds,
     ) {
         parent::__construct(
@@ -36,6 +38,7 @@ class SlowWorkspaceManager extends WorkspaceManager
             $customerRepository,
             $membershipRepository,
             $membershipBusinessRepository,
+            $transitionRepository,
         );
     }
 
