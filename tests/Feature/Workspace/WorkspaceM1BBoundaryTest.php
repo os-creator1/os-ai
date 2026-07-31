@@ -308,14 +308,25 @@ class WorkspaceM1BBoundaryTest extends TestCase
     // 14. no Milestone-2 effective-access/lifecycle implementation has been
     // added — WorkspaceManager still ships only its one narrow M1B
     // resolver (RFC-003 §13).
-    public function test_workspace_manager_has_no_milestone_2_methods(): void
+    // RFC-003 Milestone 2 Slice 2B adds exactly the read-side effective-
+    // access methods (userCanAccessBusiness()/assertUserCanAccessBusiness())
+    // — this boundary is updated to admit only those two, and still fails
+    // the moment any other Milestone 2 method (lifecycle, membership,
+    // scope, Business orchestration, ownership transfer) appears ahead of
+    // its own approved slice.
+    public function test_workspace_manager_has_no_unapproved_milestone_2_methods(): void
     {
         $methods = array_map(
             fn (ReflectionMethod $method) => $method->getName(),
             (new ReflectionClass(WorkspaceManager::class))->getMethods(ReflectionMethod::IS_PUBLIC)
         );
 
-        $this->assertEqualsCanonicalizing(['__construct', 'resolveLegacyOnboardingWorkspace'], $methods);
+        $this->assertEqualsCanonicalizing([
+            '__construct',
+            'resolveLegacyOnboardingWorkspace',
+            'userCanAccessBusiness',
+            'assertUserCanAccessBusiness',
+        ], $methods);
     }
 
     // 15. no plans, billing, entitlements, wallet or Stripe work has been

@@ -2,13 +2,18 @@
 
 namespace App\Library\Workspace;
 
+use App\Enums\Workspace\WorkspaceBusinessAccessScope;
 use App\Enums\Workspace\WorkspaceContextFailureReason;
+use App\Exceptions\Workspace\WorkspaceAccessDeniedException;
 use App\Exceptions\Workspace\WorkspaceContextRequiredException;
+use App\Models\Business;
 use App\Models\User;
 use App\Models\Workspace;
 use App\Repositories\Contracts\BusinessRepository;
 use App\Repositories\Contracts\CustomerOnboardingRepository;
 use App\Repositories\Contracts\CustomerRepository;
+use App\Repositories\Contracts\WorkspaceMembershipBusinessRepository;
+use App\Repositories\Contracts\WorkspaceMembershipRepository;
 use App\Repositories\Contracts\WorkspaceRepository;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Collection;
@@ -29,7 +34,77 @@ class WorkspaceManager
         private readonly BusinessRepository $businessRepository,
         private readonly CustomerOnboardingRepository $onboardingRepository,
         private readonly CustomerRepository $customerRepository,
+        private readonly WorkspaceMembershipRepository $membershipRepository,
+        private readonly WorkspaceMembershipBusinessRepository $membershipBusinessRepository,
     ) {
+    }
+
+    /**
+     * RFC-003 §14.1's effective Business-access algorithm. Platform-
+     * administrator access is deliberately not evaluated here — §14 states
+     * it is "checked upstream of, and independently from, everything
+     * below" by existing backend authorization, and RFC-003 "does not add
+     * to, wrap, or duplicate this path."
+     *
+     * Re-reads Business and Workspace via their repositories rather than
+     * trusting the caller's in-memory $business (and its relations) for
+     * the load-bearing fields (workspace_id, customer_id, is_active,
+     * owner_user_id) — a caller-held model can be stale relative to the
+     * current persisted row. Performs no write, event dispatch, or
+     * transition creation.
+     */
+    public function userCanAccessBusiness(int $userId, Business $business): bool
+    {
+        $currentBusiness = $this->businessRepository->findById($business->id);
+
+        if ($currentBusiness === null || $currentBusiness->workspace_id === null) {
+            // No Workspace to evaluate against — §14.1: "workspace is
+            // null" only occurs pre-M1B; handled defensively, not assumed
+            // impossible for every historical row.
+            return false;
+        }
+
+        $workspace = $this->workspaceRepository->findById($currentBusiness->workspace_id);
+
+        if ($workspace === null || ! $workspace->is_active) {
+            // An inactive (or missing) Workspace blocks ALL customer-side
+            // access to this Business, including direct ownership —
+            // evaluated before any ownership/membership check.
+            return false;
+        }
+
+        if ((int) $currentBusiness->customer_id === $userId) {
+            return true;
+        }
+
+        if ((int) $workspace->owner_user_id === $userId) {
+            // The Workspace owner always has full access, never
+            // scope-limited (§7.3) — independent of Business.customer_id.
+            return true;
+        }
+
+        $membership = $this->membershipRepository->findByWorkspaceAndUser($workspace, $userId);
+
+        if ($membership === null || ! $membership->is_active) {
+            return false;
+        }
+
+        if ($membership->business_access_scope === WorkspaceBusinessAccessScope::All) {
+            return true;
+        }
+
+        return $this->membershipBusinessRepository->isAssigned($membership, $currentBusiness->id);
+    }
+
+    /**
+     * Delegates entirely to userCanAccessBusiness() — no second,
+     * independent access algorithm. Performs no write.
+     */
+    public function assertUserCanAccessBusiness(int $userId, Business $business): void
+    {
+        if (! $this->userCanAccessBusiness($userId, $business)) {
+            throw new WorkspaceAccessDeniedException($userId, $business->id);
+        }
     }
 
     public function resolveLegacyOnboardingWorkspace(int $ownerUserId): Workspace

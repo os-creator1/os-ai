@@ -34,6 +34,20 @@ class EloquentWorkspaceRepository extends EloquentBaseRepository implements Work
         return $this->query()->where('owner_user_id', $userId)->get();
     }
 
+    public function allForUser(int $userId): Collection
+    {
+        return $this->query()
+            ->where('owner_user_id', $userId)
+            ->orWhereIn('id', function ($query) use ($userId) {
+                $query->select('workspace_id')
+                    ->from('workspace_memberships')
+                    ->where('user_id', $userId)
+                    ->where('is_active', true);
+            })
+            ->orderBy('id')
+            ->get();
+    }
+
     public function create(array $attributes): Workspace
     {
         /** @var Workspace $workspace */

@@ -24,6 +24,19 @@ interface WorkspaceRepository extends BaseRepository
      */
     public function findOwnedBy(int $userId): Collection;
 
+    /**
+     * Every Workspace this user can see: owned via owner_user_id, or
+     * reached through an active workspace_memberships row (RFC-003
+     * Milestone 2 domain contract — allForUser()). Deliberately not an
+     * Eloquent relationship on User — it combines two distinct foreign-key
+     * paths, not one ordinary relation. Deduplicated, ordered by
+     * workspaces.id ascending. Never filters workspaces.is_active: listing
+     * and effective Business access (§14.1) are separate concerns, so an
+     * inactive Workspace the user owns or actively belongs to still
+     * appears here.
+     */
+    public function allForUser(int $userId): Collection;
+
     public function create(array $attributes): Workspace;
 
     public function update(Workspace $workspace, array $attributes): Workspace;

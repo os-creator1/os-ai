@@ -6,6 +6,8 @@ use App\Library\Workspace\WorkspaceManager;
 use App\Repositories\Contracts\BusinessRepository;
 use App\Repositories\Contracts\CustomerOnboardingRepository;
 use App\Repositories\Contracts\CustomerRepository;
+use App\Repositories\Contracts\WorkspaceMembershipBusinessRepository;
+use App\Repositories\Contracts\WorkspaceMembershipRepository;
 use App\Repositories\Contracts\WorkspaceRepository;
 
 /**
@@ -23,9 +25,18 @@ class SlowWorkspaceManager extends WorkspaceManager
         BusinessRepository $businessRepository,
         CustomerOnboardingRepository $onboardingRepository,
         CustomerRepository $customerRepository,
+        WorkspaceMembershipRepository $membershipRepository,
+        WorkspaceMembershipBusinessRepository $membershipBusinessRepository,
         private readonly float $holdSeconds,
     ) {
-        parent::__construct($workspaceRepository, $businessRepository, $onboardingRepository, $customerRepository);
+        parent::__construct(
+            $workspaceRepository,
+            $businessRepository,
+            $onboardingRepository,
+            $customerRepository,
+            $membershipRepository,
+            $membershipBusinessRepository,
+        );
     }
 
     protected function lockOwnerRow(int $ownerUserId): ?object
