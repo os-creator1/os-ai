@@ -52,28 +52,32 @@ class WorkspaceManagerTest extends TestCase
     }
 
     /**
-     * is_primary and workspace_id are not mass-assignable (by design —
-     * neither Business::$fillable nor the repository allow it), so both
-     * are set as direct properties after creation, defaulting to
-     * false/null when not supplied.
+     * is_primary is not mass-assignable (by design — neither
+     * Business::$fillable nor the repository allow it), so it is set as a
+     * direct property, defaulting to false when not supplied. workspaceId
+     * is a required argument, not an optional attribute: businesses.workspace_id
+     * is NOT NULL under the final schema, so every Business this helper
+     * creates is inserted exactly once, with workspace_id already set —
+     * never inserted first and assigned afterward. Tests whose premise
+     * needs a Business with no Workspace candidate at all live in
+     * WorkspaceManagerPreEnforcementTest instead, against the isolated
+     * pre-enforcement schema where that state can still be constructed.
      */
-    private function createBusiness(int $customerId, array $attributes = []): Business
+    private function createBusiness(int $customerId, int $workspaceId, array $attributes = []): Business
     {
         $isPrimary = $attributes['is_primary'] ?? false;
-        $workspaceId = $attributes['workspace_id'] ?? null;
         unset($attributes['is_primary'], $attributes['workspace_id']);
 
-        $business = Business::create(array_merge([
-            'customer_id' => $customerId,
+        $business = new Business(array_merge([
             'name' => 'Legacy Business',
             'industry' => 'photo_booth_service',
             'country_code' => 'US',
             'timezone' => 'America/New_York',
             'currency_code' => 'USD',
         ], $attributes));
-
-        $business->is_primary = $isPrimary;
+        $business->customer_id = $customerId;
         $business->workspace_id = $workspaceId;
+        $business->is_primary = $isPrimary;
         $business->save();
 
         return $business;
@@ -144,12 +148,16 @@ class WorkspaceManagerTest extends TestCase
         $this->assertSame(1, Workspace::where('owner_user_id', $owner->id)->count());
     }
 
-    // 7. customers.company wins naming.
+    // 7. customers.company wins naming. No Business is needed at all: tier
+    // 1 (company) is checked before any Business-derived tier, so a
+    // Business's presence or absence cannot affect this assertion — and a
+    // primary Business would need a real Workspace candidate under the
+    // final schema, which would make the resolver reuse it instead of
+    // creating a new (company-named) one, defeating the point of this test.
     public function test_customers_company_wins_naming(): void
     {
         $owner = $this->createUser(['first_name' => 'Jane', 'last_name' => 'Doe']);
         $this->createCustomerRecord($owner->id, 'Acme Corp');
-        $this->createBusiness($owner->id, ['name' => 'Some Business', 'is_primary' => true]);
         $manager = app(WorkspaceManager::class);
 
         $result = $manager->resolveLegacyOnboardingWorkspace($owner->id);
@@ -157,33 +165,10 @@ class WorkspaceManagerTest extends TestCase
         $this->assertSame('Acme Corp', $result->name);
     }
 
-    // 8. one primary Business name is naming tier 2.
-    public function test_one_primary_business_name_is_naming_tier_two(): void
-    {
-        $owner = $this->createUser(['first_name' => 'Jane', 'last_name' => 'Doe']);
-        $this->createCustomerRecord($owner->id, null);
-        $this->createBusiness($owner->id, ['name' => 'Primary Biz', 'is_primary' => true]);
-        $this->createBusiness($owner->id, ['name' => 'Other Biz', 'is_primary' => false]);
-        $manager = app(WorkspaceManager::class);
-
-        $result = $manager->resolveLegacyOnboardingWorkspace($owner->id);
-
-        $this->assertSame('Primary Biz', $result->name);
-    }
-
-    // 9. first Business by ID is naming tier 3.
-    public function test_first_business_by_id_is_naming_tier_three(): void
-    {
-        $owner = $this->createUser(['first_name' => 'Jane', 'last_name' => 'Doe']);
-        $this->createCustomerRecord($owner->id, null);
-        $this->createBusiness($owner->id, ['name' => 'First Biz', 'is_primary' => false]);
-        $this->createBusiness($owner->id, ['name' => 'Second Biz', 'is_primary' => false]);
-        $manager = app(WorkspaceManager::class);
-
-        $result = $manager->resolveLegacyOnboardingWorkspace($owner->id);
-
-        $this->assertSame('First Biz', $result->name);
-    }
+    // 8/9/12 (naming tiers 2 and 3, and the multiple-primary tier-2 skip)
+    // moved to WorkspaceManagerPreEnforcementTest: each genuinely needs a
+    // Business with zero Workspace candidates — a state businesses.workspace_id's
+    // NOT NULL constraint makes unconstructible under this file's final schema.
 
     // 10. User name is naming tier 4.
     public function test_user_name_is_naming_tier_four(): void
@@ -207,33 +192,12 @@ class WorkspaceManagerTest extends TestCase
         $this->assertSame("Customer #{$owner->id}'s Workspace", $result->name);
     }
 
-    // 12. multiple primary Businesses skip naming tier 2 and use the deterministic first-Business tier.
-    public function test_multiple_primary_businesses_skip_tier_two_naming(): void
-    {
-        $owner = $this->createUser(['first_name' => 'Jane', 'last_name' => 'Doe']);
-        $this->createCustomerRecord($owner->id, null);
-        $first = $this->createBusiness($owner->id, ['name' => 'First Primary', 'is_primary' => true]);
-        // Force a second primary directly — nothing in the schema prevents it.
-        $second = $this->createBusiness($owner->id, ['name' => 'Second Primary', 'is_primary' => true]);
-        // Give each primary a distinct Workspace so the earlier candidate
-        // ambiguity is resolved first — this test is purely about naming
-        // once we reach Workspace creation with zero preferred candidates,
-        // so both primaries here must have null workspace_id instead.
-        $second->workspace_id = null;
-        $second->save();
-
-        $manager = app(WorkspaceManager::class);
-        $result = $manager->resolveLegacyOnboardingWorkspace($owner->id);
-
-        $this->assertSame('First Primary', $result->name);
-    }
-
     // 13. onboarding Business and primary Business linked to the same Workspace return it.
     public function test_onboarding_and_primary_business_linked_to_same_workspace_return_it(): void
     {
         $owner = $this->createUser();
         $workspace = $this->createWorkspaceOwnedBy($owner->id);
-        $business = $this->createBusiness($owner->id, ['is_primary' => true, 'workspace_id' => $workspace->id]);
+        $business = $this->createBusiness($owner->id, $workspace->id, ['is_primary' => true]);
         $this->createOnboarding($owner->id, $business->id);
 
         $manager = app(WorkspaceManager::class);
@@ -248,8 +212,8 @@ class WorkspaceManagerTest extends TestCase
         $owner = $this->createUser();
         $workspaceA = $this->createWorkspaceOwnedBy($owner->id, ['name' => 'A']);
         $workspaceB = $this->createWorkspaceOwnedBy($owner->id, ['name' => 'B']);
-        $onboardingBusiness = $this->createBusiness($owner->id, ['name' => 'Onboarding Biz', 'workspace_id' => $workspaceA->id]);
-        $this->createBusiness($owner->id, ['name' => 'Primary Biz', 'is_primary' => true, 'workspace_id' => $workspaceB->id]);
+        $onboardingBusiness = $this->createBusiness($owner->id, $workspaceA->id, ['name' => 'Onboarding Biz']);
+        $this->createBusiness($owner->id, $workspaceB->id, ['name' => 'Primary Biz', 'is_primary' => true]);
         $this->createOnboarding($owner->id, $onboardingBusiness->id);
 
         $manager = app(WorkspaceManager::class);
@@ -268,8 +232,8 @@ class WorkspaceManagerTest extends TestCase
         $owner = $this->createUser();
         $workspaceA = $this->createWorkspaceOwnedBy($owner->id, ['name' => 'A']);
         $workspaceB = $this->createWorkspaceOwnedBy($owner->id, ['name' => 'B']);
-        $this->createBusiness($owner->id, ['name' => 'Primary A', 'is_primary' => true, 'workspace_id' => $workspaceA->id]);
-        $this->createBusiness($owner->id, ['name' => 'Primary B', 'is_primary' => true, 'workspace_id' => $workspaceB->id]);
+        $this->createBusiness($owner->id, $workspaceA->id, ['name' => 'Primary A', 'is_primary' => true]);
+        $this->createBusiness($owner->id, $workspaceB->id, ['name' => 'Primary B', 'is_primary' => true]);
 
         $manager = app(WorkspaceManager::class);
 
@@ -288,7 +252,7 @@ class WorkspaceManagerTest extends TestCase
         $unrelatedA = $this->createWorkspaceOwnedBy($owner->id, ['name' => 'Unrelated A']);
         $unrelatedB = $this->createWorkspaceOwnedBy($owner->id, ['name' => 'Unrelated B']);
         $preferred = $this->createWorkspaceOwnedBy($owner->id, ['name' => 'Preferred']);
-        $this->createBusiness($owner->id, ['is_primary' => true, 'workspace_id' => $preferred->id]);
+        $this->createBusiness($owner->id, $preferred->id, ['is_primary' => true]);
 
         $manager = app(WorkspaceManager::class);
         $result = $manager->resolveLegacyOnboardingWorkspace($owner->id);
@@ -307,7 +271,8 @@ class WorkspaceManagerTest extends TestCase
         $this->assertSame('ultimatesms_testing', DB::connection()->getDatabaseName());
 
         $owner = $this->createUser();
-        $business = $this->createBusiness($owner->id);
+        $workspace = $this->createWorkspaceOwnedBy($owner->id);
+        $business = $this->createBusiness($owner->id, $workspace->id);
         $onboarding = $this->createOnboarding($owner->id, $business->id);
         $danglingBusinessId = $business->id;
         DB::table('businesses')->where('id', $business->id)->delete();
@@ -350,7 +315,8 @@ class WorkspaceManagerTest extends TestCase
     {
         $owner = $this->createUser();
         $otherOwner = $this->createUser();
-        $othersBusiness = $this->createBusiness($otherOwner->id);
+        $otherWorkspace = $this->createWorkspaceOwnedBy($otherOwner->id);
+        $othersBusiness = $this->createBusiness($otherOwner->id, $otherWorkspace->id);
         $onboarding = $this->createOnboarding($owner->id);
         DB::table('customer_onboardings')->where('id', $onboarding->id)->update(['business_id' => $othersBusiness->id]);
 
@@ -370,7 +336,7 @@ class WorkspaceManagerTest extends TestCase
         $owner = $this->createUser();
         $otherOwner = $this->createUser();
         $othersWorkspace = $this->createWorkspaceOwnedBy($otherOwner->id);
-        $othersBusiness = $this->createBusiness($otherOwner->id, ['workspace_id' => $othersWorkspace->id]);
+        $othersBusiness = $this->createBusiness($otherOwner->id, $othersWorkspace->id);
         $onboarding = $this->createOnboarding($owner->id);
         DB::table('customer_onboardings')->where('id', $onboarding->id)->update(['business_id' => $othersBusiness->id]);
 
@@ -392,7 +358,7 @@ class WorkspaceManagerTest extends TestCase
         $otherOwner = $this->createUser();
         $workspace = $this->createWorkspaceOwnedBy($otherOwner->id);
         // Not primary, not onboarding-linked — a pure fallback candidate.
-        $this->createBusiness($owner->id, ['workspace_id' => $workspace->id]);
+        $this->createBusiness($owner->id, $workspace->id);
 
         $manager = app(WorkspaceManager::class);
         $result = $manager->resolveLegacyOnboardingWorkspace($owner->id);
@@ -417,7 +383,7 @@ class WorkspaceManagerTest extends TestCase
     {
         $owner = $this->createUser();
         $workspace = $this->createWorkspaceOwnedBy($owner->id);
-        $this->createBusiness($owner->id, ['workspace_id' => $workspace->id]);
+        $this->createBusiness($owner->id, $workspace->id);
 
         $manager = app(WorkspaceManager::class);
         $result = $manager->resolveLegacyOnboardingWorkspace($owner->id);
@@ -448,7 +414,7 @@ class WorkspaceManagerTest extends TestCase
     {
         $owner = $this->createUser();
         $inactivePreferred = $this->createWorkspaceOwnedBy($owner->id, ['is_active' => false]);
-        $this->createBusiness($owner->id, ['is_primary' => true, 'workspace_id' => $inactivePreferred->id]);
+        $this->createBusiness($owner->id, $inactivePreferred->id, ['is_primary' => true]);
 
         $manager = app(WorkspaceManager::class);
         $result = $manager->resolveLegacyOnboardingWorkspace($owner->id);
@@ -497,13 +463,38 @@ class WorkspaceManagerTest extends TestCase
         $this->assertNotSame($someWorkspace->id, $result->id);
     }
 
+    /**
+     * businesses.workspace_id now carries a NOT NULL + RESTRICT FK, so a
+     * genuinely dangling reference can no longer be constructed through
+     * ordinary writes at all — the RESTRICT FK alone would block deleting
+     * a still-referenced Workspace. Disabling FK checks for this one
+     * forced delete (mirroring test_missing_onboarding_business_reference_throws's
+     * established rationale in this same file) is the sole remaining way
+     * to exercise the resolver's defensive "missing Workspace" branch.
+     * Wrapped in try/finally and restored immediately; RefreshDatabase's
+     * per-test rollback (not a second forced write) discards the row
+     * afterward, so no further repair is needed or attempted here.
+     */
+    private function deleteWorkspaceBypassingForeignKeyChecks(int $workspaceId): void
+    {
+        DB::statement('SET FOREIGN_KEY_CHECKS=0');
+
+        try {
+            DB::table('workspaces')->where('id', $workspaceId)->delete();
+        } finally {
+            DB::statement('SET FOREIGN_KEY_CHECKS=1');
+        }
+    }
+
     // 27. dangling preferred Workspace ID throws DanglingWorkspaceReference.
     public function test_dangling_preferred_workspace_id_throws(): void
     {
         $owner = $this->createUser();
         $workspace = $this->createWorkspaceOwnedBy($owner->id);
-        $business = $this->createBusiness($owner->id, ['is_primary' => true, 'workspace_id' => $workspace->id]);
-        DB::table('workspaces')->where('id', $workspace->id)->delete();
+        $this->createBusiness($owner->id, $workspace->id, ['is_primary' => true]);
+        $danglingWorkspaceId = $workspace->id;
+
+        $this->deleteWorkspaceBypassingForeignKeyChecks($workspace->id);
 
         $manager = app(WorkspaceManager::class);
 
@@ -512,13 +503,8 @@ class WorkspaceManagerTest extends TestCase
             $this->fail('Expected WorkspaceContextRequiredException was not thrown.');
         } catch (WorkspaceContextRequiredException $e) {
             $this->assertSame(WorkspaceContextFailureReason::DanglingWorkspaceReference, $e->reason);
-            $this->assertContains($workspace->id, $e->candidateWorkspaceIds);
+            $this->assertContains($danglingWorkspaceId, $e->candidateWorkspaceIds);
         }
-
-        // Restore referential integrity so tearDown's RefreshDatabase
-        // rollback doesn't choke on the dangling reference mid-transaction.
-        $business->workspace_id = null;
-        $business->save();
     }
 
     // 28. dangling fallback Workspace ID throws DanglingWorkspaceReference.
@@ -526,8 +512,10 @@ class WorkspaceManagerTest extends TestCase
     {
         $owner = $this->createUser();
         $workspace = $this->createWorkspaceOwnedBy($owner->id);
-        $business = $this->createBusiness($owner->id, ['workspace_id' => $workspace->id]);
-        DB::table('workspaces')->where('id', $workspace->id)->delete();
+        $this->createBusiness($owner->id, $workspace->id);
+        $danglingWorkspaceId = $workspace->id;
+
+        $this->deleteWorkspaceBypassingForeignKeyChecks($workspace->id);
 
         $manager = app(WorkspaceManager::class);
 
@@ -536,11 +524,8 @@ class WorkspaceManagerTest extends TestCase
             $this->fail('Expected WorkspaceContextRequiredException was not thrown.');
         } catch (WorkspaceContextRequiredException $e) {
             $this->assertSame(WorkspaceContextFailureReason::DanglingWorkspaceReference, $e->reason);
-            $this->assertContains($workspace->id, $e->candidateWorkspaceIds);
+            $this->assertContains($danglingWorkspaceId, $e->candidateWorkspaceIds);
         }
-
-        $business->workspace_id = null;
-        $business->save();
     }
 
     // 29. exception IDs contain only normalized missing/conflicting IDs.

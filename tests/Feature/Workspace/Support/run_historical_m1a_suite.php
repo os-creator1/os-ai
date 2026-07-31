@@ -1,17 +1,29 @@
 <?php
 
 /**
- * RFC-003 M1B Slice 4A dedicated runner for the historical-m1a PHPUnit
- * group. Prepares a disposable, uniquely named
- * ultimatesms_testing_historical_<pid>_<hex> database at the current
- * latest-migration schema state (post-migration-5 today — Slice 4A ships
- * no migration 6), runs only the #[Group('historical-m1a')] test classes
- * against it in a genuinely separate PHPUnit child process, then drops the
- * database.
+ * RFC-003 M1B Slice 4A/4B dedicated runner for both schema-isolated
+ * pre-enforcement PHPUnit groups: historical-m1a and
+ * workspace-pre-enforcement. Both need the exact same
+ * post-migration-5/pre-migration-6 schema state, so one generated,
+ * uniquely named ultimatesms_testing_historical_<pid>_<hex> database
+ * safely serves both — a second database lifecycle would be pure overhead
+ * for two groups with an identical schema requirement. Runs both groups'
+ * test classes against it in a genuinely separate PHPUnit child process
+ * (verified via `--group historical-m1a --group workspace-pre-enforcement
+ * --list-tests` before being relied on here — repeated flags, not a
+ * comma-separated value, since PHPUnit 12 removes comma-separated --group
+ * support), then drops the database.
+ *
+ * Since Slice 4B, migration 6 exists and participates in every full
+ * migration chain, so this runner migrates the temporary database all the
+ * way through (proving migration 6 itself still applies cleanly to a
+ * fresh database) and then rolls back exactly that one migration — never
+ * assuming the rollback worked without independently re-verifying the
+ * resulting schema shape.
  *
  * The primary ultimatesms_testing database is only ever read to verify it
- * is the resolved base connection — it is never migrated backward,
- * migrated forward here, dropped, renamed or reconfigured.
+ * is the resolved base connection — it is never migrated, migrated
+ * backward, dropped, renamed or reconfigured.
  *
  * Usage: php tests/Feature/Workspace/Support/run_historical_m1a_suite.php
  */
@@ -92,14 +104,28 @@ try {
         function (string $databaseName, string $connectionName) use ($projectRoot) {
             fwrite(STDOUT, "Historical database: {$databaseName}\n");
 
-            // Steps 6/7: migrate through the current latest migration
-            // against the named connection only — never by mutating this
-            // already-booted process's own DB_DATABASE/default connection.
+            // Step 2: the full migration chain, against the named
+            // connection only — never by mutating this already-booted
+            // process's own DB_DATABASE/default connection. This also
+            // proves migration 6 itself still applies cleanly to a fresh
+            // database before immediately rolling it back below.
             Artisan::call('migrate', [
                 '--database' => $connectionName,
                 '--force' => true,
             ]);
 
+            // Step 3: roll back exactly the latest migration (6) on this
+            // temporary database only — ultimatesms_testing is never
+            // touched by this call, since $connectionName always points
+            // at the generated temporary database.
+            Artisan::call('migrate:rollback', [
+                '--database' => $connectionName,
+                '--step' => 1,
+                '--force' => true,
+            ]);
+
+            // Step 4: never assume --step=1 worked — independently
+            // re-verify the exact resulting schema shape.
             assertHistoricalSchemaState($connectionName, $databaseName);
 
             // Steps 8/9: a genuinely separate PHPUnit child process, its
@@ -113,7 +139,11 @@ try {
             ];
 
             $process = new Process(
-                [$phpBinary, $projectRoot . '/vendor/bin/phpunit', '--group', 'historical-m1a'],
+                [
+                    $phpBinary, $projectRoot . '/vendor/bin/phpunit',
+                    '--group', 'historical-m1a',
+                    '--group', 'workspace-pre-enforcement',
+                ],
                 $projectRoot,
                 $childEnv
             );

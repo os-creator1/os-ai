@@ -43,10 +43,14 @@ class WorkspaceSchemaTest extends TestCase
 
     private function createBusinessFor(int $customerId): Business
     {
-        return Business::create(array_merge(
-            $this->businessAttributes(),
-            ['customer_id' => $customerId]
-        ));
+        $workspaceId = $this->createWorkspace($customerId);
+
+        $business = new Business($this->businessAttributes());
+        $business->customer_id = $customerId;
+        $business->workspace_id = $workspaceId;
+        $business->save();
+
+        return $business;
     }
 
     public function test_workspaces_uid_has_database_level_unique_constraint(): void
@@ -189,14 +193,16 @@ class WorkspaceSchemaTest extends TestCase
         ]);
     }
 
-    public function test_businesses_workspace_id_column_exists_and_is_nullable(): void
+    // (rewritten for Slice 4B — migration 6 is now applied in every
+    // migrate:fresh, so businesses.workspace_id is NOT NULL, not nullable.)
+    public function test_businesses_workspace_id_column_is_not_null(): void
     {
         $this->assertTrue(Schema::hasColumn('businesses', 'workspace_id'));
 
         $owner = $this->createCustomer();
         $business = $this->createBusinessFor($owner->user_id);
 
-        $this->assertNull($business->fresh()->workspace_id);
+        $this->assertNotNull($business->fresh()->workspace_id);
 
         $column = DB::selectOne(
             "SELECT IS_NULLABLE FROM information_schema.COLUMNS
@@ -204,28 +210,49 @@ class WorkspaceSchemaTest extends TestCase
              AND COLUMN_NAME = 'workspace_id'"
         );
 
-        $this->assertSame('YES', $column->IS_NULLABLE);
+        $this->assertSame('NO', $column->IS_NULLABLE);
     }
 
-    public function test_businesses_workspace_id_has_no_foreign_key_yet(): void
+    // (rewritten for Slice 4B — the final businesses_workspace_id_foreign
+    // FK now exists, referencing workspaces.id with RESTRICT.)
+    public function test_businesses_workspace_id_has_the_final_foreign_key(): void
     {
-        $constraints = DB::select(
-            "SELECT CONSTRAINT_NAME FROM information_schema.KEY_COLUMN_USAGE
+        $constraint = DB::selectOne(
+            "SELECT REFERENCED_TABLE_NAME, REFERENCED_COLUMN_NAME FROM information_schema.KEY_COLUMN_USAGE
              WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'businesses'
-             AND COLUMN_NAME = 'workspace_id' AND REFERENCED_TABLE_NAME IS NOT NULL"
+             AND COLUMN_NAME = 'workspace_id' AND CONSTRAINT_NAME = 'businesses_workspace_id_foreign'"
         );
 
-        $this->assertCount(0, $constraints);
+        $this->assertNotNull($constraint);
+        $this->assertSame('workspaces', $constraint->REFERENCED_TABLE_NAME);
+        $this->assertSame('id', $constraint->REFERENCED_COLUMN_NAME);
+
+        $deleteRule = DB::selectOne(
+            "SELECT DELETE_RULE FROM information_schema.REFERENTIAL_CONSTRAINTS
+             WHERE CONSTRAINT_SCHEMA = DATABASE() AND TABLE_NAME = 'businesses'
+             AND CONSTRAINT_NAME = 'businesses_workspace_id_foreign'"
+        );
+        $this->assertSame('RESTRICT', $deleteRule->DELETE_RULE);
     }
 
-    public function test_businesses_has_no_m1b_workspace_indexes_yet(): void
+    // (rewritten for Slice 4B — both final Workspace indexes now exist, in
+    // the documented column order.)
+    public function test_businesses_has_the_final_m1b_workspace_indexes(): void
     {
         $indexes = DB::select(
             "SELECT DISTINCT INDEX_NAME FROM information_schema.STATISTICS
              WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'businesses'
-             AND COLUMN_NAME = 'workspace_id'"
+             AND INDEX_NAME IN ('businesses_workspace_id_index', 'businesses_workspace_id_status_index')"
         );
+        $this->assertCount(2, $indexes);
 
-        $this->assertCount(0, $indexes);
+        $compositeColumns = DB::table('information_schema.STATISTICS')
+            ->whereRaw('TABLE_SCHEMA = DATABASE()')
+            ->where('TABLE_NAME', 'businesses')
+            ->where('INDEX_NAME', 'businesses_workspace_id_status_index')
+            ->orderBy('SEQ_IN_INDEX')
+            ->pluck('COLUMN_NAME')
+            ->all();
+        $this->assertSame(['workspace_id', 'status'], $compositeColumns);
     }
 }

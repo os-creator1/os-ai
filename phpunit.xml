@@ -20,6 +20,8 @@
     <groups>
         <exclude>
             <group>historical-m1a</group>
+            <group>workspace-pre-enforcement</group>
+            <group>workspace-enforcement</group>
         </exclude>
     </groups>
     <filter>

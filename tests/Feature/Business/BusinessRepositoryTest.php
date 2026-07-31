@@ -4,7 +4,6 @@ namespace Tests\Feature\Business;
 
 use App\Enums\Business\BusinessIndustry;
 use App\Enums\Business\BusinessStatus;
-use App\Models\Business;
 use App\Models\User;
 use App\Models\Workspace;
 use App\Repositories\Contracts\BusinessRepository;
@@ -491,25 +490,36 @@ class BusinessRepositoryTest extends TestCase
         $this->assertSame([$primary->id], $result->pluck('id')->all());
     }
 
-    // 13. workspaceIdsForCustomer excludes null workspace_id values. createForCustomer()
-    // is removed (Slice 3B), so the null-workspace_id row is constructed directly —
-    // this is not an ordinary fixture, it deliberately needs the legacy-shape null
-    // value this method's exclusion logic is being proven against.
-    public function test_workspace_ids_for_customer_excludes_null_workspace_id_values(): void
+    // 13 (rewritten for Slice 4B — businesses.workspace_id is now NOT NULL,
+    // so a null-workspace_id row can no longer be constructed through any
+    // live write path; the null-exclusion behavior this test used to prove
+    // is no longer reachable). Proves the method's full remaining
+    // contract instead: distinct Workspace IDs, deterministic first-seen
+    // Business ID order, another customer's Businesses excluded, and
+    // integer-typed IDs.
+    public function test_workspace_ids_for_customer_returns_distinct_first_seen_integer_ids_excluding_other_customers(): void
     {
         $customer = $this->createCustomer();
-        $workspace = $this->createWorkspaceOwnedBy($customer->user);
+        $workspaceA = $this->createWorkspaceOwnedBy($customer->user, ['name' => 'WS A']);
+        $workspaceB = $this->createWorkspaceOwnedBy($customer->user, ['name' => 'WS B']);
         $repository = app(BusinessRepository::class);
-        $nullWorkspaceBusiness = new Business($this->businessAttributes(['name' => 'Null WS']));
-        $nullWorkspaceBusiness->customer_id = $customer->user_id;
-        $nullWorkspaceBusiness->status = BusinessStatus::Draft;
-        $nullWorkspaceBusiness->save();
-        $repository->createForCustomerInWorkspace($customer, $workspace, $this->businessAttributes(['name' => 'Has WS']));
+        $repository->createForCustomerInWorkspace($customer, $workspaceA, $this->businessAttributes(['name' => 'One']));
+        $repository->createForCustomerInWorkspace($customer, $workspaceB, $this->businessAttributes(['name' => 'Two']));
+        // Same Workspace as the first Business, seen again — must not duplicate.
+        $repository->createForCustomerInWorkspace($customer, $workspaceA, $this->businessAttributes(['name' => 'Three']));
+
+        $otherCustomer = $this->createCustomer();
+        $otherWorkspace = $this->createWorkspaceOwnedBy($otherCustomer->user, ['name' => 'Other WS']);
+        $repository->createForCustomerInWorkspace($otherCustomer, $otherWorkspace, $this->businessAttributes(['name' => 'Other Customer Business']));
 
         $ids = $repository->workspaceIdsForCustomer($customer->user_id);
 
-        $this->assertCount(1, $ids);
-        $this->assertTrue($ids->contains($workspace->id));
+        $this->assertSame([$workspaceA->id, $workspaceB->id], $ids->values()->all());
+        $this->assertFalse($ids->contains($otherWorkspace->id));
+
+        foreach ($ids as $id) {
+            $this->assertIsInt($id);
+        }
     }
 
     // 14. It returns distinct integer IDs in deterministic first-seen order.
