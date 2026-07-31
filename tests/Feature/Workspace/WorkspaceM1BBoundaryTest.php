@@ -328,6 +328,13 @@ class WorkspaceM1BBoundaryTest extends TestCase
     // the moment any other Milestone 2 method (Business-access scope
     // mutation, Business orchestration, ownership transfer) appears ahead
     // of its own approved slice.
+    // RFC-003 Milestone 2 Slice 2E adds exactly the scoped Business-access
+    // methods (changeMemberBusinessAccessScope(), assignBusinessToMember(),
+    // unassignBusinessFromMember()) — this boundary is updated to admit
+    // those three in addition to Slice 2B's two, Slice 2C's four and
+    // Slice 2D's four, and still fails the moment any other Milestone 2
+    // method (Business creation/reassignment, ownership transfer) appears
+    // ahead of its own approved slice.
     public function test_workspace_manager_has_no_unapproved_milestone_2_methods(): void
     {
         $methods = array_map(
@@ -348,6 +355,9 @@ class WorkspaceM1BBoundaryTest extends TestCase
             'changeMemberRole',
             'deactivateMember',
             'reactivateMember',
+            'changeMemberBusinessAccessScope',
+            'assignBusinessToMember',
+            'unassignBusinessFromMember',
         ], $methods);
     }
 

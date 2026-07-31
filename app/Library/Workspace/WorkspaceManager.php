@@ -9,19 +9,24 @@ use App\Enums\Workspace\WorkspaceMembershipRole;
 use App\Events\Workspace\BusinessAssignedToWorkspace;
 use App\Events\Workspace\WorkspaceCreated;
 use App\Events\Workspace\WorkspaceDeactivated;
+use App\Events\Workspace\WorkspaceMembershipBusinessAccessScopeChanged;
 use App\Events\Workspace\WorkspaceMembershipBusinessAssigned;
+use App\Events\Workspace\WorkspaceMembershipBusinessUnassigned;
 use App\Events\Workspace\WorkspaceMembershipCreated;
 use App\Events\Workspace\WorkspaceMembershipDeactivated;
 use App\Events\Workspace\WorkspaceMembershipReactivated;
 use App\Events\Workspace\WorkspaceMembershipRoleChanged;
 use App\Events\Workspace\WorkspaceReactivated;
 use App\Events\Workspace\WorkspaceRenamed;
+use App\Exceptions\Workspace\BusinessAssignmentRequiresSelectedScopeException;
+use App\Exceptions\Workspace\CrossWorkspaceAssignmentException;
 use App\Exceptions\Workspace\InactiveWorkspaceMembershipMutationException;
 use App\Exceptions\Workspace\InactiveWorkspaceMutationException;
 use App\Exceptions\Workspace\InvalidBusinessAccessScopeAssignmentException;
 use App\Exceptions\Workspace\OwnerCannotBeMemberException;
 use App\Exceptions\Workspace\UnauthorizedWorkspaceManagementException;
 use App\Exceptions\Workspace\WorkspaceAccessDeniedException;
+use App\Exceptions\Workspace\WorkspaceBusinessNotFoundException;
 use App\Exceptions\Workspace\WorkspaceContextRequiredException;
 use App\Exceptions\Workspace\WorkspaceMembershipAlreadyExistsException;
 use App\Exceptions\Workspace\WorkspaceMembershipNotFoundException;
@@ -32,6 +37,7 @@ use App\Models\Business;
 use App\Models\User;
 use App\Models\Workspace;
 use App\Models\WorkspaceMembership;
+use App\Models\WorkspaceMembershipBusiness;
 use App\Repositories\Contracts\BusinessRepository;
 use App\Repositories\Contracts\CustomerOnboardingRepository;
 use App\Repositories\Contracts\CustomerRepository;
@@ -594,6 +600,302 @@ class WorkspaceManager
     }
 
     /**
+     * Changes a WorkspaceMembership's Business-access scope (RFC-003 §7.5,
+     * Milestone 2 Slice 2E), synchronizing workspace_membership_businesses
+     * as the enum transitions between `all` and `selected`. Owner-or-
+     * active-Admin authority (same rule as renameWorkspace()) — Staff,
+     * inactive Admin, and unrelated Users are all denied. Same Workspace/
+     * Membership consistency correction as Slice 2D: the Workspace lock
+     * uses the caller-supplied Membership's workspace_id, the Membership
+     * is locked separately by ID, and their relationship is re-verified
+     * rather than assumed.
+     *
+     * `all` -> `all` and an identical `selected` -> `selected` normalized
+     * set are both authorized no-ops (no write, no event).
+     * `all` -> `selected` and a changed `selected` -> `selected` set both
+     * synchronize the complete requested set via
+     * WorkspaceMembershipBusinessRepository::syncForMembership() — which
+     * validates every ID (existence, then same-Workspace membership)
+     * before any assignment row changes, so a mixed valid/invalid ID set
+     * writes nothing and throws CrossWorkspaceAssignmentException, rolling
+     * back this method's own transaction, including any scope write.
+     * `selected` -> `all` clears every assignment row.
+     */
+    public function changeMemberBusinessAccessScope(
+        int $actorUserId,
+        WorkspaceMembership $membership,
+        WorkspaceBusinessAccessScope $scope,
+        array $businessIds = [],
+    ): WorkspaceMembership {
+        return DB::transaction(function () use ($actorUserId, $membership, $scope, $businessIds) {
+            $expectedWorkspaceId = (int) $membership->workspace_id;
+
+            $lockedWorkspace = $this->workspaceRepository->findForUpdate($expectedWorkspaceId);
+
+            if ($lockedWorkspace === null) {
+                throw new WorkspaceNotFoundException($expectedWorkspaceId);
+            }
+
+            $lockedMembership = $this->membershipRepository->findForUpdate($membership->id);
+
+            if ($lockedMembership === null) {
+                throw new WorkspaceMembershipNotFoundException($lockedWorkspace->id, $membership->user_id);
+            }
+
+            if ((int) $lockedMembership->workspace_id !== (int) $lockedWorkspace->id) {
+                throw new WorkspaceMembershipWorkspaceMismatchException(
+                    $lockedMembership->id,
+                    (int) $lockedWorkspace->id,
+                    (int) $lockedMembership->workspace_id,
+                );
+            }
+
+            if (! $lockedWorkspace->is_active) {
+                throw new InactiveWorkspaceMutationException($lockedWorkspace->id);
+            }
+
+            if (! $lockedMembership->is_active) {
+                throw new InactiveWorkspaceMembershipMutationException($lockedMembership->id);
+            }
+
+            $this->assertActorIsOwnerOrActiveAdmin($actorUserId, $lockedWorkspace);
+
+            if ($scope === WorkspaceBusinessAccessScope::All && $businessIds !== []) {
+                throw new InvalidBusinessAccessScopeAssignmentException($scope, count($businessIds));
+            }
+
+            $currentScope = $lockedMembership->business_access_scope;
+            $currentIds = $this->normalizeBusinessIds(
+                $this->membershipBusinessRepository->assignedBusinessIds($lockedMembership)->all()
+            );
+            $requestedIds = $this->normalizeBusinessIds($businessIds);
+
+            // A. all -> all: authorized no-op.
+            if ($currentScope === WorkspaceBusinessAccessScope::All && $scope === WorkspaceBusinessAccessScope::All) {
+                return $lockedMembership;
+            }
+
+            // D (no-op case). selected -> selected, identical normalized set.
+            if ($currentScope === WorkspaceBusinessAccessScope::Selected
+                && $scope === WorkspaceBusinessAccessScope::Selected
+                && $currentIds === $requestedIds
+            ) {
+                return $lockedMembership;
+            }
+
+            // C. selected -> all: clear every assignment row.
+            if ($currentScope === WorkspaceBusinessAccessScope::Selected && $scope === WorkspaceBusinessAccessScope::All) {
+                $this->membershipBusinessRepository->syncForMembership($lockedMembership, []);
+                $updated = $this->membershipRepository->updateBusinessAccessScope($lockedMembership, $scope);
+
+                foreach ($currentIds as $businessId) {
+                    WorkspaceMembershipBusinessUnassigned::dispatch($lockedMembership->id, $lockedWorkspace->id, $businessId, $actorUserId);
+                }
+
+                WorkspaceMembershipBusinessAccessScopeChanged::dispatch(
+                    $lockedMembership->id,
+                    $lockedWorkspace->id,
+                    $lockedMembership->user_id,
+                    $actorUserId,
+                    $currentScope->value,
+                    $scope->value,
+                );
+
+                return $updated;
+            }
+
+            // B. all -> selected, or D (changed case). selected -> selected
+            // with a changed set. Both synchronize the complete requested
+            // set first.
+            $this->membershipBusinessRepository->syncForMembership($lockedMembership, $requestedIds);
+
+            $added = $this->addedIds($currentIds, $requestedIds);
+            $removed = $this->removedIds($currentIds, $requestedIds);
+
+            if ($currentScope === WorkspaceBusinessAccessScope::All) {
+                $updated = $this->membershipRepository->updateBusinessAccessScope($lockedMembership, $scope);
+
+                WorkspaceMembershipBusinessAccessScopeChanged::dispatch(
+                    $lockedMembership->id,
+                    $lockedWorkspace->id,
+                    $lockedMembership->user_id,
+                    $actorUserId,
+                    $currentScope->value,
+                    $scope->value,
+                );
+
+                foreach ($added as $businessId) {
+                    WorkspaceMembershipBusinessAssigned::dispatch($lockedMembership->id, $lockedWorkspace->id, $businessId, $actorUserId);
+                }
+
+                return $updated;
+            }
+
+            // D (changed case): selected -> selected. The enum value did
+            // not change, so no scope-changed event is dispatched.
+            foreach ($added as $businessId) {
+                WorkspaceMembershipBusinessAssigned::dispatch($lockedMembership->id, $lockedWorkspace->id, $businessId, $actorUserId);
+            }
+
+            foreach ($removed as $businessId) {
+                WorkspaceMembershipBusinessUnassigned::dispatch($lockedMembership->id, $lockedWorkspace->id, $businessId, $actorUserId);
+            }
+
+            return $lockedMembership;
+        });
+    }
+
+    /**
+     * Directly assigns one Business to a `selected`-scope Membership
+     * (RFC-003 §7.5, Milestone 2 Slice 2E). Same locking, consistency,
+     * active-state and authority rules as changeMemberBusinessAccessScope().
+     * Re-reads the Business via BusinessRepository::findById() — the
+     * authoritative persisted lookup — rather than trusting the caller's
+     * $business for workspace_id; WorkspaceMembershipBusinessRepository::
+     * assign() re-verifies the same-Workspace invariant against that
+     * authoritative row before writing. Idempotent: an already-assigned
+     * Business is an authorized no-op returning the existing persisted
+     * assignment, detected via Eloquent's wasRecentlyCreated on the
+     * firstOrCreate() result inside assign() — no new repository method
+     * or Manager-level raw database query is needed.
+     */
+    public function assignBusinessToMember(
+        int $actorUserId,
+        WorkspaceMembership $membership,
+        Business $business,
+    ): WorkspaceMembershipBusiness {
+        return DB::transaction(function () use ($actorUserId, $membership, $business) {
+            $expectedWorkspaceId = (int) $membership->workspace_id;
+
+            $lockedWorkspace = $this->workspaceRepository->findForUpdate($expectedWorkspaceId);
+
+            if ($lockedWorkspace === null) {
+                throw new WorkspaceNotFoundException($expectedWorkspaceId);
+            }
+
+            $lockedMembership = $this->membershipRepository->findForUpdate($membership->id);
+
+            if ($lockedMembership === null) {
+                throw new WorkspaceMembershipNotFoundException($lockedWorkspace->id, $membership->user_id);
+            }
+
+            if ((int) $lockedMembership->workspace_id !== (int) $lockedWorkspace->id) {
+                throw new WorkspaceMembershipWorkspaceMismatchException(
+                    $lockedMembership->id,
+                    (int) $lockedWorkspace->id,
+                    (int) $lockedMembership->workspace_id,
+                );
+            }
+
+            if (! $lockedWorkspace->is_active) {
+                throw new InactiveWorkspaceMutationException($lockedWorkspace->id);
+            }
+
+            if (! $lockedMembership->is_active) {
+                throw new InactiveWorkspaceMembershipMutationException($lockedMembership->id);
+            }
+
+            $this->assertActorIsOwnerOrActiveAdmin($actorUserId, $lockedWorkspace);
+
+            if ($lockedMembership->business_access_scope !== WorkspaceBusinessAccessScope::Selected) {
+                throw new BusinessAssignmentRequiresSelectedScopeException($lockedMembership->id);
+            }
+
+            $lockedBusiness = $this->businessRepository->findById($business->id);
+
+            if ($lockedBusiness === null) {
+                throw new WorkspaceBusinessNotFoundException($business->id);
+            }
+
+            $assignment = $this->membershipBusinessRepository->assign($lockedMembership, $lockedBusiness);
+
+            if (! $assignment->wasRecentlyCreated) {
+                return $assignment;
+            }
+
+            WorkspaceMembershipBusinessAssigned::dispatch($lockedMembership->id, $lockedWorkspace->id, $lockedBusiness->id, $actorUserId);
+
+            return $assignment;
+        });
+    }
+
+    /**
+     * Directly unassigns one Business from a `selected`-scope Membership
+     * (RFC-003 §7.5, Milestone 2 Slice 2E). Same locking, consistency,
+     * active-state and authority rules as assignBusinessToMember(). Unlike
+     * assign(), WorkspaceMembershipBusinessRepository::unassign() performs
+     * no same-Workspace check of its own (it is an unconditional delete by
+     * composite key), so the cross-Workspace comparison against the
+     * authoritative locked Business/Workspace happens here — a plain
+     * attribute comparison on already-locked/loaded models, not a new
+     * repository method or raw database query.
+     */
+    public function unassignBusinessFromMember(
+        int $actorUserId,
+        WorkspaceMembership $membership,
+        Business $business,
+    ): void {
+        DB::transaction(function () use ($actorUserId, $membership, $business) {
+            $expectedWorkspaceId = (int) $membership->workspace_id;
+
+            $lockedWorkspace = $this->workspaceRepository->findForUpdate($expectedWorkspaceId);
+
+            if ($lockedWorkspace === null) {
+                throw new WorkspaceNotFoundException($expectedWorkspaceId);
+            }
+
+            $lockedMembership = $this->membershipRepository->findForUpdate($membership->id);
+
+            if ($lockedMembership === null) {
+                throw new WorkspaceMembershipNotFoundException($lockedWorkspace->id, $membership->user_id);
+            }
+
+            if ((int) $lockedMembership->workspace_id !== (int) $lockedWorkspace->id) {
+                throw new WorkspaceMembershipWorkspaceMismatchException(
+                    $lockedMembership->id,
+                    (int) $lockedWorkspace->id,
+                    (int) $lockedMembership->workspace_id,
+                );
+            }
+
+            if (! $lockedWorkspace->is_active) {
+                throw new InactiveWorkspaceMutationException($lockedWorkspace->id);
+            }
+
+            if (! $lockedMembership->is_active) {
+                throw new InactiveWorkspaceMembershipMutationException($lockedMembership->id);
+            }
+
+            $this->assertActorIsOwnerOrActiveAdmin($actorUserId, $lockedWorkspace);
+
+            if ($lockedMembership->business_access_scope !== WorkspaceBusinessAccessScope::Selected) {
+                throw new BusinessAssignmentRequiresSelectedScopeException($lockedMembership->id);
+            }
+
+            $lockedBusiness = $this->businessRepository->findById($business->id);
+
+            if ($lockedBusiness === null) {
+                throw new WorkspaceBusinessNotFoundException($business->id);
+            }
+
+            if ((int) $lockedBusiness->workspace_id !== (int) $lockedWorkspace->id) {
+                throw new CrossWorkspaceAssignmentException(
+                    "WorkspaceMembership [{$lockedMembership->id}] belongs to Workspace [{$lockedWorkspace->id}]; " .
+                    'Business [' . $lockedBusiness->id . '] belongs to Workspace [' . ($lockedBusiness->workspace_id ?? 'null') . '].'
+                );
+            }
+
+            if (! $this->membershipBusinessRepository->isAssigned($lockedMembership, $lockedBusiness->id)) {
+                return;
+            }
+
+            $this->membershipBusinessRepository->unassign($lockedMembership, $lockedBusiness->id);
+
+            WorkspaceMembershipBusinessUnassigned::dispatch($lockedMembership->id, $lockedWorkspace->id, $lockedBusiness->id, $actorUserId);
+        });
+    }
+
+    /**
      * Shared authority rule for addMember() (against the requested role)
      * and deactivateMember()/reactivateMember() (against the target
      * membership's current role) — Admin requires the Workspace owner;
@@ -622,6 +924,34 @@ class WorkspaceManager
             ->sort()
             ->values()
             ->all();
+    }
+
+    /**
+     * IDs present in $requested but not $current, in ascending order.
+     * Both arguments are expected to already be normalizeBusinessIds()
+     * output (deduplicated, ascending, zero-indexed) — array_diff()
+     * preserves $requested's existing order, so no re-sort is needed.
+     *
+     * @param  array<int, int>  $current
+     * @param  array<int, int>  $requested
+     * @return array<int, int>
+     */
+    private function addedIds(array $current, array $requested): array
+    {
+        return array_values(array_diff($requested, $current));
+    }
+
+    /**
+     * IDs present in $current but not $requested, in ascending order. Same
+     * pre-normalized-input assumption as addedIds().
+     *
+     * @param  array<int, int>  $current
+     * @param  array<int, int>  $requested
+     * @return array<int, int>
+     */
+    private function removedIds(array $current, array $requested): array
+    {
+        return array_values(array_diff($current, $requested));
     }
 
     public function resolveLegacyOnboardingWorkspace(int $ownerUserId): Workspace
