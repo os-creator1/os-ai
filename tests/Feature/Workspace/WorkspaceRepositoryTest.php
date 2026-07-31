@@ -142,4 +142,44 @@ class WorkspaceRepositoryTest extends TestCase
         $this->assertTrue($found->is($workspace));
         $this->assertSame($workspace->name, $found->fresh()->name);
     }
+
+    public function test_transfer_ownership_updates_only_owner_user_id(): void
+    {
+        $repository = app(WorkspaceRepository::class);
+        $originalOwner = $this->createCustomer()->user;
+        $newOwner = $this->createCustomer()->user;
+        $workspace = $this->createWorkspace($originalOwner, ['name' => 'Original Name', 'is_active' => true]);
+
+        $updated = $repository->transferOwnership($workspace, $newOwner->id);
+
+        $this->assertSame($newOwner->id, $updated->owner_user_id);
+        $this->assertSame($newOwner->id, $workspace->fresh()->owner_user_id);
+    }
+
+    public function test_transfer_ownership_leaves_name_and_active_state_untouched(): void
+    {
+        $repository = app(WorkspaceRepository::class);
+        $originalOwner = $this->createCustomer()->user;
+        $newOwner = $this->createCustomer()->user;
+        $workspace = $this->createWorkspace($originalOwner, ['name' => 'Original Name', 'is_active' => true]);
+
+        $repository->transferOwnership($workspace, $newOwner->id);
+        $fresh = $workspace->fresh();
+
+        $this->assertSame('Original Name', $fresh->name);
+        $this->assertTrue($fresh->is_active);
+    }
+
+    public function test_transfer_ownership_returns_the_same_refreshed_workspace(): void
+    {
+        $repository = app(WorkspaceRepository::class);
+        $originalOwner = $this->createCustomer()->user;
+        $newOwner = $this->createCustomer()->user;
+        $workspace = $this->createWorkspace($originalOwner);
+
+        $updated = $repository->transferOwnership($workspace, $newOwner->id);
+
+        $this->assertTrue($updated->is($workspace));
+        $this->assertTrue($updated->exists);
+    }
 }

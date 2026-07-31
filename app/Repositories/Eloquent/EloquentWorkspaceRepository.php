@@ -73,6 +73,14 @@ class EloquentWorkspaceRepository extends EloquentBaseRepository implements Work
         return $workspace;
     }
 
+    public function transferOwnership(Workspace $workspace, int $newOwnerUserId): Workspace
+    {
+        $workspace->owner_user_id = $newOwnerUserId;
+        $workspace->save();
+
+        return $workspace;
+    }
+
     public function businessesForWorkspace(Workspace $workspace): Collection
     {
         return $workspace->businesses()->get();

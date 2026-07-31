@@ -3,9 +3,11 @@
 namespace App\Library\Workspace;
 
 use App\DTO\Workspace\WorkspaceFirstBusinessInput;
+use App\DTO\Workspace\WorkspaceOwnershipTransferDisposition;
 use App\Enums\Workspace\WorkspaceBusinessAccessScope;
 use App\Enums\Workspace\WorkspaceContextFailureReason;
 use App\Enums\Workspace\WorkspaceMembershipRole;
+use App\Enums\Workspace\WorkspaceOwnershipTransferMode;
 use App\Enums\Workspace\WorkspaceTransitionType;
 use App\Events\Workspace\BusinessAssignedToWorkspace;
 use App\Events\Workspace\BusinessReassignedToWorkspace;
@@ -18,6 +20,7 @@ use App\Events\Workspace\WorkspaceMembershipCreated;
 use App\Events\Workspace\WorkspaceMembershipDeactivated;
 use App\Events\Workspace\WorkspaceMembershipReactivated;
 use App\Events\Workspace\WorkspaceMembershipRoleChanged;
+use App\Events\Workspace\WorkspaceOwnershipTransferred;
 use App\Events\Workspace\WorkspaceReactivated;
 use App\Events\Workspace\WorkspaceRenamed;
 use App\Exceptions\Workspace\BusinessAssignmentRequiresSelectedScopeException;
@@ -31,6 +34,7 @@ use App\Exceptions\Workspace\UnauthorizedWorkspaceManagementException;
 use App\Exceptions\Workspace\WorkspaceAccessDeniedException;
 use App\Exceptions\Workspace\WorkspaceBusinessNotFoundException;
 use App\Exceptions\Workspace\WorkspaceContextRequiredException;
+use App\Exceptions\Workspace\WorkspaceInvalidIncomingOwnerException;
 use App\Exceptions\Workspace\WorkspaceMembershipAlreadyExistsException;
 use App\Exceptions\Workspace\WorkspaceMembershipNotFoundException;
 use App\Exceptions\Workspace\WorkspaceMembershipWorkspaceMismatchException;
@@ -52,6 +56,7 @@ use App\Repositories\Contracts\WorkspaceTransitionRepository;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use RuntimeException;
 
 /**
  * Narrow compatibility resolver (RFC-003 §13.1) for the one still-active
@@ -1060,6 +1065,254 @@ class WorkspaceManager
 
             return $updated;
         });
+    }
+
+    /**
+     * Transfers Workspace ownership (RFC-003 §15, Milestone 2 Slice 2G) —
+     * owner-only authority, no active-Admin bypass. Changes exactly one
+     * `workspaces` column (owner_user_id, via WorkspaceRepository::
+     * transferOwnership()); every membership write below is a separate,
+     * expected side effect of the same transaction, not a change to that
+     * single-column scope. A same-owner call is an authorized no-op,
+     * evaluated only after authority/active-state checks — the supplied
+     * disposition is ignored, and nothing is written.
+     *
+     * For a real transfer: both the previous and incoming owner's `users`
+     * rows are locked in ascending ID order (there is no Workspace-derived
+     * lock that serializes concurrent transfers touching the same User),
+     * then both membership rows (a missing row is valid, represented by
+     * null) via findByWorkspaceAndUserForUpdate() in the same ascending
+     * order. The incoming owner's existing active membership (if any) is
+     * deactivated — never deleted, since owner status is derived solely
+     * from owner_user_id (§7.2) and never coexists with a membership row
+     * for the same user — before owner_user_id itself changes, so no
+     * active membership for the previous owner can ever be created before
+     * the column flips. The previous owner's disposition (deactivate or
+     * convert-to-admin) is reconciled after that, then exactly one
+     * workspace_transitions row is written before any event dispatch.
+     * Cross-Workspace Business IDs in a convert-to-admin disposition
+     * surface as CrossWorkspaceAssignmentException from the same
+     * syncForMembership() validation reassignBusiness()/
+     * changeMemberBusinessAccessScope() already rely on, rolling back this
+     * method's entire transaction — deactivation, ownership column,
+     * reconciliation, assignments, transition, and every event together.
+     */
+    public function transferOwnership(
+        int $actorUserId,
+        Workspace $workspace,
+        int $newOwnerUserId,
+        WorkspaceOwnershipTransferDisposition $previousOwnerDisposition,
+    ): Workspace {
+        return DB::transaction(function () use ($actorUserId, $workspace, $newOwnerUserId, $previousOwnerDisposition) {
+            $lockedWorkspace = $this->workspaceRepository->findForUpdate($workspace->id);
+
+            if ($lockedWorkspace === null) {
+                throw new WorkspaceNotFoundException($workspace->id);
+            }
+
+            if (! $lockedWorkspace->is_active) {
+                throw new InactiveWorkspaceMutationException($lockedWorkspace->id);
+            }
+
+            $this->assertActorIsOwner($actorUserId, $lockedWorkspace);
+
+            $previousOwnerUserId = (int) $lockedWorkspace->owner_user_id;
+
+            if ($newOwnerUserId === $previousOwnerUserId) {
+                return $lockedWorkspace;
+            }
+
+            $userIdsToLock = collect([$previousOwnerUserId, $newOwnerUserId])->unique()->sort()->values();
+
+            $lockedUsers = [];
+
+            foreach ($userIdsToLock as $userId) {
+                $lockedUsers[$userId] = $this->lockOwnerRow($userId);
+            }
+
+            if ($lockedUsers[$newOwnerUserId] === null) {
+                throw new WorkspaceInvalidIncomingOwnerException($newOwnerUserId);
+            }
+
+            if ($lockedUsers[$previousOwnerUserId] === null) {
+                throw new RuntimeException(
+                    "Workspace [{$lockedWorkspace->id}]'s current owner User [{$previousOwnerUserId}] does not " .
+                    'exist despite workspaces.owner_user_id being a foreign key to users.id.'
+                );
+            }
+
+            $lockedMemberships = [];
+
+            foreach ($userIdsToLock as $userId) {
+                $lockedMemberships[$userId] = $this->membershipRepository->findByWorkspaceAndUserForUpdate($lockedWorkspace->id, $userId);
+            }
+
+            $incomingMembership = $lockedMemberships[$newOwnerUserId];
+            $previousMembership = $lockedMemberships[$previousOwnerUserId];
+
+            if ($incomingMembership !== null && $incomingMembership->is_active) {
+                $this->membershipRepository->setActive($incomingMembership, false);
+
+                WorkspaceMembershipDeactivated::dispatch($incomingMembership->id, $lockedWorkspace->id, $newOwnerUserId, $actorUserId);
+            }
+
+            $updatedWorkspace = $this->workspaceRepository->transferOwnership($lockedWorkspace, $newOwnerUserId);
+
+            if ($previousOwnerDisposition->mode === WorkspaceOwnershipTransferMode::Deactivate) {
+                $this->reconcileDeactivateDisposition($previousMembership, $actorUserId, $updatedWorkspace, $previousOwnerUserId);
+            } else {
+                $this->reconcileConvertToAdminDisposition($previousMembership, $previousOwnerDisposition, $actorUserId, $updatedWorkspace, $previousOwnerUserId);
+            }
+
+            $this->transitionRepository->create([
+                'workspace_id' => $updatedWorkspace->id,
+                'transition_type' => WorkspaceTransitionType::OwnershipTransferred,
+                'actor_user_id' => $actorUserId,
+                'from_owner_user_id' => $previousOwnerUserId,
+                'to_owner_user_id' => $newOwnerUserId,
+                'previous_owner_disposition' => $previousOwnerDisposition->mode->value,
+                'business_id' => null,
+                'from_workspace_id' => null,
+            ]);
+
+            WorkspaceOwnershipTransferred::dispatch(
+                $updatedWorkspace->id,
+                $actorUserId,
+                $previousOwnerUserId,
+                $newOwnerUserId,
+                $previousOwnerDisposition->mode->value,
+            );
+
+            return $updatedWorkspace;
+        });
+    }
+
+    /**
+     * WorkspaceOwnershipTransferMode::Deactivate reconciliation. A missing
+     * previous-owner membership is a valid, expected state (§7.3 — the
+     * owner never held one) and requires no write. An existing active row
+     * is deactivated, never deleted; its workspace_membership_businesses
+     * rows are retained untouched. An existing already-inactive row is
+     * left exactly as-is — no write, no event.
+     */
+    private function reconcileDeactivateDisposition(
+        ?WorkspaceMembership $previousMembership,
+        int $actorUserId,
+        Workspace $workspace,
+        int $previousOwnerUserId,
+    ): void {
+        if ($previousMembership === null || ! $previousMembership->is_active) {
+            return;
+        }
+
+        $this->membershipRepository->setActive($previousMembership, false);
+
+        WorkspaceMembershipDeactivated::dispatch($previousMembership->id, $workspace->id, $previousOwnerUserId, $actorUserId);
+    }
+
+    /**
+     * WorkspaceOwnershipTransferMode::ConvertToAdmin reconciliation. When
+     * no previous-owner membership exists, creates one exactly like
+     * addMember() would (Created dispatched before any initial Assigned
+     * grant, ascending) — no role/scope-change event for a brand-new row.
+     * When one already exists (including the anomalous case of an already-
+     * active owner-membership row, per §7.3's normal invariant not always
+     * holding for historical data) it is reconciled in place: reactivated
+     * if inactive, promoted to Admin if not already, then its Business-
+     * access scope reconciled using the same normalized set-difference
+     * approach as changeMemberBusinessAccessScope() — but with this
+     * method's own required event order (scope-changed always dispatched
+     * before assigned/unassigned here, unlike that method's `selected` ->
+     * `all` branch), so this is deliberately not delegated to it.
+     */
+    private function reconcileConvertToAdminDisposition(
+        ?WorkspaceMembership $previousMembership,
+        WorkspaceOwnershipTransferDisposition $disposition,
+        int $actorUserId,
+        Workspace $workspace,
+        int $previousOwnerUserId,
+    ): void {
+        if ($previousMembership === null) {
+            $newMembership = $this->membershipRepository->create($workspace, $previousOwnerUserId, WorkspaceMembershipRole::Admin, $disposition->scope);
+
+            if ($disposition->scope === WorkspaceBusinessAccessScope::Selected && $disposition->businessIds !== []) {
+                $this->membershipBusinessRepository->syncForMembership($newMembership, $disposition->businessIds);
+            }
+
+            WorkspaceMembershipCreated::dispatch(
+                $newMembership->id,
+                $workspace->id,
+                $previousOwnerUserId,
+                $actorUserId,
+                WorkspaceMembershipRole::Admin->value,
+                $disposition->scope->value,
+            );
+
+            if ($disposition->scope === WorkspaceBusinessAccessScope::Selected) {
+                foreach ($disposition->businessIds as $businessId) {
+                    WorkspaceMembershipBusinessAssigned::dispatch($newMembership->id, $workspace->id, $businessId, $actorUserId);
+                }
+            }
+
+            return;
+        }
+
+        if (! $previousMembership->is_active) {
+            $this->membershipRepository->setActive($previousMembership, true);
+
+            WorkspaceMembershipReactivated::dispatch($previousMembership->id, $workspace->id, $previousOwnerUserId, $actorUserId);
+        }
+
+        if ($previousMembership->role !== WorkspaceMembershipRole::Admin) {
+            $previousRole = $previousMembership->role;
+            $this->membershipRepository->updateRole($previousMembership, WorkspaceMembershipRole::Admin);
+
+            WorkspaceMembershipRoleChanged::dispatch(
+                $previousMembership->id,
+                $workspace->id,
+                $previousOwnerUserId,
+                $actorUserId,
+                $previousRole->value,
+                WorkspaceMembershipRole::Admin->value,
+            );
+        }
+
+        $currentScope = $previousMembership->business_access_scope;
+        $currentIds = $this->normalizeBusinessIds(
+            $this->membershipBusinessRepository->assignedBusinessIds($previousMembership)->all()
+        );
+        $requestedScope = $disposition->scope;
+        $requestedIds = $disposition->businessIds;
+
+        if ($currentScope === $requestedScope && $currentIds === $requestedIds) {
+            return;
+        }
+
+        $this->membershipBusinessRepository->syncForMembership($previousMembership, $requestedIds);
+
+        if ($currentScope !== $requestedScope) {
+            $this->membershipRepository->updateBusinessAccessScope($previousMembership, $requestedScope);
+
+            WorkspaceMembershipBusinessAccessScopeChanged::dispatch(
+                $previousMembership->id,
+                $workspace->id,
+                $previousOwnerUserId,
+                $actorUserId,
+                $currentScope->value,
+                $requestedScope->value,
+            );
+        }
+
+        $added = $this->addedIds($currentIds, $requestedIds);
+        $removed = $this->removedIds($currentIds, $requestedIds);
+
+        foreach ($added as $businessId) {
+            WorkspaceMembershipBusinessAssigned::dispatch($previousMembership->id, $workspace->id, $businessId, $actorUserId);
+        }
+
+        foreach ($removed as $businessId) {
+            WorkspaceMembershipBusinessUnassigned::dispatch($previousMembership->id, $workspace->id, $businessId, $actorUserId);
+        }
     }
 
     /**

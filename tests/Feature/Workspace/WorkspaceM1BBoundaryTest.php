@@ -341,6 +341,11 @@ class WorkspaceM1BBoundaryTest extends TestCase
     // two, Slice 2C's four, Slice 2D's four and Slice 2E's three, and
     // still fails the moment ownership transfer (transferOwnership())
     // appears ahead of its own approved slice.
+    // RFC-003 Milestone 2 Slice 2G adds exactly transferOwnership() — this
+    // boundary is updated to admit it in addition to every prior slice's
+    // methods, completing Milestone 2's full WorkspaceManager surface.
+    // From here, this boundary's remaining job is guarding against any
+    // Milestone 3+ (HTTP/admin/controller) method appearing on this class.
     public function test_workspace_manager_has_no_unapproved_milestone_2_methods(): void
     {
         $methods = array_map(
@@ -366,6 +371,7 @@ class WorkspaceM1BBoundaryTest extends TestCase
             'unassignBusinessFromMember',
             'createBusinessInWorkspace',
             'reassignBusiness',
+            'transferOwnership',
         ], $methods);
     }
 

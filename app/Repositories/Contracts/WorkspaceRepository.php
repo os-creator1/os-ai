@@ -43,5 +43,15 @@ interface WorkspaceRepository extends BaseRepository
 
     public function setActive(Workspace $workspace, bool $isActive): Workspace;
 
+    /**
+     * Transfers ownership by updating only owner_user_id (RFC-003 §15,
+     * Milestone 2 domain contract) — never name, is_active, or any other
+     * Workspace column — mirroring setActive()'s narrow single-field
+     * mutation convention. Accepts no arbitrary attribute array. Dispatches
+     * no event and writes no workspace_transitions row; that is
+     * WorkspaceManager::transferOwnership()'s responsibility.
+     */
+    public function transferOwnership(Workspace $workspace, int $newOwnerUserId): Workspace;
+
     public function businessesForWorkspace(Workspace $workspace): Collection;
 }

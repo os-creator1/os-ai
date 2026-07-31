@@ -740,14 +740,16 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
 
     // --- BOUNDARY ---
 
-    // 48. No transferOwnership() method is added.
-    public function test_no_transfer_ownership_method_is_added(): void
-    {
-        $this->assertFalse(method_exists(WorkspaceManager::class, 'transferOwnership'));
-    }
+    // 48. transferOwnership() is now implemented (Slice 2G) — this file's
+    // former forward-looking "not yet added" assertion is retired; see
+    // WorkspaceOwnershipTransferTest for its own coverage.
 
-    // 49. No ownership-transfer event or transition is created.
-    public function test_no_ownership_transfer_event_or_transition_is_created(): void
+    // 49. reassignBusiness() creates no ownership-transfer event or
+    // transition of its own — it writes only a business_reassigned_to_
+    // workspace transition with null owner fields, never an ownership-
+    // transfer one, even though WorkspaceOwnershipTransferred now exists
+    // (Slice 2G) as a class WorkspaceManager can dispatch elsewhere.
+    public function test_reassignment_creates_no_ownership_transfer_event_or_transition(): void
     {
         $owner = $this->createCustomer();
         $workspaceA = $this->createWorkspace($owner->user);
@@ -760,7 +762,6 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
         $this->assertNotSame(WorkspaceTransitionType::OwnershipTransferred, $transition->transition_type);
         $this->assertNull($transition->from_owner_user_id);
         $this->assertNull($transition->to_owner_user_id);
-        $this->assertFalse(class_exists('App\Events\Workspace\WorkspaceOwnershipTransferred'));
     }
 
     // 50. No HTTP/model/migration scope is introduced.

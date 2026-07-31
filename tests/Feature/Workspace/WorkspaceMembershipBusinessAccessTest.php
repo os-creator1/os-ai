@@ -925,20 +925,10 @@ class WorkspaceMembershipBusinessAccessTest extends TestCase
         $this->assertSame(0, WorkspaceTransition::count());
     }
 
-    // 41. No Slice 2G public method is added. Slice 2F's own methods
-    // (createBusinessInWorkspace(), reassignBusiness()) are removed from
-    // this forbidden list now that Slice 2F implements them — covered
-    // instead by WorkspaceBusinessOrchestrationTest's own later-milestone
-    // boundary assertion.
-    public function test_no_later_milestone_2_methods_exist(): void
-    {
-        foreach ([
-            'transferOwnership',
-        ] as $method) {
-            $this->assertFalse(
-                method_exists(WorkspaceManager::class, $method),
-                "Unexpected method [{$method}] found on WorkspaceManager."
-            );
-        }
-    }
+    // 41. Milestone 2's last method (transferOwnership(), Slice 2G) is now
+    // implemented, so no "later Milestone 2 method" remains to forbid here
+    // — this file's own no-later-method assertion is retired; the
+    // remaining Milestone-2-vs-Milestone-3+ boundary is covered by
+    // WorkspaceM1BBoundaryTest and WorkspaceOwnershipTransferTest's own
+    // boundary assertions.
 }
