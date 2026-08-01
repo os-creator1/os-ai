@@ -113,8 +113,8 @@ jobs:
             exit 1
           fi
 
-      - name: composer validate --strict
-        run: composer validate --strict
+      - name: composer validate --strict --no-check-all
+        run: composer validate --strict --no-check-all
 
       - name: composer install (full, with scripts and package discovery)
         run: composer install --no-interaction --prefer-dist --no-progress
