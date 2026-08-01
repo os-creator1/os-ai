@@ -119,6 +119,19 @@ jobs:
       - name: composer install (full, with scripts and package discovery)
         run: composer install --no-interaction --prefer-dist --no-progress
 
+      - name: Restore generated Laravel package-discovery cache files
+        run: |
+          set -euo pipefail
+          git restore --worktree -- \
+            bootstrap/cache/packages.php \
+            bootstrap/cache/services.php
+
+          if [ -n "$(git status --porcelain -- bootstrap/cache/packages.php bootstrap/cache/services.php)" ]; then
+            echo "::error::failed to restore generated Laravel cache files"
+            git status --short -- bootstrap/cache/packages.php bootstrap/cache/services.php
+            exit 1
+          fi
+
       - name: Report resolved key package versions
         run: |
           composer show laravel/framework
