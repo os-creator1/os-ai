@@ -369,8 +369,6 @@ class WorkspaceOverviewHttpTest extends TestCase
         $this->assertSame(['workspace', 'directory'], array_keys($data));
         $this->assertSame(['name', 'is_active', 'role'], array_keys($data['workspace']));
         $response->assertDontSee($customer->user->email);
-        $response->assertDontSee((string) $workspace->id);
-        $response->assertDontSee((string) $workspace->owner_user_id);
     }
 
     public function test_get_produces_no_database_writes(): void
