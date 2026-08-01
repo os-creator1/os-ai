@@ -83,23 +83,112 @@ DECISION_JSON_SCHEMA = {
 
 # Given verbatim by the human operator as the locked Slice 3B product
 # contract. The planning-stage model is told to bound its instruction to
-# exactly this contract, not to invent scope from the RFC on its own.
+# exactly this contract, not to invent scope from the RFC on its own. Every
+# product decision that would otherwise require judgment -- route name, page
+# structure, field set, ordering, owner-row treatment -- is deliberately
+# pre-decided here so the plan stage never has grounds to return
+# NEEDS_HUMAN for anything other than a real repository contradiction.
 SLICE_3B_CONTRACT = """\
 Locked Slice 3B product contract (RFC-003 Milestone 3):
-- add read-only Workspace overview
-- add read-only Workspace membership list
-- membership list audience is Workspace owner plus active Admin only
-- Staff cannot access the membership list
-- direct Business ownership alone grants no Workspace-level surface
-- active memberships only are listed
-- display member name, role, scope, and selected-Business assignment count
-- do not display email, numeric IDs, inactive rows, or selected-Business names
-- inactive Workspace remains addressable to owner/active members
-- inactive Workspace Business access remains blocked
-- inaccessible and unknown Workspace uid both return 404
-- GET only
-- no mutation forms, buttons, routes, or actions
-- no Slice 3C Business-list or navigation work
+
+ROUTE AND PAGE
+- Add exactly one new customer GET route:
+  name: customer.workspaces.show
+  URI: workspaces/{workspaceUid}
+- This route renders one read-only Workspace overview page.
+- The membership directory is part of that same overview page -- not a
+  separate page, route, or endpoint.
+- Do not add a customer.workspaces.members.index route.
+- Do not add a customer.workspaces.businesses.index route.
+- Do not add any POST, PUT, PATCH, or DELETE Workspace route.
+
+OVERVIEW CONTENT
+The overview section displays exactly:
+- Workspace name
+- Workspace status: Active or Inactive
+- current user's effective Workspace role: Owner, Admin, or Staff
+Do not display: Workspace numeric ID, owner numeric ID, owner email,
+Business list, Business names, Business count, navigation into a Business,
+or billing/wallet/usage/plan data.
+
+AUTHORIZATION
+The overview returns 200 only when the authenticated customer user is the
+Workspace owner, or an active Workspace membership holder.
+The overview returns 404 when: the Workspace uid is unknown; the user is
+unrelated; the user has only an inactive membership; the user only
+directly owns a Business inside that Workspace; or users.parent_id /
+users.is_admin is the only possible access path.
+Owner status always wins over an anomalous coexisting membership row.
+An inactive Workspace remains addressable and returns 200 to its owner and
+active membership holders. It must visibly show Inactive.
+
+MEMBERSHIP DIRECTORY VISIBILITY
+- Workspace owner can view the membership directory.
+- Active Admin membership can view the membership directory.
+- Active Staff membership can view the overview but cannot view the
+  directory. Staff responses must not receive member rows in view data,
+  not merely hide them with CSS.
+- Unknown or unauthorized users still receive 404 rather than 403.
+
+MEMBERSHIP DIRECTORY ROWS
+The directory contains active workspace_memberships rows only.
+- Do not synthesize the Workspace owner as a membership row.
+- Do not include inactive memberships.
+- Sort rows by workspace_memberships.id ascending.
+Each row exposes exactly: member name; role label (Admin or Staff); scope
+label (All Businesses for scope all, Selected Businesses for scope
+selected); selected-Business assignment count as an integer. The
+assignment count is the actual number of workspace_membership_businesses
+rows for that membership -- for an All Businesses membership this should
+normally be zero under the domain invariant, but the presentation must
+report the actual assignment-row count rather than loading or exposing
+Business names.
+Do not expose: member email, user numeric ID, membership numeric ID,
+Workspace numeric ID, assigned Business IDs, assigned Business names, or
+inactive rows.
+
+IMPLEMENTATION BOUNDARY
+The expected implementation surface is limited to:
+- app/Http/Controllers/Customer/Workspace/WorkspaceController.php
+- routes/customer.php
+- resources/views/customer/workspaces/show.blade.php
+- tests/Feature/Workspace/WorkspaceOverviewHttpTest.php
+- the existing WorkspaceSwitcherHttpTest only where its Slice 3A "no later
+  route exists" assertion must now permit customer.workspaces.show while
+  continuing to forbid member-list and Business-list routes
+Use these existing repository contracts -- do not add repository methods
+unless inspection proves one of them does not exist or cannot satisfy the
+contract, in which case state the smallest required repository addition
+without changing domain semantics:
+- WorkspaceRepository::findByUid()
+- WorkspaceMembershipRepository::findByWorkspaceAndUser()
+- WorkspaceMembershipRepository::activeForWorkspace()
+- WorkspaceMembershipBusinessRepository::assignedBusinessIds()
+
+READ-ONLY SAFETY
+- Every Slice 3B request is GET/HEAD only.
+- A GET must produce no database writes.
+- The page contains no forms, mutation buttons, mutation links, or
+  JavaScript mutation actions.
+- No Slice 3C Business list or navigation.
+- No mutation service or WorkspaceManager method is called.
+
+REQUIRED TEST COVERAGE
+Require at least:
+  php artisan test --filter=WorkspaceOverviewHttpTest
+  php artisan test --filter=WorkspaceSwitcherHttpTest
+WorkspaceOverviewHttpTest must prove: route name, URI, and GET/HEAD-only
+methods; guest rejection; owner overview access; active Admin overview
+access; active Staff overview access; inactive Workspace remains
+addressable; unknown uid returns 404; unrelated user returns 404; inactive
+membership returns 404; direct Business ownership alone returns 404; owner
+sees active membership directory; active Admin sees active membership
+directory; Staff receives no membership rows or member data; inactive
+memberships are omitted; name, role, scope, and assignment count are
+correct; owner is not synthesized into the membership rows; email, numeric
+IDs, Business IDs, and Business names are absent; deterministic membership
+ordering; GET causes no database writes; no separate members route; no
+Business-list route; no mutation verbs or surfaces.
 """
 
 # Coarse, deliberately fail-closed guardrails against a claude_prompt that
@@ -123,6 +212,10 @@ FORBIDDEN_PROMPT_PATTERNS = [
         "requests Slice 3C (navigation / Business list) work",
     ),
 ]
+
+# A match immediately preceded by one of these cues (within a short window)
+# is a boundary being *respected*, not crossed -- see scope_violations().
+NEGATION_CUES = re.compile(r"\b(no|not|never|without|cannot|must\s+not)\b|n['’]t\b", re.I)
 
 # Only these two literal command shapes may ever reach subprocess.run, and
 # only after every token is checked against the identifier pattern below.
@@ -181,14 +274,25 @@ SYSTEM_PROMPTS = {
     "plan": (
         "You are the planning stage of a bounded, one-slice AI orchestration pilot for a Laravel "
         "application. You determine the exact next-slice implementation instruction for Claude Code, "
-        "strictly bounded to the locked Slice 3B product contract supplied in the user message. "
+        "strictly bounded to the locked Slice 3B product contract supplied in the user message. That "
+        "contract is complete: every product decision that could otherwise require judgment -- route "
+        "name, page structure, field set, display ordering, and whether the owner is synthesized into "
+        "the membership rows -- has already been made and is not yours to revisit. Do not return "
+        "NEEDS_HUMAN merely because you would have chosen a different route name, page structure, field "
+        "set, ordering, or owner-row treatment; the contract's answer on each of those points is final. "
         "You do not have authority to expand scope, invent product requirements, approve a merge, or "
-        "authorize any change to main, to workflow files, or to database configuration. If the contract "
-        "is ambiguous in a way that would require a product decision, return decision=NEEDS_HUMAN with "
-        "the ambiguity in blocking_questions rather than guessing. Otherwise return decision=IMPLEMENT "
-        "with a complete, bounded claude_prompt that names the exact files to add or change, the exact "
-        "authorization rule to enforce, and the exact focused test command(s) to run. Respond with only "
-        "the structured JSON object requested."
+        "authorize any change to main, to workflow files, or to database configuration. Return "
+        "decision=IMPLEMENT with a complete, bounded claude_prompt that names the exact files to add or "
+        "change (limited to the contract's implementation boundary), the exact authorization rule to "
+        "enforce, and the exact focused test command(s) to run, unless repository inspection reveals one "
+        "of: a true contradiction in the repository's existing architecture (for example, one of the "
+        "named repository methods does not exist or cannot satisfy the contract, and no minimal, "
+        "semantics-preserving addition resolves it); a required change to a forbidden path (workflow, "
+        "config, or main); an unresolved security or data-isolation problem the contract does not already "
+        "settle; or an implementation that would require Slice 3C or mutation scope to satisfy. In any of "
+        "those cases, return decision=NEEDS_HUMAN with the specific contradiction in blocking_questions "
+        "rather than guessing or inventing a workaround. Respond with only the structured JSON object "
+        "requested."
     ),
     "review": (
         "You are the review stage of a bounded, one-slice AI orchestration pilot. You review Claude's "
@@ -306,7 +410,22 @@ def validate_decision(obj) -> dict:
 
 
 def scope_violations(claude_prompt: str) -> list[str]:
-    return [msg for pattern, msg in FORBIDDEN_PROMPT_PATTERNS if pattern.search(claude_prompt)]
+    violations = []
+    for pattern, msg in FORBIDDEN_PROMPT_PATTERNS:
+        for match in pattern.finditer(claude_prompt):
+            preceding = claude_prompt[max(0, match.start() - 25):match.start()]
+            if NEGATION_CUES.search(preceding):
+                # The Slice 3B contract now explicitly spells out several
+                # of these boundaries (e.g. "no Slice 3C Business list or
+                # navigation work"), so a well-behaved claude_prompt is
+                # likely to echo that same boundary back as a reminder.
+                # Flagging the reminder itself as a violation would force
+                # NEEDS_HUMAN on a prompt that is doing exactly the right
+                # thing, so a negated match is not treated as a violation.
+                continue
+            violations.append(msg)
+            break
+    return violations
 
 
 def force_needs_human(decision: dict, reason: str) -> dict:
@@ -549,6 +668,14 @@ def cmd_selftest(_args: argparse.Namespace) -> int:
     check(
         "scope guard leaves an in-scope prompt untouched",
         not scope_violations(good_decision["claude_prompt"]),
+    )
+    check(
+        "scope guard does not flag a boundary reminder that echoes the contract",
+        not scope_violations(
+            "Implement the Workspace overview and membership directory. "
+            "Do not add Business list navigation -- that is Slice 3C and out of scope. "
+            "Never merge this PR or push to main."
+        ),
     )
 
     check(
