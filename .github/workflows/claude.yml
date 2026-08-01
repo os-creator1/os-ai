@@ -41,7 +41,7 @@ jobs:
       # this job rather than defaulting to read.
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 1
 
@@ -53,7 +53,7 @@ jobs:
           trigger_phrase: "@claude"
           claude_args: |
             --model claude-sonnet-5
-            --max-turns 8
-            --allowedTools "Bash(vendor/bin/phpunit:*),Bash(php artisan test:*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Read,Grep,Glob,Edit,Write"
+            --max-turns 20
+            --allowedTools "Bash(vendor/bin/phpunit:*),Bash(php artisan test:*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git branch:*),Bash(git rev-parse:*),Bash(git show:*),Bash(git diff-tree:*),Bash(git ls-files:*),Read,Grep,Glob,Edit,Write"
             --disallowedTools "Bash(git push origin main:*),Bash(git push origin master:*),Bash(git push:*main),Bash(git push:*master),Bash(git push --force:*),Bash(git checkout main:*),Bash(git merge:*),Bash(gh pr merge:*),Bash(gh api:*),WebFetch,WebSearch"
             --append-system-prompt "Branch-only development on this repository. Never push to main or master, never merge a pull request, and never force-push — commit only to the branch that triggered this workflow run. For any test run, use the ultimatesms_testing database only; never touch a production-looking database, deployment credential, or unrelated secret. Run the focused tests relevant to the change before any full regression suite. Report exact test counts and the exact git scope (files changed) in your summary."
