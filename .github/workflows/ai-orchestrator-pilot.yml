@@ -52,13 +52,26 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       APP_ENV: testing
       TARGET_DB: ultimatesms_testing
+      # Explicit, disposable, runtime-only test configuration. There is no
+      # .env.testing in a fresh checkout (.env and .env.* are gitignored),
+      # so these values -- not a file -- are the single source of truth for
+      # the pilot's database configuration. They exist only for the
+      # lifetime of this job and must match the mysql service below exactly.
+      APP_KEY: base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      DB_CONNECTION: mysql
+      DB_HOST: 127.0.0.1
+      DB_PORT: "3306"
+      DB_DATABASE: ultimatesms_testing
+      DB_USERNAME: ultimatesms_test
+      DB_PASSWORD: Choose-A-Local-Test-Password
       ORCHESTRATOR: .pilot-tooling/.github/scripts/openai_orchestrator.py
     services:
       mysql:
         image: mysql:8.0
         env:
-          # Values match the repository's already-committed .env.testing --
-          # a non-secret, local-only test fixture, not a real credential.
+          # Values match the job-level env above -- a disposable, local-only
+          # MySQL service credential that exists only inside this runner,
+          # not a real credential and not sourced from any committed file.
           MYSQL_DATABASE: ultimatesms_testing
           MYSQL_USER: ultimatesms_test
           MYSQL_PASSWORD: Choose-A-Local-Test-Password
@@ -178,18 +191,35 @@ jobs:
       - name: Verify test database configuration
         run: |
           set -euo pipefail
-          if [ ! -f .env.testing ]; then
-            echo "::error::.env.testing not found; refusing to guess database configuration"
+
+          fail() {
+            echo "::error::$1"
             exit 1
-          fi
-          if ! grep -qx 'DB_DATABASE=ultimatesms_testing' .env.testing; then
-            echo "::error::.env.testing does not declare DB_DATABASE=ultimatesms_testing exactly; refusing"
-            exit 1
-          fi
-          if grep -qi 'jazmisuh_jasmin' .env.testing; then
-            echo "::error::.env.testing references a production-looking database name; refusing"
-            exit 1
-          fi
+          }
+
+          [ "${TARGET_DB}" = "ultimatesms_testing" ] || fail "TARGET_DB is not exactly ultimatesms_testing"
+          [ "${DB_DATABASE}" = "ultimatesms_testing" ] || fail "DB_DATABASE is not exactly ultimatesms_testing"
+          [ "${DB_CONNECTION}" = "mysql" ] || fail "DB_CONNECTION is not exactly mysql"
+          [ "${DB_HOST}" = "127.0.0.1" ] || fail "DB_HOST is not exactly 127.0.0.1"
+          [ "${DB_PORT}" = "3306" ] || fail "DB_PORT is not exactly 3306"
+          [ "${DB_USERNAME}" = "ultimatesms_test" ] || fail "DB_USERNAME is not exactly ultimatesms_test"
+          [ -n "${DB_PASSWORD:-}" ] || fail "DB_PASSWORD is empty"
+          [ -z "${DATABASE_URL:-}" ] || fail "DATABASE_URL must be absent or empty; it can override the explicit DB_* configuration"
+
+          for value in "$TARGET_DB" "$DB_DATABASE" "$DB_CONNECTION" "$DB_HOST" "$DB_USERNAME"; do
+            case "$value" in
+              *jazmisuh_jasmin*)
+                fail "database configuration references the production database name" ;;
+              *[Pp][Rr][Oo][Dd]*)
+                fail "database configuration references an obvious production database name" ;;
+            esac
+          done
+
+          echo "DB_CONNECTION=${DB_CONNECTION}"
+          echo "DB_HOST=${DB_HOST}"
+          echo "DB_PORT=${DB_PORT}"
+          echo "DB_DATABASE=${DB_DATABASE}"
+          echo "DB_USERNAME=${DB_USERNAME}"
 
       - name: Set up PHP
         uses: shivammathur/setup-php@v2
