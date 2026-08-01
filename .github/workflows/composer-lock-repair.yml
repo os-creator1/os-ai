@@ -8,14 +8,24 @@ name: Composer Lock Repair (temporary)
 # follow-up commit) once composer.lock has been regenerated successfully
 # -- it is not meant to survive into the PR against main.
 #
-# Manually triggered only, hardcoded to operate on
+# Triggered only by a push to fix/composer-lock-laravel12 that touches this
+# workflow file itself (workflow_dispatch isn't usable here since GitHub
+# only allows dispatching workflows that exist on the default branch, and
+# this one intentionally does not). The path filter means the later
+# composer.lock commit does not re-trigger it, and deleting this file in a
+# follow-up commit removes it before that commit could trigger it either --
+# there is no recursion. It is hardcoded to operate on
 # fix/composer-lock-laravel12 alone, and pushes only composer.lock back to
 # that same branch. It never touches main or feature/rfc-003-m3, never
 # calls OpenAI or Anthropic, and never modifies composer.json (a hash
 # check after `composer update` aborts the run if composer.json changed).
 
 on:
-  workflow_dispatch: {}
+  push:
+    branches:
+      - fix/composer-lock-laravel12
+    paths:
+      - .github/workflows/composer-lock-repair.yml
 
 permissions:
   contents: write
