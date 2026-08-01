@@ -6,13 +6,6 @@ on:
   pull_request_review_comment:
     types: [created]
 
-concurrency:
-  # One in-flight Claude run per PR/issue conversation. A newer @claude
-  # comment cancels whatever Claude run is still in progress for the same
-  # conversation rather than queuing behind it.
-  group: claude-${{ github.event.issue.number || github.event.pull_request.number }}
-  cancel-in-progress: true
-
 jobs:
   claude:
     # Gate 1: the comment must actually contain the trigger phrase.
@@ -27,6 +20,14 @@ jobs:
       (github.event.comment.author_association == 'OWNER' ||
        github.event.comment.author_association == 'MEMBER' ||
        github.event.comment.author_association == 'COLLABORATOR')
+
+    # Job-level (not workflow-level) so a skipped run — e.g. claude[bot]'s
+    # own progress comment, which fails the if: condition above — never
+    # enters this group and cancels the authorized run already in flight.
+    concurrency:
+      group: claude-${{ github.event.issue.number || github.event.pull_request.number }}
+      cancel-in-progress: true
+
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
