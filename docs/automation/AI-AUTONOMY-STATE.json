@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "repository": "os-creator1/os-ai",
+  "active_pull_request": 2,
+  "base_branch": "main",
+  "head_branch": "feature/rfc-003-m3",
+  "active_rfc": "RFC-003",
+  "active_milestone": "Milestone 3",
+  "current_slice": "Slice 3B",
+  "status": "ready_to_implement_after_setup",
+  "merge_policy": "human_only",
+  "maximum_correction_rounds": 2,
+  "advance_automatically": false,
+  "next_candidate": "Slice 3C - access-filtered Business list and customer navigation",
+  "contract_source": "docs/automation/RFC-003-M3-ORCHESTRATOR.md#the-locked-slice-3b-contract",
+  "allowed_paths": [
+    "app/Http/Controllers/Customer/Workspace/WorkspaceController.php",
+    "routes/customer.php",
+    "resources/views/customer/workspaces/show.blade.php",
+    "tests/Feature/Workspace/WorkspaceOverviewHttpTest.php",
+    "tests/Feature/Workspace/WorkspaceSwitcherHttpTest.php"
+  ],
+  "required_new_paths": [
+    "resources/views/customer/workspaces/show.blade.php",
+    "tests/Feature/Workspace/WorkspaceOverviewHttpTest.php"
+  ],
+  "required_test_commands": [
+    "php artisan test --filter=WorkspaceOverviewHttpTest",
+    "php artisan test --filter=WorkspaceSwitcherHttpTest"
+  ],
+  "gate_label": "ai:testing",
+  "forbidden_scope": [
+    "Slice 3C Business-list or customer-navigation work",
+    "Workspace mutation routes or controls",
+    "plans, entitlements, billing, wallets, usage, or Stripe",
+    "workflow, environment, database configuration, or dependency changes"
+  ],
+  "success_label": "ai:ready-for-human",
+  "failure_label": "ai:needs-human"
+}

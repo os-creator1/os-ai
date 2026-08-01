@@ -1,0 +1,331 @@
+name: AI Subscription Test Gate
+
+on:
+  pull_request:
+    types: [synchronize]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request number to re-check
+        required: true
+        default: "2"
+        type: string
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+concurrency:
+  group: ai-subscription-gate-${{ github.event.pull_request.number || inputs.pr_number }}
+  cancel-in-progress: false
+
+jobs:
+  focused-tests:
+    name: Prove scope and focused tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      APP_ENV: testing
+      TARGET_DB: ultimatesms_testing
+      APP_KEY: base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      DB_CONNECTION: mysql
+      DB_HOST: 127.0.0.1
+      DB_PORT: "3306"
+      DB_DATABASE: ultimatesms_testing
+      DB_USERNAME: ultimatesms_test
+      DB_PASSWORD: Choose-A-Local-Test-Password
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_DATABASE: ultimatesms_testing
+          MYSQL_USER: ultimatesms_test
+          MYSQL_PASSWORD: Choose-A-Local-Test-Password
+          MYSQL_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+    steps:
+      - name: Resolve the controlled PR
+        id: target
+        uses: actions/github-script@v8
+        env:
+          REQUESTED_PR: ${{ github.event_name == 'workflow_dispatch' && inputs.pr_number || github.event.pull_request.number }}
+        with:
+          script: |
+            const value = String(process.env.REQUESTED_PR || '');
+            if (!/^[1-9][0-9]*$/.test(value)) {
+              core.setFailed(`Invalid pull request number: ${value}`);
+              return;
+            }
+            const prNumber = Number(value);
+            const { data: pr } = await github.rest.pulls.get({
+              ...context.repo,
+              pull_number: prNumber,
+            });
+            core.setOutput('pr_number', String(prNumber));
+            core.setOutput('head_ref', pr.head.ref);
+            core.setOutput('head_sha', pr.head.sha);
+
+      - name: Check out the exact PR head
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.target.outputs.head_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check out trusted gate code
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: .trusted-automation
+          persist-credentials: false
+
+      - name: Exclude trusted tooling from the PR checkout
+        run: echo ".trusted-automation/" >> .git/info/exclude
+
+      - name: Validate state, labels, branches, and progress lease
+        id: validate
+        uses: actions/github-script@v8
+        env:
+          CONTROL_PR_NUMBER: ${{ steps.target.outputs.pr_number }}
+          CONTROL_HEAD_SHA: ${{ steps.target.outputs.head_sha }}
+        with:
+          script: |
+            const fs = require('node:fs');
+            const state = JSON.parse(fs.readFileSync(
+              '.trusted-automation/docs/automation/AI-AUTONOMY-STATE.json',
+              'utf8',
+            ));
+            const prNumber = Number(process.env.CONTROL_PR_NUMBER);
+            const { data: pr } = await github.rest.pulls.get({
+              ...context.repo,
+              pull_number: prNumber,
+            });
+            if (
+              state.repository !== context.repo.owner + '/' + context.repo.repo
+              || state.active_pull_request !== prNumber
+              || pr.state !== 'open'
+              || pr.base.ref !== state.base_branch
+              || pr.head.ref !== state.head_branch
+              || pr.head.repo.full_name !== state.repository
+            ) {
+              core.setFailed('The event does not match the locked automation target.');
+              return;
+            }
+            if (pr.head.sha !== process.env.CONTROL_HEAD_SHA) {
+              core.notice('A newer PR head exists; this queued gate run is stale.');
+              core.setOutput('stale', 'true');
+              return;
+            }
+            const labels = new Set(pr.labels.map((label) => label.name));
+            if (!labels.has(state.gate_label)) {
+              core.notice(`PR no longer has ${state.gate_label}; there is nothing to gate.`);
+              core.setOutput('stale', 'true');
+              return;
+            }
+            if (labels.has('ai:paused') || labels.has(state.failure_label)) {
+              core.notice('Automation is paused or already needs human attention.');
+              core.setOutput('stale', 'true');
+              return;
+            }
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              ...context.repo,
+              issue_number: prNumber,
+              per_page: 100,
+            });
+            const lease = [...comments].reverse().find((comment) =>
+              comment.user?.login === 'github-actions[bot]'
+              && comment.body?.includes('[AI-SUBSCRIPTION-LOOP LEASE]')
+            );
+            const beforeSha = lease?.body?.match(/before_sha: `([0-9a-f]{40})`/i)?.[1];
+            if (!beforeSha) {
+              core.setFailed('No trusted progress lease was found for this run.');
+              return;
+            }
+            if (beforeSha.toLowerCase() === pr.head.sha.toLowerCase()) {
+              core.setFailed('Claude did not push a new commit after the trusted progress lease.');
+              return;
+            }
+            core.setOutput('stale', 'false');
+            core.setOutput('before_sha', beforeSha);
+
+      - name: Fetch base branch for scope comparison
+        if: steps.validate.outputs.stale == 'false'
+        run: git fetch origin "${{ github.event.repository.default_branch }}"
+
+      - name: Self-test trusted gate code
+        if: steps.validate.outputs.stale == 'false'
+        run: |
+          node .trusted-automation/.github/scripts/ai_subscription_gate.js --selftest
+          node .trusted-automation/.github/scripts/ai_subscription_gate.js validate-state \
+            --state .trusted-automation/docs/automation/AI-AUTONOMY-STATE.json
+
+      - name: Verify runtime test database
+        if: steps.validate.outputs.stale == 'false'
+        run: |
+          set -euo pipefail
+          [ "$TARGET_DB" = "ultimatesms_testing" ]
+          [ "$DB_DATABASE" = "ultimatesms_testing" ]
+          [ "$DB_CONNECTION" = "mysql" ]
+          [ "$DB_HOST" = "127.0.0.1" ]
+          [ "$DB_PORT" = "3306" ]
+          [ "$DB_USERNAME" = "ultimatesms_test" ]
+          [ -n "$DB_PASSWORD" ]
+          [ -z "${DATABASE_URL:-}" ]
+
+      - name: Build changed-file evidence
+        if: steps.validate.outputs.stale == 'false'
+        run: git diff --name-only "origin/${{ github.event.repository.default_branch }}...HEAD" > "$RUNNER_TEMP/changed-files.txt"
+
+      - name: Enforce the locked file scope
+        if: steps.validate.outputs.stale == 'false'
+        run: |
+          node .trusted-automation/.github/scripts/ai_subscription_gate.js check-scope \
+            --state .trusted-automation/docs/automation/AI-AUTONOMY-STATE.json \
+            --changed-files "$RUNNER_TEMP/changed-files.txt" \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --output "$RUNNER_TEMP/scope.json"
+
+      - name: Set up PHP
+        if: steps.validate.outputs.stale == 'false'
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.2"
+          extensions: mbstring, bcmath, pdo_mysql, intl, xml, curl, zip
+          coverage: none
+          tools: composer:v2
+
+      - name: Install Composer dependencies
+        if: steps.validate.outputs.stale == 'false'
+        run: composer install --no-interaction --prefer-dist --no-progress
+
+      - name: Prepare disposable test database
+        if: steps.validate.outputs.stale == 'false'
+        run: |
+          php artisan config:clear
+          php artisan migrate --force
+
+      - name: Run required focused tests with a positive-test guard
+        if: steps.validate.outputs.stale == 'false'
+        run: |
+          node .trusted-automation/.github/scripts/ai_subscription_gate.js run-tests \
+            --state .trusted-automation/docs/automation/AI-AUTONOMY-STATE.json \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --output "$RUNNER_TEMP/tests.json"
+
+      - name: Request Codex review for the proven head
+        id: passed
+        if: steps.validate.outputs.stale == 'false' && success()
+        uses: actions/github-script@v8
+        env:
+          CONTROL_PR_NUMBER: ${{ steps.target.outputs.pr_number }}
+          CONTROL_HEAD_SHA: ${{ steps.target.outputs.head_sha }}
+          BEFORE_SHA: ${{ steps.validate.outputs.before_sha }}
+        with:
+          script: |
+            const fs = require('node:fs');
+            const state = JSON.parse(fs.readFileSync(
+              '.trusted-automation/docs/automation/AI-AUTONOMY-STATE.json',
+              'utf8',
+            ));
+            const tests = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + '/tests.json', 'utf8'));
+            const scope = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + '/scope.json', 'utf8'));
+            const prNumber = Number(process.env.CONTROL_PR_NUMBER);
+            const { data: pr } = await github.rest.pulls.get({
+              ...context.repo,
+              pull_number: prNumber,
+            });
+            if (pr.head.sha !== process.env.CONTROL_HEAD_SHA) {
+              core.notice('A newer head was pushed while tests ran; leaving ai:testing for the queued run.');
+              return;
+            }
+            const managed = [
+              'ai:implement', 'ai:testing', 'ai:awaiting-codex',
+              'ai:codex-reviewed', 'ai:ready-for-human', 'ai:needs-human', 'ai:paused',
+            ];
+            for (const label of managed.filter((label) => label !== 'ai:awaiting-codex')) {
+              try {
+                await github.rest.issues.removeLabel({
+                  ...context.repo,
+                  issue_number: prNumber,
+                  name: label,
+                });
+              } catch (error) {
+                if (error.status !== 404) throw error;
+              }
+            }
+            await github.rest.issues.addLabels({
+              ...context.repo,
+              issue_number: prNumber,
+              labels: ['ai:awaiting-codex'],
+            });
+            const testLines = tests.results.map((test) =>
+              `- \`${test.command}\`: ${test.test_count} tests passed`
+            );
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number: prNumber,
+              body: [
+                '[AI-SUBSCRIPTION-LOOP TESTED]',
+                `before SHA: \`${process.env.BEFORE_SHA}\``,
+                `proven head SHA: \`${process.env.CONTROL_HEAD_SHA}\``,
+                `exact changed files: ${scope.changed_files.map((file) => `\`${file}\``).join(', ')}`,
+                ...testLines,
+                '',
+                '@codex review',
+              ].join('\n'),
+            });
+            core.setOutput('transitioned', 'true');
+
+      - name: Stop safely when the gate fails
+        if: failure() && steps.validate.outputs.stale != 'true'
+        uses: actions/github-script@v8
+        env:
+          CONTROL_PR_NUMBER: ${{ steps.target.outputs.pr_number }}
+          CONTROL_HEAD_SHA: ${{ steps.target.outputs.head_sha }}
+        with:
+          script: |
+            const prNumber = Number(process.env.CONTROL_PR_NUMBER);
+            if (!prNumber) return;
+            const { data: pr } = await github.rest.pulls.get({
+              ...context.repo,
+              pull_number: prNumber,
+            });
+            const labels = new Set(pr.labels.map((label) => label.name));
+            if (pr.head.sha !== process.env.CONTROL_HEAD_SHA || !labels.has('ai:testing')) {
+              core.notice('Failure belongs to a stale or already-transitioned run; no label change made.');
+              return;
+            }
+            for (const label of ['ai:implement', 'ai:testing', 'ai:awaiting-codex', 'ai:codex-reviewed']) {
+              try {
+                await github.rest.issues.removeLabel({
+                  ...context.repo,
+                  issue_number: prNumber,
+                  name: label,
+                });
+              } catch (error) {
+                if (error.status !== 404) throw error;
+              }
+            }
+            await github.rest.issues.addLabels({
+              ...context.repo,
+              issue_number: prNumber,
+              labels: ['ai:needs-human'],
+            });
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number: prNumber,
+              body: [
+                '[AI-SUBSCRIPTION-LOOP NEEDS HUMAN]',
+                `The deterministic scope/test gate failed for \`${process.env.CONTROL_HEAD_SHA}\`.`,
+                `Evidence: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                'No Codex review was requested and no merge action was taken.',
+              ].join('\n'),
+            });
