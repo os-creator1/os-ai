@@ -1,0 +1,67 @@
+name: AI Subscription Loop
+
+on:
+  pull_request_review:
+    types: [submitted]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request number controlled by the loop
+        required: true
+        default: "2"
+        type: string
+      command:
+        description: State transition to apply
+        required: true
+        default: start
+        type: choice
+        options:
+          - start
+          - resume
+          - pause
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+concurrency:
+  group: ai-subscription-loop-${{ github.event.pull_request.number || inputs.pr_number }}
+  cancel-in-progress: false
+
+jobs:
+  transition:
+    name: Move the PR automation state
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Check out trusted automation code
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Self-test the state controller
+        run: node .github/scripts/ai_subscription_labels.js --selftest
+
+      - name: Apply the trusted label transition
+        uses: actions/github-script@v8
+        env:
+          CONTROL_COMMAND: ${{ github.event_name == 'workflow_dispatch' && inputs.command || 'review-submitted' }}
+          CONTROL_PR_NUMBER: ${{ github.event_name == 'workflow_dispatch' && inputs.pr_number || github.event.pull_request.number }}
+          CODEX_REVIEWER_LOGIN: ${{ vars.CODEX_REVIEWER_LOGIN }}
+        with:
+          script: |
+            const control = require('./.github/scripts/ai_subscription_labels.js');
+            const result = await control({ github, context, core });
+
+            await core.summary
+              .addHeading('AI subscription loop')
+              .addTable([
+                [{ data: 'Field', header: true }, { data: 'Value', header: true }],
+                ['PR', String(result.prNumber ?? 'n/a')],
+                ['Status', result.status],
+                ['Transition', result.transition ?? 'none'],
+              ])
+              .write();
