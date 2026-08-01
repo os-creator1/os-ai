@@ -1,8 +1,6 @@
 name: AI Subscription Loop
 
 on:
-  pull_request_review:
-    types: [submitted]
   workflow_dispatch:
     inputs:
       pr_number:
@@ -26,7 +24,7 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: ai-subscription-loop-${{ github.event.pull_request.number || inputs.pr_number }}
+  group: ai-subscription-loop-${{ inputs.pr_number }}
   cancel-in-progress: false
 
 jobs:
@@ -43,18 +41,23 @@ jobs:
           persist-credentials: false
 
       - name: Self-test the state controller
-        run: node .github/scripts/ai_subscription_labels.js --selftest
+        run: |
+          node .github/scripts/ai_subscription_labels.js --selftest
+          node .github/scripts/fire_claude_routine.js --selftest
 
       - name: Apply the trusted label transition
+        id: control
         uses: actions/github-script@v8
         env:
-          CONTROL_COMMAND: ${{ github.event_name == 'workflow_dispatch' && inputs.command || 'review-submitted' }}
-          CONTROL_PR_NUMBER: ${{ github.event_name == 'workflow_dispatch' && inputs.pr_number || github.event.pull_request.number }}
-          CODEX_REVIEWER_LOGIN: ${{ vars.CODEX_REVIEWER_LOGIN }}
+          CONTROL_COMMAND: ${{ inputs.command }}
+          CONTROL_PR_NUMBER: ${{ inputs.pr_number }}
         with:
           script: |
             const control = require('./.github/scripts/ai_subscription_labels.js');
             const result = await control({ github, context, core });
+            core.setOutput('pr_number', String(result.prNumber ?? ''));
+            core.setOutput('status', result.status ?? 'unknown');
+            core.setOutput('transition', result.transition ?? '');
 
             await core.summary
               .addHeading('AI subscription loop')
@@ -65,3 +68,51 @@ jobs:
                 ['Transition', result.transition ?? 'none'],
               ])
               .write();
+
+
+      - name: Fire the Claude Routine
+        id: claude
+        if: steps.control.outputs.status == 'transitioned' && contains(steps.control.outputs.transition, '->ai:implement')
+        env:
+          CLAUDE_ROUTINE_URL: ${{ secrets.CLAUDE_ROUTINE_URL }}
+          CLAUDE_ROUTINE_TOKEN: ${{ secrets.CLAUDE_ROUTINE_TOKEN }}
+        run: node .github/scripts/fire_claude_routine.js
+
+      - name: Stop safely when the Claude Routine cannot start
+        if: failure() && steps.control.outputs.status == 'transitioned' && contains(steps.control.outputs.transition, '->ai:implement')
+        uses: actions/github-script@v8
+        env:
+          CONTROL_PR_NUMBER: ${{ steps.control.outputs.pr_number }}
+        with:
+          script: |
+            const prNumber = Number(process.env.CONTROL_PR_NUMBER);
+            const managed = [
+              'ai:implement', 'ai:testing', 'ai:awaiting-codex',
+              'ai:codex-reviewed', 'ai:ready-for-human',
+            ];
+            for (const label of managed) {
+              try {
+                await github.rest.issues.removeLabel({
+                  ...context.repo,
+                  issue_number: prNumber,
+                  name: label,
+                });
+              } catch (error) {
+                if (error.status !== 404) throw error;
+              }
+            }
+            await github.rest.issues.addLabels({
+              ...context.repo,
+              issue_number: prNumber,
+              labels: ['ai:needs-human'],
+            });
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number: prNumber,
+              body: [
+                '[AI-SUBSCRIPTION-LOOP NEEDS HUMAN]',
+                'The trusted state transition succeeded, but the Claude subscription Routine did not start.',
+                `Evidence: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                'No merge action was taken.',
+              ].join('\n'),
+            });
