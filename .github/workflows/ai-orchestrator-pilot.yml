@@ -52,7 +52,6 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       APP_ENV: testing
       TARGET_DB: ultimatesms_testing
-      PILOT_TMP: ${{ runner.temp }}/pilot
       ORCHESTRATOR: .pilot-tooling/.github/scripts/openai_orchestrator.py
     services:
       mysql:
@@ -72,8 +71,11 @@ jobs:
           --health-timeout=5s
           --health-retries=10
     steps:
-      - name: Create scratch directory
-        run: mkdir -p "$PILOT_TMP"
+      - name: Initialize scratch directory
+        run: |
+          set -euo pipefail
+          echo "PILOT_TMP=$RUNNER_TEMP/pilot" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/pilot"
 
       # ---------------------------------------------------------------
       # Stage 1: resolve and validate the target PR before touching
