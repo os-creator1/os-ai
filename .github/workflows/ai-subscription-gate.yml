@@ -182,7 +182,7 @@ jobs:
 
       - name: Build changed-file evidence
         if: steps.validate.outputs.stale == 'false'
-        run: git diff --name-only "origin/${{ github.event.repository.default_branch }}...HEAD" > "$RUNNER_TEMP/changed-files.txt"
+        run: git diff --name-only "${{ steps.validate.outputs.before_sha }}...HEAD" > "$RUNNER_TEMP/changed-files.txt"
 
       - name: Enforce the locked file scope
         if: steps.validate.outputs.stale == 'false'
