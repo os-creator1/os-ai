@@ -264,7 +264,7 @@ class WorkspaceOverviewHttpTest extends TestCase
 
         $response = $this->get(route('customer.workspaces.show', ['workspaceUid' => $workspace->uid]))->assertOk();
 
-        $this->assertNull($this->directoryViewData($response));
+        $this->assertArrayNotHasKey('directory', $response->original->getData());
         $response->assertDontSee('Ada');
         $response->assertDontSee($admin->user->email);
     }
@@ -411,7 +411,9 @@ class WorkspaceOverviewHttpTest extends TestCase
      */
     private function directoryViewData($response): ?array
     {
-        return $response->original->getData()['directory'];
+        $data = $response->original->getData();
+
+        return array_key_exists('directory', $data) ? $data['directory'] : null;
     }
 
     private function createNamedMember(

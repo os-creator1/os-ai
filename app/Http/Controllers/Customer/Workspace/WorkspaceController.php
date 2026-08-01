@@ -71,16 +71,19 @@ class WorkspaceController extends CustomerBaseController
             abort(404);
         }
 
-        return view('customer.workspaces.show', [
+        $viewData = [
             'workspace' => [
                 'name' => $workspace->name,
                 'is_active' => (bool) $workspace->is_active,
                 'role' => self::ROLE_LABELS[$roleKey],
             ],
-            'directory' => in_array($roleKey, ['owner', 'admin'], true)
-                ? $this->membershipDirectory($workspace)
-                : null,
-        ]);
+        ];
+
+        if (in_array($roleKey, ['owner', 'admin'], true)) {
+            $viewData['directory'] = $this->membershipDirectory($workspace);
+        }
+
+        return view('customer.workspaces.show', $viewData);
     }
 
     /**
