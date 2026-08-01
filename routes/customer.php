@@ -568,4 +568,14 @@
             ->name('execution-status');
     });
 
+    /*
+    |--------------------------------------------------------------------------
+    | Workspace switcher (RFC-003 Milestone 3 Slice 3A)
+    |--------------------------------------------------------------------------
+    */
+
+    Route::prefix('workspaces')->name('workspaces.')->group(function () {
+        Route::get('/', 'Workspace\WorkspaceController@index')->name('index');
+    });
+
 
