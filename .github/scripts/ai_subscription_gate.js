@@ -255,6 +255,12 @@ function main() {
     fs.writeFileSync(outputPath, `${JSON.stringify(result, null, 2)}\n`);
     for (const test of result.results) {
       console.log(`${test.status.toUpperCase()}: ${test.command} (${test.test_count} tests)`);
+      if (test.status !== 'passed' && test.output_tail) {
+        const safeTail = test.output_tail.replace(/^::/gm, ' ::');
+        console.error(`--- failure output tail: ${test.command} ---`);
+        console.error(safeTail);
+        console.error('--- end failure output tail ---');
+      }
     }
     if (!result.verified) {
       throw new Error('One or more required test commands failed the positive-test gate.');
