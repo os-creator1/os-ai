@@ -34,6 +34,7 @@ jobs:
       pull-requests: write
       issues: write
       actions: read
+      id-token: write
       # Every other permission (checks, deployments, packages, security-events,
       # statuses, etc.) is intentionally omitted, which sets it to "none" for
       # this job rather than defaulting to read.
