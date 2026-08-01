@@ -9,6 +9,59 @@ const ANSI_ESCAPE = /[\u001B\u009B][[\]()#;?]*(?:(?:[a-zA-Z\d]*(?:;[-a-zA-Z\d\/#
 const SAFE_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_\\-]*$/;
 const SAFE_TEST_PATH = /^tests\/(Feature|Unit)\/[A-Za-z0-9_./-]+\.php$/;
 
+const DEFAULT_CODEX_LOGINS = Object.freeze([
+  'chatgpt-codex-connector',
+  'chatgpt-codex-connector[bot]',
+]);
+
+function parseReviewerLogins(configured) {
+  const values = String(configured || '')
+    .split(',')
+    .map((value) => value.trim().toLowerCase())
+    .filter(Boolean);
+  return new Set(values.length > 0 ? values : DEFAULT_CODEX_LOGINS);
+}
+
+function reviewerIsTrusted(login, configured) {
+  return parseReviewerLogins(configured).has(String(login || '').toLowerCase());
+}
+
+function reviewMatchesHead(reviewCommitId, headSha) {
+  return /^[0-9a-f]{40}$/i.test(String(reviewCommitId || ''))
+    && String(reviewCommitId).toLowerCase() === String(headSha || '').toLowerCase();
+}
+
+function cleanCodexCommentMatchesHead(body, headSha) {
+  const text = String(body || '');
+  if (!/Codex Review:\s*Didn't find any major issues/i.test(text)) {
+    return false;
+  }
+  const reviewed = text.match(/\*\*Reviewed commit:\*\*\s*\`([0-9a-f]{10,40})\`/i)?.[1];
+  return Boolean(reviewed)
+    && String(headSha || '').toLowerCase().startsWith(reviewed.toLowerCase());
+}
+
+function findTrustedCodexResult({
+  reviews = [],
+  comments = [],
+  headSha,
+  configuredLogins = '',
+}) {
+  const review = reviews.find((candidate) =>
+    reviewerIsTrusted(candidate.user?.login, configuredLogins)
+    && reviewMatchesHead(candidate.commit_id, headSha)
+  );
+  if (review) {
+    return { kind: 'review', id: String(review.id) };
+  }
+  const comment = comments.find((candidate) =>
+    reviewerIsTrusted(candidate.user?.login, configuredLogins)
+    && cleanCodexCommentMatchesHead(candidate.body, headSha)
+  );
+  return comment ? { kind: 'clean-comment', id: String(comment.id) } : null;
+}
+
+
 function loadState(statePath) {
   const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
   const requiredStrings = [
@@ -198,6 +251,45 @@ function selftest() {
   assert.equal(discoveredTestCount('OK (7 tests, 21 assertions)'), 7);
   assert.equal(discoveredTestCount('INFO  No tests found.'), 0);
   assert.equal(discoveredTestCount('command completed'), null);
+  const head = '4acce6f6ce368ba599db8f7b41a38548ae6c75ec';
+  assert.equal(reviewerIsTrusted('chatgpt-codex-connector[bot]', ''), true);
+  assert.equal(reviewerIsTrusted('lookalike[bot]', ''), false);
+  assert.equal(reviewMatchesHead(head, head), true);
+  assert.equal(reviewMatchesHead('4acce6f6ce', head), false);
+  assert.equal(
+    cleanCodexCommentMatchesHead(
+      "Codex Review: Didn't find any major issues.\n\n**Reviewed commit:** \`4acce6f6ce\`",
+      head,
+    ),
+    true,
+  );
+  assert.equal(
+    cleanCodexCommentMatchesHead(
+      "Codex Review: Didn't find any major issues.\n\n**Reviewed commit:** \`4e9a5dbb57\`",
+      head,
+    ),
+    false,
+  );
+  assert.deepEqual(
+    findTrustedCodexResult({
+      reviews: [{ id: 7, commit_id: head, user: { login: 'chatgpt-codex-connector[bot]' } }],
+      comments: [],
+      headSha: head,
+    }),
+    { kind: 'review', id: '7' },
+  );
+  assert.deepEqual(
+    findTrustedCodexResult({
+      reviews: [],
+      comments: [{
+        id: 8,
+        user: { login: 'chatgpt-codex-connector[bot]' },
+        body: "Codex Review: Didn't find any major issues.\n\n**Reviewed commit:** \`4acce6f6ce\`",
+      }],
+      headSha: head,
+    }),
+    { kind: 'clean-comment', id: '8' },
+  );
 
   const state = {
     allowed_paths: ['a.php', 'b.php'],
@@ -213,7 +305,7 @@ function selftest() {
   });
   assert.equal(checkScope(state, ['outside.php'], fixtureRoot).ok, false);
   fs.rmSync(fixtureRoot, { recursive: true, force: true });
-  console.log('PASS: 12 subscription-gate checks');
+  console.log('PASS: 20 subscription-gate checks');
 }
 
 function main() {
@@ -277,8 +369,11 @@ if (require.main === module) {
 
 module.exports = {
   checkScope,
+  cleanCodexCommentMatchesHead,
+  findTrustedCodexResult,
   discoveredTestCount,
   isSafeTestCommand,
   loadState,
   runTests,
 };
+
