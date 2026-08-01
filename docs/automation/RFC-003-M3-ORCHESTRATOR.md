@@ -45,23 +45,82 @@ when something is ambiguous, unverifiable, or out of scope.
 ## The locked Slice 3B contract
 
 The planning-stage OpenAI call is given this contract verbatim and is told
-not to invent scope beyond it (see `SLICE_3B_CONTRACT` in
+it is **complete** -- every product decision that could otherwise require
+judgment (route name, page structure, field set, ordering, owner-row
+treatment) is already made, so the plan stage has no grounds to return
+`NEEDS_HUMAN` for anything short of a real repository contradiction (see
+`SLICE_3B_CONTRACT` and the `plan` entry in `SYSTEM_PROMPTS`, both in
 `openai_orchestrator.py`):
 
-- add read-only Workspace overview
-- add read-only Workspace membership list
-- membership list audience is Workspace owner plus active Admin only
-- Staff cannot access the membership list
-- direct Business ownership alone grants no Workspace-level surface
-- active memberships only are listed
-- display member name, role, scope, and selected-Business assignment count
-- do not display email, numeric IDs, inactive rows, or selected-Business names
-- inactive Workspace remains addressable to owner/active members
-- inactive Workspace Business access remains blocked
-- inaccessible and unknown Workspace uid both return 404
-- GET only
-- no mutation forms, buttons, routes, or actions
-- no Slice 3C Business-list or navigation work
+**Route and page.** Exactly one new customer GET route,
+`customer.workspaces.show` at `workspaces/{workspaceUid}`, rendering one
+read-only Workspace overview page. The membership directory lives on that
+same page -- not a separate route. No `customer.workspaces.members.index`,
+no `customer.workspaces.businesses.index`, and no POST/PUT/PATCH/DELETE
+Workspace route.
+
+**Overview content.** Displays exactly: Workspace name, Workspace status
+(Active or Inactive), and the current user's effective role (Owner, Admin,
+or Staff). Never displays: Workspace numeric ID, owner numeric ID, owner
+email, Business list/names/count, navigation into a Business, or
+billing/wallet/usage/plan data.
+
+**Authorization.** 200 only for the Workspace owner or an active
+membership holder. 404 for: unknown uid, an unrelated user, an
+inactive-membership-only user, a user who only directly owns a Business
+inside that Workspace, or `users.parent_id`/`users.is_admin` as the only
+possible access path. Owner status always wins over an anomalous
+coexisting membership row. An inactive Workspace stays addressable (200,
+visibly showing Inactive) to its owner and active members.
+
+**Membership directory visibility.** Owner and active Admin can see the
+directory; active Staff sees the overview but the directory rows are
+absent from the response data entirely (not CSS-hidden). Unknown/
+unauthorized users get 404, never 403.
+
+**Membership directory rows.** Active `workspace_memberships` rows only,
+sorted by `workspace_memberships.id` ascending. The owner is never
+synthesized as a row; inactive memberships are never included. Each row
+exposes exactly: member name, role label (Admin/Staff), scope label (All
+Businesses / Selected Businesses), and the selected-Business assignment
+count as an integer (the actual `workspace_membership_businesses` row
+count for that membership -- normally zero for an All Businesses
+membership under the domain invariant, but reported as the real count, not
+assumed). Never exposes: member email, user/membership/Workspace numeric
+IDs, assigned Business IDs or names, or inactive rows.
+
+**Implementation boundary.** Limited to
+`app/Http/Controllers/Customer/Workspace/WorkspaceController.php`,
+`routes/customer.php`,
+`resources/views/customer/workspaces/show.blade.php`,
+`tests/Feature/Workspace/WorkspaceOverviewHttpTest.php`, and one narrow
+update to the existing `WorkspaceSwitcherHttpTest` (its Slice 3A "no later
+route exists" assertion must now permit `customer.workspaces.show` while
+still forbidding member-list and Business-list routes). Must reuse
+`WorkspaceRepository::findByUid()`,
+`WorkspaceMembershipRepository::findByWorkspaceAndUser()`,
+`WorkspaceMembershipRepository::activeForWorkspace()`, and
+`WorkspaceMembershipBusinessRepository::assignedBusinessIds()` -- all four
+were confirmed to exist against the actual repository interfaces before
+this contract was locked in. No new repository method unless inspection
+proves one of these can't satisfy the contract, in which case the smallest
+semantics-preserving addition must be named explicitly rather than the
+plan silently working around it.
+
+**Read-only safety.** GET/HEAD only, no database writes, no forms/
+mutation buttons/mutation links/JS mutation actions, no Slice 3C
+Business-list or navigation work, no mutation service or
+`WorkspaceManager` method call.
+
+**Required test coverage.** At minimum
+`php artisan test --filter=WorkspaceOverviewHttpTest` and
+`php artisan test --filter=WorkspaceSwitcherHttpTest`.
+`WorkspaceOverviewHttpTest` must prove route shape and HTTP-method
+restriction, guest rejection, owner/Admin/Staff overview access, inactive-
+Workspace addressability, every 404 case above, directory visibility and
+row content per role, deterministic ordering, absence of every forbidden
+field, that a GET performs no writes, and that no members/Business-list
+route or mutation surface exists.
 
 ## How to run it
 
