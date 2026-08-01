@@ -2,9 +2,12 @@
 
 namespace App\Http\Controllers\Customer\Workspace;
 
+use App\Enums\Workspace\WorkspaceBusinessAccessScope;
 use App\Enums\Workspace\WorkspaceMembershipRole;
 use App\Http\Controllers\Customer\CustomerBaseController;
 use App\Models\Workspace;
+use App\Models\WorkspaceMembership;
+use App\Repositories\Contracts\WorkspaceMembershipBusinessRepository;
 use App\Repositories\Contracts\WorkspaceMembershipRepository;
 use App\Repositories\Contracts\WorkspaceRepository;
 use Illuminate\Contracts\View\View;
@@ -21,6 +24,7 @@ class WorkspaceController extends CustomerBaseController
     public function __construct(
         private readonly WorkspaceRepository $workspaceRepository,
         private readonly WorkspaceMembershipRepository $membershipRepository,
+        private readonly WorkspaceMembershipBusinessRepository $membershipBusinessRepository,
     ) {
     }
 
@@ -41,6 +45,89 @@ class WorkspaceController extends CustomerBaseController
             ->values();
 
         return view('customer.workspaces.index', ['workspaces' => $workspaces]);
+    }
+
+    /**
+     * RFC-003 Milestone 3 Slice 3B: read-only Workspace overview. 404 (never
+     * 403) for an unknown uid or a user with no owner/active-membership path
+     * to this Workspace — owner status always wins over an anomalous
+     * coexisting membership row. The embedded membership directory is
+     * populated only for the owner and an active Admin; for active Staff the
+     * `directory` key is omitted from the view data entirely rather than
+     * rendered empty.
+     */
+    public function show(string $workspaceUid): View
+    {
+        $workspace = $this->workspaceRepository->findByUid($workspaceUid);
+
+        if ($workspace === null) {
+            abort(404);
+        }
+
+        $userId = (int) Auth::id();
+        $roleKey = $this->effectiveRoleKey($workspace, $userId);
+
+        if ($roleKey === null) {
+            abort(404);
+        }
+
+        return view('customer.workspaces.show', [
+            'workspace' => [
+                'name' => $workspace->name,
+                'is_active' => (bool) $workspace->is_active,
+                'role' => self::ROLE_LABELS[$roleKey],
+            ],
+            'directory' => in_array($roleKey, ['owner', 'admin'], true)
+                ? $this->membershipDirectory($workspace)
+                : null,
+        ]);
+    }
+
+    /**
+     * Same owner-wins-over-membership precedence as presentationRow(), but
+     * returns only the role key (no uid/name row shape) since show() needs
+     * just the effective role to decide access and directory visibility.
+     */
+    private function effectiveRoleKey(Workspace $workspace, int $userId): ?string
+    {
+        if ((int) $workspace->owner_user_id === $userId) {
+            return 'owner';
+        }
+
+        $membership = $this->membershipRepository->findByWorkspaceAndUser($workspace, $userId);
+
+        if ($membership === null || ! $membership->is_active) {
+            return null;
+        }
+
+        return $membership->role === WorkspaceMembershipRole::Admin ? 'admin' : 'staff';
+    }
+
+    /**
+     * Active memberships only, ordered by workspace_memberships.id
+     * ascending; the owner is never synthesized as a row. Each row's
+     * assigned-Business count is the real
+     * workspace_membership_businesses row count for that membership, not
+     * assumed from the access-scope label.
+     *
+     * @return array<int, array{name: string, role: string, scope: string, assigned_business_count: int}>
+     */
+    private function membershipDirectory(Workspace $workspace): array
+    {
+        return $this->membershipRepository->activeForWorkspace($workspace)
+            ->sortBy('id')
+            ->values()
+            ->map(fn (WorkspaceMembership $membership) => [
+                'name' => trim($membership->user->first_name . ' ' . $membership->user->last_name),
+                'role' => $membership->role === WorkspaceMembershipRole::Admin ? 'Admin' : 'Staff',
+                'scope' => $membership->business_access_scope === WorkspaceBusinessAccessScope::All
+                    ? 'All Businesses'
+                    : 'Selected Businesses',
+                'assigned_business_count' => $this->membershipBusinessRepository
+                    ->assignedBusinessIds($membership)
+                    ->count(),
+            ])
+            ->all();
     }
 
     /**

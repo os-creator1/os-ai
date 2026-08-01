@@ -570,12 +570,13 @@
 
     /*
     |--------------------------------------------------------------------------
-    | Workspace switcher (RFC-003 Milestone 3 Slice 3A)
+    | Workspace switcher and overview (RFC-003 Milestone 3 Slice 3A/3B)
     |--------------------------------------------------------------------------
     */
 
     Route::prefix('workspaces')->name('workspaces.')->group(function () {
         Route::get('/', 'Workspace\WorkspaceController@index')->name('index');
+        Route::get('{workspaceUid}', 'Workspace\WorkspaceController@show')->name('show');
     });
 
 
