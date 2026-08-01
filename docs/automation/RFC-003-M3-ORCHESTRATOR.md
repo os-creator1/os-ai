@@ -17,10 +17,11 @@ when something is ambiguous, unverifiable, or out of scope.
    trusting it to make any decision.
 2. Resolves PR #2 via `gh pr view` and refuses to proceed unless the PR is
    open, based on `main`, and not from a fork.
-3. Checks out the PR's actual head branch, verifies the test database is
-   exactly `ultimatesms_testing`, installs PHP/Composer dependencies, and
-   proves the runner can execute a real focused test
-   (`WorkspaceRepositoryTest`) before doing anything else.
+3. Checks out the PR's actual head branch, verifies the job's runtime
+   database environment variables are exactly the disposable test
+   configuration (see "Test database configuration" below), installs
+   PHP/Composer dependencies, and proves the runner can execute a real
+   focused test (`WorkspaceRepositoryTest`) before doing anything else.
 4. **OpenAI plan call** -- turns the locked Slice 3B contract (below) into a
    concrete, bounded implementation instruction, or returns `NEEDS_HUMAN` if
    the contract is ambiguous.
@@ -119,7 +120,7 @@ It cannot be triggered by a PR comment, by `@claude`, or by any push -- only
 | Never push to main | Claude's `--disallowedTools` blocks `git push origin main`, `git push *main`, `git checkout main`; the workflow itself never pushes anywhere |
 | Never force-push | Blocked in `--disallowedTools` |
 | Never modify workflow files from inside the pilot | Claude's system prompt instructs this; **structurally enforced** by the post-implementation/post-correction scope guard (`check-scope`), which fails the run if any changed file starts with `.github/`, `.env`, `.pilot-tooling/`, or equals `phpunit.xml` / `config/database.php` -- this is the compensating control for the fact that the action's tool-allowlist syntax cannot itself restrict `Edit`/`Write` by path |
-| Test database must be `ultimatesms_testing` | A dedicated step greps `.env.testing` for exactly `DB_DATABASE=ultimatesms_testing` and refuses to proceed otherwise, before Composer install or any test run |
+| Test database must be `ultimatesms_testing` | A dedicated step checks the job's own runtime `DB_*`/`TARGET_DB` environment variables (not a file) exactly match the disposable test configuration and refuses to proceed otherwise, before Composer install or any test run -- see "Test database configuration" below |
 | No PAT | Only `secrets.GITHUB_TOKEN` (the run's own auto-issued token) is used, via `gh`'s default auth and `actions/checkout`'s default credential persistence |
 | Untrusted PR text can't become shell syntax | PR title/body are written straight to files by `jq` and only ever consumed as **file content** by the Python script's `--pr-title-file`/`--pr-body-file` args -- never interpolated into a `${{ }}` expression inside a `run:` block |
 | OpenAI-generated text is data, not executable | `claude_prompt` is written to a file, exported to `$GITHUB_ENV` with a random per-run delimiter, and passed to `claude-code-action` via its dedicated `prompt` input -- never concatenated into the `claude_args` CLI-flags string, so it cannot inject extra flags into the Claude CLI invocation the way string concatenation would allow |
@@ -136,6 +137,45 @@ run and stops the pilot before any further stage (including the review call)
 if a forbidden path was touched. Because the pilot never merges anything, a
 human still reviews the PR before this could reach `main` even in the worst
 case.
+
+## Test database configuration
+
+This repository's `.gitignore` excludes `.env` and `.env.*`, so a fresh
+GitHub Actions checkout of any branch -- including the PR branch this pilot
+operates on -- never contains a `.env.testing` file. The workflow does not
+create one, does not commit one, and does not require one to exist.
+
+Instead, `.github/workflows/ai-orchestrator-pilot.yml` supplies the test
+database configuration directly as **explicit, disposable, job-level
+environment variables** (`APP_KEY`, `DB_CONNECTION`, `DB_HOST`, `DB_PORT`,
+`DB_DATABASE`, `DB_USERNAME`, `DB_PASSWORD`, alongside the existing
+`APP_ENV`/`TARGET_DB`). These values exist only for the lifetime of the
+job -- they are not secrets, not sourced from any file, and match the
+`mysql` service container defined in the same job exactly. The MySQL
+service's own credentials likewise exist only inside that disposable
+GitHub-hosted runner and are torn down when the job ends.
+
+The "Verify test database configuration" step checks the *runtime
+environment*, not a file:
+
+- `TARGET_DB` and `DB_DATABASE` are each exactly `ultimatesms_testing`.
+- `DB_CONNECTION` is exactly `mysql`, `DB_HOST` is exactly `127.0.0.1`,
+  `DB_PORT` is exactly `3306`, `DB_USERNAME` is exactly `ultimatesms_test`.
+- `DB_PASSWORD` is non-empty (its value is never printed or compared by
+  content -- only presence is checked).
+- `DATABASE_URL` is absent or empty, since Laravel lets a `DATABASE_URL`
+  override individual `DB_*` values -- if it were set, it could silently
+  redirect the pilot at a different database than the one just verified.
+- None of `TARGET_DB`/`DB_DATABASE`/`DB_CONNECTION`/`DB_HOST`/`DB_USERNAME`
+  contain the production database name or an obvious production-sounding
+  substring.
+
+Failure at this step means the runtime environment does not match the
+exact safe test configuration above -- for any reason, including a future
+edit to the job-level `env:` block -- and the pilot refuses to proceed
+rather than guess. The step prints only the non-sensitive values
+(`DB_CONNECTION`, `DB_HOST`, `DB_PORT`, `DB_DATABASE`, `DB_USERNAME`) for
+audit purposes; `DB_PASSWORD` is never printed.
 
 ## Expected cost range
 
@@ -180,9 +220,9 @@ The pilot fails closed -- meaning it stops and reports rather than guessing
 
 - The PR cannot be resolved, is closed/merged, is based on something other
   than `main`, or is from a fork.
-- `.env.testing` is missing, or does not declare exactly
-  `DB_DATABASE=ultimatesms_testing`, or references a production-looking
-  database name.
+- The job's runtime `DB_*`/`TARGET_DB` environment variables do not exactly
+  match the disposable test configuration, `DATABASE_URL` is set, or any of
+  those values reference a production-looking database name.
 - Composer/PHP setup or migration fails.
 - An OpenAI response fails schema validation, is unparsable, or the model
   refuses -- the stage reports `NEEDS_HUMAN` with the validation error as a
@@ -258,8 +298,10 @@ configuration exists on the OpenAI side at the time.
   added this pilot -- only the three files listed in the PR (this doc, the
   workflow, and the script).
 - Confirmed no secret values appear in the diff (the MySQL credentials in
-  the workflow's `services:` block are the repository's own already-public,
-  non-secret `.env.testing` placeholder values, not real credentials).
+  the workflow's `services:` block and job-level `env:` are disposable,
+  non-secret, local-only placeholder values that exist only inside the
+  GitHub-hosted runner for the lifetime of the job -- not real credentials
+  and not sourced from any committed file).
 - Reviewed workflow permissions (narrowest set that supports the flow, no
   `deployments`/`packages`/`security-events`/environments) and every place
   untrusted text (PR title/body, OpenAI output) touches a shell or an
