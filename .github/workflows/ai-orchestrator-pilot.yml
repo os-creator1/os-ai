@@ -1,0 +1,423 @@
+name: AI Orchestrator Pilot (RFC-003 M3)
+
+# Bounded, one-slice pilot: OpenAI plans and reviews, Claude Code implements
+# on the existing PR branch, and the pilot stops for a human rather than
+# guessing whenever something is ambiguous, unverifiable, or out of scope.
+# Manually triggered only -- see docs/automation/RFC-003-M3-ORCHESTRATOR.md.
+#
+# Directory layout used by this workflow (documented here because it is not
+# obvious from the steps alone):
+#   $GITHUB_WORKSPACE (repo root) -- the *PR's own head branch*, checked out
+#     directly at the root because anthropics/claude-code-action operates on
+#     whatever is checked out there and has no working-directory override.
+#   $GITHUB_WORKSPACE/.pilot-tooling -- this workflow's own branch (whichever
+#     ref the run was dispatched from), checked out read-only into a
+#     subdirectory purely so the orchestrator script is available even while
+#     the PR branch (which does not contain it) is checked out at the root.
+#     It is excluded via .git/info/exclude (never a committed .gitignore
+#     change) so it can never be swept into `git add -A`/`git add .` and
+#     never appears in a origin/main...HEAD diff.
+#   $RUNNER_TEMP/pilot -- all generated artifacts (PR metadata, diffs,
+#     decisions, test results, the final comment). Kept outside the checked-
+#     out repo entirely so a later `actions/checkout` clean step can never
+#     delete them.
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: "PR number to operate on"
+        required: true
+        default: "2"
+      slice:
+        description: "Target slice"
+        required: true
+        default: "RFC-003 Milestone 3 Slice 3B"
+
+concurrency:
+  group: ai-orchestrator-pilot-${{ github.event.inputs.pr_number }}
+  cancel-in-progress: false
+
+jobs:
+  pilot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      actions: read
+      id-token: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      APP_ENV: testing
+      TARGET_DB: ultimatesms_testing
+      PILOT_TMP: ${{ runner.temp }}/pilot
+      ORCHESTRATOR: .pilot-tooling/.github/scripts/openai_orchestrator.py
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          # Values match the repository's already-committed .env.testing --
+          # a non-secret, local-only test fixture, not a real credential.
+          MYSQL_DATABASE: ultimatesms_testing
+          MYSQL_USER: ultimatesms_test
+          MYSQL_PASSWORD: Choose-A-Local-Test-Password
+          MYSQL_ROOT_PASSWORD: root
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+    steps:
+      - name: Create scratch directory
+        run: mkdir -p "$PILOT_TMP"
+
+      # ---------------------------------------------------------------
+      # Stage 1: resolve and validate the target PR before touching
+      # anything else. Uses the runner's preinstalled gh CLI and the
+      # workflow's own auto-issued GITHUB_TOKEN -- no PAT. No checkout
+      # has happened yet, so nothing written here can be wiped by one.
+      # ---------------------------------------------------------------
+      - name: Validate pr_number input
+        run: |
+          set -euo pipefail
+          if ! [[ "${{ github.event.inputs.pr_number }}" =~ ^[0-9]+$ ]]; then
+            echo "::error::pr_number must be a plain integer"
+            exit 1
+          fi
+
+      - name: Resolve and validate target PR
+        id: resolve_pr
+        run: |
+          set -euo pipefail
+          gh pr view "${{ github.event.inputs.pr_number }}" \
+            --repo "${{ github.repository }}" \
+            --json number,state,baseRefName,headRefName,isCrossRepository,title,body,url \
+            > "$PILOT_TMP/pr.json"
+
+          state=$(jq -r '.state' "$PILOT_TMP/pr.json")
+          base=$(jq -r '.baseRefName' "$PILOT_TMP/pr.json")
+          cross=$(jq -r '.isCrossRepository' "$PILOT_TMP/pr.json")
+          head=$(jq -r '.headRefName' "$PILOT_TMP/pr.json")
+          number=$(jq -r '.number' "$PILOT_TMP/pr.json")
+
+          if [ "$state" != "OPEN" ]; then
+            echo "::error::PR #$number is not open (state: $state); refusing"
+            exit 1
+          fi
+          if [ "$base" != "main" ]; then
+            echo "::error::PR #$number base branch is '$base', not main; refusing"
+            exit 1
+          fi
+          if [ "$cross" != "false" ]; then
+            echo "::error::PR #$number is from a fork; refusing"
+            exit 1
+          fi
+          if [ "$number" != "${{ github.event.inputs.pr_number }}" ]; then
+            echo "::error::resolved PR number does not match the requested input; refusing"
+            exit 1
+          fi
+
+          echo "head_ref=$head" >> "$GITHUB_OUTPUT"
+          jq -r '.title' "$PILOT_TMP/pr.json" > "$PILOT_TMP/pr_title.txt"
+          jq -r '.body // ""' "$PILOT_TMP/pr.json" > "$PILOT_TMP/pr_body.txt"
+
+      # ---------------------------------------------------------------
+      # Stage 2: check out the PR's real head branch at the workspace
+      # root (required by claude-code-action), then the pilot's own
+      # tooling into a subdirectory, then exclude that subdirectory
+      # locally so it can never be swept into a commit.
+      # ---------------------------------------------------------------
+      - name: Checkout PR head branch
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.resolve_pr.outputs.head_ref }}
+          fetch-depth: 0
+
+      - name: Checkout pilot tooling
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.ref }}
+          path: .pilot-tooling
+
+      - name: Exclude pilot tooling from the PR repo's git view
+        run: echo ".pilot-tooling/" >> .git/info/exclude
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Validate orchestrator script syntax
+        run: python3 -m py_compile "$ORCHESTRATOR"
+
+      - name: Self-test orchestrator script (mocked input, no network)
+        run: python3 "$ORCHESTRATOR" selftest
+
+      - name: Fetch main for diffing
+        run: git fetch origin main
+
+      - name: Record starting SHA
+        id: start_sha
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Build initial diff context
+        run: |
+          git diff origin/main...HEAD > "$PILOT_TMP/diff.patch"
+          git diff --name-only origin/main...HEAD > "$PILOT_TMP/changed_files.txt"
+
+      # ---------------------------------------------------------------
+      # Stage 3: fail closed on the test database before installing
+      # anything or running anything.
+      # ---------------------------------------------------------------
+      - name: Verify test database configuration
+        run: |
+          set -euo pipefail
+          if [ ! -f .env.testing ]; then
+            echo "::error::.env.testing not found; refusing to guess database configuration"
+            exit 1
+          fi
+          if ! grep -qx 'DB_DATABASE=ultimatesms_testing' .env.testing; then
+            echo "::error::.env.testing does not declare DB_DATABASE=ultimatesms_testing exactly; refusing"
+            exit 1
+          fi
+          if grep -qi 'jazmisuh_jasmin' .env.testing; then
+            echo "::error::.env.testing references a production-looking database name; refusing"
+            exit 1
+          fi
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.2"
+          extensions: mbstring, bcmath, pdo_mysql, intl, xml, curl, zip
+          coverage: none
+          tools: composer:v2
+
+      - name: Install Composer dependencies
+        run: composer install --no-interaction --prefer-dist --no-progress
+
+      - name: Prepare test database
+        run: |
+          php artisan config:clear
+          php artisan migrate --force
+
+      - name: Prove the runner can execute a focused Workspace test
+        run: php artisan test --filter=WorkspaceRepositoryTest
+
+      # ---------------------------------------------------------------
+      # Stage 4: OpenAI plan call (1 of max 3 OpenAI requests).
+      # ---------------------------------------------------------------
+      - name: OpenAI planning stage
+        id: plan
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          python3 "$ORCHESTRATOR" decide \
+            --stage plan \
+            --pr-number "${{ github.event.inputs.pr_number }}" \
+            --slice "${{ github.event.inputs.slice }}" \
+            --rfc-file docs/rfcs/RFC-003-WORKSPACE-AND-BUSINESS-ACCOUNT-CORE.md \
+            --claude-md-file CLAUDE.md \
+            --pr-title-file "$PILOT_TMP/pr_title.txt" \
+            --pr-body-file "$PILOT_TMP/pr_body.txt" \
+            --diff-file "$PILOT_TMP/diff.patch" \
+            --changed-files-file "$PILOT_TMP/changed_files.txt" \
+            --output-json "$PILOT_TMP/plan_decision.json" \
+            --claude-prompt-file "$PILOT_TMP/claude_prompt.txt" \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Export Claude prompt safely
+        if: steps.plan.outputs.decision == 'IMPLEMENT'
+        run: |
+          set -euo pipefail
+          delim="prompt_$(python3 -c 'import uuid; print(uuid.uuid4().hex)')"
+          {
+            echo "CLAUDE_PROMPT<<$delim"
+            cat "$PILOT_TMP/claude_prompt.txt"
+            echo ""
+            echo "$delim"
+          } >> "$GITHUB_ENV"
+
+      # ---------------------------------------------------------------
+      # Stage 5: Claude implementation (1 of max 2 Claude executions).
+      # The generated instruction goes in via the action's dedicated
+      # `prompt` input, never concatenated into the claude_args string,
+      # so it cannot inject extra CLI flags into the Claude CLI invocation.
+      # ---------------------------------------------------------------
+      - name: Claude implementation
+        id: claude_implementation
+        if: steps.plan.outputs.decision == 'IMPLEMENT'
+        continue-on-error: true
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: ${{ env.CLAUDE_PROMPT }}
+          display_report: true
+          claude_args: |
+            --model claude-sonnet-5
+            --max-turns 30
+            --allowedTools "Bash(vendor/bin/phpunit:*),Bash(php artisan test:*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git branch:*),Bash(git rev-parse:*),Bash(git show:*),Bash(git diff-tree:*),Bash(git ls-files:*),Read,Grep,Glob,Edit,Write"
+            --disallowedTools "Bash(git push origin main:*),Bash(git push origin master:*),Bash(git push:*main),Bash(git push:*master),Bash(git push --force:*),Bash(git checkout main:*),Bash(git merge:*),Bash(gh pr merge:*),Bash(gh api:*),Bash(composer:*),WebFetch,WebSearch"
+            --append-system-prompt "Branch-only development on this repository, restricted to the branch already checked out. Never push to main or master, never merge a pull request, never force-push, and never modify any file under .github/workflows/, .pilot-tooling/, or any .env* file. Never run 'git add -A' or 'git add .' -- stage only the specific files your change actually touches. You are one bounded step of a one-slice autonomous pilot: implement only the instruction given, nothing beyond it -- no Slice 3C work, no unrelated refactors. For any test run, use the ultimatesms_testing database only; never touch a production-looking database, deployment credential, or unrelated secret. Run the focused tests relevant to the change before any full regression suite. Commit your changes with a clear message and push to the current branch only; do not open a new branch or a new pull request. Report exact test counts and the exact git scope (files changed) in your summary. If any instruction is ambiguous or requires a product decision outside what was given to you, stop and describe the ambiguity instead of guessing."
+
+      - name: Refresh diff after implementation
+        if: steps.plan.outputs.decision == 'IMPLEMENT'
+        run: |
+          git fetch origin "${{ steps.resolve_pr.outputs.head_ref }}"
+          git diff origin/main...HEAD > "$PILOT_TMP/diff.patch"
+          git diff --name-only origin/main...HEAD > "$PILOT_TMP/changed_files.txt"
+
+      - name: Enforce workflow/env/config scope guard
+        id: scope_guard
+        if: steps.plan.outputs.decision == 'IMPLEMENT'
+        run: python3 "$ORCHESTRATOR" check-scope --changed-files-file "$PILOT_TMP/changed_files.txt"
+
+      - name: Run focused tests after implementation
+        id: tests_after_implementation
+        if: steps.plan.outputs.decision == 'IMPLEMENT' && steps.scope_guard.outcome == 'success'
+        continue-on-error: true
+        run: |
+          python3 "$ORCHESTRATOR" run-tests \
+            --decision-file "$PILOT_TMP/plan_decision.json" \
+            --output-json "$PILOT_TMP/test_results_1.json"
+          cat "$PILOT_TMP/test_results_1.json"
+
+      # ---------------------------------------------------------------
+      # Stage 6: OpenAI review call (2 of max 3 OpenAI requests).
+      # ---------------------------------------------------------------
+      - name: OpenAI review stage
+        id: review
+        if: steps.plan.outputs.decision == 'IMPLEMENT' && steps.scope_guard.outcome == 'success'
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          python3 "$ORCHESTRATOR" decide \
+            --stage review \
+            --pr-number "${{ github.event.inputs.pr_number }}" \
+            --slice "${{ github.event.inputs.slice }}" \
+            --rfc-file docs/rfcs/RFC-003-WORKSPACE-AND-BUSINESS-ACCOUNT-CORE.md \
+            --claude-md-file CLAUDE.md \
+            --pr-title-file "$PILOT_TMP/pr_title.txt" \
+            --pr-body-file "$PILOT_TMP/pr_body.txt" \
+            --diff-file "$PILOT_TMP/diff.patch" \
+            --changed-files-file "$PILOT_TMP/changed_files.txt" \
+            --test-results-file "$PILOT_TMP/test_results_1.json" \
+            --prior-decision-file "$PILOT_TMP/plan_decision.json" \
+            --output-json "$PILOT_TMP/review_decision.json" \
+            --claude-prompt-file "$PILOT_TMP/correction_prompt.txt" \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Export correction prompt safely
+        if: steps.review.outputs.decision == 'FIX'
+        run: |
+          set -euo pipefail
+          delim="prompt_$(python3 -c 'import uuid; print(uuid.uuid4().hex)')"
+          {
+            echo "CORRECTION_PROMPT<<$delim"
+            cat "$PILOT_TMP/correction_prompt.txt"
+            echo ""
+            echo "$delim"
+          } >> "$GITHUB_ENV"
+
+      # ---------------------------------------------------------------
+      # Stage 7: optional Claude correction (2 of max 2 Claude executions).
+      # ---------------------------------------------------------------
+      - name: Claude correction
+        id: claude_correction
+        if: steps.review.outputs.decision == 'FIX'
+        continue-on-error: true
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: ${{ env.CORRECTION_PROMPT }}
+          display_report: true
+          claude_args: |
+            --model claude-sonnet-5
+            --max-turns 30
+            --allowedTools "Bash(vendor/bin/phpunit:*),Bash(php artisan test:*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git branch:*),Bash(git rev-parse:*),Bash(git show:*),Bash(git diff-tree:*),Bash(git ls-files:*),Read,Grep,Glob,Edit,Write"
+            --disallowedTools "Bash(git push origin main:*),Bash(git push origin master:*),Bash(git push:*main),Bash(git push:*master),Bash(git push --force:*),Bash(git checkout main:*),Bash(git merge:*),Bash(gh pr merge:*),Bash(gh api:*),Bash(composer:*),WebFetch,WebSearch"
+            --append-system-prompt "Branch-only development on this repository, restricted to the branch already checked out. Never push to main or master, never merge a pull request, never force-push, and never modify any file under .github/workflows/, .pilot-tooling/, or any .env* file. Never run 'git add -A' or 'git add .' -- stage only the specific files your change actually touches. This is the single permitted correction round of a bounded one-slice pilot -- apply only the exact findings given to you, nothing else. For any test run, use the ultimatesms_testing database only. Commit and push to the current branch only. Report exact test counts and the exact git scope (files changed) in your summary."
+
+      - name: Refresh diff after correction
+        if: steps.review.outputs.decision == 'FIX'
+        run: |
+          git fetch origin "${{ steps.resolve_pr.outputs.head_ref }}"
+          git diff origin/main...HEAD > "$PILOT_TMP/diff.patch"
+          git diff --name-only origin/main...HEAD > "$PILOT_TMP/changed_files.txt"
+
+      - name: Enforce workflow/env/config scope guard (post-correction)
+        id: scope_guard_2
+        if: steps.review.outputs.decision == 'FIX'
+        run: python3 "$ORCHESTRATOR" check-scope --changed-files-file "$PILOT_TMP/changed_files.txt"
+
+      - name: Run focused tests after correction
+        id: tests_after_correction
+        if: steps.review.outputs.decision == 'FIX' && steps.scope_guard_2.outcome == 'success'
+        continue-on-error: true
+        run: |
+          python3 "$ORCHESTRATOR" run-tests \
+            --decision-file "$PILOT_TMP/review_decision.json" \
+            --output-json "$PILOT_TMP/test_results_2.json"
+          cat "$PILOT_TMP/test_results_2.json"
+
+      # ---------------------------------------------------------------
+      # Stage 8: OpenAI final review (3 of max 3 OpenAI requests), only
+      # when a correction round actually happened.
+      # ---------------------------------------------------------------
+      - name: OpenAI final review stage
+        id: final_review
+        if: steps.review.outputs.decision == 'FIX' && steps.scope_guard_2.outcome == 'success'
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          python3 "$ORCHESTRATOR" decide \
+            --stage final_review \
+            --pr-number "${{ github.event.inputs.pr_number }}" \
+            --slice "${{ github.event.inputs.slice }}" \
+            --rfc-file docs/rfcs/RFC-003-WORKSPACE-AND-BUSINESS-ACCOUNT-CORE.md \
+            --claude-md-file CLAUDE.md \
+            --pr-title-file "$PILOT_TMP/pr_title.txt" \
+            --pr-body-file "$PILOT_TMP/pr_body.txt" \
+            --diff-file "$PILOT_TMP/diff.patch" \
+            --changed-files-file "$PILOT_TMP/changed_files.txt" \
+            --test-results-file "$PILOT_TMP/test_results_2.json" \
+            --prior-decision-file "$PILOT_TMP/review_decision.json" \
+            --output-json "$PILOT_TMP/final_review_decision.json" \
+            --github-output "$GITHUB_OUTPUT"
+
+      # ---------------------------------------------------------------
+      # Stage 9: report. Always runs, regardless of where the pipeline
+      # stopped, and never merges or pushes to main.
+      # ---------------------------------------------------------------
+      - name: Render final PR comment
+        id: render_comment
+        if: always()
+        run: |
+          # Decision/test-result files simply may not exist if the pilot
+          # stopped before that stage ran -- the script treats a missing
+          # or unreadable file as "that stage did not produce a decision"
+          # rather than erroring, so every path below is passed
+          # unconditionally regardless of which stages actually ran.
+          python3 "$ORCHESTRATOR" render-comment \
+            --pr-number "${{ github.event.inputs.pr_number }}" \
+            --slice "${{ github.event.inputs.slice }}" \
+            --start-sha "${{ steps.start_sha.outputs.sha }}" \
+            --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --plan-decision "$PILOT_TMP/plan_decision.json" \
+            --review-decision "$PILOT_TMP/review_decision.json" \
+            --final-review-decision "$PILOT_TMP/final_review_decision.json" \
+            --test-results-1 "$PILOT_TMP/test_results_1.json" \
+            --test-results-2 "$PILOT_TMP/test_results_2.json" \
+            --changed-files-file "$PILOT_TMP/changed_files.txt" \
+            --claude-implementation-ran "${{ steps.claude_implementation.outcome || 'skipped' }}" \
+            --claude-correction-ran "${{ steps.claude_correction.outcome || 'skipped' }}" \
+            --scope-guard-outcome "${{ steps.scope_guard_2.outcome || steps.scope_guard.outcome || 'not-run' }}" \
+            --output "$PILOT_TMP/comment.md"
+
+      - name: Post PR comment
+        if: always()
+        run: gh pr comment "${{ github.event.inputs.pr_number }}" --repo "${{ github.repository }}" --body-file "$PILOT_TMP/comment.md"
