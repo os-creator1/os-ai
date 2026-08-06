@@ -16,6 +16,19 @@ function isAllowedRoutineUrl(value) {
   }
 }
 
+function isAllowedSessionUrl(value) {
+  try {
+    const url = new URL(String(value || ''));
+    return url.protocol === 'https:'
+      && url.hostname === 'claude.ai'
+      && /^\/code\/(?:session_[A-Za-z0-9_-]+|session\/[A-Za-z0-9_-]+)$/.test(url.pathname)
+      && url.search === ''
+      && url.hash === '';
+  } catch {
+    return false;
+  }
+}
+
 async function fireRoutine({ url, token, fetchImpl = global.fetch }) {
   if (!isAllowedRoutineUrl(url)) {
     throw new Error('CLAUDE_ROUTINE_URL is missing or is not an official Claude Routine /fire URL.');
@@ -39,7 +52,7 @@ async function fireRoutine({ url, token, fetchImpl = global.fetch }) {
   const result = await response.json();
   if (
     result?.type !== 'routine_fire'
-    || !/^https:\/\/claude\.ai\/code\/session\//.test(String(result.claude_code_session_url || ''))
+    || !isAllowedSessionUrl(result.claude_code_session_url)
   ) {
     throw new Error('Claude Routine trigger returned an unexpected response.');
   }
@@ -54,6 +67,12 @@ async function selftest() {
   assert.equal(isAllowedRoutineUrl('https://example.com/v1/claude_code/routines/trig_01ABC/fire'), false);
   assert.equal(isAllowedRoutineUrl('https://api.anthropic.com/v1/claude_code/routines/x/fire'), false);
   assert.equal(isAllowedRoutineUrl(''), false);
+  assert.equal(isAllowedSessionUrl('https://claude.ai/code/session_01ABC_def'), true);
+  assert.equal(isAllowedSessionUrl('https://claude.ai/code/session/session_01ABC_def'), true);
+  assert.equal(isAllowedSessionUrl('https://claude.ai.evil.example/code/session_01ABC'), false);
+  assert.equal(isAllowedSessionUrl('https://claude.ai/code/session_01ABC?next=evil'), false);
+  assert.equal(isAllowedSessionUrl('https://claude.ai/code/session_01ABC#fragment'), false);
+  assert.equal(isAllowedSessionUrl('https://claude.ai/code/not-a-session'), false);
   let request;
   const result = await fireRoutine({
     url: 'https://api.anthropic.com/v1/claude_code/routines/trig_01ABC/fire',
@@ -65,7 +84,7 @@ async function selftest() {
         status: 200,
         json: async () => ({
           type: 'routine_fire',
-          claude_code_session_url: 'https://claude.ai/code/session/session_test',
+          claude_code_session_url: 'https://claude.ai/code/session_01ABC_def',
         }),
       };
     },
@@ -74,7 +93,7 @@ async function selftest() {
   assert.equal(request.options.headers['anthropic-beta'], 'experimental-cc-routine-2026-04-01');
   assert.equal(request.options.body, '{}');
   assert.equal(result.type, 'routine_fire');
-  console.log('PASS: 8 Claude Routine trigger checks');
+  console.log('PASS: 14 Claude Routine trigger checks');
 }
 
 async function main() {
@@ -99,4 +118,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { fireRoutine, isAllowedRoutineUrl };
+module.exports = { fireRoutine, isAllowedRoutineUrl, isAllowedSessionUrl };
