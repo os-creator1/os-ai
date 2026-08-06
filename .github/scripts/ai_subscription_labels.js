@@ -1,6 +1,8 @@
 'use strict';
 
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const LABELS = Object.freeze({
   implement: 'ai:implement',
@@ -29,6 +31,16 @@ const DEFAULT_CODEX_LOGINS = Object.freeze([
 
 const MANAGED_LABELS = Object.freeze(Object.values(LABELS));
 const COMMANDS = new Set(['start', 'resume', 'pause', 'review-submitted']);
+
+function implementationCommandIsAuthorized(command, state) {
+  return !['start', 'resume'].includes(command) || state?.implementation_authorized === true;
+}
+
+function loadAutomationState() {
+  const statePath = process.env.AI_AUTONOMY_STATE_PATH
+    || path.join(process.cwd(), 'docs/automation/AI-AUTONOMY-STATE.json');
+  return JSON.parse(fs.readFileSync(statePath, 'utf8'));
+}
 
 function parseReviewerLogins(configured) {
   const values = String(configured || '')
@@ -140,6 +152,12 @@ async function control({ github, context, core }) {
     throw new Error(`Unsupported command: ${command}`);
   }
 
+  if (!implementationCommandIsAuthorized(command, loadAutomationState())) {
+    throw new Error(
+      `Command ${command} is disabled because the locked state authorizes verification only.`,
+    );
+  }
+
   const { data: pullRequest } = await github.rest.pulls.get({
     owner,
     repo,
@@ -240,6 +258,10 @@ function selftest() {
   assert.equal(parsePrNumber('2'), 2);
   assert.throws(() => parsePrNumber('2x'), /Invalid pull request number/);
   assert.throws(() => parsePrNumber('0'), /Invalid pull request number/);
+  assert.equal(implementationCommandIsAuthorized('start', { implementation_authorized: true }), true);
+  assert.equal(implementationCommandIsAuthorized('resume', { implementation_authorized: false }), false);
+  assert.equal(implementationCommandIsAuthorized('pause', { implementation_authorized: false }), true);
+  assert.equal(implementationCommandIsAuthorized('review-submitted', { implementation_authorized: false }), true);
 
   assert.deepEqual(
     transitionFor('start', [LABELS.paused, 'unrelated']),
@@ -282,7 +304,7 @@ function selftest() {
   );
 
   assert.equal(new Set(MANAGED_LABELS).size, MANAGED_LABELS.length);
-  console.log(`PASS: ${16} subscription-loop checks`);
+  console.log(`PASS: ${20} subscription-loop checks`);
 }
 
 if (require.main === module) {
@@ -297,6 +319,7 @@ module.exports = control;
 module.exports._test = {
   LABELS,
   MANAGED_LABELS,
+  implementationCommandIsAuthorized,
   parsePrNumber,
   reviewMatchesHead,
   reviewerIsTrusted,
