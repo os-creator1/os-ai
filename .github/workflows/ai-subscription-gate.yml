@@ -24,7 +24,7 @@ jobs:
   focused-tests:
     name: Prove scope and focused tests
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     env:
       APP_ENV: testing
       TARGET_DB: ultimatesms_testing
@@ -164,6 +164,7 @@ jobs:
         if: steps.validate.outputs.stale == 'false'
         run: |
           node .trusted-automation/.github/scripts/ai_subscription_gate.js --selftest
+          node .trusted-automation/.github/scripts/fire_claude_routine.js --selftest
           node .trusted-automation/.github/scripts/ai_subscription_gate.js validate-state \
             --state .trusted-automation/docs/automation/AI-AUTONOMY-STATE.json
 
@@ -220,7 +221,7 @@ jobs:
             --repo-root "$GITHUB_WORKSPACE" \
             --output "$RUNNER_TEMP/tests.json"
 
-      - name: Request Codex review for the proven head
+      - name: Publish tested evidence and wait for current-head Codex
         id: passed
         if: steps.validate.outputs.stale == 'false' && success()
         uses: actions/github-script@v8
@@ -228,16 +229,20 @@ jobs:
           CONTROL_PR_NUMBER: ${{ steps.target.outputs.pr_number }}
           CONTROL_HEAD_SHA: ${{ steps.target.outputs.head_sha }}
           BEFORE_SHA: ${{ steps.validate.outputs.before_sha }}
+          CODEX_REVIEWER_LOGIN: ${{ vars.CODEX_REVIEWER_LOGIN }}
         with:
           script: |
             const fs = require('node:fs');
-            const state = JSON.parse(fs.readFileSync(
-              '.trusted-automation/docs/automation/AI-AUTONOMY-STATE.json',
-              'utf8',
-            ));
+            const { findTrustedCodexResult } = require(
+              './.trusted-automation/.github/scripts/ai_subscription_gate.js'
+            );
             const tests = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + '/tests.json', 'utf8'));
             const scope = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + '/scope.json', 'utf8'));
             const prNumber = Number(process.env.CONTROL_PR_NUMBER);
+            const managed = [
+              'ai:implement', 'ai:testing', 'ai:awaiting-codex',
+              'ai:codex-reviewed', 'ai:ready-for-human', 'ai:needs-human', 'ai:paused',
+            ];
             const { data: pr } = await github.rest.pulls.get({
               ...context.repo,
               pull_number: prNumber,
@@ -246,10 +251,6 @@ jobs:
               core.notice('A newer head was pushed while tests ran; leaving ai:testing for the queued run.');
               return;
             }
-            const managed = [
-              'ai:implement', 'ai:testing', 'ai:awaiting-codex',
-              'ai:codex-reviewed', 'ai:ready-for-human', 'ai:needs-human', 'ai:paused',
-            ];
             for (const label of managed.filter((label) => label !== 'ai:awaiting-codex')) {
               try {
                 await github.rest.issues.removeLabel({
@@ -279,10 +280,79 @@ jobs:
                 `exact changed files: ${scope.changed_files.map((file) => `\`${file}\``).join(', ')}`,
                 ...testLines,
                 '',
-                '@codex review',
+                'Waiting for the subscription-backed Codex auto-review of this exact head.',
               ].join('\n'),
             });
-            core.setOutput('transitioned', 'true');
+
+            const deadline = Date.now() + (10 * 60 * 1000);
+            let codexResult = null;
+            while (Date.now() < deadline) {
+              const [reviews, comments] = await Promise.all([
+                github.paginate(github.rest.pulls.listReviews, {
+                  ...context.repo,
+                  pull_number: prNumber,
+                  per_page: 100,
+                }),
+                github.paginate(github.rest.issues.listComments, {
+                  ...context.repo,
+                  issue_number: prNumber,
+                  per_page: 100,
+                }),
+              ]);
+              codexResult = findTrustedCodexResult({
+                reviews,
+                comments,
+                headSha: process.env.CONTROL_HEAD_SHA,
+                configuredLogins: process.env.CODEX_REVIEWER_LOGIN,
+              });
+              if (codexResult) break;
+              await new Promise((resolve) => setTimeout(resolve, 15000));
+            }
+            if (!codexResult) {
+              core.setFailed('No trusted current-head Codex result arrived within ten minutes.');
+              return;
+            }
+
+            const { data: currentPr } = await github.rest.pulls.get({
+              ...context.repo,
+              pull_number: prNumber,
+            });
+            const currentLabels = new Set(currentPr.labels.map((label) => label.name));
+            if (
+              currentPr.head.sha !== process.env.CONTROL_HEAD_SHA
+              || !currentLabels.has('ai:awaiting-codex')
+            ) {
+              core.notice('The PR moved while Codex was reviewing; this result is stale.');
+              return;
+            }
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number: prNumber,
+              body: [
+                '[AI-SUBSCRIPTION-LOOP LEASE]',
+                'mode: correction',
+                `before_sha: \`${currentPr.head.sha}\``,
+                `Trusted Codex result: ${codexResult.kind} ${codexResult.id}.`,
+              ].join('\n'),
+            });
+            await github.rest.issues.removeLabel({
+              ...context.repo,
+              issue_number: prNumber,
+              name: 'ai:awaiting-codex',
+            });
+            await github.rest.issues.addLabels({
+              ...context.repo,
+              issue_number: prNumber,
+              labels: ['ai:codex-reviewed'],
+            });
+            core.setOutput('reviewed', 'true');
+
+      - name: Fire Claude for the reviewed head
+        if: steps.passed.outputs.reviewed == 'true' && success()
+        env:
+          CLAUDE_ROUTINE_URL: ${{ secrets.CLAUDE_ROUTINE_URL }}
+          CLAUDE_ROUTINE_TOKEN: ${{ secrets.CLAUDE_ROUTINE_TOKEN }}
+        run: node .trusted-automation/.github/scripts/fire_claude_routine.js
 
       - name: Stop safely when the gate fails
         if: failure() && steps.validate.outputs.stale != 'true'
@@ -299,7 +369,11 @@ jobs:
               pull_number: prNumber,
             });
             const labels = new Set(pr.labels.map((label) => label.name));
-            if (pr.head.sha !== process.env.CONTROL_HEAD_SHA || !labels.has('ai:testing')) {
+            const activeStates = ['ai:testing', 'ai:awaiting-codex', 'ai:codex-reviewed'];
+            if (
+              pr.head.sha !== process.env.CONTROL_HEAD_SHA
+              || !activeStates.some((label) => labels.has(label))
+            ) {
               core.notice('Failure belongs to a stale or already-transitioned run; no label change made.');
               return;
             }
@@ -324,8 +398,8 @@ jobs:
               issue_number: prNumber,
               body: [
                 '[AI-SUBSCRIPTION-LOOP NEEDS HUMAN]',
-                `The deterministic scope/test gate failed for \`${process.env.CONTROL_HEAD_SHA}\`.`,
+                `The deterministic gate, Codex wait, or Claude Routine trigger failed for \`${process.env.CONTROL_HEAD_SHA}\`.`,
                 `Evidence: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
-                'No Codex review was requested and no merge action was taken.',
+                'No merge action was taken.',
               ].join('\n'),
             });
