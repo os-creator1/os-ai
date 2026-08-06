@@ -62,6 +62,16 @@ class WorkspaceOverviewHttpTest extends TestCase
         $this->assertFalse(Route::has('customer.workspaces.businesses.index'));
     }
 
+    public function test_overview_links_back_to_the_workspace_index(): void
+    {
+        $customer = $this->actingAsHttpCustomer();
+        $workspace = $this->createWorkspace($customer->user);
+
+        $response = $this->get(route('customer.workspaces.show', ['workspaceUid' => $workspace->uid]))->assertOk();
+
+        $response->assertSee('href="' . route('customer.workspaces.index') . '"', false);
+    }
+
     public function test_unknown_uid_returns_not_found(): void
     {
         $this->actingAsHttpCustomer();
@@ -366,7 +376,7 @@ class WorkspaceOverviewHttpTest extends TestCase
         $response = $this->get(route('customer.workspaces.show', ['workspaceUid' => $workspace->uid]))->assertOk();
 
         $data = $response->original->getData();
-        $this->assertSame(['workspace', 'directory'], array_keys($data));
+        $this->assertSame(['workspace', 'businesses', 'directory'], array_keys($data));
         $this->assertSame(['name', 'is_active', 'role'], array_keys($data['workspace']));
         $response->assertDontSee($customer->user->email);
     }

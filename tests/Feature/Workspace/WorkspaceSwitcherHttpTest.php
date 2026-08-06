@@ -3,6 +3,7 @@
 namespace Tests\Feature\Workspace;
 
 use App\Enums\Workspace\WorkspaceMembershipRole;
+use App\Helpers\Helper;
 use App\Models\AppConfig;
 use App\Models\Customer;
 use App\Models\User;
@@ -306,11 +307,37 @@ class WorkspaceSwitcherHttpTest extends TestCase
     public function test_no_workspace_member_or_business_route_is_introduced(): void
     {
         // Slice 3B adds exactly customer.workspaces.show (RFC-003-M3-ORCHESTRATOR.md
-        // §"The locked Slice 3B contract"); member-list and Business-list
-        // routes remain out of scope through Slice 3C.
+        // §"The locked Slice 3B contract"); Slice 3C embeds the Business
+        // list on that same overview rather than adding a route, so
+        // member-list and Business-list routes remain out of scope.
         $this->assertTrue(Route::has('customer.workspaces.show'));
         $this->assertFalse(Route::has('customer.workspaces.members.index'));
         $this->assertFalse(Route::has('customer.workspaces.businesses.index'));
+    }
+
+    public function test_index_workspace_name_links_to_its_overview(): void
+    {
+        $customer = $this->actingAsHttpCustomer();
+        $workspace = $this->createWorkspace($customer->user, ['name' => 'Linked Co']);
+
+        $response = $this->get(route('customer.workspaces.index'))->assertOk();
+
+        $response->assertSee(
+            'href="' . route('customer.workspaces.show', $workspace->uid) . '"',
+            false
+        );
+    }
+
+    public function test_customer_menu_includes_a_workspaces_entry(): void
+    {
+        $menu = Helper::menuData()['customer'];
+
+        $entry = collect($menu)->firstWhere('slug', 'workspaces');
+
+        $this->assertNotNull($entry);
+        $this->assertSame('Workspaces', $entry['i18n']);
+        $this->assertSame(url('workspaces'), $entry['url']);
+        $this->assertSame('access_backend', $entry['access']);
     }
 
     private function tableFingerprint(string $table): string

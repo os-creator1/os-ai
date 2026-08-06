@@ -26,7 +26,7 @@
                                     <tbody>
                                         @foreach ($workspaces as $workspace)
                                             <tr>
-                                                <td>{{ $workspace['name'] }}</td>
+                                                <td><a href="{{ route('customer.workspaces.show', $workspace['uid']) }}">{{ $workspace['name'] }}</a></td>
                                                 <td>{{ $workspace['role'] }}</td>
                                                 <td>
                                                     @if ($workspace['is_active'])

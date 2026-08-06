@@ -5,6 +5,8 @@ namespace App\Http\Controllers\Customer\Workspace;
 use App\Enums\Workspace\WorkspaceBusinessAccessScope;
 use App\Enums\Workspace\WorkspaceMembershipRole;
 use App\Http\Controllers\Customer\CustomerBaseController;
+use App\Library\Workspace\WorkspaceManager;
+use App\Models\Business;
 use App\Models\Workspace;
 use App\Models\WorkspaceMembership;
 use App\Repositories\Contracts\WorkspaceMembershipBusinessRepository;
@@ -25,6 +27,7 @@ class WorkspaceController extends CustomerBaseController
         private readonly WorkspaceRepository $workspaceRepository,
         private readonly WorkspaceMembershipRepository $membershipRepository,
         private readonly WorkspaceMembershipBusinessRepository $membershipBusinessRepository,
+        private readonly WorkspaceManager $workspaceManager,
     ) {
     }
 
@@ -48,13 +51,17 @@ class WorkspaceController extends CustomerBaseController
     }
 
     /**
-     * RFC-003 Milestone 3 Slice 3B: read-only Workspace overview. 404 (never
-     * 403) for an unknown uid or a user with no owner/active-membership path
-     * to this Workspace — owner status always wins over an anomalous
-     * coexisting membership row. The embedded membership directory is
-     * populated only for the owner and an active Admin; for active Staff the
-     * `directory` key is omitted from the view data entirely rather than
-     * rendered empty.
+     * RFC-003 Milestone 3 Slice 3B/3C: read-only Workspace overview. 404
+     * (never 403) for an unknown uid or a user with no owner/active-
+     * membership path to this Workspace — owner status always wins over an
+     * anomalous coexisting membership row. The embedded membership
+     * directory is populated only for the owner and an active Admin; for
+     * active Staff the `directory` key is omitted from the view data
+     * entirely rather than rendered empty. `businesses` is always present
+     * (owner, Admin, and Staff alike) and is the RFC-003 §14.1 effective-
+     * access filter over this Workspace's Businesses via
+     * WorkspaceManager::userCanAccessBusiness() — never a second,
+     * partially reimplemented algorithm.
      */
     public function show(string $workspaceUid): View
     {
@@ -77,6 +84,7 @@ class WorkspaceController extends CustomerBaseController
                 'is_active' => (bool) $workspace->is_active,
                 'role' => self::ROLE_LABELS[$roleKey],
             ],
+            'businesses' => $this->effectiveBusinesses($workspace, $userId),
         ];
 
         if (in_array($roleKey, ['owner', 'admin'], true)) {
@@ -84,6 +92,24 @@ class WorkspaceController extends CustomerBaseController
         }
 
         return view('customer.workspaces.show', $viewData);
+    }
+
+    /**
+     * RFC-003 Milestone 3 Slice 3C Business list: every Business in this
+     * Workspace for which userCanAccessBusiness() returns true, sorted by
+     * the persisted businesses.id ascending for a deterministic list.
+     * Never exposes that numeric ID — each row carries only `name`.
+     *
+     * @return array<int, array{name: string}>
+     */
+    private function effectiveBusinesses(Workspace $workspace, int $userId): array
+    {
+        return $this->workspaceRepository->businessesForWorkspace($workspace)
+            ->filter(fn (Business $business) => $this->workspaceManager->userCanAccessBusiness($userId, $business))
+            ->sortBy('id')
+            ->values()
+            ->map(fn (Business $business) => ['name' => $business->name])
+            ->all();
     }
 
     /**

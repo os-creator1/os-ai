@@ -909,6 +909,14 @@
                         'icon'   => 'home',
                         'access' => 'access_backend',
                     ],
+                    [
+                        'url'    => url('workspaces'),
+                        'slug'   => 'workspaces',
+                        'name'   => 'Workspaces',
+                        'i18n'   => 'Workspaces',
+                        'icon'   => 'briefcase',
+                        'access' => 'access_backend',
+                    ],
                     ...(config('opportunity.enabled', false) ? [[
                         'url'    => url('opportunities'),
                         'slug'   => 'opportunities',

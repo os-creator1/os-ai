@@ -6,6 +6,10 @@
     <section id="workspace-overview">
         <div class="row">
             <div class="col-12">
+                <a href="{{ route('customer.workspaces.index') }}">Back to Workspaces</a>
+            </div>
+
+            <div class="col-12">
                 <div class="card">
                     <div class="card-header">
                         <h4 class="card-title">{{ $workspace['name'] }}</h4>
@@ -24,6 +28,36 @@
                             <dt class="col-sm-3">Your role</dt>
                             <dd class="col-sm-9">{{ $workspace['role'] }}</dd>
                         </dl>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-12">
+                <div class="card">
+                    <div class="card-header">
+                        <h4 class="card-title">Businesses</h4>
+                    </div>
+                    <div class="card-body">
+                        @if (empty($businesses))
+                            <p class="mb-0">No Businesses are accessible in this Workspace.</p>
+                        @else
+                            <div class="table-responsive">
+                                <table class="table">
+                                    <thead>
+                                        <tr>
+                                            <th>Name</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach ($businesses as $business)
+                                            <tr>
+                                                <td>{{ $business['name'] }}</td>
+                                            </tr>
+                                        @endforeach
+                                    </tbody>
+                                </table>
+                            </div>
+                        @endif
                     </div>
                 </div>
             </div>
