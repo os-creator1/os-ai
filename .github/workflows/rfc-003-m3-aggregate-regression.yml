@@ -1,0 +1,325 @@
+name: RFC-003 M3 Aggregate Regression
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Locked Milestone 3 pull request number
+        required: true
+        default: "2"
+        type: string
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+concurrency:
+  group: rfc-003-m3-aggregate-regression-${{ inputs.pr_number }}
+  cancel-in-progress: false
+
+jobs:
+  aggregate-regression:
+    name: Prove the complete Milestone 3 Workspace surface
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      APP_ENV: testing
+      TARGET_DB: ultimatesms_testing
+      APP_KEY: base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+      DB_CONNECTION: mysql
+      DB_HOST: 127.0.0.1
+      DB_PORT: "3306"
+      DB_DATABASE: ultimatesms_testing
+      DB_USERNAME: ultimatesms_test
+      DB_PASSWORD: Choose-A-Local-Test-Password
+    services:
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_DATABASE: ultimatesms_testing
+          MYSQL_USER: ultimatesms_test
+          MYSQL_PASSWORD: Choose-A-Local-Test-Password
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_ROOT_HOST: "%"
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+    steps:
+      - name: Require a default-branch dispatch and resolve the locked PR
+        id: target
+        uses: actions/github-script@v8
+        env:
+          REQUESTED_PR: ${{ inputs.pr_number }}
+        with:
+          script: |
+            if (context.ref !== `refs/heads/${context.payload.repository.default_branch}`) {
+              core.setFailed('Aggregate regression must be dispatched from the default branch.');
+              return;
+            }
+            const value = String(process.env.REQUESTED_PR || '');
+            if (!/^[1-9][0-9]*$/.test(value)) {
+              core.setFailed(`Invalid pull request number: ${value}`);
+              return;
+            }
+            const prNumber = Number(value);
+            const { data: stateFile } = await github.rest.repos.getContent({
+              ...context.repo,
+              path: 'docs/automation/AI-AUTONOMY-STATE.json',
+              ref: context.payload.repository.default_branch,
+            });
+            if (Array.isArray(stateFile) || stateFile.type !== 'file') {
+              core.setFailed('Trusted automation state is not a file.');
+              return;
+            }
+            const state = JSON.parse(Buffer.from(stateFile.content, 'base64').toString('utf8'));
+            const { data: pr } = await github.rest.pulls.get({
+              ...context.repo,
+              pull_number: prNumber,
+            });
+            const labels = new Set(pr.labels.map((label) => label.name));
+            const managed = [
+              'ai:implement', 'ai:testing', 'ai:awaiting-codex',
+              'ai:codex-reviewed', 'ai:ready-for-human', 'ai:needs-human', 'ai:paused',
+            ];
+            const conflicting = managed.filter((label) =>
+              label !== state.success_label && labels.has(label)
+            );
+            const identityMatches =
+              state.repository === `${context.repo.owner}/${context.repo.repo}`
+              && state.active_pull_request === prNumber
+              && state.current_slice === 'Milestone 3 aggregate regression'
+              && state.status === 'ready_to_run_after_human_contract_merge'
+              && state.merge_policy === 'human_only'
+              && state.implementation_authorized === false
+              && state.require_exact_scope === true
+              && state.advance_automatically === false
+              && /^[0-9a-f]{40}$/i.test(String(state.expected_head_sha || ''))
+              && pr.state === 'open'
+              && pr.draft === true
+              && pr.base.ref === state.base_branch
+              && pr.head.ref === state.head_branch
+              && pr.head.repo.full_name === state.repository
+              && pr.head.sha.toLowerCase() === state.expected_head_sha.toLowerCase()
+              && labels.has(state.success_label)
+              && conflicting.length === 0;
+            if (!identityMatches) {
+              core.setFailed(
+                `PR #${prNumber} does not match the locked verification-only target. `
+                + `Conflicting labels: ${conflicting.join(', ') || 'none'}.`,
+              );
+              return;
+            }
+            core.setOutput('authorized', 'true');
+            core.setOutput('pr_number', String(prNumber));
+            core.setOutput('base_ref', pr.base.ref);
+            core.setOutput('head_ref', pr.head.ref);
+            core.setOutput('head_sha', pr.head.sha);
+
+      - name: Check out the exact pinned PR head
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ steps.target.outputs.head_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check out trusted regression code
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: .trusted-automation
+          persist-credentials: false
+
+      - name: Exclude trusted tooling from the PR checkout
+        run: echo ".trusted-automation/" >> .git/info/exclude
+
+      - name: Self-test and validate trusted regression state
+        run: |
+          node .trusted-automation/.github/scripts/ai_subscription_gate.js --selftest
+          node .trusted-automation/.github/scripts/ai_subscription_labels.js --selftest
+          node .trusted-automation/.github/scripts/ai_subscription_gate.js validate-state \
+            --state .trusted-automation/docs/automation/AI-AUTONOMY-STATE.json
+
+      - name: Verify the pinned checkout and fetch its base
+        env:
+          PINNED_HEAD: ${{ steps.target.outputs.head_sha }}
+          BASE_BRANCH: ${{ steps.target.outputs.base_ref }}
+        run: |
+          set -euo pipefail
+          [ "$(git rev-parse HEAD)" = "$PINNED_HEAD" ]
+          git fetch --no-tags origin "$BASE_BRANCH:refs/remotes/origin/$BASE_BRANCH"
+
+      - name: Verify runtime test database
+        run: |
+          set -euo pipefail
+          [ "$TARGET_DB" = "ultimatesms_testing" ]
+          [ "$DB_DATABASE" = "ultimatesms_testing" ]
+          [ "$DB_CONNECTION" = "mysql" ]
+          [ "$DB_HOST" = "127.0.0.1" ]
+          [ "$DB_PORT" = "3306" ]
+          [ "$DB_USERNAME" = "ultimatesms_test" ]
+          [ -n "$DB_PASSWORD" ]
+          [ -z "${DATABASE_URL:-}" ]
+
+      - name: Build the cumulative Milestone 3 file evidence
+        env:
+          BASE_BRANCH: ${{ steps.target.outputs.base_ref }}
+        run: git diff --name-only "origin/$BASE_BRANCH...HEAD" > "$RUNNER_TEMP/changed-files.txt"
+
+      - name: Enforce the exact locked Milestone 3 scope
+        run: |
+          node .trusted-automation/.github/scripts/ai_subscription_gate.js check-scope \
+            --state .trusted-automation/docs/automation/AI-AUTONOMY-STATE.json \
+            --changed-files "$RUNNER_TEMP/changed-files.txt" \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --output "$RUNNER_TEMP/scope.json"
+
+      - name: Set up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "8.2"
+          extensions: mbstring, bcmath, pdo_mysql, intl, xml, curl, zip
+          coverage: none
+          tools: composer:v2
+
+      - name: Grant only the two trusted temporary-database prefixes
+        env:
+          TEST_DB_ADMIN_USERNAME: root
+          TEST_DB_ADMIN_PASSWORD: root
+        run: |
+          php <<'PHP'
+          <?php
+          $pdo = new PDO(
+              'mysql:host=127.0.0.1;port=3306;dbname=ultimatesms_testing',
+              getenv('TEST_DB_ADMIN_USERNAME'),
+              getenv('TEST_DB_ADMIN_PASSWORD'),
+              [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION],
+          );
+          $pdo->exec(
+              "GRANT ALL PRIVILEGES ON `ultimatesms\\_testing\\_historical\\_%`.* "
+              . "TO 'ultimatesms_test'@'%'"
+          );
+          $pdo->exec(
+              "GRANT ALL PRIVILEGES ON `ultimatesms\\_testing\\_enforcement\\_%`.* "
+              . "TO 'ultimatesms_test'@'%'"
+          );
+          PHP
+
+      - name: Install Composer dependencies
+        run: composer install --no-interaction --prefer-dist --no-progress
+
+      - name: Prepare the disposable base test database
+        run: |
+          php artisan config:clear
+          php artisan migrate --force
+
+      - name: Run focused, normal, historical, and enforcement tests
+        run: |
+          node .trusted-automation/.github/scripts/ai_subscription_gate.js run-tests \
+            --state .trusted-automation/docs/automation/AI-AUTONOMY-STATE.json \
+            --repo-root "$GITHUB_WORKSPACE" \
+            --output "$RUNNER_TEMP/tests.json"
+
+      - name: Publish aggregate regression evidence and stop for a human
+        id: passed
+        uses: actions/github-script@v8
+        env:
+          CONTROL_PR_NUMBER: ${{ steps.target.outputs.pr_number }}
+          CONTROL_HEAD_SHA: ${{ steps.target.outputs.head_sha }}
+        with:
+          script: |
+            const fs = require('node:fs');
+            const tests = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + '/tests.json', 'utf8'));
+            const scope = JSON.parse(fs.readFileSync(process.env.RUNNER_TEMP + '/scope.json', 'utf8'));
+            const prNumber = Number(process.env.CONTROL_PR_NUMBER);
+            const { data: pr } = await github.rest.pulls.get({
+              ...context.repo,
+              pull_number: prNumber,
+            });
+            const labels = new Set(pr.labels.map((label) => label.name));
+            if (
+              pr.state !== 'open'
+              || pr.draft !== true
+              || pr.head.sha !== process.env.CONTROL_HEAD_SHA
+              || !labels.has('ai:ready-for-human')
+            ) {
+              core.setFailed('The PR moved or left its human-ready draft state while regression ran.');
+              return;
+            }
+            const testLines = tests.results.map((test) =>
+              `- \`${test.command}\`: ${test.test_count} tests passed`
+            );
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number: prNumber,
+              body: [
+                '[AI-M3-AGGREGATE-REGRESSION PASSED]',
+                `proven head SHA: \`${process.env.CONTROL_HEAD_SHA}\``,
+                `exact cumulative changed files: ${scope.changed_files.map((file) => `\`${file}\``).join(', ')}`,
+                ...testLines,
+                '',
+                'PR #2 remains open, draft, unmerged, and ai:ready-for-human.',
+                'No Claude Routine, Codex review, paid model API, push, merge, or tag was used.',
+              ].join('\n'),
+            });
+            await core.summary
+              .addHeading('RFC-003 Milestone 3 aggregate regression')
+              .addTable([
+                [{ data: 'Command', header: true }, { data: 'Tests', header: true }],
+                ...tests.results.map((test) => [test.command, String(test.test_count)]),
+              ])
+              .addRaw('\nPR #2 remains draft and requires a human merge decision.\n')
+              .write();
+            core.setOutput('verified', 'true');
+
+      - name: Stop safely when an authorized regression fails
+        if: failure() && steps.target.outputs.authorized == 'true'
+        uses: actions/github-script@v8
+        env:
+          CONTROL_PR_NUMBER: ${{ steps.target.outputs.pr_number }}
+          CONTROL_HEAD_SHA: ${{ steps.target.outputs.head_sha }}
+        with:
+          script: |
+            const prNumber = Number(process.env.CONTROL_PR_NUMBER);
+            const { data: pr } = await github.rest.pulls.get({
+              ...context.repo,
+              pull_number: prNumber,
+            });
+            if (pr.head.sha !== process.env.CONTROL_HEAD_SHA) {
+              core.notice('The failed run is stale; no label was changed.');
+              return;
+            }
+            for (const label of [
+              'ai:implement', 'ai:testing', 'ai:awaiting-codex',
+              'ai:codex-reviewed', 'ai:ready-for-human',
+            ]) {
+              try {
+                await github.rest.issues.removeLabel({
+                  ...context.repo,
+                  issue_number: prNumber,
+                  name: label,
+                });
+              } catch (error) {
+                if (error.status !== 404) throw error;
+              }
+            }
+            await github.rest.issues.addLabels({
+              ...context.repo,
+              issue_number: prNumber,
+              labels: ['ai:needs-human'],
+            });
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number: prNumber,
+              body: [
+                '[AI-M3-AGGREGATE-REGRESSION NEEDS HUMAN]',
+                `Regression failed for pinned head \`${process.env.CONTROL_HEAD_SHA}\`.`,
+                `Evidence: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                'No correction, Claude Routine, merge, or tag was started.',
+              ].join('\n'),
+            });

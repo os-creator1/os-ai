@@ -8,6 +8,11 @@ const { spawnSync } = require('node:child_process');
 const ANSI_ESCAPE = /[\u001B\u009B][[\]()#;?]*(?:(?:[a-zA-Z\d]*(?:;[-a-zA-Z\d\/#&.:=?%@~_]+)*)?\u0007|(?:(?:\d{1,4}(?:[;:]\d{0,4})*)?[\dA-PR-TZcf-nq-uy=><~]))/g;
 const SAFE_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_\\-]*$/;
 const SAFE_TEST_PATH = /^tests\/(Feature|Unit)\/[A-Za-z0-9_./-]+\.php$/;
+const SAFE_TEST_DIRECTORY = /^tests\/(Feature|Unit)\/[A-Za-z0-9_./-]+$/;
+const SAFE_PHP_TEST_RUNNERS = new Set([
+  'tests/Feature/Workspace/Support/run_historical_m1a_suite.php',
+  'tests/Feature/Workspace/Support/run_workspace_enforcement_suite.php',
+]);
 
 const DEFAULT_CODEX_LOGINS = Object.freeze([
   'chatgpt-codex-connector',
@@ -84,6 +89,25 @@ function loadState(statePath) {
     throw new Error('active_pull_request must be a positive integer.');
   }
 
+  if (typeof state.implementation_authorized !== 'boolean') {
+    throw new Error('implementation_authorized must be a boolean.');
+  }
+
+  if (state.merge_policy !== 'human_only' || state.advance_automatically !== false) {
+    throw new Error('Automation state must retain human-only merge and advancement policy.');
+  }
+
+  if (
+    state.implementation_authorized === false
+    && !/^[0-9a-f]{40}$/i.test(String(state.expected_head_sha || ''))
+  ) {
+    throw new Error('Verification-only state must pin a full expected_head_sha.');
+  }
+
+  if (state.require_exact_scope !== undefined && typeof state.require_exact_scope !== 'boolean') {
+    throw new Error('require_exact_scope must be a boolean when present.');
+  }
+
   for (const key of ['allowed_paths', 'required_new_paths', 'required_test_commands']) {
     if (!Array.isArray(state[key]) || state[key].length === 0) {
       throw new Error(`State field ${key} must be a non-empty array.`);
@@ -121,6 +145,14 @@ function splitCommand(command) {
 
 function isSafeTestCommand(command) {
   const tokens = splitCommand(command);
+  if (
+    tokens.length === 2
+    && tokens[0] === 'php'
+    && SAFE_PHP_TEST_RUNNERS.has(tokens[1])
+  ) {
+    return true;
+  }
+
   if (tokens.length !== 4 || tokens[0] !== 'php' || tokens[1] !== 'artisan' || tokens[2] !== 'test') {
     return false;
   }
@@ -129,7 +161,7 @@ function isSafeTestCommand(command) {
   if (selector.startsWith('--filter=')) {
     return SAFE_IDENTIFIER.test(selector.slice('--filter='.length));
   }
-  return SAFE_TEST_PATH.test(selector);
+  return SAFE_TEST_PATH.test(selector) || SAFE_TEST_DIRECTORY.test(selector);
 }
 
 function discoveredTestCount(output) {
@@ -171,14 +203,21 @@ function checkScope(state, changedFiles, repositoryRoot) {
   const allowed = new Set(state.allowed_paths);
   const changed = changedFiles.map((value) => value.trim()).filter(Boolean);
   const forbidden = changed.filter((value) => !allowed.has(value));
+  const missingExpected = state.require_exact_scope === true
+    ? state.allowed_paths.filter((value) => !changed.includes(value))
+    : [];
   const missing = state.required_new_paths.filter(
     (value) => !fs.existsSync(path.join(repositoryRoot, value)),
   );
 
   return {
-    ok: changed.length > 0 && forbidden.length === 0 && missing.length === 0,
+    ok: changed.length > 0
+      && forbidden.length === 0
+      && missingExpected.length === 0
+      && missing.length === 0,
     changed_files: changed,
     forbidden_files: forbidden,
+    missing_expected_files: missingExpected,
     missing_required_files: missing,
   };
 }
@@ -243,6 +282,16 @@ function readFlag(name, fallback = null) {
 function selftest() {
   assert.equal(isSafeTestCommand('php artisan test --filter=WorkspaceOverviewHttpTest'), true);
   assert.equal(isSafeTestCommand('php artisan test tests/Feature/Workspace/FooTest.php'), true);
+  assert.equal(isSafeTestCommand('php artisan test tests/Feature/Workspace'), true);
+  assert.equal(
+    isSafeTestCommand('php tests/Feature/Workspace/Support/run_historical_m1a_suite.php'),
+    true,
+  );
+  assert.equal(
+    isSafeTestCommand('php tests/Feature/Workspace/Support/run_workspace_enforcement_suite.php'),
+    true,
+  );
+  assert.equal(isSafeTestCommand('php tests/Feature/Workspace/Support/arbitrary.php'), false);
   assert.equal(isSafeTestCommand('php artisan test'), false);
   assert.equal(isSafeTestCommand('php artisan test --filter=Foo;env'), false);
   assert.equal(isSafeTestCommand('composer test'), false);
@@ -301,11 +350,13 @@ function selftest() {
     ok: true,
     changed_files: ['a.php', 'b.php'],
     forbidden_files: [],
+    missing_expected_files: [],
     missing_required_files: [],
   });
   assert.equal(checkScope(state, ['outside.php'], fixtureRoot).ok, false);
+  assert.equal(checkScope({ ...state, require_exact_scope: true }, ['a.php'], fixtureRoot).ok, false);
   fs.rmSync(fixtureRoot, { recursive: true, force: true });
-  console.log('PASS: 20 subscription-gate checks');
+  console.log('PASS: 25 subscription-gate checks');
 }
 
 function main() {
@@ -376,4 +427,3 @@ module.exports = {
   loadState,
   runTests,
 };
-
