@@ -6,34 +6,41 @@
   "head_branch": "feature/rfc-003-m3",
   "active_rfc": "RFC-003",
   "active_milestone": "Milestone 3",
-  "current_slice": "Slice 3B",
-  "status": "ready_to_implement_after_setup",
+  "current_slice": "Slice 3C",
+  "status": "ready_to_implement_after_human_contract_merge",
   "merge_policy": "human_only",
   "maximum_correction_rounds": 2,
   "advance_automatically": false,
-  "next_candidate": "Slice 3C - access-filtered Business list and customer navigation",
-  "contract_source": "docs/automation/RFC-003-M3-ORCHESTRATOR.md#the-locked-slice-3b-contract",
+  "next_candidate": "Milestone 3 aggregate regression and human merge decision",
+  "contract_source": "docs/automation/RFC-003-M3-SLICE-3C-CONTRACT.md#locked-slice-3c-contract",
   "allowed_paths": [
+    "app/Helpers/Helper.php",
     "app/Http/Controllers/Customer/Workspace/WorkspaceController.php",
-    "routes/customer.php",
+    "resources/lang/en/locale.php",
+    "resources/views/customer/workspaces/index.blade.php",
     "resources/views/customer/workspaces/show.blade.php",
+    "tests/Feature/Workspace/WorkspaceBusinessListHttpTest.php",
     "tests/Feature/Workspace/WorkspaceOverviewHttpTest.php",
     "tests/Feature/Workspace/WorkspaceSwitcherHttpTest.php"
   ],
   "required_new_paths": [
-    "resources/views/customer/workspaces/show.blade.php",
-    "tests/Feature/Workspace/WorkspaceOverviewHttpTest.php"
+    "tests/Feature/Workspace/WorkspaceBusinessListHttpTest.php"
   ],
   "required_test_commands": [
+    "php artisan test --filter=WorkspaceBusinessListHttpTest",
     "php artisan test --filter=WorkspaceOverviewHttpTest",
-    "php artisan test --filter=WorkspaceSwitcherHttpTest"
+    "php artisan test --filter=WorkspaceSwitcherHttpTest",
+    "php artisan test --filter=WorkspaceEffectiveAccessTest"
   ],
   "gate_label": "ai:testing",
   "forbidden_scope": [
-    "Slice 3C Business-list or customer-navigation work",
+    "Any new HTTP route, per-Business customer page, or link to customer.business.edit",
+    "Active-Business selection or session/cookie state",
+    "A duplicated access algorithm or repository, manager, model, enum, migration, provider, permission, or middleware change",
     "Workspace mutation routes or controls",
     "plans, entitlements, billing, wallets, usage, or Stripe",
-    "workflow, environment, database configuration, or dependency changes"
+    "workflow, environment, database configuration, or dependency changes",
+    "Milestone 3 aggregate regression, merge, or automatic advancement beyond Slice 3C"
   ],
   "success_label": "ai:ready-for-human",
   "failure_label": "ai:needs-human"
