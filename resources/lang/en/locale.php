@@ -779,6 +779,7 @@
 
         'menu' => [
             'Dashboard'           => 'Dashboard',
+            'Workspaces'          => 'Workspaces',
             'Customer'            => 'Customer',
             'Customers'           => 'Customers',
             'Subscriptions'       => 'Subscriptions',
