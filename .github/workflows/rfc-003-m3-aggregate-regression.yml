@@ -12,7 +12,7 @@ on:
 permissions:
   contents: read
   issues: write
-  pull-requests: read
+  pull-requests: write
 
 concurrency:
   group: rfc-003-m3-aggregate-regression-${{ inputs.pr_number }}
