@@ -36,6 +36,19 @@ function implementationCommandIsAuthorized(command, state) {
   return !['start', 'resume'].includes(command) || state?.implementation_authorized === true;
 }
 
+function implementationTargetIsAuthorized(command, state, pullRequest, prNumber, owner, repo) {
+  if (!['start', 'resume'].includes(command)) {
+    return true;
+  }
+
+  return state?.active_pull_request === prNumber
+    && pullRequest.base?.ref === state.base_branch
+    && pullRequest.head?.ref === state.head_branch
+    && pullRequest.head?.repo?.full_name === `${owner}/${repo}`
+    && /^[0-9a-f]{40}$/i.test(String(state.expected_head_sha || ''))
+    && pullRequest.head?.sha?.toLowerCase() === state.expected_head_sha.toLowerCase();
+}
+
 function loadAutomationState() {
   const statePath = process.env.AI_AUTONOMY_STATE_PATH
     || path.join(process.cwd(), 'docs/automation/AI-AUTONOMY-STATE.json');
@@ -147,12 +160,13 @@ async function control({ github, context, core }) {
   const command = process.env.CONTROL_COMMAND;
   const prNumber = parsePrNumber(process.env.CONTROL_PR_NUMBER);
   const { owner, repo } = context.repo;
+  const state = loadAutomationState();
 
   if (!COMMANDS.has(command)) {
     throw new Error(`Unsupported command: ${command}`);
   }
 
-  if (!implementationCommandIsAuthorized(command, loadAutomationState())) {
+  if (!implementationCommandIsAuthorized(command, state)) {
     throw new Error(
       `Command ${command} is disabled because the locked state authorizes verification only.`,
     );
@@ -174,6 +188,10 @@ async function control({ github, context, core }) {
 
   if (pullRequest.head.repo.full_name !== `${owner}/${repo}`) {
     throw new Error(`PR #${prNumber} comes from an external repository.`);
+  }
+
+  if (!implementationTargetIsAuthorized(command, state, pullRequest, prNumber, owner, repo)) {
+    throw new Error(`PR #${prNumber} does not match the locked implementation target.`);
   }
 
   if (command === 'review-submitted') {
@@ -262,6 +280,43 @@ function selftest() {
   assert.equal(implementationCommandIsAuthorized('resume', { implementation_authorized: false }), false);
   assert.equal(implementationCommandIsAuthorized('pause', { implementation_authorized: false }), true);
   assert.equal(implementationCommandIsAuthorized('review-submitted', { implementation_authorized: false }), true);
+  const lockedState = {
+    active_pull_request: 7,
+    base_branch: 'main',
+    head_branch: 'feature/locked',
+    expected_head_sha: '513d21388707a05662b3e07a6cc85c2d07f7f1e1',
+  };
+  const lockedPr = {
+    base: { ref: 'main' },
+    head: {
+      ref: 'feature/locked',
+      sha: '513d21388707a05662b3e07a6cc85c2d07f7f1e1',
+      repo: { full_name: 'owner/repo' },
+    },
+  };
+  assert.equal(
+    implementationTargetIsAuthorized('start', lockedState, lockedPr, 7, 'owner', 'repo'),
+    true,
+  );
+  assert.equal(
+    implementationTargetIsAuthorized('start', lockedState, lockedPr, 8, 'owner', 'repo'),
+    false,
+  );
+  assert.equal(
+    implementationTargetIsAuthorized(
+      'start',
+      lockedState,
+      { ...lockedPr, head: { ...lockedPr.head, sha: '613d21388707a05662b3e07a6cc85c2d07f7f1e1' } },
+      7,
+      'owner',
+      'repo',
+    ),
+    false,
+  );
+  assert.equal(
+    implementationTargetIsAuthorized('pause', {}, {}, 99, 'owner', 'repo'),
+    true,
+  );
 
   assert.deepEqual(
     transitionFor('start', [LABELS.paused, 'unrelated']),
@@ -304,7 +359,7 @@ function selftest() {
   );
 
   assert.equal(new Set(MANAGED_LABELS).size, MANAGED_LABELS.length);
-  console.log(`PASS: ${20} subscription-loop checks`);
+  console.log(`PASS: ${24} subscription-loop checks`);
 }
 
 if (require.main === module) {
@@ -320,6 +375,7 @@ module.exports._test = {
   LABELS,
   MANAGED_LABELS,
   implementationCommandIsAuthorized,
+  implementationTargetIsAuthorized,
   parsePrNumber,
   reviewMatchesHead,
   reviewerIsTrusted,

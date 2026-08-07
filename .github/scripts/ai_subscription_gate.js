@@ -13,6 +13,12 @@ const SAFE_PHP_TEST_RUNNERS = new Set([
   'tests/Feature/Workspace/Support/run_historical_m1a_suite.php',
   'tests/Feature/Workspace/Support/run_workspace_enforcement_suite.php',
 ]);
+const SAFE_NODE_SELFTESTS = new Set([
+  '.github/scripts/ai_subscription_autostart.js',
+  '.github/scripts/ai_subscription_gate.js',
+  '.github/scripts/ai_subscription_labels.js',
+  '.github/scripts/fire_claude_routine.js',
+]);
 
 const DEFAULT_CODEX_LOGINS = Object.freeze([
   'chatgpt-codex-connector',
@@ -85,12 +91,17 @@ function loadState(statePath) {
     }
   }
 
-  if (!Number.isSafeInteger(state.active_pull_request) || state.active_pull_request < 1) {
-    throw new Error('active_pull_request must be a positive integer.');
-  }
-
   if (typeof state.implementation_authorized !== 'boolean') {
     throw new Error('implementation_authorized must be a boolean.');
+  }
+
+  const hasActivePullRequest = Number.isSafeInteger(state.active_pull_request)
+    && state.active_pull_request > 0;
+  if (state.active_pull_request !== null && !hasActivePullRequest) {
+    throw new Error('active_pull_request must be null or a positive integer.');
+  }
+  if (state.implementation_authorized === true && !hasActivePullRequest) {
+    throw new Error('Implementation state must name an active pull request.');
   }
 
   if (state.merge_policy !== 'human_only' || state.advance_automatically !== false) {
@@ -106,6 +117,24 @@ function loadState(statePath) {
 
   if (state.require_exact_scope !== undefined && typeof state.require_exact_scope !== 'boolean') {
     throw new Error('require_exact_scope must be a boolean when present.');
+  }
+
+  if (
+    state.start_automatically_after_contract_merge !== undefined
+    && typeof state.start_automatically_after_contract_merge !== 'boolean'
+  ) {
+    throw new Error('start_automatically_after_contract_merge must be a boolean when present.');
+  }
+
+  if (
+    state.start_automatically_after_contract_merge === true
+    && (
+      state.implementation_authorized !== true
+      || state.status !== 'ready_to_implement_after_human_contract_merge'
+      || !/^[0-9a-f]{40}$/i.test(String(state.expected_head_sha || ''))
+    )
+  ) {
+    throw new Error('Automatic start requires a locked implementation state and full target SHA.');
   }
 
   for (const key of ['allowed_paths', 'required_new_paths', 'required_test_commands']) {
@@ -145,6 +174,15 @@ function splitCommand(command) {
 
 function isSafeTestCommand(command) {
   const tokens = splitCommand(command);
+  if (
+    tokens.length === 3
+    && tokens[0] === 'node'
+    && SAFE_NODE_SELFTESTS.has(tokens[1])
+    && tokens[2] === '--selftest'
+  ) {
+    return true;
+  }
+
   if (
     tokens.length === 2
     && tokens[0] === 'php'
@@ -186,6 +224,7 @@ function discoveredTestCount(output) {
   }
 
   for (const pattern of [
+    /\bPASS:\s*(\d+)\s+[A-Za-z0-9 -]+\s+checks\b/i,
     /\bOK\s*\(\s*(\d+)\s+tests?\b/i,
     /\b(\d+)\s+tests?\s+passed\b/i,
     /\bTests:\s*(\d+)\s*,\s*Assertions:\s*\d+\b/i,
@@ -280,6 +319,10 @@ function readFlag(name, fallback = null) {
 }
 
 function selftest() {
+  assert.equal(isSafeTestCommand('node .github/scripts/ai_subscription_autostart.js --selftest'), true);
+  assert.equal(isSafeTestCommand('node .github/scripts/ai_subscription_gate.js --selftest'), true);
+  assert.equal(isSafeTestCommand('node .github/scripts/unknown.js --selftest'), false);
+  assert.equal(isSafeTestCommand('node .github/scripts/ai_subscription_gate.js --selftest extra'), false);
   assert.equal(isSafeTestCommand('php artisan test --filter=WorkspaceOverviewHttpTest'), true);
   assert.equal(isSafeTestCommand('php artisan test tests/Feature/Workspace/FooTest.php'), true);
   assert.equal(isSafeTestCommand('php artisan test tests/Feature/Workspace'), true);
@@ -297,6 +340,7 @@ function selftest() {
   assert.equal(isSafeTestCommand('composer test'), false);
   assert.equal(discoveredTestCount('Tests:    20 passed (54 assertions)'), 20);
   assert.equal(discoveredTestCount('Tests:  2 failed, 13 passed (40 assertions)'), 15);
+  assert.equal(discoveredTestCount('PASS: 15 automatic-start checks'), 15);
   assert.equal(discoveredTestCount('OK (7 tests, 21 assertions)'), 7);
   assert.equal(discoveredTestCount('INFO  No tests found.'), 0);
   assert.equal(discoveredTestCount('command completed'), null);
@@ -355,8 +399,35 @@ function selftest() {
   });
   assert.equal(checkScope(state, ['outside.php'], fixtureRoot).ok, false);
   assert.equal(checkScope({ ...state, require_exact_scope: true }, ['a.php'], fixtureRoot).ok, false);
+  const idleStatePath = path.join(fixtureRoot, 'idle-state.json');
+  const idleState = {
+    repository: 'owner/repo',
+    active_pull_request: null,
+    base_branch: 'main',
+    head_branch: 'none',
+    current_slice: 'Idle',
+    status: 'automation_ready_pending_next_locked_contract',
+    merge_policy: 'human_only',
+    implementation_authorized: false,
+    expected_head_sha: '513d21388707a05662b3e07a6cc85c2d07f7f1e1',
+    advance_automatically: false,
+    start_automatically_after_contract_merge: false,
+    allowed_paths: ['a.php'],
+    required_new_paths: ['a.php'],
+    required_test_commands: ['node .github/scripts/ai_subscription_gate.js --selftest'],
+    gate_label: 'ai:testing',
+    success_label: 'ai:ready-for-human',
+    failure_label: 'ai:needs-human',
+  };
+  fs.writeFileSync(idleStatePath, JSON.stringify(idleState));
+  assert.equal(loadState(idleStatePath).active_pull_request, null);
+  fs.writeFileSync(idleStatePath, JSON.stringify({
+    ...idleState,
+    implementation_authorized: true,
+  }));
+  assert.throws(() => loadState(idleStatePath), /must name an active pull request/);
   fs.rmSync(fixtureRoot, { recursive: true, force: true });
-  console.log('PASS: 25 subscription-gate checks');
+  console.log('PASS: 32 subscription-gate checks');
 }
 
 function main() {
