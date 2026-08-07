@@ -6,16 +6,16 @@
   "head_branch": "feature/rfc-003-m3",
   "active_rfc": "RFC-003",
   "active_milestone": "Milestone 3",
-  "current_slice": "Milestone 3 aggregate regression",
-  "status": "ready_to_run_after_human_contract_merge",
+  "current_slice": "Milestone 3 complete",
+  "status": "milestone_complete_pending_autonomy_phase_2",
   "merge_policy": "human_only",
   "implementation_authorized": false,
   "expected_head_sha": "019f3dc65a40b338e353906de9ed481f05323d05",
   "require_exact_scope": true,
   "maximum_correction_rounds": 2,
   "advance_automatically": false,
-  "next_candidate": "Human merge decision for RFC-003 Milestone 3",
-  "contract_source": "docs/automation/RFC-003-M3-AGGREGATE-REGRESSION-CONTRACT.md#locked-aggregate-regression-contract",
+  "next_candidate": "Autonomy Phase 2 control-plane contract before RFC-003 Milestone 4",
+  "contract_source": "docs/automation/RFC-003-M3-CLOSURE.md#locked-milestone-3-closure",
   "allowed_paths": [
     "app/Helpers/Helper.php",
     "app/Http/Controllers/Customer/Workspace/WorkspaceController.php",
@@ -46,14 +46,16 @@
   ],
   "gate_label": "ai:testing",
   "forbidden_scope": [
-    "Any product, test, route, migration, dependency, workflow, environment, or database-configuration change on pull request #2",
-    "Starting or resuming the Claude Routine, requesting another Codex review, or creating a correction lease",
-    "Changing the pinned pull request head or accepting a cumulative diff other than the exact nine allowed paths",
-    "Weakening, skipping, reordering, or claiming success for any required command with a zero or unrecognized test count",
-    "plans, entitlements, billing, wallets, usage, or Stripe",
-    "Milestone 4 or later RFC-003 product work",
-    "Merging pull request #2, pushing to main, force-pushing, tagging, or automatic advancement"
+    "Any product, test, route, migration, dependency, workflow, environment, or database-configuration change under the completed Milestone 3 state",
+    "Starting or resuming the Claude Routine, requesting a Codex review, creating a correction lease, or applying an automation trigger label to merged pull request #2",
+    "RFC-003 Milestone 4 or later product work without a separate locked contract that is human-approved and merged",
+    "Setting advance_automatically true before the Autonomy Phase 2 controller, fail-closed tests, and roadmap-selection contract are merged",
+    "Using a metered model API, enabling usage credits, merging automatically, force-pushing, or tagging"
   ],
   "success_label": "ai:ready-for-human",
-  "failure_label": "ai:needs-human"
+  "failure_label": "ai:needs-human",
+  "completed_pull_request": 2,
+  "completed_product_head_sha": "019f3dc65a40b338e353906de9ed481f05323d05",
+  "completed_merge_commit_sha": "076927abc056da133cd35f770d7f558319b0a0c1",
+  "aggregate_regression_run": 31159820708
 }
