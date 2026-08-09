@@ -7,6 +7,8 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/ai-subscription-watchdog.yml"
+      - ".github/workflows/ai-subscription-gate.yml"
+      - ".github/scripts/ai_subscription_gate.js"
       - "docs/automation/AI-AUTONOMY-STATE.json"
   workflow_dispatch:
 
