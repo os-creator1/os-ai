@@ -566,8 +566,8 @@ class WorkspaceMemberManagementHttpTest extends TestCase
             'business_access_scope' => 'all',
         ]);
 
-        $ownerTargetResponse->assertNotFound();
-        $existingMemberResponse->assertNotFound();
+        $ownerTargetResponse->assertSessionHas('flash_error', 'This user cannot be added as a member.');
+        $existingMemberResponse->assertSessionHas('flash_error', 'This user cannot be added as a member.');
     }
 
     public function test_add_member_on_an_inactive_workspace_fails(): void
