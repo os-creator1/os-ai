@@ -15,7 +15,8 @@ on:
 permissions:
   contents: read
   actions: write
-  pull-requests: read
+  issues: write
+  pull-requests: write
 
 concurrency:
   group: ai-subscription-watchdog
@@ -27,7 +28,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Dispatch the deterministic gate when needed
+      - name: Dispatch the deterministic gate or consume a trusted override
+        id: recover
         uses: actions/github-script@v8
         with:
           script: |
@@ -65,12 +67,42 @@ jobs:
             }
 
             const labels = new Set(pr.labels.map((label) => label.name));
-            if (!labels.has(state.gate_label)) {
-              core.notice('The active pull request is not waiting at the deterministic gate.');
+            if (labels.has('ai:paused')) {
+              core.notice('Automation is paused.');
               return;
             }
-            if (labels.has('ai:paused') || labels.has(state.failure_label)) {
-              core.notice('Automation is paused or already needs human attention.');
+            if (labels.has(state.failure_label)) {
+              const comments = await github.paginate(github.rest.issues.listComments, {
+                ...context.repo,
+                issue_number: prNumber,
+                per_page: 100,
+              });
+              const override = [...comments].reverse().find((comment) =>
+                comment.user?.login === context.repo.owner
+                && comment.body?.includes('[AI-SUBSCRIPTION-LOOP HUMAN OVERRIDE]')
+                && comment.body?.includes(`before_sha: \`${pr.head.sha}\``)
+              );
+              if (!override) {
+                core.notice('Human attention is required and no trusted current-head override exists.');
+                return;
+              }
+              await github.rest.issues.removeLabel({
+                ...context.repo,
+                issue_number: prNumber,
+                name: state.failure_label,
+              });
+              await github.rest.issues.addLabels({
+                ...context.repo,
+                issue_number: prNumber,
+                labels: ['ai:codex-reviewed'],
+              });
+              core.setOutput('fire_claude', 'true');
+              core.setOutput('pr_number', String(prNumber));
+              core.notice(`Consumed trusted override comment ${override.id} for ${pr.head.sha}.`);
+              return;
+            }
+            if (!labels.has(state.gate_label)) {
+              core.notice('The active pull request is not waiting at the deterministic gate.');
               return;
             }
 
@@ -92,3 +124,52 @@ jobs:
               inputs: { pr_number: String(prNumber) },
             });
             core.notice(`Dispatched the gate for PR #${prNumber} at ${pr.head.sha}.`);
+
+      - name: Check out the trusted Routine trigger
+        if: steps.recover.outputs.fire_claude == 'true'
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Validate and fire Claude for the trusted override
+        if: steps.recover.outputs.fire_claude == 'true'
+        env:
+          CLAUDE_ROUTINE_URL: ${{ secrets.CLAUDE_ROUTINE_URL }}
+          CLAUDE_ROUTINE_TOKEN: ${{ secrets.CLAUDE_ROUTINE_TOKEN }}
+        run: |
+          node .github/scripts/fire_claude_routine.js --selftest
+          node .github/scripts/fire_claude_routine.js
+
+      - name: Stop safely if the override Routine cannot start
+        if: failure() && steps.recover.outputs.fire_claude == 'true'
+        uses: actions/github-script@v8
+        env:
+          CONTROL_PR_NUMBER: ${{ steps.recover.outputs.pr_number }}
+        with:
+          script: |
+            const prNumber = Number(process.env.CONTROL_PR_NUMBER);
+            try {
+              await github.rest.issues.removeLabel({
+                ...context.repo,
+                issue_number: prNumber,
+                name: 'ai:codex-reviewed',
+              });
+            } catch (error) {
+              if (error.status !== 404) throw error;
+            }
+            await github.rest.issues.addLabels({
+              ...context.repo,
+              issue_number: prNumber,
+              labels: ['ai:needs-human'],
+            });
+            await github.rest.issues.createComment({
+              ...context.repo,
+              issue_number: prNumber,
+              body: [
+                '[AI-SUBSCRIPTION-LOOP NEEDS HUMAN]',
+                'The trusted override was accepted, but the Claude Routine did not start.',
+                `Evidence: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                'No merge action was taken.',
+              ].join('\\n'),
+            });
