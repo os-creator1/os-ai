@@ -24,7 +24,7 @@ jobs:
   focused-tests:
     name: Prove scope and focused tests
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     env:
       APP_ENV: testing
       TARGET_DB: ultimatesms_testing
@@ -284,7 +284,7 @@ jobs:
               ].join('\n'),
             });
 
-            const deadline = Date.now() + (10 * 60 * 1000);
+            const deadline = Date.now() + (30 * 60 * 1000);
             let codexResult = null;
             while (Date.now() < deadline) {
               const [reviews, comments] = await Promise.all([
@@ -309,7 +309,7 @@ jobs:
               await new Promise((resolve) => setTimeout(resolve, 15000));
             }
             if (!codexResult) {
-              core.setFailed('No trusted current-head Codex result arrived within ten minutes.');
+              core.setFailed('No trusted current-head Codex result arrived within thirty minutes.');
               return;
             }
 
