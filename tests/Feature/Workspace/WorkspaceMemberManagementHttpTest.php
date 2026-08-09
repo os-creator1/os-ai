@@ -1229,6 +1229,93 @@ class WorkspaceMemberManagementHttpTest extends TestCase
         );
     }
 
+    public function test_active_admin_does_not_see_the_admin_option_on_the_add_member_form(): void
+    {
+        $customer = $this->actingAsHttpCustomer();
+        $owner = $this->createCustomer()->user;
+        $workspace = $this->createWorkspace($owner);
+        $this->createMembership($workspace, $customer->user, [
+            'role' => WorkspaceMembershipRole::Admin,
+            'is_active' => true,
+        ]);
+
+        $response = $this->get(route('customer.workspaces.show', $workspace->uid))->assertOk();
+
+        $response->assertDontSee('<option value="admin">Admin</option>', false);
+    }
+
+    public function test_owner_sees_the_admin_option_on_the_add_member_form(): void
+    {
+        $customer = $this->actingAsHttpCustomer();
+        $workspace = $this->createWorkspace($customer->user);
+
+        $response = $this->get(route('customer.workspaces.show', $workspace->uid))->assertOk();
+
+        $response->assertSee('<option value="admin">Admin</option>', false);
+    }
+
+    public function test_admin_cannot_change_access_for_a_member_with_businesses_outside_their_effective_access(): void
+    {
+        $customer = $this->actingAsHttpCustomer();
+        $owner = $this->createCustomer()->user;
+        $workspace = $this->createWorkspace($owner);
+        $admin = $this->createMembership($workspace, $customer->user, [
+            'role' => WorkspaceMembershipRole::Admin,
+            'business_access_scope' => WorkspaceBusinessAccessScope::Selected,
+            'is_active' => true,
+        ]);
+        $visibleBusiness = $this->createBusinessForCustomer($owner->id, $workspace->id);
+        $hiddenBusiness = $this->createBusinessForCustomer($owner->id, $workspace->id);
+        WorkspaceMembershipBusiness::create(['workspace_membership_id' => $admin->id, 'business_id' => $visibleBusiness->id]);
+
+        $target = $this->createNamedMember($workspace, 'Hid', 'Den', [
+            'role' => WorkspaceMembershipRole::Staff,
+            'business_access_scope' => WorkspaceBusinessAccessScope::Selected,
+        ]);
+        WorkspaceMembershipBusiness::create(['workspace_membership_id' => $target->id, 'business_id' => $visibleBusiness->id]);
+        WorkspaceMembershipBusiness::create(['workspace_membership_id' => $target->id, 'business_id' => $hiddenBusiness->id]);
+
+        $response = $this->get(route('customer.workspaces.show', $workspace->uid))->assertOk();
+        $html = $response->getContent();
+
+        $this->assertDoesNotMatchRegularExpression(
+            '/data-member-action="access" data-member-uid="' . preg_quote($target->user->uid, '/') . '"/',
+            $html
+        );
+        $this->assertStringContainsString(
+            "Business access can only be changed by a manager who can see this member's complete assigned Businesses.",
+            $html
+        );
+    }
+
+    public function test_admin_can_change_access_for_a_member_whose_businesses_are_fully_visible(): void
+    {
+        $customer = $this->actingAsHttpCustomer();
+        $owner = $this->createCustomer()->user;
+        $workspace = $this->createWorkspace($owner);
+        $admin = $this->createMembership($workspace, $customer->user, [
+            'role' => WorkspaceMembershipRole::Admin,
+            'business_access_scope' => WorkspaceBusinessAccessScope::Selected,
+            'is_active' => true,
+        ]);
+        $visibleBusiness = $this->createBusinessForCustomer($owner->id, $workspace->id);
+        WorkspaceMembershipBusiness::create(['workspace_membership_id' => $admin->id, 'business_id' => $visibleBusiness->id]);
+
+        $target = $this->createNamedMember($workspace, 'Vis', 'Ible', [
+            'role' => WorkspaceMembershipRole::Staff,
+            'business_access_scope' => WorkspaceBusinessAccessScope::Selected,
+        ]);
+        WorkspaceMembershipBusiness::create(['workspace_membership_id' => $target->id, 'business_id' => $visibleBusiness->id]);
+
+        $response = $this->get(route('customer.workspaces.show', $workspace->uid))->assertOk();
+        $html = $response->getContent();
+
+        $this->assertMatchesRegularExpression(
+            '/data-member-action="access" data-member-uid="' . preg_quote($target->user->uid, '/') . '"/',
+            $html
+        );
+    }
+
     public function test_member_action_forms_are_bound_after_they_exist_in_the_markup(): void
     {
         $customer = $this->actingAsHttpCustomer();

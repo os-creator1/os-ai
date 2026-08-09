@@ -122,7 +122,9 @@
                                     <label class="form-label" for="member-role">Role</label>
                                     <select class="form-control" id="member-role" name="role">
                                         <option value="staff">Staff</option>
-                                        <option value="admin">Admin</option>
+                                        @if ($workspace['role'] === 'Owner')
+                                            <option value="admin">Admin</option>
+                                        @endif
                                     </select>
                                 </div>
 
@@ -151,6 +153,9 @@
                             @if (empty($directory))
                                 <p class="mb-0">This Workspace has no members.</p>
                             @else
+                                @php
+                                    $manageableBusinessUids = collect($manageableBusinesses ?? [])->pluck('uid')->all();
+                                @endphp
                                 <div class="table-responsive">
                                     <table class="table">
                                         <thead>
@@ -181,6 +186,7 @@
                                                         @php
                                                             $viewerIsOwner = $workspace['role'] === 'Owner';
                                                             $viewerCanManageLifecycle = $viewerIsOwner || $member['role'] !== 'Admin';
+                                                            $viewerCanSeeMembersCompleteAccess = empty(array_diff($member['assigned_business_uids'], $manageableBusinessUids));
                                                         @endphp
                                                         @if ($member['is_active'])
                                                             @if ($viewerIsOwner)
@@ -194,24 +200,28 @@
                                                                 </form>
                                                             @endif
 
-                                                            <form method="POST" data-member-action="access" data-member-uid="{{ $member['uid'] }}" class="mb-1">
-                                                                @csrf
-                                                                <select name="business_access_scope" class="form-control form-control-sm d-inline-block w-auto">
-                                                                    <option value="all" @selected($member['scope'] === 'All Businesses')>All Businesses</option>
-                                                                    <option value="selected" @selected($member['scope'] === 'Selected Businesses')>Selected Businesses</option>
-                                                                </select>
+                                                            @if ($viewerCanSeeMembersCompleteAccess)
+                                                                <form method="POST" data-member-action="access" data-member-uid="{{ $member['uid'] }}" class="mb-1">
+                                                                    @csrf
+                                                                    <select name="business_access_scope" class="form-control form-control-sm d-inline-block w-auto">
+                                                                        <option value="all" @selected($member['scope'] === 'All Businesses')>All Businesses</option>
+                                                                        <option value="selected" @selected($member['scope'] === 'Selected Businesses')>Selected Businesses</option>
+                                                                    </select>
 
-                                                                @if (! empty($manageableBusinesses))
-                                                                    @foreach ($manageableBusinesses as $business)
-                                                                        <div class="form-check form-check-inline">
-                                                                            <input class="form-check-input" type="checkbox" name="business_uids[]" value="{{ $business['uid'] }}" id="access-{{ $member['uid'] }}-{{ $business['uid'] }}" @checked(in_array($business['uid'], $member['assigned_business_uids'], true))>
-                                                                            <label class="form-check-label" for="access-{{ $member['uid'] }}-{{ $business['uid'] }}">{{ $business['name'] }}</label>
-                                                                        </div>
-                                                                    @endforeach
-                                                                @endif
+                                                                    @if (! empty($manageableBusinesses))
+                                                                        @foreach ($manageableBusinesses as $business)
+                                                                            <div class="form-check form-check-inline">
+                                                                                <input class="form-check-input" type="checkbox" name="business_uids[]" value="{{ $business['uid'] }}" id="access-{{ $member['uid'] }}-{{ $business['uid'] }}" @checked(in_array($business['uid'], $member['assigned_business_uids'], true))>
+                                                                                <label class="form-check-label" for="access-{{ $member['uid'] }}-{{ $business['uid'] }}">{{ $business['name'] }}</label>
+                                                                            </div>
+                                                                        @endforeach
+                                                                    @endif
 
-                                                                <button type="submit" class="btn btn-sm btn-outline-primary">Update access</button>
-                                                            </form>
+                                                                    <button type="submit" class="btn btn-sm btn-outline-primary">Update access</button>
+                                                                </form>
+                                                            @else
+                                                                <p class="mb-1 text-muted">Business access can only be changed by a manager who can see this member's complete assigned Businesses.</p>
+                                                            @endif
 
                                                             @if ($viewerCanManageLifecycle)
                                                                 <form method="POST" data-member-action="deactivate" data-member-uid="{{ $member['uid'] }}">
