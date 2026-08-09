@@ -539,6 +539,37 @@ class WorkspaceMemberManagementHttpTest extends TestCase
         $this->assertNull(WorkspaceMembership::where('user_id', $customer->user->id)->first());
     }
 
+    public function test_owner_target_denial_is_not_distinguishable_from_an_existing_member_denial(): void
+    {
+        $customer = $this->actingAsHttpCustomer();
+        $owner = $this->createCustomer()->user;
+        $workspace = $this->createWorkspace($owner);
+        $this->createMembership($workspace, $customer->user, [
+            'role' => WorkspaceMembershipRole::Admin,
+            'is_active' => true,
+        ]);
+        $existingMember = $this->createTargetUser('Existing', 'Member');
+        $this->createMembership($workspace, $existingMember, [
+            'role' => WorkspaceMembershipRole::Staff,
+            'is_active' => true,
+        ]);
+
+        $ownerTargetResponse = $this->post(route('customer.workspaces.members.store', $workspace->uid), [
+            'user_uid' => $owner->uid,
+            'role' => 'staff',
+            'business_access_scope' => 'all',
+        ]);
+
+        $existingMemberResponse = $this->post(route('customer.workspaces.members.store', $workspace->uid), [
+            'user_uid' => $existingMember->uid,
+            'role' => 'admin',
+            'business_access_scope' => 'all',
+        ]);
+
+        $ownerTargetResponse->assertSessionHas('flash_error', 'This user cannot be added as a member.');
+        $existingMemberResponse->assertSessionHas('flash_error', 'This user cannot be added as a member.');
+    }
+
     public function test_add_member_on_an_inactive_workspace_fails(): void
     {
         $customer = $this->actingAsHttpCustomer();

@@ -214,10 +214,8 @@ class WorkspaceController extends CustomerBaseController
             abort(404);
         } catch (InactiveWorkspaceMutationException) {
             return redirect()->back()->with('flash_error', 'An inactive Workspace cannot receive new members.');
-        } catch (OwnerCannotBeMemberException) {
-            return redirect()->back()->with('flash_error', 'The Workspace owner cannot be added as a member.');
-        } catch (WorkspaceMembershipAlreadyExistsException) {
-            return redirect()->back()->with('flash_error', 'This user already has a membership in this Workspace.');
+        } catch (OwnerCannotBeMemberException|WorkspaceMembershipAlreadyExistsException) {
+            return redirect()->back()->with('flash_error', 'This user cannot be added as a member.');
         } catch (InvalidBusinessAccessScopeAssignmentException) {
             return redirect()->back()->with('flash_error', 'Business selections are not valid for the "All Businesses" scope.');
         }
