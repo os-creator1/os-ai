@@ -15,6 +15,7 @@ on:
 
 permissions:
   contents: read
+  actions: write
   issues: write
   pull-requests: write
 
@@ -29,7 +30,7 @@ jobs:
     if: github.event.action != 'labeled' || github.event.label.name == 'ai:testing'
     name: Prove scope and focused tests
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     env:
       APP_ENV: testing
       TARGET_DB: ultimatesms_testing
@@ -364,6 +365,46 @@ jobs:
           CLAUDE_ROUTINE_URL: ${{ secrets.CLAUDE_ROUTINE_URL }}
           CLAUDE_ROUTINE_TOKEN: ${{ secrets.CLAUDE_ROUTINE_TOKEN }}
         run: node .trusted-automation/.github/scripts/fire_claude_routine.js
+
+      - name: Follow Claude and dispatch the returned head
+        if: steps.passed.outputs.reviewed == 'true' && success()
+        timeout-minutes: 45
+        uses: actions/github-script@v8
+        env:
+          CONTROL_PR_NUMBER: ${{ steps.target.outputs.pr_number }}
+          CONTROL_HEAD_SHA: ${{ steps.target.outputs.head_sha }}
+        with:
+          script: |
+            const prNumber = Number(process.env.CONTROL_PR_NUMBER);
+            const originalHead = process.env.CONTROL_HEAD_SHA;
+            const deadline = Date.now() + (44 * 60 * 1000);
+            while (Date.now() < deadline) {
+              const { data: pr } = await github.rest.pulls.get({
+                ...context.repo,
+                pull_number: prNumber,
+              });
+              const labels = new Set(pr.labels.map((label) => label.name));
+              if (labels.has('ai:ready-for-human')) {
+                core.notice('Claude finalized the reviewed head without another correction.');
+                return;
+              }
+              if (labels.has('ai:needs-human') || labels.has('ai:paused')) {
+                core.setFailed('Claude stopped safely and requested human attention.');
+                return;
+              }
+              if (pr.head.sha !== originalHead && labels.has('ai:testing')) {
+                await github.rest.actions.createWorkflowDispatch({
+                  ...context.repo,
+                  workflow_id: 'ai-subscription-gate.yml',
+                  ref: context.payload.repository.default_branch,
+                  inputs: { pr_number: String(prNumber) },
+                });
+                core.notice(`Dispatched the returned Claude head ${pr.head.sha}.`);
+                return;
+              }
+              await new Promise((resolve) => setTimeout(resolve, 15000));
+            }
+            core.setFailed('Claude did not return a corrected or finalized head within forty-four minutes.');
 
       - name: Stop safely when the gate fails
         if: failure() && steps.validate.outputs.stale != 'true'
