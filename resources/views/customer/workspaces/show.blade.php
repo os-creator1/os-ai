@@ -178,15 +178,21 @@
                                                         @endif
                                                     </td>
                                                     <td>
+                                                        @php
+                                                            $viewerIsOwner = $workspace['role'] === 'Owner';
+                                                            $viewerCanManageLifecycle = $viewerIsOwner || $member['role'] !== 'Admin';
+                                                        @endphp
                                                         @if ($member['is_active'])
-                                                            <form method="POST" data-member-action="role" data-member-uid="{{ $member['uid'] }}" class="mb-1">
-                                                                @csrf
-                                                                <select name="role" class="form-control form-control-sm d-inline-block w-auto">
-                                                                    <option value="staff" @selected($member['role'] === 'Staff')>Staff</option>
-                                                                    <option value="admin" @selected($member['role'] === 'Admin')>Admin</option>
-                                                                </select>
-                                                                <button type="submit" class="btn btn-sm btn-outline-primary">Change role</button>
-                                                            </form>
+                                                            @if ($viewerIsOwner)
+                                                                <form method="POST" data-member-action="role" data-member-uid="{{ $member['uid'] }}" class="mb-1">
+                                                                    @csrf
+                                                                    <select name="role" class="form-control form-control-sm d-inline-block w-auto">
+                                                                        <option value="staff" @selected($member['role'] === 'Staff')>Staff</option>
+                                                                        <option value="admin" @selected($member['role'] === 'Admin')>Admin</option>
+                                                                    </select>
+                                                                    <button type="submit" class="btn btn-sm btn-outline-primary">Change role</button>
+                                                                </form>
+                                                            @endif
 
                                                             <form method="POST" data-member-action="access" data-member-uid="{{ $member['uid'] }}" class="mb-1">
                                                                 @csrf
@@ -207,15 +213,19 @@
                                                                 <button type="submit" class="btn btn-sm btn-outline-primary">Update access</button>
                                                             </form>
 
-                                                            <form method="POST" data-member-action="deactivate" data-member-uid="{{ $member['uid'] }}">
-                                                                @csrf
-                                                                <button type="submit" class="btn btn-sm btn-outline-danger">Deactivate</button>
-                                                            </form>
+                                                            @if ($viewerCanManageLifecycle)
+                                                                <form method="POST" data-member-action="deactivate" data-member-uid="{{ $member['uid'] }}">
+                                                                    @csrf
+                                                                    <button type="submit" class="btn btn-sm btn-outline-danger">Deactivate</button>
+                                                                </form>
+                                                            @endif
                                                         @else
-                                                            <form method="POST" data-member-action="reactivate" data-member-uid="{{ $member['uid'] }}">
-                                                                @csrf
-                                                                <button type="submit" class="btn btn-sm btn-outline-success">Reactivate</button>
-                                                            </form>
+                                                            @if ($viewerCanManageLifecycle)
+                                                                <form method="POST" data-member-action="reactivate" data-member-uid="{{ $member['uid'] }}">
+                                                                    @csrf
+                                                                    <button type="submit" class="btn btn-sm btn-outline-success">Reactivate</button>
+                                                                </form>
+                                                            @endif
                                                         @endif
                                                     </td>
                                                 </tr>

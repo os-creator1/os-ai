@@ -179,10 +179,11 @@ class WorkspaceController extends CustomerBaseController
      * unknown/inaccessible-target boundary. Business selection is resolved
      * and access-checked entirely by resolveManageableBusinessIds() before
      * any WorkspaceManager call, so an invalid selection never reaches the
-     * manager and never partially writes. An UnauthorizedWorkspaceManagementException
-     * also resolves to 404 (not a flash-message redirect) so this route can
-     * never be used as an oracle distinguishing an unknown target uid from a
-     * known one the actor simply isn't authorized to add.
+     * manager and never partially writes; an invalid selection resolves to
+     * the same 404 as an unauthorized actor or unknown target, not a
+     * flash-message redirect, so this pre-check can't be used as an oracle
+     * either. An UnauthorizedWorkspaceManagementException from the manager
+     * itself also resolves to 404 for the same reason.
      */
     public function storeMember(StoreWorkspaceMemberRequest $request, string $workspaceUid): RedirectResponse
     {
@@ -203,7 +204,7 @@ class WorkspaceController extends CustomerBaseController
             $businessIds = $this->resolveManageableBusinessIds($workspace, $actorUserId, $request->validated('business_uids', []));
 
             if ($businessIds === null) {
-                return redirect()->back()->with('flash_error', 'One or more selected Businesses are invalid or inaccessible.');
+                abort(404);
             }
         }
 
@@ -259,8 +260,10 @@ class WorkspaceController extends CustomerBaseController
      * Owner-or-active-Admin Business-access scope/assignment change --
      * entirely WorkspaceManager::changeMemberBusinessAccessScope()'s own
      * authority and synchronization rules. Same pre-validated,
-     * fail-closed Business resolution as storeMember(). An authority
-     * failure resolves to the same 404 as an unknown memberUid.
+     * fail-closed Business resolution as storeMember(): an invalid
+     * selection resolves to the same 404 as an unknown memberUid or an
+     * authority failure, never a flash-message redirect, so neither
+     * pre-check can be used as a target-existence oracle.
      */
     public function updateMemberAccess(UpdateWorkspaceMemberAccessRequest $request, string $workspaceUid, string $memberUid): RedirectResponse
     {
@@ -275,7 +278,7 @@ class WorkspaceController extends CustomerBaseController
             $businessIds = $this->resolveManageableBusinessIds($workspace, $actorUserId, $request->validated('business_uids', []));
 
             if ($businessIds === null) {
-                return redirect()->back()->with('flash_error', 'One or more selected Businesses are invalid or inaccessible.');
+                abort(404);
             }
         }
 

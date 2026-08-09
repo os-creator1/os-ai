@@ -622,7 +622,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
             'business_uids' => ['does-not-exist'],
         ]);
 
-        $response->assertSessionHas('flash_error');
+        $response->assertNotFound();
         $this->assertNull(WorkspaceMembership::where('user_id', $target->id)->first());
     }
 
@@ -641,7 +641,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
             'business_uids' => [$foreignBusiness->uid],
         ]);
 
-        $response->assertSessionHas('flash_error');
+        $response->assertNotFound();
         $this->assertNull(WorkspaceMembership::where('user_id', $target->id)->first());
     }
 
@@ -667,7 +667,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
             'business_uids' => [$forbiddenBusiness->uid],
         ]);
 
-        $response->assertSessionHas('flash_error');
+        $response->assertNotFound();
         $this->assertNull(WorkspaceMembership::where('user_id', $target->id)->first());
     }
 
@@ -854,7 +854,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
             'business_uids' => [$forbiddenBusiness->uid],
         ]);
 
-        $response->assertSessionHas('flash_error');
+        $response->assertNotFound();
         $this->assertSame(WorkspaceBusinessAccessScope::All, $member->fresh()->business_access_scope);
     }
 
@@ -1184,6 +1184,48 @@ class WorkspaceMemberManagementHttpTest extends TestCase
             "checkbox.checked = false;",
             $html,
             'Expected assigned-Business checkboxes to be cleared when "All Businesses" is selected, so an unmodified submit cannot fail UpdateWorkspaceMemberAccessRequest\'s all-scope validation.'
+        );
+    }
+
+    public function test_active_admin_does_not_see_the_role_change_form(): void
+    {
+        $customer = $this->actingAsHttpCustomer();
+        $owner = $this->createCustomer()->user;
+        $workspace = $this->createWorkspace($owner);
+        $this->createMembership($workspace, $customer->user, [
+            'role' => WorkspaceMembershipRole::Admin,
+            'is_active' => true,
+        ]);
+        $this->createNamedMember($workspace, 'Sta', 'Ffer', ['role' => WorkspaceMembershipRole::Staff]);
+
+        $response = $this->get(route('customer.workspaces.show', $workspace->uid))->assertOk();
+
+        $response->assertDontSee('data-member-action="role"', false);
+        $response->assertDontSee('Change role');
+    }
+
+    public function test_active_admin_does_not_see_lifecycle_controls_for_an_admin_target_but_does_for_staff(): void
+    {
+        $customer = $this->actingAsHttpCustomer();
+        $owner = $this->createCustomer()->user;
+        $workspace = $this->createWorkspace($owner);
+        $this->createMembership($workspace, $customer->user, [
+            'role' => WorkspaceMembershipRole::Admin,
+            'is_active' => true,
+        ]);
+        $adminTarget = $this->createNamedMember($workspace, 'Ano', 'Ther', ['role' => WorkspaceMembershipRole::Admin]);
+        $staffTarget = $this->createNamedMember($workspace, 'Sta', 'Ffer', ['role' => WorkspaceMembershipRole::Staff]);
+
+        $response = $this->get(route('customer.workspaces.show', $workspace->uid))->assertOk();
+        $html = $response->getContent();
+
+        $this->assertDoesNotMatchRegularExpression(
+            '/data-member-action="deactivate" data-member-uid="' . preg_quote($adminTarget->user->uid, '/') . '"/',
+            $html
+        );
+        $this->assertMatchesRegularExpression(
+            '/data-member-action="deactivate" data-member-uid="' . preg_quote($staffTarget->user->uid, '/') . '"/',
+            $html
         );
     }
 
