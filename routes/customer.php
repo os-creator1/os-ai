@@ -576,7 +576,10 @@
 
     Route::prefix('workspaces')->name('workspaces.')->group(function () {
         Route::get('/', 'Workspace\WorkspaceController@index')->name('index');
+        Route::post('/', 'Workspace\WorkspaceController@store')->name('store');
         Route::get('{workspaceUid}', 'Workspace\WorkspaceController@show')->name('show');
+        Route::post('{workspaceUid}/rename', 'Workspace\WorkspaceController@rename')->name('rename');
+        Route::post('{workspaceUid}/deactivate', 'Workspace\WorkspaceController@deactivate')->name('deactivate');
     });
 
 

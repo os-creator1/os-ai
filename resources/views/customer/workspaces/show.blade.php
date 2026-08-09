@@ -10,6 +10,26 @@
             </div>
 
             <div class="col-12">
+                @if (session('flash_success'))
+                    <div class="alert alert-success">{{ session('flash_success') }}</div>
+                @endif
+
+                @if (session('flash_error'))
+                    <div class="alert alert-danger">{{ session('flash_error') }}</div>
+                @endif
+
+                @if ($errors->any())
+                    <div class="alert alert-danger">
+                        <ul class="mb-0">
+                            @foreach ($errors->all() as $error)
+                                <li>{{ $error }}</li>
+                            @endforeach
+                        </ul>
+                    </div>
+                @endif
+            </div>
+
+            <div class="col-12">
                 <div class="card">
                     <div class="card-header">
                         <h4 class="card-title">{{ $workspace['name'] }}</h4>
@@ -28,9 +48,39 @@
                             <dt class="col-sm-3">Your role</dt>
                             <dd class="col-sm-9">{{ $workspace['role'] }}</dd>
                         </dl>
+
+                        @if (in_array($workspace['role'], ['Owner', 'Admin'], true))
+                            <form method="POST" data-workspace-action="rename" class="mt-1">
+                                @csrf
+
+                                <div class="mb-1">
+                                    <label class="form-label" for="workspace-rename">Rename Workspace</label>
+                                    <input type="text" class="form-control" id="workspace-rename" name="name" value="{{ old('name', $workspace['name']) }}" required>
+                                </div>
+
+                                <button type="submit" class="btn btn-outline-primary">Rename</button>
+                            </form>
+                        @endif
+
+                        @if ($workspace['role'] === 'Owner')
+                            <form method="POST" data-workspace-action="deactivate" class="mt-1">
+                                @csrf
+
+                                <button type="submit" class="btn btn-outline-danger">Deactivate Workspace</button>
+                            </form>
+                        @endif
                     </div>
                 </div>
             </div>
+
+            @if (in_array($workspace['role'], ['Owner', 'Admin'], true))
+                <script>
+                    document.querySelectorAll('form[data-workspace-action]').forEach(function (form) {
+                        var basePath = window.location.pathname.replace(/\/+$/, '');
+                        form.setAttribute('action', basePath + '/' + form.getAttribute('data-workspace-action'));
+                    });
+                </script>
+            @endif
 
             <div class="col-12">
                 <div class="card">

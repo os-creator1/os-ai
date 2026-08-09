@@ -11,6 +11,35 @@
                         <h4 class="card-title">Workspaces</h4>
                     </div>
                     <div class="card-body">
+                        @if (session('flash_success'))
+                            <div class="alert alert-success">{{ session('flash_success') }}</div>
+                        @endif
+
+                        @if (session('flash_error'))
+                            <div class="alert alert-danger">{{ session('flash_error') }}</div>
+                        @endif
+
+                        @if ($errors->any())
+                            <div class="alert alert-danger">
+                                <ul class="mb-0">
+                                    @foreach ($errors->all() as $error)
+                                        <li>{{ $error }}</li>
+                                    @endforeach
+                                </ul>
+                            </div>
+                        @endif
+
+                        <form method="POST" action="{{ route('customer.workspaces.store') }}" class="mb-2">
+                            @csrf
+
+                            <div class="mb-1">
+                                <label class="form-label" for="workspace-name">New Workspace name</label>
+                                <input type="text" class="form-control" id="workspace-name" name="name" value="{{ old('name') }}" required>
+                            </div>
+
+                            <button type="submit" class="btn btn-primary">Create Workspace</button>
+                        </form>
+
                         @if ($workspaces->isEmpty())
                             <p class="mb-0">You don't have access to any Workspaces yet.</p>
                         @else
