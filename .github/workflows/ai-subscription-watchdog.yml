@@ -86,6 +86,25 @@ jobs:
                 core.notice('Human attention is required and no trusted current-head override exists.');
                 return;
               }
+              const consumed = comments.some((comment) =>
+                comment.user?.login === 'github-actions[bot]'
+                && comment.body?.includes('[AI-SUBSCRIPTION-LOOP OVERRIDE CONSUMED]')
+                && comment.body?.includes(`override_comment: ${override.id}`)
+              );
+              if (consumed) {
+                core.notice(`Trusted override comment ${override.id} was already consumed.`);
+                return;
+              }
+              await github.rest.issues.createComment({
+                ...context.repo,
+                issue_number: prNumber,
+                body: [
+                  '[AI-SUBSCRIPTION-LOOP OVERRIDE CONSUMED]',
+                  `override_comment: ${override.id}`,
+                  `before_sha: \`${pr.head.sha}\``,
+                  'One bounded Claude correction run was authorized. No merge action was taken.',
+                ].join('\\n'),
+              });
               await github.rest.issues.removeLabel({
                 ...context.repo,
                 issue_number: prNumber,
