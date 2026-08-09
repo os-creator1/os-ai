@@ -27,7 +27,8 @@
     "resources/views/customer/workspaces/show.blade.php",
     "routes/customer.php",
     "tests/Feature/Workspace/WorkspaceMemberManagementHttpTest.php",
-    "tests/Feature/Workspace/WorkspaceOverviewHttpTest.php"
+    "tests/Feature/Workspace/WorkspaceOverviewHttpTest.php",
+    "tests/Feature/Workspace/WorkspaceBusinessListHttpTest.php"
   ],
   "required_new_paths": [
     "app/Http/Requests/Customer/Workspace/StoreWorkspaceMemberRequest.php",
@@ -50,7 +51,7 @@
     "Any invitation/email flow, new-user creation, password flow, outbound notification, member hard delete or platform-administrator Workspace control",
     "Any WorkspaceManager, model, enum, event, exception, migration, dependency, environment or database-configuration change",
     "Any billing, plan, entitlement, feature-toggle or usage-wallet implementation",
-    "Any application change outside the ten exact allowed implementation paths, including the pre-lease target marker, contract and automation state",
+    "Any application change outside the eleven exact allowed implementation paths, including the pre-lease target marker, contract and automation state",
     "Any alternate authorization algorithm, direct model mutation write, repository bypass, automatic later-contract generation or approval",
     "Setting advance_automatically true, changing merge_policy from human_only, or weakening current-head, exact-scope, positive-test or Codex trust gates",
     "Using a metered model API, enabling usage credits, merging automatically, force-pushing, pushing to main or tagging"
