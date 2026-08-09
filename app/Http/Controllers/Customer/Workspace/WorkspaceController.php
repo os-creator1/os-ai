@@ -4,13 +4,21 @@ namespace App\Http\Controllers\Customer\Workspace;
 
 use App\Enums\Workspace\WorkspaceBusinessAccessScope;
 use App\Enums\Workspace\WorkspaceMembershipRole;
+use App\Exceptions\Workspace\InactiveWorkspaceMembershipMutationException;
 use App\Exceptions\Workspace\InactiveWorkspaceMutationException;
+use App\Exceptions\Workspace\InvalidBusinessAccessScopeAssignmentException;
+use App\Exceptions\Workspace\OwnerCannotBeMemberException;
 use App\Exceptions\Workspace\UnauthorizedWorkspaceManagementException;
+use App\Exceptions\Workspace\WorkspaceMembershipAlreadyExistsException;
 use App\Http\Controllers\Customer\CustomerBaseController;
 use App\Http\Requests\Customer\Workspace\RenameWorkspaceRequest;
+use App\Http\Requests\Customer\Workspace\StoreWorkspaceMemberRequest;
 use App\Http\Requests\Customer\Workspace\StoreWorkspaceRequest;
+use App\Http\Requests\Customer\Workspace\UpdateWorkspaceMemberAccessRequest;
+use App\Http\Requests\Customer\Workspace\UpdateWorkspaceMemberRoleRequest;
 use App\Library\Workspace\WorkspaceManager;
 use App\Models\Business;
+use App\Models\User;
 use App\Models\Workspace;
 use App\Models\WorkspaceMembership;
 use App\Repositories\Contracts\WorkspaceMembershipBusinessRepository;
@@ -18,6 +26,7 @@ use App\Repositories\Contracts\WorkspaceMembershipRepository;
 use App\Repositories\Contracts\WorkspaceRepository;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\RedirectResponse;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Auth;
 
 class WorkspaceController extends CustomerBaseController
@@ -94,6 +103,7 @@ class WorkspaceController extends CustomerBaseController
 
         if (in_array($roleKey, ['owner', 'admin'], true)) {
             $viewData['directory'] = $this->membershipDirectory($workspace);
+            $viewData['manageableBusinesses'] = $this->manageableBusinesses($workspace, $userId);
         }
 
         return view('customer.workspaces.show', $viewData);
@@ -163,6 +173,176 @@ class WorkspaceController extends CustomerBaseController
     }
 
     /**
+     * RFC-003 Milestone 4 Slice 4B: adds an existing User as an active
+     * member via User::findByUid() + WorkspaceManager::addMember() —
+     * unknown user uid fails closed with 404, matching resolveAccessibleMembership()'s
+     * unknown/inaccessible-target boundary. Business selection is resolved
+     * and access-checked entirely by resolveManageableBusinessIds() before
+     * any WorkspaceManager call, so an invalid selection never reaches the
+     * manager and never partially writes.
+     */
+    public function storeMember(StoreWorkspaceMemberRequest $request, string $workspaceUid): RedirectResponse
+    {
+        $actorUserId = (int) Auth::id();
+        $workspace = $this->resolveAccessibleWorkspace($workspaceUid, $actorUserId);
+
+        $targetUser = User::findByUid($request->validated('user_uid'));
+
+        if ($targetUser === null) {
+            abort(404);
+        }
+
+        $role = WorkspaceMembershipRole::from($request->validated('role'));
+        $scope = WorkspaceBusinessAccessScope::from($request->validated('business_access_scope'));
+        $businessIds = [];
+
+        if ($scope === WorkspaceBusinessAccessScope::Selected) {
+            $businessIds = $this->resolveManageableBusinessIds($workspace, $actorUserId, $request->validated('business_uids', []));
+
+            if ($businessIds === null) {
+                return redirect()->back()->with('flash_error', 'One or more selected Businesses are invalid or inaccessible.');
+            }
+        }
+
+        try {
+            $this->workspaceManager->addMember($actorUserId, $workspace, (int) $targetUser->id, $role, $scope, $businessIds);
+        } catch (UnauthorizedWorkspaceManagementException) {
+            return redirect()->back()->with('flash_error', 'You are not authorized to add this member.');
+        } catch (InactiveWorkspaceMutationException) {
+            return redirect()->back()->with('flash_error', 'An inactive Workspace cannot receive new members.');
+        } catch (OwnerCannotBeMemberException) {
+            return redirect()->back()->with('flash_error', 'The Workspace owner cannot be added as a member.');
+        } catch (WorkspaceMembershipAlreadyExistsException) {
+            return redirect()->back()->with('flash_error', 'This user already has a membership in this Workspace.');
+        } catch (InvalidBusinessAccessScopeAssignmentException) {
+            return redirect()->back()->with('flash_error', 'Business selections are not valid for the "All Businesses" scope.');
+        }
+
+        return redirect()
+            ->route('customer.workspaces.show', $workspaceUid)
+            ->with('flash_success', 'Member added.');
+    }
+
+    /**
+     * Owner-only Admin promotion/demotion, owner-or-active-Admin otherwise
+     * -- entirely WorkspaceManager::changeMemberRole()'s own authority
+     * rule, never reimplemented here.
+     */
+    public function updateMemberRole(UpdateWorkspaceMemberRoleRequest $request, string $workspaceUid, string $memberUid): RedirectResponse
+    {
+        $actorUserId = (int) Auth::id();
+        $workspace = $this->resolveAccessibleWorkspace($workspaceUid, $actorUserId);
+        $membership = $this->resolveAccessibleMembership($workspace, $memberUid);
+
+        $role = WorkspaceMembershipRole::from($request->validated('role'));
+
+        try {
+            $this->workspaceManager->changeMemberRole($actorUserId, $membership, $role);
+        } catch (UnauthorizedWorkspaceManagementException) {
+            return redirect()->back()->with('flash_error', 'You are not authorized to change this member\'s role.');
+        } catch (InactiveWorkspaceMutationException) {
+            return redirect()->back()->with('flash_error', 'An inactive Workspace cannot be managed.');
+        } catch (InactiveWorkspaceMembershipMutationException) {
+            return redirect()->back()->with('flash_error', 'An inactive member must be reactivated before its role can change.');
+        }
+
+        return redirect()
+            ->route('customer.workspaces.show', $workspaceUid)
+            ->with('flash_success', 'Member role updated.');
+    }
+
+    /**
+     * Owner-or-active-Admin Business-access scope/assignment change --
+     * entirely WorkspaceManager::changeMemberBusinessAccessScope()'s own
+     * authority and synchronization rules. Same pre-validated,
+     * fail-closed Business resolution as storeMember().
+     */
+    public function updateMemberAccess(UpdateWorkspaceMemberAccessRequest $request, string $workspaceUid, string $memberUid): RedirectResponse
+    {
+        $actorUserId = (int) Auth::id();
+        $workspace = $this->resolveAccessibleWorkspace($workspaceUid, $actorUserId);
+        $membership = $this->resolveAccessibleMembership($workspace, $memberUid);
+
+        $scope = WorkspaceBusinessAccessScope::from($request->validated('business_access_scope'));
+        $businessIds = [];
+
+        if ($scope === WorkspaceBusinessAccessScope::Selected) {
+            $businessIds = $this->resolveManageableBusinessIds($workspace, $actorUserId, $request->validated('business_uids', []));
+
+            if ($businessIds === null) {
+                return redirect()->back()->with('flash_error', 'One or more selected Businesses are invalid or inaccessible.');
+            }
+        }
+
+        try {
+            $this->workspaceManager->changeMemberBusinessAccessScope($actorUserId, $membership, $scope, $businessIds);
+        } catch (UnauthorizedWorkspaceManagementException) {
+            return redirect()->back()->with('flash_error', 'You are not authorized to change this member\'s Business access.');
+        } catch (InactiveWorkspaceMutationException) {
+            return redirect()->back()->with('flash_error', 'An inactive Workspace cannot be managed.');
+        } catch (InactiveWorkspaceMembershipMutationException) {
+            return redirect()->back()->with('flash_error', 'An inactive member must be reactivated before its Business access can change.');
+        } catch (InvalidBusinessAccessScopeAssignmentException) {
+            return redirect()->back()->with('flash_error', 'Business selections are not valid for the "All Businesses" scope.');
+        }
+
+        return redirect()
+            ->route('customer.workspaces.show', $workspaceUid)
+            ->with('flash_success', 'Member Business access updated.');
+    }
+
+    /**
+     * Deactivates one membership -- target-role authority (owner for Admin
+     * targets, owner-or-active-Admin for Staff) is entirely
+     * WorkspaceManager::deactivateMember()'s own rule. Every scoped
+     * Business assignment row is retained by the manager, never touched
+     * here.
+     */
+    public function deactivateMember(string $workspaceUid, string $memberUid): RedirectResponse
+    {
+        $actorUserId = (int) Auth::id();
+        $workspace = $this->resolveAccessibleWorkspace($workspaceUid, $actorUserId);
+        $membership = $this->resolveAccessibleMembership($workspace, $memberUid);
+
+        try {
+            $this->workspaceManager->deactivateMember($actorUserId, $membership);
+        } catch (UnauthorizedWorkspaceManagementException) {
+            return redirect()->back()->with('flash_error', 'You are not authorized to deactivate this member.');
+        } catch (InactiveWorkspaceMutationException) {
+            return redirect()->back()->with('flash_error', 'An inactive Workspace cannot be managed.');
+        }
+
+        return redirect()
+            ->route('customer.workspaces.show', $workspaceUid)
+            ->with('flash_success', 'Member deactivated.');
+    }
+
+    /**
+     * Reactivates one membership -- same target-role authority rule as
+     * deactivateMember(). WorkspaceManager::reactivateMember() restores
+     * effective access purely by flipping is_active back to true; no
+     * assignment-row restoration happens here.
+     */
+    public function reactivateMember(string $workspaceUid, string $memberUid): RedirectResponse
+    {
+        $actorUserId = (int) Auth::id();
+        $workspace = $this->resolveAccessibleWorkspace($workspaceUid, $actorUserId);
+        $membership = $this->resolveAccessibleMembership($workspace, $memberUid);
+
+        try {
+            $this->workspaceManager->reactivateMember($actorUserId, $membership);
+        } catch (UnauthorizedWorkspaceManagementException) {
+            return redirect()->back()->with('flash_error', 'You are not authorized to reactivate this member.');
+        } catch (InactiveWorkspaceMutationException) {
+            return redirect()->back()->with('flash_error', 'An inactive Workspace cannot be managed.');
+        }
+
+        return redirect()
+            ->route('customer.workspaces.show', $workspaceUid)
+            ->with('flash_success', 'Member reactivated.');
+    }
+
+    /**
      * Same owner-or-active-membership visibility boundary as show()'s
      * effectiveRoleKey(): a uid that doesn't resolve, or that resolves to
      * a Workspace the actor has no owner/active-membership relationship
@@ -184,6 +364,87 @@ class WorkspaceController extends CustomerBaseController
     }
 
     /**
+     * RFC-003 Milestone 4 Slice 4B: resolves a membership-management target
+     * by the target User's opaque uid rather than a raw membership or user
+     * ID. An unknown uid, or a User with no WorkspaceMembership row (active
+     * or inactive) in this Workspace, fails closed with 404 -- identical
+     * treatment for both cases so this route can never be used to probe
+     * for a hidden target's existence. Deliberately returns an inactive
+     * membership too: reactivateMember() is a legitimate caller.
+     */
+    private function resolveAccessibleMembership(Workspace $workspace, string $memberUid): WorkspaceMembership
+    {
+        $targetUser = User::findByUid($memberUid);
+
+        if ($targetUser === null) {
+            abort(404);
+        }
+
+        $membership = $this->membershipRepository->findByWorkspaceAndUser($workspace, (int) $targetUser->id);
+
+        if ($membership === null) {
+            abort(404);
+        }
+
+        return $membership;
+    }
+
+    /**
+     * RFC-003 Milestone 4 Slice 4B: resolves submitted Business uids to IDs
+     * for addMember()/changeMemberBusinessAccessScope(), reusing the exact
+     * RFC-003 §14.1 effective-access filter (accessibleBusinesses()) rather
+     * than a second algorithm -- an Admin with selected scope can only
+     * select from their own effective access, identical to what
+     * manageableBusinesses() shows them. An unknown, cross-Workspace, or
+     * inaccessible uid, or an unresolvable uid, returns null so the caller
+     * fails closed before any WorkspaceManager call -- no partial write.
+     * Duplicate submitted uids are rejected by the Form Request's
+     * `distinct` rule before this method ever runs.
+     *
+     * @param  array<int, string>  $businessUids
+     * @return array<int, int>|null
+     */
+    private function resolveManageableBusinessIds(Workspace $workspace, int $actorUserId, array $businessUids): ?array
+    {
+        if ($businessUids === []) {
+            return [];
+        }
+
+        $manageable = $this->accessibleBusinesses($workspace, $actorUserId)->keyBy('uid');
+        $businessIds = [];
+
+        foreach ($businessUids as $businessUid) {
+            $business = $manageable->get($businessUid);
+
+            if ($business === null) {
+                return null;
+            }
+
+            $businessIds[] = (int) $business->id;
+        }
+
+        return $businessIds;
+    }
+
+    /**
+     * RFC-003 §14.1's effective-access filter over this Workspace's
+     * Businesses, ordered by businesses.id ascending -- the single shared
+     * source for both effectiveBusinesses() (display-only, Milestone 3
+     * Slice 3C) and manageableBusinesses()/resolveManageableBusinessIds()
+     * (Milestone 4 Slice 4B management surfaces), so there is never a
+     * second, independently-filtered Business set.
+     *
+     * @return Collection<int, Business>
+     */
+    private function accessibleBusinesses(Workspace $workspace, int $userId): Collection
+    {
+        return $this->workspaceRepository->businessesForWorkspace($workspace)
+            ->filter(fn (Business $business) => $this->workspaceManager->userCanAccessBusiness($userId, $business))
+            ->sortBy('id')
+            ->values();
+    }
+
+    /**
      * RFC-003 Milestone 3 Slice 3C Business list: every Business in this
      * Workspace for which userCanAccessBusiness() returns true, sorted by
      * the persisted businesses.id ascending for a deterministic list.
@@ -193,11 +454,23 @@ class WorkspaceController extends CustomerBaseController
      */
     private function effectiveBusinesses(Workspace $workspace, int $userId): array
     {
-        return $this->workspaceRepository->businessesForWorkspace($workspace)
-            ->filter(fn (Business $business) => $this->workspaceManager->userCanAccessBusiness($userId, $business))
-            ->sortBy('id')
-            ->values()
+        return $this->accessibleBusinesses($workspace, $userId)
             ->map(fn (Business $business) => ['name' => $business->name])
+            ->all();
+    }
+
+    /**
+     * RFC-003 Milestone 4 Slice 4B: the same effective-access Business set
+     * as effectiveBusinesses(), but carrying each Business's opaque uid so
+     * an owner/active-Admin manager can select a Business to assign on the
+     * add-member/change-access forms. Never exposes the numeric ID.
+     *
+     * @return array<int, array{uid: string, name: string}>
+     */
+    private function manageableBusinesses(Workspace $workspace, int $userId): array
+    {
+        return $this->accessibleBusinesses($workspace, $userId)
+            ->map(fn (Business $business) => ['uid' => $business->uid, 'name' => $business->name])
             ->all();
     }
 
@@ -222,20 +495,28 @@ class WorkspaceController extends CustomerBaseController
     }
 
     /**
-     * Active memberships only, ordered by workspace_memberships.id
-     * ascending; the owner is never synthesized as a row. Each row's
-     * assigned-Business count is the real
-     * workspace_membership_businesses row count for that membership, not
-     * assumed from the access-scope label.
+     * Every membership row (active and inactive alike, via
+     * WorkspaceMembershipRepository::allForWorkspace() -- RFC-003
+     * Milestone 4 Slice 4B), ordered by workspace_memberships.id
+     * ascending; the owner is never synthesized as a row. Inactive rows
+     * are deliberately included, not omitted, so an owner/active-Admin
+     * manager can find and reactivate them -- there is no separate
+     * members-index surface. Each row's assigned-Business count is the
+     * real workspace_membership_businesses row count for that membership,
+     * not assumed from the access-scope label, and is retained (not
+     * zeroed) across deactivation. `uid` is the member User's opaque uid
+     * (never the numeric membership or user ID), used to target the
+     * role/access/deactivate/reactivate actions.
      *
-     * @return array<int, array{name: string, role: string, scope: string, assigned_business_count: int}>
+     * @return array<int, array{uid: string, name: string, role: string, scope: string, assigned_business_count: int, is_active: bool}>
      */
     private function membershipDirectory(Workspace $workspace): array
     {
-        return $this->membershipRepository->activeForWorkspace($workspace)
+        return $this->membershipRepository->allForWorkspace($workspace)
             ->sortBy('id')
             ->values()
             ->map(fn (WorkspaceMembership $membership) => [
+                'uid' => $membership->user->uid,
                 'name' => trim($membership->user->first_name . ' ' . $membership->user->last_name),
                 'role' => $membership->role === WorkspaceMembershipRole::Admin ? 'Admin' : 'Staff',
                 'scope' => $membership->business_access_scope === WorkspaceBusinessAccessScope::All
@@ -244,6 +525,7 @@ class WorkspaceController extends CustomerBaseController
                 'assigned_business_count' => $this->membershipBusinessRepository
                     ->assignedBusinessIds($membership)
                     ->count(),
+                'is_active' => (bool) $membership->is_active,
             ])
             ->all();
     }

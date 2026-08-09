@@ -275,6 +275,7 @@ class WorkspaceOverviewHttpTest extends TestCase
         $response = $this->get(route('customer.workspaces.show', ['workspaceUid' => $workspace->uid]))->assertOk();
 
         $this->assertArrayNotHasKey('directory', $response->original->getData());
+        $this->assertArrayNotHasKey('manageableBusinesses', $response->original->getData());
         $response->assertDontSee('Ada');
         $response->assertDontSee($admin->user->email);
     }
@@ -296,12 +297,14 @@ class WorkspaceOverviewHttpTest extends TestCase
 
         $rows = $this->directoryViewData($response);
         $this->assertCount(1, $rows);
-        $this->assertSame(['name', 'role', 'scope', 'assigned_business_count'], array_keys($rows[0]));
+        $this->assertSame(['uid', 'name', 'role', 'scope', 'assigned_business_count', 'is_active'], array_keys($rows[0]));
         $this->assertSame([
+            'uid' => $member->user->uid,
             'name' => 'Priya Shah',
             'role' => 'Admin',
             'scope' => 'Selected Businesses',
             'assigned_business_count' => 2,
+            'is_active' => true,
         ], $rows[0]);
         $response->assertDontSee($member->user->email);
     }
@@ -328,8 +331,13 @@ class WorkspaceOverviewHttpTest extends TestCase
         $this->assertSame(1, $rows[0]['assigned_business_count']);
     }
 
-    public function test_directory_omits_the_owner_row_and_inactive_memberships(): void
+    public function test_directory_omits_the_owner_row_but_includes_inactive_memberships(): void
     {
+        // RFC-003 Milestone 4 Slice 4B: inactive members must remain
+        // visible (with is_active === false) so an owner/active-Admin
+        // manager can find and reactivate them -- there is no separate
+        // members-index surface. The owner itself is still never
+        // synthesized as a row.
         $customer = $this->actingAsHttpCustomer();
         $workspace = $this->createWorkspace($customer->user);
         $this->createNamedMember($workspace, 'Active', 'Member', ['is_active' => true]);
@@ -338,8 +346,12 @@ class WorkspaceOverviewHttpTest extends TestCase
         $response = $this->get(route('customer.workspaces.show', ['workspaceUid' => $workspace->uid]))->assertOk();
 
         $rows = $this->directoryViewData($response);
-        $this->assertCount(1, $rows);
-        $this->assertSame('Active Member', $rows[0]['name']);
+        $this->assertCount(2, $rows);
+        $this->assertEqualsCanonicalizing(['Active Member', 'Inactive Member'], array_column($rows, 'name'));
+        $activeRow = collect($rows)->firstWhere('name', 'Active Member');
+        $inactiveRow = collect($rows)->firstWhere('name', 'Inactive Member');
+        $this->assertTrue($activeRow['is_active']);
+        $this->assertFalse($inactiveRow['is_active']);
     }
 
     public function test_directory_rows_are_ordered_by_membership_id_ascending(): void
@@ -376,7 +388,7 @@ class WorkspaceOverviewHttpTest extends TestCase
         $response = $this->get(route('customer.workspaces.show', ['workspaceUid' => $workspace->uid]))->assertOk();
 
         $data = $response->original->getData();
-        $this->assertSame(['workspace', 'businesses', 'directory'], array_keys($data));
+        $this->assertSame(['workspace', 'businesses', 'directory', 'manageableBusinesses'], array_keys($data));
         $this->assertSame(['name', 'is_active', 'role'], array_keys($data['workspace']));
         $response->assertDontSee($customer->user->email);
     }
