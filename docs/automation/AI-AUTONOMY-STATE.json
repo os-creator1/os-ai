@@ -10,7 +10,7 @@
   "status": "ready_to_implement_after_human_contract_merge",
   "merge_policy": "human_only",
   "implementation_authorized": true,
-  "expected_head_sha": "ebd8f724564e206d5becec70f95f3b420156d60a",
+  "expected_head_sha": "c18ea585bc424585240a44657978434d6d732c75",
   "require_exact_scope": true,
   "maximum_correction_rounds": 2,
   "advance_automatically": false,
