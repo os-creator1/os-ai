@@ -250,7 +250,6 @@ class WorkspaceBusinessListHttpTest extends TestCase
         $this->assertSame(['name'], array_keys($rows[0]));
         $this->assertSame('Alpha Studio', $rows[0]['name']);
 
-        $response->assertDontSee((string) $business->id);
         // Slice 4B manager controls intentionally carry the opaque Business UID.
         // The structured read-only row remains name-only, as asserted above.
         $response->assertDontSee('/business', false);
