@@ -23,7 +23,7 @@ The implementation must remain on this PR and branch. The target marker at `docs
 
 1. Extend the existing customer Workspace overview with a manager-only membership surface. The Workspace owner and active Admin may see the management data; Staff must receive neither member-management data nor controls.
 2. Address existing users and Businesses at the HTTP boundary only by their existing opaque `uid` values. Never expose, accept, or route on raw database IDs. Do not expose member email addresses, owner identifiers, or internal Workspace/membership/Business IDs.
-3. Add an existing user as an active Workspace member with an explicit role (`admin` or `staff`), explicit Business-access scope (`all` or `selected`), and a complete selected-Business UID set when applicable. Resolve the user through the existing `User::findByUid()` boundary and delegate the mutation to `WorkspaceManager::addMember()`.
+3. Add an existing user as an active Workspace member with an explicit role (`admin` or `staff`), explicit Business-access scope (`all` or `selected`), and a complete selected-Business UID set when applicable. Resolve the submitted user UID through the existing `User` model query boundary with a nullable lookup and delegate the mutation to `WorkspaceManager::addMember()`. The legacy non-null `User::findByUid()` signature must not be allowed to turn an unknown UID into a 500 response; do not change the model in this slice.
 4. Change an active member's role only through `WorkspaceManager::changeMemberRole()`. Owner-only role authority, including Admin promotion/demotion, remains exactly as enforced by the manager.
 5. Change an active member's Business-access scope and complete selected-Business assignment set only through `WorkspaceManager::changeMemberBusinessAccessScope()`. `all` must carry no selected assignments. `selected` may carry zero or more Businesses.
 6. Convert submitted Business UIDs to IDs only after resolving the current Workspace's Businesses. An active Admin with selected scope must not be shown or allowed to submit a Business outside that Admin's own effective access; use `WorkspaceManager::userCanAccessBusiness()` rather than creating a second access algorithm. Unknown, cross-Workspace, duplicate, malformed, or inaccessible Business UIDs must fail closed with no partial write.
@@ -32,7 +32,7 @@ The implementation must remain on this PR and branch. The target marker at `docs
 9. Add one additive repository read method that returns all Workspace memberships, active and inactive, so authorized managers can see and reactivate inactive members. Keep the existing active-only repository method and existing access behavior intact.
 10. Unknown or inaccessible Workspace/member/user targets must return 404 or an equivalent fail-closed response without revealing whether a hidden target exists. Domain authorization and inactive-state rules must not be replaced by parallel weaker rules.
 11. Add bounded Form Requests, dedicated POST routes, minimal overview controls, and focused HTTP tests for add, role, scope/assignment, deactivate, and reactivate flows.
-12. Preserve Slice 4A Workspace create/rename/deactivate behavior and all Milestone 3 switcher, overview, directory privacy, and effective Business-list behavior except for the explicitly authorized manager-only membership data/control additions.
+12. Preserve Slice 4A Workspace create/rename/deactivate behavior and all Milestone 3 switcher, overview, directory privacy, and effective Business-list behavior except for the explicitly authorized manager-only membership data/control additions. The structured read-only `businesses` rows must remain name-only; an older whole-document assertion may be narrowed because opaque Business UIDs are now intentionally present only inside authorized manager controls.
 
 ### Exact implementation scope
 
@@ -48,6 +48,7 @@ Only these implementation paths may change after the automatic-start lease:
 - `routes/customer.php`
 - `tests/Feature/Workspace/WorkspaceMemberManagementHttpTest.php`
 - `tests/Feature/Workspace/WorkspaceOverviewHttpTest.php`
+- `tests/Feature/Workspace/WorkspaceBusinessListHttpTest.php`
 
 The automation state and this contract are included in the state allow-list only so the trusted control plane can validate the human-merged authorization contract; Claude must not edit either file on the implementation PR. The pre-lease target marker must also remain unchanged.
 
@@ -93,7 +94,7 @@ The focused HTTP suite must prove at minimum:
 - No platform-administrator Workspace controls.
 - No change to `WorkspaceManager`, Workspace/Business/User/membership models, enums, events, exceptions, migrations, database configuration, dependencies, environment files, billing, plans, entitlements, feature toggles, or usage wallets.
 - No new generic service layer, alternate authorization algorithm, direct model write, or repository bypass for mutations.
-- No application change outside the ten exact allowed implementation paths.
+- No application change outside the eleven exact allowed implementation paths.
 - No edit to the target marker, this contract, or automation state from the implementation PR.
 - No automatic generation or approval of a later contract.
 - No `advance_automatically: true`, merge-policy change, or weakening of current-head, exact-scope, positive-test, or Codex trust gates.
