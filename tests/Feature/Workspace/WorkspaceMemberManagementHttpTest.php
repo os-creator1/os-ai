@@ -129,6 +129,52 @@ class WorkspaceMemberManagementHttpTest extends TestCase
             ->assertUnauthorized();
     }
 
+    // --- CSRF boundary -------------------------------------------------
+    //
+    // These five mutation routes share the 'web' middleware group's
+    // VerifyCsrfToken. Laravel's own VerifyCsrfToken::runningUnitTests()
+    // bypasses that check under APP_ENV=testing, so the enforcement below
+    // is re-armed for the duration of a single test via forceCsrfVerification().
+
+    public function test_store_member_rejects_a_request_without_a_valid_csrf_token(): void
+    {
+        $this->forceCsrfVerification();
+        $customer = $this->actingAsHttpCustomer();
+        $workspace = $this->createWorkspace($customer->user);
+        $target = $this->createTargetUser('Csrf', 'Missing');
+
+        $response = $this->post(route('customer.workspaces.members.store', $workspace->uid), [
+            'user_uid' => $target->uid,
+            'role' => 'staff',
+            'business_access_scope' => 'all',
+        ]);
+
+        $response->assertStatus(419);
+        $this->assertNull(WorkspaceMembership::where('user_id', $target->id)->first());
+    }
+
+    public function test_store_member_succeeds_with_a_valid_csrf_token(): void
+    {
+        $this->forceCsrfVerification();
+        $customer = $this->actingAsHttpCustomer();
+        $workspace = $this->createWorkspace($customer->user);
+        $target = $this->createTargetUser('Csrf', 'Valid');
+        $token = 'test-csrf-token';
+
+        $response = $this->withSession(['_token' => $token])->post(
+            route('customer.workspaces.members.store', $workspace->uid),
+            [
+                '_token' => $token,
+                'user_uid' => $target->uid,
+                'role' => 'staff',
+                'business_access_scope' => 'all',
+            ]
+        );
+
+        $response->assertRedirect(route('customer.workspaces.show', $workspace->uid));
+        $this->assertNotNull(WorkspaceMembership::where('user_id', $target->id)->first());
+    }
+
     // --- Validation ----------------------------------------------------
 
     public function test_store_member_requires_a_user_uid(): void
@@ -358,8 +404,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
             'business_access_scope' => 'all',
         ]);
 
-        $response->assertRedirect();
-        $response->assertSessionHas('flash_error');
+        $response->assertNotFound();
         $this->assertNull(WorkspaceMembership::where('user_id', $target->id)->first());
     }
 
@@ -380,9 +425,36 @@ class WorkspaceMemberManagementHttpTest extends TestCase
             'business_access_scope' => 'all',
         ]);
 
-        $response->assertRedirect();
-        $response->assertSessionHas('flash_error');
+        $response->assertNotFound();
         $this->assertNull(WorkspaceMembership::where('user_id', $target->id)->first());
+    }
+
+    public function test_staff_denial_is_not_distinguishable_from_an_unknown_user_uid(): void
+    {
+        $customer = $this->actingAsHttpCustomer();
+        $owner = $this->createCustomer()->user;
+        $workspace = $this->createWorkspace($owner);
+        $this->createMembership($workspace, $customer->user, [
+            'role' => WorkspaceMembershipRole::Staff,
+            'is_active' => true,
+        ]);
+        $target = $this->createTargetUser('Known', 'Target');
+
+        $knownTargetResponse = $this->post(route('customer.workspaces.members.store', $workspace->uid), [
+            'user_uid' => $target->uid,
+            'role' => 'staff',
+            'business_access_scope' => 'all',
+        ]);
+
+        $unknownTargetResponse = $this->post(route('customer.workspaces.members.store', $workspace->uid), [
+            'user_uid' => 'does-not-exist',
+            'role' => 'staff',
+            'business_access_scope' => 'all',
+        ]);
+
+        $knownTargetResponse->assertNotFound();
+        $unknownTargetResponse->assertNotFound();
+        $this->assertSame($knownTargetResponse->status(), $unknownTargetResponse->status());
     }
 
     public function test_inactive_admin_cannot_add_members(): void
@@ -631,7 +703,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
             'role' => 'admin',
         ]);
 
-        $response->assertSessionHas('flash_error');
+        $response->assertNotFound();
         $this->assertSame(WorkspaceMembershipRole::Staff, $member->fresh()->role);
     }
 
@@ -647,7 +719,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
         $member = $this->createNamedMember($workspace, 'Role', 'Change', ['role' => WorkspaceMembershipRole::Staff]);
 
         $this->post(route('customer.workspaces.members.role', [$workspace->uid, $member->user->uid]), ['role' => 'admin'])
-            ->assertSessionHas('flash_error');
+            ->assertNotFound();
         $this->assertSame(WorkspaceMembershipRole::Staff, $member->fresh()->role);
     }
 
@@ -757,7 +829,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
 
         $this->post(route('customer.workspaces.members.access', [$workspace->uid, $member->user->uid]), [
             'business_access_scope' => 'selected',
-        ])->assertSessionHas('flash_error');
+        ])->assertNotFound();
 
         $this->assertSame(WorkspaceBusinessAccessScope::All, $member->fresh()->business_access_scope);
     }
@@ -895,7 +967,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
 
         $response = $this->post(route('customer.workspaces.members.deactivate', [$workspace->uid, $member->user->uid]));
 
-        $response->assertSessionHas('flash_error');
+        $response->assertNotFound();
         $this->assertTrue((bool) $member->fresh()->is_active);
     }
 
@@ -911,7 +983,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
         $member = $this->createNamedMember($workspace, 'Oth', 'Er', ['role' => WorkspaceMembershipRole::Staff]);
 
         $this->post(route('customer.workspaces.members.deactivate', [$workspace->uid, $member->user->uid]))
-            ->assertSessionHas('flash_error');
+            ->assertNotFound();
         $this->assertTrue((bool) $member->fresh()->is_active);
     }
 
@@ -1090,6 +1162,31 @@ class WorkspaceMemberManagementHttpTest extends TestCase
         );
     }
 
+    public function test_access_scope_script_clears_stale_business_selections_when_all_is_chosen(): void
+    {
+        $customer = $this->actingAsHttpCustomer();
+        $workspace = $this->createWorkspace($customer->user);
+        $this->createNamedMember($workspace, 'Nia', 'Cole', [
+            'role' => WorkspaceMembershipRole::Admin,
+            'business_access_scope' => WorkspaceBusinessAccessScope::Selected,
+        ]);
+        $this->createBusinessForCustomer($customer->user->id, $workspace->id);
+
+        $response = $this->get(route('customer.workspaces.show', $workspace->uid))->assertOk();
+        $html = $response->getContent();
+
+        $this->assertStringContainsString(
+            'select[name="business_access_scope"]',
+            $html,
+            'Expected a script that reconciles the business_uids checkboxes with the chosen access scope.'
+        );
+        $this->assertStringContainsString(
+            "checkbox.checked = false;",
+            $html,
+            'Expected assigned-Business checkboxes to be cleared when "All Businesses" is selected, so an unmodified submit cannot fail UpdateWorkspaceMemberAccessRequest\'s all-scope validation.'
+        );
+    }
+
     public function test_member_action_forms_are_bound_after_they_exist_in_the_markup(): void
     {
         $customer = $this->actingAsHttpCustomer();
@@ -1112,6 +1209,25 @@ class WorkspaceMemberManagementHttpTest extends TestCase
     }
 
     // --- Helpers -----------------------------------------------------------
+
+    /**
+     * Re-arms CSRF verification for the current test only. Laravel's own
+     * VerifyCsrfToken::runningUnitTests() otherwise bypasses the check
+     * under APP_ENV=testing, so the CSRF-boundary tests above bind a
+     * subclass that forces enforcement instead of reimplementing the
+     * middleware.
+     */
+    private function forceCsrfVerification(): void
+    {
+        $this->app->bind(\App\Http\Middleware\VerifyCsrfToken::class, function ($app) {
+            return new class($app, $app->make('encrypter')) extends \App\Http\Middleware\VerifyCsrfToken {
+                protected function runningUnitTests()
+                {
+                    return false;
+                }
+            };
+        });
+    }
 
     private function createTargetUser(string $firstName, string $lastName): User
     {

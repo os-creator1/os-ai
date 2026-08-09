@@ -179,7 +179,10 @@ class WorkspaceController extends CustomerBaseController
      * unknown/inaccessible-target boundary. Business selection is resolved
      * and access-checked entirely by resolveManageableBusinessIds() before
      * any WorkspaceManager call, so an invalid selection never reaches the
-     * manager and never partially writes.
+     * manager and never partially writes. An UnauthorizedWorkspaceManagementException
+     * also resolves to 404 (not a flash-message redirect) so this route can
+     * never be used as an oracle distinguishing an unknown target uid from a
+     * known one the actor simply isn't authorized to add.
      */
     public function storeMember(StoreWorkspaceMemberRequest $request, string $workspaceUid): RedirectResponse
     {
@@ -207,7 +210,7 @@ class WorkspaceController extends CustomerBaseController
         try {
             $this->workspaceManager->addMember($actorUserId, $workspace, (int) $targetUser->id, $role, $scope, $businessIds);
         } catch (UnauthorizedWorkspaceManagementException) {
-            return redirect()->back()->with('flash_error', 'You are not authorized to add this member.');
+            abort(404);
         } catch (InactiveWorkspaceMutationException) {
             return redirect()->back()->with('flash_error', 'An inactive Workspace cannot receive new members.');
         } catch (OwnerCannotBeMemberException) {
@@ -226,7 +229,8 @@ class WorkspaceController extends CustomerBaseController
     /**
      * Owner-only Admin promotion/demotion, owner-or-active-Admin otherwise
      * -- entirely WorkspaceManager::changeMemberRole()'s own authority
-     * rule, never reimplemented here.
+     * rule, never reimplemented here. An authority failure resolves to the
+     * same 404 as an unknown memberUid, not a flash-message redirect.
      */
     public function updateMemberRole(UpdateWorkspaceMemberRoleRequest $request, string $workspaceUid, string $memberUid): RedirectResponse
     {
@@ -239,7 +243,7 @@ class WorkspaceController extends CustomerBaseController
         try {
             $this->workspaceManager->changeMemberRole($actorUserId, $membership, $role);
         } catch (UnauthorizedWorkspaceManagementException) {
-            return redirect()->back()->with('flash_error', 'You are not authorized to change this member\'s role.');
+            abort(404);
         } catch (InactiveWorkspaceMutationException) {
             return redirect()->back()->with('flash_error', 'An inactive Workspace cannot be managed.');
         } catch (InactiveWorkspaceMembershipMutationException) {
@@ -255,7 +259,8 @@ class WorkspaceController extends CustomerBaseController
      * Owner-or-active-Admin Business-access scope/assignment change --
      * entirely WorkspaceManager::changeMemberBusinessAccessScope()'s own
      * authority and synchronization rules. Same pre-validated,
-     * fail-closed Business resolution as storeMember().
+     * fail-closed Business resolution as storeMember(). An authority
+     * failure resolves to the same 404 as an unknown memberUid.
      */
     public function updateMemberAccess(UpdateWorkspaceMemberAccessRequest $request, string $workspaceUid, string $memberUid): RedirectResponse
     {
@@ -277,7 +282,7 @@ class WorkspaceController extends CustomerBaseController
         try {
             $this->workspaceManager->changeMemberBusinessAccessScope($actorUserId, $membership, $scope, $businessIds);
         } catch (UnauthorizedWorkspaceManagementException) {
-            return redirect()->back()->with('flash_error', 'You are not authorized to change this member\'s Business access.');
+            abort(404);
         } catch (InactiveWorkspaceMutationException) {
             return redirect()->back()->with('flash_error', 'An inactive Workspace cannot be managed.');
         } catch (InactiveWorkspaceMembershipMutationException) {
@@ -296,7 +301,8 @@ class WorkspaceController extends CustomerBaseController
      * targets, owner-or-active-Admin for Staff) is entirely
      * WorkspaceManager::deactivateMember()'s own rule. Every scoped
      * Business assignment row is retained by the manager, never touched
-     * here.
+     * here. An authority failure resolves to the same 404 as an unknown
+     * memberUid.
      */
     public function deactivateMember(string $workspaceUid, string $memberUid): RedirectResponse
     {
@@ -307,7 +313,7 @@ class WorkspaceController extends CustomerBaseController
         try {
             $this->workspaceManager->deactivateMember($actorUserId, $membership);
         } catch (UnauthorizedWorkspaceManagementException) {
-            return redirect()->back()->with('flash_error', 'You are not authorized to deactivate this member.');
+            abort(404);
         } catch (InactiveWorkspaceMutationException) {
             return redirect()->back()->with('flash_error', 'An inactive Workspace cannot be managed.');
         }
@@ -321,7 +327,8 @@ class WorkspaceController extends CustomerBaseController
      * Reactivates one membership -- same target-role authority rule as
      * deactivateMember(). WorkspaceManager::reactivateMember() restores
      * effective access purely by flipping is_active back to true; no
-     * assignment-row restoration happens here.
+     * assignment-row restoration happens here. An authority failure
+     * resolves to the same 404 as an unknown memberUid.
      */
     public function reactivateMember(string $workspaceUid, string $memberUid): RedirectResponse
     {
@@ -332,7 +339,7 @@ class WorkspaceController extends CustomerBaseController
         try {
             $this->workspaceManager->reactivateMember($actorUserId, $membership);
         } catch (UnauthorizedWorkspaceManagementException) {
-            return redirect()->back()->with('flash_error', 'You are not authorized to reactivate this member.');
+            abort(404);
         } catch (InactiveWorkspaceMutationException) {
             return redirect()->back()->with('flash_error', 'An inactive Workspace cannot be managed.');
         }

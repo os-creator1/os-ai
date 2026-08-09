@@ -241,6 +241,29 @@
                         var memberUid = form.getAttribute('data-member-uid');
                         form.setAttribute('action', basePath + '/members/' + memberUid + '/' + form.getAttribute('data-member-action'));
                     });
+
+                    document.querySelectorAll('select[name="business_access_scope"]').forEach(function (select) {
+                        var form = select.closest('form');
+
+                        if (! form) {
+                            return;
+                        }
+
+                        var syncBusinessCheckboxes = function () {
+                            var isAllScope = select.value === 'all';
+
+                            form.querySelectorAll('input[name="business_uids[]"]').forEach(function (checkbox) {
+                                checkbox.disabled = isAllScope;
+
+                                if (isAllScope) {
+                                    checkbox.checked = false;
+                                }
+                            });
+                        };
+
+                        select.addEventListener('change', syncBusinessCheckboxes);
+                        syncBusinessCheckboxes();
+                    });
                 </script>
             @endif
         </div>
