@@ -772,6 +772,26 @@ class WorkspaceMemberManagementHttpTest extends TestCase
             ->assertNotFound();
     }
 
+    public function test_staff_role_change_denial_on_an_inactive_member_is_not_distinguishable_from_an_unknown_member_uid(): void
+    {
+        $customer = $this->actingAsHttpCustomer();
+        $owner = $this->createCustomer()->user;
+        $workspace = $this->createWorkspace($owner);
+        $this->createMembership($workspace, $customer->user, [
+            'role' => WorkspaceMembershipRole::Staff,
+            'is_active' => true,
+        ]);
+        $inactiveMember = $this->createNamedMember($workspace, 'Ina', 'Ctive', ['role' => WorkspaceMembershipRole::Staff, 'is_active' => false]);
+
+        $knownTargetResponse = $this->post(route('customer.workspaces.members.role', [$workspace->uid, $inactiveMember->user->uid]), ['role' => 'admin']);
+        $unknownTargetResponse = $this->post(route('customer.workspaces.members.role', [$workspace->uid, 'does-not-exist']), ['role' => 'admin']);
+
+        $knownTargetResponse->assertNotFound();
+        $unknownTargetResponse->assertNotFound();
+        $this->assertSame($knownTargetResponse->status(), $unknownTargetResponse->status());
+        $this->assertSame(WorkspaceMembershipRole::Staff, $inactiveMember->fresh()->role);
+    }
+
     // --- Business access scope / assignment change --------------------------
 
     public function test_owner_can_change_scope_from_all_to_selected_with_assignments(): void
@@ -886,6 +906,49 @@ class WorkspaceMemberManagementHttpTest extends TestCase
 
         $response->assertSessionHas('flash_error');
         $this->assertSame(WorkspaceBusinessAccessScope::All, $member->fresh()->business_access_scope);
+    }
+
+    public function test_staff_access_change_denial_on_an_inactive_member_is_not_distinguishable_from_an_unknown_member_uid(): void
+    {
+        $customer = $this->actingAsHttpCustomer();
+        $owner = $this->createCustomer()->user;
+        $workspace = $this->createWorkspace($owner);
+        $this->createMembership($workspace, $customer->user, [
+            'role' => WorkspaceMembershipRole::Staff,
+            'is_active' => true,
+        ]);
+        $inactiveMember = $this->createNamedMember($workspace, 'Ina', 'Ctive', ['is_active' => false, 'business_access_scope' => WorkspaceBusinessAccessScope::All]);
+
+        $knownTargetResponse = $this->post(route('customer.workspaces.members.access', [$workspace->uid, $inactiveMember->user->uid]), ['business_access_scope' => 'selected']);
+        $unknownTargetResponse = $this->post(route('customer.workspaces.members.access', [$workspace->uid, 'does-not-exist']), ['business_access_scope' => 'selected']);
+
+        $knownTargetResponse->assertNotFound();
+        $unknownTargetResponse->assertNotFound();
+        $this->assertSame($knownTargetResponse->status(), $unknownTargetResponse->status());
+        $this->assertSame(WorkspaceBusinessAccessScope::All, $inactiveMember->fresh()->business_access_scope);
+    }
+
+    public function test_active_admin_can_still_see_the_reactivation_prompt_for_an_inactive_admin_members_access_change(): void
+    {
+        $customer = $this->actingAsHttpCustomer();
+        $owner = $this->createCustomer()->user;
+        $workspace = $this->createWorkspace($owner);
+        $this->createMembership($workspace, $customer->user, [
+            'role' => WorkspaceMembershipRole::Admin,
+            'is_active' => true,
+        ]);
+        $inactiveAdmin = $this->createNamedMember($workspace, 'Ina', 'Ctive', [
+            'role' => WorkspaceMembershipRole::Admin,
+            'is_active' => false,
+            'business_access_scope' => WorkspaceBusinessAccessScope::All,
+        ]);
+
+        $response = $this->post(route('customer.workspaces.members.access', [$workspace->uid, $inactiveAdmin->user->uid]), [
+            'business_access_scope' => 'selected',
+        ]);
+
+        $response->assertSessionHas('flash_error');
+        $this->assertSame(WorkspaceBusinessAccessScope::All, $inactiveAdmin->fresh()->business_access_scope);
     }
 
     public function test_role_and_scope_changes_are_independent(): void
@@ -1097,6 +1160,59 @@ class WorkspaceMemberManagementHttpTest extends TestCase
         $this->assertFalse($inactiveRow['is_active']);
         $response->assertDontSee($active->user->email);
         $response->assertDontSee($inactive->user->email);
+    }
+
+    /**
+     * transferOwnership() deliberately retains a prior membership row for
+     * a user who becomes owner, deactivated rather than deleted (RFC-003
+     * §7.3's owner-never-holds-a-membership-row invariant applies going
+     * forward, not retroactively to that retained row). The directory
+     * must exclude it -- the owner is never one of their own Workspace's
+     * listed members -- regardless of how that retained row's role or
+     * active state ended up set.
+     */
+    public function test_directory_excludes_the_owners_own_retained_membership_row(): void
+    {
+        $customer = $this->actingAsHttpCustomer();
+        $workspace = $this->createWorkspace($customer->user);
+        $this->createMembership($workspace, $customer->user, [
+            'role' => WorkspaceMembershipRole::Admin,
+            'is_active' => false,
+        ]);
+        $genuineMember = $this->createNamedMember($workspace, 'Gen', 'Uine', ['is_active' => true]);
+
+        $response = $this->get(route('customer.workspaces.show', $workspace->uid))->assertOk();
+
+        $rows = $response->original->getData()['directory'];
+        $this->assertCount(1, $rows);
+        $this->assertSame($genuineMember->user->uid, $rows[0]['uid']);
+    }
+
+    public function test_owners_retained_membership_row_cannot_be_targeted_by_role_change(): void
+    {
+        $customer = $this->actingAsHttpCustomer();
+        $workspace = $this->createWorkspace($customer->user);
+        $this->createMembership($workspace, $customer->user, [
+            'role' => WorkspaceMembershipRole::Staff,
+            'is_active' => false,
+        ]);
+
+        $this->post(route('customer.workspaces.members.role', [$workspace->uid, $customer->user->uid]), ['role' => 'admin'])
+            ->assertNotFound();
+    }
+
+    public function test_owners_retained_membership_row_cannot_be_reactivated(): void
+    {
+        $customer = $this->actingAsHttpCustomer();
+        $workspace = $this->createWorkspace($customer->user);
+        $ownerMembership = $this->createMembership($workspace, $customer->user, [
+            'role' => WorkspaceMembershipRole::Admin,
+            'is_active' => false,
+        ]);
+
+        $this->post(route('customer.workspaces.members.reactivate', [$workspace->uid, $customer->user->uid]))
+            ->assertNotFound();
+        $this->assertFalse($ownerMembership->fresh()->is_active);
     }
 
     public function test_manageable_businesses_carry_uid_and_no_raw_identifiers(): void

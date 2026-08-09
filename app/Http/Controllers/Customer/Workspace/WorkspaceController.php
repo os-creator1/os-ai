@@ -232,6 +232,13 @@ class WorkspaceController extends CustomerBaseController
      * -- entirely WorkspaceManager::changeMemberRole()'s own authority
      * rule, never reimplemented here. An authority failure resolves to the
      * same 404 as an unknown memberUid, not a flash-message redirect.
+     * changeMemberRole() itself checks the target membership's active
+     * state before its own owner-only authority assertion, so an
+     * unauthorized actor targeting an inactive membership must not see the
+     * distinguishing flash-message redirect either -- effectiveRoleKey()
+     * re-reads the exact same owner/active-Admin primitives the manager's
+     * private assertion uses, not a second authorization rule, purely to
+     * pick which response shape an already-thrown exception gets.
      */
     public function updateMemberRole(UpdateWorkspaceMemberRoleRequest $request, string $workspaceUid, string $memberUid): RedirectResponse
     {
@@ -248,6 +255,10 @@ class WorkspaceController extends CustomerBaseController
         } catch (InactiveWorkspaceMutationException) {
             return redirect()->back()->with('flash_error', 'An inactive Workspace cannot be managed.');
         } catch (InactiveWorkspaceMembershipMutationException) {
+            if ($this->effectiveRoleKey($workspace, $actorUserId) !== 'owner') {
+                abort(404);
+            }
+
             return redirect()->back()->with('flash_error', 'An inactive member must be reactivated before its role can change.');
         }
 
@@ -264,6 +275,14 @@ class WorkspaceController extends CustomerBaseController
      * selection resolves to the same 404 as an unknown memberUid or an
      * authority failure, never a flash-message redirect, so neither
      * pre-check can be used as a target-existence oracle.
+     * changeMemberBusinessAccessScope() itself checks the target
+     * membership's active state before its own owner-or-active-Admin
+     * authority assertion, so an unauthorized actor targeting an inactive
+     * membership must not see the distinguishing flash-message redirect
+     * either -- effectiveRoleKey() re-reads the exact same owner/
+     * active-Admin primitives the manager's private assertion uses, not a
+     * second authorization rule, purely to pick which response shape an
+     * already-thrown exception gets.
      */
     public function updateMemberAccess(UpdateWorkspaceMemberAccessRequest $request, string $workspaceUid, string $memberUid): RedirectResponse
     {
@@ -289,6 +308,10 @@ class WorkspaceController extends CustomerBaseController
         } catch (InactiveWorkspaceMutationException) {
             return redirect()->back()->with('flash_error', 'An inactive Workspace cannot be managed.');
         } catch (InactiveWorkspaceMembershipMutationException) {
+            if (! in_array($this->effectiveRoleKey($workspace, $actorUserId), ['owner', 'admin'], true)) {
+                abort(404);
+            }
+
             return redirect()->back()->with('flash_error', 'An inactive member must be reactivated before its Business access can change.');
         } catch (InvalidBusinessAccessScopeAssignmentException) {
             return redirect()->back()->with('flash_error', 'Business selections are not valid for the "All Businesses" scope.');
@@ -380,13 +403,18 @@ class WorkspaceController extends CustomerBaseController
      * or inactive) in this Workspace, fails closed with 404 -- identical
      * treatment for both cases so this route can never be used to probe
      * for a hidden target's existence. Deliberately returns an inactive
-     * membership too: reactivateMember() is a legitimate caller.
+     * membership too: reactivateMember() is a legitimate caller. The
+     * current Workspace owner is never a valid mutation target here even
+     * if a retained membership row exists for them (transferOwnership()
+     * deliberately keeps a prior membership row, deactivated, rather than
+     * deleting it) -- same fail-closed 404 as an unknown uid, so that
+     * retained row can never be targeted through this route either.
      */
     private function resolveAccessibleMembership(Workspace $workspace, string $memberUid): WorkspaceMembership
     {
         $targetUser = User::query()->where('uid', $memberUid)->first();
 
-        if ($targetUser === null) {
+        if ($targetUser === null || (int) $targetUser->id === (int) $workspace->owner_user_id) {
             abort(404);
         }
 
@@ -521,15 +549,21 @@ class WorkspaceController extends CustomerBaseController
      * opaque Business uids, so the manager view can pre-check a member's
      * currently-assigned Businesses on the access-change form instead of
      * defaulting every checkbox to unchecked and silently clearing the
-     * assignment set on an unmodified submit.
+     * assignment set on an unmodified submit. transferOwnership() can
+     * leave the current owner with their own retained (deactivated)
+     * membership row rather than deleting it; that row is filtered out
+     * here by owner_user_id so the owner is never listed as, or
+     * reactivatable as, one of their own Workspace's members.
      *
      * @return array<int, array{uid: string, name: string, role: string, scope: string, assigned_business_count: int, assigned_business_uids: array<int, string>, is_active: bool}>
      */
     private function membershipDirectory(Workspace $workspace): array
     {
         $businessUidsById = $this->workspaceRepository->businessesForWorkspace($workspace)->pluck('uid', 'id');
+        $ownerUserId = (int) $workspace->owner_user_id;
 
         return $this->membershipRepository->allForWorkspace($workspace)
+            ->reject(fn (WorkspaceMembership $membership) => (int) $membership->user_id === $ownerUserId)
             ->sortBy('id')
             ->values()
             ->map(function (WorkspaceMembership $membership) use ($businessUidsById) {
