@@ -12,7 +12,7 @@
   "implementation_authorized": true,
   "expected_head_sha": "c18ea585bc424585240a44657978434d6d732c75",
   "require_exact_scope": true,
-  "maximum_correction_rounds": 2,
+  "maximum_correction_rounds": 5,
   "advance_automatically": false,
   "start_automatically_after_contract_merge": true,
   "next_candidate": "RFC-003 Milestone 4 Slice 4C locked contract",
