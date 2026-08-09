@@ -145,6 +145,11 @@ jobs:
               issue_number: prNumber,
               per_page: 100,
             });
+            const priorTested = comments.some((comment) =>
+              comment.user?.login === 'github-actions[bot]'
+              && comment.body?.includes('[AI-SUBSCRIPTION-LOOP TESTED]')
+            );
+            core.setOutput('allow_partial_scope', priorTested ? 'true' : 'false');
             const lease = [...comments].reverse().find((comment) =>
               comment.user?.login === 'github-actions[bot]'
               && comment.body?.includes('[AI-SUBSCRIPTION-LOOP LEASE]')
@@ -197,6 +202,7 @@ jobs:
             --state .trusted-automation/docs/automation/AI-AUTONOMY-STATE.json \
             --changed-files "$RUNNER_TEMP/changed-files.txt" \
             --repo-root "$GITHUB_WORKSPACE" \
+            --allow-partial-expected "${{ steps.validate.outputs.allow_partial_scope }}" \
             --output "$RUNNER_TEMP/scope.json"
 
       - name: Set up PHP
