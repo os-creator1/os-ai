@@ -506,27 +506,41 @@ class WorkspaceController extends CustomerBaseController
      * not assumed from the access-scope label, and is retained (not
      * zeroed) across deactivation. `uid` is the member User's opaque uid
      * (never the numeric membership or user ID), used to target the
-     * role/access/deactivate/reactivate actions.
+     * role/access/deactivate/reactivate actions. `assigned_business_uids`
+     * carries the same assignment rows as `assigned_business_count`, but as
+     * opaque Business uids, so the manager view can pre-check a member's
+     * currently-assigned Businesses on the access-change form instead of
+     * defaulting every checkbox to unchecked and silently clearing the
+     * assignment set on an unmodified submit.
      *
-     * @return array<int, array{uid: string, name: string, role: string, scope: string, assigned_business_count: int, is_active: bool}>
+     * @return array<int, array{uid: string, name: string, role: string, scope: string, assigned_business_count: int, assigned_business_uids: array<int, string>, is_active: bool}>
      */
     private function membershipDirectory(Workspace $workspace): array
     {
+        $businessUidsById = $this->workspaceRepository->businessesForWorkspace($workspace)->pluck('uid', 'id');
+
         return $this->membershipRepository->allForWorkspace($workspace)
             ->sortBy('id')
             ->values()
-            ->map(fn (WorkspaceMembership $membership) => [
-                'uid' => $membership->user->uid,
-                'name' => trim($membership->user->first_name . ' ' . $membership->user->last_name),
-                'role' => $membership->role === WorkspaceMembershipRole::Admin ? 'Admin' : 'Staff',
-                'scope' => $membership->business_access_scope === WorkspaceBusinessAccessScope::All
-                    ? 'All Businesses'
-                    : 'Selected Businesses',
-                'assigned_business_count' => $this->membershipBusinessRepository
-                    ->assignedBusinessIds($membership)
-                    ->count(),
-                'is_active' => (bool) $membership->is_active,
-            ])
+            ->map(function (WorkspaceMembership $membership) use ($businessUidsById) {
+                $assignedBusinessIds = $this->membershipBusinessRepository->assignedBusinessIds($membership);
+
+                return [
+                    'uid' => $membership->user->uid,
+                    'name' => trim($membership->user->first_name . ' ' . $membership->user->last_name),
+                    'role' => $membership->role === WorkspaceMembershipRole::Admin ? 'Admin' : 'Staff',
+                    'scope' => $membership->business_access_scope === WorkspaceBusinessAccessScope::All
+                        ? 'All Businesses'
+                        : 'Selected Businesses',
+                    'assigned_business_count' => $assignedBusinessIds->count(),
+                    'assigned_business_uids' => $assignedBusinessIds
+                        ->map(fn (int $businessId) => $businessUidsById->get($businessId))
+                        ->filter()
+                        ->values()
+                        ->all(),
+                    'is_active' => (bool) $membership->is_active,
+                ];
+            })
             ->all();
     }
 

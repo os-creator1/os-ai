@@ -73,21 +73,6 @@
                 </div>
             </div>
 
-            @if (in_array($workspace['role'], ['Owner', 'Admin'], true))
-                <script>
-                    document.querySelectorAll('form[data-workspace-action]').forEach(function (form) {
-                        var basePath = window.location.pathname.replace(/\/+$/, '');
-                        form.setAttribute('action', basePath + '/' + form.getAttribute('data-workspace-action'));
-                    });
-
-                    document.querySelectorAll('form[data-member-action]').forEach(function (form) {
-                        var basePath = window.location.pathname.replace(/\/+$/, '');
-                        var memberUid = form.getAttribute('data-member-uid');
-                        form.setAttribute('action', basePath + '/members/' + memberUid + '/' + form.getAttribute('data-member-action'));
-                    });
-                </script>
-            @endif
-
             <div class="col-12">
                 <div class="card">
                     <div class="card-header">
@@ -213,7 +198,7 @@
                                                                 @if (! empty($manageableBusinesses))
                                                                     @foreach ($manageableBusinesses as $business)
                                                                         <div class="form-check form-check-inline">
-                                                                            <input class="form-check-input" type="checkbox" name="business_uids[]" value="{{ $business['uid'] }}" id="access-{{ $member['uid'] }}-{{ $business['uid'] }}">
+                                                                            <input class="form-check-input" type="checkbox" name="business_uids[]" value="{{ $business['uid'] }}" id="access-{{ $member['uid'] }}-{{ $business['uid'] }}" @checked(in_array($business['uid'], $member['assigned_business_uids'], true))>
                                                                             <label class="form-check-label" for="access-{{ $member['uid'] }}-{{ $business['uid'] }}">{{ $business['name'] }}</label>
                                                                         </div>
                                                                     @endforeach
@@ -243,6 +228,21 @@
                     </div>
                 </div>
             @endisset
+
+            @if (in_array($workspace['role'], ['Owner', 'Admin'], true))
+                <script>
+                    document.querySelectorAll('form[data-workspace-action]').forEach(function (form) {
+                        var basePath = window.location.pathname.replace(/\/+$/, '');
+                        form.setAttribute('action', basePath + '/' + form.getAttribute('data-workspace-action'));
+                    });
+
+                    document.querySelectorAll('form[data-member-action]').forEach(function (form) {
+                        var basePath = window.location.pathname.replace(/\/+$/, '');
+                        var memberUid = form.getAttribute('data-member-uid');
+                        form.setAttribute('action', basePath + '/members/' + memberUid + '/' + form.getAttribute('data-member-action'));
+                    });
+                </script>
+            @endif
         </div>
     </section>
 @endsection

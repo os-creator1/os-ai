@@ -1013,7 +1013,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
         $rows = $response->original->getData()['directory'];
         $this->assertCount(2, $rows);
         $this->assertSame(
-            ['uid', 'name', 'role', 'scope', 'assigned_business_count', 'is_active'],
+            ['uid', 'name', 'role', 'scope', 'assigned_business_count', 'assigned_business_uids', 'is_active'],
             array_keys($rows[0])
         );
         $uids = array_column($rows, 'uid');
@@ -1055,6 +1055,60 @@ class WorkspaceMemberManagementHttpTest extends TestCase
 
         $this->assertArrayNotHasKey('manageableBusinesses', $response->original->getData());
         $this->assertArrayNotHasKey('directory', $response->original->getData());
+    }
+
+    // --- Member-management view rendering -----------------------------------
+
+    public function test_access_form_pre_checks_currently_assigned_businesses(): void
+    {
+        $customer = $this->actingAsHttpCustomer();
+        $workspace = $this->createWorkspace($customer->user);
+        $member = $this->createNamedMember($workspace, 'Priya', 'Shah', [
+            'role' => WorkspaceMembershipRole::Admin,
+            'business_access_scope' => WorkspaceBusinessAccessScope::Selected,
+        ]);
+        $assignedBusiness = $this->createBusinessForCustomer($member->user->id, $workspace->id);
+        $unassignedBusiness = $this->createBusinessForCustomer($member->user->id, $workspace->id);
+        WorkspaceMembershipBusiness::create([
+            'workspace_membership_id' => $member->id,
+            'business_id' => $assignedBusiness->id,
+        ]);
+
+        $response = $this->get(route('customer.workspaces.show', $workspace->uid))->assertOk();
+        $html = $response->getContent();
+
+        $assignedInputId = 'access-' . $member->user->uid . '-' . $assignedBusiness->uid;
+        $unassignedInputId = 'access-' . $member->user->uid . '-' . $unassignedBusiness->uid;
+
+        $this->assertMatchesRegularExpression(
+            '/id="' . preg_quote($assignedInputId, '/') . '"[^>]*\schecked/',
+            $html
+        );
+        $this->assertDoesNotMatchRegularExpression(
+            '/id="' . preg_quote($unassignedInputId, '/') . '"[^>]*\schecked/',
+            $html
+        );
+    }
+
+    public function test_member_action_forms_are_bound_after_they_exist_in_the_markup(): void
+    {
+        $customer = $this->actingAsHttpCustomer();
+        $workspace = $this->createWorkspace($customer->user);
+        $this->createNamedMember($workspace, 'Dana', 'Lee', ['is_active' => true]);
+
+        $response = $this->get(route('customer.workspaces.show', $workspace->uid))->assertOk();
+        $html = $response->getContent();
+
+        $scriptPosition = strpos($html, "document.querySelectorAll('form[data-member-action]')");
+        $lastFormPosition = strrpos($html, 'data-member-action=');
+
+        $this->assertNotFalse($scriptPosition, 'Expected the member-action binding script to be present.');
+        $this->assertNotFalse($lastFormPosition, 'Expected at least one member-action form to be rendered.');
+        $this->assertGreaterThan(
+            $lastFormPosition,
+            $scriptPosition,
+            'The member-action binding script must run after every member-action form already exists in the markup.'
+        );
     }
 
     // --- Helpers -----------------------------------------------------------

@@ -297,13 +297,14 @@ class WorkspaceOverviewHttpTest extends TestCase
 
         $rows = $this->directoryViewData($response);
         $this->assertCount(1, $rows);
-        $this->assertSame(['uid', 'name', 'role', 'scope', 'assigned_business_count', 'is_active'], array_keys($rows[0]));
+        $this->assertSame(['uid', 'name', 'role', 'scope', 'assigned_business_count', 'assigned_business_uids', 'is_active'], array_keys($rows[0]));
         $this->assertSame([
             'uid' => $member->user->uid,
             'name' => 'Priya Shah',
             'role' => 'Admin',
             'scope' => 'Selected Businesses',
             'assigned_business_count' => 2,
+            'assigned_business_uids' => [$businessA->uid, $businessB->uid],
             'is_active' => true,
         ], $rows[0]);
         $response->assertDontSee($member->user->email);
