@@ -559,14 +559,13 @@ class WorkspaceMemberManagementHttpTest extends TestCase
             'role' => 'staff',
             'business_access_scope' => 'all',
         ]);
+        $ownerTargetResponse->assertSessionHas('flash_error', 'This user cannot be added as a member.');
 
         $existingMemberResponse = $this->post(route('customer.workspaces.members.store', $workspace->uid), [
             'user_uid' => $existingMember->uid,
             'role' => 'admin',
             'business_access_scope' => 'all',
         ]);
-
-        $ownerTargetResponse->assertSessionHas('flash_error', 'This user cannot be added as a member.');
         $existingMemberResponse->assertSessionHas('flash_error', 'This user cannot be added as a member.');
     }
 
