@@ -1,8 +1,10 @@
 name: AI Subscription Test Gate
 
 on:
+  # Synchronize covers direct pushes. Labeled catches Claude's settled final head
+  # because Claude applies ai:testing only after all commits are pushed.
   pull_request:
-    types: [synchronize]
+    types: [synchronize, labeled]
   workflow_dispatch:
     inputs:
       pr_number:
@@ -18,10 +20,13 @@ permissions:
 
 concurrency:
   group: ai-subscription-gate-${{ github.event.pull_request.number || inputs.pr_number }}
-  cancel-in-progress: false
+  # Keep only the newest head/label event; intermediate Claude commits are stale.
+  cancel-in-progress: true
 
 jobs:
   focused-tests:
+    # Ignore unrelated labels while retaining synchronize and manual dispatch runs.
+    if: github.event.action != 'labeled' || github.event.label.name == 'ai:testing'
     name: Prove scope and focused tests
     runs-on: ubuntu-latest
     timeout-minutes: 60
