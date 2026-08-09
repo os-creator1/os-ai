@@ -4,7 +4,11 @@ namespace App\Http\Controllers\Customer\Workspace;
 
 use App\Enums\Workspace\WorkspaceBusinessAccessScope;
 use App\Enums\Workspace\WorkspaceMembershipRole;
+use App\Exceptions\Workspace\InactiveWorkspaceMutationException;
+use App\Exceptions\Workspace\UnauthorizedWorkspaceManagementException;
 use App\Http\Controllers\Customer\CustomerBaseController;
+use App\Http\Requests\Customer\Workspace\RenameWorkspaceRequest;
+use App\Http\Requests\Customer\Workspace\StoreWorkspaceRequest;
 use App\Library\Workspace\WorkspaceManager;
 use App\Models\Business;
 use App\Models\Workspace;
@@ -13,6 +17,7 @@ use App\Repositories\Contracts\WorkspaceMembershipBusinessRepository;
 use App\Repositories\Contracts\WorkspaceMembershipRepository;
 use App\Repositories\Contracts\WorkspaceRepository;
 use Illuminate\Contracts\View\View;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Support\Facades\Auth;
 
 class WorkspaceController extends CustomerBaseController
@@ -92,6 +97,90 @@ class WorkspaceController extends CustomerBaseController
         }
 
         return view('customer.workspaces.show', $viewData);
+    }
+
+    /**
+     * RFC-003 Milestone 4 Slice 4A: creates a Workspace owned by the
+     * authenticated user via WorkspaceManager::createWorkspace(). No
+     * Business is created here -- that remains outside this slice.
+     */
+    public function store(StoreWorkspaceRequest $request): RedirectResponse
+    {
+        $workspace = $this->workspaceManager->createWorkspace(
+            (int) Auth::id(),
+            $request->validated('name'),
+        );
+
+        return redirect()
+            ->route('customer.workspaces.show', $workspace->uid)
+            ->with('flash_success', 'Workspace created.');
+    }
+
+    /**
+     * Resolves the target by uid and delegates entirely to
+     * WorkspaceManager::renameWorkspace() -- owner-or-active-admin
+     * authority and the active-Workspace requirement are enforced there,
+     * never reimplemented here.
+     */
+    public function rename(RenameWorkspaceRequest $request, string $workspaceUid): RedirectResponse
+    {
+        $userId = (int) Auth::id();
+        $workspace = $this->resolveAccessibleWorkspace($workspaceUid, $userId);
+
+        try {
+            $this->workspaceManager->renameWorkspace($userId, $workspace, $request->validated('name'));
+        } catch (UnauthorizedWorkspaceManagementException) {
+            return redirect()->back()->with('flash_error', 'You are not authorized to rename this Workspace.');
+        } catch (InactiveWorkspaceMutationException) {
+            return redirect()->back()->with('flash_error', 'An inactive Workspace cannot be renamed.');
+        }
+
+        return redirect()
+            ->route('customer.workspaces.show', $workspaceUid)
+            ->with('flash_success', 'Workspace renamed.');
+    }
+
+    /**
+     * Owner-only Workspace deactivation. Resolves the target by uid and
+     * delegates authority entirely to
+     * WorkspaceManager::deactivateWorkspace() -- Staff and Admin never
+     * gain deactivation authority here.
+     */
+    public function deactivate(string $workspaceUid): RedirectResponse
+    {
+        $userId = (int) Auth::id();
+        $workspace = $this->resolveAccessibleWorkspace($workspaceUid, $userId);
+
+        try {
+            $this->workspaceManager->deactivateWorkspace($userId, $workspace);
+        } catch (UnauthorizedWorkspaceManagementException) {
+            return redirect()->back()->with('flash_error', 'You are not authorized to deactivate this Workspace.');
+        }
+
+        return redirect()
+            ->route('customer.workspaces.show', $workspaceUid)
+            ->with('flash_success', 'Workspace deactivated.');
+    }
+
+    /**
+     * Same owner-or-active-membership visibility boundary as show()'s
+     * effectiveRoleKey(): a uid that doesn't resolve, or that resolves to
+     * a Workspace the actor has no owner/active-membership relationship
+     * to, fails closed with 404 -- identical to show()'s unrelated-user
+     * behavior -- so a mutation route can never be used to probe for
+     * Workspace existence. This is purely the same visibility check
+     * show() already makes; it never grants or narrows mutation
+     * authority, which stays exclusively WorkspaceManager's job.
+     */
+    private function resolveAccessibleWorkspace(string $workspaceUid, int $userId): Workspace
+    {
+        $workspace = $this->workspaceRepository->findByUid($workspaceUid);
+
+        if ($workspace === null || $this->effectiveRoleKey($workspace, $userId) === null) {
+            abort(404);
+        }
+
+        return $workspace;
     }
 
     /**
