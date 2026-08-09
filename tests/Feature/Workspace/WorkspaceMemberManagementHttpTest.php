@@ -550,7 +550,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
         ]);
         $existingMember = $this->createTargetUser('Existing', 'Member');
         $this->createMembership($workspace, $existingMember, [
-            'role' => WorkspaceMembershipRole::Staff,
+            'role' => WorkspaceMembershipRole::Admin,
             'is_active' => true,
         ]);
 
@@ -563,7 +563,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
 
         $existingMemberResponse = $this->post(route('customer.workspaces.members.store', $workspace->uid), [
             'user_uid' => $existingMember->uid,
-            'role' => 'admin',
+            'role' => 'staff',
             'business_access_scope' => 'all',
         ]);
         $existingMemberResponse->assertSessionHas('flash_error', 'This user cannot be added as a member.');
