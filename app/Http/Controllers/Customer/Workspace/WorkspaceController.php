@@ -174,7 +174,7 @@ class WorkspaceController extends CustomerBaseController
 
     /**
      * RFC-003 Milestone 4 Slice 4B: adds an existing User as an active
-     * member via User::findByUid() + WorkspaceManager::addMember() —
+     * member via a nullable User uid lookup + WorkspaceManager::addMember() —
      * unknown user uid fails closed with 404, matching resolveAccessibleMembership()'s
      * unknown/inaccessible-target boundary. Business selection is resolved
      * and access-checked entirely by resolveManageableBusinessIds() before
@@ -186,7 +186,7 @@ class WorkspaceController extends CustomerBaseController
         $actorUserId = (int) Auth::id();
         $workspace = $this->resolveAccessibleWorkspace($workspaceUid, $actorUserId);
 
-        $targetUser = User::findByUid($request->validated('user_uid'));
+        $targetUser = User::query()->where('uid', $request->validated('user_uid'))->first();
 
         if ($targetUser === null) {
             abort(404);
@@ -374,7 +374,7 @@ class WorkspaceController extends CustomerBaseController
      */
     private function resolveAccessibleMembership(Workspace $workspace, string $memberUid): WorkspaceMembership
     {
-        $targetUser = User::findByUid($memberUid);
+        $targetUser = User::query()->where('uid', $memberUid)->first();
 
         if ($targetUser === null) {
             abort(404);
