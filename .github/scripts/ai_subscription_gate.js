@@ -238,11 +238,11 @@ function discoveredTestCount(output) {
   return null;
 }
 
-function checkScope(state, changedFiles, repositoryRoot) {
+function checkScope(state, changedFiles, repositoryRoot, { allowPartialExpected = false } = {}) {
   const allowed = new Set(state.allowed_paths);
   const changed = changedFiles.map((value) => value.trim()).filter(Boolean);
   const forbidden = changed.filter((value) => !allowed.has(value));
-  const missingExpected = state.require_exact_scope === true
+  const missingExpected = state.require_exact_scope === true && !allowPartialExpected
     ? state.allowed_paths.filter((value) => !changed.includes(value))
     : [];
   const missing = state.required_new_paths.filter(
@@ -399,6 +399,15 @@ function selftest() {
   });
   assert.equal(checkScope(state, ['outside.php'], fixtureRoot).ok, false);
   assert.equal(checkScope({ ...state, require_exact_scope: true }, ['a.php'], fixtureRoot).ok, false);
+  assert.equal(
+    checkScope(
+      { ...state, require_exact_scope: true },
+      ['a.php'],
+      fixtureRoot,
+      { allowPartialExpected: true },
+    ).ok,
+    true,
+  );
   const idleStatePath = path.join(fixtureRoot, 'idle-state.json');
   const idleState = {
     repository: 'owner/repo',
@@ -427,7 +436,7 @@ function selftest() {
   }));
   assert.throws(() => loadState(idleStatePath), /must name an active pull request/);
   fs.rmSync(fixtureRoot, { recursive: true, force: true });
-  console.log('PASS: 32 subscription-gate checks');
+  console.log('PASS: 33 subscription-gate checks');
 }
 
 function main() {
@@ -453,7 +462,13 @@ function main() {
     const repositoryRoot = readFlag('--repo-root', process.cwd());
     const outputPath = readFlag('--output');
     const changedFiles = fs.readFileSync(changedFilesPath, 'utf8').split(/\r?\n/);
-    const result = checkScope(state, changedFiles, repositoryRoot);
+    const allowPartialExpected = readFlag('--allow-partial-expected', 'false') === 'true';
+    const result = checkScope(
+      state,
+      changedFiles,
+      repositoryRoot,
+      { allowPartialExpected },
+    );
     fs.writeFileSync(outputPath, `${JSON.stringify(result, null, 2)}\n`);
     if (!result.ok) {
       throw new Error(`Scope gate failed: ${JSON.stringify(result)}`);
