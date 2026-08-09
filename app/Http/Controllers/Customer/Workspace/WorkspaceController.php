@@ -206,6 +206,8 @@ class WorkspaceController extends CustomerBaseController
             if ($businessIds === null) {
                 abort(404);
             }
+        } elseif (! $this->actorHasUnrestrictedBusinessAccess($workspace, $actorUserId)) {
+            abort(404);
         }
 
         try {
@@ -213,6 +215,14 @@ class WorkspaceController extends CustomerBaseController
         } catch (UnauthorizedWorkspaceManagementException) {
             abort(404);
         } catch (InactiveWorkspaceMutationException) {
+            $hasAuthorityOverRole = $role === WorkspaceMembershipRole::Admin
+                ? $this->effectiveRoleKey($workspace, $actorUserId) === 'owner'
+                : in_array($this->effectiveRoleKey($workspace, $actorUserId), ['owner', 'admin'], true);
+
+            if (! $hasAuthorityOverRole) {
+                abort(404);
+            }
+
             return redirect()->back()->with('flash_error', 'An inactive Workspace cannot receive new members.');
         } catch (OwnerCannotBeMemberException|WorkspaceMembershipAlreadyExistsException) {
             return redirect()->back()->with('flash_error', 'This user cannot be added as a member.');
@@ -297,6 +307,8 @@ class WorkspaceController extends CustomerBaseController
             if ($businessIds === null) {
                 abort(404);
             }
+        } elseif (! $this->actorHasUnrestrictedBusinessAccess($workspace, $actorUserId)) {
+            abort(404);
         }
 
         try {
@@ -460,6 +472,30 @@ class WorkspaceController extends CustomerBaseController
         }
 
         return $businessIds;
+    }
+
+    /**
+     * Whether $actorUserId can grant `all`-scope Business access to
+     * another member without exceeding their own effective access. The
+     * Workspace owner always can (§7.3, never scope-limited). A
+     * selected-scope Admin cannot: granting `all` would hand the target
+     * access to every current and future Workspace Business, including
+     * ones outside the Admin's own effective set -- the same principle
+     * resolveManageableBusinessIds() already applies to individual
+     * selected-scope grants. Only an active Admin whose own membership is
+     * itself `all`-scope qualifies.
+     */
+    private function actorHasUnrestrictedBusinessAccess(Workspace $workspace, int $actorUserId): bool
+    {
+        if ((int) $workspace->owner_user_id === $actorUserId) {
+            return true;
+        }
+
+        $membership = $this->membershipRepository->findByWorkspaceAndUser($workspace, $actorUserId);
+
+        return $membership !== null
+            && $membership->is_active
+            && $membership->business_access_scope === WorkspaceBusinessAccessScope::All;
     }
 
     /**

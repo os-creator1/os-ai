@@ -385,6 +385,28 @@ class WorkspaceMemberManagementHttpTest extends TestCase
         $this->assertNotNull(WorkspaceMembership::where('workspace_id', $workspace->id)->where('user_id', $target->id)->first());
     }
 
+    public function test_selected_scope_admin_cannot_add_a_member_with_all_scope(): void
+    {
+        $customer = $this->actingAsHttpCustomer();
+        $owner = $this->createCustomer()->user;
+        $workspace = $this->createWorkspace($owner);
+        $this->createMembership($workspace, $customer->user, [
+            'role' => WorkspaceMembershipRole::Admin,
+            'business_access_scope' => WorkspaceBusinessAccessScope::Selected,
+            'is_active' => true,
+        ]);
+        $target = $this->createTargetUser('New', 'Staff');
+
+        $response = $this->post(route('customer.workspaces.members.store', $workspace->uid), [
+            'user_uid' => $target->uid,
+            'role' => 'staff',
+            'business_access_scope' => 'all',
+        ]);
+
+        $response->assertNotFound();
+        $this->assertNull(WorkspaceMembership::where('user_id', $target->id)->first());
+    }
+
     // --- Add member: denial ------------------------------------------------
 
     public function test_active_admin_cannot_add_an_admin_member(): void
@@ -582,6 +604,37 @@ class WorkspaceMemberManagementHttpTest extends TestCase
         ]);
 
         $response->assertSessionHas('flash_error');
+        $this->assertNull(WorkspaceMembership::where('user_id', $target->id)->first());
+    }
+
+    public function test_staff_denial_on_an_inactive_workspace_is_not_distinguishable_from_an_unknown_user_uid(): void
+    {
+        $customer = $this->actingAsHttpCustomer();
+        $owner = $this->createCustomer()->user;
+        $workspace = $this->createWorkspace($owner);
+        $this->createMembership($workspace, $customer->user, [
+            'role' => WorkspaceMembershipRole::Staff,
+            'is_active' => true,
+        ]);
+        $target = $this->createTargetUser('Known', 'Target');
+        $workspace->is_active = false;
+        $workspace->save();
+
+        $knownTargetResponse = $this->post(route('customer.workspaces.members.store', $workspace->uid), [
+            'user_uid' => $target->uid,
+            'role' => 'staff',
+            'business_access_scope' => 'all',
+        ]);
+
+        $unknownTargetResponse = $this->post(route('customer.workspaces.members.store', $workspace->uid), [
+            'user_uid' => 'does-not-exist',
+            'role' => 'staff',
+            'business_access_scope' => 'all',
+        ]);
+
+        $knownTargetResponse->assertNotFound();
+        $unknownTargetResponse->assertNotFound();
+        $this->assertSame($knownTargetResponse->status(), $unknownTargetResponse->status());
         $this->assertNull(WorkspaceMembership::where('user_id', $target->id)->first());
     }
 
@@ -864,6 +917,26 @@ class WorkspaceMemberManagementHttpTest extends TestCase
 
         $response->assertSessionHas('flash_success');
         $this->assertSame(WorkspaceBusinessAccessScope::All, $member->fresh()->business_access_scope);
+    }
+
+    public function test_selected_scope_admin_cannot_grant_all_scope_access(): void
+    {
+        $customer = $this->actingAsHttpCustomer();
+        $owner = $this->createCustomer()->user;
+        $workspace = $this->createWorkspace($owner);
+        $this->createMembership($workspace, $customer->user, [
+            'role' => WorkspaceMembershipRole::Admin,
+            'business_access_scope' => WorkspaceBusinessAccessScope::Selected,
+            'is_active' => true,
+        ]);
+        $member = $this->createNamedMember($workspace, 'Sta', 'Ffer', ['business_access_scope' => WorkspaceBusinessAccessScope::Selected]);
+
+        $response = $this->post(route('customer.workspaces.members.access', [$workspace->uid, $member->user->uid]), [
+            'business_access_scope' => 'all',
+        ]);
+
+        $response->assertNotFound();
+        $this->assertSame(WorkspaceBusinessAccessScope::Selected, $member->fresh()->business_access_scope);
     }
 
     public function test_staff_cannot_change_a_members_access_scope(): void
