@@ -26,7 +26,7 @@ jobs:
   recover-stranded-gate:
     name: Recover a stranded testing state
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 50
     steps:
       - name: Dispatch the deterministic gate or consume a trusted override
         id: recover
@@ -117,6 +117,7 @@ jobs:
               });
               core.setOutput('fire_claude', 'true');
               core.setOutput('pr_number', String(prNumber));
+              core.setOutput('head_sha', pr.head.sha);
               core.notice(`Consumed trusted override comment ${override.id} for ${pr.head.sha}.`);
               return;
             }
@@ -159,6 +160,46 @@ jobs:
         run: |
           node .github/scripts/fire_claude_routine.js --selftest
           node .github/scripts/fire_claude_routine.js
+
+      - name: Follow the override Routine and dispatch its returned head
+        if: steps.recover.outputs.fire_claude == 'true' && success()
+        timeout-minutes: 45
+        uses: actions/github-script@v8
+        env:
+          CONTROL_PR_NUMBER: ${{ steps.recover.outputs.pr_number }}
+          CONTROL_HEAD_SHA: ${{ steps.recover.outputs.head_sha }}
+        with:
+          script: |
+            const prNumber = Number(process.env.CONTROL_PR_NUMBER);
+            const originalHead = process.env.CONTROL_HEAD_SHA;
+            const deadline = Date.now() + (44 * 60 * 1000);
+            while (Date.now() < deadline) {
+              const { data: pr } = await github.rest.pulls.get({
+                ...context.repo,
+                pull_number: prNumber,
+              });
+              const labels = new Set(pr.labels.map((label) => label.name));
+              if (labels.has('ai:ready-for-human')) {
+                core.notice('Claude finalized the override head without another correction.');
+                return;
+              }
+              if (labels.has('ai:needs-human') || labels.has('ai:paused')) {
+                core.setFailed('Claude stopped safely and requested human attention.');
+                return;
+              }
+              if (pr.head.sha !== originalHead && labels.has('ai:testing')) {
+                await github.rest.actions.createWorkflowDispatch({
+                  ...context.repo,
+                  workflow_id: 'ai-subscription-gate.yml',
+                  ref: context.payload.repository.default_branch,
+                  inputs: { pr_number: String(prNumber) },
+                });
+                core.notice(`Dispatched the returned override head ${pr.head.sha}.`);
+                return;
+              }
+              await new Promise((resolve) => setTimeout(resolve, 15000));
+            }
+            core.setFailed('Claude did not return an override correction within forty-four minutes.');
 
       - name: Stop safely if the override Routine cannot start
         if: failure() && steps.recover.outputs.fire_claude == 'true'
