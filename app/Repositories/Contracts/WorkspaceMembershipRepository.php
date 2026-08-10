@@ -32,6 +32,14 @@ interface WorkspaceMembershipRepository extends BaseRepository
 
     public function activeForWorkspace(Workspace $workspace): Collection;
 
+    /**
+     * Every WorkspaceMembership for this Workspace, active and inactive
+     * alike (RFC-003 Milestone 4 Slice 4B) — used only by manager-facing
+     * surfaces that must also see and reactivate inactive members.
+     * activeForWorkspace() is untouched and remains the active-only read.
+     */
+    public function allForWorkspace(Workspace $workspace): Collection;
+
     public function activeForUser(int $userId): Collection;
 
     /**
