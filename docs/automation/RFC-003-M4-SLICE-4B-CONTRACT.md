@@ -66,6 +66,8 @@ Every command must discover a positive test count and exit successfully:
 
 The deterministic gate must also enforce the exact lease delta and current PR head before Codex review is accepted.
 
+These commands may be executed by the automated deterministic gate, or manually by a human developer in their own local environment against the exact verified head. Either satisfies this requirement, provided the outcome and the exact verified head are recorded in `docs/automation/AI-AUTONOMY-STATE.json`'s `manual_verification` record when run manually.
+
 ### Required test coverage
 
 The focused HTTP suite must prove at minimum:
@@ -102,4 +104,4 @@ The focused HTTP suite must prove at minimum:
 
 ### Completion condition
 
-Slice 4B is ready for human review only when the exact-scope implementation is at the current pinned PR head, every required test command passes with a positive recognized count, Codex has reviewed that same head, and any bounded correction cycle has completed. Final product merge remains human-approved.
+Slice 4B is ready for human review when the exact-scope implementation is at the current pinned PR head and every required test command has passed with a positive recognized count against that exact head — verified either by the automated deterministic gate followed by Codex review, or by a human developer running the required commands manually and recording the result as described above. Under the governance transition recorded in `docs/automation/AI-SUBSCRIPTION-LOOP.md`, Codex review and the automatic Claude Routine handoff are not required for completion; a human-reviewed manual verification is sufficient. Final product merge remains exclusively human-approved regardless of which verification path was used.

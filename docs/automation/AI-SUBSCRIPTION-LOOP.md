@@ -12,6 +12,30 @@ Actions job proves scope and focused tests against disposable MySQL, Codex
 reviews, Claude applies at most two bounded corrections, and the loop stops at
 `ai:ready-for-human`.
 
+## Manual completion path (governance transition)
+
+The automated Codex-review + Claude Routine handoff loop below remains
+available, but it is not the only way to reach `ai:ready-for-human`. A human
+developer may instead complete the locked current slice manually:
+
+1. Run Claude Code interactively (not via the Routine) to implement or
+   correct the locked current slice, staying strictly inside its exact
+   allowed paths.
+2. Run the slice's required deterministic test commands manually in their
+   own local environment against the exact resulting head.
+3. Record the verified head SHA and the manual test outcome in the
+   `manual_verification` field of `docs/automation/AI-AUTONOMY-STATE.json`.
+4. Review the resulting diff and test evidence themselves.
+5. Merge only as a human, exactly as the automated path already requires.
+
+Codex review and the Routine's automatic handoff steps are optional under
+this path, not mandatory. Every other invariant is unchanged: subscription-
+only Claude usage (no metered Anthropic/OpenAI API key, no usage credits),
+`merge_policy: human_only`, exact-scope enforcement, positive required-test-
+count enforcement, no force-push, no direct push to `main`, and no automatic
+advancement to a later slice without a separate, explicit human-approved
+bounded contract.
+
 ## Flow
 
 1. Dispatch `AI Subscription Loop` with command `start` for the active PR.

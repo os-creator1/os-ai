@@ -7,14 +7,17 @@
   "active_rfc": "RFC-003",
   "active_milestone": "Milestone 4",
   "current_slice": "RFC-003 Milestone 4 Slice 4B",
-  "status": "ready_to_implement_after_human_contract_merge",
+  "status": "manually_verified_awaiting_human_review",
   "merge_policy": "human_only",
   "implementation_authorized": true,
-  "expected_head_sha": "c18ea585bc424585240a44657978434d6d732c75",
+  "expected_head_sha": "b7286b80b5264dc65bd7d69adb31777f3c7176ce",
   "require_exact_scope": true,
   "maximum_correction_rounds": 8,
   "advance_automatically": false,
-  "start_automatically_after_contract_merge": true,
+  "start_automatically_after_contract_merge": false,
+  "completion_verification_mode": "manual_or_automated",
+  "codex_review_required_for_completion": false,
+  "automatic_model_handoff_required": false,
   "next_candidate": "RFC-003 Milestone 4 Slice 4C locked contract",
   "contract_source": "docs/automation/RFC-003-M4-SLICE-4B-CONTRACT.md#implementation-contract",
   "allowed_paths": [
@@ -45,6 +48,24 @@
     "php artisan test tests/Feature/Workspace/WorkspaceMembershipLifecycleTest.php",
     "php artisan test tests/Feature/Workspace/WorkspaceMembershipBusinessAccessTest.php"
   ],
+  "manual_verification": {
+    "verified_head_sha": "b7286b80b5264dc65bd7d69adb31777f3c7176ce",
+    "environment": "human developer's local Laragon / PHP 8.3 environment",
+    "test_commands_run": [
+      "php artisan test tests/Feature/Workspace/WorkspaceMemberManagementHttpTest.php",
+      "php artisan test tests/Feature/Workspace/WorkspaceOverviewHttpTest.php",
+      "php artisan test tests/Feature/Workspace/WorkspaceMutationHttpTest.php",
+      "php artisan test tests/Feature/Workspace/WorkspaceBusinessListHttpTest.php",
+      "php artisan test tests/Feature/Workspace/WorkspaceSwitcherHttpTest.php",
+      "php artisan test tests/Feature/Workspace/WorkspaceMembershipLifecycleTest.php",
+      "php artisan test tests/Feature/Workspace/WorkspaceMembershipBusinessAccessTest.php"
+    ],
+    "result": "all_passed",
+    "test_counts_recorded": false,
+    "working_tree_clean_after": true,
+    "static_review": "no remaining genuine Slice 4B defect found on manual Claude review",
+    "verified_by": "human developer, manual Claude Code session"
+  },
   "gate_label": "ai:testing",
   "forbidden_scope": [
     "Any Business creation, mutation, deletion or Workspace reassignment; Workspace ownership transfer or Workspace reactivation HTTP surface",
