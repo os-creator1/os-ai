@@ -10,6 +10,13 @@ The Routine follows the saved prompt in
 `docs/automation/CLAUDE-ROUTINE-PROMPT.md` and the locked task in
 `docs/automation/AI-AUTONOMY-STATE.json`.
 
+A human developer may also run Claude Code manually/interactively for the
+locked current slice instead of dispatching the Routine. See
+`docs/automation/AI-SUBSCRIPTION-LOOP.md` ("Manual completion path") for the
+exact conditions under which manual implementation, manually-run tests, and
+human review satisfy completion without Codex review or an automatic Routine
+handoff. All non-negotiable rules below apply to both paths equally.
+
 ### State labels
 
 - `ai:implement`: implement exactly the locked current slice.
