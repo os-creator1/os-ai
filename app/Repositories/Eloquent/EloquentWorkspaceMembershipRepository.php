@@ -51,6 +51,13 @@ class EloquentWorkspaceMembershipRepository extends EloquentBaseRepository imple
             ->get();
     }
 
+    public function allForWorkspace(Workspace $workspace): Collection
+    {
+        return $this->query()
+            ->where('workspace_id', $workspace->id)
+            ->get();
+    }
+
     public function activeForUser(int $userId): Collection
     {
         return $this->query()
