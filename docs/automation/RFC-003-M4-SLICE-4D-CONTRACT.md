@@ -1,6 +1,6 @@
 # RFC-003 Milestone 4 Slice 4D Contract
 
-**Status: proposed. Not yet authorized. Implementation must not begin under this document alone.**
+**Status: completed and closed.** Authorization was completed via PR #45; implementation was PR #44 (branch `agent/rfc-003-m4-slice-4d`), human-merged as `c590cfe78f929bed328c9ae775e789f06322641c`. See `docs/automation/RFC-003-M4-SLICE-4D-CLOSURE.md` for final closure evidence.
 
 ## Implementation contract
 
@@ -12,16 +12,19 @@ RFC-003 §23's Milestone 4 bullet ("Create/rename/deactivate Workspace, manage m
 
 Of the three, `createBusinessInWorkspace()` is the smallest and least coupled: a single Workspace lock, owner-or-active-Admin authority (the same rule already used by `renameWorkspace()` and `changeMemberBusinessAccessScope()`), no cross-Workspace consistency check, and — per the method's own docblock — no `workspace_transitions` audit row. By contrast `reassignBusiness()` locks two Workspaces in ascending-ID order, re-verifies the Business's actual source Workspace against a possibly-stale caller model, requires authority over both Workspaces, removes stale scoped-access grants, and writes a durable `workspace_transitions` row; `transferOwnership()` locks two `users` rows and up to two membership rows and requires the caller to resolve the previous owner's disposition explicitly. This contract authorizes only Business creation. Business reassignment and Workspace ownership transfer remain for later, independently reviewed and separately bounded contracts — deliberately not combined here.
 
-### Locked target
+### Locked target (historical — closed)
 
-- Implementation PR: not yet opened
+- Implementation PR: [#44](https://github.com/os-creator1/os-ai/pull/44)
 - Base: `main`
-- Head: not yet created (expected name, following the existing per-slice convention: `agent/rfc-003-m4-slice-4d`)
-- Starting SHA: not yet pinned
+- Head: `agent/rfc-003-m4-slice-4d`
+- Authorization PR: [#45](https://github.com/os-creator1/os-ai/pull/45) (human-merged, pinned the authorized baseline SHA below)
+- Authorized baseline SHA: `a47d8db21f481a4fb05bc5df2caeabc4af1eed9d`
+- Final product head: `94302c0335e92bbd03b7b2fba01d39f4b6889749`
+- Human merge commit on `main`: `c590cfe78f929bed328c9ae775e789f06322641c`
 - Merge policy: human only
 - Maximum bounded correction rounds: 2
 
-**This contract is a proposal, not a lease.** The manual authorization sequence is exactly: (1) this Slice 4D contract is human-reviewed and merged; (2) only after that merge may a dedicated Slice 4D implementation branch be created from current `main` and a draft/baseline implementation PR be opened — solely to establish the exact target PR number, branch, and starting SHA identity; (3) at that stage no Slice 4D product/application implementation may be written yet; (4) the exact implementation PR number, head branch, and full starting SHA are then recorded in a separate, human-reviewed `docs/automation/AI-AUTONOMY-STATE.json` update that sets `implementation_authorized: true`, under the manual bounded-contract workflow described in `docs/automation/AI-SUBSCRIPTION-LOOP.md`'s manual completion path; (5) a human reviews and merges that state update; (6) only after that authorizing state update is merged may Slice 4D product implementation begin. `start_automatically_after_contract_merge` remains `false` throughout this sequence — no automatic starter is involved at any step. Product merge remains exclusively human-only.
+The manual authorization sequence that was actually followed: (1) this contract was human-reviewed and merged; (2) a dedicated Slice 4D implementation branch (`agent/rfc-003-m4-slice-4d`) was created from `main` and a draft/baseline PR (#44) was opened solely to establish the exact target identity; (3) no product implementation was written until that baseline was pinned; (4) a separate, human-reviewed `AI-AUTONOMY-STATE.json` update (PR #45) recorded the exact PR number, branch, and starting SHA and set `implementation_authorized: true`; (5) a human reviewed and merged that authorization; (6) only then did Slice 4D product implementation begin. `start_automatically_after_contract_merge` remained `false` throughout — no automatic starter was involved at any step. The product PR was merged by a human. `docs/automation/AI-AUTONOMY-STATE.json` has since been returned to an idle, non-authorized state — see the closure document.
 
 ### Authorized behavior
 
@@ -36,7 +39,7 @@ Of the three, `createBusinessInWorkspace()` is the smallest and least coupled: a
 
 ### Exact implementation scope
 
-Only these implementation paths may change once a separate authorizing state update pins this contract to a real implementation PR/branch:
+Only these implementation paths were authorized to change, once the separate authorizing state update (PR #45) pinned this contract to the real implementation PR/branch — and only these four actually changed in PR #44:
 
 - `app/Http/Controllers/Customer/Workspace/WorkspaceController.php`
 - `resources/views/customer/workspaces/show.blade.php`
@@ -95,4 +98,4 @@ The focused HTTP suite must prove at minimum:
 
 Slice 4D is ready for human review when the exact-scope implementation is at the pinned PR head and every required test command has passed with a positive recognized count against that exact head — verified either by an automated deterministic gate or by a human developer running the required commands manually and recording the result, per the manual completion path. Codex review and an automatic Claude Routine handoff are not required. Final product merge remains exclusively human-approved.
 
-**Implementation is not authorized under this document alone.** This contract must first be human-reviewed and merged; a separate `AI-AUTONOMY-STATE.json` update must then explicitly authorize and pin an implementation PR/branch/SHA before any code under "Exact implementation scope" may be written.
+**Closed.** This condition was met: PR #44 reached final product head `94302c0335e92bbd03b7b2fba01d39f4b6889749`, all eight required test commands were manually run and passed, `git diff --check` was clean, and a human merged PR #44 into `main` as `c590cfe78f929bed328c9ae775e789f06322641c`. See `docs/automation/RFC-003-M4-SLICE-4D-CLOSURE.md` for full closure evidence. No further implementation, correction, or product work is authorized under this document.
