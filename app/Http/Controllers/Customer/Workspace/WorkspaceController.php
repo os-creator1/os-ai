@@ -173,6 +173,29 @@ class WorkspaceController extends CustomerBaseController
     }
 
     /**
+     * RFC-003 Milestone 4 Slice 4C: owner-only Workspace reactivation.
+     * Resolves the target by uid and delegates entirely to
+     * WorkspaceManager::reactivateWorkspace() -- owner-only authority and
+     * the idempotent no-op on an already-active Workspace are enforced
+     * there, never reimplemented here. Mirrors deactivate() exactly.
+     */
+    public function reactivate(string $workspaceUid): RedirectResponse
+    {
+        $userId = (int) Auth::id();
+        $workspace = $this->resolveAccessibleWorkspace($workspaceUid, $userId);
+
+        try {
+            $this->workspaceManager->reactivateWorkspace($userId, $workspace);
+        } catch (UnauthorizedWorkspaceManagementException) {
+            return redirect()->back()->with('flash_error', 'You are not authorized to reactivate this Workspace.');
+        }
+
+        return redirect()
+            ->route('customer.workspaces.show', $workspaceUid)
+            ->with('flash_success', 'Workspace reactivated.');
+    }
+
+    /**
      * RFC-003 Milestone 4 Slice 4B: adds an existing User as an active
      * member via a nullable User uid lookup + WorkspaceManager::addMember() —
      * unknown user uid fails closed with 404, matching resolveAccessibleMembership()'s

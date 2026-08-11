@@ -63,11 +63,19 @@
                         @endif
 
                         @if ($workspace['role'] === 'Owner')
-                            <form method="POST" data-workspace-action="deactivate" class="mt-1">
-                                @csrf
+                            @if ($workspace['is_active'])
+                                <form method="POST" data-workspace-action="deactivate" class="mt-1">
+                                    @csrf
 
-                                <button type="submit" class="btn btn-outline-danger">Deactivate Workspace</button>
-                            </form>
+                                    <button type="submit" class="btn btn-outline-danger">Deactivate Workspace</button>
+                                </form>
+                            @else
+                                <form method="POST" data-workspace-action="reactivate" class="mt-1">
+                                    @csrf
+
+                                    <button type="submit" class="btn btn-outline-success">Reactivate Workspace</button>
+                                </form>
+                            @endif
                         @endif
                     </div>
                 </div>

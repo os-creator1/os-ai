@@ -580,6 +580,7 @@
         Route::get('{workspaceUid}', 'Workspace\WorkspaceController@show')->name('show');
         Route::post('{workspaceUid}/rename', 'Workspace\WorkspaceController@rename')->name('rename');
         Route::post('{workspaceUid}/deactivate', 'Workspace\WorkspaceController@deactivate')->name('deactivate');
+        Route::post('{workspaceUid}/reactivate', 'Workspace\WorkspaceController@reactivate')->name('reactivate');
 
         // RFC-003 Milestone 4 Slice 4B: bounded membership management.
         Route::post('{workspaceUid}/members', 'Workspace\WorkspaceController@storeMember')->name('members.store');
