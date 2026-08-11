@@ -137,12 +137,12 @@ These commands may be executed by an automated deterministic gate, or manually b
 - successful reassignment by a selected-scope active Admin whose membership is explicitly assigned the source Business;
 - a selected-scope active Admin whose membership is *not* assigned the source Business is denied via a crafted POST naming that Business's real uid directly (not merely absent from the UI list) — 404, proving the manager, not the UI, is authoritative;
 - the selected-scope Admin's rendered overview only lists Businesses they can access (UI reflects `effectiveBusinesses()`/`accessibleBusinesses()`, never the raw unfiltered Workspace roster);
-- authority over the source Workspace only is denied (flash-error);
-- authority over the target Workspace only is denied (flash-error);
-- Staff is denied (flash-error);
-- an inactive Admin is denied (flash-error);
-- an unrelated user is denied (flash-error);
-- platform-admin status alone grants no authority (flash-error — `is_admin` is not evaluated by `assertActorIsOwnerOrActiveAdmin()`, so a platform-admin-only actor still fails the existing authority check, exactly as every other Workspace-management action already behaves);
+- authority over the source Workspace only is denied: the actor is owner-or-active-Admin of the source but is given an active **Staff** membership in the target (not no membership at all), so `resolveAccessibleWorkspace()` succeeds for the target and the request actually reaches `WorkspaceManager`, which then denies on the target authority check (flash-error). Giving the actor no relationship to the target at all would instead 404 at the resolver and never exercise the manager's authority check;
+- authority over the target Workspace only is denied: symmetrically, the actor is owner-or-active-Admin of the target but is given an active **Staff** membership in the source, so `resolveAccessibleWorkspace()` succeeds for the source and the manager denies on the source authority check (flash-error);
+- Staff is denied: an active Staff membership makes the Workspace addressable (`resolveAccessibleWorkspace()` succeeds — Staff is a non-null effective role), but `WorkspaceManager::reassignBusiness()` still denies via `UnauthorizedWorkspaceManagementException` (flash-error), since Staff never satisfies owner-or-active-Admin;
+- an inactive Admin is denied with **404**, not flash-error: `resolveAccessibleWorkspace()`'s `effectiveRoleKey()` returns `null` for an inactive membership, so the request fails closed at the controller's existing resolver and `WorkspaceManager::reassignBusiness()` is never called;
+- an unrelated user is denied with **404**, not flash-error, for the same reason — no membership row at all also resolves to a `null` effective role;
+- platform-admin status alone grants no authority, denied with **404**, not flash-error: `effectiveRoleKey()`/`resolveAccessibleWorkspace()` never consults `is_admin` at all, so a platform-admin-only actor with no owner/active-membership relationship to the Workspace fails closed at the same resolver, before `WorkspaceManager` is ever reached — consistent with how platform-admin status is already excluded from every other customer Workspace mutation in this controller;
 - an inactive source Workspace is denied (flash-error);
 - an inactive target Workspace is denied (flash-error);
 - an unknown or inaccessible source Workspace uid fails closed with 404;
