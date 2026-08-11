@@ -87,3 +87,5 @@ The focused HTTP suite must prove at minimum:
 Slice 4C is ready for human review when the exact-scope implementation is at the pinned PR head and every required test command has passed with a positive recognized count against that exact head — verified either by an automated deterministic gate or by a human developer running the required commands manually and recording the result, per the manual completion path. Codex review and an automatic Claude Routine handoff are not required. Final product merge remains exclusively human-approved.
 
 **Implementation is not authorized under this document alone.** This contract must first be human-reviewed and merged; a separate `AI-AUTONOMY-STATE.json` update must then explicitly authorize and pin an implementation PR/branch/SHA before any code under "Exact implementation scope" may be written.
+
+**Closed.** Slice 4C is complete: implementation PR #41 (branch `agent/rfc-003-m4-slice-4c`) was human-merged as `c9992a3eea8c16e36213793cd697df04365c8d7a`, product head `13fc5419ff184685a61439002f9c4abae55ce772`. See `docs/automation/RFC-003-M4-SLICE-4C-CLOSURE.md` for final closure evidence.
