@@ -87,6 +87,70 @@
                         <h4 class="card-title">Businesses</h4>
                     </div>
                     <div class="card-body">
+                        @if (in_array($workspace['role'], ['Owner', 'Admin'], true))
+                            <form method="POST" data-workspace-action="businesses" class="mb-2">
+                                @csrf
+
+                                <div class="mb-1">
+                                    <label class="form-label" for="business-name">Business name</label>
+                                    <input type="text" class="form-control" id="business-name" name="name" value="{{ old('name') }}" required>
+                                </div>
+
+                                <div class="mb-1">
+                                    <label class="form-label" for="business-industry">Industry</label>
+                                    <select class="form-control" id="business-industry" name="industry" required>
+                                        @foreach (\App\Enums\Business\BusinessIndustry::cases() as $industry)
+                                            <option value="{{ $industry->value }}" @selected(old('industry') === $industry->value)>
+                                                {{ ucwords(str_replace('_', ' ', $industry->value)) }}
+                                            </option>
+                                        @endforeach
+                                    </select>
+                                </div>
+
+                                <div class="mb-1">
+                                    <label class="form-label" for="business-industry-other">Industry (other)</label>
+                                    <input type="text" class="form-control" id="business-industry-other" name="industry_other" value="{{ old('industry_other') }}">
+                                </div>
+
+                                <div class="mb-1">
+                                    <label class="form-label" for="business-description">Description</label>
+                                    <textarea class="form-control" id="business-description" name="description" maxlength="5000">{{ old('description') }}</textarea>
+                                </div>
+
+                                <div class="mb-1">
+                                    <label class="form-label" for="business-email">Public email</label>
+                                    <input type="email" class="form-control" id="business-email" name="email" value="{{ old('email') }}">
+                                </div>
+
+                                <div class="mb-1">
+                                    <label class="form-label" for="business-phone">Phone</label>
+                                    <input type="text" class="form-control" id="business-phone" name="phone" value="{{ old('phone') }}">
+                                </div>
+
+                                <div class="mb-1">
+                                    <label class="form-label" for="business-website">Website</label>
+                                    <input type="text" class="form-control" id="business-website" name="website_url" value="{{ old('website_url') }}">
+                                </div>
+
+                                <div class="row">
+                                    <div class="col-md-4 mb-1">
+                                        <label class="form-label" for="business-country-code">Country code</label>
+                                        <input type="text" class="form-control" id="business-country-code" name="country_code" maxlength="2" value="{{ old('country_code') }}" required>
+                                    </div>
+                                    <div class="col-md-4 mb-1">
+                                        <label class="form-label" for="business-timezone">Timezone</label>
+                                        <input type="text" class="form-control" id="business-timezone" name="timezone" value="{{ old('timezone') }}" required>
+                                    </div>
+                                    <div class="col-md-4 mb-1">
+                                        <label class="form-label" for="business-currency-code">Currency code</label>
+                                        <input type="text" class="form-control" id="business-currency-code" name="currency_code" maxlength="3" value="{{ old('currency_code') }}" required>
+                                    </div>
+                                </div>
+
+                                <button type="submit" class="btn btn-outline-primary">Create Business</button>
+                            </form>
+                        @endif
+
                         @if (empty($businesses))
                             <p class="mb-0">No Businesses are accessible in this Workspace.</p>
                         @else
