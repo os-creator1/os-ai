@@ -19,6 +19,8 @@ This contract keeps role (`admin`/`staff`) and Business-access scope (`all`/`sel
 
 The implementation must remain on this PR and branch. The target marker at `docs/automation/RFC-003-M4-SLICE-4B-TARGET.md` predates the automatic-start lease and must not be edited by Claude. The trusted automation state is authoritative for the current-head lease and automatic start.
 
+**Closed.** Implementation PR #25 was superseded by a clean-integration PR #39 (human-merged as `303acab328392c805cf55116fd15bf301a1b85dc`, product head `0df6949c74cdc1e98310aa699b95f9852a85eee1`). PR #25 and branch `agent/rfc-003-m4-slice-4b` are closed and must not be reopened or reused. See `docs/automation/RFC-003-M4-SLICE-4B-CLOSURE.md` for final closure evidence.
+
 ### Authorized behavior
 
 1. Extend the existing customer Workspace overview with a manager-only membership surface. The Workspace owner and active Admin may see the management data; Staff must receive neither member-management data nor controls.
