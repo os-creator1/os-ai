@@ -1,16 +1,16 @@
 {
   "schema_version": 1,
   "repository": "os-creator1/os-ai",
-  "active_pull_request": 44,
+  "active_pull_request": null,
   "base_branch": "main",
-  "head_branch": "agent/rfc-003-m4-slice-4d",
+  "head_branch": "none",
   "active_rfc": "RFC-003",
   "active_milestone": "Milestone 4",
-  "current_slice": "RFC-003 Milestone 4 Slice 4D",
-  "status": "implementation_authorized_for_manual_work",
+  "current_slice": "Idle — Slice 4D closed; no next Milestone 4 slice yet selected or authorized",
+  "status": "automation_ready_pending_next_locked_contract",
   "merge_policy": "human_only",
-  "implementation_authorized": true,
-  "expected_head_sha": "a47d8db21f481a4fb05bc5df2caeabc4af1eed9d",
+  "implementation_authorized": false,
+  "expected_head_sha": "c590cfe78f929bed328c9ae775e789f06322641c",
   "require_exact_scope": true,
   "maximum_correction_rounds": 2,
   "advance_automatically": false,
@@ -18,45 +18,36 @@
   "completion_verification_mode": "manual_or_automated",
   "codex_review_required_for_completion": false,
   "automatic_model_handoff_required": false,
-  "next_candidate": "RFC-003 Milestone 4 Slice 4D active implementation",
-  "contract_source": "docs/automation/RFC-003-M4-SLICE-4D-CONTRACT.md#implementation-contract",
+  "next_candidate": "None selected. See docs/automation/RFC-003-M4-SLICE-4D-CLOSURE.md, \"Remaining Milestone 4 scope\", for the factual (not yet chosen) remaining domain-backed HTTP surfaces.",
+  "contract_source": null,
   "allowed_paths": [
-    "app/Http/Controllers/Customer/Workspace/WorkspaceController.php",
-    "resources/views/customer/workspaces/show.blade.php",
-    "routes/customer.php",
-    "tests/Feature/Workspace/WorkspaceBusinessCreationHttpTest.php"
+    "docs/automation/AI-AUTONOMY-STATE.json",
+    "docs/automation/RFC-003-M4-SLICE-4D-CONTRACT.md",
+    "docs/automation/RFC-003-M4-SLICE-4D-CLOSURE.md"
   ],
   "required_new_paths": [
-    "tests/Feature/Workspace/WorkspaceBusinessCreationHttpTest.php"
+    "docs/automation/RFC-003-M4-SLICE-4D-CLOSURE.md"
   ],
   "required_test_commands": [
-    "php artisan test tests/Feature/Workspace/WorkspaceBusinessCreationHttpTest.php",
-    "php artisan test tests/Feature/Workspace/WorkspaceMutationHttpTest.php",
-    "php artisan test tests/Feature/Workspace/WorkspaceReactivationHttpTest.php",
-    "php artisan test tests/Feature/Workspace/WorkspaceOverviewHttpTest.php",
-    "php artisan test tests/Feature/Workspace/WorkspaceSwitcherHttpTest.php",
-    "php artisan test tests/Feature/Workspace/WorkspaceBusinessListHttpTest.php",
-    "php artisan test tests/Feature/Workspace/WorkspaceMemberManagementHttpTest.php",
-    "php artisan test tests/Feature/Workspace/WorkspaceBusinessOrchestrationTest.php"
+    "node .github/scripts/ai_subscription_gate.js --selftest",
+    "node .github/scripts/ai_subscription_autostart.js --selftest",
+    "node .github/scripts/ai_subscription_labels.js --selftest"
   ],
   "gate_label": "ai:testing",
   "forbidden_scope": [
-    "Any Business reassignment (RFC-003 §16.2) or Workspace ownership transfer (§15) HTTP surface",
-    "Any Business creation on behalf of a customer other than the acting user's own Customer record",
-    "Any member add/role/scope/deactivate/reactivate change (Slice 4B's membership surface is closed and out of scope for this slice)",
-    "Any Workspace create/rename/deactivate/reactivate behavior change (Slices 4A/4C are closed and out of scope for this slice)",
-    "Any WorkspaceManager, model, enum, event, exception, migration, dependency, environment or database-configuration change — createBusinessInWorkspace() already exists and is fully implemented; this slice only wires an HTTP action to it",
-    "Any billing, plan, entitlement, feature-toggle or usage-wallet implementation",
-    "Any application change outside the exact allowed implementation paths",
-    "Any alternate authorization algorithm, direct model mutation write, repository bypass, automatic later-contract generation or approval",
+    "No implementation of any kind: no active product slice is authorized",
+    "No Business reassignment, Workspace ownership transfer, or any other Milestone 4 product surface until a separate bounded contract is human-reviewed and merged",
+    "No WorkspaceManager, repository, model, enum, event, exception, migration, dependency, environment or database-configuration change",
+    "No billing, plan, entitlement, feature-toggle or usage-wallet implementation",
+    "No alternate authorization algorithm, direct model mutation write, repository bypass, or automatic later-contract generation or approval",
     "Setting advance_automatically true, changing merge_policy from human_only, or weakening exact-scope or positive-test gates",
     "Using a metered model API, enabling usage credits, merging automatically, force-pushing, pushing to main or tagging",
-    "Implementation of any kind before this contract itself is human-reviewed, merged, and paired with a separate authorizing AI-AUTONOMY-STATE.json update"
+    "Selecting or authorizing a next Milestone 4 slice from this idle state alone — a new contract must be independently drafted, human-reviewed, and merged first"
   ],
   "success_label": "ai:ready-for-human",
   "failure_label": "ai:needs-human",
-  "completed_pull_request": 41,
-  "completed_product_head_sha": "13fc5419ff184685a61439002f9c4abae55ce772",
-  "completed_merge_commit_sha": "c9992a3eea8c16e36213793cd697df04365c8d7a",
+  "completed_pull_request": 44,
+  "completed_product_head_sha": "94302c0335e92bbd03b7b2fba01d39f4b6889749",
+  "completed_merge_commit_sha": "c590cfe78f929bed328c9ae775e789f06322641c",
   "aggregate_regression_run": 31159820708
 }
