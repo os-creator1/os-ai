@@ -11,6 +11,7 @@ use App\Exceptions\Workspace\OwnerCannotBeMemberException;
 use App\Exceptions\Workspace\UnauthorizedWorkspaceManagementException;
 use App\Exceptions\Workspace\WorkspaceMembershipAlreadyExistsException;
 use App\Http\Controllers\Customer\CustomerBaseController;
+use App\Http\Requests\Business\UpsertBusinessIdentityRequest;
 use App\Http\Requests\Customer\Workspace\RenameWorkspaceRequest;
 use App\Http\Requests\Customer\Workspace\StoreWorkspaceMemberRequest;
 use App\Http\Requests\Customer\Workspace\StoreWorkspaceRequest;
@@ -193,6 +194,40 @@ class WorkspaceController extends CustomerBaseController
         return redirect()
             ->route('customer.workspaces.show', $workspaceUid)
             ->with('flash_success', 'Workspace reactivated.');
+    }
+
+    /**
+     * RFC-003 Milestone 4 Slice 4D: owner-or-active-Admin Business creation
+     * inside an existing Workspace. Resolves the target Workspace by uid via
+     * the existing resolveAccessibleWorkspace() pattern and delegates
+     * entirely to WorkspaceManager::createBusinessInWorkspace() -- Workspace
+     * mutation authority and the active-Workspace requirement are enforced
+     * there, never reimplemented here. createBusinessInWorkspace() does not
+     * infer or verify Customer ownership from the actor (RFC-003 §11.2): the
+     * acting Customer is resolved here, exclusively from the authenticated
+     * user's own User::customer() relationship, never from request input.
+     * This is the slice's sole HTTP tenancy boundary, not a competing
+     * Workspace authorization algorithm. Reuses the existing, unmodified
+     * UpsertBusinessIdentityRequest -- its validated payload carries
+     * Business identity fields only, no customer identifier of any kind.
+     */
+    public function storeBusiness(UpsertBusinessIdentityRequest $request, string $workspaceUid): RedirectResponse
+    {
+        $actorUserId = (int) Auth::id();
+        $workspace = $this->resolveAccessibleWorkspace($workspaceUid, $actorUserId);
+        $customer = Auth::user()->customer;
+
+        try {
+            $this->workspaceManager->createBusinessInWorkspace($actorUserId, $customer, $workspace, $request->validated());
+        } catch (UnauthorizedWorkspaceManagementException) {
+            return redirect()->back()->with('flash_error', 'You are not authorized to create a Business in this Workspace.');
+        } catch (InactiveWorkspaceMutationException) {
+            return redirect()->back()->with('flash_error', 'An inactive Workspace cannot receive a new Business.');
+        }
+
+        return redirect()
+            ->route('customer.workspaces.show', $workspaceUid)
+            ->with('flash_success', 'Business created.');
     }
 
     /**
