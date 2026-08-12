@@ -11,6 +11,7 @@ use App\Events\Workspace\WorkspaceMembershipBusinessUnassigned;
 use App\Exceptions\Workspace\BusinessWorkspaceMismatchException;
 use App\Exceptions\Workspace\InactiveWorkspaceMutationException;
 use App\Exceptions\Workspace\UnauthorizedWorkspaceManagementException;
+use App\Exceptions\Workspace\WorkspaceAccessDeniedException;
 use App\Exceptions\Workspace\WorkspaceBusinessNotFoundException;
 use App\Exceptions\Workspace\WorkspaceNotFoundException;
 use App\Library\Workspace\WorkspaceManager;
@@ -762,6 +763,109 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
         $this->assertNotSame(WorkspaceTransitionType::OwnershipTransferred, $transition->transition_type);
         $this->assertNull($transition->from_owner_user_id);
         $this->assertNull($transition->to_owner_user_id);
+    }
+
+    // --- SLICE 4E: SELECTED-SCOPE BUSINESS-ACCESS CORRECTION ---
+
+    // 51. All-scope active Admin remains allowed (regression confirmation
+    // for the new Business-access check inserted after the existing
+    // authority/active-state checks, before the same-target no-op).
+    public function test_all_scope_active_admin_reassignment_remains_allowed(): void
+    {
+        $ownerA = $this->createCustomer();
+        $ownerB = $this->createCustomer();
+        $admin = $this->createCustomer();
+        $workspaceA = $this->createWorkspace($ownerA->user);
+        $workspaceB = $this->createWorkspace($ownerB->user);
+        $this->createMembership($workspaceA, $admin->user, ['role' => WorkspaceMembershipRole::Admin, 'is_active' => true]);
+        $this->createMembership($workspaceB, $admin->user, ['role' => WorkspaceMembershipRole::Admin, 'is_active' => true]);
+        $business = $this->manager()->createBusinessInWorkspace($ownerA->user_id, $ownerA, $workspaceA, $this->businessAttributes());
+
+        $result = $this->manager()->reassignBusiness($admin->user_id, $business, $workspaceB);
+
+        $this->assertSame($workspaceB->id, $result->workspace_id);
+    }
+
+    // 52. Selected-scope Admin may reassign a Business explicitly assigned
+    // to their own membership, when also authorized over the target.
+    public function test_selected_scope_admin_may_reassign_an_assigned_business(): void
+    {
+        $ownerA = $this->createCustomer();
+        $ownerB = $this->createCustomer();
+        $admin = $this->createCustomer();
+        $workspaceA = $this->createWorkspace($ownerA->user);
+        $workspaceB = $this->createWorkspace($ownerB->user);
+        $business = $this->manager()->createBusinessInWorkspace($ownerA->user_id, $ownerA, $workspaceA, $this->businessAttributes());
+        $this->manager()->addMember($ownerA->user_id, $workspaceA, $admin->user_id, WorkspaceMembershipRole::Admin, WorkspaceBusinessAccessScope::Selected, [$business->id]);
+        $this->createMembership($workspaceB, $admin->user, ['role' => WorkspaceMembershipRole::Admin, 'is_active' => true]);
+
+        $result = $this->manager()->reassignBusiness($admin->user_id, $business, $workspaceB);
+
+        $this->assertSame($workspaceB->id, $result->workspace_id);
+    }
+
+    // 53. Selected-scope Admin cannot reassign a Business not assigned to
+    // their own membership, even with management authority over both
+    // Workspaces -- the previously-unexercised gap this slice closes.
+    public function test_selected_scope_admin_cannot_reassign_an_unassigned_business(): void
+    {
+        $ownerA = $this->createCustomer();
+        $ownerB = $this->createCustomer();
+        $admin = $this->createCustomer();
+        $workspaceA = $this->createWorkspace($ownerA->user);
+        $workspaceB = $this->createWorkspace($ownerB->user);
+        $business = $this->manager()->createBusinessInWorkspace($ownerA->user_id, $ownerA, $workspaceA, $this->businessAttributes());
+        $this->manager()->addMember($ownerA->user_id, $workspaceA, $admin->user_id, WorkspaceMembershipRole::Admin, WorkspaceBusinessAccessScope::Selected, []);
+        $this->createMembership($workspaceB, $admin->user, ['role' => WorkspaceMembershipRole::Admin, 'is_active' => true]);
+
+        $this->expectException(WorkspaceAccessDeniedException::class);
+        $this->manager()->reassignBusiness($admin->user_id, $business, $workspaceB);
+    }
+
+    // 54. Direct Business ownership (Business.customer_id) is an
+    // independent access route but does not substitute for Workspace
+    // management authority over source and target.
+    public function test_direct_business_owner_without_management_authority_cannot_reassign(): void
+    {
+        $workspaceOwner = $this->createCustomer();
+        $businessOwner = $this->createCustomer();
+        $workspaceA = $this->createWorkspace($workspaceOwner->user);
+        $workspaceB = $this->createWorkspace($workspaceOwner->user);
+        $business = $this->manager()->createBusinessInWorkspace($workspaceOwner->user_id, $businessOwner, $workspaceA, $this->businessAttributes());
+
+        $this->expectException(UnauthorizedWorkspaceManagementException::class);
+        $this->manager()->reassignBusiness($businessOwner->user_id, $business, $workspaceB);
+    }
+
+    // 55. Same-target call by a selected-scope Admin whose membership is
+    // assigned the Business is still an authorized no-op.
+    public function test_same_target_no_op_for_selected_scope_admin_with_assigned_business(): void
+    {
+        $owner = $this->createCustomer();
+        $admin = $this->createCustomer();
+        $workspaceA = $this->createWorkspace($owner->user);
+        $business = $this->manager()->createBusinessInWorkspace($owner->user_id, $owner, $workspaceA, $this->businessAttributes());
+        $this->manager()->addMember($owner->user_id, $workspaceA, $admin->user_id, WorkspaceMembershipRole::Admin, WorkspaceBusinessAccessScope::Selected, [$business->id]);
+
+        $result = $this->manager()->reassignBusiness($admin->user_id, $business, $workspaceA);
+
+        $this->assertSame($workspaceA->id, $result->workspace_id);
+    }
+
+    // 56. Same-target call by a selected-scope Admin whose membership is
+    // NOT assigned the Business still fails on Business access -- the
+    // no-op is reached only after every required check, including access,
+    // has passed.
+    public function test_same_target_call_denied_for_selected_scope_admin_with_unassigned_business(): void
+    {
+        $owner = $this->createCustomer();
+        $admin = $this->createCustomer();
+        $workspaceA = $this->createWorkspace($owner->user);
+        $business = $this->manager()->createBusinessInWorkspace($owner->user_id, $owner, $workspaceA, $this->businessAttributes());
+        $this->manager()->addMember($owner->user_id, $workspaceA, $admin->user_id, WorkspaceMembershipRole::Admin, WorkspaceBusinessAccessScope::Selected, []);
+
+        $this->expectException(WorkspaceAccessDeniedException::class);
+        $this->manager()->reassignBusiness($admin->user_id, $business, $workspaceA);
     }
 
     // 50. No HTTP/model/migration scope is introduced.

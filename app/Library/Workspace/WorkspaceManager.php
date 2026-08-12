@@ -1027,6 +1027,8 @@ class WorkspaceManager
                 throw new InactiveWorkspaceMutationException($lockedTargetWorkspace->id);
             }
 
+            $this->assertUserCanAccessBusiness($actorUserId, $lockedBusiness);
+
             if ($expectedSourceWorkspaceId === $targetWorkspaceId) {
                 return $lockedBusiness;
             }
