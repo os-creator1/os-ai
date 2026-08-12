@@ -1,6 +1,6 @@
 # RFC-003 Milestone 4 Slice 4E Contract
 
-**Status: PROPOSED — NOT AUTHORIZED. Implementation must not begin under this document alone.**
+**Status: completed and closed.** Authorization was completed via PR #49; implementation was PR #48 (branch `agent/rfc-003-m4-slice-4e`), authorized baseline `92d06e255d491084e7d5bdd9f741028c7d3a16c9`, final product head `2f45feff4cf5d6b9e0200359feba35f5ed2660b6`, human-merged as `2327d9c1c3cd56d473ca770318c627f397c2b534`. See `docs/automation/RFC-003-M4-SLICE-4E-CLOSURE.md` for final closure evidence.
 
 ## Implementation contract
 
@@ -43,16 +43,19 @@ Add exactly one new call to `WorkspaceManager::reassignBusiness()`: `$this->asse
 
 **None of these four existing tests requires any change.** They remain valid regressions and must not be rewritten. Step 7 only becomes observable — and only produces `WorkspaceAccessDeniedException` — for an actor who has *already* passed both Workspace-authority checks and both active-state checks, i.e. exactly the previously-unexercised selected-scope-Admin gap this correction closes.
 
-### Locked target
+### Locked target (historical — closed)
 
-- Implementation PR: not yet opened
+- Implementation PR: [#48](https://github.com/os-creator1/os-ai/pull/48)
 - Base: `main`
-- Head: not yet created (expected name, following the existing per-slice convention: `agent/rfc-003-m4-slice-4e`)
-- Starting SHA: not yet pinned
+- Head: `agent/rfc-003-m4-slice-4e`
+- Authorization PR: [#49](https://github.com/os-creator1/os-ai/pull/49) (human-merged, pinned the authorized baseline SHA below)
+- Authorized baseline SHA: `92d06e255d491084e7d5bdd9f741028c7d3a16c9`
+- Final product head: `2f45feff4cf5d6b9e0200359feba35f5ed2660b6`
+- Human merge commit on `main`: `2327d9c1c3cd56d473ca770318c627f397c2b534`
 - Merge policy: human only
 - Maximum bounded correction rounds: 2
 
-**This contract is a proposal, not a lease.** The manual authorization sequence is exactly: (1) this Slice 4E contract is human-reviewed and merged; (2) only after that merge may a dedicated Slice 4E implementation branch be created from then-current `main` and an inert Draft baseline implementation PR be opened — solely to establish the exact target PR number, branch, and starting SHA identity; (3) at that stage no Slice 4E product/application implementation may be written yet; (4) the exact implementation PR number, head branch, and full starting SHA are then recorded in a separate, human-reviewed `docs/automation/AI-AUTONOMY-STATE.json` update that sets `implementation_authorized: true`; (5) a human reviews and merges that state update; (6) only after that authorizing state update is merged may Slice 4E product implementation begin. `start_automatically_after_contract_merge` remains `false` throughout — no automatic starter is involved at any step. Product merge remains exclusively human-only. No paid model API or usage-credit enablement is authorized at any step; no Codex review or automatic Claude Routine handoff is required for completion, per the manual completion path in `docs/automation/AI-SUBSCRIPTION-LOOP.md`.
+The manual authorization sequence that was actually followed: (1) this contract was human-reviewed and merged; (2) a dedicated Slice 4E implementation branch (`agent/rfc-003-m4-slice-4e`) was created from `main` and an inert Draft baseline PR (#48) was opened solely to establish the exact target identity; (3) no product implementation was written until that baseline was pinned; (4) a separate, human-reviewed `AI-AUTONOMY-STATE.json` update (PR #49) recorded the exact PR number, branch, and starting SHA and set `implementation_authorized: true`; (5) a human reviewed and merged that authorization; (6) only then did Slice 4E product implementation begin. `start_automatically_after_contract_merge` remained `false` throughout — no automatic starter was involved at any step. The product PR was merged by a human. `docs/automation/AI-AUTONOMY-STATE.json` has since been returned to an idle, non-authorized state — see the closure document.
 
 ### Authorized behavior
 
@@ -84,7 +87,7 @@ Add exactly one new call to `WorkspaceManager::reassignBusiness()`: `$this->asse
 
 ### Exact implementation scope
 
-Only these implementation paths may change once a separate authorizing state update pins this contract to a real implementation PR/branch:
+Only these implementation paths were authorized to change, once the separate authorizing state update (PR #49) pinned this contract to the real implementation PR/branch — and only these seven actually changed in PR #48:
 
 - `app/Http/Controllers/Customer/Workspace/WorkspaceController.php`
 - `app/Http/Requests/Customer/Workspace/ReassignWorkspaceBusinessRequest.php` (new)
@@ -173,4 +176,4 @@ These commands may be executed by an automated deterministic gate, or manually b
 
 Slice 4E is ready for human review when the exact-scope implementation is at the pinned PR head and every required test command has passed with a positive recognized count against that exact head — verified either by an automated deterministic gate or by a human developer running the required commands manually and recording the result, per the manual completion path. Codex review and an automatic Claude Routine handoff are not required. Final product merge remains exclusively human-approved.
 
-**Implementation is not authorized under this document alone.** This contract must first be human-reviewed and merged; a separate `AI-AUTONOMY-STATE.json` update must then explicitly authorize and pin an implementation PR/branch/SHA before any code under "Exact implementation scope" may be written.
+**Closed.** This condition was met: PR #48 reached final product head `2f45feff4cf5d6b9e0200359feba35f5ed2660b6`, all nine required test commands were manually run and passed, and a human merged PR #48 into `main` as `2327d9c1c3cd56d473ca770318c627f397c2b534`. See `docs/automation/RFC-003-M4-SLICE-4E-CLOSURE.md` for full closure evidence. No further implementation, correction, or product work is authorized under this document.
