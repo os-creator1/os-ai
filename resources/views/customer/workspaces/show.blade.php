@@ -76,6 +76,44 @@
                                     <button type="submit" class="btn btn-outline-success">Reactivate Workspace</button>
                                 </form>
                             @endif
+
+                            <form method="POST" data-workspace-action="ownership/transfer" class="mt-1">
+                                @csrf
+
+                                <div class="mb-1">
+                                    <label class="form-label" for="ownership-transfer-new-owner">New owner User UID</label>
+                                    <input type="text" class="form-control" id="ownership-transfer-new-owner" name="new_owner_user_uid" value="{{ old('new_owner_user_uid') }}" required>
+                                </div>
+
+                                <div class="mb-1">
+                                    <label class="form-label" for="ownership-transfer-disposition">Previous owner disposition</label>
+                                    <select class="form-control" id="ownership-transfer-disposition" name="previous_owner_disposition">
+                                        <option value="deactivate" @selected(old('previous_owner_disposition', 'deactivate') === 'deactivate')>Deactivate previous owner</option>
+                                        <option value="convert_to_admin" @selected(old('previous_owner_disposition') === 'convert_to_admin')>Convert previous owner to Admin</option>
+                                    </select>
+                                </div>
+
+                                <div class="mb-1" data-ownership-transfer-admin-fields>
+                                    <label class="form-label" for="ownership-transfer-scope">Business access</label>
+                                    <select class="form-control" id="ownership-transfer-scope" name="business_access_scope">
+                                        <option value="all">All Businesses</option>
+                                        <option value="selected">Selected Businesses</option>
+                                    </select>
+
+                                    @if (! empty($manageableBusinesses))
+                                        <div class="mt-1">
+                                            @foreach ($manageableBusinesses as $business)
+                                                <div class="form-check form-check-inline">
+                                                    <input class="form-check-input" type="checkbox" name="business_uids[]" value="{{ $business['uid'] }}" id="ownership-transfer-business-{{ $business['uid'] }}">
+                                                    <label class="form-check-label" for="ownership-transfer-business-{{ $business['uid'] }}">{{ $business['name'] }}</label>
+                                                </div>
+                                            @endforeach
+                                        </div>
+                                    @endif
+                                </div>
+
+                                <button type="submit" class="btn btn-outline-warning">Transfer ownership</button>
+                            </form>
                         @endif
                     </div>
                 </div>
@@ -397,6 +435,38 @@
 
                         select.addEventListener('change', syncBusinessCheckboxes);
                         syncBusinessCheckboxes();
+                    });
+
+                    document.querySelectorAll('select[name="previous_owner_disposition"]').forEach(function (select) {
+                        var form = select.closest('form');
+                        var adminFields = form ? form.querySelector('[data-ownership-transfer-admin-fields]') : null;
+
+                        if (! adminFields) {
+                            return;
+                        }
+
+                        var scopeSelect = adminFields.querySelector('select[name="business_access_scope"]');
+
+                        var syncAdminFields = function () {
+                            var isConvertToAdmin = select.value === 'convert_to_admin';
+                            adminFields.style.display = isConvertToAdmin ? '' : 'none';
+
+                            if (scopeSelect) {
+                                scopeSelect.disabled = ! isConvertToAdmin;
+                            }
+
+                            adminFields.querySelectorAll('input[name="business_uids[]"]').forEach(function (checkbox) {
+                                checkbox.disabled = ! isConvertToAdmin || (scopeSelect && scopeSelect.value === 'all');
+                            });
+                        };
+
+                        select.addEventListener('change', syncAdminFields);
+
+                        if (scopeSelect) {
+                            scopeSelect.addEventListener('change', syncAdminFields);
+                        }
+
+                        syncAdminFields();
                     });
                 </script>
             @endif

@@ -2,9 +2,11 @@
 
 namespace App\Http\Controllers\Customer\Workspace;
 
+use App\DTO\Workspace\WorkspaceOwnershipTransferDisposition;
 use App\Enums\Workspace\WorkspaceBusinessAccessScope;
 use App\Enums\Workspace\WorkspaceMembershipRole;
 use App\Exceptions\Workspace\BusinessWorkspaceMismatchException;
+use App\Exceptions\Workspace\CrossWorkspaceAssignmentException;
 use App\Exceptions\Workspace\InactiveWorkspaceMembershipMutationException;
 use App\Exceptions\Workspace\InactiveWorkspaceMutationException;
 use App\Exceptions\Workspace\InvalidBusinessAccessScopeAssignmentException;
@@ -12,6 +14,7 @@ use App\Exceptions\Workspace\OwnerCannotBeMemberException;
 use App\Exceptions\Workspace\UnauthorizedWorkspaceManagementException;
 use App\Exceptions\Workspace\WorkspaceAccessDeniedException;
 use App\Exceptions\Workspace\WorkspaceBusinessNotFoundException;
+use App\Exceptions\Workspace\WorkspaceInvalidIncomingOwnerException;
 use App\Exceptions\Workspace\WorkspaceMembershipAlreadyExistsException;
 use App\Exceptions\Workspace\WorkspaceNotFoundException;
 use App\Http\Controllers\Customer\CustomerBaseController;
@@ -20,6 +23,7 @@ use App\Http\Requests\Customer\Workspace\ReassignWorkspaceBusinessRequest;
 use App\Http\Requests\Customer\Workspace\RenameWorkspaceRequest;
 use App\Http\Requests\Customer\Workspace\StoreWorkspaceMemberRequest;
 use App\Http\Requests\Customer\Workspace\StoreWorkspaceRequest;
+use App\Http\Requests\Customer\Workspace\TransferWorkspaceOwnershipRequest;
 use App\Http\Requests\Customer\Workspace\UpdateWorkspaceMemberAccessRequest;
 use App\Http\Requests\Customer\Workspace\UpdateWorkspaceMemberRoleRequest;
 use App\Library\Workspace\WorkspaceManager;
@@ -281,6 +285,70 @@ class WorkspaceController extends CustomerBaseController
         return redirect()
             ->route('customer.workspaces.show', $workspaceUid)
             ->with('flash_success', 'Business reassigned.');
+    }
+
+    /**
+     * RFC-003 Milestone 4 Slice 4F: exposes the existing
+     * WorkspaceManager::transferOwnership() through the customer HTTP
+     * layer. Uses the existing resolveAccessibleWorkspace() for
+     * addressability only -- transferOwnership()'s own
+     * assertActorIsOwner() remains the sole authority, stricter than every
+     * other Workspace mutation here (no active-Admin bypass). The incoming
+     * owner is resolved by opaque uid exactly like storeMember()'s
+     * target-User lookup; an unknown uid fails closed with 404 before the
+     * manager is ever called, and the incoming User is not required to
+     * already be a Workspace member. The previous-owner disposition is
+     * constructed explicitly from validated input via the existing DTO's
+     * two named factories -- never a third or default state. Selected-scope
+     * Business uids reuse resolveManageableBusinessIds() unmodified: the
+     * actor is always the Workspace owner here, and an owner always has
+     * unconditional Business access under RFC-003 §14.1, so this naturally
+     * resolves against the owner's full effective set with no relaxed
+     * check. A successful transfer redirects to the Workspace index, not
+     * this Workspace's own overview, because a deactivate disposition can
+     * immediately strip the acting owner's own access to it.
+     */
+    public function transferOwnership(TransferWorkspaceOwnershipRequest $request, string $workspaceUid): RedirectResponse
+    {
+        $actorUserId = (int) Auth::id();
+        $workspace = $this->resolveAccessibleWorkspace($workspaceUid, $actorUserId);
+
+        $newOwner = User::query()->where('uid', $request->validated('new_owner_user_uid'))->first();
+
+        if ($newOwner === null) {
+            abort(404);
+        }
+
+        if ($request->validated('previous_owner_disposition') === 'deactivate') {
+            $disposition = WorkspaceOwnershipTransferDisposition::deactivate();
+        } else {
+            $scope = WorkspaceBusinessAccessScope::from($request->validated('business_access_scope'));
+            $businessIds = [];
+
+            if ($scope === WorkspaceBusinessAccessScope::Selected) {
+                $businessIds = $this->resolveManageableBusinessIds($workspace, $actorUserId, $request->validated('business_uids', []));
+
+                if ($businessIds === null) {
+                    abort(404);
+                }
+            }
+
+            $disposition = WorkspaceOwnershipTransferDisposition::convertToAdmin($scope, $businessIds);
+        }
+
+        try {
+            $this->workspaceManager->transferOwnership($actorUserId, $workspace, (int) $newOwner->id, $disposition);
+        } catch (UnauthorizedWorkspaceManagementException) {
+            return redirect()->back()->with('flash_error', 'You are not authorized to transfer ownership of this Workspace.');
+        } catch (InactiveWorkspaceMutationException) {
+            return redirect()->back()->with('flash_error', 'An inactive Workspace cannot have its ownership transferred.');
+        } catch (WorkspaceNotFoundException|WorkspaceInvalidIncomingOwnerException|CrossWorkspaceAssignmentException) {
+            abort(404);
+        }
+
+        return redirect()
+            ->route('customer.workspaces.index')
+            ->with('flash_success', 'Workspace ownership transferred.');
     }
 
     /**
