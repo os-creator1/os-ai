@@ -149,6 +149,41 @@
 
                                 <button type="submit" class="btn btn-outline-primary">Create Business</button>
                             </form>
+
+                            @php
+                                $reassignTargetWorkspaces = request()->attributes->get('reassignTargetWorkspaces', []);
+                            @endphp
+
+                            @if (! empty($manageableBusinesses) && ! empty($reassignTargetWorkspaces))
+                                <div class="table-responsive mb-2">
+                                    <table class="table table-sm">
+                                        <thead>
+                                            <tr>
+                                                <th>Business</th>
+                                                <th>Reassign to</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            @foreach ($manageableBusinesses as $business)
+                                                <tr>
+                                                    <td>{{ $business['name'] }}</td>
+                                                    <td>
+                                                        <form method="POST" data-business-action="reassign" data-business-uid="{{ $business['uid'] }}" class="d-flex">
+                                                            @csrf
+                                                            <select name="target_workspace_uid" class="form-control form-control-sm d-inline-block w-auto me-1">
+                                                                @foreach ($reassignTargetWorkspaces as $targetWorkspace)
+                                                                    <option value="{{ $targetWorkspace['uid'] }}">{{ $targetWorkspace['name'] }}</option>
+                                                                @endforeach
+                                                            </select>
+                                                            <button type="submit" class="btn btn-sm btn-outline-primary">Reassign</button>
+                                                        </form>
+                                                    </td>
+                                                </tr>
+                                            @endforeach
+                                        </tbody>
+                                    </table>
+                                </div>
+                            @endif
                         @endif
 
                         @if (empty($businesses))
@@ -332,6 +367,13 @@
                         var basePath = window.location.pathname.replace(/\/+$/, '');
                         var memberUid = form.getAttribute('data-member-uid');
                         form.setAttribute('action', basePath + '/members/' + memberUid + '/' + form.getAttribute('data-member-action'));
+                    });
+
+                    document.querySelectorAll('form[data-business-action]').forEach(function (form) {
+                        var basePath = window.location.pathname.replace(/\/+$/, '');
+                        var businessUid = form.getAttribute('data-business-uid');
+                        var resourcePath = ['businesses', businessUid, form.getAttribute('data-business-action')].join('/');
+                        form.setAttribute('action', basePath + '/' + resourcePath);
                     });
 
                     document.querySelectorAll('select[name="business_access_scope"]').forEach(function (select) {

@@ -585,6 +585,9 @@
         // RFC-003 Milestone 4 Slice 4D: Business creation inside an existing Workspace.
         Route::post('{workspaceUid}/businesses', 'Workspace\WorkspaceController@storeBusiness')->name('businesses.store');
 
+        // RFC-003 Milestone 4 Slice 4E: Business reassignment between Workspaces.
+        Route::post('{workspaceUid}/businesses/{businessUid}/reassign', 'Workspace\WorkspaceController@reassignBusiness')->name('businesses.reassign');
+
         // RFC-003 Milestone 4 Slice 4B: bounded membership management.
         Route::post('{workspaceUid}/members', 'Workspace\WorkspaceController@storeMember')->name('members.store');
         Route::post('{workspaceUid}/members/{memberUid}/role', 'Workspace\WorkspaceController@updateMemberRole')->name('members.role');

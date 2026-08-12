@@ -4,14 +4,19 @@ namespace App\Http\Controllers\Customer\Workspace;
 
 use App\Enums\Workspace\WorkspaceBusinessAccessScope;
 use App\Enums\Workspace\WorkspaceMembershipRole;
+use App\Exceptions\Workspace\BusinessWorkspaceMismatchException;
 use App\Exceptions\Workspace\InactiveWorkspaceMembershipMutationException;
 use App\Exceptions\Workspace\InactiveWorkspaceMutationException;
 use App\Exceptions\Workspace\InvalidBusinessAccessScopeAssignmentException;
 use App\Exceptions\Workspace\OwnerCannotBeMemberException;
 use App\Exceptions\Workspace\UnauthorizedWorkspaceManagementException;
+use App\Exceptions\Workspace\WorkspaceAccessDeniedException;
+use App\Exceptions\Workspace\WorkspaceBusinessNotFoundException;
 use App\Exceptions\Workspace\WorkspaceMembershipAlreadyExistsException;
+use App\Exceptions\Workspace\WorkspaceNotFoundException;
 use App\Http\Controllers\Customer\CustomerBaseController;
 use App\Http\Requests\Business\UpsertBusinessIdentityRequest;
+use App\Http\Requests\Customer\Workspace\ReassignWorkspaceBusinessRequest;
 use App\Http\Requests\Customer\Workspace\RenameWorkspaceRequest;
 use App\Http\Requests\Customer\Workspace\StoreWorkspaceMemberRequest;
 use App\Http\Requests\Customer\Workspace\StoreWorkspaceRequest;
@@ -105,6 +110,14 @@ class WorkspaceController extends CustomerBaseController
         if (in_array($roleKey, ['owner', 'admin'], true)) {
             $viewData['directory'] = $this->membershipDirectory($workspace);
             $viewData['manageableBusinesses'] = $this->manageableBusinesses($workspace, $userId);
+
+            // RFC-003 Milestone 4 Slice 4E: UI-only transport for the
+            // reassignment control's target-Workspace candidates -- a
+            // request attribute, not a view-data key, so this Milestone 3
+            // show() response's top-level shape (workspace, businesses,
+            // directory, manageableBusinesses) stays exactly as it already
+            // was for every existing caller/test.
+            request()->attributes->set('reassignTargetWorkspaces', $this->manageableTargetWorkspaces($userId));
         }
 
         return view('customer.workspaces.show', $viewData);
@@ -228,6 +241,46 @@ class WorkspaceController extends CustomerBaseController
         return redirect()
             ->route('customer.workspaces.show', $workspaceUid)
             ->with('flash_success', 'Business created.');
+    }
+
+    /**
+     * RFC-003 Milestone 4 Slice 4E: reassigns an existing Business from this
+     * (source) Workspace to a different (target) Workspace, through the
+     * existing WorkspaceManager::reassignBusiness(). The source Workspace
+     * and the target Workspace both use the existing
+     * resolveAccessibleWorkspace() pattern -- reused twice, never a new
+     * resolver. The Business is resolved by opaque uid scoped to the
+     * source Workspace via resolveWorkspaceBusiness() -- addressability
+     * only, never filtered through accessibleBusinesses(); the manager's
+     * own assertUserCanAccessBusiness() call (added for this slice) remains
+     * the sole authoritative Business-access decision, so a Business that
+     * exists in the source Workspace but is outside the actor's access
+     * still reaches the manager and is denied there, not pre-filtered here.
+     * WorkspaceManager remains exclusively authoritative for owner-or-
+     * active-Admin authority over both Workspaces, both-Workspace active
+     * state, and the actor's Business access to the source Business --
+     * none of that is reimplemented in this action.
+     */
+    public function reassignBusiness(ReassignWorkspaceBusinessRequest $request, string $workspaceUid, string $businessUid): RedirectResponse
+    {
+        $actorUserId = (int) Auth::id();
+        $sourceWorkspace = $this->resolveAccessibleWorkspace($workspaceUid, $actorUserId);
+        $business = $this->resolveWorkspaceBusiness($sourceWorkspace, $businessUid);
+        $targetWorkspace = $this->resolveAccessibleWorkspace($request->validated('target_workspace_uid'), $actorUserId);
+
+        try {
+            $this->workspaceManager->reassignBusiness($actorUserId, $business, $targetWorkspace);
+        } catch (UnauthorizedWorkspaceManagementException) {
+            return redirect()->back()->with('flash_error', 'You are not authorized to reassign this Business.');
+        } catch (InactiveWorkspaceMutationException) {
+            return redirect()->back()->with('flash_error', 'An inactive Workspace cannot be involved in a Business reassignment.');
+        } catch (WorkspaceAccessDeniedException|WorkspaceNotFoundException|WorkspaceBusinessNotFoundException|BusinessWorkspaceMismatchException) {
+            abort(404);
+        }
+
+        return redirect()
+            ->route('customer.workspaces.show', $workspaceUid)
+            ->with('flash_success', 'Business reassigned.');
     }
 
     /**
@@ -496,6 +549,33 @@ class WorkspaceController extends CustomerBaseController
     }
 
     /**
+     * RFC-003 Milestone 4 Slice 4E: resolves the Business targeted for
+     * reassignment by opaque uid, scoped to the source Workspace via the
+     * existing raw businessesForWorkspace() -- addressability only, never
+     * filtered through accessibleBusinesses(). An unknown uid, or a uid
+     * belonging to a different Workspace, both fail closed identically
+     * with 404, mirroring resolveAccessibleMembership()'s exact pattern,
+     * so this route can never be used to probe for a Business's existence
+     * or true Workspace. The actor's actual Business-access authorization
+     * remains exclusively WorkspaceManager::assertUserCanAccessBusiness()'s
+     * job, called inside reassignBusiness() itself -- a Business that
+     * exists here but is outside the actor's access still reaches the
+     * manager and is denied there (WorkspaceAccessDeniedException, mapped
+     * to the same 404), so this method must never pre-filter by access.
+     */
+    private function resolveWorkspaceBusiness(Workspace $workspace, string $businessUid): Business
+    {
+        $business = $this->workspaceRepository->businessesForWorkspace($workspace)
+            ->firstWhere('uid', $businessUid);
+
+        if ($business === null) {
+            abort(404);
+        }
+
+        return $business;
+    }
+
+    /**
      * RFC-003 Milestone 4 Slice 4B: resolves submitted Business uids to IDs
      * for addMember()/changeMemberBusinessAccessScope(), reusing the exact
      * RFC-003 §14.1 effective-access filter (accessibleBusinesses()) rather
@@ -601,6 +681,28 @@ class WorkspaceController extends CustomerBaseController
     {
         return $this->accessibleBusinesses($workspace, $userId)
             ->map(fn (Business $business) => ['uid' => $business->uid, 'name' => $business->name])
+            ->all();
+    }
+
+    /**
+     * RFC-003 Milestone 4 Slice 4E: candidate target Workspaces for the
+     * Business-reassignment control -- every Workspace this actor can see
+     * (WorkspaceRepository::allForUser(), already used by index()),
+     * filtered to rows where the existing effectiveRoleKey() resolves to
+     * owner or admin. Reuses existing primitives only; not a new
+     * algorithm. UI convenience only -- a stale or hand-crafted
+     * target_workspace_uid outside this list is still independently and
+     * correctly enforced by resolveAccessibleWorkspace() and
+     * WorkspaceManager at submission time.
+     *
+     * @return array<int, array{uid: string, name: string}>
+     */
+    private function manageableTargetWorkspaces(int $actorUserId): array
+    {
+        return $this->workspaceRepository->allForUser($actorUserId)
+            ->filter(fn (Workspace $workspace) => in_array($this->effectiveRoleKey($workspace, $actorUserId), ['owner', 'admin'], true))
+            ->map(fn (Workspace $workspace) => ['uid' => $workspace->uid, 'name' => $workspace->name])
+            ->values()
             ->all();
     }
 
