@@ -18,7 +18,10 @@
                 $table->string('feature_key', 64);
                 $table->timestamps();
 
-                $table->unique(['workspace_plan_catalog_id', 'feature_key']);
+                $table->unique(
+                    ['workspace_plan_catalog_id', 'feature_key'],
+                    'workspace_plan_features_catalog_feature_unique'
+                );
             });
         }
 
