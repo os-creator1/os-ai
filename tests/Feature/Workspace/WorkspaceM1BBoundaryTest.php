@@ -21,7 +21,9 @@ use Tests\TestCase;
  * protects. This is now the boundary before Milestone 2: WorkspaceManager
  * ships only its one narrow resolver, createForCustomer() is gone
  * everywhere, businesses.workspace_id is permanently enforced, and no
- * plans/billing/entitlement/wallet work exists.
+ * RFC-005 usage/billing/wallet work exists — RFC-004 Milestone 1's own
+ * Workspace Plan/Entitlement foundation now legitimately exists and is no
+ * longer part of what this boundary forbids.
  */
 class WorkspaceM1BBoundaryTest extends TestCase
 {
@@ -375,17 +377,23 @@ class WorkspaceM1BBoundaryTest extends TestCase
         ], $methods);
     }
 
-    // 15. no plans, billing, entitlements, wallet or Stripe work has been
-    // introduced by RFC-003 M1B (RFC-003 §4, §26). Scoped to files whose
-    // name combines "Workspace" with a billing/entitlement term — the
-    // RFC-004/RFC-005 concepts this RFC explicitly defers — rather than a
+    // 15. no RFC-005 usage-billing/wallet work has been introduced yet
+    // (RFC-003 §4, §26; RFC-004 §19/§31 defers exactly this). Scoped to
+    // files whose name combines "Workspace" with a billing/wallet term —
+    // the RFC-005 concepts RFC-004 explicitly defers — rather than a
     // blanket scan of app/ for those terms alone: Ultimate SMS already has
     // long-standing, wholly unrelated SMS sending "Plan" functionality
     // (App\Models\Plan, Admin\PlanController, etc.) that predates RFC-003
     // entirely and is not part of what this check is meant to catch.
-    public function test_no_rfc004_or_rfc005_concepts_exist_yet(): void
+    // RFC-004 Milestone 1 legitimately introduces Workspace Plan and
+    // Entitlement concepts (workspace_plan_catalog, WorkspacePlanAssignment,
+    // PlatformFeatureRegistry, etc., RFC-004 §10/§11) — "Plan" and
+    // "Entitlement" are no longer forbidden terms here; only RFC-005's own
+    // usage/billing/wallet vocabulary remains out of bounds until RFC-005's
+    // own milestones ship.
+    public function test_no_rfc005_concepts_exist_yet(): void
     {
-        $forbiddenTerms = ['Plan', 'Entitlement', 'Wallet', 'Ledger', 'Stripe'];
+        $forbiddenTerms = ['Wallet', 'Ledger', 'Stripe'];
         $offending = [];
 
         foreach ($this->phpFilesUnder(app_path()) as $file) {
@@ -402,7 +410,7 @@ class WorkspaceM1BBoundaryTest extends TestCase
             }
         }
 
-        $this->assertSame([], $offending, 'Unexpected RFC-004/RFC-005 Workspace concept file(s): ' . implode(', ', $offending));
+        $this->assertSame([], $offending, 'Unexpected RFC-005 Workspace concept file(s): ' . implode(', ', $offending));
     }
 
     public function test_no_enforcement_migration_named_differently_exists(): void
