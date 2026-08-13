@@ -646,3 +646,26 @@
             ->whereNumber('opportunity')
             ->name('opportunities.reopen');
     });
+
+
+    /*
+    |--------------------------------------------------------------------------
+    | Workspace module (RFC-003 Milestone 5)
+    |--------------------------------------------------------------------------
+    |
+    | Admin-only, intentionally cross-tenant, READ-ONLY Workspace inspection
+    | (docs/automation/RFC-003-M5-CONTRACT.md). No create/rename/deactivate/
+    | reactivate/member/business/ownership-transfer route exists — those
+    | remain exclusively the customer-side RFC-003 Milestone 4 surfaces.
+    |
+    | EnsureUserIsAdministrator is the same independent, explicit admin-account-
+    | type boundary layered on top of the group's blanket 'can:access backend'
+    | gate as the Business and Opportunity modules above (defense in depth).
+    |
+    */
+    Route::middleware(EnsureUserIsAdministrator::class)->group(function () {
+        Route::get('workspaces', 'WorkspaceController@index')->name('workspaces.index');
+        Route::get('workspaces/{workspace}', 'WorkspaceController@show')
+            ->whereUuid('workspace')
+            ->name('workspaces.show');
+    });

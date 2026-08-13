@@ -182,4 +182,152 @@ class WorkspaceRepositoryTest extends TestCase
         $this->assertTrue($updated->is($workspace));
         $this->assertTrue($updated->exists);
     }
+
+    // --- paginateForAdmin() (RFC-003 Milestone 5) ---------------------------
+
+    public function test_paginate_for_admin_returns_workspaces_across_unrelated_tenants(): void
+    {
+        $repository = app(WorkspaceRepository::class);
+        $workspaceA = $this->createWorkspace($this->createCustomer()->user);
+        $workspaceB = $this->createWorkspace($this->createCustomer()->user);
+
+        $result = $repository->paginateForAdmin([], 25);
+
+        $this->assertTrue($result->getCollection()->contains(fn ($workspace) => $workspace->is($workspaceA)));
+        $this->assertTrue($result->getCollection()->contains(fn ($workspace) => $workspace->is($workspaceB)));
+    }
+
+    public function test_paginate_for_admin_includes_active_and_inactive_workspaces(): void
+    {
+        $repository = app(WorkspaceRepository::class);
+        $active = $this->createWorkspace($this->createCustomer()->user, ['is_active' => true]);
+        $inactive = $this->createWorkspace($this->createCustomer()->user, ['is_active' => false]);
+
+        $result = $repository->paginateForAdmin([], 25);
+
+        $this->assertTrue($result->getCollection()->contains(fn ($workspace) => $workspace->is($active)));
+        $this->assertTrue($result->getCollection()->contains(fn ($workspace) => $workspace->is($inactive)));
+    }
+
+    public function test_paginate_for_admin_eager_loads_owner(): void
+    {
+        $repository = app(WorkspaceRepository::class);
+        $owner = $this->createCustomer()->user;
+        $workspace = $this->createWorkspace($owner);
+
+        $result = $repository->paginateForAdmin([], 25);
+        $found = $result->getCollection()->first(fn ($item) => $item->is($workspace));
+
+        $this->assertTrue($found->relationLoaded('owner'));
+        $this->assertTrue($found->owner->is($owner));
+    }
+
+    public function test_paginate_for_admin_businesses_count_is_correct(): void
+    {
+        $repository = app(WorkspaceRepository::class);
+        $owner = $this->createCustomer()->user;
+        $workspace = $this->createWorkspace($owner);
+        $this->createBusinessForCustomer($owner->id, $workspace->id);
+        $this->createBusinessForCustomer($owner->id, $workspace->id);
+
+        $result = $repository->paginateForAdmin([], 25);
+        $found = $result->getCollection()->first(fn ($item) => $item->is($workspace));
+
+        $this->assertSame(2, $found->businesses_count);
+    }
+
+    public function test_paginate_for_admin_active_memberships_count_excludes_inactive(): void
+    {
+        $repository = app(WorkspaceRepository::class);
+        $owner = $this->createCustomer()->user;
+        $workspace = $this->createWorkspace($owner);
+        $this->createMembership($workspace, $this->createCustomer()->user, ['is_active' => true]);
+        $this->createMembership($workspace, $this->createCustomer()->user, ['is_active' => true]);
+        $this->createMembership($workspace, $this->createCustomer()->user, ['is_active' => false]);
+
+        $result = $repository->paginateForAdmin([], 25);
+        $found = $result->getCollection()->first(fn ($item) => $item->is($workspace));
+
+        $this->assertSame(2, $found->active_memberships_count);
+    }
+
+    public function test_paginate_for_admin_search_matches_workspace_name(): void
+    {
+        $repository = app(WorkspaceRepository::class);
+        $matching = $this->createWorkspace($this->createCustomer()->user, ['name' => 'Acme Ops']);
+        $other = $this->createWorkspace($this->createCustomer()->user, ['name' => 'Unrelated Co']);
+
+        $result = $repository->paginateForAdmin(['search' => 'Acme'], 25);
+
+        $this->assertTrue($result->getCollection()->contains(fn ($item) => $item->is($matching)));
+        $this->assertFalse($result->getCollection()->contains(fn ($item) => $item->is($other)));
+    }
+
+    public function test_paginate_for_admin_search_matches_workspace_uid(): void
+    {
+        $repository = app(WorkspaceRepository::class);
+        $matching = $this->createWorkspace($this->createCustomer()->user);
+        $other = $this->createWorkspace($this->createCustomer()->user);
+
+        $result = $repository->paginateForAdmin(['search' => $matching->uid], 25);
+
+        $this->assertTrue($result->getCollection()->contains(fn ($item) => $item->is($matching)));
+        $this->assertFalse($result->getCollection()->contains(fn ($item) => $item->is($other)));
+    }
+
+    public function test_paginate_for_admin_active_filter_true(): void
+    {
+        $repository = app(WorkspaceRepository::class);
+        $active = $this->createWorkspace($this->createCustomer()->user, ['is_active' => true]);
+        $inactive = $this->createWorkspace($this->createCustomer()->user, ['is_active' => false]);
+
+        $result = $repository->paginateForAdmin(['is_active' => true], 25);
+
+        $this->assertTrue($result->getCollection()->contains(fn ($item) => $item->is($active)));
+        $this->assertFalse($result->getCollection()->contains(fn ($item) => $item->is($inactive)));
+    }
+
+    public function test_paginate_for_admin_active_filter_false(): void
+    {
+        $repository = app(WorkspaceRepository::class);
+        $active = $this->createWorkspace($this->createCustomer()->user, ['is_active' => true]);
+        $inactive = $this->createWorkspace($this->createCustomer()->user, ['is_active' => false]);
+
+        $result = $repository->paginateForAdmin(['is_active' => false], 25);
+
+        $this->assertTrue($result->getCollection()->contains(fn ($item) => $item->is($inactive)));
+        $this->assertFalse($result->getCollection()->contains(fn ($item) => $item->is($active)));
+    }
+
+    public function test_paginate_for_admin_ignores_unknown_filters(): void
+    {
+        $repository = app(WorkspaceRepository::class);
+        $workspace = $this->createWorkspace($this->createCustomer()->user);
+
+        $result = $repository->paginateForAdmin(['unknown_filter' => 'anything'], 25);
+
+        $this->assertTrue($result->getCollection()->contains(fn ($item) => $item->is($workspace)));
+    }
+
+    public function test_paginate_for_admin_orders_by_id_descending(): void
+    {
+        $repository = app(WorkspaceRepository::class);
+        $first = $this->createWorkspace($this->createCustomer()->user);
+        $second = $this->createWorkspace($this->createCustomer()->user);
+        $third = $this->createWorkspace($this->createCustomer()->user);
+
+        $result = $repository->paginateForAdmin([], 25);
+
+        $this->assertSame([$third->id, $second->id, $first->id], $result->getCollection()->pluck('id')->all());
+    }
+
+    public function test_paginate_for_admin_clamps_per_page_to_one_hundred(): void
+    {
+        $repository = app(WorkspaceRepository::class);
+        $this->createWorkspace($this->createCustomer()->user);
+
+        $result = $repository->paginateForAdmin([], 500);
+
+        $this->assertSame(100, $result->perPage());
+    }
 }

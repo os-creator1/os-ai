@@ -866,6 +866,12 @@
             'category'     => 'Business',
         ],
 
+        // Workspace Module (RFC-003 Milestone 5 — read-only admin inspection)
+        'view workspace' => [
+            'display_name' => 'read',
+            'category'     => 'Workspace',
+        ],
+
         // Opportunity Module (RFC-002)
         'view opportunities' => [
             'display_name' => 'read',

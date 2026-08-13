@@ -3,6 +3,7 @@
 namespace App\Repositories\Contracts;
 
 use App\Models\Workspace;
+use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Collection;
 
 interface WorkspaceRepository extends BaseRepository
@@ -54,4 +55,17 @@ interface WorkspaceRepository extends BaseRepository
     public function transferOwnership(Workspace $workspace, int $newOwnerUserId): Workspace;
 
     public function businessesForWorkspace(Workspace $workspace): Collection;
+
+    /**
+     * Admin-only, intentionally cross-tenant Workspace listing (RFC-003
+     * Milestone 5 — `docs/automation/RFC-003-M5-CONTRACT.md`) — no owner or
+     * membership restriction, unlike allForUser()/findOwnedBy(). This is a
+     * deliberate backend-admin exception and must never be called from a
+     * customer controller. Only 'search' and 'is_active' are read from
+     * $filters; any other key is ignored. $perPage is clamped to 1..100 by
+     * the implementation regardless of what the caller supplies.
+     *
+     * @param  array{search?: ?string, is_active?: ?bool}  $filters
+     */
+    public function paginateForAdmin(array $filters, int $perPage): LengthAwarePaginator;
 }
