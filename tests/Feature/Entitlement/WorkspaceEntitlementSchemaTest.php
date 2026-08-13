@@ -90,6 +90,49 @@ class WorkspaceEntitlementSchemaTest extends TestCase
         $this->assertNull($row->currency_id);
     }
 
+    public function test_seeded_core_catalog_row_exact_structural_fields(): void
+    {
+        $row = DB::table('workspace_plan_catalog')->where('tier', 'core')->first();
+
+        $this->assertNotNull($row);
+        $this->assertNull($row->price);
+        $this->assertNull($row->currency_id);
+        $this->assertSame('monthly', $row->billing_cycle);
+        $this->assertSame(3, (int) $row->business_slot_included);
+        $this->assertSame(5, (int) $row->business_slot_max);
+        $this->assertSame(0, (int) $row->unlimited_business_slots);
+        $this->assertSame('0.5000', $row->additional_business_slot_price_ratio);
+        $this->assertSame(1, (int) $row->is_active);
+    }
+
+    public function test_seeded_growth_catalog_row_exact_structural_fields(): void
+    {
+        $row = DB::table('workspace_plan_catalog')->where('tier', 'growth')->first();
+
+        $this->assertNotNull($row);
+        $this->assertNull($row->price);
+        $this->assertNull($row->currency_id);
+        $this->assertSame(3, (int) $row->business_slot_included);
+        $this->assertSame(5, (int) $row->business_slot_max);
+        $this->assertSame(0, (int) $row->unlimited_business_slots);
+        $this->assertSame('0.5000', $row->additional_business_slot_price_ratio);
+        $this->assertSame(1, (int) $row->is_active);
+    }
+
+    public function test_seeded_agency_catalog_row_exact_structural_fields(): void
+    {
+        $row = DB::table('workspace_plan_catalog')->where('tier', 'agency')->first();
+
+        $this->assertNotNull($row);
+        $this->assertNull($row->price);
+        $this->assertNull($row->currency_id);
+        $this->assertSame(3, (int) $row->business_slot_included);
+        $this->assertNull($row->business_slot_max);
+        $this->assertSame(1, (int) $row->unlimited_business_slots);
+        $this->assertNull($row->additional_business_slot_price_ratio);
+        $this->assertSame(1, (int) $row->is_active);
+    }
+
     public function test_catalog_currency_id_restricts_deletion_of_referenced_currency(): void
     {
         $currencyId = DB::table('currencies')->insertGetId([
@@ -142,13 +185,42 @@ class WorkspaceEntitlementSchemaTest extends TestCase
         DB::table('workspace_plan_catalog')->where('id', $catalogId)->delete();
     }
 
-    public function test_seeded_packaging_matrix_is_nine_twelve_fifteen(): void
+    public function test_seeded_packaging_matrix_matches_exact_feature_key_sets(): void
     {
         $catalogIds = DB::table('workspace_plan_catalog')->pluck('id', 'tier');
 
-        $this->assertSame(9, DB::table('workspace_plan_features')->where('workspace_plan_catalog_id', $catalogIds['core'])->count());
-        $this->assertSame(12, DB::table('workspace_plan_features')->where('workspace_plan_catalog_id', $catalogIds['growth'])->count());
-        $this->assertSame(15, DB::table('workspace_plan_features')->where('workspace_plan_catalog_id', $catalogIds['agency'])->count());
+        $keysFor = function ($catalogId) {
+            return DB::table('workspace_plan_features')
+                ->where('workspace_plan_catalog_id', $catalogId)
+                ->pluck('feature_key')
+                ->sort()
+                ->values()
+                ->all();
+        };
+
+        $coreKeys = $keysFor($catalogIds['core']);
+        $growthKeys = $keysFor($catalogIds['growth']);
+        $agencyKeys = $keysFor($catalogIds['agency']);
+
+        $expectedCore = [
+            'ads_basic_visibility', 'ai_coo_basic', 'automations', 'calendar',
+            'conversations', 'crm', 'forms', 'seo_basic_visibility', 'website_generation',
+        ];
+        sort($expectedCore);
+
+        $expectedGrowth = array_merge($expectedCore, ['google_ads_module', 'meta_ads_module', 'seo_module']);
+        sort($expectedGrowth);
+
+        $expectedAgency = array_merge($expectedGrowth, ['agency_package_capabilities', 'prospect_outreach', 'white_label']);
+        sort($expectedAgency);
+
+        $this->assertCount(9, $expectedCore);
+        $this->assertCount(12, $expectedGrowth);
+        $this->assertCount(15, $expectedAgency);
+
+        $this->assertSame($expectedCore, $coreKeys, 'Core feature-key set mismatch.');
+        $this->assertSame($expectedGrowth, $growthKeys, 'Growth feature-key set mismatch (must equal exact Core + 3).');
+        $this->assertSame($expectedAgency, $agencyKeys, 'Agency feature-key set mismatch (must equal exact Growth + 3).');
     }
 
     public function test_planned_feature_prospect_outreach_still_receives_an_agency_packaging_row(): void

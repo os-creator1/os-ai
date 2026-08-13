@@ -12,6 +12,7 @@ use App\Models\WorkspacePlanCatalog;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Str;
 use ReflectionClass;
 use Tests\Feature\Business\Concerns\CreatesBusinessTestData;
 use Tests\Feature\Workspace\Concerns\CreatesWorkspaceTestData;
@@ -205,24 +206,62 @@ class WorkspaceEntitlementBackfillV1Test extends TestCase
         $this->assertSame(1, DB::table('workspace_entitlement_transitions')->where('workspace_id', $workspace->id)->count());
     }
 
-    // 12. multiple Workspaces spanning more than one internal page are all processed.
-    public function test_more_workspaces_than_one_page_are_processed_correctly(): void
+    // 12. more Workspaces than production's real CHUNK_SIZE (500) genuinely
+    // cross an internal page boundary and are all still processed
+    // correctly (M1 correction round 2 — the previous version of this test
+    // created only 5 Workspaces, which never actually exceeded
+    // CHUNK_SIZE=500 and therefore never crossed a page boundary at all;
+    // production CHUNK_SIZE is not changed to make this test pass).
+    public function test_more_workspaces_than_one_chunk_page_are_processed_correctly(): void
     {
-        $workspaceIds = [];
+        $now = now();
+        $workspaceCount = 501; // one more than production CHUNK_SIZE (500).
+        $emailPrefix = 'entitlement-pagination-' . uniqid() . '-';
 
-        for ($i = 0; $i < 5; $i++) {
-            $workspaceIds[] = $this->createWorkspace($this->createCustomer()->user)->id;
+        $userRows = [];
+        for ($i = 0; $i < $workspaceCount; $i++) {
+            $userRows[] = [
+                'uid' => (string) Str::uuid(),
+                'first_name' => 'Pagination',
+                'last_name' => 'Test',
+                'email' => $emailPrefix . $i . '@example.test',
+                'status' => true,
+                'is_admin' => false,
+                'is_customer' => true,
+                'active_portal' => 'customer',
+                'created_at' => $now,
+                'updated_at' => $now,
+            ];
         }
+        DB::table('users')->insert($userRows);
+
+        $userIds = DB::table('users')->where('email', 'like', $emailPrefix . '%')->pluck('id')->all();
+        $this->assertCount($workspaceCount, $userIds);
+
+        $workspaceRows = [];
+        foreach ($userIds as $userId) {
+            $workspaceRows[] = [
+                'uid' => (string) Str::uuid(),
+                'name' => 'Pagination Workspace',
+                'owner_user_id' => $userId,
+                'is_active' => true,
+                'created_at' => $now,
+                'updated_at' => $now,
+            ];
+        }
+        DB::table('workspaces')->insert($workspaceRows);
+
+        $workspaceIds = DB::table('workspaces')->whereIn('owner_user_id', $userIds)->pluck('id')->all();
+        $this->assertCount($workspaceCount, $workspaceIds);
 
         $result = (new WorkspaceEntitlementBackfillV1())->run();
 
-        $this->assertSame(5, $result->workspacesProcessed);
-        $this->assertSame(5, $result->assignmentsCreated);
+        $this->assertSame($workspaceCount, $result->workspacesProcessed);
+        $this->assertSame($workspaceCount, $result->assignmentsCreated);
         $this->assertSame(0, $result->remainingUnassignedCount);
 
-        foreach ($workspaceIds as $workspaceId) {
-            $this->assertSame(1, DB::table('workspace_plan_assignments')->where('workspace_id', $workspaceId)->count());
-        }
+        $assignedCount = DB::table('workspace_plan_assignments')->whereIn('workspace_id', $workspaceIds)->count();
+        $this->assertSame($workspaceCount, $assignedCount);
     }
 
     // 13. no legacy plans/subscriptions-family table is touched.

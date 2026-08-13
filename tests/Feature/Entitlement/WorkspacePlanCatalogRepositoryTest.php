@@ -8,6 +8,7 @@ use App\Repositories\Contracts\WorkspacePlanCatalogRepository;
 use App\Repositories\Eloquent\EloquentWorkspacePlanCatalogRepository;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 class WorkspacePlanCatalogRepositoryTest extends TestCase
@@ -26,20 +27,37 @@ class WorkspacePlanCatalogRepositoryTest extends TestCase
     {
         $repository = app(WorkspacePlanCatalogRepository::class);
 
+        $agencyId = WorkspacePlanCatalog::where('tier', 'agency')->value('id');
+
+        // Free the Agency tier for a genuine create() round-trip, entirely
+        // inside this test's own RefreshDatabase transaction — never an
+        // invented tier: WorkspacePlanTier is a closed three-case enum
+        // (core/growth/agency), and the model's tier cast rejects any other
+        // backed value. workspace_plan_features restricts deletion of its
+        // referenced catalog row, so the packaging rows must go first.
+        DB::table('workspace_plan_features')->where('workspace_plan_catalog_id', $agencyId)->delete();
+        DB::table('workspace_plan_catalog')->where('id', $agencyId)->delete();
+
         $catalog = $repository->create([
-            'tier' => 'growth_pilot_' . uniqid(),
-            'display_name' => 'Growth Pilot',
+            'tier' => WorkspacePlanTier::Agency,
+            'display_name' => 'Agency',
             'business_slot_included' => 3,
-            'business_slot_max' => 5,
-            'unlimited_business_slots' => false,
-            'additional_business_slot_price_ratio' => 0.5,
+            'business_slot_max' => null,
+            'unlimited_business_slots' => true,
+            'additional_business_slot_price_ratio' => null,
             'is_active' => true,
         ]);
 
         $this->assertInstanceOf(WorkspacePlanCatalog::class, $catalog);
-        $this->assertSame('Growth Pilot', $catalog->fresh()->display_name);
-        $this->assertSame(3, $catalog->fresh()->business_slot_included);
-        $this->assertTrue($catalog->fresh()->is_active);
+
+        $fresh = $catalog->fresh();
+        $this->assertSame(WorkspacePlanTier::Agency, $fresh->tier);
+        $this->assertSame('Agency', $fresh->display_name);
+        $this->assertSame(3, $fresh->business_slot_included);
+        $this->assertNull($fresh->business_slot_max);
+        $this->assertTrue($fresh->unlimited_business_slots);
+        $this->assertNull($fresh->additional_business_slot_price_ratio);
+        $this->assertTrue($fresh->is_active);
     }
 
     public function test_find_by_tier_casts_the_seeded_core_row(): void

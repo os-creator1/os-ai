@@ -8,40 +8,47 @@ use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use ReflectionMethod;
+use Symfony\Component\Process\PhpExecutableFinder;
+use Symfony\Component\Process\Process;
 use Tests\TestCase;
 
 /**
  * Proves WorkspaceEntitlementBackfillV1's concurrency safety (RFC-004
- * §25.2) at the database level: two independent, live connections to the
- * same test database racing an insert for the same Workspace's
- * workspace_plan_assignments row must never both succeed.
+ * §25.2, "two simultaneous backfill attempts for the same never-before-
+ * assigned Workspace create exactly one workspace_plan_assignments row")
+ * with a real two-process race of the actual public run() method — not a
+ * simulated raw-insert stand-in.
  *
  * Deliberately does NOT use RefreshDatabase — its per-test wrapping
  * transaction on the default connection would hide an uncommitted insert
- * from a genuinely separate second connection, defeating the point of this
+ * from a genuinely separate child process, defeating the point of this
  * test (mirroring WorkspaceBackfillV1ConcurrencyTest's identical rationale,
  * RFC-003). Fixture rows are inserted directly (auto-committed) and
  * explicitly removed in tearDown().
  *
- * Uses two real, separately opened database connections from within this
- * one PHPUnit process rather than spawning OS subprocesses — MySQL's own
- * InnoDB row-locking on the unique workspace_id constraint is the thing
- * under test, not PHP-level parallelism, so this proves genuine contention
- * (connection B must either block until timeout or observably wait) without
- * cross-process bootstrap machinery.
+ * Architectural precedent: tests/Feature/Workspace/WorkspaceBackfillV1ConcurrencyTest.php
+ * (RFC-003), which spawns a separate runner *file*. No new file is
+ * authorized here, so both child processes run inline `php -r` code built
+ * by buildRunnerCode() instead of a Support/ script — same Symfony Process
+ * tooling, same strict test-database guard (a child refuses to run unless
+ * its own resolved connection matches the parent's explicitly-forwarded
+ * EXPECTED_TEST_DATABASE), same before-any-mutation ordering.
+ *
+ * Genuine overlap (not sequential coincidence) is forced by the parent: it
+ * holds a real FOR UPDATE lock on the one fixture Workspace's row before
+ * starting either child. Both children's own WorkspaceEntitlementBackfillV1::run()
+ * independently select that same still-unassigned Workspace (the
+ * candidate-selection query takes no lock), then both attempt their own
+ * insert into workspace_plan_assignments — and MySQL/InnoDB requires an
+ * implicit shared lock on the referenced workspaces row to satisfy that
+ * insert's own foreign key, which blocks behind the parent's held
+ * exclusive lock. Only once the parent commits do both children's inserts
+ * unblock together and genuinely race the workspace_id unique constraint.
  */
 class WorkspaceEntitlementBackfillV1ConcurrencyTest extends TestCase
 {
     private array $createdWorkspaceIds = [];
     private array $createdUserIds = [];
-
-    protected function setUp(): void
-    {
-        parent::setUp();
-
-        $default = config('database.default');
-        config(['database.connections.entitlement_concurrency_secondary' => config("database.connections.{$default}")]);
-    }
 
     protected function tearDown(): void
     {
@@ -92,92 +99,195 @@ class WorkspaceEntitlementBackfillV1ConcurrencyTest extends TestCase
         return (int) DB::table('workspace_plan_catalog')->where('tier', 'core')->value('id');
     }
 
-    public function test_two_connections_racing_the_same_workspace_create_exactly_one_assignment_row(): void
+    /**
+     * Inline `php -r` source for each child process: boots Laravel exactly
+     * as tests/Feature/Workspace/Support/concurrent_backfill_runner.php
+     * does (RFC-003 precedent), refuses to run against any database other
+     * than the one explicitly forwarded by the parent, emits a READY
+     * marker immediately before calling the real backfill, and reports its
+     * outcome on stdout/stderr with a distinguishing exit code.
+     */
+    private function buildRunnerCode(): string
     {
-        $workspaceId = $this->insertWorkspace();
-        $coreCatalogId = $this->coreCatalogId();
-        $now = now();
+        $basePath = var_export(str_replace('\\', '/', base_path()), true);
 
-        $connectionA = DB::connection();
-        $connectionB = DB::connection('entitlement_concurrency_secondary');
+        return <<<PHP
+require {$basePath} . '/vendor/autoload.php';
+putenv('APP_ENV=testing');
+\$_ENV['APP_ENV'] = 'testing';
+\$_SERVER['APP_ENV'] = 'testing';
+\$app = require {$basePath} . '/bootstrap/app.php';
+\$app->make(Illuminate\\Contracts\\Console\\Kernel::class)->bootstrap();
 
-        // A short lock-wait timeout on B's session so a genuine block is
-        // observable within this test rather than hanging indefinitely.
-        $connectionB->statement('SET SESSION innodb_lock_wait_timeout = 2');
+\$expected = getenv('EXPECTED_TEST_DATABASE');
+\$resolved = Illuminate\\Support\\Facades\\DB::connection()->getDatabaseName();
 
-        // Plain insert() on both connections — matching
-        // WorkspaceEntitlementBackfillV1's own corrected mechanism exactly
-        // (no insertOrIgnore()/INSERT IGNORE anywhere).
-        $connectionA->beginTransaction();
-        $connectionA->table('workspace_plan_assignments')->insert([
-            'workspace_id' => $workspaceId,
-            'workspace_plan_catalog_id' => $coreCatalogId,
-            'status' => 'active',
-            'is_complimentary' => true,
-            'additional_business_slots' => 0,
-            'created_at' => $now,
-            'updated_at' => $now,
-        ]);
+if (\$expected === false || \$expected === '' || \$resolved !== \$expected) {
+    fwrite(STDERR, "Refusing to run WorkspaceEntitlementBackfillV1: resolved database [{\$resolved}] does not match expected [{\$expected}]. Aborting before any database write.\\n");
+    exit(3);
+}
 
-        $start = microtime(true);
-        $blocked = false;
+fwrite(STDOUT, "READY\\n");
+fflush(STDOUT);
 
-        try {
-            $connectionB->table('workspace_plan_assignments')->insert([
-                'workspace_id' => $workspaceId,
-                'workspace_plan_catalog_id' => $coreCatalogId,
-                'status' => 'active',
-                'is_complimentary' => true,
-                'additional_business_slots' => 0,
-                'created_at' => $now,
-                'updated_at' => $now,
-            ]);
-        } catch (QueryException $e) {
-            // A lock-wait-timeout while A's row is still uncommitted is
-            // itself proof of genuine contention — B never even reaches the
-            // point of discovering a duplicate key, since A's row is not
-            // yet visible/committed.
-            $blocked = true;
+try {
+    \$result = (new App\\Library\\Entitlement\\Migration\\WorkspaceEntitlementBackfillV1())->run();
+    fwrite(STDOUT, sprintf("OK workspacesProcessed=%d assignmentsCreated=%d\\n", \$result->workspacesProcessed, \$result->assignmentsCreated));
+    exit(0);
+} catch (Throwable \$e) {
+    fwrite(STDERR, get_class(\$e) . ': ' . \$e->getMessage() . "\\n");
+    exit(1);
+}
+PHP;
+    }
+
+    private function waitForReady(Process $process, string $label, float $timeoutSeconds = 10.0): void
+    {
+        $deadline = microtime(true) + $timeoutSeconds;
+
+        while (! str_contains($process->getOutput(), "READY\n")) {
+            if (! $process->isRunning()) {
+                $this->fail("Child process [{$label}] exited before emitting READY. stderr: " . $process->getErrorOutput());
+            }
+
+            if (microtime(true) > $deadline) {
+                $this->fail("Timed out waiting for child process [{$label}] READY marker. stderr: " . $process->getErrorOutput());
+            }
+
+            usleep(20_000);
         }
+    }
 
-        $elapsed = microtime(true) - $start;
+    public function test_two_real_concurrent_backfill_runs_for_the_same_workspace_create_exactly_one_assignment(): void
+    {
+        $expectedDatabase = DB::connection()->getDatabaseName();
+        $workspaceId = $this->insertWorkspace();
 
-        $connectionA->commit();
+        $phpBinary = (new PhpExecutableFinder())->find() ?: 'php';
+        $runnerCode = $this->buildRunnerCode();
+        $childEnv = [
+            'DB_DATABASE' => getenv('DB_DATABASE') ?: null,
+            'EXPECTED_TEST_DATABASE' => $expectedDatabase,
+        ];
 
-        $this->assertTrue(
-            $blocked || $elapsed >= 1.0,
-            "Expected connection B to genuinely block on connection A's uncommitted row lock."
-        );
+        $processA = new Process([$phpBinary, '-r', $runnerCode], null, $childEnv);
+        $processB = new Process([$phpBinary, '-r', $runnerCode], null, $childEnv);
+
+        // Force genuine overlap: hold an exclusive lock on the one fixture
+        // Workspace row before either child starts, so both independently
+        // select it as a candidate and then both block on the same
+        // implicit foreign-key shared-lock request when attempting their
+        // own workspace_plan_assignments insert.
+        DB::beginTransaction();
+        DB::table('workspaces')->where('id', $workspaceId)->lockForUpdate()->first();
+
+        $processA->start();
+        $processB->start();
+
+        $this->waitForReady($processA, 'A');
+        $this->waitForReady($processB, 'B');
+
+        // Short controlled interval so both children genuinely reach the
+        // locked insert path before the parent releases the lock.
+        usleep(300_000);
+
+        $this->assertTrue($processA->isRunning(), 'Expected child A to still be blocked before the lock releases.');
+        $this->assertTrue($processB->isRunning(), 'Expected child B to still be blocked before the lock releases.');
+
+        DB::commit();
+
+        $processA->wait();
+        $processB->wait();
+
+        $this->assertTrue($processA->isSuccessful(), 'child A failed: ' . $processA->getErrorOutput());
+        $this->assertTrue($processB->isSuccessful(), 'child B failed: ' . $processB->getErrorOutput());
 
         $this->assertSame(
             1,
             DB::table('workspace_plan_assignments')->where('workspace_id', $workspaceId)->count(),
-            'Expected exactly one workspace_plan_assignments row after two racing connections.'
-        );
-    }
-
-    // The real WorkspaceEntitlementBackfillV1::run() method, invoked
-    // repeatedly back-to-back with no artificial delay, still never
-    // produces more than one assignment or transition row per Workspace —
-    // the algorithm's own narrow duplicate-workspace_id catch (verified
-    // driver error code 1062 against this table's exact unique-constraint
-    // name), not test timing, is what guarantees this.
-    public function test_repeated_immediate_runs_never_produce_more_than_one_assignment_or_transition(): void
-    {
-        $workspaceId = $this->insertWorkspace();
-
-        for ($i = 0; $i < 3; $i++) {
-            (new WorkspaceEntitlementBackfillV1())->run();
-        }
-
-        $this->assertSame(
-            1,
-            DB::table('workspace_plan_assignments')->where('workspace_id', $workspaceId)->count()
+            'Expected exactly one workspace_plan_assignments row after two real concurrent backfill runs.'
         );
         $this->assertSame(
             1,
             DB::table('workspace_entitlement_transitions')
                 ->where('workspace_id', $workspaceId)
+                ->where('transition_type', WorkspaceEntitlementTransitionType::PlanAssigned->value)
+                ->count(),
+            'Expected exactly one plan_assigned transition row after two real concurrent backfill runs.'
+        );
+    }
+
+    // Idempotent full rerun: a second complete run against an
+    // already-fully-assigned database performs zero work and reports zero
+    // remaining, per the contract's own required assertions.
+    public function test_full_rerun_after_complete_first_run_is_a_true_no_op(): void
+    {
+        $workspaceId = $this->insertWorkspace();
+
+        $first = (new WorkspaceEntitlementBackfillV1())->run();
+        $second = (new WorkspaceEntitlementBackfillV1())->run();
+
+        $this->assertSame(1, $first->assignmentsCreated);
+
+        $this->assertSame(0, $second->workspacesProcessed);
+        $this->assertSame(0, $second->assignmentsCreated);
+        $this->assertSame(0, $second->remainingUnassignedCount);
+
+        $this->assertSame(1, DB::table('workspace_plan_assignments')->where('workspace_id', $workspaceId)->count());
+        $this->assertSame(
+            1,
+            DB::table('workspace_entitlement_transitions')
+                ->where('workspace_id', $workspaceId)
+                ->where('transition_type', WorkspaceEntitlementTransitionType::PlanAssigned->value)
+                ->count()
+        );
+    }
+
+    // Partial-rerun safety: a Workspace already committed by a prior
+    // (simulated interrupted) run is never reprocessed or duplicated, while
+    // a still-unassigned sibling Workspace is correctly picked up by the
+    // next normal run() call, ending with zero remaining unassigned.
+    public function test_partial_rerun_does_not_reprocess_an_already_committed_workspace(): void
+    {
+        $workspaceAId = $this->insertWorkspace();
+        $workspaceBId = $this->insertWorkspace();
+        $coreCatalogId = $this->coreCatalogId();
+
+        // Simulate a prior run that committed Workspace A's assignment but
+        // was interrupted before reaching Workspace B — using the
+        // backfill's own real per-Workspace unit of work
+        // (processWorkspace(), accessed via reflection since it is
+        // protected), not a hand-rolled reimplementation.
+        $backfill = new WorkspaceEntitlementBackfillV1();
+        $method = new ReflectionMethod(WorkspaceEntitlementBackfillV1::class, 'processWorkspace');
+        $method->setAccessible(true);
+        $createdA = $method->invoke($backfill, $workspaceAId, $coreCatalogId);
+
+        $this->assertTrue($createdA);
+        $this->assertSame(1, DB::table('workspace_plan_assignments')->where('workspace_id', $workspaceAId)->count());
+        $this->assertSame(0, DB::table('workspace_plan_assignments')->where('workspace_id', $workspaceBId)->count());
+
+        $result = (new WorkspaceEntitlementBackfillV1())->run();
+
+        $this->assertSame(0, $result->remainingUnassignedCount);
+
+        // Workspace A: still exactly one assignment and one transition —
+        // never reprocessed or duplicated.
+        $this->assertSame(1, DB::table('workspace_plan_assignments')->where('workspace_id', $workspaceAId)->count());
+        $this->assertSame(
+            1,
+            DB::table('workspace_entitlement_transitions')
+                ->where('workspace_id', $workspaceAId)
+                ->where('transition_type', WorkspaceEntitlementTransitionType::PlanAssigned->value)
+                ->count()
+        );
+
+        // Workspace B: correctly picked up and completed by the resumed run.
+        $this->assertSame(1, DB::table('workspace_plan_assignments')->where('workspace_id', $workspaceBId)->count());
+        $this->assertSame(
+            1,
+            DB::table('workspace_entitlement_transitions')
+                ->where('workspace_id', $workspaceBId)
                 ->where('transition_type', WorkspaceEntitlementTransitionType::PlanAssigned->value)
                 ->count()
         );

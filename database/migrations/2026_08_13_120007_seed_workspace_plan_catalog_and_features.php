@@ -14,13 +14,18 @@
      * lock (§11) — a Planned feature (e.g. prospect_outreach) still
      * receives its packaging row here; §12.2 states this is a valid,
      * honest seed row, not a promise of current executability.
+     *
+     * up() is idempotent under step rollback/reapply (M1 correction round
+     * 2): each tier and each plan-feature mapping is inserted only if
+     * missing — never re-inserted or overwritten — so a rerun after down()
+     * never clears a later legitimate price/currency value on an existing
+     * catalog row and never creates a duplicate row. No insertOrIgnore()/
+     * INSERT IGNORE is used anywhere; every ordinary database error still
+     * propagates normally.
      */
     return new class extends Migration {
-        public function up(): void
-        {
-            $now = now();
-
-            $coreId = DB::table('workspace_plan_catalog')->insertGetId([
+        private const CATALOG = [
+            [
                 'tier' => 'core',
                 'display_name' => 'Core',
                 'price' => null,
@@ -31,11 +36,8 @@
                 'unlimited_business_slots' => false,
                 'additional_business_slot_price_ratio' => 0.5000,
                 'is_active' => true,
-                'created_at' => $now,
-                'updated_at' => $now,
-            ]);
-
-            $growthId = DB::table('workspace_plan_catalog')->insertGetId([
+            ],
+            [
                 'tier' => 'growth',
                 'display_name' => 'Growth',
                 'price' => null,
@@ -46,11 +48,8 @@
                 'unlimited_business_slots' => false,
                 'additional_business_slot_price_ratio' => 0.5000,
                 'is_active' => true,
-                'created_at' => $now,
-                'updated_at' => $now,
-            ]);
-
-            $agencyId = DB::table('workspace_plan_catalog')->insertGetId([
+            ],
+            [
                 'tier' => 'agency',
                 'display_name' => 'Agency',
                 'price' => null,
@@ -61,9 +60,33 @@
                 'unlimited_business_slots' => true,
                 'additional_business_slot_price_ratio' => null,
                 'is_active' => true,
-                'created_at' => $now,
-                'updated_at' => $now,
-            ]);
+            ],
+        ];
+
+        public function up(): void
+        {
+            $now = now();
+
+            $catalogIds = [];
+
+            foreach (self::CATALOG as $tierRow) {
+                $existingId = DB::table('workspace_plan_catalog')->where('tier', $tierRow['tier'])->value('id');
+
+                if ($existingId !== null) {
+                    // Reuse the existing row exactly as-is — never
+                    // overwritten, so a later legitimate price/currency
+                    // value already set on it (outside this migration) is
+                    // never cleared by a rerun.
+                    $catalogIds[$tierRow['tier']] = (int) $existingId;
+
+                    continue;
+                }
+
+                $catalogIds[$tierRow['tier']] = DB::table('workspace_plan_catalog')->insertGetId(array_merge($tierRow, [
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ]));
+            }
 
             $coreFeatures = [
                 'crm', 'conversations', 'calendar', 'forms', 'automations',
@@ -76,10 +99,25 @@
                 'white_label', 'agency_package_capabilities', 'prospect_outreach',
             ]);
 
-            $rows = [];
+            $matrix = ['core' => $coreFeatures, 'growth' => $growthFeatures, 'agency' => $agencyFeatures];
 
-            foreach ([$coreId => $coreFeatures, $growthId => $growthFeatures, $agencyId => $agencyFeatures] as $catalogId => $featureKeys) {
-                foreach ($featureKeys as $featureKey) {
+            foreach ($matrix as $tier => $featureKeys) {
+                $catalogId = $catalogIds[$tier];
+
+                $existingFeatureKeys = DB::table('workspace_plan_features')
+                    ->where('workspace_plan_catalog_id', $catalogId)
+                    ->pluck('feature_key')
+                    ->all();
+
+                $missingFeatureKeys = array_diff($featureKeys, $existingFeatureKeys);
+
+                if ($missingFeatureKeys === []) {
+                    continue;
+                }
+
+                $rows = [];
+
+                foreach ($missingFeatureKeys as $featureKey) {
                     $rows[] = [
                         'workspace_plan_catalog_id' => $catalogId,
                         'feature_key' => $featureKey,
@@ -87,14 +125,26 @@
                         'updated_at' => $now,
                     ];
                 }
-            }
 
-            DB::table('workspace_plan_features')->insert($rows);
+                DB::table('workspace_plan_features')->insert($rows);
+            }
         }
 
         public function down(): void
         {
-            DB::table('workspace_plan_features')->delete();
-            DB::table('workspace_plan_catalog')->delete();
+            // Intentionally a non-destructive no-op. Migration 8's backfill
+            // rows deliberately survive its own down() (RFC-004 §25.2,
+            // mirroring RFC-003 migration 5's identical rationale) — a
+            // backfilled workspace_plan_assignments row's
+            // workspace_plan_catalog_id foreign key RESTRICTs deletion of
+            // the catalog row it references. If this migration's down()
+            // deleted workspace_plan_features then workspace_plan_catalog
+            // rows (as an earlier version of this file did), a rollback run
+            // after a real backfill would successfully delete the
+            // packaging matrix, then fail deleting the still-referenced
+            // Core catalog row, leaving the database partially rolled back.
+            // Physical removal of these tables is migrations 1-6's own
+            // down() responsibility during a complete rollback; this
+            // migration only ever adds rows, never removes them.
         }
     };
