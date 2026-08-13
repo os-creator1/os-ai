@@ -1,7 +1,7 @@
 # RFC-004 — Plans and Business Feature Entitlements
 
 **Status:** DRAFT — DESIGN ONLY — IMPLEMENTATION NOT AUTHORIZED
-**Version:** 1.0
+**Version:** 1.1
 **Priority:** P1
 **Target framework:** Laravel 12 / PHP 8.2
 **Architecture constraint:** Extend the existing Ultimate SMS controller → repository → library/manager → model structure. Do not introduce a new generic service-layer convention.
@@ -10,13 +10,15 @@
 
 Merging the future RFC-004 design PR does **not** automatically authorize implementation. After this RFC is accepted, Milestone 1 requires its own separate, human-reviewed, bounded implementation contract — the same discipline RFC-003 followed for every one of its milestones.
 
+**v1.1 revision note:** this revision corrects fourteen design defects found in v1.0 review: a missing sixth table (the durable audit table was undercounted); a conflation of "feature key is known" with "feature is implemented" that would have let a plan mapping or admin override make an unbuilt module executable; a slot model that let every Core/Growth Workspace silently reach 5 Businesses with no allocation step; a catalog schema that forced inventing unfrozen prices; a self-contradictory complimentary/status precedence; an uncounted `WorkspacePlanFeatureRepository`; under-scoped durable audit coverage for high-value admin overrides and slot allocation; and a backfill section that was referenced repeatedly but never actually written. The major architecture — universal Workspace tenancy, a distinct RFC-004 domain fully separate from legacy SMS Plan/Subscription, Core/Growth/Agency tiers, Workspace-level plan assignment, feature entitlements, Workspace overrides, Business feature toggles, the RFC-005 usage/billing boundary, and four implementation milestones — is unchanged and remains valid.
+
 ---
 
 ## 1. Purpose
 
 RFC-003 gave every customer a Workspace — a universal tenancy container that can hold one Business or many, with owner/member roles and per-membership Business-access scoping. It deliberately implemented no commercial packaging: every Workspace today has unlimited Business slots and unlimited feature access, because RFC-003 §4 explicitly deferred "plans, Workspace plan assignment, or Business slot limits" and "per-Business feature toggles or a platform feature registry" to this RFC.
 
-RFC-004 answers one question: **what commercial tier is a Workspace on, what does that tier structurally entitle it to, and how does the platform decide — cheaply, deterministically, and auditably — whether a given feature may execute for a given Business right now?** It introduces the Core/Growth/Agency plan tiers, a platform feature registry, Workspace-level plan assignment and admin overrides, Business-level feature toggles, and Business-slot capacity enforcement (3 included, up to 5 for Core/Growth, unlimited for Agency).
+RFC-004 answers one question: **what commercial tier is a Workspace on, what does that tier structurally entitle it to, and how does the platform decide — cheaply, deterministically, and auditably — whether a given feature may execute for a given Business right now?** It introduces the Core/Growth/Agency plan tiers, a platform feature registry that distinguishes a known feature key from an actually-implemented one, Workspace-level plan assignment and admin overrides, Business-level feature toggles, and Business-slot capacity enforcement with an explicit paid-allocation step for slots 4 and 5.
 
 RFC-004 does **not** implement billing execution, usage metering, wallets, or Stripe integration — those are RFC-005's exclusive scope, deliberately walled off here (§19).
 
@@ -25,25 +27,26 @@ RFC-004 does **not** implement billing execution, usage metering, wallets, or St
 ## 2. Goals
 
 - Formalize Core/Growth/Agency as data-driven commercial tiers assigned to a Workspace, never a separate tenancy model.
-- Introduce one authoritative platform feature registry with stable, code-defined machine keys.
-- Define a deterministic, precedence-ordered effective-access-decision algorithm: platform support → Workspace plan entitlement → Workspace admin override → Business feature toggle → billing state → (RFC-005) usage authorization.
-- Enforce Business/location slot capacity (3 included, 4–5 as paid add-ons, 6+ requires Agency) at the same transactional boundary RFC-003 already uses for Business creation, safely under concurrency.
-- Give the platform admin an explicit, audited complimentary-assignment mechanism, including for the platform owner's own Workspace.
+- Introduce one authoritative platform feature registry with stable, code-defined machine keys, and a separate, also code-backed, implementation-availability distinction so a planned-but-unbuilt feature can never become executable through a plan mapping or an admin override.
+- Define a deterministic, precedence-ordered effective-access-decision algorithm: platform support → implementation availability → Workspace assignment resolved → Workspace plan entitlement/override → Business feature toggle → billing/operational state → (RFC-005) usage authorization.
+- Enforce Business/location slot capacity (3 included, an explicit paid allocation step for 4 and 5, 6+ requires Agency) at the same transactional boundary RFC-003 already uses for Business creation, safely under concurrency, with the allocation quantity itself an authoritative, auditable, admin-controlled mutation.
+- Give the platform admin an explicit, durably audited complimentary-assignment mechanism, including for the platform owner's own Workspace.
 - Preserve RFC-003's authorization boundary exactly: plan entitlement is an additional gate layered on top of Workspace/Business authorization, never a replacement for it, and never a way to bypass it.
 - Leave a clean, minimal, already-satisfiable seam for RFC-005 so usage-authorization can be added later without reshaping anything RFC-004 ships.
+- Never let a backfilled or newly-gated capability silently remove access an existing Workspace already legitimately had.
 
 ---
 
 ## 3. Non-goals
 
-RFC-004 does not implement: Business usage wallets, ledgers, payers, or auto-recharge (RFC-005, §19); Stripe or any payment-gateway integration change; a redesign of the legacy `plans`/`subscriptions` SMS-credit system (§7); an `Agency` model or `businesses.agency_id` (explicitly forbidden, matching RFC-003 §4/§27); a redesign of the Prospect Outreach Engine's existing safety rules (§13.1); a full white-label implementation beyond gating an existing bounded capability if one exists (§13.2); implementation of SEO/Ads/AI modules that do not yet exist in code, beyond defining their stable entitlement keys (§12.4); any change to RFC-003's Workspace/Business tenancy, ownership, membership, or `business_access_scope` model (§9's isolation invariant); any change to RFC-001/RFC-002 behavior beyond the one additive Business-creation call site named in §17.
+RFC-004 does not implement: Business usage wallets, ledgers, payers, or auto-recharge (RFC-005, §19); Stripe or any payment-gateway integration change or actual payment collection for additional Business slots (§13, §17); a redesign of the legacy `plans`/`subscriptions` SMS-credit system (§6); an `Agency` model or `businesses.agency_id` (explicitly forbidden, matching RFC-003 §4/§27); a redesign of the Prospect Outreach Engine's existing safety rules (§26); a full white-label implementation beyond gating an existing bounded capability if one exists (§26, §29 M3); implementation of SEO/Ads/AI/Calendar/Forms/Website-generation modules that do not yet exist in code, beyond defining their stable entitlement keys and marking them not-yet-available (§11, §12.4); any change to RFC-003's Workspace/Business tenancy, ownership, membership, or `business_access_scope` model (§9's isolation invariant); any change to RFC-001/RFC-002 behavior beyond the one additive Business-creation call site named in §17.
 
 ---
 
 ## 4. Dependency on RFC-001, RFC-002, RFC-003
 
 - **RFC-001** established `Business` (`businesses.customer_id`) as the aggregate root with locations/services. RFC-004 gates *feature access on* a Business; it never changes what a Business *is*.
-- **RFC-002** built the Opportunity Engine on top of a single Business. Prospect Outreach (§13.1) is an Opportunity-Engine-adjacent capability that RFC-004 only gates; RFC-004 does not touch `Opportunity`/`OpportunityRun` code.
+- **RFC-002** built the Opportunity Engine on top of a single Business. Prospect Outreach (§26) is an Opportunity-Engine-adjacent capability that RFC-004 only gates; RFC-004 does not touch `Opportunity`/`OpportunityRun` code.
 - **RFC-003** established the Workspace as the universal tenancy container, `WorkspaceManager` as the sole domain authority for Workspace/Business/membership mutation, and the §14.1 `userCanAccessBusiness()` authorization algorithm. RFC-004 is layered *on top of* that algorithm, never inside or in place of it (§9, §14). RFC-003 is complete and tagged `rfc-003-workspace-and-business-account-core` — this RFC treats that tag's tree as its starting point and does not reopen any RFC-003 milestone.
 
 ---
@@ -56,9 +59,10 @@ Findings from direct inspection before drafting this RFC (do not assume; every c
 2. **`Subscription` belongs to `user_id`, not `workspace_id` or `business_id`.** `database/migrations/2019_03_09_065029_create_subscriptions_table.php`: `user_id` (not nullable), `plan_id`, `payment_method_id`, `status` enum (`new`/`pending`/`active`/`ended`/`renew`), `options` (JSON, SMS credit-warning/notification settings). `Subscription implements HasQuotaInterface` and `use HasQuota` — it is wired directly into the SMS sending-rate/credit-quota system (`App\Library\RateTracker`), a completely different concern from Workspace commercial packaging.
 3. **Every foreign key in the legacy Plan/Subscription schema uses `onDelete('cascade')`**, the opposite of RFC-003's `restrictOnDelete()` posture for tenancy-critical data. Reusing these tables for Workspace plan assignment would inherit a deletion policy this RFC's commercial/audit requirements cannot accept.
 4. **`SubscriptionLog`, `SubscriptionTransaction`, `CustomerBasedPricingPlan`, `PlanSendingCreditPrice`** are all further SMS-billing machinery: country/sending-server-based per-credit pricing, payment transaction logs — none of it maps to "Workspace commercial tier" or "Business feature entitlement" by any reasonable extension.
-5. **RFC-003's Workspace domain is exactly as its own closure documents describe** (cross-checked against `RFC-003-M4-CLOSURE.md`, `RFC-003-M5-CLOSURE.md`, `RFC-003-M6-CONFORMANCE.md`, all already verified in this repository): `WorkspaceManager` (`app/Library/Workspace/WorkspaceManager.php`, ~1,590 lines) is the sole authority for Workspace/membership/Business mutation and the `userCanAccessBusiness()` algorithm; `WorkspaceRepository`/`WorkspaceMembershipRepository`/`WorkspaceMembershipBusinessRepository`/`WorkspaceTransitionRepository` are plain data-access contracts with no `Interface` suffix, bound in `AppServiceProvider::register()`'s `$bindings` array (`WorkspaceRepository::class => EloquentWorkspaceRepository::class`, confirmed at line 148); `Workspace`/`WorkspaceMembership`/`WorkspaceMembershipBusiness` models exist with the relationships RFC-003 §11 specifies; `config/permissions.php` already carries `'view workspace'` (Milestone 5) alongside the legacy `'manage plans'`/`'create plans'`/`'edit plans'`/`'delete plans'` keys (category `Plan`) — a naming collision RFC-004 must avoid by choosing a distinct permission category (§20).
+5. **RFC-003's Workspace domain is exactly as its own closure documents describe** (cross-checked against `RFC-003-M4-CLOSURE.md`, `RFC-003-M5-CLOSURE.md`, `RFC-003-M6-CONFORMANCE.md`, all already verified in this repository): `WorkspaceManager` (`app/Library/Workspace/WorkspaceManager.php`, ~1,590 lines) is the sole authority for Workspace/membership/Business mutation and the `userCanAccessBusiness()` algorithm; `WorkspaceRepository`/`WorkspaceMembershipRepository`/`WorkspaceMembershipBusinessRepository`/`WorkspaceTransitionRepository` are plain data-access contracts with no `Interface` suffix, bound in `AppServiceProvider::register()`'s `$bindings` array (`WorkspaceRepository::class => EloquentWorkspaceRepository::class`, confirmed at line 148); `Workspace`/`WorkspaceMembership`/`WorkspaceMembershipBusiness` models exist with the relationships RFC-003 §11 specifies; `config/permissions.php` already carries `'view workspace'` (Milestone 5) alongside the legacy `'manage plans'`/`'create plans'`/`'edit plans'`/`'delete plans'` keys (category `Plan`) — a naming collision RFC-004 must avoid by choosing a distinct permission category (§20/§22).
 6. **`payment_methods`** (`database/migrations/2018_07_27_112022_create_payment_methods_table.php`) exists and is referenced by `subscriptions.payment_method_id`. RFC-004 does not use it directly — payment execution is RFC-005's boundary (§18/§19) — but its existence confirms a payment-method concept already exists in this codebase for RFC-005 to eventually build on, and RFC-004's plan-assignment `status` enum is deliberately shaped to be compatible with it later without RFC-004 needing to reference it now.
 7. **RFC-001/RFC-002/RFC-003 precedent is consistent and directly reusable**: repository-contract naming with no `Interface` suffix; `App\Library\{Domain}\{Domain}Manager` for orchestration; `App\Enums\{Domain}\*` for string-backed PHP enums (no native DB `ENUM` columns); durable `*_transitions` audit tables reserved for the highest-stakes mutations only (RFC-002's `opportunity_transitions`, RFC-003's `workspace_transitions`); `tests/Unit/{Domain}` + `tests/Feature/{Domain}` test-directory pairing.
+8. **Existing customer-facing modules confirmed present in `routes/customer.php`** (inspected earlier in this same session's RFC-003 work): a Contact module, an Automations module, and a ChatBox/conversations module, among others, all already implemented and routed. This directly grounds §11's implementation-availability distinction — some `PlatformFeature` keys correspond to capabilities that already exist today, not only to planned ones.
 
 ---
 
@@ -92,29 +96,33 @@ A customer's existing SMS plan/subscription is completely orthogonal to which Wo
 
 | Term | Meaning |
 |---|---|
-| Plan tier | One of `Core`, `Growth`, `Agency` — a fixed, code-defined identity (`WorkspacePlanTier` enum) with tier-specific structural rules (slot counts). Not a database row's primary identity; the database row (`workspace_plan_catalog`) holds that tier's mutable commercial data (price, active state). |
-| Plan catalog | The `workspace_plan_catalog` table — one row per tier, holding pricing/display data. Data/catalog, not hard-coded. |
-| Platform feature | A stable, code-defined machine key (`PlatformFeature` enum) identifying one gateable capability, independent of whether it is entitled to anyone yet. |
+| Plan tier | One of `Core`, `Growth`, `Agency` — a fixed, code-defined *identity only* (`WorkspacePlanTier` enum). All structural/commercial data for a tier (slot counts, pricing, allocation ratio) lives in `workspace_plan_catalog` (§10.1/§12.1), never duplicated in code. |
+| Plan catalog | The `workspace_plan_catalog` table — one row per tier, holding pricing/display/slot-policy data. Data/catalog, not hard-coded, and the sole authority for slot policy (§12.1). |
+| Platform feature | A stable, code-defined machine key (`PlatformFeature` enum) identifying one gateable capability, independent of whether it is entitled to anyone yet, and independent of whether it is actually implemented yet (§11). |
+| Feature availability | Whether a known `PlatformFeature` key corresponds to an actually-implemented, executable capability today (`PlatformFeatureRegistry`, §11) — distinct from, and checked before, plan/override entitlement. |
 | Plan-feature mapping | `workspace_plan_features` — which platform features a given plan-catalog row includes. |
-| Workspace plan assignment | `workspace_plan_assignments` — the one active plan tier a Workspace currently has, plus its billing status and complimentary flag. |
-| Workspace entitlement override | `workspace_entitlement_overrides` — an explicit, audited, per-feature admin exception (`allow` or `deny`) layered on top of the Workspace's plan-derived entitlement. |
+| Workspace plan assignment | `workspace_plan_assignments` — the one active plan tier a Workspace currently has, plus its operational status, complimentary flag, and additional Business-slot allocation. |
+| Workspace entitlement override | `workspace_entitlement_overrides` — an explicit, audited, per-feature admin exception (`allow` or `deny`) layered on top of the Workspace's plan-derived entitlement. Can never override feature *unavailability* (§11, §14). |
 | Business feature toggle | `business_feature_toggles` — an explicit, per-Business, per-feature *disable* narrowing what the Workspace would otherwise entitle that Business to. Never a grant beyond Workspace entitlement. |
 | Effective entitlement | The final allow/deny decision for (Workspace, Business, feature), computed by walking the precedence chain in §14. |
-| Complimentary assignment | A plan assignment explicitly marked as not requiring a recurring charge, with normal entitlements and normal slot rules still applying unless separately overridden. |
-| Business slot | One unit of Business-creation capacity under a Workspace's assigned tier (§13). |
+| Complimentary assignment | A plan assignment explicitly marked as not requiring a recurring charge, orthogonal to operational `status` (§18) — normal entitlements and normal slot rules still apply unless separately overridden/allocated. |
+| Business slot | One unit of Business-creation capacity under a Workspace's assigned tier. `included` slots are free; `additional` slots (Core/Growth only) are an explicit, priced, admin-allocated grant (§13). |
+| Entitlement transition | A durably audited row in `workspace_entitlement_transitions` (§10.4, §21) for a commercially significant mutation. |
 
 ---
 
 ## 8. Authoritative invariants
 
-- Every Workspace has at most one active `workspace_plan_assignments` row at a time (unique `workspace_id`). A Workspace with no row is treated as unassigned — see §16 for the deterministic backfill guarantee that this state does not persist for any pre-existing Workspace.
-- `workspace_plan_catalog` price/currency changes never retroactively change what an *already-created* Business's slot cost was — RFC-004 does not implement billing execution (§19); this invariant matters only for RFC-005's future consumption of this data.
-- A `PlatformFeature` key that does not exist in the code-defined registry can never be entitled, overridden, or toggled — every write path validates against the registry before persisting.
-- A Business feature toggle can only ever narrow access (`disabled`), never widen it beyond the Workspace's effective entitlement (§9, §14, §15).
-- Disabling a feature at the platform-registry or Workspace-plan level always overrides any Business-level enabled state — there is no path for a Business to retain access to a feature the Workspace has lost.
-- Every commercially significant entitlement mutation (plan assignment, plan change, complimentary status change, override change) is both event-dispatched and, for plan assignment/change/complimentary status specifically, durably audited in `workspace_plan_transitions` (§21).
+- Every Workspace has at most one `workspace_plan_assignments` row at a time (unique `workspace_id`). A Workspace with no row is treated as unassigned and denies every feature-gated decision with `workspace_plan_unassigned` (§14) — see §25 for the deterministic backfill guarantee that this state does not persist for any pre-existing Workspace.
+- `workspace_plan_catalog` price/currency/ratio changes never retroactively change what an *already-created* Business's slot cost was — RFC-004 does not implement billing execution (§19); this invariant matters only for RFC-005's future consumption of this data.
+- A known `PlatformFeature` key is not, by itself, proof the feature may execute. Implementation availability (`PlatformFeatureRegistry`, §11) is checked before any plan mapping or override is even consulted, and no plan mapping or Workspace override can ever make an unavailable feature executable (§14).
+- A Business feature toggle can only ever narrow access (`disabled`), never widen it beyond the Workspace's effective entitlement (§9, §14, §16).
+- Disabling a feature at the platform-availability, plan-mapping, or Workspace-override level always overrides any Business-level enabled state — there is no path for a Business to retain access to a feature the Workspace has lost.
+- A Workspace's effective additional Business-slot capacity is `min(business_slot_included + additional_business_slots, business_slot_max)` for Core/Growth, and unconditionally unlimited for Agency (`additional_business_slots` must remain `0` and is never consulted for Agency) — §13.
+- Every commercially significant entitlement mutation (plan assignment, plan change, complimentary status change, additional-slot allocation change, Workspace override create/change/revert) is both event-dispatched and durably audited in `workspace_entitlement_transitions` (§21).
 - Business-slot capacity enforcement never trusts a UI-only check; it is enforced inside the same locked transaction RFC-003's `WorkspaceManager::createBusinessInWorkspace()` already uses (§17).
-- Nothing in this RFC's schema forecloses RFC-005: `workspace_plan_assignments.status` is a plan/billing lifecycle flag only, never a usage-wallet balance or ledger.
+- A non-complimentary plan assignment must never be created or changed to reference a catalog row with a null `price` or `currency_id` (§10.1, §12.5) — RFC-004 refuses to represent an undefined paid commercial state, even though it executes no payment itself.
+- Nothing in this RFC's schema forecloses RFC-005: `workspace_plan_assignments.status` is a plan/operational lifecycle flag only, never a usage-wallet balance or ledger.
 
 ---
 
@@ -126,7 +134,7 @@ No entitlement feature introduced by this RFC may weaken: Workspace isolation, B
 
 ## 10. Proposed data model
 
-All new tables use `id`, `created_at`, `updated_at` (except the audit table, which follows `workspace_transitions`' `created_at`-only, immutable-row convention). No database-native `ENUM` columns — string columns cast to string-backed PHP enums under `App\Enums\Entitlement`, matching RFC-003 §9's AD-004 convention.
+**Six** authoritative RFC-004 tables. All use `id`, `created_at`, `updated_at` (except the audit table, §10.4, which follows `workspace_transitions`' `created_at`-only, immutable-row convention). No database-native `ENUM` columns — string columns cast to string-backed PHP enums under `App\Enums\Entitlement`, matching RFC-003 §9's AD-004 convention.
 
 ### 10.1 `workspace_plan_catalog`
 
@@ -135,19 +143,20 @@ All new tables use `id`, `created_at`, `updated_at` (except the audit table, whi
 | `id` | bigint unsigned | no | auto | Primary key |
 | `tier` | varchar(20) | no | — | `WorkspacePlanTier`: `core`\|`growth`\|`agency`. Unique. |
 | `display_name` | varchar(255) | no | — | Admin/customer-facing name |
-| `price` | decimal(16,2) | no | — | Data, not hard-coded (§12) |
-| `currency_id` | bigint unsigned FK | no | — | References existing `currencies.id` — reuses the same currency catalog the legacy `plans` table already uses |
+| `price` | decimal(16,2), **nullable** | yes | `null` | Data, not hard-coded (§12). **Nullable** — see §8/§12.5: a tier may be seeded with a defined structural shape before its commercial price is frozen |
+| `currency_id` | bigint unsigned FK, **nullable** | yes | `null` | References existing `currencies.id`. Nullable in lockstep with `price` — never one without the other (§12.5) |
 | `billing_cycle` | varchar(20) | no | `monthly` | `monthly`\|`yearly` — deliberately narrower than legacy `Plan`'s billing-cycle set; RFC-005 may extend if a real product need arises |
-| `business_slot_included` | unsigned tinyint | no | — | `3` for Core/Growth; `3` for Agency too (documentation value only — see `unlimited_business_slots`) |
-| `business_slot_max` | unsigned tinyint, nullable | yes | `null` | `5` for Core/Growth; `null` for Agency (see `unlimited_business_slots`, which is authoritative — `business_slot_max` is descriptive/UI-only when unlimited) |
-| `unlimited_business_slots` | boolean | no | `false` | `true` only for `agency`. Authoritative for slot enforcement (§13) — `business_slot_max` is never consulted when this is `true` |
+| `business_slot_included` | unsigned tinyint | no | — | `3` for Core/Growth/Agency (documentation value for Agency only — see `unlimited_business_slots`) |
+| `business_slot_max` | unsigned tinyint, nullable | yes | `null` | `5` for Core/Growth; `null` for Agency (see `unlimited_business_slots`, which is authoritative — `business_slot_max` is never consulted when this is `true`) |
+| `unlimited_business_slots` | boolean | no | `false` | `true` only for `agency`. Authoritative for slot enforcement (§13) — every other slot column on this row is ignored when this is `true` |
+| `additional_business_slot_price_ratio` | decimal(6,4), nullable | yes | `null` | `0.5000` for Core/Growth (§13); `null` for Agency, which has no additional-slot concept. Commercial catalog **data**, so RFC-005 never has to hard-code `0.5` |
 | `is_active` | boolean | no | `true` | An inactive catalog row cannot receive new assignments, but existing assignments referencing it are unaffected (matches RFC-003's `is_active`-is-tenancy-not-deletion posture) |
 | timestamps | — | no | — | |
 
 Indexes: unique `tier`, index `is_active`.
-Foreign key: `currency_id` → `currencies.id`, `restrictOnDelete()`.
+Foreign key: `currency_id` → `currencies.id`, `restrictOnDelete()` (only enforced when non-null).
 
-Seeded once, at Milestone 1, with exactly three rows (`core`, `growth`, `agency`) — see §16.
+Seeded once, at Milestone 1, with exactly three rows (`core`, `growth`, `agency`) — see §25. **This table, not `WorkspacePlanTier`, is the sole authority for slot/ratio policy** (§12.1) — manager logic reads these columns; it never hard-codes `3`, `5`, or `0.5000` anywhere beyond this one seed.
 
 ### 10.2 `workspace_plan_features`
 
@@ -161,42 +170,54 @@ Seeded once, at Milestone 1, with exactly three rows (`core`, `growth`, `agency`
 Indexes/constraints: unique `(workspace_plan_catalog_id, feature_key)`.
 Foreign key: `workspace_plan_catalog_id` → `workspace_plan_catalog.id`, `restrictOnDelete()`.
 
-Existence of a row = that tier includes that feature. No boolean column — an absent row is the only "not included" representation, avoiding a redundant `is_included = false` row that would never legitimately exist.
+Existence of a row = that tier includes that feature *structurally* — this is a packaging fact only, independent of whether the feature is actually implemented (§11/§14 check availability separately, before this mapping is even consulted). No boolean column — an absent row is the only "not included" representation.
+
+Access authority: `WorkspacePlanFeatureRepository` (§20).
 
 ### 10.3 `workspace_plan_assignments`
 
 | Column | Type | Null | Default | Notes |
 |---|---|---:|---|---|
 | `id` | bigint unsigned | no | auto | Primary key |
-| `workspace_id` | bigint unsigned FK | no | — | The Workspace this assignment belongs to. Unique — one active assignment per Workspace, matching §8 |
+| `workspace_id` | bigint unsigned FK | no | — | The Workspace this assignment belongs to. Unique — one assignment per Workspace, matching §8 |
 | `workspace_plan_catalog_id` | bigint unsigned FK | no | — | The current tier |
 | `status` | varchar(20) | no | — | `WorkspacePlanAssignmentStatus`: `active`\|`inactive`\|`suspended`. No default — every assignment-creation path must supply it explicitly, matching RFC-003 §9.2's `business_access_scope` no-default precedent |
-| `is_complimentary` | boolean | no | `false` | Independent of `status` — a complimentary assignment can still be `active`/`suspended` |
+| `is_complimentary` | boolean | no | `false` | Orthogonal to `status` (§18) — a complimentary assignment can still be `active` or `suspended` |
 | `complimentary_reason` | text, nullable | yes | `null` | Required at the application layer whenever `is_complimentary` is set `true` (§15) |
-| `complimentary_granted_by_user_id` | bigint unsigned, nullable, no FK | yes | `null` | Plain scalar, not a FK — matches RFC-003 `workspace_transitions.actor_user_id`'s "must never block a legitimate user-deletion feature" rationale. `null` only for the one-time Milestone-1 backfill (§16), never for an admin-initiated grant |
+| `complimentary_granted_by_user_id` | bigint unsigned, nullable, no FK | yes | `null` | Plain scalar, not a FK — matches RFC-003 `workspace_transitions.actor_user_id`'s "must never block a legitimate user-deletion feature" rationale. `null` only for the one-time Milestone-1 backfill (§25), never for an admin-initiated grant |
 | `complimentary_granted_at` | timestamp, nullable | yes | `null` | |
+| `additional_business_slots` | unsigned tinyint | no | `0` | Core/Growth: `0`, `1`, or `2` — the number of explicitly allocated paid slots beyond the tier's included 3 (§13). Agency: must remain `0`; ignored by slot logic regardless (§8) |
 | timestamps | — | no | — | |
 
 Indexes: unique `workspace_id`, index `workspace_plan_catalog_id`, index `status`.
 Foreign keys: `workspace_id` → `workspaces.id`, `restrictOnDelete()`; `workspace_plan_catalog_id` → `workspace_plan_catalog.id`, `restrictOnDelete()`.
 
-### 10.4 `workspace_plan_transitions` (durable audit — mirrors `workspace_transitions`)
+### 10.4 `workspace_entitlement_transitions` (durable audit)
 
-Limited to the commercially significant mutations only, following RFC-003 §19's "not every event needs a durable row" discipline.
+Named for what it actually covers — both plan-level and Workspace-entitlement-level commercially significant mutations, corrected from an earlier "plan transitions" framing that undercounted its scope. Limited to the commercially significant subset only, following RFC-003 §19's "not every event needs a durable row" discipline (§21).
 
 | Column | Type | Null | Default | Notes |
 |---|---|---:|---|---|
 | `id` | bigint unsigned | no | auto | Primary key |
 | `workspace_id` | bigint unsigned FK | no | — | |
-| `transition_type` | varchar(40) | no | — | `WorkspacePlanTransitionType`: `plan_assigned`\|`plan_changed`\|`complimentary_granted`\|`complimentary_revoked` |
+| `transition_type` | varchar(48) | no | — | `WorkspaceEntitlementTransitionType`: `plan_assigned`\|`plan_changed`\|`complimentary_granted`\|`complimentary_revoked`\|`additional_business_slots_changed`\|`entitlement_override_allowed`\|`entitlement_override_denied`\|`entitlement_override_reverted` |
 | `actor_user_id` | bigint unsigned, nullable, no FK | yes | `null` | `null` only for the Milestone-1 backfill's `plan_assigned` rows |
-| `from_plan_catalog_id` | bigint unsigned, nullable, FK | yes | `null` | Null for the initial assignment |
-| `to_plan_catalog_id` | bigint unsigned, nullable, FK | yes | `null` | Null only for a pure complimentary-status change that does not also change tier |
+| `from_plan_catalog_id` | bigint unsigned, nullable, FK | yes | `null` | Set for `plan_changed`; null for `plan_assigned` and every non-plan transition type |
+| `to_plan_catalog_id` | bigint unsigned, nullable, FK | yes | `null` | Set for `plan_assigned`/`plan_changed`; null for every other type |
+| `feature_key` | varchar(64), nullable | yes | `null` | Set only for `entitlement_override_*` transition types |
+| `from_override_state` | varchar(10), nullable | yes | `null` | Set only when an override changes an *existing* override's state or is reverted (the state it had immediately before); null when creating a first-time override |
+| `to_override_state` | varchar(10), nullable | yes | `null` | Set only for `entitlement_override_allowed`/`entitlement_override_denied`; null for `entitlement_override_reverted` |
+| `from_additional_business_slots` | unsigned tinyint, nullable | yes | `null` | Set only for `additional_business_slots_changed` |
+| `to_additional_business_slots` | unsigned tinyint, nullable | yes | `null` | Set only for `additional_business_slots_changed` |
 | `reason` | text, nullable | yes | `null` | |
 | `created_at` | timestamp | no | — | No `updated_at` — immutable row, matching `workspace_transitions` |
 
+The minimum nullable-column set above makes every one of the eight transition types fully deterministic and reconstructable without any JSON column (§10.6).
+
 Indexes: composite `(workspace_id, created_at)` (serves both the per-Workspace lookup and InnoDB's FK-leftmost-index requirement, exactly matching `workspace_transitions`' documented rationale).
 Foreign keys: `workspace_id` → `workspaces.id`; `from_plan_catalog_id`/`to_plan_catalog_id` → `workspace_plan_catalog.id`, all `restrictOnDelete()`.
+
+Access authority: `WorkspaceEntitlementTransitionRepository` (§20).
 
 ### 10.5 `workspace_entitlement_overrides`
 
@@ -213,7 +234,7 @@ Foreign keys: `workspace_id` → `workspaces.id`; `from_plan_catalog_id`/`to_pla
 Indexes/constraints: unique `(workspace_id, feature_key)`.
 Foreign key: `workspace_id` → `workspaces.id`, `restrictOnDelete()`.
 
-**Why "inherit" is never a stored row rather than a third enum value:** an explicit `inherit` row would be a no-op that means exactly the same thing as no row at all, while adding a case every reader must handle identically to absence. Modeling the tri-state as {no row = inherit, row with `state = allow`, row with `state = deny`} keeps the table's only rows meaningful (an actual exception exists) and "revert to inherit" a plain delete — auditable via the `WorkspaceEntitlementOverrideChanged` event (§21), not via row retention.
+**Why "inherit" is never a stored row rather than a third enum value:** an explicit `inherit` row would be a no-op that means exactly the same thing as no row at all, while adding a case every reader must handle identically to absence. Modeling the tri-state as {no row = inherit, row with `state = allow`, row with `state = deny`} keeps the table's only rows meaningful (an actual exception exists) and "revert to inherit" a plain delete — durably audited via `workspace_entitlement_transitions` (§10.4, §15), not via row retention.
 
 ### 10.6 `business_feature_toggles`
 
@@ -222,26 +243,28 @@ Foreign key: `workspace_id` → `workspaces.id`, `restrictOnDelete()`.
 | `id` | bigint unsigned | no | auto | Primary key |
 | `business_id` | bigint unsigned FK | no | — | |
 | `feature_key` | varchar(64) | no | — | Validated against `PlatformFeature` at the application layer |
-| `reason` | text, nullable | yes | `null` | Optional — Business-level toggles are lower-stakes than Workspace overrides |
+| `reason` | text, nullable | yes | `null` | Optional — Business-level toggles are lower-stakes than Workspace overrides (§21) |
 | `created_by_user_id` | bigint unsigned, nullable, no FK | yes | `null` | The Workspace owner/admin who disabled it |
 | timestamps | — | no | — | |
 
 Indexes/constraints: unique `(business_id, feature_key)`.
 Foreign key: `business_id` → `businesses.id`, `restrictOnDelete()`.
 
-**No boolean/"enabled" column and no "allow" state, by design (§15):** a Business toggle can only ever disable — the RFC's own invariant ("never grant a feature the Workspace is not effectively entitled to") means there is no legitimate "explicitly enabled beyond default" state to store. A row's mere existence *is* "disabled here"; absence is "enabled, subject to Workspace entitlement." Re-enabling deletes the row.
+**No boolean/"enabled" column and no "allow" state, by design (§16):** a Business toggle can only ever disable — the RFC's own invariant ("never grant a feature the Workspace is not effectively entitled to") means there is no legitimate "explicitly enabled beyond default" state to store. A row's mere existence *is* "disabled here"; absence is "enabled, subject to Workspace entitlement." Re-enabling deletes the row.
 
-### 10.7 No JSON blob for authoritative state
+Access authority: `BusinessFeatureToggleRepository` (§20). Toggle changes are event-only, not durably audited in `workspace_entitlement_transitions` — see §21's explicit justification.
 
-Every table above is fully relational and queryable — no entitlement decision requires deserializing a JSON column, unlike the legacy `Plan`/`Subscription::options` blobs this RFC deliberately does not extend (§6). The only place a JSON-like structure might seem tempting — "which features does this plan include" — is instead the fully-indexed, uniquely-constrained `workspace_plan_features` pivot table, so "does plan X include feature Y" is a single indexed lookup, not an application-layer JSON decode.
+**Six tables total: `workspace_plan_catalog`, `workspace_plan_features`, `workspace_plan_assignments`, `workspace_entitlement_overrides`, `business_feature_toggles`, `workspace_entitlement_transitions`.**
+
+No JSON blob for authoritative state: every table above is fully relational and queryable — no entitlement decision requires deserializing a JSON column, unlike the legacy `Plan`/`Subscription::options` blobs this RFC deliberately does not extend (§6).
 
 ---
 
 ## 11. Feature-registry architecture
 
-**Decision: hybrid — feature *identity* is code-backed; feature *packaging* (which plan includes which feature, and Workspace/Business exceptions) is database-backed.**
+**Decision: hybrid, with two separate code-backed concerns kept explicitly distinct — identity and availability — plus database-backed packaging.**
 
-**Justification:** a feature cannot be gated unless code exists to check the gate at the point of use — you cannot enable access to a controller action, view section, or job that has no corresponding code. The registry of "what capabilities the platform structurally supports" is therefore `App\Enums\Entitlement\PlatformFeature`, a string-backed PHP enum, matching RFC-003's `WorkspaceMembershipRole`/`WorkspaceBusinessAccessScope` convention exactly — adding a new feature key is a code change (a new enum case) by necessity, since the feature's actual implementation is also a code change. But *which plan tier includes which feature*, and *which Workspace/Business has an exception*, are commercial/operational decisions an admin must be able to change without a deploy — hence §10.2/§10.5/§10.6 being ordinary database tables, not additional enum cases or hard-coded arrays.
+**Feature identity** — `App\Enums\Entitlement\PlatformFeature`, a string-backed PHP enum, matching RFC-003's `WorkspaceMembershipRole`/`WorkspaceBusinessAccessScope` convention:
 
 ```php
 enum PlatformFeature: string
@@ -264,19 +287,63 @@ enum PlatformFeature: string
 }
 ```
 
-`PlatformFeature::cases()` is the single source of truth every write path (`workspace_plan_features`, `workspace_entitlement_overrides`, `business_feature_toggles`) validates `feature_key` against before persisting — never a free-text string accepted from a controller. No feature-name string literal is scattered through controllers or views; every reference goes through `PlatformFeature::{Case}->value` or the enum itself.
+`PlatformFeature::cases()` is the single source of truth every write path (`workspace_plan_features`, `workspace_entitlement_overrides`, `business_feature_toggles`) validates `feature_key` against before persisting — never a free-text string accepted from a controller.
 
-**Distinguishing entitlement architecture from actual implementation availability (§12.4):** every case above may exist in the enum before its underlying module is built. `SeoModule`, `GoogleAdsModule`, `MetaAdsModule`, `WhiteLabel`, `AgencyPackageCapabilities`, and `ProspectOutreach` (this last one *does* have an existing implementation — the Opportunity Engine's Prospect Outreach capability, RFC-002) are examples where the *entitlement key* is defined now so plan packaging (§12) is stable and complete, while the *underlying capability* may or may not exist in code yet. An entitlement row (`workspace_plan_features`) asserting a plan includes `SeoModule` is a packaging fact, not a claim that a `SeoModule` controller exists — a caller checking entitlement for a not-yet-built module will correctly get "entitled" and must independently know the feature isn't wired to any UI/route yet, exactly as an ungated, unbuilt feature naturally behaves today. This RFC does not require every enum case to have a corresponding implementation before Milestone 1 ships.
+**Feature availability — a separate, equally code-backed concern, corrected in this revision.** v1.0 incorrectly treated "the key exists in `PlatformFeature::cases()`" as sufficient for a plan mapping or override to make a feature executable. This was wrong: several keys above are deliberately defined ahead of their implementation (§12.4), and nothing prevented an admin override, or even the seeded plan matrix itself, from claiming an unbuilt module was live. This revision adds `PlatformFeatureRegistry`:
+
+```php
+enum PlatformFeatureAvailability: string
+{
+    case Available = 'available';
+    case Planned = 'planned';
+}
+
+final class PlatformFeatureRegistry
+{
+    // Illustrative shape only — see the caveat below. Exact per-key values
+    // must be re-verified against actual repository modules at Milestone 1
+    // implementation time, not assumed from this table.
+    private const AVAILABILITY = [
+        PlatformFeature::Crm->value => PlatformFeatureAvailability::Available,           // existing Contact module
+        PlatformFeature::Conversations->value => PlatformFeatureAvailability::Available, // existing ChatBox module
+        PlatformFeature::Automations->value => PlatformFeatureAvailability::Available,   // existing Automations module
+        PlatformFeature::ProspectOutreach->value => PlatformFeatureAvailability::Available, // existing RFC-002 capability
+        PlatformFeature::Calendar->value => PlatformFeatureAvailability::Planned,
+        PlatformFeature::Forms->value => PlatformFeatureAvailability::Planned,
+        PlatformFeature::WebsiteGeneration->value => PlatformFeatureAvailability::Planned,
+        PlatformFeature::AiCooBasic->value => PlatformFeatureAvailability::Planned,
+        PlatformFeature::SeoBasicVisibility->value => PlatformFeatureAvailability::Planned,
+        PlatformFeature::AdsBasicVisibility->value => PlatformFeatureAvailability::Planned,
+        PlatformFeature::SeoModule->value => PlatformFeatureAvailability::Planned,
+        PlatformFeature::GoogleAdsModule->value => PlatformFeatureAvailability::Planned,
+        PlatformFeature::MetaAdsModule->value => PlatformFeatureAvailability::Planned,
+        PlatformFeature::WhiteLabel->value => PlatformFeatureAvailability::Planned,       // pending §26/§29 M3 verification
+        PlatformFeature::AgencyPackageCapabilities->value => PlatformFeatureAvailability::Planned,
+    ];
+
+    public static function isKnown(string $featureKey): bool { /* in PlatformFeature::cases() */ }
+
+    public static function isAvailable(string $featureKey): bool
+    {
+        return self::isKnown($featureKey)
+            && (self::AVAILABILITY[$featureKey] ?? null) === PlatformFeatureAvailability::Available;
+    }
+}
+```
+
+**Caveat, stated explicitly rather than glossed over:** `Crm`/`Conversations`/`Automations` are marked `Available` above on the strength of this session's own direct confirmation that a Contact module, a ChatBox module, and an Automations module already exist and are routed (§5 finding 8) — a real, if narrow, evidentiary basis. `ProspectOutreach` is `Available` on RFC-002's own shipped implementation. Every other case is marked `Planned` because no equivalent direct confirmation exists in this RFC's own repository inspection — not because they are confirmed absent. **Milestone 1's own implementation must re-verify every value in this table against actual repository modules before shipping it**, exactly as §26/§29 already requires for white-label specifically; this table demonstrates the mechanism's shape, it is not a substitute for that verification.
+
+**The absolute rule this registry enforces (§14, §15):** a plan mapping or a Workspace override may make an *available* feature entitled outside its normal packaging (an override may grant Growth-only access to a Core Workspace, for instance) — but **neither may ever make an unavailable feature executable.** `platform_feature_unavailable` is checked and can deny before any override or plan mapping is even resolved (§14), and no override write path accepts a `feature_key` that fails `PlatformFeatureRegistry::isAvailable()` for an `allow` override specifically (a `deny` override for an unavailable feature is harmless and permitted, though redundant, since the feature is already denied). This is a deliberate, code-only switch — **no database column lets an admin claim unsupported code exists**; only a code deploy changes a feature's availability.
 
 ---
 
 ## 12. Plan model / Core-Growth-Agency semantics
 
-### 12.1 Tier identity vs. commercial data
+### 12.1 Tier identity vs. commercial/structural data
 
-`WorkspacePlanTier` (`core`\|`growth`\|`agency`) is a fixed, code-defined enum — only three tiers exist, and each carries tier-*structural* rules (slot counts, §13) that are product decisions fixed in this RFC's text, not admin-configurable. `workspace_plan_catalog` (§10.1) holds each tier's *commercial* data (price, display name, active state) — genuinely data/catalog, changeable by an admin without a deploy, exactly as required. This split resolves the tension between "pricing must be data" and "the tier's slot rules are fixed product decisions": identity+structure = enum, money+packaging = table.
+`WorkspacePlanTier` (`core`\|`growth`\|`agency`) is a fixed, code-defined **identity enum only** — it carries no structural rules, no slot counts, no ratios. **`workspace_plan_catalog` (§10.1) is the sole authority for every structural/commercial fact about a tier**: `business_slot_included`, `business_slot_max`, `unlimited_business_slots`, `additional_business_slot_price_ratio`, `price`, `currency_id`. This is a correction from an earlier framing that described the enum as "carrying" structural rules, which risked the same fact being duplicated in two places (an enum-level constant and a catalog row) and drifting apart. There is now exactly one place slot/ratio policy lives — the seeded catalog row — and `EntitlementManager` (§20) always reads it from there, never from a hard-coded `3`/`5`/`0.5000` literal anywhere in manager logic beyond the one seed migration (§25).
 
-### 12.2 Plan feature matrix (Milestone 1 seed data, §16)
+### 12.2 Plan feature matrix (Milestone 1 seed data, §25)
 
 | Feature | Core | Growth | Agency |
 |---|---|---|---|
@@ -296,25 +363,32 @@ enum PlatformFeature: string
 | Agency package capabilities | | | ✓ |
 | Prospect Outreach | | | ✓ |
 
-This table is realized as fifteen `workspace_plan_features` rows for Agency, twelve for Growth, nine for Core — seeded once at Milestone 1 (§16), editable afterward through the admin surface (§22) without a deploy.
+This table is realized as fifteen `workspace_plan_features` rows for Agency, twelve for Growth, nine for Core — seeded once at Milestone 1 (§25), editable afterward through the admin surface (§22) without a deploy. **This table is packaging only** — it says nothing about implementation availability (§11); a `✓` for a `Planned`-availability feature is a valid, honest seed row meaning "this tier will include it once built," and §14's algorithm denies execution via `platform_feature_unavailable` until that changes.
 
 ### 12.3 Slot policy per tier
 
-See §13 for the full slot model. `workspace_plan_catalog` values: Core → `business_slot_included = 3`, `business_slot_max = 5`, `unlimited_business_slots = false`. Growth → identical slot shape to Core (the RFC's product direction gives Growth the same 3-included/5-max structure as Core, differing only in feature packaging per §12.2). Agency → `unlimited_business_slots = true` (`business_slot_max` is `null` and not consulted).
+See §13 for the full slot model. Seeded `workspace_plan_catalog` values: Core → `business_slot_included = 3`, `business_slot_max = 5`, `unlimited_business_slots = false`, `additional_business_slot_price_ratio = 0.5000`. Growth → identical slot/ratio shape to Core (the RFC's product direction gives Growth the same 3-included/5-max/50%-ratio structure as Core, differing only in feature packaging per §12.2). Agency → `unlimited_business_slots = true`, `business_slot_max = null`, `additional_business_slot_price_ratio = null` (no additional-slot concept — unlimited from the start).
 
 ### 12.4 Entitlement architecture vs. implementation availability
 
-Restated from §11: this RFC defines the complete Core/Growth/Agency feature matrix above, including keys for modules that may not exist in code yet (`SeoModule`, `GoogleAdsModule`, `MetaAdsModule`, `WhiteLabel`, `AgencyPackageCapabilities`). Implementing those modules is explicitly out of scope for RFC-004 (§3) — this RFC only guarantees that when they are built, the plan they should be gated behind is already a stable, seeded fact, not a design question to redo.
+Restated from §11: this RFC defines the complete Core/Growth/Agency feature matrix above, including keys for modules that may not exist in code yet. Implementing those modules is explicitly out of scope for RFC-004 (§3) — this RFC only guarantees that when they are built, the plan they should be gated behind is already a stable, seeded fact, and that until they are built, `PlatformFeatureRegistry` denies execution deterministically rather than an unbuilt module silently appearing "entitled."
+
+### 12.5 Pricing may be undefined for a structurally-seeded tier
+
+A `workspace_plan_catalog` row may exist, be `is_active`, and carry a fully-defined slot/ratio policy while `price`/`currency_id` remain `null` — product requirements did not freeze actual base prices at RFC-drafting time, and this RFC does not invent them (§8). The one invariant this RFC enforces: **a non-complimentary (`is_complimentary = false`) `workspace_plan_assignments` row must never be created or changed to reference a catalog row whose `price` or `currency_id` is null** — `EntitlementManager` (§20) checks this at write time and rejects the mutation (a new `UndefinedPlanPricingException`) rather than silently representing an undefined paid state. A **complimentary** assignment never needs catalog pricing at all and is never subject to this check (§15) — complimentary means the charge is waived, not that a price was decided.
 
 ---
 
 ## 13. Business-slot semantics
 
-- **Core/Growth:** the first 3 Businesses in a Workspace are included in the base price. Businesses 4 and 5 may exist as paid additional slots, each commercially priced at 50% of the tier's normal plan price (a product/billing fact this RFC records but does not execute — see §18; RFC-004 owns *whether* the Workspace is allowed to have the slot, not the invoicing of it). 5 is the hard maximum for Core/Growth. A 6th Business requires the Workspace to be on Agency.
-- **Agency:** unlimited Businesses/locations (`unlimited_business_slots = true`).
-- **Slot entitlement vs. RFC-005 usage-wallet billing:** these are different concerns. RFC-004 answers "is this Workspace *allowed* to have a 4th Business right now" — a yes/no structural question enforced at Business-creation time (§17). Whether/how the resulting 50%-priced slot is actually invoiced, charged, or reflected in a usage ledger is RFC-005's exclusive domain (§19); RFC-004 records the commercial rule (`business_slot_included`/`business_slot_max` on the catalog) cleanly enough for RFC-005 to consume later, but implements no charge itself.
-- **Effective slot count** for a Workspace = `count(businesses WHERE workspace_id = :id)` (all Businesses, regardless of individual `status`, since a Business row existing under the Workspace is what consumes tenancy capacity — RFC-003 draws no distinction here and neither does this RFC). Compared against the assigned tier's `business_slot_max` (or bypassed entirely when `unlimited_business_slots = true`).
-- **Denial, not deletion:** attempting to create a 6th Business on Core/Growth is denied at creation time (§17) with a stable denial reason (§14). No existing Business is ever removed, hidden, or deactivated as a consequence of a slot limit, at any point, including during backfill (§16).
+- **Core/Growth included capacity:** the first 3 Businesses in a Workspace are included in the base price, with no allocation step required.
+- **Core/Growth additional capacity — an explicit, allocated, priced grant, not an automatic extension.** Businesses 4 and 5 require the Workspace's `workspace_plan_assignments.additional_business_slots` to be explicitly `1` or `2` respectively (§10.3) — a Core/Growth Workspace with `additional_business_slots = 0` cannot create a 4th Business at all, regardless of `business_slot_max`. Each allocated additional slot is commercially priced at `workspace_plan_catalog.additional_business_slot_price_ratio` (`0.5000`, i.e. 50%) of the tier's normal plan price (§12.5's pricing-nullability rule applies here too, at allocation time, not just at plan-assignment time — see §17). 5 (`business_slot_included + 2`) is the hard maximum for Core/Growth; a 6th Business is always denied regardless of allocation and requires the Workspace to be on Agency.
+- **Agency:** unlimited Businesses/locations (`unlimited_business_slots = true`); `additional_business_slots` is not a meaningful concept for Agency and must remain `0` (§8, §10.3).
+- **Effective capacity formula (Core/Growth):** `min(business_slot_included + additional_business_slots, business_slot_max)`. With `additional_business_slots = 0` → capacity 3; `= 1` → capacity 4; `= 2` → capacity 5. **A 4th or 5th Business must never succeed merely because `business_slot_max = 5`** — this was v1.0's defect; the corrected rule requires the allocation to actually have happened.
+- **Slot entitlement vs. RFC-005 usage-wallet billing:** these are different concerns. RFC-004 owns the *structural allocation quantity* — whether the Workspace has been granted an additional slot at all (§17's `EntitlementManager` mutation). Whether/how that allocation is actually invoiced, charged, or reflected in a usage ledger is RFC-005's exclusive domain (§19); RFC-004 records the commercial ratio (`additional_business_slot_price_ratio`) cleanly enough for RFC-005 to consume later — and RFC-005's eventual checkout flow is expected to call the **same** authoritative allocation mutation this RFC defines (§17) once payment succeeds, so slot enforcement is never redesigned when RFC-005 ships.
+- **Effective slot count** for a Workspace = `count(businesses WHERE workspace_id = :id)` (all Businesses, regardless of individual `status`, since a Business row existing under the Workspace is what consumes tenancy capacity — RFC-003 draws no distinction here and neither does this RFC).
+- **Denial, not deletion:** attempting to create a Business beyond effective capacity is denied at creation time (§17) with a stable denial reason (§14/§17). No existing Business is ever removed, hidden, or deactivated as a consequence of a slot limit, at any point, including during backfill (§25).
+- **Allocation authority:** only the platform admin, under RFC-004's admin authority (§22), may allocate or revoke an additional Business slot. A Workspace customer may inspect their allocation and effective capacity (§22) but may never self-grant an unpaid additional slot.
 
 ---
 
@@ -327,15 +401,19 @@ function effectiveEntitlement(workspace, business, featureKey, actorUserId):
     if featureKey not in PlatformFeature::cases():
         return denied('platform_feature_unknown')
 
+    if not PlatformFeatureRegistry::isAvailable(featureKey):
+        return denied('platform_feature_unavailable')
+
+    assignment = WorkspacePlanAssignment.find(workspace)
+    if assignment is null:
+        return denied('workspace_plan_unassigned')   // never dereferenced before this check
+
     override = WorkspaceEntitlementOverride.find(workspace, featureKey)
     if override is not null:
         workspaceEntitled = (override.state == ALLOW)
-        denialReasonIfNot = override.state == DENY
-            ? 'denied_by_workspace_override'
-            : unreachable  // ALLOW never denies here
+        denialReasonIfNot = 'denied_by_workspace_override'
     else:
-        assignment = WorkspacePlanAssignment.find(workspace)
-        workspaceEntitled = PlanFeatureMapping.exists(assignment.plan_catalog_id, featureKey)
+        workspaceEntitled = WorkspacePlanFeature.exists(assignment.workspace_plan_catalog_id, featureKey)
         denialReasonIfNot = 'not_entitled_by_plan'
 
     if not workspaceEntitled:
@@ -344,48 +422,54 @@ function effectiveEntitlement(workspace, business, featureKey, actorUserId):
     if BusinessFeatureToggle.exists(business, featureKey):
         return denied('disabled_for_business')
 
-    billingState = effectiveBillingState(assignment)  // see §18
-    if billingState != ACTIVE and billingState != COMPLIMENTARY:
-        return denied(billingState == SUSPENDED ? 'plan_suspended' : 'plan_inactive')
+    billingState = effectiveBillingState(assignment)  // §18, corrected precedence
+    if billingState == SUSPENDED:
+        return denied('plan_suspended')
+    if billingState == INACTIVE:
+        return denied('plan_inactive')
+    // billingState is ACTIVE or COMPLIMENTARY here
 
     usageAuthorization = UsageAuthorizationGateway::check(business, featureKey)  // RFC-005 seam, §19
     if not usageAuthorization.authorized:
-        return denied(usageAuthorization.reason)  // never reachable before RFC-005 ships (§19)
+        return denied(usageAuthorization.reason)  // reserved key, never reachable before RFC-005 ships
 
     return allowed()
 ```
 
 **Precedence, explicit and total (no ambiguity left to a caller's interpretation):**
 
-1. **Platform support** is the hard floor. An unknown feature key is always denied, regardless of any override or plan — this can only happen from a bug or a stale key, never a legitimate state.
-2. **Workspace effective entitlement** = the override if one exists for this exact `(workspace, feature)` pair, else the plan-feature mapping. An override, when present, **completely replaces** the plan-mapping answer for that feature — it does not merely add to it. This is the one deliberate point where an admin override may grant a feature outside the Workspace's base plan (see §15's explicit "yes" and its justification).
-3. **Business feature toggle** can only narrow a `true` Workspace entitlement to `false` for one specific Business — it is consulted only after Workspace entitlement has already passed, and can never flip a Workspace `false` to a Business-level `true` (there is no data path in §10.6 that could even represent that).
-4. **Billing state** gates *feature entitlement decisions* specifically — it never gates RFC-003 tenancy access (login, viewing owned data, the Workspace overview). This mirrors RFC-003 §14.2's own forward-documented distinction verbatim: "RFC-004's entitlement rule may disable paid execution while `is_active` stays `true` and ordinary account access continues."
-5. **Usage authorization** is the RFC-005 seam (§19) — until RFC-005 ships, this step is a fixed pass-through that always returns `authorized: true`, so the chain degrades to exactly steps 1–4 today, with the exact same call shape (`UsageAuthorizationGateway::check()`) that RFC-005 will implement for real without any caller needing to change.
+1. **Feature key known** — the hard floor. An unknown key is always denied (`platform_feature_unknown`), regardless of any override or plan.
+2. **Implementation available** (§11) — checked before the Workspace assignment is even resolved, and strictly before any override is consulted. An unavailable feature is always denied (`platform_feature_unavailable`), and **no override can ever reach or bypass this step** — an `allow` override write is itself rejected at creation time for an unavailable feature (§11), so this state can never even be reached with a contradicting override on file.
+3. **Workspace assignment resolved** — a Workspace with no `workspace_plan_assignments` row denies with `workspace_plan_unassigned` before any field of a (non-existent) assignment is dereferenced.
+4. **Workspace effective entitlement** = the override if one exists for this exact `(workspace, feature)` pair, else the plan-feature mapping. An override, when present, **completely replaces** the plan-mapping answer for that feature. This is the one deliberate point where an admin override may grant a feature outside the Workspace's base plan (§15) — bounded strictly by step 2 having already passed.
+5. **Business feature toggle** can only narrow a `true` Workspace entitlement to `false` for one specific Business — consulted only after Workspace entitlement has already passed, and can never flip a Workspace `false` to a Business-level `true`.
+6. **Billing/operational state** (§18) gates *feature entitlement decisions* specifically — it never gates RFC-003 tenancy access (login, viewing owned data, the Workspace overview).
+7. **Usage authorization** is the RFC-005 seam (§19) — until RFC-005 ships, this step is a fixed pass-through that always returns `authorized: true`.
+8. **Allowed.**
 
-Every denial carries one of a small, stable set of reason keys (`platform_feature_unknown`, `not_entitled_by_plan`, `denied_by_workspace_override`, `disabled_for_business`, `plan_inactive`, `plan_suspended`; a `usage_unauthorized`-shaped key is reserved for RFC-005 and never returned today) — suitable for tests, UI messaging, logs, and eventual RFC-005 billing-decision integration without redesign.
+Stable denial reasons (nine total, one reserved): `platform_feature_unknown`, `platform_feature_unavailable`, `workspace_plan_unassigned`, `not_entitled_by_plan`, `denied_by_workspace_override`, `disabled_for_business`, `plan_inactive`, `plan_suspended`, and `usage_unauthorized` (reserved for RFC-005, never returned today) — suitable for tests, UI messaging, logs, and eventual RFC-005 billing-decision integration without redesign.
 
 ---
 
 ## 15. Workspace overrides
 
-An admin override may grant a feature **outside** the Workspace's assigned plan's base mapping. **This is explicit and intentional — stated here rather than left unresolved, per this RFC's own requirement.** Justification: sales exceptions, support goodwill, and pilot/beta access are legitimate, common SaaS operational needs, and an admin-only, reason-required, fully audited override is a safer way to satisfy them than an ad hoc code change or a manually-edited plan-mapping row that would affect every Workspace on that tier. The override can **never** exceed step 1 of §14 (platform support) — an override's `feature_key` is validated against `PlatformFeature::cases()` exactly like every other write path, so an admin cannot invent a feature the platform doesn't structurally support.
+An admin override may grant a feature **outside** the Workspace's assigned plan's base mapping — **but never an unavailable one** (§11, §14 step 2). **This is explicit and intentional — stated here rather than left unresolved, per this RFC's own requirement.** Justification: sales exceptions, support goodwill, and pilot/beta access are legitimate, common SaaS operational needs, and an admin-only, reason-required, durably audited override is a safer way to satisfy them than an ad hoc code change or a manually-edited plan-mapping row that would affect every Workspace on that tier.
 
-Every override write requires: the acting admin's `created_by_user_id`, a non-empty `reason`, and dispatches `WorkspaceEntitlementOverrideChanged` (§21) — fully auditable, matching the RFC's explicit requirement. Reverting to inherit is a delete of the override row, also event-dispatched.
+Every override write requires: the acting admin's `created_by_user_id`, a non-empty `reason`, dispatches `WorkspaceEntitlementOverrideChanged` (§21), and writes an `entitlement_override_allowed`/`entitlement_override_denied` row to `workspace_entitlement_transitions` (§10.4) — **durable audit, not event-only**, corrected in this revision: an override may grant a paid capability outside the base plan, which is a high-value enough mutation that event dispatch alone (easily missed by a listener) is insufficient (§21). Reverting to inherit is a delete of the override row, which also dispatches the event and writes an `entitlement_override_reverted` transition row recording the state it had immediately before removal.
 
-**Precedence between platform support, plan mapping, Workspace override, and Business toggle** (restated compactly from §14): platform support (floor) → Workspace override if present, else plan mapping (Workspace-level entitlement) → Business toggle (narrows only, never widens). This order is total and admits no ambiguity: a `deny` override always wins over the plan; an `allow` override always wins over the plan; a Business toggle can only ever remove access the Workspace step already granted.
+**Precedence between platform support, availability, plan mapping, Workspace override, and Business toggle** (restated compactly from §14): known key (floor) → available (floor, never bypassable by an override) → Workspace override if present, else plan mapping (Workspace-level entitlement) → Business toggle (narrows only, never widens). This order is total and admits no ambiguity.
 
 ---
 
 ## 16. Business feature toggles
 
-A Workspace owner or active Admin (RFC-003 §7.3's existing authority levels — reused unmodified, not redefined here) may disable a specific feature for a specific Business under their Workspace, provided the Workspace is effectively entitled to that feature at all (§14 step 3). **A Business toggle can never grant a feature the Workspace is not entitled to** — enforced structurally, not just by convention: §10.6's table has no "enabled beyond default" state to write, and the write path (§20) rejects any attempt to create a toggle for a feature the Workspace does not currently have effective entitlement to, since there would be nothing meaningful to disable.
+A Workspace owner or active Admin (RFC-003 §7.3's existing authority levels — reused unmodified, not redefined here) may disable a specific feature for a specific Business under their Workspace, provided the Workspace is effectively entitled to that feature at all (§14 step 5). **A Business toggle can never grant a feature the Workspace is not entitled to** — enforced structurally, not just by convention: §10.6's table has no "enabled beyond default" state to write, and the write path (§20) rejects any attempt to create a toggle for a feature the Workspace does not currently have effective entitlement to, since there would be nothing meaningful to disable.
 
 **Creation defaults for a new Business (deterministic):** a newly created Business (via RFC-003's existing `WorkspaceManager::createBusinessInWorkspace()`/`reassignBusiness()`) starts with **zero** `business_feature_toggles` rows — every feature the Workspace is effectively entitled to is available to the new Business by default, matching §10.6's "absence = enabled" model. No RFC-003 code path needs to change to satisfy this default; it falls out naturally from never writing a toggle row unless an owner/admin explicitly disables something afterward.
 
 ---
 
-## 17. Business-creation slot enforcement
+## 17. Business-creation slot enforcement and the slot decision API
 
 RFC-003's `WorkspaceManager::createBusinessInWorkspace()` remains the sole Business-creation orchestration entry point — RFC-004 does not duplicate or parallel it. **Exactly one additive call is inserted into that existing method**, at the point after it locks the Workspace row (`findForUpdate()`, already present per RFC-003 §18) and before it creates the new `Business` row:
 
@@ -393,24 +477,84 @@ RFC-003's `WorkspaceManager::createBusinessInWorkspace()` remains the sole Busin
 $this->entitlementManager->assertCanCreateAnotherBusiness($lockedWorkspace);
 ```
 
-`EntitlementManager::assertCanCreateAnotherBusiness(Workspace $workspace): void` (new, `app/Library/Entitlement/EntitlementManager.php`) reads the Workspace's current `workspace_plan_assignments` row (locked implicitly by the caller already holding the Workspace row lock — see below) and its catalog tier's slot policy, counts current Businesses for that `workspace_id`, and throws `BusinessSlotLimitExceededException` (new, `app/Exceptions/Entitlement/`) if at capacity and not unlimited. `createBusinessInWorkspace()` propagates this exception uncaught, exactly as it already propagates `InactiveWorkspaceMutationException`/`UnauthorizedWorkspaceManagementException` today — no new try/catch pattern, no duplicated authority logic.
+**Slot decisions are explainable, not only exception-shaped**, corrected in this revision — UI and tests must never re-derive slot math independently of `EntitlementManager`. The manager exposes an underlying immutable decision object:
 
-**Concurrency safety — two simultaneous requests must not both consume the last slot:** `createBusinessInWorkspace()` already locks the Workspace row (`findForUpdate()`) for the duration of its transaction before this call executes (RFC-003 §18). Because the slot count (`COUNT(*) FROM businesses WHERE workspace_id = ?`) is read *after* that lock is held, and the Business insert happens inside the same transaction before the lock releases, two concurrent calls for the same Workspace serialize on that existing lock exactly the way RFC-003 already serializes every other Workspace mutation — the second call's count read (which only proceeds after the first transaction commits or rolls back) reflects the first call's result. No new lock, no new transaction boundary, no new concurrency primitive is introduced; this reuses RFC-003's existing locking discipline unmodified.
+```php
+final readonly class BusinessSlotCapacityDecision
+{
+    public function __construct(
+        public int $currentBusinessCount,
+        public int $includedSlots,
+        public int $additionalSlotsAllocated,
+        public ?int $effectiveCapacity,  // null when unlimited
+        public bool $unlimited,
+        public bool $allowed,
+        public ?string $denialReason,
+    ) {}
+}
+```
+
+`EntitlementManager::decideBusinessSlotCapacity(Workspace $workspace): BusinessSlotCapacityDecision`:
+
+```text
+function decideBusinessSlotCapacity(workspace):
+    assignment = WorkspacePlanAssignment.find(workspace)
+    if assignment is null:
+        return decision(allowed=false, denialReason='workspace_plan_unassigned')
+
+    billingState = effectiveBillingState(assignment)  // §18
+    if billingState == SUSPENDED:
+        return decision(allowed=false, denialReason='plan_suspended')
+    if billingState == INACTIVE:
+        return decision(allowed=false, denialReason='plan_inactive')
+
+    catalog = assignment.catalog
+    currentCount = count(businesses where workspace_id = workspace.id)
+
+    if catalog.unlimited_business_slots:
+        return decision(currentCount, catalog.business_slot_included, 0, null, unlimited=true, allowed=true, null)
+
+    effectiveCapacity = min(catalog.business_slot_included + assignment.additional_business_slots, catalog.business_slot_max)
+
+    if currentCount < effectiveCapacity:
+        return decision(currentCount, catalog.business_slot_included, assignment.additional_business_slots, effectiveCapacity, false, allowed=true, null)
+
+    if effectiveCapacity < catalog.business_slot_max:
+        // a further additional-slot allocation could still raise capacity
+        return decision(..., allowed=false, denialReason='business_slot_allocation_required')
+
+    // already at the tier's absolute maximum (business_slot_max)
+    return decision(..., allowed=false, denialReason='business_slot_limit_exceeded')
+```
+
+`EntitlementManager::assertCanCreateAnotherBusiness(Workspace $workspace): void` calls `decideBusinessSlotCapacity()` internally and throws a typed exception matching `denialReason` (`WorkspacePlanUnassignedException`, `InactiveWorkspacePlanException`/`SuspendedWorkspacePlanException`, `BusinessSlotAllocationRequiredException`, or `BusinessSlotLimitExceededException` — all new, `app/Exceptions/Entitlement/`) when `allowed` is `false`. `createBusinessInWorkspace()` propagates whichever exception uncaught, exactly as it already propagates `InactiveWorkspaceMutationException`/`UnauthorizedWorkspaceManagementException` today — no new try/catch pattern, no duplicated authority logic, and the UI/admin/customer surfaces (§22) call `decideBusinessSlotCapacity()` directly for display rather than re-implementing the arithmetic.
+
+**Concurrency safety — two simultaneous requests must not both consume the last slot:** `createBusinessInWorkspace()` already locks the Workspace row (`findForUpdate()`) for the duration of its transaction before this call executes (RFC-003 §18). Because the slot count is read *after* that lock is held, and the Business insert happens inside the same transaction before the lock releases, two concurrent calls for the same Workspace serialize on that existing lock exactly the way RFC-003 already serializes every other Workspace mutation. No new lock, no new transaction boundary, no new concurrency primitive is introduced.
+
+**Additional-slot allocation is a separate, admin-only, durably audited mutation:** `EntitlementManager::setAdditionalBusinessSlots(Workspace $workspace, int $count, int $actorUserId, ?string $reason): void` — validates `$count` is `0`, `1`, or `2` for a Core/Growth-assigned Workspace (rejecting any other value, and rejecting a non-zero value outright for an Agency-assigned Workspace, since Agency has no additional-slot concept, §8/§13), dispatches `WorkspaceAdditionalBusinessSlotsChanged` (§21), and writes an `additional_business_slots_changed` row to `workspace_entitlement_transitions` (§10.4) recording the before/after count. **This is the one authoritative mutation point for the allocation quantity** — RFC-004 does not execute the corresponding charge/checkout itself (§3, §13), but RFC-005's eventual paid-checkout flow is expected to call this exact method once payment succeeds, so slot enforcement is never redesigned when RFC-005 ships.
 
 ---
 
 ## 18. Billing-state boundary
 
-`workspace_plan_assignments.status` (`active`\|`inactive`\|`suspended`) is the plan/billing-lifecycle flag this RFC owns, orthogonal to `is_complimentary`. **Effective billing state**, as consumed by §14 step 4:
+`workspace_plan_assignments.status` (`active`\|`inactive`\|`suspended`) is the operational lifecycle flag this RFC owns. **Effective billing state, corrected precedence** (§14 step 6, §17):
 
-- `is_complimentary = true` → always treated as `COMPLIMENTARY` for entitlement purposes, regardless of `status` — normal entitlements apply, no billing-state denial, matching §16's (product) complimentary semantics exactly. (An admin could still separately set `status = suspended` on a complimentary assignment for an unrelated operational reason — that combination is legal and denies via `plan_suspended` even though complimentary, since suspension is a distinct signal from "requires payment.")
-- `is_complimentary = false`, `status = active` → `ACTIVE`, entitlements apply normally.
-- `is_complimentary = false`, `status = inactive` → `INACTIVE` — plan lapsed/cancelled; feature entitlement denied (`plan_inactive`).
-- `is_complimentary = false`, `status = suspended` → `SUSPENDED` — an operational hold (e.g. a payment failure once RFC-005 exists, or an admin-initiated suspension); feature entitlement denied (`plan_suspended`).
+```text
+if assignment.status == suspended:
+    SUSPENDED -> deny (plan_suspended)
+else if assignment.status == inactive:
+    INACTIVE -> deny (plan_inactive)
+else if assignment.status == active AND assignment.is_complimentary:
+    COMPLIMENTARY -> allow
+else if assignment.status == active:
+    ACTIVE -> allow
+```
 
-**This governs feature-entitlement decisions only — it never gates RFC-003 tenancy access.** A Workspace with `status = inactive` remains fully reachable: its owner can still log in, view the overview, see its Businesses and members, exactly as RFC-003 §14.2 already forward-documents ("RFC-004's entitlement rule may disable paid execution while `is_active` stays `true` and ordinary account access continues"). RFC-004 introduces no new Workspace/Business visibility restriction of any kind — only feature-*execution* denial, evaluated exclusively through §14's algorithm at the specific point a feature-gated action is attempted.
+**`status` is checked first and is an operational gate; `is_complimentary` is an orthogonal commercial-payment attribute consulted only once `status` has already permitted evaluation to continue.** This is a correction from v1.0, which described `is_complimentary = true` as "always treated as COMPLIMENTARY... regardless of `status`" and then, in the very next sentence, described `suspended` as still denying a complimentary assignment — an internal contradiction. The corrected rule removes the contradiction entirely: **complimentary means the recurring plan charge is waived and normal feature/slot entitlements remain — it does not, and never did in the corrected design, bypass an explicit `inactive` or `suspended` status.** An admin who wants a complimentary Workspace to also be denied must set `status` accordingly; complimentary alone never overrides an operational hold.
 
-**Relationship to `Subscription::status`:** none, by design (§6). RFC-004 defines its own `WorkspacePlanAssignmentStatus` enum rather than reusing `Subscription`'s `new`/`pending`/`active`/`ended`/`renew` set, because that set is shaped for the legacy per-user SMS billing lifecycle (a `pending` initial-payment state, a `renew` transition state) that does not map cleanly onto a Workspace's plan-entitlement lifecycle. No `trial`/`past_due` state exists in this repository's legacy Subscription model today (confirmed absent from its status constants, §5 finding 2) — so no such compatibility behavior needs to be documented; if RFC-005 later needs a trial or past-due concept, it is a new, explicitly designed addition to `WorkspacePlanAssignmentStatus`, not something inherited from legacy code today.
+**This governs feature-entitlement and slot-creation decisions only — it never gates RFC-003 tenancy access.** A Workspace with `status = inactive` remains fully reachable: its owner can still log in, view the overview, see its Businesses and members, exactly as RFC-003 §14.2 already forward-documents ("RFC-004's entitlement rule may disable paid execution while `is_active` stays `true` and ordinary account access continues"). RFC-004 introduces no new Workspace/Business visibility restriction of any kind — only feature-*execution* and Business-*creation* denial, evaluated exclusively through §14/§17's algorithms at the specific point a gated action is attempted.
+
+**Relationship to `Subscription::status`:** none, by design (§6). RFC-004 defines its own `WorkspacePlanAssignmentStatus` enum rather than reusing `Subscription`'s `new`/`pending`/`active`/`ended`/`renew` set, because that set is shaped for the legacy per-user SMS billing lifecycle. No `trial`/`past_due` state exists in this repository's legacy Subscription model today (confirmed absent from its status constants, §5 finding 2) — if RFC-005 later needs a trial or past-due concept, it is a new, explicitly designed addition to `WorkspacePlanAssignmentStatus`, not something inherited from legacy code today.
 
 **Explicitly not implemented by RFC-004:** any Stripe webhook, usage ledger, wallet, auto-recharge, or Business-payer logic (§19). `workspace_plan_assignments.status` is written only by the admin-facing plan-assignment/complimentary-management actions this RFC defines (§22) — no automated billing-event handler exists yet to write it, and none is added here.
 
@@ -418,9 +562,11 @@ $this->entitlementManager->assertCanCreateAnotherBusiness($lockedWorkspace);
 
 ## 19. RFC-005 usage-authorization boundary
 
-RFC-004 owns **structural** feature entitlement — the answer to "does this Workspace's plan, as modified by any admin override, structurally include this feature, and has this Business not had it disabled." RFC-005 will own **Business usage wallets, balances, payer selection, the usage ledger, reservation/release for uncertain-cost operations, auto-recharge, monthly usage caps, low-balance notifications, zero-balance usage suspension, usage webhooks/idempotency, Agency client rebilling, and any Stripe usage-billing change** — RFC-003 §26.2's deferral list, unchanged and un-narrowed by this RFC.
+RFC-004 owns **structural** feature entitlement and Business-slot allocation. RFC-005 will own **Business usage wallets, balances, payer selection, the usage ledger, reservation/release for uncertain-cost operations, auto-recharge, monthly usage caps, low-balance notifications, zero-balance usage suspension, usage webhooks/idempotency, Agency client rebilling, and any Stripe usage-billing change, including the actual payment collection for a Core/Growth additional Business slot** — RFC-003 §26.2's deferral list, unchanged and un-narrowed by this RFC.
 
-The seam is `UsageAuthorizationGateway::check(Business $business, PlatformFeature $feature): UsageAuthorizationResult` (new, minimal interface only — `app/Library/Entitlement/Contracts/UsageAuthorizationGateway.php`), called as the final step of §14's algorithm. **RFC-004 ships exactly one implementation of this interface**: `NullUsageAuthorizationGateway`, which always returns `authorized: true` for every call, unconditionally. This is the "deterministic behavior rather than a broken dependency" the product requirement demands for non-metered features before RFC-005 exists — every feature is authorized today because no metering exists yet to deny anything, and the call shape RFC-005 will need is already exercised by every entitlement decision made from Milestone 1 onward, so RFC-005 can bind a real implementation later with zero change to `EntitlementManager` or any caller.
+The seam is `UsageAuthorizationGateway::check(Business $business, PlatformFeature $feature): UsageAuthorizationResult` (new, minimal interface only — `app/Library/Entitlement/Contracts/UsageAuthorizationGateway.php`), called as the final step of §14's algorithm. **RFC-004 ships exactly one implementation of this interface**: `NullUsageAuthorizationGateway`, which always returns `authorized: true` for every call, unconditionally — the "deterministic behavior rather than a broken dependency" the product requirement demands for non-metered features before RFC-005 exists. RFC-005 can bind a real implementation later with zero change to `EntitlementManager` or any caller.
+
+The additional-Business-slot **charge** itself follows the identical pattern: RFC-004's `setAdditionalBusinessSlots()` (§17) is the one authoritative allocation mutation; RFC-005's future checkout flow calls it after payment succeeds, rather than RFC-004 inventing a temporary payment-adjacent mechanism now.
 
 ---
 
@@ -428,12 +574,20 @@ The seam is `UsageAuthorizationGateway::check(Business $business, PlatformFeatur
 
 Following RFC-003's Library/Manager + Repository convention exactly — no new generic service layer.
 
-- **`App\Library\Entitlement\EntitlementManager`** (new) — the sole authority for: computing effective entitlement (§14), assigning/changing a Workspace's plan, granting/revoking complimentary status, creating/reverting Workspace overrides, creating/removing Business toggles, and `assertCanCreateAnotherBusiness()` (§17). Every mutating method re-checks authority/state even when the caller already checked, matching RFC-001/RFC-003's manager posture.
-- **Repository contracts** (new, no `Interface` suffix, extending `BaseRepository`, bound in `AppServiceProvider::register()`'s existing `$bindings` array exactly like RFC-003's): `WorkspacePlanCatalogRepository`, `WorkspacePlanAssignmentRepository`, `WorkspacePlanTransitionRepository`, `WorkspaceEntitlementOverrideRepository`, `BusinessFeatureToggleRepository`. Each is a plain data-access contract — no business-rule/authority logic beyond the one same-Workspace-style validation `WorkspaceMembershipBusinessRepository` already models for its own cross-table check (§10.5/§10.6's `feature_key` validity check belongs to the repository layer; the *entitlement decision* belongs to `EntitlementManager`).
-- **Feature-access decision:** `EntitlementManager::decide(Workspace $workspace, Business $business, PlatformFeature $feature, int $actorUserId): EntitlementDecision` — the one method every controller/job/other feature code must call. `EntitlementDecision` is a small immutable value object (`allowed: bool`, `reason: ?string`), not a bare boolean, so denial reasons are always available to the caller (§14).
-- **Slot-capacity decision:** `EntitlementManager::assertCanCreateAnotherBusiness(Workspace $workspace): void` (§17) — throws rather than returning a boolean, matching RFC-003's `assertActorIsOwner()`-style "assert" methods that already throw typed exceptions on failure.
+- **`App\Library\Entitlement\EntitlementManager`** (new) — the sole authority for: computing effective entitlement (§14), assigning/changing a Workspace's plan, granting/revoking complimentary status, allocating/revoking additional Business slots (§17), creating/reverting Workspace overrides, creating/removing Business toggles, `decideBusinessSlotCapacity()`/`assertCanCreateAnotherBusiness()` (§17). Every mutating method re-checks authority/state even when the caller already checked, matching RFC-001/RFC-003's manager posture.
+- **Repository contracts** (new, no `Interface` suffix, extending `BaseRepository`, bound in `AppServiceProvider::register()`'s existing `$bindings` array exactly like RFC-003's) — **six repositories, one per table (§10), with none left without a named access authority**:
+  1. `WorkspacePlanCatalogRepository`
+  2. `WorkspacePlanFeatureRepository` — added in this revision; v1.0 omitted a named repository for `workspace_plan_features`, leaving that table's access authority undefined
+  3. `WorkspacePlanAssignmentRepository`
+  4. `WorkspaceEntitlementTransitionRepository` — renamed in this revision from `WorkspacePlanTransitionRepository`, matching the renamed table (§10.4)
+  5. `WorkspaceEntitlementOverrideRepository`
+  6. `BusinessFeatureToggleRepository`
 
-**No direct entitlement-table query is authorized anywhere outside `EntitlementManager` and its repositories** — every controller, job, or future feature-gated code path calls `EntitlementManager::decide()`, never `WorkspacePlanFeatureRepository` or the raw tables directly. This mirrors RFC-003's own "controllers never duplicate `WorkspaceManager` logic" discipline.
+  Each is a plain data-access contract — no business-rule/authority logic beyond the one same-Workspace/valid-feature-key-style validation `WorkspaceMembershipBusinessRepository` already models for its own cross-table check; the *entitlement decision* belongs exclusively to `EntitlementManager`.
+- **Feature-access decision:** `EntitlementManager::decide(Workspace $workspace, Business $business, PlatformFeature $feature, int $actorUserId): EntitlementDecision` — the one method every controller/job/other feature code must call. `EntitlementDecision` is a small immutable value object (`allowed: bool`, `reason: ?string`), not a bare boolean.
+- **Slot-capacity decision:** `EntitlementManager::decideBusinessSlotCapacity()`/`assertCanCreateAnotherBusiness()` (§17).
+
+**No direct entitlement-table query is authorized anywhere outside `EntitlementManager` and its six repositories** — every controller, job, or future feature-gated code path calls `EntitlementManager::decide()` or `decideBusinessSlotCapacity()`, never a repository or the raw tables directly. This mirrors RFC-003's own "controllers never duplicate `WorkspaceManager` logic" discipline.
 
 ---
 
@@ -444,44 +598,54 @@ Following RFC-003 §19's exact convention (immutable events, IDs and scalar meta
 - `WorkspacePlanAssigned` — first-ever assignment for a Workspace.
 - `WorkspacePlanChanged` — tier change on an existing assignment.
 - `WorkspaceComplimentaryStatusChanged` — `is_complimentary` flipped either direction.
+- `WorkspaceAdditionalBusinessSlotsChanged` — added in this revision (§17) — `additional_business_slots` changed.
 - `WorkspaceEntitlementOverrideChanged` — an override created, changed (allow↔deny), or reverted to inherit (deleted).
 - `BusinessFeatureToggleChanged` — a Business toggle created or removed.
 
-**Durable audit table** (`workspace_plan_transitions`, §10.4) is written for exactly `plan_assigned`, `plan_changed`, `complimentary_granted`, `complimentary_revoked` — the commercially significant subset, matching RFC-003's own restraint (`workspace_transitions` covers only ownership transfer and cross-Workspace reassignment out of fourteen total events). Override and toggle changes are event-only, not durably audited in a separate table — they are reversible, lower-stakes, and more frequent, the same reasoning RFC-003 applied to e.g. membership role/scope changes.
+**Durable audit table** (`workspace_entitlement_transitions`, §10.4) is written for **eight** transition types — expanded in this revision from four, correcting an under-scoped original list: `plan_assigned`, `plan_changed`, `complimentary_granted`, `complimentary_revoked`, `additional_business_slots_changed`, `entitlement_override_allowed`, `entitlement_override_denied`, `entitlement_override_reverted`.
+
+**Why Workspace overrides now require durable audit, not event-only (corrected from v1.0):** a Workspace override may grant a paid capability outside a Workspace's base plan (§15) — a commercially significant, potentially revenue-relevant exception. Event-only audit is insufficient for this specific mutation, because an event can be missed by a listener and leaves no queryable durable record; a slot-allocation change is equally commercially significant (it represents an intended charge, §17). Both now durably audited.
+
+**Business-level feature toggle changes remain event-only.** No direct repository evidence was found of an existing durable audit facility for Business-scoped, lower-stakes, reversible toggles worth reusing here, and they are meaningfully lower-stakes and more frequent than a Workspace-level override or a plan/slot change — matching RFC-003's own restraint (`workspace_transitions` covers only two of RFC-003's fourteen events).
 
 ---
 
 ## 22. Admin/customer surfaces
 
-Minimum surfaces this RFC's implementation milestones (§25) must eventually cover — full HTTP/UI design is deferred to those bounded contracts, not specified route-by-route here, matching how RFC-003 itself only specified milestone *scope* at the RFC stage and left exact routes to each slice's contract.
+Minimum surfaces this RFC's implementation milestones (§29) must eventually cover — full HTTP/UI design is deferred to those bounded contracts, not specified route-by-route here, matching how RFC-003 itself only specified milestone *scope* at the RFC stage and left exact routes to each slice's contract.
 
 **Platform admin** (behind the existing `EnsureUserIsAdministrator` boundary, unmodified, plus new permission keys — §5 finding 5's collision-avoidance: use a distinct category, e.g. `'view workspace plans'`/`'manage workspace plans'` under a new `Workspace Plans` category, never reusing the legacy `'manage plans'`/`Plan` category):
 
 - Inspect the plan catalog and plan-feature mapping (read; mutation is a narrower, separately-gated capability).
 - Inspect and change a Workspace's plan assignment.
-- Grant/revoke complimentary status, including for the platform owner's own Workspace — no special-cased mechanism: the same general complimentary-assignment action, applied to whichever Workspace the acting admin happens to own, is architecturally sufficient (there is nothing that distinguishes "the owner's Workspace" from any other Workspace in this schema).
+- Grant/revoke complimentary status, including for the platform owner's own Workspace — no special-cased mechanism: the same general complimentary-assignment action, applied to whichever Workspace the acting admin happens to own, is architecturally sufficient.
+- Allocate/revoke a Core/Growth Workspace's additional Business slots (§17) — the sole write authority for this quantity; a customer may never self-grant one.
 - Create/revert Workspace entitlement overrides.
-- View the "effective entitlement" explanation for a given (Workspace, Business, feature) — a direct surface over `EntitlementManager::decide()`'s `EntitlementDecision`, never a re-derivation.
+- View the "effective entitlement" explanation for a given (Workspace, Business, feature) — a direct surface over `EntitlementManager::decide()`'s `EntitlementDecision`, never a re-derivation — and the "slot capacity" explanation over `decideBusinessSlotCapacity()`'s `BusinessSlotCapacityDecision`.
 
 **Workspace owner/admin** (customer-side, reusing RFC-003's existing owner/active-Admin authority check — never a new authorization algorithm):
 
 - Inspect the Workspace's current plan tier and its feature list.
-- Inspect Business-slot usage/capacity (e.g. "3 of 5 used").
+- Inspect Business-slot usage/capacity, including included vs. allocated-additional vs. effective capacity (e.g. "3 included + 1 additional = 4 of 5 used") — sourced directly from `decideBusinessSlotCapacity()`, never recomputed independently by the UI.
 - Inspect available features per Business.
 - Enable/disable a Business-level feature toggle, only for a feature the Workspace is currently effectively entitled to (§16).
 
-**Explicitly not permitted:** an ordinary Workspace member (any role) granting themselves or anyone else a plan entitlement, override, or complimentary status — those remain exclusively platform-admin actions, gated by the new admin permission keys layered on the unmodified `EnsureUserIsAdministrator` boundary.
+**Explicitly not permitted:** an ordinary Workspace member (any role) granting themselves or anyone else a plan entitlement, override, complimentary status, or additional Business slot — those remain exclusively platform-admin actions, gated by the new admin permission keys layered on the unmodified `EnsureUserIsAdministrator` boundary.
 
 ---
 
 ## 23. Failure modes
 
 - Unknown `feature_key` reaching any write path (catalog mapping, override, toggle) → rejected at the application layer before persistence, never silently accepted (§11).
+- An `allow`-override write for a feature `PlatformFeatureRegistry::isAvailable()` reports `false` for → rejected at the application layer (§11, §15) — a `deny` override for the same feature is harmless and permitted.
 - Attempting to create a Business toggle for a feature the Workspace is not currently entitled to → rejected; there is nothing to disable (§16).
 - Attempting to set `is_complimentary = true` without a `reason` → validation failure (§15).
-- A Workspace with no `workspace_plan_assignments` row reaching `EntitlementManager::decide()` (should be structurally impossible post-backfill, §16, but checked defensively like RFC-003 §14.1's "workspace is null" case) → treated as `INACTIVE`, denying every feature-gated action with `plan_inactive`, never silently treated as `active`/entitled-to-everything.
-- Concurrent Business-creation racing the last slot → the second request fails closed with `BusinessSlotLimitExceededException` (§17), never a silent over-allocation.
-- A dangling `workspace_plan_features`/`workspace_entitlement_overrides`/`business_feature_toggles` row referencing a deleted `PlatformFeature` case (a case removed in a future code change) → the entitlement check must treat any `feature_key` not currently in `PlatformFeature::cases()` as `platform_feature_unknown` (denied), even though a stored row exists — code-registry validity is re-checked at read time, not only at write time, so a future enum-case removal fails closed automatically rather than requiring a companion data migration to be safe.
+- Attempting to create/change a **non-complimentary** assignment against a catalog row with a null `price`/`currency_id` → rejected with `UndefinedPlanPricingException` (§12.5) — never silently represented.
+- Attempting `setAdditionalBusinessSlots()` with a value outside `{0,1,2}` for Core/Growth, or any non-zero value for Agency → validation failure (§17).
+- A Workspace with no `workspace_plan_assignments` row reaching `EntitlementManager::decide()`/`decideBusinessSlotCapacity()` (should be structurally impossible post-backfill, §25, but checked defensively like RFC-003 §14.1's "workspace is null" case) → denies every feature-gated and Business-creation action with `workspace_plan_unassigned`, never silently treated as entitled-to-everything.
+- Concurrent Business-creation racing the last available slot → the second request fails closed with the applicable typed exception (§17), never a silent over-allocation.
+- A dangling `workspace_plan_features`/`workspace_entitlement_overrides`/`business_feature_toggles` row referencing a deleted `PlatformFeature` case (a case removed in a future code change) → treated as `platform_feature_unknown` (denied) at read time, even though a stored row exists — code-registry validity is re-checked at read time, not only at write time.
+- A `PlatformFeatureRegistry` entry changed from `Available` to `Planned` in a future code change (a capability temporarily disabled/rolled back) → every existing plan mapping/override referencing it immediately denies with `platform_feature_unavailable`, with no data migration required — the same fail-closed-on-code-change guarantee as the unknown-key case above.
 
 ---
 
@@ -490,83 +654,169 @@ Minimum surfaces this RFC's implementation milestones (§25) must eventually cov
 - No RFC-001, RFC-002, or RFC-003 table, column, route, controller, or view is dropped, renamed, or altered in a breaking way.
 - RFC-003's `WorkspaceManager::createBusinessInWorkspace()` gains exactly one additive call (§17) — its existing signature, transaction boundary, and every other behavior is unchanged.
 - The legacy `plans`/`subscriptions` stack (§6) is untouched — every existing SMS-plan/subscription behavior continues exactly as today.
-- Every existing Workspace gains a deterministic plan assignment via the Milestone-1 backfill (§16) — no existing Workspace, Business, or member loses any access as a direct result of this RFC shipping (billing-state denial only ever applies going forward from an explicit, later, admin-initiated status change — never as a side effect of the backfill itself, which always assigns `status = active` with `is_complimentary = true`, §16).
+- Every existing Workspace gains a deterministic plan assignment via the Milestone-1 backfill (§25) — no existing Workspace, Business, or member loses any access as a direct result of this RFC shipping.
 - `config/permissions.php` gains new keys under a new category, never colliding with or reusing the legacy `Plan` category's keys (§5 finding 5, §22).
+- No pre-RFC-004 capability that customers could already legitimately reach is silently gated away by Milestone 3 without a compatibility pass (§26).
 
 ---
 
-## 25. Test strategy
+## 25. Migration, backfill and upgrade safety
+
+**This is a dedicated section, added in this revision** — v1.0 referenced "the Milestone-1 backfill (§16)" repeatedly, but v1.0's own §16 was "Business feature toggles," never an actual backfill discussion; every such stale reference throughout this document has been corrected to point here.
+
+### 25.1 Conceptual migration ordering
+
+Eight migrations, DDL and data kept separate exactly as RFC-003 §10.1 established (MySQL DDL is not part of the surrounding transaction the way DML is):
+
+- **A.** Schema for `workspace_plan_catalog` — DDL only.
+- **B.** Schema for `workspace_plan_features` — DDL only.
+- **C.** Schema for `workspace_plan_assignments` — DDL only.
+- **D.** Schema for `workspace_entitlement_overrides` — DDL only.
+- **E.** Schema for `business_feature_toggles` — DDL only.
+- **F.** Schema for `workspace_entitlement_transitions` — DDL only.
+- **G.** Deterministic catalog/feature-matrix seed — data operation only. Inserts exactly the three `workspace_plan_catalog` rows (§12.3) and the nine/twelve/fifteen `workspace_plan_features` rows (§12.2).
+- **H.** Deterministic existing-Workspace assignment backfill — data operation only, described in full below.
+
+### 25.2 Backfill action
+
+A versioned action, `App\Library\Entitlement\Migration\WorkspaceEntitlementBackfillV1`, following the exact `WorkspaceBackfillV1` precedent (RFC-003 §10.3):
+
+- **Query-builder-only** — no Eloquent model, no model event, no `HasUid`-style creation hook.
+- **Bounded/chunked traversal** over Workspaces lacking a `workspace_plan_assignments` row.
+- **Per-Workspace transaction** — each Workspace's assignment-plus-audit-row write commits or rolls back atomically and independently of every other Workspace, mirroring `WorkspaceBackfillV1`'s per-`customer_id`-group transaction boundary.
+- **Idempotent, safe under partial rerun** — a Workspace that already has an assignment row is skipped entirely (no duplicate assignment, no duplicate `plan_assigned` transition row); re-running after a partial failure resumes exactly where the previous attempt left off.
+- **Final zero-unassigned-Workspace assertion** — at the end of a run, `SELECT COUNT(*) FROM workspaces LEFT JOIN workspace_plan_assignments ... WHERE workspace_plan_assignments.id IS NULL` must be zero; a non-zero count is a failed run, surfaced with the exact remaining count, mirroring `WorkspaceBackfillV1`'s null-count failure discipline exactly (RFC-003 §10.4).
+- **Deterministic failure behavior** — no partial/ambiguous state; a failed group's transaction rolls back completely, leaving that Workspace exactly as it was before the run (still unassigned, safely re-processable).
+- **No Eloquent events dispatched from the migration/backfill action itself** — matching `WorkspaceBackfillV1`'s explicit constraint (RFC-003 §10.3); ordinary event dispatch (§21) is a concern of the *manager* layer for actor-initiated mutations, not of this one-time migration action.
+- **Migration rerun/concurrency tests required** (§27) — mirroring `WorkspaceBackfillV1ConcurrencyTest`'s exact pattern: two simultaneous backfill attempts must not create two assignment rows for the same Workspace (serialized via a row-level lock on the Workspace, or the unique `workspace_id` constraint on `workspace_plan_assignments` caught and treated as "already assigned," matching RFC-003 §12.2's documented idempotent-create pattern).
+
+### 25.3 Backfill assignment values
+
+For every pre-existing Workspace lacking an assignment:
+
+- Tier: **Core**.
+- `status`: **active**.
+- `is_complimentary`: **true**.
+- `complimentary_reason`: a fixed, explicit string (e.g. `"Pre-RFC-004 Workspace — grandfathered complimentary assignment during Milestone 1 backfill"`).
+- `complimentary_granted_by_user_id`: **null** — a system migration, not an admin actor (§10.3).
+- `complimentary_granted_at`: set to the backfill's own execution timestamp.
+- A `workspace_entitlement_transitions` row is written with `transition_type = plan_assigned`, `actor_user_id = null`, `to_plan_catalog_id` = the Core catalog row's id, `reason` = the same fixed string above.
+- **No existing Business is deleted, deactivated, or hidden** at any point during this process (§8, §13).
+
+### 25.4 Additional-slot backfill, preserving existing Business counts
+
+`additional_business_slots` is computed deterministically per Workspace from its **existing** Business count at backfill time (`count(businesses WHERE workspace_id = :id)`, the same query §13/§17 use):
+
+| Existing Business count | `additional_business_slots` |
+|---|---|
+| ≤ 3 | `0` |
+| 4 | `1` |
+| ≥ 5 | `2` |
+
+**A pre-existing Workspace with more than 5 Businesses (a state RFC-003's own unlimited-slot era made entirely possible) is not treated as corrupt data.** The backfill assigns `additional_business_slots = 2` (the representable maximum for Core/Growth) and **keeps every existing Business** — none is deleted, deactivated, or hidden. This Workspace's operational state is described as **grandfathered-over-capacity**: `decideBusinessSlotCapacity()` (§17) correctly reports `currentCount ≥ effectiveCapacity` and `effectiveCapacity == business_slot_max`, so any *new* Business-creation attempt is denied with `business_slot_limit_exceeded` from that point forward, until the Workspace is either upgraded to Agency (unlimited) or its own Business count later falls back to or below its entitled capacity through ordinary reassignment/deactivation elsewhere. **The migration itself still succeeds** for this Workspace — over-capacity grandfathered state is an expected, deterministic, non-blocking outcome of the backfill, not a failure condition (§25.2's "final zero-unassigned assertion" is about *assignment* existing, not about every Workspace being under capacity).
+
+This preserves every existing Business while establishing deterministic future enforcement — exactly the same "backfill never removes access, enforcement applies only going forward" posture RFC-003 §10's own backfill used for the `businesses.workspace_id` invariant.
+
+---
+
+## 26. Existing-capability compatibility
+
+**A backfilled Core assignment, or a newly introduced feature gate, must never silently remove access to a capability that existed and was reachable before RFC-004 introduced its plan gate.** This is a general rule, added in this revision, that governs how Milestone 3 (§29) may introduce any new gate over a pre-existing capability:
+
+**Before M3 gates any pre-RFC-004 capability that is not part of Core's baseline packaging** (§12.2), M3 must first establish a deterministic compatibility predicate — provable from actual repository state (usage history, existing feature flags, existing customer records, or an equivalent concrete signal) — identifying which Workspaces could legitimately use that capability before the gate existed. For every Workspace the predicate identifies, M3 must create a reasoned Workspace `allow` override (§15) for that feature, using the normal audited override mechanism, before or atomically with enabling the new gate for everyone else. **If no reliable compatibility predicate can be proven from repository state, M3 must not introduce that capability's gate in RFC-004 at all** — the gap is reported and the gate deferred to a later, separately reviewed milestone, rather than risking an unexpected access removal.
+
+**Applied explicitly to Prospect Outreach** (§5 finding 8, §4): it is packaged as Agency-only (§12.2) but has a pre-RFC-004 implementation under RFC-002, reachable today with no Workspace/plan restriction of any kind. M3 must determine, from real repository evidence at that time, which Workspaces (via their now-RFC-003-backfilled tenancy) have actually used or could legitimately have used Prospect Outreach before RFC-004's gate exists, and grant each one an explicit `allow` override for `ProspectOutreach` — with a reason such as `"Pre-RFC-004 Prospect Outreach access preserved"` — before or with enabling the Agency-only gate.
+
+**White-label follows the identical rule if, and only if, M3's own repository inspection finds a real existing bounded capability** to gate (§30's open item). This is **not** a permanent special bypass mechanism: both cases use the ordinary, fully audited Workspace-override path (§10.5, §15, §21) — a normal, inspectable exception, not a parallel code path.
+
+---
+
+## 27. Test strategy
 
 Mirroring RFC-003's `tests/Unit/{Domain}` + `tests/Feature/{Domain}` pairing, under a new `Entitlement` domain directory (`tests/Unit/Entitlement`, `tests/Feature/Entitlement`) so RFC-004's suite is independently targetable exactly as RFC-003's regression commands targeted `tests/*/Workspace`.
 
 Concrete groups (no fabricated counts — exact test methods are each bounded milestone's own responsibility to write and report, per RFC-003's established discipline):
 
-- **Plan catalog invariants:** exactly three seeded tiers; unique `tier`; catalog price/currency changes never retroactively alter an existing assignment's already-decided entitlement.
-- **Feature registry invariants:** every `PlatformFeature` case is a valid `feature_key` everywhere it's accepted; an unknown key is rejected at every write path (§23).
-- **Plan-feature mappings:** the seeded matrix (§12.2) matches exactly; unique `(catalog_id, feature_key)`.
-- **Effective entitlement precedence:** the full §14 algorithm, step by step — platform-support floor, override-replaces-mapping, toggle-narrows-only, billing-state gate, usage-authorization pass-through.
-- **Workspace override allow/deny/inherit:** allow grants outside the base plan; deny overrides an included feature; deleting an override reverts to plan-mapping-derived state exactly.
+- **Six-table schema invariants:** all six tables (§10) exist with their exact constraints; no fifth-table miscount anywhere in fixtures/factories.
+- **Plan catalog invariants:** exactly three seeded tiers; unique `tier`; catalog price/currency/ratio changes never retroactively alter an existing assignment's already-decided entitlement; a structurally-seeded tier with null price/currency is valid on its own (§12.5).
+- **Feature registry invariants:** every `PlatformFeature` case is a valid `feature_key` everywhere it's accepted; an unknown key is rejected at every write path.
+- **Known-vs-available feature distinction:** a known-but-`Planned` feature is denied with `platform_feature_unavailable` even when a plan mapping includes it; an `allow`-override write for a `Planned` feature is rejected; a `deny`-override write for a `Planned` feature is permitted (redundant but harmless).
+- **Plan-feature mappings:** the seeded matrix (§12.2) matches exactly; unique `(catalog_id, feature_key)`; `WorkspacePlanFeatureRepository` boundary — no direct table access outside it.
+- **Effective entitlement precedence:** the full §14 eight-step algorithm, in order, including the "never dereference assignment before the unassigned check" ordering.
+- **Workspace override allow/deny/inherit:** allow grants outside the base plan (for an available feature); deny overrides an included feature; deleting an override reverts to plan-mapping-derived state exactly; an override can never bypass `platform_feature_unavailable`.
 - **Business toggle cannot escalate entitlement:** attempting to create a toggle for a not-entitled feature is rejected; a toggle never appears as a "grant."
-- **Disabled platform feature wins:** removing a `PlatformFeature` case denies every stored row referencing it, even without a data migration (§23).
-- **Inactive/suspended plan behavior:** both deny feature execution; neither denies RFC-003 tenancy access (§18).
-- **Complimentary behavior:** complimentary bypasses billing-state denial regardless of `status`'s other value except `suspended`; normal entitlement/slot rules still apply.
-- **Core/Growth/Agency feature matrix:** the exact §12.2 table, both directions (included features pass, excluded features deny with `not_entitled_by_plan`).
-- **Core/Growth 3 included slots:** the 1st–3rd Business creation succeeds with no additional check surfaced.
-- **Core/Growth slot 4 and 5 eligibility:** succeed, remaining within `business_slot_max`.
-- **Core/Growth 6th Business denied:** `BusinessSlotLimitExceededException`, no Business row created.
-- **Agency unlimited Business slots:** creation never denied by slot count regardless of existing count.
-- **Concurrent final-slot creation safety:** two simultaneous creation attempts for the last available slot — exactly one succeeds, the other fails closed, no over-allocation (mirroring RFC-003's `WorkspaceBackfillV1ConcurrencyTest`/`WorkspaceManagerConcurrencyTest` pattern).
+- **Disabled/rolled-back platform feature wins:** removing or demoting a `PlatformFeature`/availability entry denies every stored row referencing it, even without a data migration.
+- **Complimentary/status precedence, corrected:** `suspended` denies even when `is_complimentary = true`; `inactive` denies even when `is_complimentary = true`; `active` + complimentary allows without requiring catalog price/currency; `active` + non-complimentary requires catalog price/currency to have been set at assignment time.
+- **Nullable unconfigured catalog price:** a catalog row may be seeded with null price/currency; a **complimentary** assignment against it succeeds; a **non-complimentary** assignment against it is rejected with `UndefinedPlanPricingException`.
+- **Core/Growth/Agency feature matrix:** the exact §12.2 table, both directions.
+- **Core/Growth included-slot baseline:** the 1st–3rd Business creation succeeds with `additional_business_slots = 0` and no allocation.
+- **Core/Growth fourth Business denied without allocation:** `additional_business_slots = 0`, 4th creation attempt fails with `business_slot_allocation_required`.
+- **Core/Growth fourth succeeds with one allocation:** `additional_business_slots = 1` permits exactly the 4th.
+- **Core/Growth fifth denied with only one allocation:** `additional_business_slots = 1`, 5th creation attempt fails with `business_slot_allocation_required`.
+- **Core/Growth fifth succeeds with two allocations:** `additional_business_slots = 2` permits the 5th.
+- **Core/Growth sixth always denied:** regardless of allocation value, `business_slot_limit_exceeded`; requires Agency.
+- **0.5000 catalog ratio:** seeded exactly, read by `EntitlementManager`, never hard-coded elsewhere (a code-search-style test asserting no literal `0.5` appears in manager logic is acceptable evidence).
+- **Agency unlimited behavior:** creation never denied by slot count regardless of existing count; `additional_business_slots` remains `0` and is never consulted.
+- **Additional-slot allocation audit:** `setAdditionalBusinessSlots()` dispatches `WorkspaceAdditionalBusinessSlotsChanged` and writes an `additional_business_slots_changed` transition row with correct from/to values; rejects out-of-range values and any non-zero value for Agency.
+- **Workspace-override durable audit:** every override create/change/revert writes the correct `entitlement_override_*` transition row with correct `feature_key`/`from_override_state`/`to_override_state`.
+- **Concurrent final-slot creation safety:** two simultaneous creation attempts for the last available effective-capacity slot — exactly one succeeds, the other fails closed, no over-allocation.
 - **Workspace/Business authorization remains independent:** a fully-entitled-but-unauthorized user is still denied by RFC-003 §14.1 before entitlement is even reached; an authorized-but-unentitled user is denied by §14 despite passing RFC-003's own check.
-- **Cross-Workspace isolation:** an entitlement/override/toggle for one Workspace never leaks into another Workspace's decision.
+- **Cross-Workspace isolation:** an entitlement/override/toggle/allocation for one Workspace never leaks into another Workspace's decision.
 - **Platform-admin boundary:** the new admin surfaces (§22) require both `access backend` (existing blanket gate) and the new permission keys independently — mirroring `AdminWorkspaceControllerTest`'s exact non-admin-forged-permission defense-in-depth test.
-- **Legacy Plan/Subscription compatibility:** the legacy suite (wherever it currently lives) is unaffected by this RFC's migrations/models — a direct regression check that no legacy Plan/Subscription test starts failing.
+- **Legacy Plan/Subscription compatibility:** the legacy suite is unaffected by this RFC's migrations/models.
+- **Backfill correctness:** additional-slot counts derived correctly for 0/1/2 cases; a pre-existing Workspace with more than 5 Businesses survives the backfill with every Business intact, `additional_business_slots = 2`, and grandfathered-over-capacity behavior; post-backfill new-Business-creation attempts correctly fail for an over-capacity grandfathered Workspace; migration idempotence and partial-rerun safety; concurrent backfill-run safety (no duplicate assignment).
+- **Existing-capability compatibility rule:** M3's Prospect Outreach compatibility-override pass is directly tested — a Workspace identified by the compatibility predicate retains access via its override after the Agency-only gate goes live; a Workspace not identified by the predicate is correctly gated.
 - **RFC-001 regression:** `tests/Unit/Business tests/Feature/Business` unaffected.
-- **RFC-002 regression, where affected:** `tests/Unit/Opportunity tests/Feature/Opportunity` — specifically Prospect Outreach gating (§13.1), everything else unaffected.
-- **RFC-003 regression:** `tests/Unit/Workspace tests/Feature/Workspace` unaffected, including the one additive `createBusinessInWorkspace()` call site (§17) not breaking any existing Business-creation test.
+- **RFC-002 regression, where affected:** `tests/Unit/Opportunity tests/Feature/Opportunity` — specifically Prospect Outreach gating, everything else unaffected.
+- **RFC-003 regression:** `tests/Unit/Workspace tests/Feature/Workspace` unaffected, including the one additive `createBusinessInWorkspace()` call site not breaking any existing Business-creation test.
 
 ---
 
-## 26. Acceptance criteria
+## 28. Acceptance criteria
 
-- All five new tables (§10) exist with exactly the specified columns, constraints, and `restrictOnDelete()` foreign keys; no native DB `ENUM` column exists anywhere in this RFC's schema.
-- `workspace_plan_catalog` is seeded with exactly `core`/`growth`/`agency`, matching §12.1's slot policy and §12.2's feature matrix exactly.
-- Every pre-existing RFC-003 Workspace has exactly one `workspace_plan_assignments` row after the Milestone-1 backfill, with `status = active` and `is_complimentary = true` (§16), and zero Workspaces are left unassigned.
-- `EntitlementManager::decide()` implements §14's algorithm exactly, including denial-reason-key stability.
-- `WorkspaceManager::createBusinessInWorkspace()`'s slot-capacity call (§17) is concurrency-safe under a forced-race test, with no over-allocation possible.
+- All **six** new tables (§10) exist with exactly the specified columns, constraints, and `restrictOnDelete()` foreign keys; no native DB `ENUM` column exists anywhere in this RFC's schema.
+- `workspace_plan_catalog` is seeded with exactly `core`/`growth`/`agency`, matching §12.1's slot policy and §12.2's feature matrix exactly, including `additional_business_slot_price_ratio = 0.5000` for Core/Growth and `null` for Agency.
+- `PlatformFeatureRegistry` exists and is consulted by `EntitlementManager::decide()` strictly before any plan-mapping/override resolution; no plan mapping or override can make an unavailable feature executable, verified by a direct test.
+- Every pre-existing RFC-003 Workspace has exactly one `workspace_plan_assignments` row after the Milestone-1 backfill (§25), with `status = active`, `is_complimentary = true`, and a correctly-derived `additional_business_slots` value, and zero Workspaces are left unassigned.
+- No pre-existing Workspace's Business count was altered, and no existing Business was deleted/deactivated/hidden, by the backfill (§25.4), verified directly.
+- `EntitlementManager::decide()` implements §14's eight-step algorithm exactly, including denial-reason-key stability across all nine keys.
+- `EntitlementManager::decideBusinessSlotCapacity()`/`assertCanCreateAnotherBusiness()` correctly enforces the allocation-gated 3/4/5 model (§13/§17) — a 4th or 5th Business never succeeds without the corresponding allocation — and is concurrency-safe under a forced-race test.
+- Every Workspace-override and additional-slot-allocation mutation writes a correct `workspace_entitlement_transitions` row (§10.4/§21), verified directly, not merely believed from event dispatch.
 - No RFC-001/RFC-002/RFC-003 test regresses; the legacy Plan/Subscription suite is unaffected.
-- No direct entitlement-table query exists outside `EntitlementManager` and its repositories (§20) — verified by code search, not merely believed.
+- No direct entitlement-table query exists outside `EntitlementManager` and its six repositories (§20) — verified by code search, not merely believed.
 - `config/permissions.php`'s new keys use a distinct category from the legacy `Plan` category (§5 finding 5).
 - No `Agency` model or `businesses.agency_id` column exists anywhere (§3, RFC-003 §4/§27 precedent preserved).
+- Any M3-introduced gate over a pre-existing capability (e.g. Prospect Outreach) is accompanied by a verified compatibility-override pass per §26, with no unexplained access-removal regression.
 
 ---
 
-## 27. Implementation milestone plan
+## 29. Implementation milestone plan
 
 Following RFC-003's exact governance discipline: **RFC design PR → bounded implementation milestones, each its own contract → PR → human merge, no automatic next-milestone start → final conformance/deployment/tag milestone.** No target-marker PR, no inert implementation PR, no separate authorization PR at any step — the simplified workflow RFC-003 Milestone 5/6 already established and proved out.
 
-**M1 — Domain/schema/catalog/feature-registry/Workspace-plan foundation.** All five tables (§10), all new enums (`WorkspacePlanTier`, `WorkspacePlanAssignmentStatus`, `WorkspaceEntitlementOverrideState`, `WorkspacePlanTransitionType`, `PlatformFeature`), all new repository contracts + Eloquent implementations (§20), the plan-catalog seed (§12.2), and the deterministic backfill/migration assigning every existing Workspace a complimentary Core assignment (§16). No `EntitlementManager`, no HTTP surface, no slot enforcement yet — pure data-layer foundation, exactly mirroring RFC-003 M1A's own scope discipline (schema + models + repositories, no manager/HTTP).
+**M1 — Domain/schema/catalog/feature-registry/Workspace-plan foundation.** All **six** tables (§10), all new enums (`WorkspacePlanTier`, `WorkspacePlanAssignmentStatus`, `WorkspaceEntitlementOverrideState`, `WorkspaceEntitlementTransitionType`, `PlatformFeature`, `PlatformFeatureAvailability`), the `PlatformFeatureRegistry` (§11, with its per-key availability values re-verified against real repository modules at this milestone's own implementation time, not assumed from this RFC's illustrative table), all six new repository contracts + Eloquent implementations (§20), the plan-catalog and plan-feature seed (§12.2/§25.1 steps A–G), and the versioned `WorkspaceEntitlementBackfillV1` action assigning every existing Workspace a complimentary Core assignment with correctly-derived additional-slot counts (§25). No `EntitlementManager` decision logic, no HTTP surface, no slot *enforcement* yet — pure data-layer foundation, exactly mirroring RFC-003 M1A's own scope discipline.
 
-**M2 — Entitlement engine, Workspace overrides, Business toggles, slot-capacity enforcement.** `EntitlementManager` (§20) implementing §14's full algorithm, the `NullUsageAuthorizationGateway` (§19), Workspace override create/revert, Business toggle create/remove, and the one additive `createBusinessInWorkspace()` call (§17) with its concurrency test. All events (§21) and the `workspace_plan_transitions` audit writes. No HTTP surface yet — mirrors RFC-003 Milestone 2's "full manager, no HTTP" scope.
+**M2 — Entitlement engine, Workspace overrides, Business toggles, slot-capacity enforcement.** `EntitlementManager` (§20) implementing §14's full algorithm and §17's slot-decision API, the `NullUsageAuthorizationGateway` (§19), Workspace override create/revert (with durable audit, §15/§21), Business toggle create/remove, `setAdditionalBusinessSlots()` (with durable audit, §17/§21), and the one additive `createBusinessInWorkspace()` call (§17) with its concurrency test. All events (§21) and all eight `workspace_entitlement_transitions` transition-type writes. No HTTP surface yet.
 
-**M3 — Admin/customer surfaces + capability integration/gating + focused regression.** The minimum surfaces in §22, new permission keys, and — only where a real existing capability needs gating (Prospect Outreach per §13.1; a white-label capability *only if* the repository is found, at M3 implementation time, to already contain a bounded existing capability that merely needs gating, per §3/§13.2's explicit constraint) — wiring `EntitlementManager::decide()` into that existing code path. No new feature module is built in M3 merely because its entitlement key exists (§3, §12.4).
+**M3 — Admin/customer surfaces + capability integration/gating + focused regression.** The minimum surfaces in §22, new permission keys, and — only where a real existing capability needs gating, and only after the §26 existing-capability compatibility pass is complete for it (Prospect Outreach, required; white-label, only if the repository is found at M3 implementation time to already contain a bounded existing capability that merely needs gating) — wiring `EntitlementManager::decide()` into that existing code path. No new feature module is built in M3 merely because its entitlement key exists.
 
-**M4 — Full conformance, deployment guide, complete regression, annotated tag.** Mirrors RFC-003 Milestone 6 exactly: an evidence-based conformance matrix against this RFC's own acceptance criteria (§26), a deployment guide grounded in the actual M1–M3 implementation, the full regression gate, and the `rfc-004-plans-and-business-feature-entitlements` annotated tag — created only after the same post-merge exact-tag-candidate regression gate RFC-003 M6 used, with explicit human authorization, never automatically.
+**M4 — Full conformance, deployment guide, complete regression, annotated tag.** Mirrors RFC-003 Milestone 6 exactly: an evidence-based conformance matrix against this RFC's own acceptance criteria (§28), a deployment guide grounded in the actual M1–M3 implementation, the full regression gate, and the `rfc-004-plans-and-business-feature-entitlements` annotated tag — created only after the same post-merge exact-tag-candidate regression gate RFC-003 M6 used, with explicit human authorization, never automatically.
 
-This is four milestones, not the six-small-governance-milestone pattern the task explicitly warns against — each one bounded, each one independently stoppable and separately contracted, matching RFC-003's own "each milestone stops and reports independently" discipline (RFC-003 §23's closing line). If repository evidence discovered during M1's own implementation reveals a safer split (e.g. the backfill warranting its own sub-stop the way RFC-003 split M1A/M1B), that discovery is reported at that milestone's own contract/closure, not decided speculatively here.
+This is four milestones, not a six-small-governance-milestone pattern — each one bounded, each one independently stoppable and separately contracted, matching RFC-003's own "each milestone stops and reports independently" discipline. If repository evidence discovered during M1's own implementation reveals a safer split, that discovery is reported at that milestone's own contract/closure, not decided speculatively here.
 
 ---
 
-## 28. Release and tag gate
+## 30. Release and tag gate
 
-Tagging follows the exact posture RFC-001/RFC-002/RFC-003 already established: an annotated tag is created only at the end of RFC-004's final milestone (M4), after full regression, never at the end of M1–M3. No tag is created, applied, or proposed as part of drafting or revising this RFC document — drafting/revising is documentation only and gates nothing by itself, exactly matching RFC-003 §25's own language.
+Tagging follows the exact posture RFC-001/RFC-002/RFC-003 already established: an annotated tag is created only at the end of RFC-004's final milestone (M4), after full regression, never at the end of M1–M3. No tag is created, applied, or proposed as part of drafting or revising this RFC document.
 
-Proposed exact tag: `rfc-004-plans-and-business-feature-entitlements`, annotated (not lightweight), verified against the `origin` remote exactly as RFC-003 M6's contract required (§9 of that contract) — including re-confirming, at that future time, whichever tag-verification convention is then current, since `docs/automation/RFC-003-M6-CONTRACT.md` itself already found one historical inconsistency (`rfc-001-business-core` local-only vs. `rfc-002-opportunity-engine` pushed) worth checking against `origin` explicitly rather than assumed.
+Proposed exact tag: `rfc-004-plans-and-business-feature-entitlements`, annotated (not lightweight), verified against the `origin` remote exactly as RFC-003 M6's contract required — including re-confirming, at that future time, whichever tag-verification convention is then current, since `docs/automation/RFC-003-M6-CONTRACT.md` itself already found one historical inconsistency (`rfc-001-business-core` local-only vs. `rfc-002-opportunity-engine` pushed) worth checking against `origin` explicitly rather than assumed.
 
 No tag is created now. No tag is created during M1–M3. No tag is created during M4's own implementation PR — only after M4's documentation PR merges, a post-merge exact-tag-candidate regression passes, and a human explicitly authorizes it.
 
 ---
 
-## 29. Explicit RFC-005 deferrals
+## 31. Explicit RFC-005 deferrals
 
 Deferred to RFC-005 — Business Usage Billing and Wallets (unchanged from RFC-003 §26.2, restated here as this RFC's own boundary, §19):
 
@@ -577,16 +827,20 @@ Deferred to RFC-005 — Business Usage Billing and Wallets (unchanged from RFC-0
 - Low-balance notifications and zero-balance usage suspension.
 - Usage webhooks and idempotency.
 - Agency client rebilling.
+- Actual payment collection for a Core/Growth additional Business-slot allocation (§13/§17) — RFC-004 owns the allocation quantity and its authoritative mutation; RFC-005 owns charging for it.
 - Any Stripe integration change, including usage-billing-specific webhooks.
 
-RFC-004's `UsageAuthorizationGateway` seam (§19) exists precisely so none of the above requires reshaping anything this RFC ships — RFC-005 binds a real implementation later; `EntitlementManager` and every caller of `decide()` are unaffected.
+RFC-004's `UsageAuthorizationGateway` seam (§19) and its `setAdditionalBusinessSlots()` mutation (§17) exist precisely so none of the above requires reshaping anything this RFC ships.
 
-Also explicitly out of scope for RFC-004 itself (§3, restated): a Prospect Outreach Engine redesign; a full white-label implementation beyond gating an existing bounded capability, if one is found to already exist at M3; implementation of any SEO/Ads/AI module that does not yet exist merely because its entitlement key is defined; unrelated CRM or messaging changes; any RFC-003 Workspace/Business tenancy redesign.
+Also explicitly out of scope for RFC-004 itself (§3, restated): a Prospect Outreach Engine redesign; a full white-label implementation beyond gating an existing bounded capability, if one is found to already exist at M3; implementation of any SEO/Ads/AI/Calendar/Forms/Website-generation module that does not yet exist merely because its entitlement key is defined; unrelated CRM or messaging changes; any RFC-003 Workspace/Business tenancy redesign.
 
 ---
 
-## 30. Open questions
+## 32. Open questions
 
-None left genuinely undecidable from product requirements and repository evidence. Every architectural choice this RFC needed to make — legacy compatibility (§6), feature-registry architecture (§11), tier-identity-vs-catalog-data split (§12.1), override-may-grant-outside-plan (§15), business-toggle-can-only-narrow (§16), billing-state-vs-tenancy-access boundary (§18), the RFC-005 seam shape (§19) — was resolved with an explicit recommendation and justification above, per this RFC's own quality requirement not to leave major architectural choices as "TBD."
+None left genuinely undecidable from product requirements and repository evidence. Every architectural choice this RFC needed to make — legacy compatibility (§6), feature-registry identity-vs-availability architecture (§11), tier-identity-vs-catalog-data split (§12.1), the allocation-gated slot model (§13), override-may-grant-outside-plan-but-never-outside-availability (§15), business-toggle-can-only-narrow (§16), the corrected billing-state precedence (§18), the RFC-005 seam shape (§19), and the durable-audit scope for overrides/allocations (§21) — was resolved with an explicit recommendation and justification above.
 
-One item is deliberately left to the *implementation* milestone that will actually resolve it, not because it is undecidable in principle but because deciding it now would be speculative ahead of that milestone's own repository inspection: **whether an existing bounded white-label capability actually exists in this repository today**, for §13.2/§27 M3's "only gate what already exists" constraint. This is not an open RFC-level design question — the design rule (gate, don't build) is fully decided — it is a fact to be verified by M3's own contract at the time M3 is actually drafted, exactly as RFC-003 repeatedly deferred file-existence verification to each slice's own contract-drafting inspection rather than guessing at RFC-drafting time.
+Two items are deliberately left to the *implementation* milestones that will actually resolve them, not because they are undecidable in principle but because deciding them now would be speculative ahead of that milestone's own repository inspection, exactly as RFC-003 repeatedly deferred file-existence verification to each slice's own contract-drafting inspection:
+
+1. **The exact per-key `PlatformFeatureRegistry` availability values** (§11) — this RFC's own table is explicitly illustrative and caveated; M1 must re-verify every value against actual repository modules before shipping it.
+2. **Whether an existing bounded white-label capability actually exists in this repository today** (§26, §29 M3) — the design rule (gate an existing capability, don't build a new one; and if gating, first run the §26 compatibility pass) is fully decided; only the underlying fact is left to M3's own contract-drafting inspection.
