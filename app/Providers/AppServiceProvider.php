@@ -149,6 +149,12 @@
                 WorkspaceMembershipRepository::class => EloquentWorkspaceMembershipRepository::class,
                 WorkspaceMembershipBusinessRepository::class => EloquentWorkspaceMembershipBusinessRepository::class,
                 WorkspaceTransitionRepository::class => EloquentWorkspaceTransitionRepository::class,
+                \App\Repositories\Contracts\WorkspacePlanCatalogRepository::class => \App\Repositories\Eloquent\EloquentWorkspacePlanCatalogRepository::class,
+                \App\Repositories\Contracts\WorkspacePlanFeatureRepository::class => \App\Repositories\Eloquent\EloquentWorkspacePlanFeatureRepository::class,
+                \App\Repositories\Contracts\WorkspacePlanAssignmentRepository::class => \App\Repositories\Eloquent\EloquentWorkspacePlanAssignmentRepository::class,
+                \App\Repositories\Contracts\WorkspaceEntitlementOverrideRepository::class => \App\Repositories\Eloquent\EloquentWorkspaceEntitlementOverrideRepository::class,
+                \App\Repositories\Contracts\BusinessFeatureToggleRepository::class => \App\Repositories\Eloquent\EloquentBusinessFeatureToggleRepository::class,
+                \App\Repositories\Contracts\WorkspaceEntitlementTransitionRepository::class => \App\Repositories\Eloquent\EloquentWorkspaceEntitlementTransitionRepository::class,
             ];
 
             foreach ($bindings as $interface => $implementation) {
