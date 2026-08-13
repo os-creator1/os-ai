@@ -1,6 +1,6 @@
 # RFC-003 Milestone 4 Slice 4F Contract
 
-**Status: PROPOSED — NOT AUTHORIZED. Implementation must not begin under this document alone.**
+**Status: completed and closed.** Authorization was completed via PR #53; implementation was PR #52 (branch `agent/rfc-003-m4-slice-4f`), human-merged as `db7829d2c33ff3eb77a5bd42820eb39e349f6d94`. See `docs/automation/RFC-003-M4-CLOSURE.md` ("Slice 4F final evidence") for final closure evidence — Slice 4F does not have a separate slice-level closure document; its completion is recorded in the combined Milestone 4 closure.
 
 ## Implementation contract
 
@@ -32,16 +32,19 @@ None of this may be reimplemented, duplicated, or second-guessed in the controll
 
 The controller must construct exactly one of these two factories explicitly from validated request input — never a third disposition, never a default. The caller (customer) must choose explicitly; the Form Request enforces this is always present. Neither the DTO nor `WorkspaceOwnershipTransferMode` nor `WorkspaceBusinessAccessScope` may be modified.
 
-### Locked target
+### Locked target (historical — closed)
 
-- Implementation PR: not yet opened
+- Implementation PR: [#52](https://github.com/os-creator1/os-ai/pull/52)
 - Base: `main`
-- Head: not yet created (expected name, following the existing per-slice convention: `agent/rfc-003-m4-slice-4f`)
-- Starting SHA: not yet pinned
+- Head: `agent/rfc-003-m4-slice-4f`
+- Authorization PR: [#53](https://github.com/os-creator1/os-ai/pull/53) (human-merged, pinned the authorized baseline SHA below)
+- Authorized baseline SHA: `c24af2212e017a66ab8fc42c7bcbba3d469dda72`
+- Final product head: `99f3e218094f40a283bab3ded6a097734b68787b`
+- Human merge commit on `main`: `db7829d2c33ff3eb77a5bd42820eb39e349f6d94`
 - Merge policy: human only
 - Maximum bounded correction rounds: 2
 
-**This contract is a proposal, not a lease.** The manual authorization sequence is exactly: (1) this Slice 4F contract is human-reviewed and merged; (2) only after that merge may a dedicated Slice 4F implementation branch be created from then-current `main` and an inert Draft baseline implementation PR be opened — solely to establish the exact target PR number, branch, and starting SHA identity; (3) at that stage no Slice 4F product/application implementation may be written yet; (4) the exact implementation PR number, head branch, and full starting SHA are then recorded in a separate, human-reviewed `docs/automation/AI-AUTONOMY-STATE.json` update that sets `implementation_authorized: true`; (5) a human reviews and merges that state update; (6) only after that authorizing state update is merged may Slice 4F product implementation begin. `start_automatically_after_contract_merge` remains `false` throughout — no automatic starter is involved at any step, and this proposal does not itself create or authorize the implementation branch/PR. Product merge remains exclusively human-only; no force-push, no push to `main`, no automatic merge. No paid model API or usage-credit enablement is authorized at any step; no Codex review or automatic Claude Routine handoff is required for completion, per the manual completion path in `docs/automation/AI-SUBSCRIPTION-LOOP.md`. No automatic next-Milestone/next-Slice start is authorized by this contract at any step.
+The manual authorization sequence that was actually followed: (1) this Slice 4F contract was human-reviewed and merged (PR #51); (2) a dedicated Slice 4F implementation branch (`agent/rfc-003-m4-slice-4f`) was created from then-current `main` and an inert Draft baseline implementation PR (#52) was opened solely to establish the exact target PR number, branch, and starting SHA identity; (3) no Slice 4F product/application implementation was written until that baseline was pinned; (4) the exact implementation PR number, head branch, and full starting SHA were then recorded in a separate, human-reviewed `docs/automation/AI-AUTONOMY-STATE.json` update (PR #53) that set `implementation_authorized: true`; (5) a human reviewed and merged that state update; (6) only after that authorizing state update was merged did Slice 4F product implementation begin. `start_automatically_after_contract_merge` remained `false` throughout — no automatic starter was involved at any step. Product merge was human-only. `docs/automation/AI-AUTONOMY-STATE.json` has since been returned to an idle, non-authorized state — see `docs/automation/RFC-003-M4-CLOSURE.md`.
 
 ### Authorized behavior
 
@@ -87,7 +90,7 @@ No other field is accepted. No unrelated existing Form Request is modified.
 
 ### Exact implementation scope
 
-Only these implementation paths may change once a separate authorizing state update pins this contract to a real implementation PR/branch:
+Only these implementation paths were authorized to change, once the separate authorizing state update (PR #53) pinned this contract to the real implementation PR/branch — and only these five actually changed in PR #52:
 
 - `app/Http/Controllers/Customer/Workspace/WorkspaceController.php`
 - `app/Http/Requests/Customer/Workspace/TransferWorkspaceOwnershipRequest.php` (new)
@@ -167,8 +170,8 @@ These commands may be executed by an automated deterministic gate, or manually b
 
 Slice 4F is ready for human review when the exact-scope implementation is at the pinned PR head and every required test command has passed with a positive recognized count against that exact head — verified either by an automated deterministic gate or by a human developer running the required commands manually and recording the result, per the manual completion path. Codex review and an automatic Claude Routine handoff are not required. Final product merge remains exclusively human-approved.
 
+**Closed.** This condition was met: PR #52 reached final product head `99f3e218094f40a283bab3ded6a097734b68787b` (implementation commit `eec1f1650bf35314d48d68f3bffd9c3da28382eb`, followed by a main-merge-sync commit that neutralized the target marker from the diff, per the Slice 4E precedent). All eleven required test commands were reported by the human developer as passing manually; individual test counts were not recorded and are not fabricated here. `git diff --check` was clean, and a human merged PR #52 into `main` as `db7829d2c33ff3eb77a5bd42820eb39e349f6d94`. See `docs/automation/RFC-003-M4-CLOSURE.md` ("Slice 4F final evidence") for full closure evidence. No further implementation, correction, or product work is authorized under this document.
+
 ### Milestone boundary
 
-Slice 4F is the final remaining RFC-003 Milestone 4 customer mutation surface identified by the completed Slice 4E closure. Completion of Slice 4F product work would complete the currently enumerated RFC-003 §23 Milestone 4 mutation-surface list — but **this contract does not, and a completed Slice 4F implementation must not, automatically close Milestone 4 or start any next Milestone.** Milestone 4 closure, and any decision about RFC-003's subsequent milestones, remains a separate, independent, human-reviewed governance action to be taken only after Slice 4F product work is itself completed and closed through its own six-step authorization and closure sequence.
-
-**Implementation is not authorized under this document alone.** This contract must first be human-reviewed and merged; a separate `AI-AUTONOMY-STATE.json` update must then explicitly authorize and pin an implementation PR/branch/SHA before any code under "Exact implementation scope" may be written.
+Slice 4F was the final remaining RFC-003 Milestone 4 customer mutation surface identified by the completed Slice 4E closure. Completion of Slice 4F product work completed the enumerated RFC-003 §23 Milestone 4 mutation-surface list — but, as required, this contract did not by itself close Milestone 4 or start any next Milestone. Milestone 4 closure was recorded separately, as its own independent, human-reviewed governance action, in `docs/automation/RFC-003-M4-CLOSURE.md`, after Slice 4F product work was completed and closed through its own six-step authorization sequence above. That closure document also does not select, authorize, or start RFC-003 Milestone 5.
