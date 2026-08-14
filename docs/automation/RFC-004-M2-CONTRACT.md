@@ -1,0 +1,567 @@
+# RFC-004 Milestone 2 Contract
+
+**Status: PROPOSED — NOT AUTHORIZED UNTIL HUMAN MERGE.**
+
+Human merge of this contract (bundled with the RFC-004 v1.3 narrow correction) directly authorizes one bounded M2 implementation branch — `agent/rfc-004-m2` — with no target-marker PR, no inert implementation PR, and no separate authorization PR, the same simplified workflow RFC-003 Milestone 5/6 and RFC-004 Milestone 1 already established and proved out. `start_automatically_after_contract_merge: false` and `advance_automatically: false` both hold throughout: a human still explicitly decides to start implementation after this contract merges, and nothing here triggers that start automatically.
+
+## Governing documents
+
+- [`docs/rfcs/RFC-004-PLANS-AND-BUSINESS-FEATURE-ENTITLEMENTS.md`](../rfcs/RFC-004-PLANS-AND-BUSINESS-FEATURE-ENTITLEMENTS.md), version **1.3** (bundled with this contract — the narrow correction to RFC-004 §17/§24/§29 is a precondition for this contract's own scope, not an independent change), read in full before drafting.
+- [`docs/automation/RFC-004-M1-CONTRACT.md`](RFC-004-M1-CONTRACT.md) — M1's own precedent for structure, evidence discipline, and governance, reused exactly.
+- RFC-004 M1 is complete, implemented, and merged via PR #63.
+
+## Base/branch assumptions
+
+- Contract-drafting branch: `chore/rfc-004-m2-contract`.
+- Base/HEAD: `18f52f3fec5fcb1ed89389cf2b344b9da3c3037c` (current `main`), working tree clean.
+- After this contract (and the bundled v1.3 correction) is human-merged, the M2 implementation branch (`agent/rfc-004-m2`) is created from the then-current `main` containing that merge.
+
+---
+
+## 1. Purpose
+
+Implement RFC-004 v1.3 §29's Milestone 2 scope: `App\Library\Entitlement\EntitlementManager` as the sole authority for RFC-004's structural entitlement decisions and mutations — the full RFC-004 §14 decision algorithm, RFC-004 §17/§17.2/§17.3/§17.4's Business-slot-capacity enforcement integrated at **every** actual Business-count-increasing operation (not only `createBusinessInWorkspace()` — this is the exact gap the bundled v1.3 correction closes), plan assignment/change/status mutations, complimentary-status mutations, additional-slot mutations, Workspace-override mutations, Business-toggle mutations, the catalog-pricing mutation guard, the `UsageAuthorizationGateway` seam with its Null implementation, all seven actor-driven entitlement events, and the typed exception set the algorithm and mutations require. M2 introduces **no** HTTP/admin/customer surface, **no** new permission keys, **no** RFC-005 implementation, and **no** M3 work of any kind.
+
+---
+
+## 2. Genuine design gap this contract closes (audit finding, not discretionary scope)
+
+Direct inspection of `app/Library/Workspace/WorkspaceManager.php`, `app/Library/Business/BusinessManager.php`, `app/Http/Controllers/Customer/Workspace/WorkspaceController.php`, `app/Repositories/Contracts/BusinessRepository.php`, and `app/Repositories/Eloquent/EloquentBusinessRepository.php`, and every actual caller of `createForCustomerInWorkspace()`, `createWorkspace()`, `createBusinessInWorkspace()`, and `reassignBusiness()`, found RFC-004 v1.2 §17/§24's "`createBusinessInWorkspace()` is the sole Business-creation orchestration entry point" statement false against the repository:
+
+1. **`BusinessManager::applyIdentity()`** (legacy onboarding path, `app/Library/Business/BusinessManager.php:143-144`) calls `WorkspaceManager::resolveLegacyOnboardingWorkspace()` and then `BusinessRepository::createForCustomerInWorkspace()` **directly** — it never calls `createBusinessInWorkspace()`.
+2. **`WorkspaceManager::createWorkspace()`** (`app/Library/Workspace/WorkspaceManager.php:161-205`) accepts an optional `WorkspaceFirstBusinessInput` and calls `createForCustomerInWorkspace()` directly when supplied.
+3. **`WorkspaceController::store()`** (`app/Http/Controllers/Customer/Workspace/WorkspaceController.php:135-145`) is `createWorkspace()`'s **only** production caller, and calls it as `createWorkspace((int) Auth::id(), $request->validated('name'))` — **never** with a `WorkspaceFirstBusinessInput`. `grep -r WorkspaceFirstBusinessInput app tests` confirms exactly four files reference it: the DTO itself, `WorkspaceManager.php`, and two test files (`tests/Feature/Workspace/WorkspaceLifecycleTest.php`, `tests/Unit/Workspace/WorkspaceFirstBusinessInputTest.php`) — no controller, job, or other production caller anywhere.
+4. **`WorkspaceManager::reassignBusiness()`** (`app/Library/Workspace/WorkspaceManager.php:976-1070`) increases the destination Workspace's Business-row count on a real cross-Workspace move and must therefore participate in destination-capacity enforcement.
+
+This is exactly the class of finding RFC-004 M1's own contract's stop/gap rule anticipates for the *next* milestone's own mandatory audit — it is corrected in RFC-004 v1.3 (bundled with this contract, RFC-004 §17/§17.2-§17.5/§24/§29) before M2's own scope is locked below, not discovered and silently worked around during M2's implementation.
+
+---
+
+## 3. Exact M2 scope
+
+- `App\Library\Entitlement\EntitlementManager` implementing RFC-004 v1.3 §14's full 8-step decision algorithm and §17's slot-decision API.
+- The `UsageAuthorizationGateway` seam (RFC-004 §19) with its `NullUsageAuthorizationGateway` implementation, bound in `AppServiceProvider`.
+- Plan assignment (§13.E below, new), the narrowly-scoped legacy-onboarding compatibility assignment (§13.D below), `changePlan()` (RFC-004 §17.1), `changePlanStatus()` (RFC-004 §18).
+- Complimentary-status grant/revoke (RFC-004 §8, §13).
+- `setAdditionalBusinessSlots()` (RFC-004 §17).
+- Workspace-override create/change/revert (RFC-004 §15).
+- Business-toggle create/remove (RFC-004 §16).
+- The catalog price/currency mutation guard (RFC-004 §12.5).
+- All seven actor-driven entitlement events (RFC-004 §21) and every actor-driven `workspace_entitlement_transitions` write M2 itself is responsible for (eight of the nine types — `plan_assigned` was already exercised once by M1's own backfill and is exercised again here by every actor-driven and legacy-compatibility first assignment).
+- Capacity-enforcement integration at **every** actual Business-count-increasing operation identified by §2 above: `createBusinessInWorkspace()`, `reassignBusiness()` (real cross-Workspace moves only), and the legacy onboarding path (including the newly-auto-provisioned-Workspace compatibility assignment).
+- Retirement of `WorkspaceFirstBusinessInput` and `createWorkspace()`'s optional third parameter (RFC-004 v1.3 §17.5 — confirmed unused by direct production-caller audit, §2 above).
+- The minimal M1-repository extensions genuinely required by the above (§10 below).
+- M2-scoped tests (§14 below).
+
+## 4. Exact out-of-scope
+
+- Any controller, route, view, or `config/permissions.php` change — those are M3 (RFC-004 §29).
+- Any RFC-005 wallet/ledger/payer/Stripe/usage-billing implementation (`UsageAuthorizationGateway` ships only its Null implementation).
+- Any Prospect Outreach or white-label gating/implementation.
+- Any legacy `plans`/`subscriptions`/`SubscriptionLog`/`SubscriptionTransaction`/`CustomerBasedPricingPlan`/`PlanSendingCreditPrice` schema, model, or repository change.
+- Any migration, unless direct implementation-time inspection proves an M1 schema defect makes M2 impossible — if so, implementation must **STOP and report**, not silently add schema.
+- Any RFC-004 M3/M4 work of any kind.
+- Any RFC-004 tag.
+- `docs/automation/AI-AUTONOMY-STATE.json` or any other workflow/autonomy-state file.
+
+---
+
+## 5. Dependency direction (preventing a WorkspaceManager ↔ EntitlementManager cycle)
+
+**One-directional: `WorkspaceManager` → `EntitlementManager` and `BusinessManager` → `EntitlementManager`. `EntitlementManager` never depends on `WorkspaceManager` or `BusinessManager`.**
+
+`EntitlementManager`'s own constructor depends only on: its six existing M1 repositories (`WorkspacePlanCatalogRepository`, `WorkspacePlanFeatureRepository`, `WorkspacePlanAssignmentRepository`, `WorkspaceEntitlementOverrideRepository`, `BusinessFeatureToggleRepository`, `WorkspaceEntitlementTransitionRepository`), plus four existing, **plain data-access** repositories it needs read/lock/authority-lookup access to and that themselves have no knowledge of `EntitlementManager` — `WorkspaceRepository` (RFC-003, for `findForUpdate()` — every `EntitlementManager` actor-driven mutation locks its target Workspace row itself, §6 below), `BusinessRepository` (RFC-001, for the new `countForWorkspace()`, §10 below), `WorkspaceMembershipRepository` (RFC-003, existing — used only for its existing `findByWorkspaceAndUser(Workspace $workspace, int $userId)` method, to enforce the already-existing RFC-003 owner-or-active-Admin authority rule for Business feature-toggle mutations, §13.K below — no code change to this repository is required or authorized), and `UserRepository` (existing — used only to look up an acting user's `users.is_admin` flag for the mutations restricted to a platform administrator, §13.N below, matching `EnsureUserIsAdministrator`'s own established administrator truth exactly — no code change to this repository is required or authorized) — plus the `UsageAuthorizationGateway` interface. None of these six repository dependencies is `WorkspaceManager` or `BusinessManager` themselves, so no cycle exists regardless of how many orchestration classes come to depend on `EntitlementManager`. Neither `WorkspaceMembershipRepository` nor `UserRepository` is added to §16's authorized-path list — both are existing, unmodified files, referenced only as dependencies.
+
+`WorkspaceManager`'s constructor gains exactly one new dependency, `EntitlementManager`, alongside its seven existing ones. `BusinessManager`'s constructor gains exactly one new dependency, `EntitlementManager`, alongside its five existing ones (it already depends on `WorkspaceManager`; that pre-existing edge is unaffected).
+
+---
+
+## 6. Locking / concurrency — exact required order
+
+**No count-increasing operation may read the Business count before locking the destination Workspace. Every `EntitlementManager` actor-driven mutation method locks its target Workspace row (`WorkspaceRepository::findForUpdate()`) as its own first step, before reading or writing any entitlement table for that Workspace — the single canonical serialization point for everything entitlement-related about a Workspace, exactly mirroring how `WorkspaceManager` already treats the Workspace row as the sole lock point for every one of its own mutations.**
+
+- **`createBusinessInWorkspace()`:** destination Workspace lock (already present, unchanged) → `EntitlementManager::assertCanCreateAnotherBusiness()` → `Business` insert, all in the same existing transaction.
+- **Legacy onboarding:** the one selected destination Workspace is locked (new, explicit — §13.C below) → `EntitlementManager::assertCanCreateAnotherBusiness()` → `Business` insert, all in the same existing `BusinessManager::applyIdentity()` transaction. When the resolver is going to throw because multiple candidates exist, **no candidate Workspace is locked at all** — this matches `resolveLegacyOnboardingWorkspace()`'s own existing, unchanged behavior exactly (it locks no Workspace today; verified by direct inspection).
+- **`reassignBusiness()`:** source + destination Workspaces locked in the existing deterministic ascending-ID order (unchanged) → Business locked + existing consistency/authority/active-state checks (unchanged) → for a **real cross-Workspace move only**, target-capacity decision using the already-locked target Workspace → source membership-grant cleanup → `BusinessRepository::reassignWorkspace()`, all in the same existing transaction. A same-Workspace call remains the existing authorized no-op, evaluated (as today) only after every lock/consistency/authority/active-state check has passed, and never reaches the capacity assertion.
+- **Every other `EntitlementManager` mutation** (`changePlan()`, `changePlanStatus()`, grant/revoke complimentary, `setAdditionalBusinessSlots()`, Workspace-override create/change/revert, Business-toggle create/remove, catalog-pricing mutation) locks its own target Workspace row as its own first step before reading or writing `workspace_plan_assignments`/`workspace_entitlement_overrides`/`business_feature_toggles`/`workspace_entitlement_transitions` for that Workspace.
+
+Required concurrency tests (§14 below), using real concurrent processes/transactions following this repository's existing proven patterns (`WorkspaceManagerConcurrencyTest.php`'s cross-process runner-script pattern **and** its same-process second-connection lock-probe pattern — both already shipped and reused, not invented) — never sequential coincidence:
+
+1. Create + create racing a destination Workspace's final slot: exactly one succeeds.
+2. Create + reassign racing the same destination Workspace's final slot: exactly one succeeds.
+3. No target over-allocation in either race.
+4. Source/destination isolation — a race on one Workspace never affects an unrelated Workspace's own count/decision.
+5. The existing opposite-direction-reassignment deadlock-prevention behavior (ascending-ID lock order for two concurrent reassignments swapping Businesses between the same two Workspaces, `WorkspaceBusinessOrchestrationTest.php`'s existing coverage) remains intact and unaffected by the new capacity assertion.
+
+---
+
+## 7. EntitlementManager — exact method surface
+
+```php
+final class EntitlementManager
+{
+    public function __construct(
+        private readonly WorkspaceRepository $workspaceRepository,
+        private readonly BusinessRepository $businessRepository,
+        private readonly WorkspaceMembershipRepository $membershipRepository,
+        private readonly UserRepository $userRepository,
+        private readonly WorkspacePlanCatalogRepository $catalogRepository,
+        private readonly WorkspacePlanFeatureRepository $planFeatureRepository,
+        private readonly WorkspacePlanAssignmentRepository $assignmentRepository,
+        private readonly WorkspaceEntitlementOverrideRepository $overrideRepository,
+        private readonly BusinessFeatureToggleRepository $toggleRepository,
+        private readonly WorkspaceEntitlementTransitionRepository $transitionRepository,
+        private readonly UsageAuthorizationGateway $usageAuthorizationGateway,
+    ) {}
+
+    // --- Read / decision (no lock — pure read, matches RFC-003's own
+    // read-side precedent of not locking for a plain authorization check) ---
+    public function decide(Workspace $workspace, Business $business, PlatformFeature $feature, int $actorUserId): EntitlementDecision;
+    public function decideBusinessSlotCapacity(Workspace $workspace): BusinessSlotCapacityDecision;
+    public function assertCanCreateAnotherBusiness(Workspace $workspace): void; // locks nothing itself — caller already holds the Workspace lock (§6)
+
+    // --- Plan assignment ---
+    public function assignFirstPlan(Workspace $workspace, WorkspacePlanTier $tier, int $actorUserId, string $reason, bool $isComplimentary = false, int $additionalBusinessSlots = 0): WorkspacePlanAssignment;
+    public function createLegacyOnboardingCompatibilityAssignment(Workspace $workspace): WorkspacePlanAssignment; // narrow, system-provenance only — §13.D
+    public function changePlan(Workspace $workspace, WorkspacePlanTier $newTier, int $actorUserId, ?string $reason = null, ?int $additionalBusinessSlots = null): WorkspacePlanAssignment;
+    public function changePlanStatus(Workspace $workspace, WorkspacePlanAssignmentStatus $status, int $actorUserId, string $reason): WorkspacePlanAssignment;
+
+    // --- Complimentary status ---
+    public function grantComplimentaryStatus(Workspace $workspace, int $actorUserId, string $reason): WorkspacePlanAssignment;
+    public function revokeComplimentaryStatus(Workspace $workspace, int $actorUserId, ?string $reason = null): WorkspacePlanAssignment;
+
+    // --- Additional Business slots ---
+    public function setAdditionalBusinessSlots(Workspace $workspace, int $count, int $actorUserId, ?string $reason = null): WorkspacePlanAssignment;
+
+    // --- Workspace overrides ---
+    public function createOrChangeOverride(Workspace $workspace, PlatformFeature $feature, WorkspaceEntitlementOverrideState $state, int $actorUserId, string $reason): WorkspaceEntitlementOverride;
+    public function revertOverride(Workspace $workspace, PlatformFeature $feature, int $actorUserId): void;
+
+    // --- Business feature toggles ---
+    public function disableBusinessFeature(Business $business, PlatformFeature $feature, int $actorUserId, ?string $reason = null): BusinessFeatureToggle;
+    public function enableBusinessFeature(Business $business, PlatformFeature $feature, int $actorUserId): void;
+
+    // --- Catalog pricing mutation guard ---
+    public function updateCatalogPricing(WorkspacePlanCatalog $catalog, ?float $price, ?int $currencyId): WorkspacePlanCatalog;
+}
+```
+
+Every mutating method re-checks state even when a caller already checked, matching RFC-001/RFC-003's manager posture (RFC-004 §20). No repository method outside these nine (six M1 repositories + the three extended ones, §10) is ever queried directly for entitlement data by any other class — `EntitlementManager` and its repositories are the only authorized readers/writers of the six RFC-004 tables (§15 below).
+
+### 7.1 `decide()` — exact precedence (RFC-004 §14, unchanged, reproduced not redesigned)
+
+1. Known feature (`PlatformFeature::tryFrom()`) — else `platform_feature_unknown`.
+2. Implementation available (`PlatformFeatureRegistry::isAvailable()`) — else `platform_feature_unavailable`, never bypassable by an override.
+3. Workspace assignment exists — else `workspace_plan_unassigned`.
+4. Workspace override if present, else plan-feature mapping — else `not_entitled_by_plan` / `denied_by_workspace_override`.
+5. Business toggle narrows only — else `disabled_for_business`.
+6. Billing/operational state (RFC-004 §18) — else `plan_inactive` / `plan_suspended`.
+7. `UsageAuthorizationGateway::check()` — else the gateway's own reason (reserved `usage_unauthorized`, unreachable until RFC-005 binds a real gateway).
+8. Allowed.
+
+Stable denial keys, exactly nine, no additions: `platform_feature_unknown`, `platform_feature_unavailable`, `workspace_plan_unassigned`, `not_entitled_by_plan`, `denied_by_workspace_override`, `disabled_for_business`, `plan_inactive`, `plan_suspended`, `usage_unauthorized`.
+
+**`decide()` and `decideBusinessSlotCapacity()` establish no tenancy authorization of any kind** — neither checks `WorkspaceMembershipRepository`, `UserRepository`, or any owner/admin/platform-admin rule, and neither should ever be modified to do so. RFC-003's own `userCanAccessBusiness()`/`assertUserCanAccessBusiness()` authorization remains an entirely independent precondition, already required to have passed before either read/decision method is ever called — exactly as RFC-004 §9 already requires (§13.N below states the full authority split for every *mutation*; these two read-only methods sit outside it entirely).
+
+### 7.2 `decideBusinessSlotCapacity()` — exact algorithm (RFC-004 §17, unchanged, reproduced not redesigned)
+
+Reproduces RFC-004 §17's pseudocode exactly: unassigned → `workspace_plan_unassigned`; suspended/inactive → `plan_suspended`/`plan_inactive`; unlimited (Agency) → always allowed; otherwise `effectiveCapacity = min(included + additionalSlots, max)`; under capacity → allowed; at capacity but `effectiveCapacity < max` → `business_slot_allocation_required`; at `max` → `business_slot_limit_exceeded`. `currentCount` is read via `BusinessRepository::countForWorkspace($workspace)` (§10) — every Business row regardless of `status` (RFC-004 §8/§13), never a Collection loaded into memory just to be counted.
+
+---
+
+## 8. Value objects (RFC-004 §17/§20, exact shapes)
+
+```php
+final readonly class EntitlementDecision
+{
+    public function __construct(public bool $allowed, public ?string $reason) {}
+}
+
+final readonly class BusinessSlotCapacityDecision
+{
+    public function __construct(
+        public int $currentBusinessCount,
+        public int $includedSlots,
+        public int $additionalSlotsAllocated,
+        public ?int $effectiveCapacity,
+        public bool $unlimited,
+        public bool $allowed,
+        public ?string $denialReason,
+    ) {}
+}
+
+final readonly class UsageAuthorizationResult
+{
+    public function __construct(public bool $authorized, public ?string $reason = null) {}
+}
+```
+
+---
+
+## 9. Usage authorization seam (RFC-004 §19, exact)
+
+```php
+interface UsageAuthorizationGateway
+{
+    public function check(Business $business, PlatformFeature $feature): UsageAuthorizationResult;
+}
+
+final class NullUsageAuthorizationGateway implements UsageAuthorizationGateway
+{
+    public function check(Business $business, PlatformFeature $feature): UsageAuthorizationResult
+    {
+        return new UsageAuthorizationResult(authorized: true);
+    }
+}
+```
+
+`AppServiceProvider` gains exactly one additive line in the existing `$bindings` array: `UsageAuthorizationGateway::class => NullUsageAuthorizationGateway::class`. No other line in that file changes. No RFC-005 implementation ships.
+
+---
+
+## 10. M1/RFC-001 repository extensions genuinely required by M2
+
+Direct inspection of all six M1 repositories plus `BusinessRepository`/`WorkspaceRepository` found the following **plain data-access** additions genuinely required — no entitlement-decision logic added to any repository, matching M1's own "plain data-access contract" boundary exactly:
+
+- **`BusinessRepository`** (contract + Eloquent): add `countForWorkspace(Workspace $workspace): int` — a lean `COUNT(*)` query (`Business::where('workspace_id', $workspace->id)->count()`), replacing what would otherwise be an inefficient full-Collection load merely to count rows. Every Business row counts, regardless of `status` (RFC-004 §8/§13) — the query applies no status filter.
+- **`WorkspacePlanCatalogRepository`** (contract + Eloquent): add `update(WorkspacePlanCatalog $catalog, array $attributes): WorkspacePlanCatalog` — M1's contract had `findById`/`findByTier`/`create()` only; the catalog-pricing mutation guard (RFC-004 §12.5) genuinely needs to update `price`/`currency_id` on an existing row.
+- **`WorkspacePlanAssignmentRepository`** (contract + Eloquent): add `update(WorkspacePlanAssignment $assignment, array $attributes): WorkspacePlanAssignment` — M1's contract had `findByWorkspaceId`/`create()` only; `changePlan()`/`changePlanStatus()`/complimentary grant-revoke/`setAdditionalBusinessSlots()` all genuinely need to mutate an existing assignment row.
+- **`WorkspaceEntitlementOverrideRepository`** (contract + Eloquent): add `update(WorkspaceEntitlementOverride $override, WorkspaceEntitlementOverrideState $state): WorkspaceEntitlementOverride` — M1's contract had `findByWorkspaceAndFeature`/`create()`/`delete()` only; changing an existing override's state (allow↔deny, RFC-004 §15) is a genuinely distinct operation from creating a first-time override.
+
+No other M1 repository (`WorkspacePlanFeatureRepository`, `BusinessFeatureToggleRepository`, `WorkspaceEntitlementTransitionRepository`) needs a new method — plan-feature packaging is not admin-mutated in M2 (no HTTP surface), toggles are create/remove-only by design (RFC-004 §16), and the transition repository is already append-only with the exact `create()`/`forWorkspace()` M2 needs.
+
+Each `update()` implementation is a plain `$model->fill(Arr::only($attributes, [...]))->save()`-style mutation (matching `EloquentWorkspaceRepository::update()`'s own exact precedent) — no business-rule logic in the repository; every invariant (pricing pairing, slot-value bounds, status transitions) is enforced exclusively by `EntitlementManager` before it calls `update()`.
+
+---
+
+## 11. Events (RFC-004 §21, exact seven, matching `App\Events\Workspace\*`'s exact convention)
+
+`WorkspacePlanAssigned`, `WorkspacePlanChanged`, `WorkspacePlanStatusChanged`, `WorkspaceComplimentaryStatusChanged`, `WorkspaceAdditionalBusinessSlotsChanged`, `WorkspaceEntitlementOverrideChanged`, `BusinessFeatureToggleChanged` — under `App\Events\Entitlement\*`. Immutable constructor-promoted scalar/ID properties only, dispatched after commit, matching `App\Events\Workspace\WorkspaceCreated`'s own exact shape and dispatch-timing convention. M2 exercises every one of them at least once in its own tests (§14).
+
+---
+
+## 12. Exceptions — exact bounded set
+
+**Seven already reserved by the M1 contract's own out-of-scope list** (verbatim names, `app/Exceptions/Entitlement/`): `WorkspacePlanUnassignedException`, `InactiveWorkspacePlanException`, `SuspendedWorkspacePlanException`, `BusinessSlotAllocationRequiredException`, `BusinessSlotLimitExceededException`, `UndefinedPlanPricingException`, `PlanCatalogPricingInUseException`.
+
+**Three additional, genuinely distinct RFC-004 failure semantics** (not collapsible into the above without losing a distinct, named failure mode RFC-004 itself requires):
+
+- `InvalidAdditionalBusinessSlotsException` — `setAdditionalBusinessSlots()`/`changePlan()`'s allocation argument outside `{0,1,2}` for Core/Growth, or any non-zero value for Agency (RFC-004 §17/§17.1).
+- `WorkspacePlanAlreadyAssignedException` — `assignFirstPlan()` called against a Workspace that already has an assignment (RFC-004 §8 — every Workspace has at most one).
+- `UnavailablePlatformFeatureOverrideException` — an `allow`-override write for a feature `PlatformFeatureRegistry::isAvailable()` reports `false` for (RFC-004 §11/§15; a `deny` override for the same feature remains permitted, no exception).
+
+No other new exception class is introduced. An unknown `feature_key` supplied to an override/toggle mutation reuses the M1 repositories' own existing `InvalidArgumentException` (already thrown by `WorkspacePlanFeatureRepository`/`WorkspaceEntitlementOverrideRepository`/`BusinessFeatureToggleRepository::create()`) — no redundant `EntitlementManager`-level exception duplicates that already-correct M1 behavior.
+
+---
+
+## 13. Exact mutation semantics
+
+### 13.A `createBusinessInWorkspace()` (WorkspaceManager, modified)
+
+Keeps its existing requirements exactly: target Workspace locked first, existing active-state/RFC-003-authority checks unchanged, Business insert in the same transaction, no controller-side slot arithmetic. The one addition: `$this->entitlementManager->assertCanCreateAnotherBusiness($lockedWorkspace);` after the lock, before the insert (RFC-004 §17).
+
+### 13.B `reassignBusiness()` (WorkspaceManager, modified)
+
+Preserves its exact existing architecture (derive source/target IDs → dedupe/sort ascending → lock every distinct Workspace in that order → lock Business → re-verify source → authority + active-state both sides → same-target no-op check). For a **real** cross-Workspace move, after every existing check has passed but **before** `removeAllForBusinessInWorkspace()` and **before** `reassignWorkspace()`: `$this->entitlementManager->assertCanCreateAnotherBusiness($lockedTargetWorkspace);`. A same-Workspace call remains the existing no-op — it must never reach this assertion and must never fail merely because the Workspace is at capacity (RFC-004 §17.2).
+
+### 13.C Legacy onboarding integration (BusinessManager + WorkspaceManager, modified)
+
+`WorkspaceManager` gains one new narrow public method:
+
+```php
+public function lockForLegacyOnboardingBusinessCreation(Workspace $workspace): Workspace
+{
+    $locked = $this->workspaceRepository->findForUpdate($workspace->id);
+
+    if ($locked === null) {
+        throw new WorkspaceNotFoundException($workspace->id);
+    }
+
+    return $locked;
+}
+```
+
+Deliberately no authority or active-state check — the legacy path has never enforced either, and this integration adds exactly one new thing (capacity enforcement), never a new authority requirement (RFC-004 §17.3). `BusinessManager::applyIdentity()`'s creation branch becomes:
+
+```php
+$workspace = $this->workspaceManager->resolveLegacyOnboardingWorkspace($customer->user_id);
+$lockedWorkspace = $this->workspaceManager->lockForLegacyOnboardingBusinessCreation($workspace);
+$this->entitlementManager->assertCanCreateAnotherBusiness($lockedWorkspace);
+$result = $this->businessRepository->createForCustomerInWorkspace($customer, $lockedWorkspace, $normalizedAttributes);
+```
+
+This lock is a genuinely new, explicit acquisition performed immediately after resolution, inside `applyIdentity()`'s own existing transaction — it is not assumed to be inherited implicitly from `resolveLegacyOnboardingWorkspace()`'s own internal `DB::transaction()` call (which, being called while `applyIdentity()`'s transaction is already open, executes as a Laravel savepoint rather than a separate real transaction — a lock taken inside it would, in practice, already survive for the rest of the outer transaction too, but this design deliberately does not rely on a reader correctly reasoning through that subtlety: the lock here is explicit, self-evident, and independently correct regardless of savepoint semantics). `resolveLegacyOnboardingWorkspace()`'s own candidate-resolution behavior is completely unchanged — when it throws for multiple candidates, it still locks nothing, exactly as today (verified: `verifyWorkspaceIds()` uses plain `findById()`, never `findForUpdate()`) — so no candidate Workspace is ever locked unnecessarily. `BusinessManager` gains no raw entitlement-table query anywhere — it only ever calls `EntitlementManager::assertCanCreateAnotherBusiness()`.
+
+### 13.D Newly auto-provisioned legacy Workspace (WorkspaceManager + EntitlementManager, modified/new)
+
+`WorkspaceManager::provisionWorkspaceRecord()` (private, called only from `resolveLegacyOnboardingWorkspace()`'s no-fallback-candidates branch) gains one additive call immediately after creating the Workspace row: `$this->entitlementManager->createLegacyOnboardingCompatibilityAssignment($workspace);`. This is the **only** call site for this method anywhere in M2's authorized scope.
+
+`EntitlementManager::createLegacyOnboardingCompatibilityAssignment(Workspace $workspace): WorkspacePlanAssignment` — narrow, system-provenance only:
+
+- Resolves the Core catalog row (same `tier = 'core'` lookup M1's own backfill used).
+- Creates a `workspace_plan_assignments` row: `status = active`, `is_complimentary = true`, `additional_business_slots = 0` (a brand-new Workspace has no existing Businesses), `complimentary_granted_by_user_id = null`.
+- **Exact fixed reason string**: `"Legacy onboarding Workspace — auto-provisioned complimentary Core assignment continuing Milestone 1's backfill posture for a brand-new Workspace created by the legacy resolver."`
+- Writes one `plan_assigned` `workspace_entitlement_transitions` row (`actor_user_id = null`, `to_plan_catalog_id` = the Core row, `reason` = the same fixed string) — the normal first-assignment transition, no new transition type.
+- Dispatches `WorkspacePlanAssigned` after commit, exactly like any other first assignment.
+- Writes **no** `complimentary_granted` transition — complimentary is part of the row's initial state, not a change to an existing one (RFC-004 §17.4/§10.4's own existing create-vs-change distinction).
+- `null` actor provenance is permitted **only** for this one narrowly-defined case and the already-existing M1 backfill — never a general admin-bypass precedent. This is a **system-only internal path**: it is never called from anywhere except `provisionWorkspaceRecord()`, is not part of any ordinary/HTTP-reachable mutation surface, and can never be invoked as a normal actor-driven self-grant by any Workspace owner, member, or administrator — `assignFirstPlan()` (§13.E) remains the only actor-driven first-assignment authority (§13.N).
+
+### 13.E Normal first plan assignment (`assignFirstPlan()`, new)
+
+**Platform administrator only (§13.N).** Workspace locked first → must currently be unassigned (else `WorkspacePlanAlreadyAssignedException`) → tier resolved from catalog → non-complimentary requires catalog `price`+`currency_id` both defined (else `UndefinedPlanPricingException`, RFC-004 §12.5) → `additionalBusinessSlots` validated `{0,1,2}` for Core/Growth, must be `0` for Agency (else `InvalidAdditionalBusinessSlotsException`) → `reason` required (non-empty) → `actorUserId` required and must resolve to a platform administrator (else the same authority denial §13.N defines) → assignment created → `plan_assigned` transition written → `WorkspacePlanAssigned` dispatched after commit.
+
+### 13.F `changePlan()` (exact, reproducing RFC-004 §17.1 without redesign)
+
+**Platform administrator only (§13.N).** Same locked transaction throughout. Core↔Growth preserves `additional_business_slots` unchanged (`$additionalBusinessSlots` must be `null`). Core/Growth→Agency atomically resets slots to `0` (writes both `plan_changed` and `additional_business_slots_changed` transitions, dispatches both events). Agency→Core/Growth defaults slots to `0`, or allocates `1`/`2` in the same operation subject to §13.E's pricing check. Existing Businesses are never removed/hidden/deactivated; grandfathered over-capacity is allowed and expected. `additional_business_slots_changed` transition/event fire only when the value actually changed.
+
+### 13.G `changePlanStatus()` (exact, reproducing RFC-004 §18 without redesign)
+
+**Platform administrator only (§13.N).** `actorUserId` and non-empty `reason` both mandatory (unlike lower-stakes mutations elsewhere). Any of `active`/`inactive`/`suspended` → any other. **No-op behavior, defined here since RFC-004 left it implicit**: requesting the assignment's own current status is an authorized no-op — actor authority and reason are still validated before the no-op is returned, matching every other `WorkspaceManager` no-op's own "authority/validation checked before the no-op" convention, but no transition is written and no event is dispatched for a true no-op. A real transition writes `plan_status_changed` (`from_status`/`to_status`) and dispatches `WorkspacePlanStatusChanged` after commit. Status gates feature execution and Business-count increase only, never Workspace visibility (RFC-004 §18).
+
+### 13.H Complimentary status (exact, reproducing RFC-004 §8/§13/§18)
+
+**Platform administrator only (§13.N).** `grantComplimentaryStatus()`: non-empty `reason` required, `actorUserId` required and must resolve to a platform administrator, sets `is_complimentary = true` (already-`true` is a no-op, no transition/event), writes `complimentary_granted`, dispatches `WorkspaceComplimentaryStatusChanged`. `revokeComplimentaryStatus()`: `actorUserId` required (same authority), `reason` optional, symmetric no-op/transition/event behavior with `complimentary_revoked`. Neither bypasses `inactive`/`suspended` status or slot capacity — both remain orthogonal gates exactly as RFC-004 §18 requires. No RFC-005 usage-cost waiver of any kind is invented beyond RFC-004's own existing complimentary semantics (§13's already-closed additional-slot-billing clarification).
+
+### 13.I `setAdditionalBusinessSlots()` (exact, reproducing RFC-004 §17 without redesign)
+
+**Platform administrator only (§13.N).** Core/Growth: `{0,1,2}` only. Agency: `0` only (else `InvalidAdditionalBusinessSlotsException`). Increasing for a non-complimentary assignment requires catalog `price`+`currency_id`+`additional_business_slot_price_ratio` all defined (else `UndefinedPlanPricingException`). Increasing for a complimentary assignment never requires pricing. Decreasing is always permitted regardless of pricing state. Writes `additional_business_slots_changed` with exact before/after values, dispatches `WorkspaceAdditionalBusinessSlotsChanged`. No payment collection of any kind.
+
+### 13.J Workspace overrides (exact, reproducing RFC-004 §15 without redesign)
+
+**Platform administrator only (§13.N).** `createOrChangeOverride()`: known feature required (else the M1 repository's own `InvalidArgumentException`); an `allow` state for a feature `PlatformFeatureRegistry::isAvailable()` reports `false` for is rejected (`UnavailablePlatformFeatureOverrideException`) — `deny` for an unavailable feature is permitted (redundant but harmless, RFC-004 §11). Non-empty `reason` and `actorUserId` (platform administrator) required. First-time create vs. change-existing both durably audited (`entitlement_override_allowed`/`entitlement_override_denied`, correct `from_override_state`/`to_override_state`), dispatches `WorkspaceEntitlementOverrideChanged`. An override, once present, completely replaces the plan-mapping answer for that feature — never partially. `revertOverride()`: deletes the row, writes `entitlement_override_reverted` recording the state it had immediately before removal, dispatches the same event.
+
+### 13.K Business feature toggles (exact, reproducing RFC-004 §16 without redesign)
+
+**Workspace owner or active Workspace Admin only (§13.N) — never a platform administrator by itself, and never Staff.** Disable-only — absence means enabled subject to Workspace entitlement. Owner-or-active-Admin authority (RFC-003 §7.3, reused unmodified — `WorkspaceManager`'s existing `assertActorIsOwnerOrActiveAdmin()`-equivalent check, called via the Workspace the Business belongs to, using `WorkspaceMembershipRepository::findByWorkspaceAndUser()`). Known feature required. The Business must belong to the Workspace being checked. The Workspace must currently be effectively entitled to the feature (via `decide()`) before a disable row can be created — there would be nothing meaningful to disable otherwise. Create/remove only — event-only (`BusinessFeatureToggleChanged`), **no** durable transition row, matching RFC-004 §21's own explicit "lower-stakes, more frequent than a Workspace-level change" justification for this one deliberate exception.
+
+### 13.L Catalog pricing mutation guard (exact, reproducing RFC-004 §12.5 without redesign)
+
+**Platform administrator only (§13.N).** `updateCatalogPricing()`: `price`/`currency_id` are always both-null or both-populated — setting exactly one is rejected at the application layer. Clearing both on a catalog row still referenced by a **non-complimentary** assignment is rejected (`PlanCatalogPricingInUseException`); a complimentary-only-referenced or unreferenced row may always be cleared. No final product price is invented anywhere in M2 — every seed/test value stays `null`/`null` unless a test scenario explicitly needs a defined price to exercise the guard itself, in which case it uses an obviously-synthetic placeholder value, never a claimed real price. No HTTP surface exists yet to reach this method — M2 tests call it directly.
+
+### 13.M Retirement of `WorkspaceFirstBusinessInput` (RFC-004 v1.3 §17.5)
+
+`createWorkspace()`'s signature becomes `createWorkspace(int $ownerUserId, string $name): Workspace` — the `?WorkspaceFirstBusinessInput $firstBusiness` parameter, its `createForCustomerInWorkspace()` branch, and the now-unreachable `BusinessAssignedToWorkspace::dispatch()` call inside it are removed. `app/DTO/Workspace/WorkspaceFirstBusinessInput.php` is deleted. `WorkspaceCreated` dispatch is unaffected. No automatic complimentary plan is invented for an ordinarily-created Workspace — it may legitimately remain unassigned; any Business-creation attempt against it is fail-closed via `assertCanCreateAnotherBusiness()`'s own `workspace_plan_unassigned` denial, exactly like any other unassigned Workspace.
+
+### 13.N Actor authority split (added in this correction)
+
+Every `EntitlementManager` **mutation** method requires an `actorUserId` and enforces exactly one of two independent authority rules — never a HTTP-layer concern, never re-derived by any caller:
+
+- **Platform administrator only** — `assignFirstPlan()` (§13.E), `changePlan()` (§13.F), `changePlanStatus()` (§13.G), `grantComplimentaryStatus()`/`revokeComplimentaryStatus()` (§13.H), `setAdditionalBusinessSlots()` (§13.I), `createOrChangeOverride()`/`revertOverride()` (§13.J), `updateCatalogPricing()` (§13.L). Authority is checked via `UserRepository`'s existing lookup of `actorUserId`, testing `users.is_admin` — the same, already-established administrator truth `EnsureUserIsAdministrator` already uses, never a new or parallel authorization mechanism. A non-administrator actor is denied before any entitlement table is read or written.
+- **Workspace owner or active Workspace Admin only** — `disableBusinessFeature()`/`enableBusinessFeature()` (§13.K). Authority is checked via `WorkspaceMembershipRepository::findByWorkspaceAndUser()`, reusing RFC-003 §7.3's already-established rule exactly (owner always qualifies; an active membership with role Admin qualifies; Staff and inactive Admin do not) — never a platform-administrator requirement, and never satisfied by platform-administrator status alone absent Workspace owner/Admin standing.
+- **Read/decision methods** (`decide()`, `decideBusinessSlotCapacity()`, `assertCanCreateAnotherBusiness()`) establish **no** tenancy authorization of any kind (§7.1) — RFC-003's own authorization remains an entirely independent precondition, already required to have passed before either is called.
+- **The narrow legacy auto-provisioning compatibility assignment** (`createLegacyOnboardingCompatibilityAssignment()`, §13.D) is a **system-only internal path** with a `null` actor — reachable only from `WorkspaceManager::provisionWorkspaceRecord()`'s own specific legacy-provisioning integration already defined by RFC-004 v1.3, never invocable as a normal actor-driven self-grant by any Workspace owner, member, or administrator, and never a template for any other mutation's authority.
+
+---
+
+## 14. Exact test scope
+
+### 14.1 New `tests/Feature/Entitlement/*` files (14)
+
+- **`EntitlementManagerDecisionTest.php`** — all 8 precedence steps in order; unknown/unavailable cannot be overridden into execution (an `allow` override write for `Planned` rejected; existing `deny` override for `Planned` permitted, still denies via step 2 not step 4); exact plan matrix both directions; toggle narrows only (never widens a Workspace `false`); active/inactive/suspended precedence; complimentary/status precedence (`suspended` denies even complimentary; `active`+complimentary allows without catalog pricing); `NullUsageAuthorizationGateway` always authorizes at step 7; all nine denial keys individually reachable and correctly named.
+- **`EntitlementManagerFirstAssignmentTest.php`** — locked/unassigned-required/tier-resolved/pricing-invariant/slot-value bounds/reason/actor all required; duplicate first assignment rejected (`WorkspacePlanAlreadyAssignedException`); `plan_assigned` transition + `WorkspacePlanAssigned` event; **a non-platform-administrator actor is denied** (§13.N).
+- **`EntitlementManagerLegacyCompatibilityAssignmentTest.php`** — only reachable via `provisionWorkspaceRecord()`; exact fixed reason string; `additional_business_slots = 0`; null actor; `plan_assigned` transition (not `complimentary_granted`); event dispatched; never reachable for an ordinarily-created Workspace; **direct proof it cannot be invoked as a normal actor-driven self-grant by any Workspace owner, member, or platform administrator — no actor-supplied path reaches it** (§13.D/§13.N).
+- **`EntitlementManagerChangePlanTest.php`** — all three direction normalizations (Core↔Growth preserves; Core/Growth→Agency resets to 0 atomically with both transitions in one call; Agency→Core/Growth defaults 0 or allocates 1/2 subject to pricing); price invariant on a non-complimentary slot increase; existing Businesses never removed; grandfathered over-capacity; `additional_business_slots_changed` fires only when the value actually changed; **a non-platform-administrator actor is denied** (§13.N).
+- **`EntitlementManagerChangePlanStatusTest.php`** — actor/reason mandatory (both omissions rejected); all six real active/inactive/suspended transitions; the same-status no-op writes no transition/event but still validates actor authority/reason first; **a non-platform-administrator actor is denied** (§13.N).
+- **`EntitlementManagerComplimentaryStatusTest.php`** — reason required on grant; actor required both directions; correct transitions/events; does not bypass inactive/suspended or capacity; **a non-platform-administrator actor is denied for both grant and revoke** (§13.N).
+- **`EntitlementManagerAdditionalSlotsTest.php`** — Core/Growth `{0,1,2}` only, Agency `0` only; increase-for-non-complimentary requires pricing; increase-for-complimentary does not; decrease always permitted; exact before/after audit + event; **a non-platform-administrator actor is denied** (§13.N).
+- **`EntitlementManagerOverrideTest.php`** — known-feature required; `allow` for unavailable rejected, `deny` for unavailable permitted; reason/actor required; precedence over plan mapping; all three transition types with correct before/after state; event; **a non-platform-administrator actor is denied for create/change/revert** (§13.N).
+- **`EntitlementManagerBusinessToggleTest.php`** — must be currently entitled to create a disable row; disable-only (never a grant); create/remove only; event fires, no transition row is ever written; **full owner-or-active-Admin authority matrix**: ordinary Workspace Staff denied; an active Workspace Admin allowed; the Workspace owner allowed; an inactive Admin denied — and a platform administrator with no Workspace owner/Admin standing is also denied, since this mutation is never platform-administrator-gated (§13.K/§13.N).
+- **`EntitlementManagerCatalogPricingTest.php`** — both-null-or-both-populated; clearing blocked while a non-complimentary assignment references the row; complimentary references never block clearing; `UndefinedPlanPricingException`/`PlanCatalogPricingInUseException` both reachable; **a non-platform-administrator actor is denied** (§13.N).
+- **`EntitlementManagerBusinessSlotCapacityTest.php`** — included 1st/2nd/3rd succeed with zero allocation; 4th requires allocation (`business_slot_allocation_required`); 4th succeeds with slot 1; 5th requires slot 2 (denied with only slot 1); 5th succeeds with slot 2; 6th always denied regardless of allocation; Agency unlimited; inactive Business rows still consume slots; grandfathered over-capacity keeps every Business and still denies further creation; **an ordinary customer-created empty Workspace does NOT silently receive a complimentary plan** — remains unassigned, and a Business-creation attempt against it fails closed with `workspace_plan_unassigned`.
+- **`NullUsageAuthorizationGatewayTest.php`** — always authorizes, for an arbitrary Business/feature pair.
+- **`EntitlementManagerConcurrencyTest.php`** — the five scenarios in §6, using the existing proven runner-script and lock-probe patterns; one new inline/Support runner only if the existing two (`concurrent_backfill_runner.php`, `concurrent_workspace_resolver_runner.php`) cannot express a real `createBusinessInWorkspace()`/`reassignBusiness()` race — confirmed they cannot (neither invokes Business-creation or reassignment), so exactly one new file is authorized: `tests/Feature/Entitlement/Support/concurrent_business_slot_runner.php`, following `concurrent_backfill_runner.php`'s exact bootstrap/database-guard/exit-code shape.
+- **`NoRawEntitlementTableQueryTest.php`** — source-scans `app/` confirming no raw query against any of the six RFC-004 tables exists outside `EntitlementManager` and its repositories, except the already-approved M1 migration/backfill historical exception (`WorkspaceEntitlementBackfillV1`, `..._120007_seed_...php`) — mirrors `WorkspaceM1BBoundaryTest.php`'s own `phpFilesUnder()`-based source-scan technique, not a new scanning mechanism.
+
+### 14.2 Modified M1 repository tests (3)
+
+- `WorkspacePlanCatalogRepositoryTest.php` — add `update()` round-trip coverage.
+- `WorkspacePlanAssignmentRepositoryTest.php` — add `update()` round-trip coverage.
+- `WorkspaceEntitlementOverrideRepositoryTest.php` — add `update()` round-trip coverage.
+
+### 14.3 Modified existing Workspace/Business tests (4)
+
+- `WorkspaceBusinessOrchestrationTest.php` — add: final-slot-available succeeds; full target denies (`BusinessSlotLimitExceededException`); unassigned target denies (`WorkspacePlanUnassignedException`); inactive-plan target denies (`InactiveWorkspacePlanException`); suspended-plan target denies (`SuspendedWorkspacePlanException`); source/destination isolation; same-target no-op still a no-op (unaffected by capacity); existing opposite-direction lock-order test still passes unmodified.
+- `WorkspaceLifecycleTest.php` — remove the four `WorkspaceFirstBusinessInput`-based test methods (retired capability); remove `BusinessAssignedToWorkspace::class` from `ALL_LIFECYCLE_EVENTS` (no longer reachable from this file's own remaining tests).
+- `WorkspaceM1BBoundaryTest.php` — `test_workspace_manager_has_no_unapproved_milestone_2_methods()`'s exact expected method list gains exactly one new name, `lockForLegacyOnboardingBusinessCreation` (RFC-003's own "Milestone 2" numbering is unrelated to RFC-004's — this is the one new public `WorkspaceManager` method M2 adds).
+- `BusinessManagerTest.php` — add: legacy onboarding against an existing at-capacity Workspace denies; legacy onboarding against a newly-auto-provisioned Workspace receives the compatibility assignment then successfully creates its first Business.
+
+### 14.4 Deleted test (1)
+
+- `tests/Unit/Workspace/WorkspaceFirstBusinessInputTest.php` — the DTO it tests no longer exists.
+
+---
+
+## 15. No-raw-query boundary (RFC-004 §20, reaffirmed)
+
+No direct query against `workspace_plan_catalog`, `workspace_plan_features`, `workspace_plan_assignments`, `workspace_entitlement_overrides`, `business_feature_toggles`, or `workspace_entitlement_transitions` exists anywhere outside `EntitlementManager` and its repositories, with exactly one already-approved historical exception: M1's own migration/backfill code (`WorkspaceEntitlementBackfillV1` and the seed/DDL migrations), which is query-builder-only by RFC-004 §25's own explicit, already-authorized design and is not reopened by M2. Verified by `NoRawEntitlementTableQueryTest.php` (§14.1), not merely believed.
+
+---
+
+## 16. Exact authorized implementation paths
+
+**Fifty-eight unique paths total.** Category subtotals sum exactly: 6 Library/Entitlement core + 7 events + 10 exceptions + 1 provider binding + 8 repository extensions (4 pairs) + 2 manager integrations + 1 retirement (deleted) = 35 app-side, plus 14 new Entitlement tests + 1 new concurrency-test support file + 3 modified M1 repository tests + 4 modified Workspace/Business tests + 1 deleted test = 23 test-side. **35 + 23 = 58.**
+
+### Library/Entitlement core (6 new)
+
+1. `app/Library/Entitlement/EntitlementManager.php`
+2. `app/Library/Entitlement/EntitlementDecision.php`
+3. `app/Library/Entitlement/BusinessSlotCapacityDecision.php`
+4. `app/Library/Entitlement/Contracts/UsageAuthorizationGateway.php`
+5. `app/Library/Entitlement/NullUsageAuthorizationGateway.php`
+6. `app/Library/Entitlement/UsageAuthorizationResult.php`
+
+### Events (7 new)
+
+7. `app/Events/Entitlement/WorkspacePlanAssigned.php`
+8. `app/Events/Entitlement/WorkspacePlanChanged.php`
+9. `app/Events/Entitlement/WorkspacePlanStatusChanged.php`
+10. `app/Events/Entitlement/WorkspaceComplimentaryStatusChanged.php`
+11. `app/Events/Entitlement/WorkspaceAdditionalBusinessSlotsChanged.php`
+12. `app/Events/Entitlement/WorkspaceEntitlementOverrideChanged.php`
+13. `app/Events/Entitlement/BusinessFeatureToggleChanged.php`
+
+### Exceptions (10 new)
+
+14. `app/Exceptions/Entitlement/WorkspacePlanUnassignedException.php`
+15. `app/Exceptions/Entitlement/InactiveWorkspacePlanException.php`
+16. `app/Exceptions/Entitlement/SuspendedWorkspacePlanException.php`
+17. `app/Exceptions/Entitlement/BusinessSlotAllocationRequiredException.php`
+18. `app/Exceptions/Entitlement/BusinessSlotLimitExceededException.php`
+19. `app/Exceptions/Entitlement/UndefinedPlanPricingException.php`
+20. `app/Exceptions/Entitlement/PlanCatalogPricingInUseException.php`
+21. `app/Exceptions/Entitlement/InvalidAdditionalBusinessSlotsException.php`
+22. `app/Exceptions/Entitlement/WorkspacePlanAlreadyAssignedException.php`
+23. `app/Exceptions/Entitlement/UnavailablePlatformFeatureOverrideException.php`
+
+### Provider binding (1 modified)
+
+24. `app/Providers/AppServiceProvider.php` — exactly one additive line (`UsageAuthorizationGateway::class => NullUsageAuthorizationGateway::class`) plus its two required `use` imports. No other line changes.
+
+### Repository extensions (8 modified — 4 pairs)
+
+25. `app/Repositories/Contracts/BusinessRepository.php`
+26. `app/Repositories/Eloquent/EloquentBusinessRepository.php`
+27. `app/Repositories/Contracts/WorkspacePlanCatalogRepository.php`
+28. `app/Repositories/Eloquent/EloquentWorkspacePlanCatalogRepository.php`
+29. `app/Repositories/Contracts/WorkspacePlanAssignmentRepository.php`
+30. `app/Repositories/Eloquent/EloquentWorkspacePlanAssignmentRepository.php`
+31. `app/Repositories/Contracts/WorkspaceEntitlementOverrideRepository.php`
+32. `app/Repositories/Eloquent/EloquentWorkspaceEntitlementOverrideRepository.php`
+
+### Manager integration (2 modified)
+
+33. `app/Library/Workspace/WorkspaceManager.php`
+34. `app/Library/Business/BusinessManager.php`
+
+### Retirement (1 deleted)
+
+35. `app/DTO/Workspace/WorkspaceFirstBusinessInput.php`
+
+### New Entitlement tests (14 new)
+
+36. `tests/Feature/Entitlement/EntitlementManagerDecisionTest.php`
+37. `tests/Feature/Entitlement/EntitlementManagerFirstAssignmentTest.php`
+38. `tests/Feature/Entitlement/EntitlementManagerLegacyCompatibilityAssignmentTest.php`
+39. `tests/Feature/Entitlement/EntitlementManagerChangePlanTest.php`
+40. `tests/Feature/Entitlement/EntitlementManagerChangePlanStatusTest.php`
+41. `tests/Feature/Entitlement/EntitlementManagerComplimentaryStatusTest.php`
+42. `tests/Feature/Entitlement/EntitlementManagerAdditionalSlotsTest.php`
+43. `tests/Feature/Entitlement/EntitlementManagerOverrideTest.php`
+44. `tests/Feature/Entitlement/EntitlementManagerBusinessToggleTest.php`
+45. `tests/Feature/Entitlement/EntitlementManagerCatalogPricingTest.php`
+46. `tests/Feature/Entitlement/EntitlementManagerBusinessSlotCapacityTest.php`
+47. `tests/Feature/Entitlement/NullUsageAuthorizationGatewayTest.php`
+48. `tests/Feature/Entitlement/EntitlementManagerConcurrencyTest.php`
+49. `tests/Feature/Entitlement/NoRawEntitlementTableQueryTest.php`
+
+### New concurrency-test support (1 new)
+
+50. `tests/Feature/Entitlement/Support/concurrent_business_slot_runner.php`
+
+### Modified M1 repository tests (3 modified)
+
+51. `tests/Feature/Entitlement/WorkspacePlanCatalogRepositoryTest.php`
+52. `tests/Feature/Entitlement/WorkspacePlanAssignmentRepositoryTest.php`
+53. `tests/Feature/Entitlement/WorkspaceEntitlementOverrideRepositoryTest.php`
+
+### Modified existing Workspace/Business tests (4 modified)
+
+54. `tests/Feature/Workspace/WorkspaceBusinessOrchestrationTest.php`
+55. `tests/Feature/Workspace/WorkspaceLifecycleTest.php`
+56. `tests/Feature/Workspace/WorkspaceM1BBoundaryTest.php`
+57. `tests/Feature/Business/BusinessManagerTest.php`
+
+### Deleted test (1 deleted)
+
+58. `tests/Unit/Workspace/WorkspaceFirstBusinessInputTest.php`
+
+**No unrelated path may be authorized.** If M2's own implementation discovers a genuine need for a path not listed above, that is a STOP-and-report condition for a bounded contract amendment — not something to add silently. No controllers/routes/views/permissions (M3). No migration unless direct inspection proves an M1 schema defect makes M2 impossible (STOP and report if so — do not silently add schema). No legacy Plan/Subscription file.
+
+---
+
+## 17. Exact human-run regression commands
+
+```
+php artisan test tests/Unit/Entitlement tests/Feature/Entitlement
+php artisan test tests/Unit/Workspace tests/Feature/Workspace
+php artisan test tests/Unit/Business tests/Feature/Business
+php artisan test --stop-on-failure
+```
+
+Every command must exit successfully and discover a positive test count — a zero/"no tests found" result is a failure. Claude must never claim any of them passed if PHP is unavailable in its own environment, and must never invent a test count. The actual results supplied by the human must be recorded honestly before M2 is considered complete.
+
+---
+
+## 18. Stop/gap rule
+
+If, during M2's own implementation, repository evidence is found that conflicts materially with RFC-004 v1.3 or with this contract as specified — making M2 unsafe or impossible as written — **implementation must STOP and report**: the exact conflict, the section it contradicts, the repository evidence found, and a proposed bounded correction. Do not silently revise the RFC. Do not implement around the gap. Minor implementation-detail choices this contract intentionally leaves to ordinary repository convention (exact PHPDoc style, exact private-method decomposition) may be resolved directly without triggering this rule — the line is whether a *structural* fact this contract asserts turns out to be wrong.
+
+---
+
+## 19. Correction-round policy
+
+`maximum_correction_rounds: 2` — matching every prior RFC-003/RFC-004 contract's bounded-correction discipline exactly. A correction round stays inside the exact §16 path list; it does not expand scope.
+
+---
+
+## 20. Governance
+
+Locked:
+
+- `human_only_merge: true`
+- `maximum_correction_rounds: 2`
+- `advance_automatically: false`
+- `start_automatically_after_contract_merge: false`
+- `codex_review_required_for_completion: false`
+- `automatic_model_handoff_required: false`
+
+No paid model API or usage-credit requirement at any step. No force push. No push directly to `main`. No RFC-004 tag during M2, at any point.
+
+**Implementation authorization semantics after contract merge:** human merge of this contract (bundled with the RFC-004 v1.3 correction) authorizes exactly one bounded M2 implementation branch/PR (`agent/rfc-004-m2`, created from the then-current `main` containing this merge) — directly, with no further governance artifact required. No target-marker PR, no inert implementation PR, no separate authorization PR. This does **not** mean implementation starts automatically — a human still explicitly decides to begin it.
+
+**M2 completion must not automatically start M3.** M3 requires its own separate, human-reviewed, bounded contract, exactly as this contract required after RFC-004 M1's own completion.
+
+---
+
+## 21. M2 completion criteria
+
+M2 is complete only when:
+
+- RFC-004 v1.3 (bundled) and this contract are human-merged;
+- the M2 implementation PR stayed inside the exact 58 authorized paths (§16), with no unrelated file touched;
+- `EntitlementManager` and every method in §7/§13 are complete and match this contract exactly;
+- the `UsageAuthorizationGateway` seam and its Null implementation are bound and complete;
+- capacity enforcement is integrated at all three identified count-increasing operations (§13.A/§13.B/§13.C), including the newly-auto-provisioned-Workspace compatibility assignment (§13.D);
+- `WorkspaceFirstBusinessInput` is retired (§13.M);
+- no unresolved GAP/BLOCKED item exists (§18);
+- all four required human-run regression commands (§17) pass, with actual results honestly recorded — not fabricated, not assumed;
+- `git diff --check` is clean;
+- human review is complete and the implementation PR is human-merged.
+
+**No RFC-004 tag is created at any point during M2.** **No automatic M3 start occurs.** No separate M2 closure PR is required by default — a closure document may be produced if the human reviewer wants one, but this contract does not mandate it as a blocking gate.
+
+## 22. M3 non-authorization statement
+
+This contract authorizes **M2 only**. It does not authorize, propose, or select RFC-004 Milestone 3 (admin/customer HTTP surfaces, new permission keys, or capability-gating integration for Prospect Outreach/white-label). M3 requires its own separate, human-reviewed, bounded contract, drafted only after M2 is itself complete and closed.
+
+**Implementation is not authorized under this document until it is human-reviewed and merged.**
