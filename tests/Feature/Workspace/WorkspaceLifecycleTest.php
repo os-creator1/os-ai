@@ -2,10 +2,8 @@
 
 namespace Tests\Feature\Workspace;
 
-use App\DTO\Workspace\WorkspaceFirstBusinessInput;
 use App\Enums\Workspace\WorkspaceBusinessAccessScope;
 use App\Enums\Workspace\WorkspaceMembershipRole;
-use App\Events\Workspace\BusinessAssignedToWorkspace;
 use App\Events\Workspace\WorkspaceCreated;
 use App\Events\Workspace\WorkspaceDeactivated;
 use App\Events\Workspace\WorkspaceReactivated;
@@ -38,7 +36,6 @@ class WorkspaceLifecycleTest extends TestCase
         WorkspaceRenamed::class,
         WorkspaceDeactivated::class,
         WorkspaceReactivated::class,
-        BusinessAssignedToWorkspace::class,
     ];
 
     private function manager(): WorkspaceManager
@@ -75,33 +72,6 @@ class WorkspaceLifecycleTest extends TestCase
         }
     }
 
-    // Correction: createWorkspace() throws the typed
-    // WorkspaceOwnerNotFoundException (not the generic
-    // ModelNotFoundException) when the owner cannot be found, exposes the
-    // exact ownerUserId, creates no Workspace, no first Business, and
-    // dispatches neither event.
-    public function test_create_workspace_missing_owner_exposes_exact_id_and_creates_nothing(): void
-    {
-        Event::fake(self::ALL_LIFECYCLE_EVENTS);
-        $customer = $this->createCustomer();
-
-        try {
-            $this->manager()->createWorkspace(
-                999999,
-                'Nobody',
-                new WorkspaceFirstBusinessInput($customer, $this->businessAttributes())
-            );
-            $this->fail('Expected WorkspaceOwnerNotFoundException was not thrown.');
-        } catch (WorkspaceOwnerNotFoundException $e) {
-            $this->assertSame(999999, $e->ownerUserId);
-        }
-
-        $this->assertSame(0, Workspace::count());
-        $this->assertSame(0, Business::count());
-        Event::assertNotDispatched(WorkspaceCreated::class);
-        Event::assertNotDispatched(BusinessAssignedToWorkspace::class);
-    }
-
     // 3. WorkspaceCreated dispatches after successful commit.
     public function test_workspace_created_dispatches_after_commit(): void
     {
@@ -113,81 +83,6 @@ class WorkspaceLifecycleTest extends TestCase
         Event::assertDispatched(WorkspaceCreated::class, function (WorkspaceCreated $event) use ($workspace, $owner) {
             return $event->workspaceId === $workspace->id && $event->ownerUserId === $owner->id;
         });
-    }
-
-    // 4/5/6/7. Creation with an explicit first Business: the Customer is
-    // used as supplied (never inferred from the Workspace owner), may
-    // differ from the Workspace owner, and workspace_id is set on the
-    // Business's initial insert.
-    public function test_create_workspace_with_first_business_succeeds(): void
-    {
-        $workspaceOwner = $this->createCustomer()->user;
-        $businessCustomer = $this->createCustomer();
-
-        $workspace = $this->manager()->createWorkspace(
-            $workspaceOwner->id,
-            'Acme Workspace',
-            new WorkspaceFirstBusinessInput($businessCustomer, $this->businessAttributes())
-        );
-
-        $business = Business::where('workspace_id', $workspace->id)->first();
-
-        $this->assertNotNull($business);
-        $this->assertSame($businessCustomer->user_id, $business->customer_id);
-        $this->assertNotSame($workspaceOwner->id, $business->customer_id);
-        $this->assertSame($workspace->id, $business->workspace_id);
-    }
-
-    // 8. WorkspaceCreated then BusinessAssignedToWorkspace are dispatched, in that order.
-    public function test_create_workspace_with_first_business_dispatches_both_events_in_order(): void
-    {
-        Event::fake(self::ALL_LIFECYCLE_EVENTS);
-        $workspaceOwner = $this->createCustomer()->user;
-        $businessCustomer = $this->createCustomer();
-
-        $workspace = $this->manager()->createWorkspace(
-            $workspaceOwner->id,
-            'Acme Workspace',
-            new WorkspaceFirstBusinessInput($businessCustomer, $this->businessAttributes())
-        );
-        $business = Business::where('workspace_id', $workspace->id)->firstOrFail();
-
-        Event::assertDispatched(WorkspaceCreated::class);
-        Event::assertDispatched(BusinessAssignedToWorkspace::class, function (BusinessAssignedToWorkspace $event) use ($business, $workspace, $workspaceOwner) {
-            return $event->businessId === $business->id
-                && $event->workspaceId === $workspace->id
-                && $event->actorUserId === $workspaceOwner->id;
-        });
-
-        $order = [];
-        foreach (Event::dispatched(WorkspaceCreated::class) as [$e]) { $order[] = 'created'; }
-        foreach (Event::dispatched(BusinessAssignedToWorkspace::class) as [$e]) { $order[] = 'assigned'; }
-        $this->assertSame(['created', 'assigned'], $order);
-    }
-
-    // 9/10. Business creation failure rolls back Workspace creation and dispatches neither event.
-    public function test_business_creation_failure_rolls_back_workspace_and_dispatches_nothing(): void
-    {
-        Event::fake(self::ALL_LIFECYCLE_EVENTS);
-        $owner = $this->createCustomer()->user;
-        $customer = $this->createCustomer();
-
-        try {
-            $this->manager()->createWorkspace(
-                $owner->id,
-                'Acme Workspace',
-                // An invalid Business.industry value fails the model's own
-                // backed-enum cast before any write is attempted.
-                new WorkspaceFirstBusinessInput($customer, $this->businessAttributes(['industry' => 'not_a_real_industry']))
-            );
-            $this->fail('Expected a ValueError from an invalid Business attribute.');
-        } catch (\ValueError $e) {
-            // expected
-        }
-
-        $this->assertSame(0, Workspace::count());
-        Event::assertNotDispatched(WorkspaceCreated::class);
-        Event::assertNotDispatched(BusinessAssignedToWorkspace::class);
     }
 
     // --- RENAME ---

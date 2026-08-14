@@ -125,4 +125,35 @@ class WorkspacePlanCatalogRepositoryTest extends TestCase
             $this->assertStringNotContainsStringIgnoringCase('entitlement', $method);
         }
     }
+
+    public function test_update_persists_a_round_trip_pricing_change(): void
+    {
+        $repository = app(WorkspacePlanCatalogRepository::class);
+        $core = $repository->findByTier(WorkspacePlanTier::Core);
+        $currency = \App\Models\Currency::create(['name' => 'US Dollar', 'code' => 'USD', 'format' => '$', 'status' => true]);
+
+        $updated = $repository->update($core, ['price' => '49.00', 'currency_id' => $currency->id]);
+
+        $fresh = $updated->fresh();
+        $this->assertSame('49.00', $fresh->price);
+        $this->assertSame($currency->id, $fresh->currency_id);
+    }
+
+    public function test_find_for_update_locks_and_returns_the_exact_row(): void
+    {
+        $repository = app(WorkspacePlanCatalogRepository::class);
+        $core = $repository->findByTier(WorkspacePlanTier::Core);
+
+        DB::transaction(function () use ($repository, $core) {
+            $locked = $repository->findForUpdate($core->id);
+            $this->assertTrue($locked->is($core));
+        });
+    }
+
+    public function test_find_for_update_returns_null_for_a_missing_id(): void
+    {
+        $repository = app(WorkspacePlanCatalogRepository::class);
+
+        $this->assertNull($repository->findForUpdate(999999));
+    }
 }

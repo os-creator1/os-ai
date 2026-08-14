@@ -324,4 +324,82 @@ class BusinessManagerTest extends TestCase
             Event::assertNotDispatched(BusinessCreated::class);
         }
     }
+
+    // M2: legacy onboarding against an existing, single-candidate Workspace
+    // already at its capacity limit fails closed via the same explicit
+    // Workspace lock + capacity assertion every other count-increasing
+    // operation uses (§13.C).
+    public function test_legacy_onboarding_against_an_existing_at_capacity_workspace_denies(): void
+    {
+        Event::fake([BusinessCreated::class]);
+
+        $customer = $this->createCustomer();
+        $workspace = Workspace::create(['name' => 'Existing', 'owner_user_id' => $customer->user_id, 'is_active' => true]);
+        $admin = \App\Models\User::create([
+            'first_name' => 'Admin', 'last_name' => 'User', 'email' => 'admin' . uniqid() . '@example.test',
+            'status' => true, 'is_admin' => true, 'is_customer' => false, 'active_portal' => 'admin',
+        ]);
+        app(\App\Library\Entitlement\EntitlementManager::class)->assignFirstPlan(
+            $workspace,
+            \App\Enums\Entitlement\WorkspacePlanTier::Core,
+            $admin->id,
+            'Fixture.',
+            true,
+            2,
+        );
+
+        $businessRepository = app(\App\Repositories\Contracts\BusinessRepository::class);
+        $primary = null;
+
+        for ($i = 0; $i < 5; $i++) {
+            $created = $businessRepository->createForCustomerInWorkspace($customer, $workspace, $this->businessAttributes(['name' => "Existing {$i}"]));
+
+            if ($i === 0) {
+                $primary = $created;
+            }
+        }
+
+        // Exactly one preferred candidate for the legacy resolver: this
+        // customer's single primary Business, already linked to this
+        // at-capacity Workspace.
+        $this->assertNotNull($primary);
+
+        $manager = app(BusinessManager::class);
+
+        $this->expectException(\App\Exceptions\Entitlement\BusinessSlotLimitExceededException::class);
+
+        try {
+            $manager->createOrUpdateOnboardingBusiness($customer, null, $this->businessAttributes(['name' => 'Sixth']));
+        } finally {
+            $this->assertSame(5, Business::where('workspace_id', $workspace->id)->count());
+            Event::assertNotDispatched(BusinessCreated::class);
+        }
+    }
+
+    // M2: legacy onboarding against a newly-auto-provisioned Workspace
+    // (zero existing candidates) receives §13.D's narrow compatibility
+    // assignment before capacity is checked, then successfully creates its
+    // first Business.
+    public function test_legacy_onboarding_against_a_newly_auto_provisioned_workspace_receives_compatibility_assignment_then_creates_first_business(): void
+    {
+        Event::fake([BusinessCreated::class, \App\Events\Entitlement\WorkspacePlanAssigned::class]);
+
+        $customer = $this->createCustomer();
+        $manager = app(BusinessManager::class);
+
+        $business = $manager->createOrUpdateOnboardingBusiness($customer, null, $this->businessAttributes());
+
+        $workspace = Workspace::find($business->workspace_id);
+        $this->assertNotNull($workspace);
+
+        $this->assertDatabaseHas('workspace_plan_assignments', [
+            'workspace_id' => $workspace->id,
+            'is_complimentary' => true,
+            'complimentary_granted_by_user_id' => null,
+        ]);
+
+        $this->assertSame($workspace->id, $business->workspace_id);
+        Event::assertDispatched(BusinessCreated::class);
+        Event::assertDispatched(\App\Events\Entitlement\WorkspacePlanAssigned::class, fn ($e) => $e->workspaceId === $workspace->id && $e->actorUserId === null);
+    }
 }

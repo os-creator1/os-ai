@@ -2,6 +2,7 @@
 
 namespace App\Repositories\Contracts;
 
+use App\Enums\Entitlement\WorkspaceEntitlementOverrideState;
 use App\Models\WorkspaceEntitlementOverride;
 
 /**
@@ -22,4 +23,12 @@ interface WorkspaceEntitlementOverrideRepository extends BaseRepository
     public function create(array $attributes): WorkspaceEntitlementOverride;
 
     public function delete(WorkspaceEntitlementOverride $override): void;
+
+    /**
+     * Changes an existing override's state (allow<->deny, RFC-004 §15) — a
+     * genuinely distinct operation from creating a first-time override
+     * (M2, §10). No business-rule logic here; enforced exclusively by
+     * EntitlementManager before it calls this method.
+     */
+    public function update(WorkspaceEntitlementOverride $override, WorkspaceEntitlementOverrideState $state): WorkspaceEntitlementOverride;
 }

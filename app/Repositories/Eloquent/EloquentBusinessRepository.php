@@ -36,6 +36,11 @@ class EloquentBusinessRepository extends EloquentBaseRepository implements Busin
         return $this->query()->whereKey($id)->lockForUpdate()->first();
     }
 
+    public function countForWorkspace(Workspace $workspace): int
+    {
+        return $this->query()->where('workspace_id', $workspace->id)->count();
+    }
+
     /**
      * @param  int  $customerId  The tenant key stored in businesses.customer_id, i.e. users.id (Customer::$user_id).
      */

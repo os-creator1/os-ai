@@ -125,4 +125,19 @@ class WorkspaceEntitlementOverrideRepositoryTest extends TestCase
             $this->assertStringNotContainsStringIgnoringCase('effectiveentitlement', $method);
         }
     }
+
+    public function test_update_persists_a_round_trip_state_change(): void
+    {
+        $repository = app(WorkspaceEntitlementOverrideRepository::class);
+        $workspace = $this->createWorkspace($this->createCustomer()->user);
+        $override = $repository->create([
+            'workspace_id' => $workspace->id,
+            'feature_key' => 'white_label',
+            'state' => WorkspaceEntitlementOverrideState::Allow,
+        ]);
+
+        $updated = $repository->update($override, WorkspaceEntitlementOverrideState::Deny);
+
+        $this->assertSame(WorkspaceEntitlementOverrideState::Deny, $updated->fresh()->state);
+    }
 }

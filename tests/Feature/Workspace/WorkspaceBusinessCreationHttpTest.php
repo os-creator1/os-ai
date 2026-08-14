@@ -29,6 +29,37 @@ class WorkspaceBusinessCreationHttpTest extends TestCase
     use CreatesBusinessTestData;
     use CreatesWorkspaceTestData;
 
+    /**
+     * M2 fixture-compatibility helper (§14.3, read-only audit finding) —
+     * NOT a change to the shared CreatesWorkspaceTestData trait. Wraps
+     * createWorkspace() with an explicit valid complimentary Core
+     * workspace_plan_assignments row, established via
+     * EntitlementManager::assignFirstPlan() using a distinct platform-admin
+     * fixture actor (never the test's own customer/owner/admin actor under
+     * test) — so this fixture step never alters or expands the HTTP
+     * endpoint's own Workspace/customer authority semantics.
+     */
+    private function entitledWorkspace($owner, array $overrides = []): \App\Models\Workspace
+    {
+        $workspace = $this->createWorkspace($owner, $overrides);
+
+        $admin = \App\Models\User::create([
+            'first_name' => 'M2Fixture', 'last_name' => 'Admin', 'email' => 'm2fixture' . uniqid() . '@example.test',
+            'status' => true, 'is_admin' => true, 'is_customer' => false, 'active_portal' => 'admin',
+        ]);
+
+        app(\App\Library\Entitlement\EntitlementManager::class)->assignFirstPlan(
+            $workspace,
+            \App\Enums\Entitlement\WorkspacePlanTier::Core,
+            $admin->id,
+            'M2 fixture-compatibility assignment.',
+            true,
+            2,
+        );
+
+        return $workspace->fresh();
+    }
+
     // --- Route shape -------------------------------------------------
 
     public function test_businesses_store_route_exists_as_post_with_expected_name_and_uri(): void
@@ -152,7 +183,7 @@ class WorkspaceBusinessCreationHttpTest extends TestCase
     public function test_owner_can_create_a_business(): void
     {
         $customer = $this->actingAsHttpCustomer();
-        $workspace = $this->createWorkspace($customer->user);
+        $workspace = $this->entitledWorkspace($customer->user);
 
         $response = $this->post(
             route('customer.workspaces.businesses.store', $workspace->uid),
@@ -172,7 +203,7 @@ class WorkspaceBusinessCreationHttpTest extends TestCase
     {
         $customer = $this->actingAsHttpCustomer();
         $owner = $this->createCustomer()->user;
-        $workspace = $this->createWorkspace($owner);
+        $workspace = $this->entitledWorkspace($owner);
         $this->createMembership($workspace, $customer->user, [
             'role' => WorkspaceMembershipRole::Admin,
             'is_active' => true,
@@ -195,7 +226,7 @@ class WorkspaceBusinessCreationHttpTest extends TestCase
     {
         $customer = $this->actingAsHttpCustomer();
         $ownerCustomer = $this->createCustomer();
-        $workspace = $this->createWorkspace($ownerCustomer->user);
+        $workspace = $this->entitledWorkspace($ownerCustomer->user);
         $this->createMembership($workspace, $customer->user, [
             'role' => WorkspaceMembershipRole::Admin,
             'is_active' => true,
@@ -215,7 +246,7 @@ class WorkspaceBusinessCreationHttpTest extends TestCase
     public function test_owner_creation_ignores_a_submitted_customer_id(): void
     {
         $customer = $this->actingAsHttpCustomer();
-        $workspace = $this->createWorkspace($customer->user);
+        $workspace = $this->entitledWorkspace($customer->user);
         $otherCustomer = $this->createCustomer();
 
         $response = $this->post(
@@ -237,7 +268,7 @@ class WorkspaceBusinessCreationHttpTest extends TestCase
     public function test_owner_creation_ignores_a_submitted_customer_uid(): void
     {
         $customer = $this->actingAsHttpCustomer();
-        $workspace = $this->createWorkspace($customer->user);
+        $workspace = $this->entitledWorkspace($customer->user);
         $otherCustomer = $this->createCustomer();
 
         $response = $this->post(
@@ -345,6 +376,37 @@ class WorkspaceBusinessCreationHttpTest extends TestCase
         $this->assertSame(0, Business::count());
     }
 
+    /**
+     * M2 focused proof (§16/§23, read-only audit finding): the HTTP path
+     * reaches EntitlementManager::assertCanCreateAnotherBusiness() and fails
+     * closed for an intentionally unassigned Workspace. The controller does
+     * not yet map this new entitlement exception to a flash-error redirect
+     * (that mapping is customer-facing production activation, blocked until
+     * M3 per contract §23) — this test proves enforcement fires, not that
+     * the controller presents it gracefully.
+     */
+    public function test_creation_against_an_intentionally_unassigned_workspace_fails_closed_with_workspace_plan_unassigned(): void
+    {
+        $customer = $this->actingAsHttpCustomer();
+        $workspace = $this->createWorkspace($customer->user);
+
+        $this->withoutExceptionHandling();
+
+        $caught = null;
+
+        try {
+            $this->post(
+                route('customer.workspaces.businesses.store', $workspace->uid),
+                $this->businessAttributes()
+            );
+        } catch (\App\Exceptions\Entitlement\WorkspacePlanUnassignedException $exception) {
+            $caught = $exception;
+        }
+
+        $this->assertNotNull($caught, 'Expected WorkspacePlanUnassignedException to propagate for an unassigned Workspace.');
+        $this->assertSame(0, Business::count());
+    }
+
     public function test_store_business_for_an_unknown_uid_is_not_found(): void
     {
         $this->actingAsHttpCustomer();
@@ -374,7 +436,7 @@ class WorkspaceBusinessCreationHttpTest extends TestCase
     public function test_created_business_appears_in_the_effective_access_business_list(): void
     {
         $customer = $this->actingAsHttpCustomer();
-        $workspace = $this->createWorkspace($customer->user);
+        $workspace = $this->entitledWorkspace($customer->user);
 
         $this->post(
             route('customer.workspaces.businesses.store', $workspace->uid),

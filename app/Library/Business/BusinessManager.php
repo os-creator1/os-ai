@@ -6,6 +6,7 @@ use App\Events\Business\BusinessCreated;
 use App\Events\Business\BusinessPrimaryLocationUpdated;
 use App\Events\Business\BusinessServicesSynced;
 use App\Events\Business\BusinessUpdated;
+use App\Library\Entitlement\EntitlementManager;
 use App\Library\Workspace\WorkspaceManager;
 use App\Models\Business;
 use App\Models\BusinessLocation;
@@ -40,6 +41,7 @@ class BusinessManager
         private readonly BusinessServiceRepository $serviceRepository,
         private readonly UrlNormalizer $urlNormalizer,
         private readonly WorkspaceManager $workspaceManager,
+        private readonly EntitlementManager $entitlementManager,
     ) {
     }
 
@@ -129,9 +131,16 @@ class BusinessManager
             }
         }
 
-        return DB::transaction(function () use ($customer, $business, $normalizedAttributes, $touchesWebsiteUrl) {
-            $created = $business === null;
+        $created = $business === null;
 
+        // CREATE path only (M2, RFC-004 §13.O): retried up to 3 attempts,
+        // since the new explicit Workspace lock below (User -> Workspace
+        // order) is the exact inverse of WorkspaceManager::transferOwnership()'s
+        // existing Workspace -> User(s) order — a real cross-operation
+        // deadlock is possible, resolved by bounded retry rather than
+        // reordering either side's locks. The update-existing-Business
+        // path is unaffected and remains at its existing single attempt.
+        return DB::transaction(function () use ($customer, $business, $normalizedAttributes, $touchesWebsiteUrl, $created) {
             if ($created) {
                 // The legacy onboarding path has no explicit Workspace
                 // selector of its own (RFC-003 §10.6, §13.1) — this is the
@@ -141,7 +150,9 @@ class BusinessManager
                 // uncaught, rolling back this whole transaction exactly
                 // like any other failure here.
                 $workspace = $this->workspaceManager->resolveLegacyOnboardingWorkspace($customer->user_id);
-                $result = $this->businessRepository->createForCustomerInWorkspace($customer, $workspace, $normalizedAttributes);
+                $lockedWorkspace = $this->workspaceManager->lockForLegacyOnboardingBusinessCreation($workspace);
+                $this->entitlementManager->assertCanCreateAnotherBusiness($lockedWorkspace);
+                $result = $this->businessRepository->createForCustomerInWorkspace($customer, $lockedWorkspace, $normalizedAttributes);
             } else {
                 $result = $this->businessRepository->update($business, $normalizedAttributes);
             }
@@ -160,7 +171,7 @@ class BusinessManager
             }
 
             return ['business' => $result, 'created' => $created, 'changedFields' => $changedFields];
-        });
+        }, $created ? 3 : 1);
     }
 
     /**
