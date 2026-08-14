@@ -194,7 +194,7 @@ Access authority: `WorkspacePlanFeatureRepository` (§20).
 | `status` | varchar(20) | no | — | `WorkspacePlanAssignmentStatus`: `active`\|`inactive`\|`suspended`. No default — every assignment-creation path must supply it explicitly, matching RFC-003 §9.2's `business_access_scope` no-default precedent. May only be changed via `EntitlementManager::changePlanStatus()`, requiring actor + reason and durably audited (§18, §21) |
 | `is_complimentary` | boolean | no | `false` | Orthogonal to `status` (§18) — a complimentary assignment can still be `active` or `suspended`. Waives recurring charges for the plan and for already-allocated additional slots; never waives allocation limits or `status` itself (§13) |
 | `complimentary_reason` | text, nullable | yes | `null` | Required at the application layer whenever `is_complimentary` is set `true` (§15) |
-| `complimentary_granted_by_user_id` | bigint unsigned, nullable, no FK | yes | `null` | Plain scalar, not a FK — matches RFC-003 `workspace_transitions.actor_user_id`'s "must never block a legitimate user-deletion feature" rationale. `null` only for the one-time Milestone-1 backfill (§25), never for an admin-initiated grant |
+| `complimentary_granted_by_user_id` | bigint unsigned, nullable, no FK | yes | `null` | Plain scalar, not a FK — matches RFC-003 `workspace_transitions.actor_user_id`'s "must never block a legitimate user-deletion feature" rationale. `null` only for: (1) the one-time Milestone-1 backfill (§25); and (2) the narrowly-scoped §17.4 legacy auto-provisioned-Workspace compatibility assignment — never for an ordinary/admin-initiated complimentary grant, which must always record the acting user |
 | `complimentary_granted_at` | timestamp, nullable | yes | `null` | |
 | `additional_business_slots` | unsigned tinyint | no | `0` | Core/Growth: `0`, `1`, or `2` — the number of explicitly allocated paid slots beyond the tier's included 3 (§13). Agency: must remain `0`; ignored by slot logic regardless (§8). Normalized deterministically on every tier change (§17) |
 | timestamps | — | no | — | |
@@ -211,7 +211,7 @@ Named for what it actually covers — both plan-level and Workspace-entitlement-
 | `id` | bigint unsigned | no | auto | Primary key |
 | `workspace_id` | bigint unsigned FK | no | — | |
 | `transition_type` | varchar(48) | no | — | `WorkspaceEntitlementTransitionType`: `plan_assigned`\|`plan_changed`\|`plan_status_changed`\|`complimentary_granted`\|`complimentary_revoked`\|`additional_business_slots_changed`\|`entitlement_override_allowed`\|`entitlement_override_denied`\|`entitlement_override_reverted` — **nine values, `plan_status_changed` added in this revision** |
-| `actor_user_id` | bigint unsigned, nullable, no FK | yes | `null` | `null` only for the Milestone-1 backfill's `plan_assigned` rows |
+| `actor_user_id` | bigint unsigned, nullable, no FK | yes | `null` | `null` only for system-authored `plan_assigned` rows from: (1) the historical Milestone-1 backfill; and (2) the §17.4 legacy auto-provisioned-Workspace compatibility assignment — every ordinary actor-driven transition still requires its actor |
 | `from_plan_catalog_id` | bigint unsigned, nullable, FK | yes | `null` | Set for `plan_changed`; null for `plan_assigned` and every other transition type |
 | `to_plan_catalog_id` | bigint unsigned, nullable, FK | yes | `null` | Set for `plan_assigned`/`plan_changed`; null for every other type |
 | `feature_key` | varchar(64), nullable | yes | `null` | Set only for `entitlement_override_*` transition types |
