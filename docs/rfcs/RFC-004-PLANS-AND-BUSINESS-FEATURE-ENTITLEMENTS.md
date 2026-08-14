@@ -416,6 +416,8 @@ A `workspace_plan_catalog` row may exist, be `is_active`, and carry a fully-defi
 
 Preconditions: RFC-003 §14.1 authorization (`userCanAccessBusiness()`) has already granted the acting user access to this Business, and the caller has already resolved the Business's owning Workspace. This algorithm is never invoked to *establish* Workspace/Business authorization — only to answer, given already-authorized access, whether a specific feature may execute.
 
+**Defensive consistency check (added in this revision, narrow — not a redesign):** `EntitlementManager::decide()` additionally, defensively re-reads the Business and verifies that its authoritative `workspace_id` equals the supplied Workspace's `id` before consulting any RFC-004 entitlement state. This check does **not** grant access, does **not** evaluate ownership or membership, and is **not** a substitute for the RFC-003 §14.1 authorization above, which must still have passed independently before `decide()` is ever called. It exists only to prevent stale or mismatched aggregate inputs — e.g. a caller holding a `Business` object from before a concurrent reassignment to a different Workspace — from mixing one Workspace's entitlement state with a Business that no longer (or never did) belong to it.
+
 ```text
 function effectiveEntitlement(workspace, business, featureKey, actorUserId):
     if featureKey not in PlatformFeature::cases():
