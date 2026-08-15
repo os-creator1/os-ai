@@ -274,8 +274,10 @@ class WorkspaceOverviewHttpTest extends TestCase
 
         $response = $this->get(route('customer.workspaces.show', ['workspaceUid' => $workspace->uid]))->assertOk();
 
-        $this->assertArrayNotHasKey('directory', $response->original->getData());
-        $this->assertArrayNotHasKey('manageableBusinesses', $response->original->getData());
+        // Exact key-shape proof, not merely "these keys happen to be
+        // absent" -- a Staff response's view data must be precisely these
+        // two keys, in this order, with nothing else ever added.
+        $this->assertSame(['workspace', 'businesses'], array_keys($response->original->getData()));
         $response->assertDontSee('Ada');
         $response->assertDontSee($admin->user->email);
     }
@@ -389,9 +391,93 @@ class WorkspaceOverviewHttpTest extends TestCase
         $response = $this->get(route('customer.workspaces.show', ['workspaceUid' => $workspace->uid]))->assertOk();
 
         $data = $response->original->getData();
-        $this->assertSame(['workspace', 'businesses', 'directory', 'manageableBusinesses'], array_keys($data));
+        $this->assertSame(['workspace', 'businesses', 'entitlement', 'directory', 'manageableBusinesses'], array_keys($data));
         $this->assertSame(['name', 'is_active', 'role'], array_keys($data['workspace']));
         $response->assertDontSee($customer->user->email);
+    }
+
+    /**
+     * RFC-004 Milestone 3 §8.3: the entitlement.summary block is always
+     * present for Owner/active-Admin (independent of whether the Workspace
+     * has a plan assigned) and its capacity always matches a direct
+     * decideBusinessSlotCapacity() call for the same Workspace.
+     */
+    public function test_entitlement_summary_capacity_matches_direct_capacity_decision(): void
+    {
+        $customer = $this->actingAsHttpCustomer();
+        $workspace = $this->createWorkspace($customer->user);
+
+        $response = $this->get(route('customer.workspaces.show', ['workspaceUid' => $workspace->uid]))->assertOk();
+
+        $entitlement = $response->original->getData()['entitlement'];
+        $direct = app(\App\Library\Entitlement\EntitlementManager::class)->decideBusinessSlotCapacity($workspace);
+
+        $this->assertEquals($direct, $entitlement['summary']->capacity);
+    }
+
+    public function test_unassigned_workspace_entitlement_summary_renders_without_throwing(): void
+    {
+        $customer = $this->actingAsHttpCustomer();
+        $workspace = $this->createWorkspace($customer->user);
+
+        $response = $this->get(route('customer.workspaces.show', ['workspaceUid' => $workspace->uid]))->assertOk();
+
+        $entitlement = $response->original->getData()['entitlement'];
+        $this->assertFalse($entitlement['summary']->isAssigned);
+    }
+
+    /**
+     * RFC-004 Milestone 3 correction round 1, item 3: the Plan & Capacity
+     * card must render the plan feature list and the full included/
+     * additional/effective capacity breakdown directly from the summary
+     * object, never recomputed in Blade.
+     */
+    public function test_plan_capacity_card_renders_feature_list_and_full_capacity_breakdown(): void
+    {
+        $customer = $this->actingAsHttpCustomer();
+        $workspace = $this->createWorkspace($customer->user);
+        app(\App\Library\Entitlement\EntitlementManager::class)->assignFirstPlan(
+            $workspace,
+            \App\Enums\Entitlement\WorkspacePlanTier::Core,
+            $this->fixturePlatformAdminId(),
+            'Fixture assignment.',
+            true,
+            1,
+        );
+
+        $response = $this->get(route('customer.workspaces.show', ['workspaceUid' => $workspace->uid]))->assertOk();
+
+        $response->assertSee('crm');
+        $response->assertSee('Included slots');
+        $response->assertSee('3'); // business_slot_included seeded for Core
+        $response->assertSee('Additional slots');
+        $response->assertSee('1');
+        $response->assertSee('Effective capacity');
+        $response->assertSee('4'); // included 3 + additional 1
+    }
+
+    /**
+     * An unassigned Workspace's capacity decision has a null
+     * effectiveCapacity ('workspace_plan_unassigned') -- the card must
+     * render a meaningful unavailable state, never a blank denominator.
+     */
+    public function test_plan_capacity_card_renders_meaningful_unavailable_state_for_an_unassigned_workspace(): void
+    {
+        $customer = $this->actingAsHttpCustomer();
+        $workspace = $this->createWorkspace($customer->user);
+
+        $response = $this->get(route('customer.workspaces.show', ['workspaceUid' => $workspace->uid]))->assertOk();
+
+        $response->assertSee('Unavailable (workspace_plan_unassigned)');
+    }
+
+    private function fixturePlatformAdminId(): int
+    {
+        return User::create([
+            'first_name' => 'Fixture', 'last_name' => 'Admin',
+            'email' => 'fixtureadmin' . uniqid() . '@example.test',
+            'status' => true, 'is_admin' => true, 'is_customer' => false, 'active_portal' => 'admin',
+        ])->id;
     }
 
     public function test_get_produces_no_database_writes(): void

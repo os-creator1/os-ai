@@ -377,33 +377,23 @@ class WorkspaceBusinessCreationHttpTest extends TestCase
     }
 
     /**
-     * M2 focused proof (§16/§23, read-only audit finding): the HTTP path
-     * reaches EntitlementManager::assertCanCreateAnotherBusiness() and fails
-     * closed for an intentionally unassigned Workspace. The controller does
-     * not yet map this new entitlement exception to a flash-error redirect
-     * (that mapping is customer-facing production activation, blocked until
-     * M3 per contract §23) — this test proves enforcement fires, not that
-     * the controller presents it gracefully.
+     * RFC-004 Milestone 3 (§16 of the M3 contract, closing the §3.7 gap):
+     * WorkspacePlanUnassignedException is now caught and mapped to a
+     * specific flash_error message rather than propagating uncaught, as it
+     * did before M3 (superseded M2-era proof removed).
      */
-    public function test_creation_against_an_intentionally_unassigned_workspace_fails_closed_with_workspace_plan_unassigned(): void
+    public function test_creation_against_an_intentionally_unassigned_workspace_is_now_caught_and_mapped_to_flash_error(): void
     {
         $customer = $this->actingAsHttpCustomer();
         $workspace = $this->createWorkspace($customer->user);
 
-        $this->withoutExceptionHandling();
+        $response = $this->post(
+            route('customer.workspaces.businesses.store', $workspace->uid),
+            $this->businessAttributes()
+        );
 
-        $caught = null;
-
-        try {
-            $this->post(
-                route('customer.workspaces.businesses.store', $workspace->uid),
-                $this->businessAttributes()
-            );
-        } catch (\App\Exceptions\Entitlement\WorkspacePlanUnassignedException $exception) {
-            $caught = $exception;
-        }
-
-        $this->assertNotNull($caught, 'Expected WorkspacePlanUnassignedException to propagate for an unassigned Workspace.');
+        $response->assertRedirect();
+        $response->assertSessionHas('flash_error');
         $this->assertSame(0, Business::count());
     }
 

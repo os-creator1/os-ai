@@ -668,4 +668,29 @@
         Route::get('workspaces/{workspace}', 'WorkspaceController@show')
             ->whereUuid('workspace')
             ->name('workspaces.show');
+
+        /*
+        |--------------------------------------------------------------------------
+        | Workspace plan catalog / entitlement mutation (RFC-004 Milestone 3)
+        |--------------------------------------------------------------------------
+        |
+        | docs/automation/RFC-004-M3-CONTRACT.md §11. Declared here with no
+        | literal "admin/" URI segment and no "admin." name prefix -- both are
+        | applied externally by RouteServiceProvider's
+        | ->prefix(config('app.admin_path'))->as('admin.') wrapper, exactly
+        | like workspaces.index/workspaces.show above.
+        |
+        */
+        Route::get('workspace-plan-catalog', 'WorkspacePlanCatalogController@index')->name('workspace-plan-catalog.index');
+
+        Route::prefix('workspaces/{workspace}')->name('workspaces.')->whereUuid('workspace')->group(function () {
+            Route::post('plan', 'WorkspaceEntitlementController@assignPlan')->name('plan.assign');
+            Route::post('plan/change', 'WorkspaceEntitlementController@changePlan')->name('plan.change');
+            Route::post('plan/status', 'WorkspaceEntitlementController@changeStatus')->name('plan.status');
+            Route::post('plan/complimentary', 'WorkspaceEntitlementController@grantComplimentary')->name('plan.complimentary.grant');
+            Route::delete('plan/complimentary', 'WorkspaceEntitlementController@revokeComplimentary')->name('plan.complimentary.revoke');
+            Route::post('plan/additional-slots', 'WorkspaceEntitlementController@updateAdditionalSlots')->name('plan.additional-slots');
+            Route::post('entitlement-overrides', 'WorkspaceEntitlementController@storeOverride')->name('entitlement-overrides.store');
+            Route::delete('entitlement-overrides/{featureKey}', 'WorkspaceEntitlementController@revertOverride')->name('entitlement-overrides.revert');
+        });
     });

@@ -119,6 +119,59 @@
                 </div>
             </div>
 
+            @isset($entitlement)
+                <div class="col-12">
+                    <div class="card" id="workspace-plan-capacity">
+                        <div class="card-header">
+                            <h4 class="card-title">Plan &amp; Capacity</h4>
+                        </div>
+                        <div class="card-body">
+                            <dl class="row mb-0">
+                                <dt class="col-sm-4">Assigned</dt>
+                                <dd class="col-sm-8">{{ $entitlement['summary']->isAssigned ? 'Yes' : 'No' }}</dd>
+
+                                @if ($entitlement['summary']->isAssigned)
+                                    <dt class="col-sm-4">Tier</dt>
+                                    <dd class="col-sm-8">{{ $entitlement['summary']->tierDisplayName }}</dd>
+
+                                    <dt class="col-sm-4">Status</dt>
+                                    <dd class="col-sm-8">{{ ucfirst($entitlement['summary']->status->value) }}</dd>
+
+                                    <dt class="col-sm-4">Plan features</dt>
+                                    <dd class="col-sm-8">
+                                        @if (empty($entitlement['summary']->planFeatureKeys))
+                                            None
+                                        @else
+                                            {{ implode(', ', $entitlement['summary']->planFeatureKeys) }}
+                                        @endif
+                                    </dd>
+                                @endif
+
+                                <dt class="col-sm-4">Current Businesses</dt>
+                                <dd class="col-sm-8">{{ $entitlement['summary']->capacity->currentBusinessCount }}</dd>
+
+                                <dt class="col-sm-4">Included slots</dt>
+                                <dd class="col-sm-8">{{ $entitlement['summary']->capacity->includedSlots }}</dd>
+
+                                <dt class="col-sm-4">Additional slots</dt>
+                                <dd class="col-sm-8">{{ $entitlement['summary']->capacity->additionalSlotsAllocated }}</dd>
+
+                                <dt class="col-sm-4">Effective capacity</dt>
+                                <dd class="col-sm-8">
+                                    @if ($entitlement['summary']->capacity->unlimited)
+                                        Unlimited
+                                    @elseif ($entitlement['summary']->capacity->effectiveCapacity !== null)
+                                        {{ $entitlement['summary']->capacity->effectiveCapacity }}
+                                    @else
+                                        Unavailable ({{ $entitlement['summary']->capacity->denialReason }})
+                                    @endif
+                                </dd>
+                            </dl>
+                        </div>
+                    </div>
+                </div>
+            @endisset
+
             <div class="col-12">
                 <div class="card">
                     <div class="card-header">
@@ -244,6 +297,63 @@
                                 </table>
                             </div>
                         @endif
+
+                        @isset($entitlement)
+                            @if (! empty($manageableBusinesses))
+                                <div class="mt-3">
+                                    <h5>Platform feature preferences</h5>
+                                    @foreach ($manageableBusinesses as $business)
+                                        @php $businessFeatures = $entitlement['features'][$business['uid']] ?? []; @endphp
+                                        @if (! empty($businessFeatures))
+                                            <h6>{{ $business['name'] }}</h6>
+                                            <div class="table-responsive mb-2">
+                                                <table class="table table-sm">
+                                                    <thead>
+                                                        <tr>
+                                                            <th>Feature</th>
+                                                            <th>Effective entitlement</th>
+                                                            <th>Platform feature preference</th>
+                                                            <th></th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        @foreach ($businessFeatures as $featureKey => $row)
+                                                            <tr>
+                                                                <td>{{ $featureKey }}</td>
+                                                                <td>
+                                                                    @if ($row['decision']->allowed)
+                                                                        <span class="badge badge-light-success">Allowed</span>
+                                                                    @else
+                                                                        <span class="badge badge-light-secondary">Denied ({{ $row['decision']->reason }})</span>
+                                                                    @endif
+                                                                </td>
+                                                                <td>
+                                                                    {{ $row['disablePreferenceRecorded'] ? 'Disable preference recorded' : 'No disable preference recorded' }}
+                                                                    <div class="text-muted small">Runtime enforcement pending. This preference is stored at the Business level but the legacy module does not yet consult it.</div>
+                                                                </td>
+                                                                <td>
+                                                                    @if ($row['disablePreferenceRecorded'])
+                                                                        <form method="POST" data-business-action="features/{{ $featureKey }}/enable" data-business-uid="{{ $business['uid'] }}">
+                                                                            @csrf
+                                                                            <button type="submit" class="btn btn-sm btn-outline-secondary">Remove disable preference</button>
+                                                                        </form>
+                                                                    @elseif ($row['decision']->allowed)
+                                                                        <form method="POST" data-business-action="features/{{ $featureKey }}/disable" data-business-uid="{{ $business['uid'] }}">
+                                                                            @csrf
+                                                                            <button type="submit" class="btn btn-sm btn-outline-secondary">Record disable preference</button>
+                                                                        </form>
+                                                                    @endif
+                                                                </td>
+                                                            </tr>
+                                                        @endforeach
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        @endif
+                                    @endforeach
+                                </div>
+                            @endif
+                        @endisset
                     </div>
                 </div>
             </div>
