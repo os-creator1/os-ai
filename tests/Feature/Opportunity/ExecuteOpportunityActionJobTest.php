@@ -11,6 +11,7 @@ use App\Events\Opportunity\OpportunityExecutionSucceeded;
 use App\Jobs\Opportunity\ExecuteOpportunityAction;
 use App\Library\Business\BusinessManager;
 use App\Library\Business\UrlNormalizer;
+use App\Library\Entitlement\EntitlementManager;
 use App\Library\Workspace\WorkspaceManager;
 use App\Library\Opportunity\OpportunityActionExecutor;
 use App\Library\Opportunity\OpportunityActionHash;
@@ -148,6 +149,7 @@ class ExecuteOpportunityActionJobTest extends TestCase
             app(BusinessServiceRepository::class),
             app(UrlNormalizer::class),
             app(WorkspaceManager::class),
+            app(EntitlementManager::class),
         ) extends BusinessManager {
             public function updateBusiness(Customer $customer, Business $business, array $attributes): Business
             {
@@ -181,6 +183,7 @@ class ExecuteOpportunityActionJobTest extends TestCase
             app(BusinessServiceRepository::class),
             app(UrlNormalizer::class),
             app(WorkspaceManager::class),
+            app(EntitlementManager::class),
         ) extends BusinessManager {
             public function updateBusiness(Customer $customer, Business $business, array $attributes): Business
             {

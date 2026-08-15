@@ -374,6 +374,7 @@ class WorkspaceM1BBoundaryTest extends TestCase
             'createBusinessInWorkspace',
             'reassignBusiness',
             'transferOwnership',
+            'lockForLegacyOnboardingBusinessCreation',
         ], $methods);
     }
 

@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Workspace\Support;
 
+use App\Library\Entitlement\EntitlementManager;
 use App\Library\Workspace\WorkspaceManager;
 use App\Repositories\Contracts\BusinessRepository;
 use App\Repositories\Contracts\CustomerOnboardingRepository;
@@ -29,6 +30,7 @@ class SlowWorkspaceManager extends WorkspaceManager
         WorkspaceMembershipRepository $membershipRepository,
         WorkspaceMembershipBusinessRepository $membershipBusinessRepository,
         WorkspaceTransitionRepository $transitionRepository,
+        EntitlementManager $entitlementManager,
         private readonly float $holdSeconds,
     ) {
         parent::__construct(
@@ -39,6 +41,7 @@ class SlowWorkspaceManager extends WorkspaceManager
             $membershipRepository,
             $membershipBusinessRepository,
             $transitionRepository,
+            $entitlementManager,
         );
     }
 

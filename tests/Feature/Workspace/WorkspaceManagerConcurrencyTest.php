@@ -37,11 +37,37 @@ class WorkspaceManagerConcurrencyTest extends TestCase
     protected function tearDown(): void
     {
         if ($this->createdUserIds !== []) {
-            DB::table('workspaces')->whereIn('owner_user_id', $this->createdUserIds)->delete();
+            $this->deleteWorkspacesAndM2EntitlementChildrenForOwners($this->createdUserIds);
             DB::table('users')->whereIn('id', $this->createdUserIds)->delete();
         }
 
         parent::tearDown();
+    }
+
+    /**
+     * Under RFC-004 M2, a brand-new Workspace provisioned by
+     * resolveLegacyOnboardingWorkspace()'s zero-candidate auto-provisioning
+     * path now legitimately receives a narrow complimentary Core
+     * workspace_plan_assignments row and its plan_assigned
+     * workspace_entitlement_transitions row — both restrictOnDelete()
+     * against workspaces.id, so they must be cleared before the Workspace
+     * row itself can be deleted. Scoped strictly to Workspaces owned by the
+     * given owner IDs; never a global truncate.
+     */
+    private function deleteWorkspacesAndM2EntitlementChildrenForOwners(array $ownerUserIds): void
+    {
+        if ($ownerUserIds === []) {
+            return;
+        }
+
+        $workspaceIds = DB::table('workspaces')->whereIn('owner_user_id', $ownerUserIds)->pluck('id');
+
+        if ($workspaceIds->isNotEmpty()) {
+            DB::table('workspace_entitlement_transitions')->whereIn('workspace_id', $workspaceIds)->delete();
+            DB::table('workspace_plan_assignments')->whereIn('workspace_id', $workspaceIds)->delete();
+        }
+
+        DB::table('workspaces')->whereIn('owner_user_id', $ownerUserIds)->delete();
     }
 
     // A. Real two-process outcome test.
@@ -194,7 +220,12 @@ class WorkspaceManagerConcurrencyTest extends TestCase
             }
         } finally {
             if ($ownerUserId !== null) {
-                DB::table('workspaces')->where('owner_user_id', $ownerUserId)->delete();
+                // Defensive: this test's own assertion above requires zero
+                // Workspaces to have been created (the resolver call is
+                // expected to fail on the lock-wait timeout), but the
+                // same FK-safe M2 cleanup is used here too in case that
+                // assumption is ever violated by a future change.
+                $this->deleteWorkspacesAndM2EntitlementChildrenForOwners([$ownerUserId]);
                 DB::table('users')->where('id', $ownerUserId)->delete();
             }
 

@@ -2,7 +2,6 @@
 
 namespace App\Library\Workspace;
 
-use App\DTO\Workspace\WorkspaceFirstBusinessInput;
 use App\DTO\Workspace\WorkspaceOwnershipTransferDisposition;
 use App\Enums\Workspace\WorkspaceBusinessAccessScope;
 use App\Enums\Workspace\WorkspaceContextFailureReason;
@@ -40,6 +39,7 @@ use App\Exceptions\Workspace\WorkspaceMembershipNotFoundException;
 use App\Exceptions\Workspace\WorkspaceMembershipWorkspaceMismatchException;
 use App\Exceptions\Workspace\WorkspaceNotFoundException;
 use App\Exceptions\Workspace\WorkspaceOwnerNotFoundException;
+use App\Library\Entitlement\EntitlementManager;
 use App\Models\Business;
 use App\Models\Customer;
 use App\Models\User;
@@ -76,6 +76,7 @@ class WorkspaceManager
         private readonly WorkspaceMembershipRepository $membershipRepository,
         private readonly WorkspaceMembershipBusinessRepository $membershipBusinessRepository,
         private readonly WorkspaceTransitionRepository $transitionRepository,
+        private readonly EntitlementManager $entitlementManager,
     ) {
     }
 
@@ -158,12 +159,9 @@ class WorkspaceManager
      * audit is limited to ownership transfer and cross-Workspace Business
      * reassignment.
      */
-    public function createWorkspace(
-        int $ownerUserId,
-        string $name,
-        ?WorkspaceFirstBusinessInput $firstBusiness = null,
-    ): Workspace {
-        return DB::transaction(function () use ($ownerUserId, $name, $firstBusiness) {
+    public function createWorkspace(int $ownerUserId, string $name): Workspace
+    {
+        return DB::transaction(function () use ($ownerUserId, $name) {
             try {
                 $userRow = $this->lockOwnerRow($ownerUserId);
 
@@ -184,21 +182,7 @@ class WorkspaceManager
                 'is_active' => true,
             ]);
 
-            $business = null;
-
-            if ($firstBusiness !== null) {
-                $business = $this->businessRepository->createForCustomerInWorkspace(
-                    $firstBusiness->customer,
-                    $workspace,
-                    $firstBusiness->businessAttributes,
-                );
-            }
-
             WorkspaceCreated::dispatch($workspace->id, $ownerUserId);
-
-            if ($business !== null) {
-                BusinessAssignedToWorkspace::dispatch($business->id, $workspace->id, $ownerUserId);
-            }
 
             return $workspace;
         });
@@ -914,8 +898,7 @@ class WorkspaceManager
      * caller's possibly-stale $workspace. $customer is always the explicit
      * caller-supplied Customer — never inferred from $workspace's
      * owner_user_id or from $actorUserId — so Business.customer_id stays
-     * fully independent of Workspace ownership (§11.2), matching
-     * createWorkspace()'s existing WorkspaceFirstBusinessInput posture.
+     * fully independent of Workspace ownership (§11.2).
      * createForCustomerInWorkspace() sets workspace_id before its single
      * insert, so the created row never has a null workspace_id window.
      * No workspace_transitions row is written — durable audit is limited
@@ -941,6 +924,8 @@ class WorkspaceManager
             }
 
             $this->assertActorIsOwnerOrActiveAdmin($actorUserId, $lockedWorkspace);
+
+            $this->entitlementManager->assertCanCreateAnotherBusiness($lockedWorkspace);
 
             $business = $this->businessRepository->createForCustomerInWorkspace($customer, $lockedWorkspace, $businessAttributes);
 
@@ -1033,6 +1018,8 @@ class WorkspaceManager
                 return $lockedBusiness;
             }
 
+            $this->entitlementManager->assertCanCreateAnotherBusiness($lockedTargetWorkspace);
+
             $removedGrants = $this->membershipBusinessRepository
                 ->removeAllForBusinessInWorkspace($lockedBusiness->id, $lockedSourceWorkspace->id)
                 ->sortBy([
@@ -1105,6 +1092,13 @@ class WorkspaceManager
         int $newOwnerUserId,
         WorkspaceOwnershipTransferDisposition $previousOwnerDisposition,
     ): Workspace {
+        // Retried up to 3 attempts (M2, RFC-004 §13.O): this method's
+        // existing Workspace -> User(s) -> Membership lock order is the
+        // exact inverse of legacy onboarding's new User -> Workspace order
+        // (BusinessManager::applyIdentity()'s CREATE path), so either side
+        // may be selected as a genuine cross-operation MySQL deadlock
+        // victim — retried cleanly from the start rather than surfacing an
+        // unhandled deadlock. No lock reordering on either side.
         return DB::transaction(function () use ($actorUserId, $workspace, $newOwnerUserId, $previousOwnerDisposition) {
             $lockedWorkspace = $this->workspaceRepository->findForUpdate($workspace->id);
 
@@ -1186,7 +1180,7 @@ class WorkspaceManager
             );
 
             return $updatedWorkspace;
-        });
+        }, 3);
     }
 
     /**
@@ -1422,6 +1416,26 @@ class WorkspaceManager
     }
 
     /**
+     * Locks the one Workspace resolveLegacyOnboardingWorkspace() already
+     * selected as the sole candidate, so BusinessManager::applyIdentity()'s
+     * legacy CREATE path can assert capacity against an authoritative,
+     * locked row (M2, RFC-004 §17.3). Deliberately no authority or
+     * active-state check — the legacy path has never enforced either, and
+     * this integration adds exactly one new thing (capacity enforcement),
+     * never a new authority requirement.
+     */
+    public function lockForLegacyOnboardingBusinessCreation(Workspace $workspace): Workspace
+    {
+        $locked = $this->workspaceRepository->findForUpdate($workspace->id);
+
+        if ($locked === null) {
+            throw new WorkspaceNotFoundException($workspace->id);
+        }
+
+        return $locked;
+    }
+
+    /**
      * The stable users row is the serialization point (RFC-003 §13.1 step
      * 2, §18) — there is no Workspace row to lock when none exists yet.
      * Protected so a test can hold this lock open for a controlled
@@ -1534,11 +1548,15 @@ class WorkspaceManager
      */
     private function provisionWorkspaceRecord(int $ownerUserId, object $userRow): Workspace
     {
-        return $this->workspaceRepository->create([
+        $workspace = $this->workspaceRepository->create([
             'owner_user_id' => $ownerUserId,
             'name' => $this->resolveWorkspaceName($ownerUserId, $userRow),
             'is_active' => true,
         ]);
+
+        $this->entitlementManager->createLegacyOnboardingCompatibilityAssignment($workspace);
+
+        return $workspace;
     }
 
     /**

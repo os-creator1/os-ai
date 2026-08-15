@@ -4,6 +4,7 @@ namespace App\Repositories\Eloquent;
 
 use App\Models\WorkspacePlanAssignment;
 use App\Repositories\Contracts\WorkspacePlanAssignmentRepository;
+use Illuminate\Support\Arr;
 
 class EloquentWorkspacePlanAssignmentRepository extends EloquentBaseRepository implements WorkspacePlanAssignmentRepository
 {
@@ -24,5 +25,30 @@ class EloquentWorkspacePlanAssignmentRepository extends EloquentBaseRepository i
         $assignment->save();
 
         return $assignment;
+    }
+
+    public function update(WorkspacePlanAssignment $assignment, array $attributes): WorkspacePlanAssignment
+    {
+        $assignment->fill(Arr::only($attributes, [
+            'workspace_plan_catalog_id',
+            'status',
+            'is_complimentary',
+            'complimentary_reason',
+            'complimentary_granted_by_user_id',
+            'complimentary_granted_at',
+            'additional_business_slots',
+        ]));
+        $assignment->save();
+
+        return $assignment;
+    }
+
+    public function hasNonComplimentaryForCatalogForUpdate(int $catalogId): bool
+    {
+        return $this->query()
+            ->where('workspace_plan_catalog_id', $catalogId)
+            ->where('is_complimentary', false)
+            ->lockForUpdate()
+            ->exists();
     }
 }

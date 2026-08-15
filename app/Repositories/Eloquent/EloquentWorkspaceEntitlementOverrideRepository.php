@@ -3,6 +3,7 @@
 namespace App\Repositories\Eloquent;
 
 use App\Enums\Entitlement\PlatformFeature;
+use App\Enums\Entitlement\WorkspaceEntitlementOverrideState;
 use App\Models\WorkspaceEntitlementOverride;
 use App\Repositories\Contracts\WorkspaceEntitlementOverrideRepository;
 use InvalidArgumentException;
@@ -36,6 +37,14 @@ class EloquentWorkspaceEntitlementOverrideRepository extends EloquentBaseReposit
     public function delete(WorkspaceEntitlementOverride $override): void
     {
         $override->delete();
+    }
+
+    public function update(WorkspaceEntitlementOverride $override, WorkspaceEntitlementOverrideState $state): WorkspaceEntitlementOverride
+    {
+        $override->state = $state;
+        $override->save();
+
+        return $override;
     }
 
     private function guardKnownFeatureKey(mixed $featureKey): void

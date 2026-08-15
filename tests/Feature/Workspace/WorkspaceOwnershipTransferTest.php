@@ -999,8 +999,14 @@ class WorkspaceOwnershipTransferTest extends TestCase
         $this->assertSame(0, count(glob(database_path('migrations/*ownership_transfer*')) ?: []));
     }
 
-    // 60. No later Milestone method is added — Milestone 2's full public
-    // surface is now complete.
+    // 60. No unapproved later-Milestone method is added — RFC-003
+    // Milestone 2's public surface plus the one explicitly authorized
+    // RFC-004 Milestone 2 compatibility seam (contract §13.C):
+    // lockForLegacyOnboardingBusinessCreation(), used by
+    // BusinessManager's legacy CREATE path to lock the resolved
+    // destination Workspace before its entitlement capacity assertion and
+    // the Business insert. Still an exact-surface assertion — any other
+    // unapproved public method still fails this test.
     public function test_no_later_milestone_method_is_added(): void
     {
         $methods = array_map(
@@ -1027,6 +1033,7 @@ class WorkspaceOwnershipTransferTest extends TestCase
             'createBusinessInWorkspace',
             'reassignBusiness',
             'transferOwnership',
+            'lockForLegacyOnboardingBusinessCreation',
         ], $methods);
     }
 }

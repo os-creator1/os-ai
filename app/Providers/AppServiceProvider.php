@@ -155,6 +155,7 @@
                 \App\Repositories\Contracts\WorkspaceEntitlementOverrideRepository::class => \App\Repositories\Eloquent\EloquentWorkspaceEntitlementOverrideRepository::class,
                 \App\Repositories\Contracts\BusinessFeatureToggleRepository::class => \App\Repositories\Eloquent\EloquentBusinessFeatureToggleRepository::class,
                 \App\Repositories\Contracts\WorkspaceEntitlementTransitionRepository::class => \App\Repositories\Eloquent\EloquentWorkspaceEntitlementTransitionRepository::class,
+                \App\Library\Entitlement\Contracts\UsageAuthorizationGateway::class => \App\Library\Entitlement\NullUsageAuthorizationGateway::class,
             ];
 
             foreach ($bindings as $interface => $implementation) {

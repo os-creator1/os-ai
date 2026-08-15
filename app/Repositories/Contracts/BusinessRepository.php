@@ -18,6 +18,14 @@ interface BusinessRepository extends BaseRepository
     public function findById(int $id): ?Business;
 
     /**
+     * Lean COUNT(*) of every Business row belonging to this Workspace,
+     * regardless of status (RFC-004 §8/§13) — used by
+     * EntitlementManager::decideBusinessSlotCapacity() (M2, §17). Applies
+     * no status filter and loads no Collection.
+     */
+    public function countForWorkspace(Workspace $workspace): int;
+
+    /**
      * Row-locking variant of findById(), for callers that must hold the row
      * lock for the duration of a transaction (RFC-002 Opportunity Engine
      * run/read-modify-write flows).

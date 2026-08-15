@@ -32,6 +32,38 @@ class WorkspaceBusinessReassignmentHttpTest extends TestCase
     use CreatesBusinessTestData;
     use CreatesWorkspaceTestData;
 
+    /**
+     * M2 fixture-compatibility helper (§14.3, read-only audit finding) —
+     * NOT a change to the shared CreatesWorkspaceTestData trait. Wraps
+     * createWorkspace() with an explicit valid complimentary Core
+     * workspace_plan_assignments row, established via
+     * EntitlementManager::assignFirstPlan() using a distinct platform-admin
+     * fixture actor (never the test's own customer/owner/admin actor under
+     * test). Applied only to destination Workspaces used by cases expected
+     * to accept a real cross-Workspace reassignment — Workspaces used to
+     * test an unassigned-target denial remain intentionally unassigned.
+     */
+    private function entitledWorkspace($owner, array $overrides = []): \App\Models\Workspace
+    {
+        $workspace = $this->createWorkspace($owner, $overrides);
+
+        $admin = \App\Models\User::create([
+            'first_name' => 'M2Fixture', 'last_name' => 'Admin', 'email' => 'm2fixture' . uniqid() . '@example.test',
+            'status' => true, 'is_admin' => true, 'is_customer' => false, 'active_portal' => 'admin',
+        ]);
+
+        app(\App\Library\Entitlement\EntitlementManager::class)->assignFirstPlan(
+            $workspace,
+            \App\Enums\Entitlement\WorkspacePlanTier::Core,
+            $admin->id,
+            'M2 fixture-compatibility assignment.',
+            true,
+            2,
+        );
+
+        return $workspace->fresh();
+    }
+
     // --- Route shape -------------------------------------------------
 
     public function test_reassign_route_exists_as_post_with_expected_name_and_uri(): void
@@ -60,7 +92,7 @@ class WorkspaceBusinessReassignmentHttpTest extends TestCase
     {
         $customer = $this->actingAsHttpCustomer();
         $sourceWorkspace = $this->createWorkspace($customer->user);
-        $targetWorkspace = $this->createWorkspace($customer->user);
+        $targetWorkspace = $this->entitledWorkspace($customer->user);
         $business = $this->createBusinessForCustomer($customer->user->id, $sourceWorkspace->id);
 
         $response = $this->post(
@@ -79,7 +111,7 @@ class WorkspaceBusinessReassignmentHttpTest extends TestCase
         $ownerA = $this->createCustomer()->user;
         $ownerB = $this->createCustomer()->user;
         $sourceWorkspace = $this->createWorkspace($ownerA);
-        $targetWorkspace = $this->createWorkspace($ownerB);
+        $targetWorkspace = $this->entitledWorkspace($ownerB);
         $this->createMembership($sourceWorkspace, $customer->user, ['role' => WorkspaceMembershipRole::Admin, 'is_active' => true]);
         $this->createMembership($targetWorkspace, $customer->user, ['role' => WorkspaceMembershipRole::Admin, 'is_active' => true]);
         $business = $this->createBusinessForCustomer($ownerA->id, $sourceWorkspace->id);
@@ -100,7 +132,7 @@ class WorkspaceBusinessReassignmentHttpTest extends TestCase
         $ownerA = $this->createCustomer()->user;
         $ownerB = $this->createCustomer()->user;
         $sourceWorkspace = $this->createWorkspace($ownerA);
-        $targetWorkspace = $this->createWorkspace($ownerB);
+        $targetWorkspace = $this->entitledWorkspace($ownerB);
         $business = $this->createBusinessForCustomer($ownerA->id, $sourceWorkspace->id);
         $membership = $this->createMembership($sourceWorkspace, $customer->user, [
             'role' => WorkspaceMembershipRole::Admin,
@@ -403,7 +435,7 @@ class WorkspaceBusinessReassignmentHttpTest extends TestCase
     {
         $customer = $this->actingAsHttpCustomer();
         $sourceWorkspace = $this->createWorkspace($customer->user);
-        $targetWorkspace = $this->createWorkspace($customer->user);
+        $targetWorkspace = $this->entitledWorkspace($customer->user);
         $business = $this->createBusinessForCustomer($customer->user->id, $sourceWorkspace->id);
         $originalCustomerId = $business->customer_id;
         $originalName = $business->name;
@@ -439,7 +471,7 @@ class WorkspaceBusinessReassignmentHttpTest extends TestCase
     {
         $customer = $this->actingAsHttpCustomer();
         $sourceWorkspace = $this->createWorkspace($customer->user);
-        $targetWorkspace = $this->createWorkspace($customer->user);
+        $targetWorkspace = $this->entitledWorkspace($customer->user);
         $business = $this->createBusinessForCustomer($customer->user->id, $sourceWorkspace->id);
         $staffUser = $this->createCustomer()->user;
         $staffMembership = $this->createMembership($sourceWorkspace, $staffUser, [
@@ -460,7 +492,7 @@ class WorkspaceBusinessReassignmentHttpTest extends TestCase
     {
         $customer = $this->actingAsHttpCustomer();
         $sourceWorkspace = $this->createWorkspace($customer->user);
-        $targetWorkspace = $this->createWorkspace($customer->user);
+        $targetWorkspace = $this->entitledWorkspace($customer->user);
         $business = $this->createBusinessForCustomer($customer->user->id, $sourceWorkspace->id);
 
         $this->post(

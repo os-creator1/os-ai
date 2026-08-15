@@ -51,6 +51,41 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
     }
 
     /**
+     * M2 fixture-compatibility helper (§14.3, read-only audit finding) —
+     * NOT a change to the shared CreatesWorkspaceTestData trait, which
+     * stays unassigned-by-default for every other consumer. Wraps
+     * createWorkspace() with an explicit valid complimentary Core
+     * workspace_plan_assignments row, established via
+     * EntitlementManager::assignFirstPlan() with a distinct platform-admin
+     * fixture actor, for every pre-existing method whose fixture setup or
+     * assertion path relies on a successful createBusinessInWorkspace()/
+     * reassignBusiness() call. New tests below that intentionally exercise
+     * an unassigned/full-target capacity denial call the shared
+     * CreatesWorkspaceTestData::createWorkspace() trait method directly
+     * instead, to keep their fixture Workspace genuinely unassigned.
+     */
+    private function entitledWorkspace($owner, array $overrides = []): Workspace
+    {
+        $workspace = $this->createWorkspace($owner, $overrides);
+
+        $admin = \App\Models\User::create([
+            'first_name' => 'M2Fixture', 'last_name' => 'Admin', 'email' => 'm2fixture' . uniqid() . '@example.test',
+            'status' => true, 'is_admin' => true, 'is_customer' => false, 'active_portal' => 'admin',
+        ]);
+
+        app(\App\Library\Entitlement\EntitlementManager::class)->assignFirstPlan(
+            $workspace,
+            \App\Enums\Entitlement\WorkspacePlanTier::Core,
+            $admin->id,
+            'M2 fixture-compatibility assignment.',
+            true,
+            2,
+        );
+
+        return $workspace->fresh();
+    }
+
+    /**
      * @return array<int, array{sql: string, bindings: array<int, mixed>}>
      */
     private function captureQueries(\Closure $callback): array
@@ -72,7 +107,7 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
     public function test_owner_can_create_business(): void
     {
         $owner = $this->createCustomer();
-        $workspace = $this->createWorkspace($owner->user);
+        $workspace = $this->entitledWorkspace($owner->user);
 
         $business = $this->manager()->createBusinessInWorkspace($owner->user_id, $owner, $workspace, $this->businessAttributes());
 
@@ -85,7 +120,7 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
     {
         $owner = $this->createCustomer();
         $admin = $this->createCustomer();
-        $workspace = $this->createWorkspace($owner->user);
+        $workspace = $this->entitledWorkspace($owner->user);
         $this->createMembership($workspace, $admin->user, ['role' => WorkspaceMembershipRole::Admin, 'is_active' => true]);
 
         $business = $this->manager()->createBusinessInWorkspace($admin->user_id, $owner, $workspace, $this->businessAttributes());
@@ -97,7 +132,7 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
     public function test_staff_inactive_admin_and_unrelated_user_cannot_create_business(): void
     {
         $owner = $this->createCustomer();
-        $workspace = $this->createWorkspace($owner->user);
+        $workspace = $this->entitledWorkspace($owner->user);
 
         $staff = $this->createCustomer();
         $this->createMembership($workspace, $staff->user, ['role' => WorkspaceMembershipRole::Staff, 'is_active' => true]);
@@ -121,7 +156,7 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
     public function test_inactive_workspace_rejects_creation(): void
     {
         $owner = $this->createCustomer();
-        $workspace = $this->createWorkspace($owner->user, ['is_active' => false]);
+        $workspace = $this->entitledWorkspace($owner->user, ['is_active' => false]);
 
         $this->expectException(InactiveWorkspaceMutationException::class);
         $this->manager()->createBusinessInWorkspace($owner->user_id, $owner, $workspace, $this->businessAttributes());
@@ -142,7 +177,7 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
     public function test_explicit_customer_is_preserved(): void
     {
         $owner = $this->createCustomer();
-        $workspace = $this->createWorkspace($owner->user);
+        $workspace = $this->entitledWorkspace($owner->user);
 
         $business = $this->manager()->createBusinessInWorkspace($owner->user_id, $owner, $workspace, $this->businessAttributes());
 
@@ -154,7 +189,7 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
     {
         $owner = $this->createCustomer();
         $differentCustomer = $this->createCustomer();
-        $workspace = $this->createWorkspace($owner->user);
+        $workspace = $this->entitledWorkspace($owner->user);
 
         $business = $this->manager()->createBusinessInWorkspace($owner->user_id, $differentCustomer, $workspace, $this->businessAttributes());
 
@@ -168,7 +203,7 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
         $owner = $this->createCustomer();
         $admin = $this->createCustomer();
         $differentCustomer = $this->createCustomer();
-        $workspace = $this->createWorkspace($owner->user);
+        $workspace = $this->entitledWorkspace($owner->user);
         $this->createMembership($workspace, $admin->user, ['role' => WorkspaceMembershipRole::Admin, 'is_active' => true]);
 
         $business = $this->manager()->createBusinessInWorkspace($admin->user_id, $differentCustomer, $workspace, $this->businessAttributes());
@@ -181,7 +216,7 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
     public function test_workspace_id_exists_on_initial_insert(): void
     {
         $owner = $this->createCustomer();
-        $workspace = $this->createWorkspace($owner->user);
+        $workspace = $this->entitledWorkspace($owner->user);
 
         $queries = $this->captureQueries(function () use ($owner, $workspace) {
             $this->manager()->createBusinessInWorkspace($owner->user_id, $owner, $workspace, $this->businessAttributes());
@@ -206,7 +241,7 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
     {
         $owner = $this->createCustomer();
         $unrelated = $this->createCustomer();
-        $workspace = $this->createWorkspace($owner->user);
+        $workspace = $this->entitledWorkspace($owner->user);
 
         $stale = clone $workspace;
         $stale->is_active = false;
@@ -221,7 +256,7 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
     public function test_successful_creation_dispatches_business_assigned_once(): void
     {
         $owner = $this->createCustomer();
-        $workspace = $this->createWorkspace($owner->user);
+        $workspace = $this->entitledWorkspace($owner->user);
 
         Event::fake(self::ALL_EVENTS);
 
@@ -239,7 +274,7 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
     public function test_failed_creation_rolls_back_business_and_event(): void
     {
         $owner = $this->createCustomer();
-        $workspace = $this->createWorkspace($owner->user);
+        $workspace = $this->entitledWorkspace($owner->user);
         $bogusCustomer = new Customer(['user_id' => 999999999]);
 
         Event::fake(self::ALL_EVENTS);
@@ -259,7 +294,7 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
     public function test_create_business_writes_no_transition_row(): void
     {
         $owner = $this->createCustomer();
-        $workspace = $this->createWorkspace($owner->user);
+        $workspace = $this->entitledWorkspace($owner->user);
 
         $this->manager()->createBusinessInWorkspace($owner->user_id, $owner, $workspace, $this->businessAttributes());
 
@@ -272,8 +307,8 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
     public function test_owner_of_both_workspaces_may_reassign(): void
     {
         $owner = $this->createCustomer();
-        $workspaceA = $this->createWorkspace($owner->user);
-        $workspaceB = $this->createWorkspace($owner->user);
+        $workspaceA = $this->entitledWorkspace($owner->user);
+        $workspaceB = $this->entitledWorkspace($owner->user);
         $business = $this->manager()->createBusinessInWorkspace($owner->user_id, $owner, $workspaceA, $this->businessAttributes());
 
         $result = $this->manager()->reassignBusiness($owner->user_id, $business, $workspaceB);
@@ -287,8 +322,8 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
         $ownerA = $this->createCustomer();
         $ownerB = $this->createCustomer();
         $admin = $this->createCustomer();
-        $workspaceA = $this->createWorkspace($ownerA->user);
-        $workspaceB = $this->createWorkspace($ownerB->user);
+        $workspaceA = $this->entitledWorkspace($ownerA->user);
+        $workspaceB = $this->entitledWorkspace($ownerB->user);
         $this->createMembership($workspaceA, $admin->user, ['role' => WorkspaceMembershipRole::Admin, 'is_active' => true]);
         $this->createMembership($workspaceB, $admin->user, ['role' => WorkspaceMembershipRole::Admin, 'is_active' => true]);
         $business = $this->manager()->createBusinessInWorkspace($ownerA->user_id, $ownerA, $workspaceA, $this->businessAttributes());
@@ -303,8 +338,8 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
     {
         $ownerA = $this->createCustomer();
         $ownerB = $this->createCustomer();
-        $workspaceA = $this->createWorkspace($ownerA->user);
-        $workspaceB = $this->createWorkspace($ownerB->user);
+        $workspaceA = $this->entitledWorkspace($ownerA->user);
+        $workspaceB = $this->entitledWorkspace($ownerB->user);
         $business = $this->manager()->createBusinessInWorkspace($ownerA->user_id, $ownerA, $workspaceA, $this->businessAttributes());
 
         $this->expectException(UnauthorizedWorkspaceManagementException::class);
@@ -316,8 +351,8 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
     {
         $ownerA = $this->createCustomer();
         $ownerB = $this->createCustomer();
-        $workspaceA = $this->createWorkspace($ownerA->user);
-        $workspaceB = $this->createWorkspace($ownerB->user);
+        $workspaceA = $this->entitledWorkspace($ownerA->user);
+        $workspaceB = $this->entitledWorkspace($ownerB->user);
         $business = $this->manager()->createBusinessInWorkspace($ownerA->user_id, $ownerA, $workspaceA, $this->businessAttributes());
 
         $this->expectException(UnauthorizedWorkspaceManagementException::class);
@@ -328,8 +363,8 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
     public function test_staff_inactive_admin_and_unrelated_user_cannot_reassign(): void
     {
         $owner = $this->createCustomer();
-        $workspaceA = $this->createWorkspace($owner->user);
-        $workspaceB = $this->createWorkspace($owner->user);
+        $workspaceA = $this->entitledWorkspace($owner->user);
+        $workspaceB = $this->entitledWorkspace($owner->user);
 
         $staff = $this->createCustomer();
         $this->createMembership($workspaceA, $staff->user, ['role' => WorkspaceMembershipRole::Staff, 'is_active' => true]);
@@ -355,8 +390,8 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
     public function test_inactive_source_workspace_is_rejected(): void
     {
         $owner = $this->createCustomer();
-        $workspaceA = $this->createWorkspace($owner->user);
-        $workspaceB = $this->createWorkspace($owner->user);
+        $workspaceA = $this->entitledWorkspace($owner->user);
+        $workspaceB = $this->entitledWorkspace($owner->user);
         $business = $this->manager()->createBusinessInWorkspace($owner->user_id, $owner, $workspaceA, $this->businessAttributes());
         $this->manager()->deactivateWorkspace($owner->user_id, $workspaceA);
 
@@ -368,8 +403,8 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
     public function test_inactive_target_workspace_is_rejected(): void
     {
         $owner = $this->createCustomer();
-        $workspaceA = $this->createWorkspace($owner->user);
-        $workspaceB = $this->createWorkspace($owner->user);
+        $workspaceA = $this->entitledWorkspace($owner->user);
+        $workspaceB = $this->entitledWorkspace($owner->user);
         $business = $this->manager()->createBusinessInWorkspace($owner->user_id, $owner, $workspaceA, $this->businessAttributes());
         $this->manager()->deactivateWorkspace($owner->user_id, $workspaceB);
 
@@ -381,7 +416,7 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
     public function test_missing_source_or_target_workspace_throws(): void
     {
         $owner = $this->createCustomer();
-        $workspaceA = $this->createWorkspace($owner->user);
+        $workspaceA = $this->entitledWorkspace($owner->user);
         $business = $this->manager()->createBusinessInWorkspace($owner->user_id, $owner, $workspaceA, $this->businessAttributes());
 
         $phantomTarget = new Workspace(['name' => 'Phantom', 'owner_user_id' => $owner->user_id, 'is_active' => true]);
@@ -409,8 +444,8 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
     public function test_missing_business_throws(): void
     {
         $owner = $this->createCustomer();
-        $workspaceA = $this->createWorkspace($owner->user);
-        $workspaceB = $this->createWorkspace($owner->user);
+        $workspaceA = $this->entitledWorkspace($owner->user);
+        $workspaceB = $this->entitledWorkspace($owner->user);
 
         $phantomBusiness = new Business($this->businessAttributes());
         $phantomBusiness->customer_id = $owner->user_id;
@@ -425,9 +460,9 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
     public function test_caller_stale_business_source_throws_mismatch(): void
     {
         $owner = $this->createCustomer();
-        $workspaceA = $this->createWorkspace($owner->user);
-        $workspaceB = $this->createWorkspace($owner->user);
-        $workspaceC = $this->createWorkspace($owner->user);
+        $workspaceA = $this->entitledWorkspace($owner->user);
+        $workspaceB = $this->entitledWorkspace($owner->user);
+        $workspaceC = $this->entitledWorkspace($owner->user);
         $business = $this->manager()->createBusinessInWorkspace($owner->user_id, $owner, $workspaceA, $this->businessAttributes());
 
         $stale = clone $business;
@@ -448,8 +483,8 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
     {
         $owner = $this->createCustomer();
         $unrelated = $this->createCustomer();
-        $workspaceA = $this->createWorkspace($owner->user);
-        $workspaceB = $this->createWorkspace($owner->user);
+        $workspaceA = $this->entitledWorkspace($owner->user);
+        $workspaceB = $this->entitledWorkspace($owner->user);
         $business = $this->manager()->createBusinessInWorkspace($owner->user_id, $owner, $workspaceA, $this->businessAttributes());
 
         $staleTarget = clone $workspaceB;
@@ -465,7 +500,7 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
     public function test_same_target_call_is_a_no_op(): void
     {
         $owner = $this->createCustomer();
-        $workspaceA = $this->createWorkspace($owner->user);
+        $workspaceA = $this->entitledWorkspace($owner->user);
         $business = $this->manager()->createBusinessInWorkspace($owner->user_id, $owner, $workspaceA, $this->businessAttributes());
 
         Event::fake(self::ALL_EVENTS);
@@ -483,7 +518,7 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
     {
         $owner = $this->createCustomer();
         $unrelated = $this->createCustomer();
-        $workspaceA = $this->createWorkspace($owner->user);
+        $workspaceA = $this->entitledWorkspace($owner->user);
         $business = $this->manager()->createBusinessInWorkspace($owner->user_id, $owner, $workspaceA, $this->businessAttributes());
 
         $this->expectException(UnauthorizedWorkspaceManagementException::class);
@@ -494,8 +529,8 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
     public function test_reassignment_changes_only_workspace_id(): void
     {
         $owner = $this->createCustomer();
-        $workspaceA = $this->createWorkspace($owner->user);
-        $workspaceB = $this->createWorkspace($owner->user);
+        $workspaceA = $this->entitledWorkspace($owner->user);
+        $workspaceB = $this->entitledWorkspace($owner->user);
         $business = $this->manager()->createBusinessInWorkspace($owner->user_id, $owner, $workspaceA, $this->businessAttributes());
         $originalName = $business->name;
         $originalCustomerId = $business->customer_id;
@@ -513,9 +548,9 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
     public function test_only_the_reassigned_businesss_source_workspace_grants_are_removed(): void
     {
         $owner = $this->createCustomer();
-        $workspaceA = $this->createWorkspace($owner->user);
-        $workspaceB = $this->createWorkspace($owner->user);
-        $workspaceC = $this->createWorkspace($owner->user);
+        $workspaceA = $this->entitledWorkspace($owner->user);
+        $workspaceB = $this->entitledWorkspace($owner->user);
+        $workspaceC = $this->entitledWorkspace($owner->user);
 
         $member1 = $this->createCustomer()->user;
         $member2 = $this->createCustomer()->user;
@@ -541,8 +576,8 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
     public function test_unassigned_events_fire_deterministically_then_reassigned_fires_last(): void
     {
         $owner = $this->createCustomer();
-        $workspaceA = $this->createWorkspace($owner->user);
-        $workspaceB = $this->createWorkspace($owner->user);
+        $workspaceA = $this->entitledWorkspace($owner->user);
+        $workspaceB = $this->entitledWorkspace($owner->user);
         $memberX = $this->createCustomer()->user;
         $memberY = $this->createCustomer()->user;
 
@@ -576,8 +611,8 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
     public function test_no_unassigned_event_fires_when_no_grants_exist(): void
     {
         $owner = $this->createCustomer();
-        $workspaceA = $this->createWorkspace($owner->user);
-        $workspaceB = $this->createWorkspace($owner->user);
+        $workspaceA = $this->entitledWorkspace($owner->user);
+        $workspaceB = $this->entitledWorkspace($owner->user);
         $business = $this->manager()->createBusinessInWorkspace($owner->user_id, $owner, $workspaceA, $this->businessAttributes());
 
         Event::fake(self::ALL_EVENTS);
@@ -593,8 +628,8 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
     public function test_exactly_one_transition_is_created_with_correct_fields(): void
     {
         $owner = $this->createCustomer();
-        $workspaceA = $this->createWorkspace($owner->user);
-        $workspaceB = $this->createWorkspace($owner->user);
+        $workspaceA = $this->entitledWorkspace($owner->user);
+        $workspaceB = $this->entitledWorkspace($owner->user);
         $business = $this->manager()->createBusinessInWorkspace($owner->user_id, $owner, $workspaceA, $this->businessAttributes());
 
         $this->manager()->reassignBusiness($owner->user_id, $business, $workspaceB);
@@ -615,8 +650,8 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
     public function test_for_workspace_exposes_transition_in_both_histories(): void
     {
         $owner = $this->createCustomer();
-        $workspaceA = $this->createWorkspace($owner->user);
-        $workspaceB = $this->createWorkspace($owner->user);
+        $workspaceA = $this->entitledWorkspace($owner->user);
+        $workspaceB = $this->entitledWorkspace($owner->user);
         $business = $this->manager()->createBusinessInWorkspace($owner->user_id, $owner, $workspaceA, $this->businessAttributes());
 
         $this->manager()->reassignBusiness($owner->user_id, $business, $workspaceB);
@@ -635,8 +670,8 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
     public function test_failure_rolls_back_cleanup_business_update_and_transition(): void
     {
         $owner = $this->createCustomer();
-        $workspaceA = $this->createWorkspace($owner->user);
-        $workspaceB = $this->createWorkspace($owner->user);
+        $workspaceA = $this->entitledWorkspace($owner->user);
+        $workspaceB = $this->entitledWorkspace($owner->user);
         $member = $this->createCustomer()->user;
         $business = $this->manager()->createBusinessInWorkspace($owner->user_id, $owner, $workspaceA, $this->businessAttributes());
         $membership = $this->manager()->addMember($owner->user_id, $workspaceA, $member->id, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected, [$business->id]);
@@ -667,8 +702,8 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
     {
         $owner = $this->createCustomer();
         $otherCustomer = $this->createCustomer();
-        $workspaceA = $this->createWorkspace($owner->user);
-        $workspaceB = $this->createWorkspace($owner->user);
+        $workspaceA = $this->entitledWorkspace($owner->user);
+        $workspaceB = $this->entitledWorkspace($owner->user);
         $business = $this->manager()->createBusinessInWorkspace($owner->user_id, $owner, $workspaceA, $this->businessAttributes());
 
         $mutated = clone $business;
@@ -687,8 +722,8 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
     public function test_workspaces_locked_ascending_then_business_locked_last(): void
     {
         $owner = $this->createCustomer();
-        $workspaceA = $this->createWorkspace($owner->user);
-        $workspaceB = $this->createWorkspace($owner->user);
+        $workspaceA = $this->entitledWorkspace($owner->user);
+        $workspaceB = $this->entitledWorkspace($owner->user);
         $this->assertLessThan($workspaceB->id, $workspaceA->id);
         $business = $this->manager()->createBusinessInWorkspace($owner->user_id, $owner, $workspaceA, $this->businessAttributes());
 
@@ -712,8 +747,8 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
     public function test_opposite_direction_reassignments_lock_workspaces_in_the_same_ascending_order(): void
     {
         $owner = $this->createCustomer();
-        $workspaceLow = $this->createWorkspace($owner->user);
-        $workspaceHigh = $this->createWorkspace($owner->user);
+        $workspaceLow = $this->entitledWorkspace($owner->user);
+        $workspaceHigh = $this->entitledWorkspace($owner->user);
         $this->assertLessThan($workspaceHigh->id, $workspaceLow->id);
 
         $businessInLow = $this->manager()->createBusinessInWorkspace($owner->user_id, $owner, $workspaceLow, $this->businessAttributes(['name' => 'In Low']));
@@ -753,8 +788,8 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
     public function test_reassignment_creates_no_ownership_transfer_event_or_transition(): void
     {
         $owner = $this->createCustomer();
-        $workspaceA = $this->createWorkspace($owner->user);
-        $workspaceB = $this->createWorkspace($owner->user);
+        $workspaceA = $this->entitledWorkspace($owner->user);
+        $workspaceB = $this->entitledWorkspace($owner->user);
         $business = $this->manager()->createBusinessInWorkspace($owner->user_id, $owner, $workspaceA, $this->businessAttributes());
 
         $this->manager()->reassignBusiness($owner->user_id, $business, $workspaceB);
@@ -775,8 +810,8 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
         $ownerA = $this->createCustomer();
         $ownerB = $this->createCustomer();
         $admin = $this->createCustomer();
-        $workspaceA = $this->createWorkspace($ownerA->user);
-        $workspaceB = $this->createWorkspace($ownerB->user);
+        $workspaceA = $this->entitledWorkspace($ownerA->user);
+        $workspaceB = $this->entitledWorkspace($ownerB->user);
         $this->createMembership($workspaceA, $admin->user, ['role' => WorkspaceMembershipRole::Admin, 'is_active' => true]);
         $this->createMembership($workspaceB, $admin->user, ['role' => WorkspaceMembershipRole::Admin, 'is_active' => true]);
         $business = $this->manager()->createBusinessInWorkspace($ownerA->user_id, $ownerA, $workspaceA, $this->businessAttributes());
@@ -793,8 +828,8 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
         $ownerA = $this->createCustomer();
         $ownerB = $this->createCustomer();
         $admin = $this->createCustomer();
-        $workspaceA = $this->createWorkspace($ownerA->user);
-        $workspaceB = $this->createWorkspace($ownerB->user);
+        $workspaceA = $this->entitledWorkspace($ownerA->user);
+        $workspaceB = $this->entitledWorkspace($ownerB->user);
         $business = $this->manager()->createBusinessInWorkspace($ownerA->user_id, $ownerA, $workspaceA, $this->businessAttributes());
         $this->manager()->addMember($ownerA->user_id, $workspaceA, $admin->user_id, WorkspaceMembershipRole::Admin, WorkspaceBusinessAccessScope::Selected, [$business->id]);
         $this->createMembership($workspaceB, $admin->user, ['role' => WorkspaceMembershipRole::Admin, 'is_active' => true]);
@@ -812,8 +847,8 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
         $ownerA = $this->createCustomer();
         $ownerB = $this->createCustomer();
         $admin = $this->createCustomer();
-        $workspaceA = $this->createWorkspace($ownerA->user);
-        $workspaceB = $this->createWorkspace($ownerB->user);
+        $workspaceA = $this->entitledWorkspace($ownerA->user);
+        $workspaceB = $this->entitledWorkspace($ownerB->user);
         $business = $this->manager()->createBusinessInWorkspace($ownerA->user_id, $ownerA, $workspaceA, $this->businessAttributes());
         $this->manager()->addMember($ownerA->user_id, $workspaceA, $admin->user_id, WorkspaceMembershipRole::Admin, WorkspaceBusinessAccessScope::Selected, []);
         $this->createMembership($workspaceB, $admin->user, ['role' => WorkspaceMembershipRole::Admin, 'is_active' => true]);
@@ -829,8 +864,8 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
     {
         $workspaceOwner = $this->createCustomer();
         $businessOwner = $this->createCustomer();
-        $workspaceA = $this->createWorkspace($workspaceOwner->user);
-        $workspaceB = $this->createWorkspace($workspaceOwner->user);
+        $workspaceA = $this->entitledWorkspace($workspaceOwner->user);
+        $workspaceB = $this->entitledWorkspace($workspaceOwner->user);
         $business = $this->manager()->createBusinessInWorkspace($workspaceOwner->user_id, $businessOwner, $workspaceA, $this->businessAttributes());
 
         $this->expectException(UnauthorizedWorkspaceManagementException::class);
@@ -843,7 +878,7 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
     {
         $owner = $this->createCustomer();
         $admin = $this->createCustomer();
-        $workspaceA = $this->createWorkspace($owner->user);
+        $workspaceA = $this->entitledWorkspace($owner->user);
         $business = $this->manager()->createBusinessInWorkspace($owner->user_id, $owner, $workspaceA, $this->businessAttributes());
         $this->manager()->addMember($owner->user_id, $workspaceA, $admin->user_id, WorkspaceMembershipRole::Admin, WorkspaceBusinessAccessScope::Selected, [$business->id]);
 
@@ -860,7 +895,7 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
     {
         $owner = $this->createCustomer();
         $admin = $this->createCustomer();
-        $workspaceA = $this->createWorkspace($owner->user);
+        $workspaceA = $this->entitledWorkspace($owner->user);
         $business = $this->manager()->createBusinessInWorkspace($owner->user_id, $owner, $workspaceA, $this->businessAttributes());
         $this->manager()->addMember($owner->user_id, $workspaceA, $admin->user_id, WorkspaceMembershipRole::Admin, WorkspaceBusinessAccessScope::Selected, []);
 
@@ -874,5 +909,115 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
         $this->assertFalse(class_exists('App\Http\Controllers\Customer\WorkspaceBusinessController'));
         $this->assertSame(0, count(glob(database_path('migrations/*reassign*')) ?: []));
         $this->assertSame(0, count(glob(database_path('migrations/*transfer_ownership*')) ?: []));
+    }
+
+    // --- M2 CAPACITY ENFORCEMENT (§13.A/§13.B, read-only audit finding) ---
+
+    private function fillToCapacity(Workspace $workspace, Customer $owner, int $count): void
+    {
+        for ($i = 0; $i < $count; $i++) {
+            $this->manager()->createBusinessInWorkspace($owner->user_id, $owner, $workspace, $this->businessAttributes(['name' => "Fixture {$i}-" . uniqid()]));
+        }
+    }
+
+    public function test_final_slot_available_succeeds(): void
+    {
+        $owner = $this->createCustomer();
+        $workspace = $this->entitledWorkspace($owner->user);
+        $this->fillToCapacity($workspace, $owner, 4);
+
+        $business = $this->manager()->createBusinessInWorkspace($owner->user_id, $owner, $workspace, $this->businessAttributes(['name' => 'Final']));
+
+        $this->assertSame($workspace->id, $business->workspace_id);
+        $this->assertSame(5, Business::where('workspace_id', $workspace->id)->count());
+    }
+
+    public function test_full_target_denies_with_business_slot_limit_exceeded(): void
+    {
+        $owner = $this->createCustomer();
+        $workspace = $this->entitledWorkspace($owner->user);
+        $this->fillToCapacity($workspace, $owner, 5);
+
+        $this->expectException(\App\Exceptions\Entitlement\BusinessSlotLimitExceededException::class);
+        $this->manager()->createBusinessInWorkspace($owner->user_id, $owner, $workspace, $this->businessAttributes(['name' => 'Sixth']));
+    }
+
+    public function test_unassigned_target_denies_with_workspace_plan_unassigned(): void
+    {
+        $owner = $this->createCustomer();
+        $workspace = $this->createWorkspace($owner->user);
+
+        $this->expectException(\App\Exceptions\Entitlement\WorkspacePlanUnassignedException::class);
+        $this->manager()->createBusinessInWorkspace($owner->user_id, $owner, $workspace, $this->businessAttributes());
+    }
+
+    public function test_inactive_plan_target_denies_with_inactive_workspace_plan(): void
+    {
+        $owner = $this->createCustomer();
+        $workspace = $this->entitledWorkspace($owner->user);
+        $admin = \App\Models\User::create([
+            'first_name' => 'Admin', 'last_name' => 'User', 'email' => 'admin' . uniqid() . '@example.test',
+            'status' => true, 'is_admin' => true, 'is_customer' => false, 'active_portal' => 'admin',
+        ]);
+        app(\App\Library\Entitlement\EntitlementManager::class)->changePlanStatus(
+            $workspace->fresh(),
+            \App\Enums\Entitlement\WorkspacePlanAssignmentStatus::Inactive,
+            $admin->id,
+            'Fixture.',
+        );
+
+        $this->expectException(\App\Exceptions\Entitlement\InactiveWorkspacePlanException::class);
+        $this->manager()->createBusinessInWorkspace($owner->user_id, $owner, $workspace->fresh(), $this->businessAttributes());
+    }
+
+    public function test_suspended_plan_target_denies_with_suspended_workspace_plan(): void
+    {
+        $owner = $this->createCustomer();
+        $workspace = $this->entitledWorkspace($owner->user);
+        $admin = \App\Models\User::create([
+            'first_name' => 'Admin', 'last_name' => 'User', 'email' => 'admin' . uniqid() . '@example.test',
+            'status' => true, 'is_admin' => true, 'is_customer' => false, 'active_portal' => 'admin',
+        ]);
+        app(\App\Library\Entitlement\EntitlementManager::class)->changePlanStatus(
+            $workspace->fresh(),
+            \App\Enums\Entitlement\WorkspacePlanAssignmentStatus::Suspended,
+            $admin->id,
+            'Fixture.',
+        );
+
+        $this->expectException(\App\Exceptions\Entitlement\SuspendedWorkspacePlanException::class);
+        $this->manager()->createBusinessInWorkspace($owner->user_id, $owner, $workspace->fresh(), $this->businessAttributes());
+    }
+
+    public function test_source_and_destination_isolation_a_race_on_one_workspace_never_affects_an_unrelated_workspace(): void
+    {
+        $owner = $this->createCustomer();
+        $fullWorkspace = $this->entitledWorkspace($owner->user);
+        $this->fillToCapacity($fullWorkspace, $owner, 5);
+
+        $unrelatedOwner = $this->createCustomer();
+        $unrelatedWorkspace = $this->entitledWorkspace($unrelatedOwner->user);
+
+        try {
+            $this->manager()->createBusinessInWorkspace($owner->user_id, $owner, $fullWorkspace, $this->businessAttributes());
+        } catch (\App\Exceptions\Entitlement\BusinessSlotLimitExceededException) {
+            // expected
+        }
+
+        $business = $this->manager()->createBusinessInWorkspace($unrelatedOwner->user_id, $unrelatedOwner, $unrelatedWorkspace, $this->businessAttributes());
+        $this->assertSame($unrelatedWorkspace->id, $business->workspace_id);
+    }
+
+    public function test_same_target_no_op_remains_a_no_op_even_when_the_workspace_is_at_full_capacity(): void
+    {
+        $owner = $this->createCustomer();
+        $workspace = $this->entitledWorkspace($owner->user);
+        $this->fillToCapacity($workspace, $owner, 4);
+        $business = $this->manager()->createBusinessInWorkspace($owner->user_id, $owner, $workspace, $this->businessAttributes(['name' => 'Final']));
+        // Workspace is now at exact capacity (5/5).
+
+        $result = $this->manager()->reassignBusiness($owner->user_id, $business, $workspace);
+
+        $this->assertSame($workspace->id, $result->workspace_id);
     }
 }
