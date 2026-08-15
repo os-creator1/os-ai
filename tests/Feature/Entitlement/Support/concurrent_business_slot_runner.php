@@ -26,6 +26,30 @@
  *   revoke-complimentary <workspaceId> <actorUserId>
  *   toggle-disable <businessId> <featureKey> <actorUserId>
  *   toggle-enable <businessId> <featureKey> <actorUserId>
+ *
+ *   hold-then <lockSpecs> <holdSeconds> <delegateMode> <delegateArgs...>
+ *     Test-only deterministic direction-forcing primitive: opens one real
+ *     transaction, takes an explicit `SELECT ... FOR UPDATE` lock on EACH
+ *     row named in <lockSpecs> (a '|'-delimited list of 'table:column:id'
+ *     triples, acquired strictly in the order given), prints "LOCKED"
+ *     (flushed) so the parent test can confirm every listed lock is
+ *     genuinely held before starting the racing "waiter" process, sleeps
+ *     for <holdSeconds>, then runs <delegateMode> (any mode above) inside
+ *     that SAME transaction. <lockSpecs> must be the exact prefix of
+ *     <delegateMode>'s own real production lock sequence, up to and
+ *     including the row the waiter actually contends on — e.g. Workspace
+ *     then catalog for a paid assignFirstPlan()/revokeComplimentaryStatus()
+ *     holder, or the owner's User row then the Workspace row for a
+ *     legacy-create holder — never a single later row locked in isolation,
+ *     which would silently invert the production method's real order. The
+ *     delegate's own internal re-acquisition of each already-listed row is
+ *     therefore a no-op, so its real logic proceeds through whatever
+ *     further locks/writes it genuinely performs next, completely
+ *     undisturbed and in its own real order, and commits only after the
+ *     deliberate hold — guaranteeing the waiter (started only after seeing
+ *     "LOCKED") genuinely blocks on the row and observes this holder's
+ *     committed result once released. No production sleep/backoff — the
+ *     sleep lives entirely in this test Support script.
  */
 
 require __DIR__ . '/../../../../vendor/autoload.php';
@@ -51,9 +75,14 @@ if ($resolvedDatabase !== EXPECTED_DATABASE) {
     exit(WRONG_DATABASE_EXIT_CODE);
 }
 
-$mode = $argv[1] ?? null;
-
-try {
+/**
+ * Runs a single mode's real production logic. Shared by the top-level
+ * dispatch below and by the `hold-then` wrapper, so both a plain
+ * (unheld) invocation and a deliberately lock-held invocation execute the
+ * exact same real manager/repository calls — never a test-only stand-in.
+ */
+function runMode(string $mode, array $argv, $app): void
+{
     switch ($mode) {
         case 'create-business':
             [, , $workspaceId, $customerId, $actorUserId] = $argv;
@@ -66,7 +95,8 @@ try {
                 ['name' => 'Concurrency Business ' . uniqid(), 'industry' => 'photo_booth_service', 'country_code' => 'US', 'timezone' => 'America/New_York', 'currency_code' => 'USD'],
             );
             fwrite(STDOUT, sprintf("OK business_id=%d\n", $business->id));
-            exit(0);
+
+            return;
 
         case 'reassign-business':
             [, , $businessId, $targetWorkspaceId, $actorUserId] = $argv;
@@ -78,7 +108,8 @@ try {
                 $targetWorkspace,
             );
             fwrite(STDOUT, sprintf("OK business_id=%d workspace_id=%d\n", $updated->id, $updated->workspace_id));
-            exit(0);
+
+            return;
 
         case 'legacy-create':
             [, , $customerId] = $argv;
@@ -89,7 +120,8 @@ try {
                 ['name' => 'Legacy Concurrency Business ' . uniqid(), 'industry' => 'photo_booth_service', 'country_code' => 'US', 'timezone' => 'America/New_York', 'currency_code' => 'USD'],
             );
             fwrite(STDOUT, sprintf("OK business_id=%d workspace_id=%d\n", $business->id, $business->workspace_id));
-            exit(0);
+
+            return;
 
         case 'transfer-ownership':
             [, , $workspaceId, $actorUserId, $newOwnerUserId] = $argv;
@@ -102,7 +134,8 @@ try {
                 $disposition,
             );
             fwrite(STDOUT, sprintf("OK workspace_id=%d owner_user_id=%d\n", $updated->id, $updated->owner_user_id));
-            exit(0);
+
+            return;
 
         case 'catalog-clear':
             [, , $catalogId, $actorUserId] = $argv;
@@ -114,7 +147,8 @@ try {
                 (int) $actorUserId,
             );
             fwrite(STDOUT, sprintf("OK catalog_id=%d cleared\n", $catalog->id));
-            exit(0);
+
+            return;
 
         case 'assign-first-plan':
             [, , $workspaceId, $tier, $actorUserId, $isComplimentary] = $argv;
@@ -128,7 +162,8 @@ try {
                 0,
             );
             fwrite(STDOUT, sprintf("OK assignment_id=%d\n", $assignment->id));
-            exit(0);
+
+            return;
 
         case 'revoke-complimentary':
             [, , $workspaceId, $actorUserId] = $argv;
@@ -138,7 +173,8 @@ try {
                 (int) $actorUserId,
             );
             fwrite(STDOUT, sprintf("OK assignment_id=%d is_complimentary=%s\n", $assignment->id, $assignment->is_complimentary ? '1' : '0'));
-            exit(0);
+
+            return;
 
         case 'toggle-disable':
             [, , $businessId, $featureKey, $actorUserId] = $argv;
@@ -149,7 +185,8 @@ try {
                 (int) $actorUserId,
             );
             fwrite(STDOUT, sprintf("OK toggle_id=%d\n", $toggle->id));
-            exit(0);
+
+            return;
 
         case 'toggle-enable':
             [, , $businessId, $featureKey, $actorUserId] = $argv;
@@ -160,12 +197,61 @@ try {
                 (int) $actorUserId,
             );
             fwrite(STDOUT, "OK toggle_removed\n");
-            exit(0);
+
+            return;
 
         default:
             fwrite(STDERR, "Unknown mode [{$mode}].\n");
             exit(2);
     }
+}
+
+$mode = $argv[1] ?? null;
+
+try {
+    if ($mode === 'hold-then') {
+        // hold-then <lockSpecs> <holdSeconds> <delegateMode> <delegateArgs...>
+        // <lockSpecs> is a '|'-delimited list of 'table:column:id' triples,
+        // acquired via SELECT ... FOR UPDATE strictly in the order given.
+        // That order MUST be the exact prefix of the real production
+        // lock sequence <delegateMode> itself would acquire up to and
+        // including the row the racing "waiter" process contends on —
+        // never a single later row acquired in isolation, which would
+        // silently invert the production method's real lock order and
+        // invalidate the proof. Once every listed row is locked, this
+        // signals "LOCKED", sleeps, then runs the real delegate inside the
+        // SAME transaction — its own internal re-acquisition of each
+        // already-listed row is therefore a no-op, so it proceeds straight
+        // into whatever further locks/writes it genuinely performs next,
+        // completely undisturbed and in its own real order.
+        [, , $lockSpecsRaw, $holdSeconds, $delegateMode] = $argv;
+        $delegateArgv = array_merge([$argv[0], $delegateMode], array_slice($argv, 5));
+
+        $lockSpecs = array_map(
+            static fn (string $spec) => explode(':', $spec, 3),
+            explode('|', $lockSpecsRaw)
+        );
+
+        Illuminate\Support\Facades\DB::transaction(function () use ($lockSpecs, $holdSeconds, $delegateMode, $delegateArgv, $app) {
+            foreach ($lockSpecs as [$lockTable, $lockColumn, $lockId]) {
+                Illuminate\Support\Facades\DB::table($lockTable)->where($lockColumn, $lockId)->lockForUpdate()->first();
+            }
+
+            fwrite(STDOUT, "LOCKED\n");
+            fflush(STDOUT);
+
+            if ((int) $holdSeconds > 0) {
+                sleep((int) $holdSeconds);
+            }
+
+            runMode($delegateMode, $delegateArgv, $app);
+        });
+
+        exit(0);
+    }
+
+    runMode((string) $mode, $argv, $app);
+    exit(0);
 } catch (Throwable $e) {
     fwrite(STDERR, get_class($e) . ': ' . $e->getMessage() . "\n");
     exit(1);

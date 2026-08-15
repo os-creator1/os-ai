@@ -839,30 +839,40 @@ final class EntitlementManager
     // Catalog pricing mutation guard
     // =====================================================================
 
+    /**
+     * The entire authority-check-through-update sequence is one real
+     * transaction: findForUpdate()'s SELECT ... FOR UPDATE only holds its
+     * row lock across subsequent statements while an ambient transaction is
+     * open — executed outside one, MySQL's autocommit mode releases the
+     * lock the instant that single SELECT completes, before the
+     * non-complimentary-reference check or the update ever runs.
+     */
     public function updateCatalogPricing(WorkspacePlanCatalog $catalog, ?string $price, ?int $currencyId, int $actorUserId): WorkspacePlanCatalog
     {
-        $this->assertPlatformAdministrator($actorUserId);
+        return DB::transaction(function () use ($catalog, $price, $currencyId, $actorUserId) {
+            $this->assertPlatformAdministrator($actorUserId);
 
-        $lockedCatalog = $this->catalogRepository->findForUpdate($catalog->id);
+            $lockedCatalog = $this->catalogRepository->findForUpdate($catalog->id);
 
-        if ($lockedCatalog === null) {
-            throw new RuntimeException("Workspace plan catalog [{$catalog->id}] does not exist.");
-        }
+            if ($lockedCatalog === null) {
+                throw new RuntimeException("Workspace plan catalog [{$catalog->id}] does not exist.");
+            }
 
-        $normalizedPrice = $price === null ? null : $this->normalizePrice($price);
+            $normalizedPrice = $price === null ? null : $this->normalizePrice($price);
 
-        if (($normalizedPrice === null) !== ($currencyId === null)) {
-            throw new InvalidArgumentException('Workspace plan catalog price and currency_id must both be null or both be populated.');
-        }
+            if (($normalizedPrice === null) !== ($currencyId === null)) {
+                throw new InvalidArgumentException('Workspace plan catalog price and currency_id must both be null or both be populated.');
+            }
 
-        if ($normalizedPrice === null && $this->assignmentRepository->hasNonComplimentaryForCatalogForUpdate($lockedCatalog->id)) {
-            throw new PlanCatalogPricingInUseException($lockedCatalog->id);
-        }
+            if ($normalizedPrice === null && $this->assignmentRepository->hasNonComplimentaryForCatalogForUpdate($lockedCatalog->id)) {
+                throw new PlanCatalogPricingInUseException($lockedCatalog->id);
+            }
 
-        return $this->catalogRepository->update($lockedCatalog, [
-            'price' => $normalizedPrice,
-            'currency_id' => $currencyId,
-        ]);
+            return $this->catalogRepository->update($lockedCatalog, [
+                'price' => $normalizedPrice,
+                'currency_id' => $currencyId,
+            ]);
+        });
     }
 
     /**
