@@ -32,6 +32,7 @@ class UsageWalletManagerConcurrencyTest extends TestCase
     private array $createdWorkspaceIds = [];
     private array $createdUserIds = [];
     private ?string $runnerPath = null;
+    private ?string $signalPath = null;
     private ?int $createdCurrencyId = null;
 
     protected function setUp(): void
@@ -59,6 +60,10 @@ class UsageWalletManagerConcurrencyTest extends TestCase
     {
         if ($this->runnerPath !== null && file_exists($this->runnerPath)) {
             @unlink($this->runnerPath);
+        }
+
+        if ($this->signalPath !== null && file_exists($this->signalPath)) {
+            @unlink($this->signalPath);
         }
 
         if ($this->createdBusinessIds !== []) {
@@ -136,6 +141,28 @@ if (\$mode === 'hold-then-reserve') {
         fwrite(STDOUT, "LOCKED\\n");
         fflush(STDOUT);
         usleep((int) (\$holdSeconds * 1000000));
+        doReserve(\$businessId, \$idempotencyKey);
+    });
+} elseif (\$mode === 'hold-until-signal') {
+    \$signalPath = \$argv[3];
+    \$idempotencyKey = \$argv[4];
+    \Illuminate\Support\Facades\DB::transaction(function () use (\$businessId, \$signalPath, \$idempotencyKey) {
+        \Illuminate\Support\Facades\DB::table('business_usage_wallets')->where('business_id', \$businessId)->lockForUpdate()->first();
+        fwrite(STDOUT, "LOCKED\\n");
+        fflush(STDOUT);
+
+        // Deadlock/safety-only ceiling: never the substantive proof. The
+        // substantive proof is that this process cannot reach this point
+        // until the parent has already observed Business B's reservation
+        // complete (see the signal-write site in the test method).
+        \$deadline = microtime(true) + 10.0;
+        while (! file_exists(\$signalPath)) {
+            if (microtime(true) >= \$deadline) {
+                throw new \RuntimeException('Timed out waiting for the release signal.');
+            }
+            usleep(20000);
+        }
+
         doReserve(\$businessId, \$idempotencyKey);
     });
 } elseif (\$mode === 'reserve') {
@@ -247,32 +274,58 @@ PHP;
         $businessIdA = $this->createBusinessWithWallet(1_000_000);
         $businessIdB = $this->createBusinessWithWallet(1_000_000);
 
-        $holder = new Process([$this->phpBinary(), $this->runnerPath, 'hold-then-reserve', (string) $businessIdA, '2', 'holder-key-'.uniqid()]);
-        $holder->start();
+        $this->signalPath = sys_get_temp_dir().'/usage_wallet_concurrency_signal_'.uniqid().'.flag';
 
-        $locked = false;
-        $holder->waitUntil(function ($type, $output) use (&$locked) {
-            if (str_contains($output, 'LOCKED')) {
-                $locked = true;
+        $holder = new Process([$this->phpBinary(), $this->runnerPath, 'hold-until-signal', (string) $businessIdA, $this->signalPath, 'holder-key-'.uniqid()]);
+        $holder->setTimeout(12.0);
 
-                return true;
+        try {
+            $holder->start();
+
+            $locked = false;
+            $holder->waitUntil(function ($type, $output) use (&$locked) {
+                if (str_contains($output, 'LOCKED')) {
+                    $locked = true;
+
+                    return true;
+                }
+
+                return false;
+            });
+            $this->assertTrue($locked, 'Holder process never confirmed its lock.');
+
+            // Business B's own wallet row is never locked by A's holder.
+            // This process is run to completion synchronously, while A's
+            // lock is still held, and only once it has genuinely returned
+            // is A's release signal written below. If B were ever actually
+            // serialized behind A's unrelated lock, this call could never
+            // return — B would be blocked on a lock that A's own process
+            // only releases after seeing a signal this parent only writes
+            // after B has already returned. The deterministic proof here
+            // is causal ordering, not a timing measurement: B's own
+            // bounded process timeout is the only thing that can fail this
+            // test, purely as a deadlock/safety net, never a fragile
+            // wall-clock ceiling.
+            $other = new Process([$this->phpBinary(), $this->runnerPath, 'reserve', (string) $businessIdB, 'other-key-'.uniqid()]);
+            $other->setTimeout(12.0);
+            $other->run();
+
+            $this->assertTrue($other->isSuccessful(), 'Business B reservation process did not complete independently while Business A\'s unrelated lock was held: '.$other->getErrorOutput());
+            $this->assertStringContainsString('GRANTED', $other->getOutput());
+            $this->assertSame(1, DB::table('business_usage_reservations')->where('business_id', $businessIdB)->count());
+
+            file_put_contents($this->signalPath, '1');
+
+            $holder->wait();
+            $this->assertStringContainsString('GRANTED', $holder->getOutput());
+        } finally {
+            if ($holder->isRunning()) {
+                $holder->stop();
             }
 
-            return false;
-        });
-        $this->assertTrue($locked);
-
-        // Business B's own wallet row is never locked by A's holder —
-        // this must complete quickly, unaffected by A's contention.
-        $other = new Process([$this->phpBinary(), $this->runnerPath, 'reserve', (string) $businessIdB, 'other-key-'.uniqid()]);
-        $start = microtime(true);
-        $other->run();
-        $elapsed = microtime(true) - $start;
-
-        $holder->wait();
-
-        $this->assertLessThan(1.0, $elapsed, 'Business B reservation was blocked by Business A\'s unrelated lock.');
-        $this->assertStringContainsString('GRANTED', $other->getOutput());
-        $this->assertSame(1, DB::table('business_usage_reservations')->where('business_id', $businessIdB)->count());
+            if ($this->signalPath !== null && file_exists($this->signalPath)) {
+                @unlink($this->signalPath);
+            }
+        }
     }
 }

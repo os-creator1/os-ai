@@ -301,6 +301,16 @@
                         @isset($entitlement)
                             @if (! empty($manageableBusinesses))
                                 <div class="mt-3">
+                                    <h5>Usage &amp; Billing</h5>
+                                    <ul class="mb-2">
+                                        @foreach ($manageableBusinesses as $business)
+                                            <li>
+                                                {{ $business['name'] }} &mdash;
+                                                <a href="#" data-business-action="usage-billing" data-business-uid="{{ $business['uid'] }}">Usage &amp; Billing</a>
+                                            </li>
+                                        @endforeach
+                                    </ul>
+
                                     <h5>Platform feature preferences</h5>
                                     @foreach ($manageableBusinesses as $business)
                                         @php $businessFeatures = $entitlement['features'][$business['uid']] ?? []; @endphp
@@ -522,6 +532,13 @@
                         var businessUid = form.getAttribute('data-business-uid');
                         var resourcePath = ['businesses', businessUid, form.getAttribute('data-business-action')].join('/');
                         form.setAttribute('action', basePath + '/' + resourcePath);
+                    });
+
+                    document.querySelectorAll('a[data-business-action]').forEach(function (anchor) {
+                        var basePath = window.location.pathname.replace(/\/+$/, '');
+                        var businessUid = anchor.getAttribute('data-business-uid');
+                        var resourcePath = ['businesses', businessUid, anchor.getAttribute('data-business-action')].join('/');
+                        anchor.setAttribute('href', basePath + '/' + resourcePath);
                     });
 
                     document.querySelectorAll('select[name="business_access_scope"]').forEach(function (select) {
