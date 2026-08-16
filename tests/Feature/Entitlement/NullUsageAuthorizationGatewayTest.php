@@ -5,6 +5,7 @@ namespace Tests\Feature\Entitlement;
 use App\Enums\Entitlement\PlatformFeature;
 use App\Library\Entitlement\Contracts\UsageAuthorizationGateway;
 use App\Library\Entitlement\NullUsageAuthorizationGateway;
+use App\Library\Entitlement\RealUsageAuthorizationGateway;
 use App\Models\Business;
 use App\Models\Customer;
 use App\Models\User;
@@ -13,16 +14,27 @@ use App\Repositories\Contracts\BusinessRepository;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\TestCase;
 
+/**
+ * RFC-005 M1 §11 — NullUsageAuthorizationGateway remains a valid,
+ * intentionally-permissive UsageAuthorizationGateway implementation even
+ * though it is no longer the active container binding
+ * (RealUsageAuthorizationGateway is, per the M1 contract's own authorized
+ * §11 binding switch). This file keeps the two concerns distinct: the
+ * active container binding is asserted directly against
+ * RealUsageAuthorizationGateway, while Null's own permissive behavior is
+ * proven by instantiating it directly, independent of what the container
+ * currently binds.
+ */
 class NullUsageAuthorizationGatewayTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_container_resolves_to_the_null_implementation(): void
+    public function test_container_resolves_to_the_real_implementation(): void
     {
-        $this->assertInstanceOf(NullUsageAuthorizationGateway::class, app(UsageAuthorizationGateway::class));
+        $this->assertInstanceOf(RealUsageAuthorizationGateway::class, app(UsageAuthorizationGateway::class));
     }
 
-    public function test_always_authorizes_for_an_arbitrary_business_and_feature(): void
+    public function test_null_implementation_still_always_authorizes_when_instantiated_directly(): void
     {
         $owner = User::create([
             'first_name' => 'Owner', 'last_name' => 'User', 'email' => 'owner' . uniqid() . '@example.test',

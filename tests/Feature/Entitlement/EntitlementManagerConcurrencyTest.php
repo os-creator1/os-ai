@@ -37,6 +37,15 @@ class EntitlementManagerConcurrencyTest extends TestCase
     private array $createdWorkspaceIds = [];
     private ?array $originalCoreCatalogState = null;
 
+    /**
+     * Scenarios 6/7 each create exactly one committed Currency row
+     * (real cross-process concurrency needs it committed, so it is never
+     * rolled back by a transaction). Tracked here so tearDown() can remove
+     * only the row this test itself created — never a broad sweep, never a
+     * pre-existing shared currencies row.
+     */
+    private ?int $createdCurrencyId = null;
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -59,6 +68,15 @@ class EntitlementManagerConcurrencyTest extends TestCase
                 'currency_id' => $this->originalCoreCatalogState['currency_id'],
                 'additional_business_slot_price_ratio' => $this->originalCoreCatalogState['additional_business_slot_price_ratio'],
             ]);
+        }
+
+        // Must run after the catalog restore immediately above — the
+        // restore already points workspace_plan_catalog.currency_id back
+        // at its pre-test value, so this test's own currency row (a
+        // restrictOnDelete() target of that column) is no longer
+        // referenced and can now be safely removed.
+        if ($this->createdCurrencyId !== null) {
+            DB::table('currencies')->where('id', $this->createdCurrencyId)->delete();
         }
 
         if ($this->createdWorkspaceIds !== []) {
@@ -261,7 +279,7 @@ class EntitlementManagerConcurrencyTest extends TestCase
     // directions forced deterministically (§6/§13.E, contract-required).
     public function test_scenario_6_catalog_clear_vs_paid_assign_first_plan(): void
     {
-        $currencyId = Currency::create(['name' => 'USD', 'code' => 'USD', 'format' => '$', 'status' => true])->id;
+        $currencyId = $this->createdCurrencyId = Currency::create(['name' => 'USD', 'code' => 'USD', 'format' => '$', 'status' => true])->id;
         $catalog = WorkspacePlanCatalog::where('tier', 'core')->first();
         $admin = $this->createAdminUserId();
         app(EntitlementManager::class)->updateCatalogPricing($catalog, '49.00', $currencyId, $admin);
@@ -320,7 +338,7 @@ class EntitlementManagerConcurrencyTest extends TestCase
     // lock-winner directions forced deterministically (§6/§13.H).
     public function test_scenario_7_catalog_clear_vs_revoke_complimentary(): void
     {
-        $currencyId = Currency::create(['name' => 'USD', 'code' => 'USD', 'format' => '$', 'status' => true])->id;
+        $currencyId = $this->createdCurrencyId = Currency::create(['name' => 'USD', 'code' => 'USD', 'format' => '$', 'status' => true])->id;
         $catalog = WorkspacePlanCatalog::where('tier', 'core')->first();
         $admin = $this->createAdminUserId();
         app(EntitlementManager::class)->updateCatalogPricing($catalog, '49.00', $currencyId, $admin);

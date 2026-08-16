@@ -2,6 +2,9 @@
 
 namespace App\Providers;
 
+use App\Events\Business\BusinessCreated;
+use App\Events\Workspace\BusinessAssignedToWorkspace;
+use App\Listeners\Usage\InitializeBusinessUsageProfile;
 use Illuminate\Auth\Events\Registered;
 use Illuminate\Auth\Listeners\SendEmailVerificationNotification;
 use Illuminate\Foundation\Support\Providers\EventServiceProvider as ServiceProvider;
@@ -16,6 +19,12 @@ class EventServiceProvider extends ServiceProvider
     protected $listen = [
         Registered::class => [
             SendEmailVerificationNotification::class,
+        ],
+        BusinessCreated::class => [
+            InitializeBusinessUsageProfile::class.'@handleBusinessCreated',
+        ],
+        BusinessAssignedToWorkspace::class => [
+            InitializeBusinessUsageProfile::class.'@handleBusinessAssignedToWorkspace',
         ],
     ];
 
