@@ -3,26 +3,40 @@
 namespace App\Library\Usage;
 
 use App\Enums\Entitlement\PlatformFeature;
+use App\Enums\Usage\BillingStatusTransitionSource;
+use App\Enums\Workspace\WorkspaceBusinessAccessScope;
+use App\Enums\Workspace\WorkspaceMembershipRole;
 use App\Enums\Usage\RoundingRule;
 use App\Enums\Usage\UsageLedgerEntryType;
+use App\Enums\Usage\UsageLimitType;
 use App\Enums\Usage\UsageReservationStatus;
 use App\Enums\Usage\WalletBillingStatus;
+use App\Events\Usage\BusinessWalletBillingStatusChanged;
 use App\Exceptions\Usage\BusinessCurrencyUnresolvableException;
+use App\Library\Entitlement\PlatformFeatureRegistry;
+use App\Exceptions\Usage\FeatureLimitExceedsPlatformSafetyLimitException;
 use App\Exceptions\Usage\InvalidReservationStateTransitionException;
 use App\Exceptions\Usage\NoActiveRateForFeatureException;
+use App\Exceptions\Usage\UnauthorizedUsageBillingManagementException;
 use App\Exceptions\Usage\UsageReservationNotFoundException;
 use App\Exceptions\Usage\UsageWalletNotFoundException;
 use App\Models\Business;
 use App\Models\BusinessUsageReservation;
 use App\Models\BusinessUsageWallet;
 use App\Models\Currency;
+use App\Repositories\Contracts\BusinessFeatureUsageLimitRepository;
 use App\Repositories\Contracts\BusinessUsageLedgerEntryRepository;
+use App\Repositories\Contracts\BusinessUsageLimitTransitionRepository;
 use App\Repositories\Contracts\BusinessUsageRateActivationRepository;
 use App\Repositories\Contracts\BusinessUsageRateRepository;
 use App\Repositories\Contracts\BusinessUsageReservationRepository;
+use App\Repositories\Contracts\BusinessUsageWalletBillingStatusTransitionRepository;
 use App\Repositories\Contracts\BusinessUsageWalletRepository;
 use App\Repositories\Contracts\PlatformFeatureUsageClassificationRepository;
 use App\Repositories\Contracts\PlatformFeatureUsageClassificationTransitionRepository;
+use App\Repositories\Contracts\PlatformFeatureUsageSafetyLimitRepository;
+use App\Repositories\Contracts\WorkspaceMembershipBusinessRepository;
+use App\Repositories\Contracts\WorkspaceMembershipRepository;
 use Illuminate\Database\QueryException;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Carbon;
@@ -47,6 +61,10 @@ class UsageWalletManager
         private readonly PlatformFeatureUsageClassificationTransitionRepository $classificationTransitionRepository,
         private readonly BusinessUsageReservationRepository $reservationRepository,
         private readonly BusinessUsageLedgerEntryRepository $ledgerRepository,
+        private readonly BusinessFeatureUsageLimitRepository $featureLimitRepository,
+        private readonly PlatformFeatureUsageSafetyLimitRepository $safetyLimitRepository,
+        private readonly BusinessUsageLimitTransitionRepository $limitTransitionRepository,
+        private readonly BusinessUsageWalletBillingStatusTransitionRepository $billingStatusTransitionRepository,
     ) {
     }
 
@@ -689,6 +707,261 @@ class UsageWalletManager
         }
 
         return new UsageCapacityDecision(true);
+    }
+
+    /**
+     * RFC-005 §15, M2 contract §6.A/§7 — nullable/unconfigured by default;
+     * no default value is ever invented. Prospective only: changes future
+     * reservation-admission headroom, never rewrites already-committed
+     * historical spend. A value below already-committed current-period
+     * spend is explicitly allowed (M2 contract §6.D) — never rejected,
+     * never touches committed_spend_this_period_micro.
+     */
+    public function setSpendCap(Business $business, ?string $capMicro, int $actorUserId, string $reason): void
+    {
+        DB::transaction(function () use ($business, $capMicro, $actorUserId, $reason) {
+            $this->assertCanManageBusinessUsageBilling($business, $actorUserId);
+
+            $wallet = $this->walletRepository->findForUpdateByBusinessId((int) $business->id);
+
+            if ($wallet === null) {
+                throw new UsageWalletNotFoundException((int) $business->id);
+            }
+
+            $fromValue = $wallet->monthly_spend_cap_micro !== null ? (string) $wallet->monthly_spend_cap_micro : null;
+
+            $this->limitTransitionRepository->create([
+                'business_id' => $business->id,
+                'limit_type' => UsageLimitType::BusinessSpendCap->value,
+                'feature_key' => null,
+                'from_value_micro' => $fromValue,
+                'to_value_micro' => $capMicro,
+                'actor_user_id' => $actorUserId,
+                'reason' => $reason,
+                'created_at' => Carbon::now(),
+            ]);
+
+            $this->walletRepository->update($wallet, [
+                'monthly_spend_cap_micro' => $capMicro,
+            ]);
+        });
+    }
+
+    /**
+     * RFC-005 §15, M2 contract §6.B/§7 — settable ahead of a feature's own
+     * future metering activation (validated only through
+     * PlatformFeatureRegistry::isAvailable(), never requiring is_metered
+     * already true). Bounded above by any configured
+     * platform_feature_usage_safety_limits ceiling for that feature
+     * (Human requirement 4) — a customer may always tighten, never loosen
+     * past the platform ceiling. $limitMicro === null clears the limit
+     * (deletes the row — absence means "no limit configured," M2 contract
+     * §11.1).
+     */
+    public function setFeatureLimit(Business $business, string $featureKey, ?string $limitMicro, int $actorUserId, string $reason): void
+    {
+        if (! PlatformFeatureRegistry::isAvailable($featureKey)) {
+            throw new NoActiveRateForFeatureException($featureKey);
+        }
+
+        DB::transaction(function () use ($business, $featureKey, $limitMicro, $actorUserId, $reason) {
+            $this->assertCanManageBusinessUsageBilling($business, $actorUserId);
+
+            if ($limitMicro !== null) {
+                $safetyLimit = $this->safetyLimitRepository->findByFeatureKey($featureKey);
+
+                if ($safetyLimit !== null && bccomp($limitMicro, (string) $safetyLimit->max_monthly_limit_micro) > 0) {
+                    throw new FeatureLimitExceedsPlatformSafetyLimitException((int) $business->id, $featureKey);
+                }
+            }
+
+            $existing = $this->featureLimitRepository->findForUpdateByBusinessAndFeature((int) $business->id, $featureKey);
+            $fromValue = $existing?->monthly_limit_micro !== null ? (string) $existing->monthly_limit_micro : null;
+
+            $this->limitTransitionRepository->create([
+                'business_id' => $business->id,
+                'limit_type' => UsageLimitType::FeatureLimit->value,
+                'feature_key' => $featureKey,
+                'from_value_micro' => $fromValue,
+                'to_value_micro' => $limitMicro,
+                'actor_user_id' => $actorUserId,
+                'reason' => $reason,
+                'created_at' => Carbon::now(),
+            ]);
+
+            if ($limitMicro === null) {
+                if ($existing !== null) {
+                    $this->featureLimitRepository->delete($existing);
+                }
+
+                return;
+            }
+
+            if ($existing === null) {
+                $this->featureLimitRepository->create([
+                    'business_id' => $business->id,
+                    'feature_key' => $featureKey,
+                    'monthly_limit_micro' => $limitMicro,
+                    'updated_by_user_id' => $actorUserId,
+                ]);
+
+                return;
+            }
+
+            $this->featureLimitRepository->update($existing, [
+                'monthly_limit_micro' => $limitMicro,
+                'updated_by_user_id' => $actorUserId,
+            ]);
+        });
+    }
+
+    /**
+     * RFC-005 §15, M2 contract §6.C — platform-administrator-only. Ships
+     * as a fully functional, tested capability with zero calling
+     * production code path at M2 (no feature is metered until M5,
+     * mirroring M1's own business_usage_rates precedent exactly).
+     */
+    public function setSafetyLimit(string $featureKey, string $maxMonthlyLimitMicro, int $actorUserId, string $reason): void
+    {
+        $this->assertPlatformAdministrator($actorUserId);
+
+        DB::transaction(function () use ($featureKey, $maxMonthlyLimitMicro, $actorUserId, $reason) {
+            $existing = $this->safetyLimitRepository->findForUpdateByFeatureKey($featureKey);
+            $fromValue = $existing !== null ? (string) $existing->max_monthly_limit_micro : null;
+
+            $this->limitTransitionRepository->create([
+                'business_id' => null,
+                'limit_type' => UsageLimitType::PlatformSafetyLimit->value,
+                'feature_key' => $featureKey,
+                'from_value_micro' => $fromValue,
+                'to_value_micro' => $maxMonthlyLimitMicro,
+                'actor_user_id' => $actorUserId,
+                'reason' => $reason,
+                'created_at' => Carbon::now(),
+            ]);
+
+            if ($existing === null) {
+                $this->safetyLimitRepository->create([
+                    'feature_key' => $featureKey,
+                    'max_monthly_limit_micro' => $maxMonthlyLimitMicro,
+                    'updated_by_user_id' => $actorUserId,
+                ]);
+
+                return;
+            }
+
+            $this->safetyLimitRepository->update($existing, [
+                'max_monthly_limit_micro' => $maxMonthlyLimitMicro,
+                'updated_by_user_id' => $actorUserId,
+            ]);
+        });
+    }
+
+    /**
+     * RFC-005 §12, M2 contract §6.G — platform-administrator-only for
+     * source = admin_action (actorUserId required); actorUserId is null
+     * only for source = dispute_webhook (M3 scope, never produced by any
+     * M2 code path). Ships as a fully functional, tested capability with
+     * zero calling production code path at M2 — no admin HTTP route
+     * exists yet (M2 contract §9).
+     */
+    public function setBillingStatus(Business $business, WalletBillingStatus $status, BillingStatusTransitionSource $source, ?int $actorUserId, string $reason): void
+    {
+        if ($source === BillingStatusTransitionSource::AdminAction) {
+            if ($actorUserId === null) {
+                throw new UnauthorizedUsageBillingManagementException(0, (int) $business->id);
+            }
+
+            $this->assertPlatformAdministrator($actorUserId);
+        }
+
+        DB::transaction(function () use ($business, $status, $source, $actorUserId, $reason) {
+            $wallet = $this->walletRepository->findForUpdateByBusinessId((int) $business->id);
+
+            if ($wallet === null) {
+                throw new UsageWalletNotFoundException((int) $business->id);
+            }
+
+            $fromStatus = $wallet->billing_status;
+
+            $this->billingStatusTransitionRepository->create([
+                'wallet_id' => $wallet->id,
+                'business_id' => $business->id,
+                'from_status' => $fromStatus->value,
+                'to_status' => $status->value,
+                'source' => $source->value,
+                'actor_user_id' => $actorUserId,
+                'reason' => $reason,
+                'created_at' => Carbon::now(),
+            ]);
+
+            $this->walletRepository->update($wallet, [
+                'billing_status' => $status->value,
+            ]);
+
+            BusinessWalletBillingStatusChanged::dispatch((int) $business->id, $fromStatus->value, $status->value);
+        });
+    }
+
+    /**
+     * M2 contract §7 non-payer mutation authority: Workspace owner,
+     * active Admin whose business_access_scope covers this Business, or
+     * the direct Business owner/customer. Staff is never authorized to
+     * mutate, even with matching scope. Mirrors
+     * BillingProfileManager::assertCanManageBusinessUsageBilling()
+     * exactly — duplicated rather than shared, since the two classes have
+     * no common ancestor authorized by either contract.
+     *
+     * WorkspaceMembershipRepository/WorkspaceMembershipBusinessRepository
+     * are resolved lazily here, rather than constructor-injected, since
+     * only this one M2 method needs them — every M1 hot-path method
+     * (reserve()/commit()/release()) never touches either, and eagerly
+     * resolving them on every UsageWalletManager instantiation (including
+     * every M1 call) is unnecessary constructor-resolution overhead this
+     * class should not pay on paths that never use them.
+     */
+    private function assertCanManageBusinessUsageBilling(Business $business, int $actorUserId): void
+    {
+        $business->loadMissing('workspace');
+
+        if ((int) $business->customer_id === $actorUserId) {
+            return;
+        }
+
+        if ((int) $business->workspace->owner_user_id === $actorUserId) {
+            return;
+        }
+
+        $membershipRepository = app(WorkspaceMembershipRepository::class);
+        $membership = $membershipRepository->findByWorkspaceAndUser($business->workspace, $actorUserId);
+
+        if ($membership !== null
+            && $membership->is_active
+            && $membership->role === WorkspaceMembershipRole::Admin
+            && (
+                $membership->business_access_scope === WorkspaceBusinessAccessScope::All
+                || app(WorkspaceMembershipBusinessRepository::class)->isAssigned($membership, (int) $business->id)
+            )
+        ) {
+            return;
+        }
+
+        throw new UnauthorizedUsageBillingManagementException($actorUserId, (int) $business->id);
+    }
+
+    /**
+     * Mirrors EntitlementManager::assertPlatformAdministrator()'s exact
+     * shape (RFC-004 §20) — a direct users.is_admin read, not one of the
+     * seven M1 or seven M2 tenancy tables this class otherwise restricts
+     * raw access to.
+     */
+    private function assertPlatformAdministrator(int $actorUserId): void
+    {
+        $isAdmin = (bool) DB::table('users')->where('id', $actorUserId)->value('is_admin');
+
+        if (! $isAdmin) {
+            throw new UnauthorizedUsageBillingManagementException($actorUserId, 0);
+        }
     }
 
     /**

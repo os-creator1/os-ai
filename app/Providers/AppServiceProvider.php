@@ -163,6 +163,13 @@
                 \App\Repositories\Contracts\BusinessUsageReservationRepository::class => \App\Repositories\Eloquent\EloquentBusinessUsageReservationRepository::class,
                 \App\Repositories\Contracts\BusinessUsageLedgerEntryRepository::class => \App\Repositories\Eloquent\EloquentBusinessUsageLedgerEntryRepository::class,
                 \App\Library\Entitlement\Contracts\UsageAuthorizationGateway::class => \App\Library\Entitlement\RealUsageAuthorizationGateway::class,
+                \App\Repositories\Contracts\BusinessFeatureUsageLimitRepository::class => \App\Repositories\Eloquent\EloquentBusinessFeatureUsageLimitRepository::class,
+                \App\Repositories\Contracts\PlatformFeatureUsageSafetyLimitRepository::class => \App\Repositories\Eloquent\EloquentPlatformFeatureUsageSafetyLimitRepository::class,
+                \App\Repositories\Contracts\BusinessUsageLimitTransitionRepository::class => \App\Repositories\Eloquent\EloquentBusinessUsageLimitTransitionRepository::class,
+                \App\Repositories\Contracts\BusinessUsageWalletBillingStatusTransitionRepository::class => \App\Repositories\Eloquent\EloquentBusinessUsageWalletBillingStatusTransitionRepository::class,
+                \App\Repositories\Contracts\BusinessBillingContactRepository::class => \App\Repositories\Eloquent\EloquentBusinessBillingContactRepository::class,
+                \App\Repositories\Contracts\BusinessPayerAssignmentRepository::class => \App\Repositories\Eloquent\EloquentBusinessPayerAssignmentRepository::class,
+                \App\Repositories\Contracts\BusinessPayerTransitionRepository::class => \App\Repositories\Eloquent\EloquentBusinessPayerTransitionRepository::class,
             ];
 
             foreach ($bindings as $interface => $implementation) {

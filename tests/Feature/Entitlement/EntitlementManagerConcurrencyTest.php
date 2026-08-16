@@ -89,6 +89,16 @@ class EntitlementManagerConcurrencyTest extends TestCase
             // grant that must be cleared before either child is deleted.
             DB::table('workspace_membership_businesses')->whereIn('business_id', $businessIds)->delete();
 
+            // business_payer_transitions/business_payer_assignments both
+            // restrictOnDelete() directly against businesses (RFC-005 M2) —
+            // the extended InitializeBusinessUsageProfile listener now
+            // creates a payer assignment for every Business these
+            // scenarios' real create/reassign/legacy-create calls produce,
+            // so both must be cleared, scoped to this test's own
+            // $businessIds, before the Business delete below.
+            DB::table('business_payer_transitions')->whereIn('business_id', $businessIds)->delete();
+            DB::table('business_payer_assignments')->whereIn('business_id', $businessIds)->delete();
+
             // workspace_transitions (RFC-003) restrictOnDelete()s against
             // businesses (business_id) AND workspaces (workspace_id,
             // from_workspace_id) — reassignBusiness()/transferOwnership()

@@ -592,6 +592,13 @@
         Route::post('{workspaceUid}/businesses/{businessUid}/features/{featureKey}/disable', 'Workspace\WorkspaceController@disableBusinessFeature')->name('businesses.features.disable');
         Route::post('{workspaceUid}/businesses/{businessUid}/features/{featureKey}/enable', 'Workspace\WorkspaceController@enableBusinessFeature')->name('businesses.features.enable');
 
+        // RFC-005 Milestone 2: Business-scoped Usage & Billing dashboard.
+        Route::get('{workspaceUid}/businesses/{businessUid}/usage-billing', 'Business\UsageBillingController@show')->name('businesses.usage-billing.show');
+        Route::post('{workspaceUid}/businesses/{businessUid}/usage-billing/payer', 'Business\UsageBillingController@updatePayer')->name('businesses.usage-billing.payer');
+        Route::post('{workspaceUid}/businesses/{businessUid}/usage-billing/billing-contact', 'Business\UsageBillingController@updateBillingContact')->name('businesses.usage-billing.billing-contact');
+        Route::post('{workspaceUid}/businesses/{businessUid}/usage-billing/spend-cap', 'Business\UsageBillingController@updateSpendCap')->name('businesses.usage-billing.spend-cap');
+        Route::post('{workspaceUid}/businesses/{businessUid}/usage-billing/feature-limits/{featureKey}', 'Business\UsageBillingController@updateFeatureLimit')->name('businesses.usage-billing.feature-limit');
+
         // RFC-003 Milestone 4 Slice 4F: Workspace ownership transfer.
         Route::post('{workspaceUid}/ownership/transfer', 'Workspace\WorkspaceController@transferOwnership')->name('ownership.transfer');
 
