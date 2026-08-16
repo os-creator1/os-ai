@@ -17,16 +17,54 @@ Neither correction expands M2's production scope, invents a financial default, o
 
 ---
 
+## Correction Round 2 record (final ordinary correction round)
+
+This round corrects exactly one confirmed contradiction, discovered during a resumed M2 implementation attempt's regression gates, which stopped — leaving the implementation worktree unstaged — the moment it was found:
+
+**Pre-existing RFC-004 concurrency test broken by the M2 listener extension (§9/§12/§15).** Confirmed by direct read, not assumption, against all six evidentiary facts this correction requires:
+
+1. **The failure occurs during test-owned Business cleanup.** Gate 2 (`php artisan test tests/Unit/Entitlement tests/Feature/Entitlement`) fails exactly 4 of its tests — `test_scenario_1_create_plus_create_racing_final_slot`, `test_scenario_2_create_plus_reassign_racing_final_slot`, `test_scenario_9_legacy_onboarding_vs_transfer_ownership`, `test_scenario_11_legacy_onboarding_vs_ordinary_create_racing_final_slot` — each with `SQLSTATE[23000]: ... Cannot delete or update a parent row: a foreign key constraint fails (business_payer_assignments_business_id_foreign ... ON DELETE RESTRICT)`, thrown from `tests/Feature/Entitlement/EntitlementManagerConcurrencyTest.php::tearDown()`'s existing `DB::table('businesses')->whereIn('workspace_id', $this->createdWorkspaceIds)->delete()` call. Every assertion inside all four test methods themselves passes; the failure is exclusively in post-test cleanup.
+2. **The payer-assignment rows are genuinely test-owned.** Scenarios 1, 2, 9, and 11 each spawn real, independent OS processes that invoke this repository's real production methods — `WorkspaceManager::createBusinessInWorkspace()`, `WorkspaceManager::reassignBusiness()`, `BusinessManager::createOrUpdateOnboardingBusiness()` (confirmed by direct read of `tests/Feature/Entitlement/Support/concurrent_business_slot_runner.php`) — which dispatch the real `BusinessCreated`/`BusinessAssignedToWorkspace` events. `InitializeBusinessUsageProfile` (M2 contract item 53, already-authorized) now unconditionally calls `BillingProfileManager::initializePayerAssignmentForBusiness()` for every Business these events fire for — exclusively the Businesses these four scenarios themselves create, scoped entirely under `$this->createdWorkspaceIds`, the test's own existing tracking array.
+3. **The production FK is `restrictOnDelete()`, confirmed by direct read.** `database/migrations/2026_08_16_130006_create_business_payer_assignments_table.php`: `$table->foreignId('business_id')->unique()->constrained('businesses')->restrictOnDelete();`.
+4. **`business_payer_transitions` also `restrictOnDelete()`s directly against `businesses`, confirmed by direct read** — `database/migrations/2026_08_16_130007_create_business_payer_transitions_table.php`: `$table->foreignId('business_id')->constrained('businesses')->restrictOnDelete();`. There is no FK from `business_payer_transitions` to `business_payer_assignments` — both restrict independently against `businesses`, so both must be cleared before a test-owned Business row can be deleted, though their relative order to each other is not itself FK-constrained. (`BillingProfileManager::initializePayerAssignmentForBusiness()`, the only call these four scenarios trigger, never writes a `business_payer_transitions` row — only the separate, explicit `changePayer()` does, which none of these four scenarios ever call — so in practice zero transition rows exist for these fixtures today; the cleanup below still scopes and clears both tables defensively, never assuming today's zero-row observation is permanent.)
+5. **The existing Business delete already runs only after every other Business-owned restricted child is cleared, confirmed by direct read of the current `tearDown()`** — `business_feature_toggles`, `workspace_membership_businesses`, and `workspace_transitions` are each already deleted, scoped to `$businessIds`/`$this->createdWorkspaceIds`, immediately before the `businesses` delete at line 103, in that established order. This correction adds `business_payer_assignments` and `business_payer_transitions` to that exact same pre-existing ordered block, immediately before the `businesses` delete, following the identical scoping convention already used for every other table in that block.
+6. **No production defect requires changing the FK.** `restrictOnDelete()` on `business_payer_assignments.business_id`/`business_payer_transitions.business_id` is the same deliberate, consistent design already used for every other M1/M2 Usage/Billing child table against `businesses` (`business_usage_wallets`, `business_usage_reservations`, `business_usage_ledger_entries`, `business_usage_rates`, etc.) — billing/audit-adjacent state must never silently disappear via an unrelated Business hard-delete. This is intentional referential integrity, not a defect, and this correction does not touch it.
+
+All six facts were confirmed by direct read, none assumed. `tests/Feature/Entitlement/EntitlementManagerConcurrencyTest.php` is added to the allowlist as item 86, authorized narrowly for the minimum FK-ordered teardown addition described in §12/§13 below — every existing concurrency scenario, assertion, the Currency-fixture tracking/cleanup introduced by the earlier M1 remediation round, and the file's genuine multi-process concurrency are all unauthorized to change and must not change.
+
+This correction changes test maintenance only. No M2 migration, model, repository, manager, listener, or production code path is added or altered. `business_payer_assignments.business_id` and `business_payer_transitions.business_id` explicitly remain `restrictOnDelete()` — changing either to cascade is explicitly rejected as a solution (rationale recorded in §11.6/§11.7 below).
+
+**This is Correction Round 2 of the maximum 2 correction rounds this contract permits, and is the final ordinary correction round** (`maximum_correction_rounds: 2`, unchanged). No third ordinary correction round remains under this contract.
+
+### Static blast-radius audit (Correction Round 2)
+
+A read-only mechanical search, run before finalizing this correction, for every existing test that manually deletes `businesses`, a Workspace containing Businesses, or a payer-assignment/payer-transition row:
+
+- `grep -rln "DB::table('businesses')->whereIn\|DB::table('businesses')->where(" tests/Feature tests/Unit` → 20 files.
+- `grep -rln "DB::table('workspaces')->whereIn\|DB::table('workspaces')->where(" tests/Feature tests/Unit` → 16 files.
+- `grep -rln "business_payer_assignments\|business_payer_transitions" tests/Feature tests/Unit` → 9 files.
+
+**Classification of every non-M2-allowlisted result** (the M2-allowlisted `tests/Feature/Usage/*` files are already in-scope, already written FK-aware, and already confirmed passing — regression gate 1, 176/176):
+
+- **`tests/Feature/Entitlement/EntitlementManagerConcurrencyTest.php`** — **confirmed failing**, the one file this correction adds (item 86 above).
+- **`tests/Feature/Business/BusinessRepositoryTest.php`** — **not applicable, confirmed by direct read**: uses `RefreshDatabase` (every row change is rolled back via transaction, never a real commit); contains zero explicit `DELETE` statements against `businesses` anywhere in the file (only `UPDATE`, e.g. `is_primary` toggles) — there is no hard-delete for any FK to intercept.
+- **`tests/Feature/Entitlement/WorkspaceEntitlementSchemaTest.php`** — **not applicable, confirmed by direct read**: uses `RefreshDatabase`; its one Business created via `createBusinessWithWorkspace()`, which calls `BusinessRepository::createForCustomerInWorkspace()` directly and never dispatches `BusinessCreated`/`BusinessAssignedToWorkspace` — no listener fires, so no `business_payer_assignments` row is ever created for it. Its one explicit `businesses` delete (`test_toggles_restricts_deletion_of_referenced_business`) already expects `QueryException::class` generically — proving `restrictOnDelete()` fires at all, not which specific FK fires — so this test is structurally unaffected either way.
+- **The 8 remaining Workspace-domain files** (`BackfillWorkspacesCommandTest.php`, `WorkspaceBackfillMigrationTest.php`, `WorkspaceBackfillV1ConcurrencyTest.php`, `WorkspaceBackfillV1Test.php`, `WorkspaceEnforcementMigrationTest.php`, `WorkspaceM1BBoundaryTest.php`, `WorkspaceManagerTest.php`, `WorkspaceSchemaTest.php`) — **not applicable, confirmed by an already-obtained, directly-reproduced regression-gate result**: `php artisan test tests/Unit/Workspace tests/Feature/Workspace` was already run in full during the resumed implementation attempt that discovered item 86 — 778 of 779 tests passed, with the single failure (`WorkspaceBusinessListHttpTest::test_business_row_exposes_exactly_the_name_key`, an unrelated nav-link content leak in `resources/views/customer/workspaces/show.blade.php`, item 55) already fixed within the existing 85-path allowlist, no test file touched. None of these 8 files were among that one failure.
+
+**No other currently-reproducible test failure shares item 86's M2-FK root cause.** Exactly one new path (item 86) is added by this correction — no speculative path was added merely because a test deletes Businesses/Workspaces, and no second same-cause failure was found and left unreported.
+
+---
+
 ## 0. Governance
 
 - Verified base SHA: `7ce3f9dbac7de4bc45ad788e46bee503b6362cbe` (`main`, confirmed `HEAD == origin/main` at drafting time).
 - Governing RFC-005 design document: `docs/rfcs/RFC-005-BUSINESS-USAGE-BILLING-AND-WALLETS.md`, version 1.4, governed by `docs/automation/RFC-005-DESIGN-CONTRACT.md` (merged commit `0e74f199bcf13eaf86e0770858c13901323b0eab`, confirmed an ancestor of the base SHA above).
 - Governing M1 contract: `docs/automation/RFC-005-M1-CONTRACT.md`, final merged commit `2462492e5e584173ee2cd283f510d9b7cfdf6487` (confirmed an ancestor of the base SHA above).
 - M1 implementation: commit `9b53097c9f1571aee65f2b522d56f94d74341b6f` (confirmed an ancestor of the base SHA above), plus the human-authorized remediation commit `9b53097` fixed forward on `main` — all 70 contract-authorized M1 paths and the 3 remediation paths (`tests/Feature/Entitlement/EntitlementManagerDecisionTest.php`, `tests/Feature/Entitlement/NullUsageAuthorizationGatewayTest.php`, `tests/Feature/Entitlement/EntitlementManagerConcurrencyTest.php`) confirmed present and tracked on `main` at the base SHA, verified mechanically (§1 below).
-- Branch: `chore/rfc-005-m2-contract` (original); `chore/rfc-005-m2-contract-correction-1` (this correction round).
-- Contract status: **READY** — every design-defined M2 object is scoped or explicitly deferred (§8 self-audit), no financial default is invented, a real customer-visible dashboard is included without contradicting the merged RFC (§3), and, as of Correction Round 1, both the omitted route-registration path and the flaky pre-existing concurrency-test path are resolved with no other scope discrepancy found.
+- Branch: `chore/rfc-005-m2-contract` (original); `chore/rfc-005-m2-contract-correction-1` (Correction Round 1); `chore/rfc-005-m2-contract-correction-2` (this correction round).
+- Contract status: **READY** — every design-defined M2 object is scoped or explicitly deferred (§8 self-audit), no financial default is invented, a real customer-visible dashboard is included without contradicting the merged RFC (§3); as of Correction Round 1, the omitted route-registration path and the flaky pre-existing concurrency-test path were resolved; as of Correction Round 2, the one confirmed pre-existing Entitlement concurrency-test teardown contradiction discovered during a resumed implementation attempt's regression gates is resolved, with no other scope discrepancy found (§8 static blast-radius audit below).
 - Merge policy: **human-only**. This contract's own merge does not automatically start implementation, including this correction round's own merge — implementation requires a separate, explicit human instruction, exactly as M1 required after its own contract (and its own correction rounds) merged.
-- `maximum_correction_rounds: 2` — identical discipline to every prior RFC-004/RFC-005 contract in this repository. This is Correction Round 1 of 2.
+- `maximum_correction_rounds: 2` — identical discipline to every prior RFC-004/RFC-005 contract in this repository. This is Correction Round 2 of 2 — **the final ordinary correction round this contract permits.** No further ordinary correction round may be requested under this contract.
 - `docs/automation/AI-AUTONOMY-STATE.json` carries no authorization weight for this contract and is not modified by it (confirmed stale/historical, still referencing RFC-003 Milestone 4, read only).
 
 ---
@@ -411,6 +449,8 @@ Sole write authority: `BillingProfileManager`.
 
 Append-only. Sole write authority: `BillingProfileManager`.
 
+**`restrictOnDelete()` on both tables' `business_id` is intentional and non-negotiable (Correction Round 2).** Confirmed during Correction Round 2 that a pre-existing, out-of-allowlist RFC-004 test (`tests/Feature/Entitlement/EntitlementManagerConcurrencyTest.php`) hard-deletes its own test-owned `businesses` rows in `tearDown()`, and — once M2's listener extension (item 53) began populating `business_payer_assignments` for those same test Businesses — that delete began failing closed on this FK, exactly as `restrictOnDelete()` is designed to do. The correction fixes the test's own cleanup ordering (§12 item 86, §13.86); it explicitly does **not** weaken either FK to `cascadeOnDelete()`. Payer assignment and transition rows are billing/audit-adjacent state, identical in kind to `business_usage_wallets`/`business_usage_reservations`/`business_usage_ledger_entries` (all `restrictOnDelete()` against `businesses` since M1) — production referential integrity must not be weakened to accommodate an obsolete test teardown; the test fixture is what must learn to clean up the restricted children it newly created, in the correct dependency order, exactly as this same test file's own `tearDown()` already does for `business_feature_toggles`/`workspace_membership_businesses`/`workspace_transitions`.
+
 **Migration order (DDL before data, matching RFC §32/M1's own established discipline):**
 
 1. `create_business_feature_usage_limits_table`
@@ -428,7 +468,7 @@ Append-only. Sole write authority: `BillingProfileManager`.
 
 ## 12. Exact implementation allowlist
 
-**85 total paths: 56 production (51 new + 5 modified) + 29 test (28 new + 1 modified).** No path is a glob or directory. Any path discovered necessary beyond this list during implementation is a STOP-and-report condition (§17) — the stop threshold is now any required **86th path**.
+**86 total paths: 56 production (51 new + 5 modified) + 30 test (28 new + 2 modified).** No path is a glob or directory. Any path discovered necessary beyond this list during implementation is a STOP-and-report condition (§17) — the stop threshold is now any required **87th path**.
 
 ### Migrations (8 new)
 
@@ -557,13 +597,14 @@ Append-only. Sole write authority: `BillingProfileManager`.
 82. `tests/Feature/Usage/NoFakePaymentControlsRenderedTest.php`
 83. `tests/Feature/Usage/NoStripeOrProviderCodeAtM2Test.php`
 
-### Modified test paths (1 — pre-existing M1 file, Correction Round 1)
+### Modified test paths (2 — pre-existing files, Correction Rounds 1 and 2)
 
 85. `tests/Feature/Usage/UsageWalletManagerConcurrencyTest.php` — **modified, not new (Correction Round 1)**: the `test_concurrent_reserve_for_a_different_business_is_unaffected()` method's fragile `assertLessThan(1.0, $elapsed, ...)` wall-clock assertion is replaced with a deterministic causal barrier/handshake (exact algorithm specified in §13.85 below). `test_two_workers_racing_the_final_balance_resolve_to_exactly_one_winner()`, `createBusinessWithWallet()`, `runnerScript()`'s existing `hold-then-reserve`/`reserve` modes, `setUp()`, and every existing cleanup/isolation assertion in this file are unauthorized to change and must not change — the correction adds one new runner mode and rewrites the one named test method only. No production code changes as a result of this correction.
+86. `tests/Feature/Entitlement/EntitlementManagerConcurrencyTest.php` — **modified, not new (Correction Round 2)**: `tearDown()` gains exactly two additional scoped delete statements — for `business_payer_transitions` and `business_payer_assignments`, both restricted to this test's own `$businessIds`/`$this->createdWorkspaceIds` — inserted into the existing ordered cleanup block (immediately alongside the existing `business_feature_toggles`/`workspace_membership_businesses`/`workspace_transitions` deletes), strictly before the existing `businesses` delete. Exact algorithm specified in §13.86 below. Every existing concurrency scenario (`test_scenario_1`...`test_scenario_11`), every existing assertion, `setUp()`, the Currency-fixture tracking/cleanup introduced by the earlier M1 remediation round, `startHolderAndWaitForLock()`, and every other existing line of `tearDown()` are unauthorized to change and must not change. No production code changes as a result of this correction.
 
-**Only one pre-existing M1 test file is modified by M2 (item 85 above, Correction Round 1, narrowly for test-stability only — never a behavioral or production-scope change).** `tests/Feature/Usage/NewBusinessWalletInitializationTest.php` continues to prove wallet-only initialization outcomes, unmodified, exactly as RFC-005 §35 itself distinguishes ("`NewBusinessWalletInitializationTest` (M1 scope)... `NewBusinessPayerAssignmentInitializationTest` (M2 scope, new)").
+**Two pre-existing test files are modified by M2 in total — item 85 (Correction Round 1, an M1 Usage file, narrowly for test-stability only) and item 86 (Correction Round 2, an RFC-004 Entitlement file, narrowly for FK-safe teardown ordering only) — neither a behavioral nor a production-scope change.** `tests/Feature/Usage/NewBusinessWalletInitializationTest.php` continues to prove wallet-only initialization outcomes, unmodified, exactly as RFC-005 §35 itself distinguishes ("`NewBusinessWalletInitializationTest` (M1 scope)... `NewBusinessPayerAssignmentInitializationTest` (M2 scope, new)").
 
-**Counts:** 8 migrations + 3 enums + 2 value objects + 3 presentation files + 7 models + 7 repository contracts + 7 Eloquent repositories + 1 manager + 4 exceptions + 3 events + 6 HTTP files = **51 new production**. + 5 modified production (items 52–55, 84) = **56 production total.** 28 new tests + 1 modified test (item 85) = **29 test total.** **56 + 29 = 85.**
+**Counts:** 8 migrations + 3 enums + 2 value objects + 3 presentation files + 7 models + 7 repository contracts + 7 Eloquent repositories + 1 manager + 4 exceptions + 3 events + 6 HTTP files = **51 new production**. + 5 modified production (items 52–55, 84) = **56 production total.** 28 new tests + 2 modified tests (items 85–86) = **30 test total.** **56 + 30 = 86.**
 
 ---
 
@@ -598,8 +639,18 @@ Each file's required proof, beyond what its own name states:
   3. This is the deterministic proof itself, not a benchmark: the parent test process only writes A's release signal *after* Business B's process has already returned — if Business B were ever actually serialized behind Business A's lock (the real defect this test exists to catch), Business B's process would never return (since it would be waiting on a lock A can only release after seeing a signal the parent will only send after B returns), so the test fails via the process's own bounded safety timeout rather than via a fragile wall-clock ceiling — never via a race that could coincidentally look fast enough on a quiet host and coincidentally look slow enough on a busy one.
   4. Preserves every existing balance/ledger/reservation/isolation assertion (`business_usage_reservations` count checks for both Businesses, `GRANTED` string checks); uses a unique `sys_get_temp_dir()` signal-file path (mirroring the file's own existing `$runnerPath` pattern), removed in `tearDown()`; terminates both subprocesses safely in `tearDown()` if either is still running after a failure (`Process::stop()`); never retries, never skips, never touches any production file. **Simply raising the `1.0` second threshold (e.g. to `2.0` or `3.0`) is explicitly rejected as a solution** — it would not fix the underlying flake, only widen the window in which it can still intermittently fail under sufficient host load; the fix must be the causal barrier described above, not a larger fragile number.
   5. `test_two_workers_racing_the_final_balance_resolve_to_exactly_one_winner()` — completely unmodified; its own `assertGreaterThan(1.0, $elapsed)` floor assertion (proving genuine wait, not genuine non-blocking) is a different claim from the one this correction addresses and is not itself flaky in the same direction (host load can only make a floor assertion more true, never less).
+- **86 `EntitlementManagerConcurrencyTest::tearDown()` (Correction Round 2, FK-safe teardown)** — the exact minimum addition, locked precisely:
+  1. Inserted into the existing ordered cleanup block inside the `if ($this->createdWorkspaceIds !== [])` guard, using the block's own already-computed `$businessIds` variable (`DB::table('businesses')->whereIn('workspace_id', $this->createdWorkspaceIds)->pluck('id')`) — the identical scoping already used by the adjacent `business_feature_toggles`/`workspace_membership_businesses` deletes — two new statements, both immediately before the existing `workspace_transitions` delete (which itself remains immediately before the existing `businesses` delete):
+     ```php
+     DB::table('business_payer_transitions')->whereIn('business_id', $businessIds)->delete();
+     DB::table('business_payer_assignments')->whereIn('business_id', $businessIds)->delete();
+     ```
+  2. Both deletes are scoped exclusively through `$businessIds`, itself derived exclusively from `$this->createdWorkspaceIds` — the test's own existing, pre-established tracking array. Neither statement is an unscoped `DB::table('business_payer_transitions')->delete()`/`DB::table('business_payer_assignments')->delete()` — an unscoped delete against either payer table is explicitly forbidden by this correction, since it would delete rows for Businesses this test never created.
+  3. Both new statements run before the existing `businesses` delete, matching every other restricted child in this same block; their order relative to *each other* is not itself FK-significant (§ Correction Round 2 record, fact 4 — no FK exists from `business_payer_transitions` to `business_payer_assignments`, both restrict independently against `businesses`), but transitions are deleted first here anyway, consistent with deleting history before its subject and requiring no special-casing if a future round ever adds such an FK.
+  4. Preserves every existing assertion in every scenario (1–11) verbatim; preserves the existing Currency-fixture tracking/cleanup (`$this->createdCurrencyId`, restored via the `originalCoreCatalogState` mechanism) verbatim and unmodified; preserves `setUp()`, `startHolderAndWaitForLock()`, `assignAtBoundary()`, and every other method verbatim; changes no scenario's genuine multi-process OS concurrency in any way; runs identically whether the preceding scenario passed or failed (PHPUnit always calls `tearDown()`), so cleanup is not conditional on test success. No scenario assertion is weakened, retried, skipped, or reordered to route around the failure — the fix is exclusively the two added delete statements.
+  5. No production file changes as a result of this correction. `business_payer_assignments.business_id` and `business_payer_transitions.business_id` remain `restrictOnDelete()`, unchanged (§5).
 
-**Six mandatory regression gates** (§15), `ultimatesms_testing` only, never a predicted count — every count is reported only after the gate actually runs. Item 85's stabilized test must additionally be run individually, then repeated at least three consecutive times with zero failures, then immediately before and after the full M2-focused suite (gate 1), and once more as part of the full-suite gate (gate 6) — proving determinism, not merely a single lucky pass.
+**Six mandatory regression gates** (§15), `ultimatesms_testing` only, never a predicted count — every count is reported only after the gate actually runs. Item 85's stabilized test must additionally be run individually, then repeated at least three consecutive times with zero failures, then immediately before and after the full M2-focused suite (gate 1), and once more as part of the full-suite gate (gate 6) — proving determinism, not merely a single lucky pass. Item 86's correction must additionally be verified, after implementation resumes, in the exact order §15 specifies: each of scenarios 1, 2, 9, and 11 individually; the entire corrected file as one run; the corrected file immediately followed by the M2 payer-initialization/backfill tests in the same PHPUnit process (proving no shared-process leakage either direction); the full Entitlement gate (gate 2); the complete M1+M2 Usage suite (gate 1); all six regression gates. Each run must additionally assert directly against the database: no `business_payer_assignments` row remains for any of this test's own Business IDs after `tearDown()`; no `business_payer_transitions` row remains for the same IDs; a payer assignment belonging to a Business this test did not create is never touched (proven by seeding one unrelated, pre-existing assignment outside this test's own tracked IDs and asserting it still exists after `tearDown()`); the existing Currency-fixture cleanup still leaves zero leaked `currencies` rows; every one of scenarios 1–11's original concurrency/isolation/exception-type assertions remains active and passing, unweakened.
 
 ---
 
@@ -617,9 +668,10 @@ Run from repository root, PHP 8.3.30, against `ultimatesms_testing` only:
 8. `grep -n "platform_feature_unknown\|platform_feature_unavailable\|workspace_plan_unassigned\|denied_by_workspace_override\|not_entitled_by_plan\|disabled_for_business\|plan_suspended\|plan_inactive\|usage_unauthorized" app/Library/Entitlement/EntitlementManager.php | wc -l` → `15` (unchanged from the M1-round finding — all nine keys present, no key added/removed/renamed).
 9. `git diff --stat -- routes/admin.php app/Http/Controllers/Admin config/permissions.php` (against the M2 base SHA) → empty (no admin surface, no permissions change, per §9/§12's own explicit exclusion).
 10. `find database/migrations -newer <base-SHA-checkout-marker> -name "*.php"` cross-checked against §12 items 1–8 → exact set equality, no extra migration.
-11. Final changed-path set (`git diff --name-only` + `git ls-files --others --exclude-standard`, sorted) equals §12's 85-path list exactly, after normalizing `{impl_date}` in the eight migration filenames.
+11. Final changed-path set (`git diff --name-only` + `git ls-files --others --exclude-standard`, sorted) equals §12's 86-path list exactly, after normalizing `{impl_date}` in the eight migration filenames.
 12. **(Correction Round 1)** `grep -c "workspaces.businesses.usage-billing" routes/customer.php` → `5` (all five M2 route names appear exactly once each: `.show`, `.payer`, `.billing-contact`, `.spend-cap`, `.feature-limit`); `git diff routes/customer.php` (against the pre-correction base) shows only additive lines — no existing line removed, reordered, or altered; `grep -n "payment/top-up\|callback/\|subscriptions/" routes/customer.php` diff-checked shows zero change to any legacy payment/subscription route block.
 13. **(Correction Round 1)** `grep -n "assertLessThan(1.0" tests/Feature/Usage/UsageWalletManagerConcurrencyTest.php` → zero matches (the fragile wall-clock ceiling assertion no longer exists anywhere in the file); `grep -n "assertGreaterThan(1.0" tests/Feature/Usage/UsageWalletManagerConcurrencyTest.php` → exactly one match, in the untouched `test_two_workers_racing_the_final_balance_resolve_to_exactly_one_winner()` method only; `git diff --stat tests/Feature/Usage/UsageWalletManagerConcurrencyTest.php` (against the pre-correction base) shows only the one corrected test method plus the one new runner-script mode changed — `createBusinessWithWallet()`, `setUp()`, the existing `hold-then-reserve`/`reserve` modes, and every other method are byte-identical; `git diff --stat -- app` (repository-wide) is empty — no production file touched by this correction.
+14. **(Correction Round 2)** `grep -c "business_payer_transitions\|business_payer_assignments" tests/Feature/Entitlement/EntitlementManagerConcurrencyTest.php` → exactly `2` (the two new scoped deletes, one reference each); `grep -n "DB::table('business_payer_transitions')->delete()\|DB::table('business_payer_assignments')->delete()" tests/Feature/Entitlement/EntitlementManagerConcurrencyTest.php` → zero matches (no unscoped delete against either payer table exists anywhere in the file); `git diff --stat tests/Feature/Entitlement/EntitlementManagerConcurrencyTest.php` (against the pre-correction base) shows only `tearDown()` changed — every `test_scenario_*` method, `setUp()`, and every helper method are byte-identical; `git diff --stat -- app database/migrations` (repository-wide, against the pre-correction base) is empty — no production file, migration, or schema touched by this correction; `grep -n "restrictOnDelete" database/migrations/2026_08_16_130006_create_business_payer_assignments_table.php database/migrations/2026_08_16_130007_create_business_payer_transitions_table.php` → both files still show `restrictOnDelete()` on `business_id`, unchanged.
 
 ---
 
@@ -633,6 +685,17 @@ Run sequentially against `ultimatesms_testing`, PHP 8.3.30 (`bcmath`/`pdo_mysql`
 4. `php artisan test tests/Feature/Business` — Business.
 5. `php artisan test tests/Feature/Opportunity` — Opportunity.
 6. `php artisan test --stop-on-failure` — full suite.
+
+**(Correction Round 2) Item 86's focused verification order, required before gate 2 is considered satisfied:**
+
+1. Each of the four previously-failing scenarios individually — `--filter=test_scenario_1_create_plus_create_racing_final_slot`, `test_scenario_2_create_plus_reassign_racing_final_slot`, `test_scenario_9_legacy_onboarding_vs_transfer_ownership`, `test_scenario_11_legacy_onboarding_vs_ordinary_create_racing_final_slot`.
+2. The entire corrected `tests/Feature/Entitlement/EntitlementManagerConcurrencyTest.php` as one run (all 8 scenarios in the file).
+3. The corrected file immediately followed, in the same `php artisan test` process, by the M2 payer-initialization/backfill tests (`tests/Feature/Usage/NewBusinessPayerAssignmentInitializationTest.php`, `tests/Feature/Usage/BackfillBusinessPayerAssignmentsTest.php`) — proving no shared-process state leaks either direction.
+4. The full Entitlement gate (gate 2 above).
+5. The complete M1+M2 Usage suite (gate 1 above).
+6. All six regression gates, in order.
+
+Each of the six steps above must additionally include the database assertions specified in §13.86's closing paragraph (no leaked `business_payer_assignments`/`business_payer_transitions` rows for test-owned Business IDs; an unrelated pre-existing payer assignment untouched; Currency cleanup intact; every original assertion in every scenario still active).
 
 ---
 
@@ -655,16 +718,18 @@ Run sequentially against `ultimatesms_testing`, PHP 8.3.30 (`bcmath`/`pdo_mysql`
 
 Implementation must stop, leave the working tree unstaged, and report rather than proceed, if:
 
-- Any path beyond §12's 85 is required (i.e., any required 86th path).
+- Any path beyond §12's 86 is required (i.e., any required 87th path).
 - Any financial default (retail rate, spend-cap value, per-feature-limit value, safety-limit value, auto-recharge value) must be invented rather than left nullable/unconfigured.
-- Any RFC-004 change is required.
+- Any RFC-004 change is required (item 86's teardown-only correction is not an RFC-004 change).
 - Any Stripe/provider behavior becomes necessary to satisfy a requirement believed to be M2 scope.
 - Payer authority is ambiguous in a real scenario §6.E/§7 does not already resolve.
 - The dashboard's content is found to conflict with any RFC-005 locked decision.
 - A third Business-creation path (beyond `BusinessCreated`/`BusinessAssignedToWorkspace`) is discovered.
 - Cross-Business/cross-Workspace isolation cannot be proven for any new table.
-- Any of the six regression gates fails for a reason not fixable within the 85-path allowlist.
+- Any of the six regression gates fails for a reason not fixable within the 86-path allowlist.
 - `ultimatesms_testing` cannot be confirmed as the effective test database.
+- Any other currently-reproducible test failure is found to share item 86's same M2-FK root cause (§8 static blast-radius audit found none beyond item 86 — if implementation nonetheless discovers one, no third ordinary correction round remains under this contract; stop and report rather than proceed).
+- Anyone proposes weakening `business_payer_assignments.business_id`/`business_payer_transitions.business_id` from `restrictOnDelete()` to `cascadeOnDelete()` to resolve a test failure — explicitly rejected, not a valid resolution path (§11.6/§11.7).
 
 ---
 
@@ -699,12 +764,13 @@ Implementation must stop, leave the working tree unstaged, and report rather tha
 2. `business_payer_assignments` is backfilled for every pre-existing Business, and both Business-creation events produce exactly one assignment for every new Business — proven by tests 75–76.
 3. The payer-consent model in §7 holds for every actor/action pair — proven by test 79 (and 68 at the manager level).
 4. No fake payment control is ever rendered — proven by test 82.
-5. No Stripe/provider code exists anywhere in the 85-path set — proven by test 83 and mechanical search 1.
+5. No Stripe/provider code exists anywhere in the 86-path set — proven by test 83 and mechanical search 1.
 6. `EntitlementManager.php` and the nine RFC-004 denial keys are unchanged — proven by mechanical searches 7–8 and regression gate 2.
 7. All six regression gates (§15) pass with exact reported counts.
-8. The final changed-path set equals §12's 85 paths exactly — proven by mechanical search 11.
+8. The final changed-path set equals §12's 86 paths exactly — proven by mechanical search 11.
 9. The five M2 routes exist exactly once each in `routes/customer.php`, with zero change to any pre-existing route — proven by mechanical search 12.
 10. `UsageWalletManagerConcurrencyTest::test_concurrent_reserve_for_a_different_business_is_unaffected` passes deterministically (individually, repeated 3+ times, before/after the M2 suite, and in the full-suite gate) with no wall-clock ceiling assertion remaining — proven by test item 85 and mechanical search 13.
+11. `EntitlementManagerConcurrencyTest`'s four previously-failing scenarios (1, 2, 9, 11) each pass individually and as part of the full file, `tearDown()` leaves zero `business_payer_assignments`/`business_payer_transitions` rows for this test's own Business IDs, an unrelated pre-existing payer assignment is proven untouched, and `restrictOnDelete()` remains unchanged on both FKs — proven by test item 86, mechanical search 14, and regression gate 2's focused verification order (§15).
 
 **Implementation sequence:**
 
@@ -717,8 +783,8 @@ Implementation must stop, leave the working tree unstaged, and report rather tha
 7. Presentation DTOs' assembly logic (`UsageBillingPresenter`, item 14).
 8. HTTP routes/controller/FormRequests (§9, items 46–50, 84).
 9. Views/navigation (items 51, 55).
-10. Tests (items 56–83), plus the stabilized concurrency-test correction (item 85, Correction Round 1).
-11. Mechanical searches (§14) and all six regression gates (§15).
+10. Tests (items 56–83), plus the stabilized concurrency-test correction (item 85, Correction Round 1) and the FK-safe teardown correction (item 86, Correction Round 2).
+11. Mechanical searches (§14) and all six regression gates (§15), including item 86's focused verification order.
 
 ---
 
