@@ -75,15 +75,40 @@ class AdminWorkspacePlanCatalogControllerTest extends TestCase
         $response->assertSee('Agency');
     }
 
+    /**
+     * Scoped to the #admin-workspace-plan-catalog-index section rather than
+     * the full rendered page: the shared application layout legitimately
+     * contains its own global POST logout form, so a whole-page
+     * assertDontSee('method="POST"') is a false positive against layout
+     * markup this slice does not own and must not touch -- mirrors
+     * AdminWorkspaceControllerTest::test_rendered_views_contain_no_mutation_controls()'s
+     * existing precedent exactly.
+     */
     public function test_index_renders_no_mutation_controls(): void
     {
         $this->actingAsAdmin(['access backend', 'view workspace plans']);
 
         $response = $this->get(route('admin.workspace-plan-catalog.index'))->assertOk();
+        $section = $this->extractSection($response->getContent(), 'admin-workspace-plan-catalog-index');
 
-        $response->assertDontSee('method="POST"', false);
-        $response->assertDontSee('method="PUT"', false);
-        $response->assertDontSee('method="DELETE"', false);
+        $this->assertStringNotContainsString('method="POST"', $section);
+        $this->assertStringNotContainsString('method="PUT"', $section);
+        $this->assertStringNotContainsString('method="DELETE"', $section);
+        $this->assertStringNotContainsString('name="_method"', $section);
+    }
+
+    private function extractSection(string $html, string $sectionId): string
+    {
+        $idPosition = strpos($html, 'id="' . $sectionId . '"');
+        $this->assertNotFalse($idPosition, "Could not locate the #{$sectionId} section in the rendered page.");
+
+        // A plain substring slice from the opening <section> tag to its
+        // first </section> is sufficient because this section never itself
+        // contains a nested <section> element.
+        $sectionStart = strrpos(substr($html, 0, $idPosition), '<section');
+        $sectionEnd = strpos($html, '</section>', $idPosition);
+
+        return substr($html, $sectionStart, $sectionEnd - $sectionStart);
     }
 
     private function ensureRequiredAppConfigRowsExist(): void

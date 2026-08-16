@@ -223,6 +223,8 @@ class AdminWorkspaceEntitlementControllerTest extends TestCase
     public function test_grant_complimentary_requires_a_reason(): void
     {
         $workspace = $this->createWorkspace($this->createCustomer()->user);
+        $currency = \App\Models\Currency::create(['name' => 'US Dollar', 'code' => 'USD', 'format' => '$1', 'status' => true]);
+        \App\Models\WorkspacePlanCatalog::where('tier', 'core')->update(['price' => '10.00', 'currency_id' => $currency->id]);
         app(EntitlementManager::class)->assignFirstPlan($workspace, WorkspacePlanTier::Core, $this->fixtureAdminId(), 'Fixture.', false, 0);
         $this->actingAsAdmin(['access backend', 'manage workspace plans']);
 
