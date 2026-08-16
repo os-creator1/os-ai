@@ -6,16 +6,27 @@
 
 ---
 
+## Correction Round 1 record
+
+This round corrects two independently verified allowlist gaps, both discovered during the first M2 implementation attempt, which stopped — leaving the implementation worktree unstaged, exactly as this contract's own §17 stop condition requires — the moment each was found:
+
+1. **Omitted customer route-registration path (§9/§12).** The customer HTTP surface's five routes (§9) can only exist by being registered in `routes/customer.php`, an existing file the original §12 allowlist never separately enumerated as a modified path — despite §9 already specifying the exact five routes, in full detail (method, URI, name, controller action), in prose. This was a drafting gap in the allowlist's own mechanical enumeration, not new scope discovered during implementation: the functionality was always fully authorized by §9; §12 simply never listed the one file that authorization necessarily requires touching. `routes/customer.php` is added to the allowlist as item 84, authorized narrowly for exactly the five M2 route definitions §9 already specifies — no other route may change (§9/§12 correction below).
+2. **Pre-existing M1 concurrency-test flakiness under host load (§13/§15).** Confirmed by direct read of `tests/Feature/Usage/UsageWalletManagerConcurrencyTest.php`: this file is outside the original 83-path M2 allowlist; its `test_concurrent_reserve_for_a_different_business_is_unaffected()` method asserts an absolute `<1.0` wall-clock-second threshold (`$this->assertLessThan(1.0, $elapsed, ...)`) as a proxy for "Business B's reserve() was not blocked by Business A's unrelated wallet-row lock"; its real, stated purpose (confirmed by its own inline comment) is proving unrelated-Business operations never serialize against one another, not measuring performance; and it was observed, this round, to intermittently fail under host load — timings ranging 1.03s–1.66s across repeated runs, including outright passes at other times — while the underlying concurrency invariant (`GRANTED` output, no cross-Business blocking) held in every single run. All four confirmation criteria this correction requires before adding a test path are met by direct evidence, not assumption. `tests/Feature/Usage/UsageWalletManagerConcurrencyTest.php` is added to the allowlist as item 85, authorized narrowly for a deterministic causal-barrier replacement of that one method's fragile assertion only — `test_two_workers_racing_the_final_balance_resolve_to_exactly_one_winner()` and every other existing assertion in the file are unauthorized to change and must not change.
+
+Neither correction expands M2's production scope, invents a financial default, or authorizes resumed implementation — a separate, explicit human instruction remains required before implementation may resume. **This is Correction Round 1 of the maximum 2 correction rounds this contract permits** (`maximum_correction_rounds: 2`, unchanged, identical discipline to every prior RFC-004/RFC-005 contract in this repository).
+
+---
+
 ## 0. Governance
 
 - Verified base SHA: `7ce3f9dbac7de4bc45ad788e46bee503b6362cbe` (`main`, confirmed `HEAD == origin/main` at drafting time).
 - Governing RFC-005 design document: `docs/rfcs/RFC-005-BUSINESS-USAGE-BILLING-AND-WALLETS.md`, version 1.4, governed by `docs/automation/RFC-005-DESIGN-CONTRACT.md` (merged commit `0e74f199bcf13eaf86e0770858c13901323b0eab`, confirmed an ancestor of the base SHA above).
 - Governing M1 contract: `docs/automation/RFC-005-M1-CONTRACT.md`, final merged commit `2462492e5e584173ee2cd283f510d9b7cfdf6487` (confirmed an ancestor of the base SHA above).
 - M1 implementation: commit `9b53097c9f1571aee65f2b522d56f94d74341b6f` (confirmed an ancestor of the base SHA above), plus the human-authorized remediation commit `9b53097` fixed forward on `main` — all 70 contract-authorized M1 paths and the 3 remediation paths (`tests/Feature/Entitlement/EntitlementManagerDecisionTest.php`, `tests/Feature/Entitlement/NullUsageAuthorizationGatewayTest.php`, `tests/Feature/Entitlement/EntitlementManagerConcurrencyTest.php`) confirmed present and tracked on `main` at the base SHA, verified mechanically (§1 below).
-- Branch: `chore/rfc-005-m2-contract`.
-- Contract status: **READY** — every design-defined M2 object is scoped or explicitly deferred (§8 self-audit), no financial default is invented, and a real customer-visible dashboard is included without contradicting the merged RFC (§3).
-- Merge policy: **human-only**. This contract's own merge does not automatically start implementation. Implementation requires a separate, explicit human instruction, exactly as M1 required after its own contract merged.
-- `maximum_correction_rounds: 2` — identical discipline to every prior RFC-004/RFC-005 contract in this repository.
+- Branch: `chore/rfc-005-m2-contract` (original); `chore/rfc-005-m2-contract-correction-1` (this correction round).
+- Contract status: **READY** — every design-defined M2 object is scoped or explicitly deferred (§8 self-audit), no financial default is invented, a real customer-visible dashboard is included without contradicting the merged RFC (§3), and, as of Correction Round 1, both the omitted route-registration path and the flaky pre-existing concurrency-test path are resolved with no other scope discrepancy found.
+- Merge policy: **human-only**. This contract's own merge does not automatically start implementation, including this correction round's own merge — implementation requires a separate, explicit human instruction, exactly as M1 required after its own contract (and its own correction rounds) merged.
+- `maximum_correction_rounds: 2` — identical discipline to every prior RFC-004/RFC-005 contract in this repository. This is Correction Round 1 of 2.
 - `docs/automation/AI-AUTONOMY-STATE.json` carries no authorization weight for this contract and is not modified by it (confirmed stale/historical, still referencing RFC-003 Milestone 4, read only).
 
 ---
@@ -417,7 +428,7 @@ Append-only. Sole write authority: `BillingProfileManager`.
 
 ## 12. Exact implementation allowlist
 
-**83 total paths: 55 production (51 new + 4 modified) + 28 test (28 new + 0 modified).** No path is a glob or directory. Any path discovered necessary beyond this list during implementation is a STOP-and-report condition (§17).
+**85 total paths: 56 production (51 new + 5 modified) + 29 test (28 new + 1 modified).** No path is a glob or directory. Any path discovered necessary beyond this list during implementation is a STOP-and-report condition (§17) — the stop threshold is now any required **86th path**.
 
 ### Migrations (8 new)
 
@@ -503,12 +514,13 @@ Append-only. Sole write authority: `BillingProfileManager`.
 50. `app/Http/Requests/Customer/Business/UpdateBusinessFeatureLimitRequest.php`
 51. `resources/views/customer/business/usage-billing/show.blade.php`
 
-### Modified production paths (4 — all pre-existing, none new)
+### Modified production paths (5 — all pre-existing, none new)
 
 52. `app/Library/Usage/UsageWalletManager.php` — **modified, not new**: exactly four additive public methods (`setSpendCap()`, `setFeatureLimit()`, `setSafetyLimit()`, `setBillingStatus()`) plus their constructor-injected repository dependencies (`BusinessFeatureUsageLimitRepository`, `PlatformFeatureUsageSafetyLimitRepository`, `BusinessUsageLimitTransitionRepository`, `BusinessUsageWalletBillingStatusTransitionRepository`). No existing method's signature or body changes.
 53. `app/Listeners/Usage/InitializeBusinessUsageProfile.php` — **modified, not new**: both existing handler methods (`handleBusinessCreated()`, `handleBusinessAssignedToWorkspace()`) gain exactly one additional call each, to `BillingProfileManager::initializePayerAssignmentForBusiness()`, after the existing `UsageWalletManager::initializeWalletForNewBusiness()` call. No existing line is removed or restructured.
 54. `app/Providers/AppServiceProvider.php` — **modified, not new**: exactly seven additive lines appended to the `$bindings` array, one per M2 repository contract/implementation pair (§12 items 24–30 to 31–37), in a new contiguous group immediately following the M1 Usage group. No other line changes; `BillingProfileManager`/`UsageBillingPresenter` require no explicit binding (concrete classes, constructor-injected, Laravel auto-resolves — matching `UsageWalletManager`'s own unbound precedent).
 55. `resources/views/customer/workspaces/show.blade.php` — **modified, not new**: exactly one new link per visible Business row (§9), gated by the viewer's existing role-resolution logic already present in that view/its controller. No other line changes.
+84. `routes/customer.php` — **modified, not new (Correction Round 1)**: exactly the five M2 route definitions §9's own table already specifies, added inside the existing `workspaces.` prefix group, in the exact method/URI/name/controller-action shape §9 locks — `GET .../usage-billing` (`workspaces.businesses.usage-billing.show`), and `POST .../usage-billing/payer`, `.../usage-billing/billing-contact`, `.../usage-billing/spend-cap`, `.../usage-billing/feature-limits/{featureKey}` (the four mutation routes, §9's own table). No existing route definition in this file may be added, removed, reordered, reformatted, or have its method/URI/name/middleware/model-binding changed. No legacy payment route (`payment/top-up/*`, `callback/{gateway}/*`, `subscriptions/*`) may be touched. Mechanical search 12 (§14) proves all five routes exist exactly once and every pre-existing route is byte-for-byte unchanged.
 
 **No change to `app/Providers/EventServiceProvider.php`** (audit item 5 — the existing `$listen` mappings already cover both Business-creation events; only the listener's own handler bodies change, and that file is item 53 above).
 
@@ -545,9 +557,13 @@ Append-only. Sole write authority: `BillingProfileManager`.
 82. `tests/Feature/Usage/NoFakePaymentControlsRenderedTest.php`
 83. `tests/Feature/Usage/NoStripeOrProviderCodeAtM2Test.php`
 
-**No M1 test file is modified by M2.** `tests/Feature/Usage/NewBusinessWalletInitializationTest.php` continues to prove wallet-only initialization outcomes, unmodified, exactly as RFC-005 §35 itself distinguishes ("`NewBusinessWalletInitializationTest` (M1 scope)... `NewBusinessPayerAssignmentInitializationTest` (M2 scope, new)").
+### Modified test paths (1 — pre-existing M1 file, Correction Round 1)
 
-**Counts:** 8 migrations + 3 enums + 2 value objects + 3 presentation files + 7 models + 7 repository contracts + 7 Eloquent repositories + 1 manager + 4 exceptions + 3 events + 6 HTTP files = **51 new production**. + 4 modified production (items 52–55) = **55 production total.** 28 new tests, 0 modified = **28 test total.** **55 + 28 = 83.**
+85. `tests/Feature/Usage/UsageWalletManagerConcurrencyTest.php` — **modified, not new (Correction Round 1)**: the `test_concurrent_reserve_for_a_different_business_is_unaffected()` method's fragile `assertLessThan(1.0, $elapsed, ...)` wall-clock assertion is replaced with a deterministic causal barrier/handshake (exact algorithm specified in §13.85 below). `test_two_workers_racing_the_final_balance_resolve_to_exactly_one_winner()`, `createBusinessWithWallet()`, `runnerScript()`'s existing `hold-then-reserve`/`reserve` modes, `setUp()`, and every existing cleanup/isolation assertion in this file are unauthorized to change and must not change — the correction adds one new runner mode and rewrites the one named test method only. No production code changes as a result of this correction.
+
+**Only one pre-existing M1 test file is modified by M2 (item 85 above, Correction Round 1, narrowly for test-stability only — never a behavioral or production-scope change).** `tests/Feature/Usage/NewBusinessWalletInitializationTest.php` continues to prove wallet-only initialization outcomes, unmodified, exactly as RFC-005 §35 itself distinguishes ("`NewBusinessWalletInitializationTest` (M1 scope)... `NewBusinessPayerAssignmentInitializationTest` (M2 scope, new)").
+
+**Counts:** 8 migrations + 3 enums + 2 value objects + 3 presentation files + 7 models + 7 repository contracts + 7 Eloquent repositories + 1 manager + 4 exceptions + 3 events + 6 HTTP files = **51 new production**. + 5 modified production (items 52–55, 84) = **56 production total.** 28 new tests + 1 modified test (item 85) = **29 test total.** **56 + 29 = 85.**
 
 ---
 
@@ -576,8 +592,14 @@ Each file's required proof, beyond what its own name states:
 - **81 `UsageBillingLedgerPaginationTest`** — `paginateForBusiness()` pagination correctness; cross-Business ledger entries never leak onto another Business's page.
 - **82 `NoFakePaymentControlsRenderedTest`** — the rendered dashboard response never contains any of: "Add card", "Checkout", "Top up", "Top-up", "Refund", "Auto-recharge" as an actionable control, "Invoice", "Receipt", "Buy", "Purchase" — direct regression test for §5's exclusion list.
 - **83 `NoStripeOrProviderCodeAtM2Test`** — mechanical grep across every path in §12 confirms zero references to `Stripe`, `stripe-php`, `PaymentIntent`, `CheckoutSession`, `SetupIntent`, or any M3+ table/class name.
+- **85 `UsageWalletManagerConcurrencyTest::test_concurrent_reserve_for_a_different_business_is_unaffected` (Correction Round 1, stabilized)** — the exact deterministic replacement, locked precisely:
+  1. A new runner-script mode (e.g. `hold-until-signal`), added only to the one file's own already-embedded `runnerScript()` method, alongside the two existing modes (unchanged): the holder subprocess opens a transaction, `lockForUpdate()`s Business A's wallet row, writes `LOCKED` to stdout (as today), then **polls for the existence of a unique OS-temp signal file** (small sleep increments, e.g. 20ms) bounded by a generous safety-only ceiling (e.g. 10s) — never a sub-second bound — before performing Business A's own `reserve()` inside that same still-open transaction and committing.
+  2. The test method's own new sequence: start the holder (`hold-until-signal`), wait for `LOCKED` exactly as today; then **synchronously run** (blocking, `Process::run()`) the unrelated Business B `reserve()` in a **separate** process while A's lock is still held, with its own generous safety-only process timeout (e.g. 12s); assert it completed successfully and returned `GRANTED`; **only then** write the signal file, releasing A; then `$holder->wait()` and assert A's own `GRANTED`.
+  3. This is the deterministic proof itself, not a benchmark: the parent test process only writes A's release signal *after* Business B's process has already returned — if Business B were ever actually serialized behind Business A's lock (the real defect this test exists to catch), Business B's process would never return (since it would be waiting on a lock A can only release after seeing a signal the parent will only send after B returns), so the test fails via the process's own bounded safety timeout rather than via a fragile wall-clock ceiling — never via a race that could coincidentally look fast enough on a quiet host and coincidentally look slow enough on a busy one.
+  4. Preserves every existing balance/ledger/reservation/isolation assertion (`business_usage_reservations` count checks for both Businesses, `GRANTED` string checks); uses a unique `sys_get_temp_dir()` signal-file path (mirroring the file's own existing `$runnerPath` pattern), removed in `tearDown()`; terminates both subprocesses safely in `tearDown()` if either is still running after a failure (`Process::stop()`); never retries, never skips, never touches any production file. **Simply raising the `1.0` second threshold (e.g. to `2.0` or `3.0`) is explicitly rejected as a solution** — it would not fix the underlying flake, only widen the window in which it can still intermittently fail under sufficient host load; the fix must be the causal barrier described above, not a larger fragile number.
+  5. `test_two_workers_racing_the_final_balance_resolve_to_exactly_one_winner()` — completely unmodified; its own `assertGreaterThan(1.0, $elapsed)` floor assertion (proving genuine wait, not genuine non-blocking) is a different claim from the one this correction addresses and is not itself flaky in the same direction (host load can only make a floor assertion more true, never less).
 
-**Six mandatory regression gates** (§15), `ultimatesms_testing` only, never a predicted count — every count is reported only after the gate actually runs.
+**Six mandatory regression gates** (§15), `ultimatesms_testing` only, never a predicted count — every count is reported only after the gate actually runs. Item 85's stabilized test must additionally be run individually, then repeated at least three consecutive times with zero failures, then immediately before and after the full M2-focused suite (gate 1), and once more as part of the full-suite gate (gate 6) — proving determinism, not merely a single lucky pass.
 
 ---
 
@@ -595,7 +617,9 @@ Run from repository root, PHP 8.3.30, against `ultimatesms_testing` only:
 8. `grep -n "platform_feature_unknown\|platform_feature_unavailable\|workspace_plan_unassigned\|denied_by_workspace_override\|not_entitled_by_plan\|disabled_for_business\|plan_suspended\|plan_inactive\|usage_unauthorized" app/Library/Entitlement/EntitlementManager.php | wc -l` → `15` (unchanged from the M1-round finding — all nine keys present, no key added/removed/renamed).
 9. `git diff --stat -- routes/admin.php app/Http/Controllers/Admin config/permissions.php` (against the M2 base SHA) → empty (no admin surface, no permissions change, per §9/§12's own explicit exclusion).
 10. `find database/migrations -newer <base-SHA-checkout-marker> -name "*.php"` cross-checked against §12 items 1–8 → exact set equality, no extra migration.
-11. Final changed-path set (`git diff --name-only` + `git ls-files --others --exclude-standard`, sorted) equals §12's 83-path list exactly, after normalizing `{impl_date}` in the eight migration filenames.
+11. Final changed-path set (`git diff --name-only` + `git ls-files --others --exclude-standard`, sorted) equals §12's 85-path list exactly, after normalizing `{impl_date}` in the eight migration filenames.
+12. **(Correction Round 1)** `grep -c "workspaces.businesses.usage-billing" routes/customer.php` → `5` (all five M2 route names appear exactly once each: `.show`, `.payer`, `.billing-contact`, `.spend-cap`, `.feature-limit`); `git diff routes/customer.php` (against the pre-correction base) shows only additive lines — no existing line removed, reordered, or altered; `grep -n "payment/top-up\|callback/\|subscriptions/" routes/customer.php` diff-checked shows zero change to any legacy payment/subscription route block.
+13. **(Correction Round 1)** `grep -n "assertLessThan(1.0" tests/Feature/Usage/UsageWalletManagerConcurrencyTest.php` → zero matches (the fragile wall-clock ceiling assertion no longer exists anywhere in the file); `grep -n "assertGreaterThan(1.0" tests/Feature/Usage/UsageWalletManagerConcurrencyTest.php` → exactly one match, in the untouched `test_two_workers_racing_the_final_balance_resolve_to_exactly_one_winner()` method only; `git diff --stat tests/Feature/Usage/UsageWalletManagerConcurrencyTest.php` (against the pre-correction base) shows only the one corrected test method plus the one new runner-script mode changed — `createBusinessWithWallet()`, `setUp()`, the existing `hold-then-reserve`/`reserve` modes, and every other method are byte-identical; `git diff --stat -- app` (repository-wide) is empty — no production file touched by this correction.
 
 ---
 
@@ -631,7 +655,7 @@ Run sequentially against `ultimatesms_testing`, PHP 8.3.30 (`bcmath`/`pdo_mysql`
 
 Implementation must stop, leave the working tree unstaged, and report rather than proceed, if:
 
-- Any path beyond §12's 83 is required.
+- Any path beyond §12's 85 is required (i.e., any required 86th path).
 - Any financial default (retail rate, spend-cap value, per-feature-limit value, safety-limit value, auto-recharge value) must be invented rather than left nullable/unconfigured.
 - Any RFC-004 change is required.
 - Any Stripe/provider behavior becomes necessary to satisfy a requirement believed to be M2 scope.
@@ -639,7 +663,7 @@ Implementation must stop, leave the working tree unstaged, and report rather tha
 - The dashboard's content is found to conflict with any RFC-005 locked decision.
 - A third Business-creation path (beyond `BusinessCreated`/`BusinessAssignedToWorkspace`) is discovered.
 - Cross-Business/cross-Workspace isolation cannot be proven for any new table.
-- Any of the six regression gates fails for a reason not fixable within the 83-path allowlist.
+- Any of the six regression gates fails for a reason not fixable within the 85-path allowlist.
 - `ultimatesms_testing` cannot be confirmed as the effective test database.
 
 ---
@@ -675,10 +699,12 @@ Implementation must stop, leave the working tree unstaged, and report rather tha
 2. `business_payer_assignments` is backfilled for every pre-existing Business, and both Business-creation events produce exactly one assignment for every new Business — proven by tests 75–76.
 3. The payer-consent model in §7 holds for every actor/action pair — proven by test 79 (and 68 at the manager level).
 4. No fake payment control is ever rendered — proven by test 82.
-5. No Stripe/provider code exists anywhere in the 83-path set — proven by test 83 and mechanical search 1.
+5. No Stripe/provider code exists anywhere in the 85-path set — proven by test 83 and mechanical search 1.
 6. `EntitlementManager.php` and the nine RFC-004 denial keys are unchanged — proven by mechanical searches 7–8 and regression gate 2.
 7. All six regression gates (§15) pass with exact reported counts.
-8. The final changed-path set equals §12's 83 paths exactly — proven by mechanical search 11.
+8. The final changed-path set equals §12's 85 paths exactly — proven by mechanical search 11.
+9. The five M2 routes exist exactly once each in `routes/customer.php`, with zero change to any pre-existing route — proven by mechanical search 12.
+10. `UsageWalletManagerConcurrencyTest::test_concurrent_reserve_for_a_different_business_is_unaffected` passes deterministically (individually, repeated 3+ times, before/after the M2 suite, and in the full-suite gate) with no wall-clock ceiling assertion remaining — proven by test item 85 and mechanical search 13.
 
 **Implementation sequence:**
 
@@ -689,9 +715,9 @@ Implementation must stop, leave the working tree unstaged, and report rather tha
 5. Listener extension and the backfill migration's own execution proof (item 53, already covered by item 8's migration).
 6. Authorization (§7, enforced inside the manager methods and the controller's role resolution).
 7. Presentation DTOs' assembly logic (`UsageBillingPresenter`, item 14).
-8. HTTP routes/controller/FormRequests (§9, items 46–50).
+8. HTTP routes/controller/FormRequests (§9, items 46–50, 84).
 9. Views/navigation (items 51, 55).
-10. Tests (items 56–83).
+10. Tests (items 56–83), plus the stabilized concurrency-test correction (item 85, Correction Round 1).
 11. Mechanical searches (§14) and all six regression gates (§15).
 
 ---
