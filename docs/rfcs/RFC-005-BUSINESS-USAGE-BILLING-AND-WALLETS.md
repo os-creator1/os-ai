@@ -1,42 +1,60 @@
 # RFC-005 — Business Usage Billing and Wallets
 
 **Status: DRAFT — NOT IMPLEMENTATION-AUTHORIZED**
-**Version: 1.2 (Correction Round 2 — final allowed round)**
+**Version: 1.3 (Human-Authorized Remediation Exception)**
 
 - Base SHA: `6ae00f8f88b1963c6d05a045f99f0ce42651d2eb` (`main`)
 - Governing contract: `docs/automation/RFC-005-DESIGN-CONTRACT.md`, merged commit `186a82393577e9afc240d40b0ad8ade4c99d27d4`
+- **This version was produced under a one-time human governance override, not a normal correction round** — the two correction rounds the merged design contract permits (`maximum_correction_rounds: 2`) were already exhausted; a human explicitly authorized one narrowly bounded remediation pass covering eleven independently verified defects, listed in the remediation record below.
 - Merging this design document does **not** authorize RFC-005 Milestone 1 or any implementation, migration, test, route, view, Stripe/provider call, or billing behavior. Every milestone in §36 requires its own separately drafted, human-reviewed, merged implementation contract before any such work may begin.
-- This document is written to be implementation-grade: each future milestone contract is expected to **reproduce** the relevant sections below, not redesign them.
-- **Implementation readiness, corrected in this round.** Four gates must each be independently satisfied before production payment collection under this design; this round resolves one of them (the recurring provider model) and leaves three open:
+- **Implementation readiness.** Four gates must each be independently satisfied before production payment collection under this design:
   1. **Additional-slot allocation authority** — a structural cross-RFC blocker (below), unresolved. `NON-IMPLEMENTATION-READY`.
   2. **RFC-004 catalog-pricing operator surface** — a repository-confirmed gap (§22), unresolved.
   3. **Production tax/VAT legal sufficiency** — a legal/compliance gate (§23), unresolved; this RFC is not legal advice.
-  4. **Recurring additional-slot provider model** — **resolved this round** (§22 now names Option A explicitly, with a full state/proration/dunning design).
-  Every other `NON-IMPLEMENTATION-READY` marker in this document (exact rates, exact caps, exact thresholds, and the remaining items collected in §39) is an ordinary open product/commercial decision, resolvable by a human decision alone — distinct from the four structural/legal gates above.
+  4. **Recurring additional-slot provider model** — resolved (Option A, §22).
+  Every other `NON-IMPLEMENTATION-READY` marker in this document is an ordinary open product/commercial decision (§39), resolvable by a human decision alone — distinct from the four structural/legal gates above.
 
 ---
 
 ## Cross-RFC implementation blocker
 
-**Discovered in the prior correction round. Not resolved here — recorded, with options, for separate human authorization. Preserved unchanged in substance this round; no RFC-004 amendment is authorized or performed by this document.**
+**Preserved unchanged in substance across every round, including this remediation. No RFC-004 amendment is authorized or performed by this document.**
 
-RFC-004 requires that additional-Business-slot allocation occur **only** through `EntitlementManager::setAdditionalBusinessSlots(Workspace $workspace, int $count, int $actorUserId, ?string $reason = null): WorkspacePlanAssignment` — the sole authoritative allocation mutation (locked decision 9, RFC-004 §17/§19). That method's first authority check, immediately after acquiring the Workspace row lock, is `$this->assertPlatformAdministrator($actorUserId)` — throwing unless `$actorUserId` resolves to a user with `is_admin = true`. RFC-004 §20/§18 is explicit that ordinary Workspace customers may **inspect** their allocation but may **never self-grant** a slot.
+RFC-004 requires that additional-Business-slot allocation occur **only** through `EntitlementManager::setAdditionalBusinessSlots(Workspace $workspace, int $count, int $actorUserId, ?string $reason = null): WorkspacePlanAssignment` — the sole authoritative allocation mutation (locked decision 9). Re-confirmed by direct code read this round: that method's first authority check, immediately after acquiring the Workspace row lock, is `$this->assertPlatformAdministrator($actorUserId)` (`(bool) $this->userRepository->query()->whereKey($actorUserId)->value('is_admin')`, throwing `AuthorizationException` if false) — no lower-privilege entry point exists. RFC-004 §20/§18 is explicit that ordinary Workspace customers may **inspect** their allocation but may **never self-grant** a slot.
 
 A customer-paid checkout whose webhook-driven completion calls `setAdditionalBusinessSlots()` using the purchasing customer's own action as the trigger has no real platform-administrator `$actorUserId` available to it — that call would fail authorization in production, exactly as RFC-004 designed.
 
 This RFC does **not** invent a fake platform-administrator actor, bypass `EntitlementManager`, pass an unrelated admin's identity, or silently weaken RFC-004's authority check. Concrete options remain:
 
-1. **Customer pays, then a real platform administrator manually reviews and allocates the slot** — via §22's saga (`payment_succeeded` → `allocation_pending` → an explicit admin action, §22/§30, → `completed`). Requires zero RFC-004 change; immediately implementable once §22's saga model exists.
+1. **Customer pays, then a real platform administrator manually reviews and allocates the slot** — via §22's saga. Requires zero RFC-004 change; immediately implementable.
 2. **Keep the checkout/platform allocation platform-admin-initiated only** — no customer self-service purchase flow at all in v1.
-3. **Recommended: a separate, explicitly human-authorized amendment to RFC-004** introducing a narrowly scoped, payment-proof-backed internal allocation entry point (e.g., `allocateAdditionalBusinessSlotsFromVerifiedPayment()`), preserving `EntitlementManager` as sole allocation authority, requiring a verified idempotent successful-payment record, recording the requesting customer separately from the system/payment actor, writing the existing audit trail unchanged, preventing arbitrary customer self-grant through any other path, and receiving its own contract/tests/review/tag decision entirely separate from this document.
+3. **Recommended: a separate, explicitly human-authorized amendment to RFC-004** introducing a narrowly scoped, payment-proof-backed internal allocation entry point, preserving `EntitlementManager` as sole allocation authority, requiring a verified idempotent successful-payment record, recording the requesting customer separately from the system/payment actor, receiving its own contract/tests/review/tag decision entirely separate from this document.
 
 **This RFC-005 design document does not authorize or perform that amendment.** No RFC-005 additional-slot implementation contract (M4, §36) may be drafted until a human explicitly chooses and authorizes one of these options. §22 designs the rest of the additional-slot payment flow in full and is implementation-ready **up to** the allocation step, which remains `NON-IMPLEMENTATION-READY`. Recorded in §39 as open item 14.
 
 ---
 
+## Human-authorized remediation record
+
+This round corrected eleven independently verified defects, under an explicit one-time human governance exception (not a third normal correction round):
+
+1. **Committed-spend reconciliation formula corrected** (§13, §15) — the prior formula referenced `UsageCharge.available_delta_micro`, which is always `0`; the actual authoritative per-entry committed amount is now defined exactly.
+2. **Calendar-month rollover replaces fixed-duration arithmetic** (§15) — months are 28–31 days and cross DST boundaries; period boundaries are now derived from the Business's timezone using genuine calendar-month construction, never a fixed `period_length`.
+3. **Webhook claim termination mechanics completed** (§21) — the stale-`processing` reclaim branch now requires `attempts < max_attempts` like every other retryable branch; exact atomic updates defined for every terminal/retry outcome; `completed_at` replaces the ambiguous overload of `processed_at`.
+4. **Business-initialization milestone ordering corrected** (§9, §28–§32) — wallet initialization (M1) and payer-assignment initialization (M2) are now separate idempotent operations, each introduced only by the milestone that creates its own table, reconciled by an M2 backfill and an extended listener.
+5. **Provider consistency for payment instruments enforced at the schema level** (§17.B) — a composite FK now makes `business_payment_instruments.provider` disagreeing with its parent `payment_provider_customers.provider` a schema-level impossibility, not a manager-only convention; nullable-unique provider-object-reference indexes added with a type-aware resolution algorithm.
+6. **Every remaining schema shorthand expanded** (§11–§23) — grouped `/`-columns with differing types, "see above"/"see §X" deferrals, and untyped nullable columns are now individually specified; every `id` column explicitly marked auto-increment.
+7. **Enum-backed fields mechanically reconciled** (§26) — three previously-unnamed enum-backed concepts (`PaymentProvider`, `PaymentInstrumentType`, `SlotAgreementBillingCadence`) are now named and counted; the shared 4-value transition-source enum is consolidated and renamed `TransitionSource`.
+8. **Add-on purchase state auditing completed** (§18) — `business_usage_addon_purchase_transitions` added; the document's "every mutable state has an append-only audit" claim is narrowed accurately for the small number of fields where a full transition table was not added.
+9. **Recurring slot-agreement schema and idempotency finished** (§22) — an initial total-charge snapshot, a frozen requesting-contact snapshot on every renewal, an exact `cancel_at_period_end`/`cancellation_requested_at`/`cancellation_effective_at` cancellation model, exact-second proration arithmetic, a `charge_kind` dimension distinct from `initiated_by`, and a deterministic per-operation idempotency key preventing same-period collision on repeated mid-period increases.
+10. **Platform-administrator charge authority narrowed** (§16, §19, §22, §24) — an administrator may resume/reconcile an already-payer-authorized attempt or issue an auditable credit, but may never originate a fresh stored-instrument debit solely by virtue of being an administrator.
+11. **Acceptance/conformance wording corrected** (§37) — the impossible claim that any single milestone's conformance document proves every §35 test class is replaced with the accurate per-milestone/M6-aggregate framing.
+
+---
+
 ## 1. Purpose and problem statement
 
-RFC-003 forward-declared, and RFC-004 explicitly deferred, a Business-scoped usage wallet, usage ledger, billing configuration, and monthly usage budget (RFC-003 §8), together with payer selection, auto-recharge, and Stripe usage-billing changes (RFC-003 §26.2; RFC-004 §19, §31). RFC-004 shipped the entitlement structure and reserved exactly one seam for this RFC: `UsageAuthorizationGateway::check(Business $business, PlatformFeature $feature): UsageAuthorizationResult`, called as the final step of `EntitlementManager::decide()`, currently bound to `NullUsageAuthorizationGateway` (always-authorized). RFC-005 designs the system that will eventually bind a real implementation to that seam: a Business-scoped wallet and append-only ledger, a versioned usage-rate catalog, reservation/commit/release for uncertain-cost metered operations, payer selection with Workspace fallback, a billing contact, payment instruments, manual/paid/promotional credits, auto-recharge, additional-Business-slot payment collection, and the Stripe provider boundary — without ever weakening RFC-003/RFC-004's already-locked tenancy, entitlement, or isolation guarantees.
+RFC-003 forward-declared, and RFC-004 explicitly deferred, a Business-scoped usage wallet, usage ledger, billing configuration, and monthly usage budget (RFC-003 §8), together with payer selection, auto-recharge, and Stripe usage-billing changes (RFC-003 §26.2; RFC-004 §19, §31). RFC-004 shipped the entitlement structure and reserved exactly one seam for this RFC: `UsageAuthorizationGateway::check(Business $business, PlatformFeature $feature): UsageAuthorizationResult`, called as the final step of `EntitlementManager::decide()`, currently bound to `NullUsageAuthorizationGateway`. RFC-005 designs the system that will eventually bind a real implementation to that seam.
 
 The problem this RFC solves is narrower than "billing" in general: the legacy SMS-plan/subscription billing stack already exists and is explicitly out of scope; RFC-005 is a **new, Business-scoped, Stripe-first, usage-metered** billing system that must coexist with, and never be confused with, that legacy stack.
 
@@ -44,11 +62,9 @@ The problem this RFC solves is narrower than "billing" in general: the legacy SM
 
 ## 2. Governing RFC/contract evidence
 
-This design is bound by, in descending specificity:
-
-1. `docs/automation/RFC-005-DESIGN-CONTRACT.md` (commit `186a823...`) — sixteen inherited locked decisions (its §4), human product requirements, mandatory A–L contents (its §5), the open-decision/gap rule (its §6), and its governance restrictions.
-2. RFC-004 (Plans and Business Feature Entitlements) — tag `rfc-004-plans-and-business-feature-entitlements` at `221e18f0...` — specifically §13/§17/§18/§19/§20/§21/§31, `EntitlementManager::setAdditionalBusinessSlots()`'s exact authority gate, and — newly re-read this round — `BusinessManager`/`WorkspaceManager`'s two distinct Business-creation paths and their event-dispatch shapes.
-3. RFC-003 (Workspace and Business Account Core) — specifically §4, §8, §14.1, §19, §26.2, §27.
+1. `docs/automation/RFC-005-DESIGN-CONTRACT.md` — sixteen inherited locked decisions, human product requirements, mandatory A–L contents, the open-decision/gap rule, and governance restrictions.
+2. RFC-004 — tag `rfc-004-plans-and-business-feature-entitlements` at `221e18f0...` — §13/§17/§18/§19/§20/§21/§31, `setAdditionalBusinessSlots()`'s authority gate (re-confirmed this round), and `BusinessManager`/`WorkspaceManager`'s two distinct Business-creation paths.
+3. RFC-003 — §4, §8, §14.1, §19, §26.2, §27.
 4. `AGENTS.md` — "Workspace authorization" and verification rules.
 
 `docs/automation/AI-AUTONOMY-STATE.json` remains stale/historical and carries no authorization weight; left untouched.
@@ -57,30 +73,33 @@ This design is bound by, in descending specificity:
 
 ## 3. Repository audit findings
 
-**New this round — the sole trigger of correction item 11 (§32):** a direct search for `BusinessCreated::dispatch` across `app/` returns **exactly one** call site: `App\Library\Business\BusinessManager::applyIdentity()`'s CREATE branch (`BusinessManager.php:62`). A second, independent Business-creation code path exists and does **not** go through it: `App\Library\Workspace\WorkspaceManager::createBusinessInWorkspace()` (confirmed by direct read, `WorkspaceManager.php:907-936`) calls the same underlying `$this->businessRepository->createForCustomerInWorkspace(...)` repository method, but dispatches a **different** event, `BusinessAssignedToWorkspace::dispatch($business->id, $lockedWorkspace->id, $actorUserId)`, and never dispatches `BusinessCreated`. **This is a real, repository-confirmed gap**, not a hypothetical one: any single-event listener keyed only to `BusinessCreated` would silently miss every Business created through the Workspace-flow path. §32 designs the fix directly from this evidence.
+Re-confirmed this round by direct code read (this remediation's own required preflight step), unchanged from prior rounds:
 
-- **`EntitlementManager::setAdditionalBusinessSlots()`'s authority gate** — re-confirmed unchanged from the prior round: `assertPlatformAdministrator($actorUserId)` is the first authority check after the Workspace lock; no lower-privilege entry point exists. The cross-RFC blocker's evidence is unchanged.
-- **`EntitlementManager::decide()`'s exact nine denial keys** — re-confirmed unchanged: `platform_feature_unknown`, `platform_feature_unavailable`, `workspace_plan_unassigned`, `not_entitled_by_plan`, `denied_by_workspace_override`, `disabled_for_business`, `plan_suspended`, `plan_inactive`, `usage_unauthorized`. `decide()`'s own code passes through whatever non-null `$reason` a bound gateway returns — the nine-key discipline remains self-imposed by `RealUsageAuthorizationGateway`, not mechanically enforced by `EntitlementManager` itself.
-- **PHP/BCMath availability** — this repository targets PHP 8.2/8.3 (per `CLAUDE.md`'s own description); `bcround()` (PHP 8.4+) is **not** available at this target, confirmed by the stated platform version — §10's rounding algorithm is written to be PHP 8.2/8.3-compatible using only `bcadd`/`bcmul`/`bcdiv`/`bcpow`, never `bcround()`.
-- Every other repository fact recorded in the prior round's §3 (Stripe SDK version, Checkout Session precedent, absence of webhook-signature precedent, `businesses.currency_code`, `workspace_plan_catalog.price`'s `decimal(16,2)` shape, the `currencies` table's missing decimal-scale metadata, the actor-column-vs-tenancy-column convention, route-naming convention, `WorkspaceMembership`'s three authorization axes, `config/permissions.php`'s existing categories, the real cross-process concurrency-test pattern, and the `ShouldDispatchAfterCommit`/`ShouldQueueAfterCommit` distinction) remains accurate at this base and is carried forward unchanged.
+- `EntitlementManager::setAdditionalBusinessSlots()`'s `assertPlatformAdministrator()` gate — unchanged, the blocker's evidence stands.
+- `EntitlementManager::decide()`'s exact nine denial keys — unchanged; the nine-key discipline remains self-imposed by `RealUsageAuthorizationGateway`.
+- Exactly one call site dispatches `BusinessCreated` (`BusinessManager::applyIdentity()`'s CREATE branch); `WorkspaceManager::createBusinessInWorkspace()` dispatches `BusinessAssignedToWorkspace` instead, never `BusinessCreated`.
+- **New this round:** `App\Models\Business` carries a `timezone` fillable attribute (confirmed by direct read, `Business.php`), grounding this RFC's repeated "the Business's configured timezone" claim (§15) in an actual, already-existing column rather than an assumed one.
+- **New this round:** `App\Models\WorkspacePlanCatalog::$casts` (confirmed by direct read) casts only `tier` (to `WorkspacePlanTier`), `unlimited_business_slots`, and `is_active` to typed values — `billing_cycle` is a plain, **uncast string** column with no backing PHP enum anywhere in RFC-004. This directly grounds §26's finding that RFC-005's own `SlotAgreementBillingCadence` enum is genuinely new, not a reuse of an RFC-004 concept, since RFC-004 has no such enum to reuse.
+- PHP/BCMath availability, Stripe SDK version, and every other repository fact from prior rounds remain accurate and unchanged.
 
-No new conflict beyond the one recorded in the blocker above was found between the merged design contract, RFC-003, RFC-004, and repository reality.
+No new conflict beyond the one recorded in the blocker above was found.
 
 ---
 
 ## 4. Goals
 
-1. Give every Business an isolated usage wallet, append-only ledger, billing contact, and payer — never Workspace-pooled, never cross-Business-visible.
-2. Meter only explicitly classified features; every non-metered, already-entitled feature continues working with an empty or non-existent wallet.
+1. Give every Business an isolated usage wallet, append-only ledger, billing contact, and payer.
+2. Meter only explicitly classified features.
 3. Give the Business, and the platform, independent, non-collapsible controls over spend.
 4. Make Stripe the sole v1 payment provider, behind a narrow boundary.
-5. Never let this system reuse the legacy multi-gateway `PaymentController`/`invoices`/`subscription_transactions` stack by inference from a similar name.
+5. Never reuse the legacy multi-gateway stack by inference from a similar name.
 6. Preserve a seam for Agency client rebilling without building it now.
-7. Never invent a customer retail rate, a default cap value, or provider behavior; every commercially significant figure not received as an explicit human product requirement is named as an open decision in §39.
-8. Represent the wallet's own accounting state (available, reserved, debt) with a model the ledger can actually reconstruct.
+7. Never invent a customer retail rate, a default cap value, or provider behavior.
+8. Represent the wallet's accounting state with a model the ledger can actually reconstruct — **corrected this round: this now means the ledger's own delta columns, correctly interpreted per entry type (§13), not a formula that silently assumed the wrong column carries a given entry type's committed amount.**
 9. Never expand `EntitlementManager::decide()`'s locked nine-key denial surface.
-10. **Added this round:** every table, counter, transition, actor, and route this document proposes is fully and consistently specified — no shorthand deferred to "elsewhere" that does not in fact exist elsewhere.
-11. **Added this round:** every commercially significant mutable state has a durable, append-only transition history; every charge-causing action requires the actual payer's own consent, never merely "some authorized role."
+10. Every table, counter, transition, actor, and route this document proposes is fully and consistently specified — **this round closes the remaining instances where that was not yet true.**
+11. Every commercially significant mutable state has a durable, append-only transition history, **or this document explicitly and accurately narrows that claim where it does not** (§18); every charge-causing action requires the actual payer's own consent — **and, new this round, a platform administrator's role alone is never itself that consent for originating a fresh charge** (§16, §24).
+12. **Added this round:** calendar-correct time handling — no accounting period boundary is ever computed from a fixed-duration assumption that ignores real calendar-month/timezone/DST variation.
 
 ---
 
@@ -88,33 +107,28 @@ No new conflict beyond the one recorded in the blocker above was found between t
 
 - Agency client rebilling execution (schema/service seam only — §16).
 - Any second payment provider besides Stripe (§20).
-- Any change to the legacy `Plan`/`Subscription` SMS-quota billing stack, `PaymentController.php`, `PaymentMethods`, `Invoices`, or `SubscriptionTransaction`.
-- Automated tax/VAT calculation as a legally-sufficient solution (§23 marks production tax posture `NON-IMPLEMENTATION-READY`).
+- Any change to the legacy `Plan`/`Subscription` SMS-quota billing stack.
+- Automated tax/VAT calculation as a legally-sufficient solution (§23).
 - Multi-currency wallets in v1 (§39 item 10).
 - A concrete v1 add-on roster beyond the schema seam and one worked example (§39 item 8).
 - Selecting exact retail rates, exact default caps, or an exact auto-recharge threshold value (§39).
 - Actual allocation of a paid additional Business slot through any customer-triggered code path, until the cross-RFC blocker is resolved (§22, §39 item 14).
-- Stripe Billing's native Subscription/Invoice object model — **explicitly decided against this round** (§22 chooses Option A: SetupIntent/Checkout-with-saved-instrument plus off-session PaymentIntent renewals, not Stripe's own subscription primitive).
+- Stripe Billing's native Subscription/Invoice object model (§22 chooses Option A).
+- **Added this round:** an unbounded platform-administrator charge-origination capability (§16/§24 now narrow this explicitly).
 
 ---
 
 ## 6. Terminology
 
-- **Business wallet** — the single row per Business holding `available_balance`, `reserved_balance`, `debt_balance`, and the Business's caps/auto-recharge configuration, including its current accounting **period** (§12).
-- **Usage account** — informal synonym for a Business's wallet + ledger + rate history taken together; not a separate table.
-- **Available balance** — spendable balance: funded balance not currently reserved or owed as debt.
-- **Reserved balance** — the sum of open (uncommitted, unreleased, unexpired) reservations.
-- **Debt balance** — a non-negative, auditable record of value the wallet owes but has not yet had funded.
-- **Period key** — **new this round.** An immutable snapshot, taken once at reservation-creation time, of which accounting period (e.g., `'2026-08'` in the Business's timezone) a reservation — and everything it later commits — belongs to for cap-accounting purposes, regardless of when it actually commits (§15).
-- **Payer** — which of Business/Workspace/(later) Agency-rebill funds a Business's wallet.
-- **Effective payer / payer consent** — the payer whose instrument a charge-causing action actually debits; only that payer's own authorized actor (or a platform administrator, with mandatory reason) may authorize the action (§16, §24 — corrected this round to apply to every charge-causing action, not only an explicit payer change).
-- **Funding source / payment instrument** — a stored Stripe PaymentMethod reference (safe display metadata only), owned via a **provider customer record** (§17.B).
-- **Funding attempt** — a durable local record of one attempt to move money between a payer's instrument and a Business's wallet, tracked through Stripe-accurate states.
-- **Top-up / Recharge / Charge / Reservation / Capture-commit / Release** — unchanged from the prior round's definitions (§13).
-- **Refund / Usage charge reversal / Correction reversal / Chargeback-dispute** — four structurally distinct concepts (§12).
-- **Metered feature** — a `PlatformFeature` explicitly classified as cost-bearing.
-- **Additional-slot agreement** — the recurring billing relationship for a paid Core/Growth additional Business slot, modeled this round as **customer-present initial authorization with a saved instrument, followed by off-session renewal PaymentIntents** (§22, Option A) — never a Stripe Billing subscription, never a one-time purchase.
-- **Claim lease — new this round.** A time-bounded exclusive hold a worker takes on a `payment_provider_events` row while processing it, allowing a crashed worker's stale claim to be safely recovered after the lease expires (§21).
+- **Business wallet** — the single row per Business holding `available_balance`, `reserved_balance`, `debt_balance`, and its current accounting periods (§12).
+- **Available / reserved / debt balance** — unchanged definitions (§12).
+- **Period key** — an immutable snapshot, taken once at reservation-creation time, of which **calendar month** (in the Business's timezone) a reservation belongs to for accounting purposes — **corrected this round from an ambiguous fixed-duration "period" concept to an explicit calendar-month one** (§15).
+- **Committed amount** — **new this round**, the exact per-entry-type formula (§13) used wherever "how much did this ledger entry commit" must be computed, replacing the prior round's incorrect formula.
+- **Payer / Effective payer / payer consent** — unchanged, now extended to every charge-causing action (§16), **and, new this round, explicitly bounded against platform-administrator over-reach** (§16).
+- **Funding source / payment instrument** — a stored Stripe PaymentMethod reference, owned via a provider customer record, **now schema-enforced to agree on `provider` with its owning record** (§17.B).
+- **Funding attempt** — unchanged (§17.C).
+- **Claim lease** — a time-bounded exclusive hold a worker takes on a `payment_provider_events` row, **corrected this round so a repeatedly-crashing lease is also subject to the maximum-attempts ceiling**, never reclaimed indefinitely (§21).
+- **Additional-slot agreement** — the recurring billing relationship for a paid Core/Growth additional Business slot, Option A (§22), **now with an exact cancellation-effective-date and mid-period-proration model** (§22).
 
 ---
 
@@ -157,9 +171,9 @@ No new conflict beyond the one recorded in the blocker above was found between t
 
 ## 9. Recommended architecture
 
-Five manager classes (unchanged from the prior round), each with a sole write authority (§28), each `DB::transaction()` + row lock + audit-trail + after-commit event on every mutation: `UsageWalletManager`, `BillingProfileManager`, `PaymentInstrumentManager`, `UsageBillingCheckoutManager`. A narrow interface, `PaymentProviderGateway` (§20), is the entire Stripe boundary, implemented only by `StripePaymentProviderGateway`.
+Five manager classes, each with a sole write authority (§28), each `DB::transaction()` + row lock + audit-trail + after-commit event on every mutation: `UsageWalletManager`, `BillingProfileManager`, `PaymentInstrumentManager`, `UsageBillingCheckoutManager`. A narrow interface, `PaymentProviderGateway` (§20), is the entire Stripe boundary, implemented only by `StripePaymentProviderGateway`.
 
-**New this round:** a sixth, minimal component — `App\Listeners\Usage\InitializeUsageWalletForNewBusiness` — subscribed to both `BusinessCreated` and `BusinessAssignedToWorkspace` (§32), calling `UsageWalletManager::initializeForNewBusiness()` idempotently.
+**Corrected this round for the M1/M2 ordering fix (§32):** the Business-creation listener is `App\Listeners\Usage\InitializeBusinessUsageProfile` (renamed from the prior round's `InitializeUsageWalletForNewBusiness` to accurately reflect that, from M2 onward, it initializes more than the wallet alone), subscribed to both `BusinessCreated` and `BusinessAssignedToWorkspace`. **At M1**, its handler calls only `UsageWalletManager::initializeWalletForNewBusiness()` (the only table that exists yet). **At M2**, the same listener class is extended with one additional idempotent call to `BillingProfileManager::initializePayerAssignmentForBusiness()` — an ordinary, expected kind of incremental extension across milestones, not a violation of any path restriction this design document itself is bound by (that restriction governs which paths *this document's own drafting* may touch, not what a later, separately authorized implementation milestone may do to code an earlier milestone shipped).
 
 Repository-per-table, exactly RFC-004's convention: one contract + one Eloquent implementation per table in §25.
 
@@ -169,19 +183,17 @@ Repository-per-table, exactly RFC-004's convention: one contract + one Eloquent 
 
 **Recommendation unchanged: signed 64-bit integer "micro-units"** (1 unit = 1⁄1,000,000 of the currency's major unit), stored in `BIGINT` columns. PHP `float` is forbidden for any persisted or in-flight authoritative money value.
 
-**Wallet buckets and ledger deltas — unchanged from the prior round's corrected model:** three independent, non-negative cached buckets (`available_balance_micro`, `reserved_balance_micro`, `debt_balance_micro`); every ledger entry carries three signed delta columns (`available_delta_micro`, `reserved_delta_micro`, `debt_delta_micro`); each bucket is independently reconstructable as the signed sum of its matching delta column; net wallet position (`available + reserved - debt`) is informational only.
+**Wallet buckets and ledger deltas — unchanged shape:** three independent, non-negative cached buckets; every ledger entry carries three signed delta columns (`available_delta_micro`, `reserved_delta_micro`, `debt_delta_micro`). **The exact formula for deriving a "committed amount" from those deltas per entry type is corrected this round — see §13, which is now this design's single authoritative source for that formula, referenced everywhere else rather than restated inconsistently.**
 
-**Exact delta behavior per event — unchanged:** debt-clearing-first credits; reserve/release/commit/overage/refund/chargeback/usage-charge-reversal/correction-reversal deltas exactly as the prior round defined (§12's ledger entry table is authoritative).
+**Outstanding debt denies new reservations: yes**, evaluated immediately after `billing_status`.
 
-**Outstanding debt denies new reservations — unchanged: yes**, evaluated immediately after `billing_status`.
+**Currency scale:** v1 scopes every Business wallet to exactly one settlement currency (recommendation: USD, `decimal_places = 2`, §39 item 10).
 
-**Currency scale — unchanged:** v1 scopes every Business wallet to exactly one settlement currency (recommendation: USD, `decimal_places = 2`, §39 item 10).
+### Exact integer arithmetic
 
-### Exact integer arithmetic — corrected this round with a concrete, PHP 8.2/8.3-compatible algorithm
+**Prerequisite:** the `bcmath` PHP extension enabled (M1 contract confirms). `bcround()` (PHP 8.4+) is not available at this repository's confirmed PHP 8.2/8.3 target — no algorithm below relies on it.
 
-**Prerequisite, stated explicitly:** this arithmetic requires the `bcmath` PHP extension enabled (a standard, common extension, but not universal by default — the M1 contract confirms it is enabled in the deployment target, mirroring the same caution already applied to MySQL `CHECK` constraints, §25). **`bcround()` is a PHP 8.4+ function and is not available at this repository's confirmed PHP 8.2/8.3 target (§3)** — no algorithm below relies on it.
-
-**Round-half-up via BCMath, PHP 8.2/8.3-compatible, applied only to non-negative magnitudes** (quantity, rate, and every computed charge in this design are non-negative by construction — sign/direction is applied separately via ledger delta assignment, never baked into a rounded magnitude, so no negative-number rounding ambiguity exists anywhere in this design):
+**Round-half-up via BCMath, applied only to non-negative magnitudes:**
 
 ```php
 /**
@@ -194,27 +206,19 @@ function bcRoundHalfUp(string $numerator, string $denominator, int $scale = 0): 
     $rawQuotient = bcdiv($numerator, $denominator, $extraPrecision);
     $shift = bcpow('10', (string) $scale, 0);
     $shifted = bcmul($rawQuotient, $shift, $extraPrecision);
-    // bcadd truncates to the given scale (0) after adding 0.5 — this is
-    // exactly round-half-up for a non-negative operand.
     return bcadd($shifted, '0.5', 0);
 }
 ```
 
-**Applied arithmetic:**
+**Applied arithmetic — unchanged:** `quantity_micro`/`charge_micro` computation, the `10^15` sanity ceiling, single-application rounding, Stripe-cent conversion (`bcRoundHalfUp($retail_amount_micro, '10000', 0)` for USD), zero-cent rejection.
 
-- `quantity_micro = bcRoundHalfUp(bcmul($quantity, '1000000', 10), '1', 0)` — the caller-supplied exact quantity (never a PHP `float`; accepted as a decimal string) converted to an integer micro-quantity.
-- `charge_micro = bcRoundHalfUp(bcmul($quantity_micro, $retail_rate_micro), '1000000', 0)` — using `bcmul`/`bcdiv` throughout; PHP's native `*`/`/` on values that could exceed the safe integer range is never used, since it can silently produce a float.
-- **Overflow/sanity ceiling:** any input `quantity` or resulting `charge_micro` exceeding `10^15` micro-units (≈ $1 billion at the v1 USD scale — a category-3 recommendation, far below `BIGINT`'s real ~`9.2 × 10^18` ceiling) is rejected before computation, with the stable reason `quantity_exceeds_sanity_ceiling`.
-- **Rounding point:** `bcRoundHalfUp()` is applied exactly once, to the final `charge_micro` — never to an intermediate product, never re-applied on read.
-- **Stripe-cent conversion:** `stripe_amount_cents = bcRoundHalfUp($retail_amount_micro, '10000', 0)` for the v1 USD/2-decimal scale. An amount whose rounded cent-equivalent is `0` for a genuinely positive charge is rejected before an outbound Stripe call (`amount_below_provider_minimum`).
-
-**Stripe minimum/maximum payment handling — corrected this round: the prior round's "effectively unbounded" maximum claim is withdrawn.** Stripe's PaymentIntent `amount` currently supports up to **eight digits** in the currency's smallest unit (i.e., for a 2-decimal currency, up to `99,999,999` minor units ≈ `$999,999.99`) — a real, currently-documented Stripe API constraint, not an assumption. `UsageBillingCheckoutManager` validates every outbound top-up/checkout/recharge/renewal amount against **both** Stripe's documented minimum (on the order of $0.50 for USD) **and** this eight-digit maximum, for the pinned Stripe API version (§20) and the wallet's settlement currency, **before** calling `PaymentProviderGateway` — returning `amount_below_provider_minimum` or `amount_exceeds_provider_maximum` rather than allowing the Stripe API call itself to fail. **The exact numeric minimum/maximum values are re-confirmed against Stripe's own current documentation for whichever API version is actually pinned at M3 implementation time** — this RFC records the currently-known constraint shape, not a value frozen forever; a future Stripe change to these limits is the M3 contract's own responsibility to re-verify, not silently assumed unchanging by this design. This check applies only to amounts actually sent to Stripe — never to an internal per-call metered ledger charge, which may be arbitrarily small in micro-units since it is never itself submitted to Stripe individually.
+**Stripe minimum/maximum payment handling — unchanged from the prior round's correction:** Stripe's PaymentIntent `amount` currently supports up to **eight digits** in the currency's smallest unit; `UsageBillingCheckoutManager` validates every outbound amount against both the documented minimum and this maximum, for the pinned API version and currency, before every outbound call — never assumed unbounded. The exact numeric values are re-confirmed against Stripe's own current documentation at M3 implementation time.
 
 ---
 
 ## 11. Rate catalog, customer charges, provider costs, and rate snapshots
 
-**Corrected in this round: rate rows are fully immutable, activation is resolved via a lockable classification-row pointer, and historical lookup is now deterministic under a timestamp tie.**
+Rate rows are fully immutable; activation is resolved via a lockable classification-row pointer; historical lookup is deterministic under a timestamp tie.
 
 **`business_usage_rates`** (fully immutable; every row, once inserted, is never updated):
 
@@ -226,10 +230,10 @@ function bcRoundHalfUp(string $numerator, string $denominator, int $scale = 0): 
 | `retail_rate_micro` | `bigint unsigned` | No | — | customer-facing price per unit |
 | `provider_cost_micro` | `bigint unsigned` | No | — | internal estimated provider cost per unit — admin-only (§34) |
 | `unit_label` | `string(64)` | No | — | e.g. `"per message"` |
-| `rounding_rule` | `string(32)`, enum-backed | No | `round_half_up` | only value defined for v1 |
+| `rounding_rule` | `string(32)`, enum-backed (`RoundingRule`) | No | `round_half_up` | only value defined for v1 |
 | `currency_id` | `unsignedBigInteger`, FK `currencies.id`, `restrictOnDelete()` | No | — | must match the wallet's v1 settlement currency |
 | `created_by_user_id` | `unsigned bigint`, no FK | No | — | actor column convention |
-| `created_at` | `timestamp` | No | `now()` | the only timestamp this table has — no `updated_at`; nothing on this row is ever mutated |
+| `created_at` | `timestamp` | No | `now()` | the only timestamp this table has — nothing on this row is ever mutated |
 
 Indexes: `UNIQUE (feature_key, version)`. Sole write authority: `UsageWalletManager`.
 
@@ -237,7 +241,7 @@ Indexes: `UNIQUE (feature_key, version)`. Sole write authority: `UsageWalletMana
 
 | Column | Type | Nullable | Default | Notes |
 |---|---|---|---|---|
-| `id` | `bigint unsigned` (PK) | No | — | |
+| `id` | `bigint unsigned` (PK, auto-increment) | No | — | |
 | `feature_key` | `string(64)` | No | — | indexed |
 | `rate_id` | `unsignedBigInteger`, FK `business_usage_rates.id`, `restrictOnDelete()` | No | — | |
 | `activated_at` | `timestamp` | No | `now()` | |
@@ -245,21 +249,15 @@ Indexes: `UNIQUE (feature_key, version)`. Sole write authority: `UsageWalletMana
 | `reason` | `text` | No | — | mandatory |
 | `created_at` | `timestamp` | No | `now()` | |
 
-**Deterministic historical lookup — new this round.** "What rate was active for feature X at time T" is answered by: `SELECT ... WHERE feature_key = X AND activated_at <= T ORDER BY activated_at DESC, id DESC LIMIT 1`. **`id` (a monotonic auto-increment sequence) is the explicit, required tiebreaker** whenever two activation rows share the same `activated_at` value (possible under coarse database timestamp precision even though the classification-row lock, below, always serializes the writes themselves) — never left to an unspecified/database-default ordering.
+**Deterministic historical lookup:** `SELECT ... WHERE feature_key = X AND activated_at <= T ORDER BY activated_at DESC, id DESC LIMIT 1`. **`id` (an explicit auto-increment monotonic sequence) is the required tiebreaker** whenever two activation rows share the same `activated_at` value.
 
-**`UsageWalletManager::setActiveRate()` — the race-free algorithm, unchanged from the prior round:**
+**`UsageWalletManager::setActiveRate()` — the race-free algorithm, unchanged:**
 
-1. `DB::transaction()`.
-2. Lock `platform_feature_usage_classifications`' row for `feature_key` (`findForUpdate()`) — this row **always exists** post-backfill.
-3. Compute the next `version` under the same lock.
-4. Insert the new, immutable `business_usage_rates` row.
-5. Insert a `business_usage_rate_activations` row.
-6. Update **only** the classification row's `active_rate_id` pointer.
-7. Commit.
+1. `DB::transaction()`. 2. Lock `platform_feature_usage_classifications`' row for `feature_key` (always exists post-backfill). 3. Compute the next `version` under the lock. 4. Insert the immutable rate row. 5. Insert an activation row. 6. Update only the classification row's `active_rate_id` pointer. 7. Commit.
 
-**Metering activation** (`UsageWalletManager::activateMetering()`) combines `setActiveRate()` with setting `is_metered = true`, in one transaction, requiring an active rate, a supported currency, an already-configured platform safety limit, and a mandatory actor/reason — **and, new this round, also inserts a `platform_feature_usage_classification_transitions` row (§14.1) recording the `is_metered` flip itself, independently of the rate-activation record**, per the explicit requirement that metering activation/deactivation be audited separately from immutable rate activation.
+**Metering activation** (`UsageWalletManager::activateMetering()`) combines `setActiveRate()` with setting `is_metered = true`, requiring an active rate, a supported currency, an already-configured platform safety limit, and a mandatory actor/reason — and inserts a `platform_feature_usage_classification_transitions` row (§14.1) recording the `is_metered` flip independently of the rate-activation record.
 
-**Snapshotting — unchanged:** every reservation and every final ledger entry involving a rate stores its own denormalized copies of `rate_id`, `rate_version`, `retail_rate_micro`, `provider_cost_micro`, `unit_label`, `rounding_rule`, `currency_id`, and `quantity`.
+**Snapshotting — unchanged in shape; exact per-column types given in §12/§13 rather than deferred here (this round's schema-completion correction).**
 
 **Cost/margin visibility — unchanged:** `provider_cost_micro` is readable only by the platform-administrator authorization path (§24), enforced by a boundary test (§35).
 
@@ -267,68 +265,74 @@ Indexes: `UNIQUE (feature_key, version)`. Sole write authority: `UsageWalletMana
 
 ## 12. Business wallet and append-only ledger invariants
 
-**`business_usage_wallets`** — one row per Business:
+**`business_usage_wallets`** — one row per Business. **Corrected this round: the prior draft's `spend_period_key`/`recharge_period_key` design is replaced by a genuine calendar-month model (§15), and the recharge-period columns — previously deferred as "see above" — are now individually specified:**
 
 | Column | Type | Nullable | Default | Notes |
 |---|---|---|---|---|
-| `id` | `bigint unsigned` (PK) | No | — | |
+| `id` | `bigint unsigned` (PK, auto-increment) | No | — | |
 | `business_id` | `unsignedBigInteger`, FK `businesses.id`, unique, `restrictOnDelete()` | No | — | 1:1, Business-scoped |
 | `currency_id` | `unsignedBigInteger`, FK `currencies.id`, `restrictOnDelete()` | No | — | wallet's single settlement currency |
 | `available_balance_micro` | `bigint` | No | `0` | never negative (manager-enforced) |
 | `reserved_balance_micro` | `bigint` | No | `0` | never negative |
 | `debt_balance_micro` | `bigint` | No | `0` | never negative |
 | `monthly_spend_cap_micro` | `bigint`, nullable | Yes | `NULL` | null = platform-safety-limit-bounded only |
-| `spend_period_key` | `string(7)`, nullable | Yes | `NULL` | **new this round** — e.g. `'2026-08'`, in the Business's configured timezone; the wallet's currently-cached period identity (§15) |
-| `spend_period_start_utc` / `spend_period_end_utc` | `timestamp` | No | set at wallet creation | exact UTC instants bounding `spend_period_key` |
+| `spend_period_key` | `string(7)` | No | set at creation | e.g. `'2026-08'` — the Business-timezone calendar month this wallet's spend counters currently track (§15) |
+| `spend_period_start_utc` | `timestamp` | No | set at creation | the UTC instant of local midnight, first day of `spend_period_key`'s month, in the Business's timezone |
+| `spend_period_end_utc` | `timestamp` | No | set at creation | the UTC instant of local midnight, first day of the **following** month |
 | `auto_recharge_enabled` | `boolean` | No | `false` | |
 | `auto_recharge_threshold_micro` | `bigint`, nullable | Yes | `NULL` | required if enabled |
 | `auto_recharge_amount_micro` | `bigint`, nullable | Yes | `NULL` | required if enabled |
 | `monthly_recharge_cap_micro` | `bigint`, nullable | Yes | `NULL` | distinct from `monthly_spend_cap_micro` |
-| `recharge_period_key` / `recharge_period_start_utc` / `recharge_period_end_utc` | see above | — | — | independent period identity from the spend cap's |
-| `committed_spend_this_period_micro` | `bigint` | No | `0` | cached, **current-period-only** (§15) |
-| `reserved_spend_this_period_micro` | `bigint` | No | `0` | cached, **current-period-only** (§15) |
-| `recharged_this_period_micro` | `bigint` | No | `0` | cached, **current-period-only** (§15) |
-| `consecutive_recharge_failures` | `unsigned smallint` | No | `0` | **new this round** — the actual schema backing §19's disable-after-N-failures rule; incremented on each `failed`/`requires_action` auto-recharge funding-attempt outcome, reset to `0` on any `succeeded` outcome |
+| `recharge_period_key` | `string(7)` | No | set at creation | independent calendar-month identity from the spend cap's (§15) |
+| `recharge_period_start_utc` | `timestamp` | No | set at creation | same construction rule as `spend_period_start_utc`, applied to the recharge period |
+| `recharge_period_end_utc` | `timestamp` | No | set at creation | same construction rule as `spend_period_end_utc` |
+| `committed_spend_this_period_micro` | `bigint` | No | `0` | cached, current-period-only (§15); uses the corrected committed-amount formula (§13) |
+| `reserved_spend_this_period_micro` | `bigint` | No | `0` | cached, current-period-only (§15) |
+| `recharged_this_period_micro` | `bigint` | No | `0` | cached, current-period-only (§15) |
+| `consecutive_recharge_failures` | `unsigned smallint` | No | `0` | incremented on each `failed`/`requires_action` auto-recharge outcome, reset to `0` on `succeeded` |
 | `low_balance_notified_at` | `timestamp`, nullable | Yes | `NULL` | dedup window (§19) |
-| `billing_status` | `string(16)`, enum-backed | No | `active` | `active` \| `suspended` |
+| `billing_status` | `string(16)`, enum-backed (`WalletBillingStatus`) | No | `active` | `active` \| `suspended` |
 | `created_at` / `updated_at` | `timestamp` | No | `now()` | the one legitimately mutable RFC-005 table |
 
-Indexes: `UNIQUE (id, business_id)` — enables the composite foreign key on child tables (below).
+Indexes: `UNIQUE (id, business_id)` — enables the composite foreign key on child tables.
 
-**`billing_status` mechanism — unchanged:** `active → suspended` set automatically on a `DisputeChargeback` entry, or explicitly by a platform administrator (mandatory reason); `suspended → active` is admin-only, mandatory reason, never automatic. Every transition is recorded in **`business_usage_wallet_billing_status_transitions`**:
+**`billing_status` mechanism — unchanged:** transitions recorded in **`business_usage_wallet_billing_status_transitions`**:
 
 | Column | Type | Nullable | Default | Notes |
 |---|---|---|---|---|
-| `id` | `bigint unsigned` (PK) | No | — | |
+| `id` | `bigint unsigned` (PK, auto-increment) | No | — | |
 | `wallet_id` / `business_id` | FK, composite-protected (below) | No | — | |
 | `from_status` / `to_status` | `string(16)` | No | — | |
-| `source` | `string(24)`, enum-backed | No | — | `dispute_webhook` \| `admin_action` |
+| `source` | `string(24)`, enum-backed (`BillingStatusTransitionSource`) | No | — | `dispute_webhook` \| `admin_action` |
 | `actor_user_id` | `unsigned bigint`, nullable, no FK | Yes | `NULL` | null for `dispute_webhook` |
 | `reason` | `text` | No | — | mandatory |
 | `created_at` | `timestamp` | No | `now()` | |
 
-`billing_status` remains entirely distinct from `workspace_plan_assignments.status`.
-
 Sole write authority: `UsageWalletManager`.
 
-**Tenancy-ID integrity ("composite-protected") — unchanged mechanism, scope corrected this round.** Every child table that carries **both** `business_id` and `wallet_id` declares a composite foreign key `(wallet_id, business_id) → business_usage_wallets(id, business_id)`. **Corrected this round: the prior draft mislabeled several `business_id`-only tables (no `wallet_id` column at all) as "composite-protected." That wording is removed from every table that does not carry both columns** — `business_feature_usage_limits`, `business_billing_contacts`, `business_payer_assignments`, `business_usage_addon_purchases`, and `business_billing_receipts` each carry a plain `business_id` FK (`restrictOnDelete()`) only, with no composite protection to describe, since there is no second, redundant tenancy column on those tables to protect against disagreeing with the first. Tables that genuinely carry both columns and remain composite-protected: `business_usage_ledger_entries`, `business_usage_reservations`, `business_usage_wallet_billing_status_transitions`, `business_funding_attempts`.
+**Tenancy-ID integrity ("composite-protected"):** every child table carrying **both** `business_id` and `wallet_id` declares a composite foreign key `(wallet_id, business_id) → business_usage_wallets(id, business_id)`. Tables genuinely composite-protected: `business_usage_ledger_entries`, `business_usage_reservations`, `business_usage_wallet_billing_status_transitions`, `business_funding_attempts`. Every other table carries a plain `business_id` FK only.
 
-**`business_usage_ledger_entries`** — append-only, never updated or deleted after insert:
+**`business_usage_ledger_entries`** — append-only, never updated or deleted after insert. **Corrected this round: the rate-snapshot column bundle, previously deferred as "see §11," is individually specified:**
 
 | Column | Type | Nullable | Default | Notes |
 |---|---|---|---|---|
-| `id` | `bigint unsigned` (PK) | No | — | |
+| `id` | `bigint unsigned` (PK, auto-increment) | No | — | |
 | `business_id` / `wallet_id` | FK, composite-protected | No | — | |
-| `entry_type` | `string(32)`, enum-backed | No | — | twelve values, see table below |
+| `entry_type` | `string(32)`, enum-backed (`UsageLedgerEntryType`) | No | — | twelve values, §13 |
 | `available_delta_micro` | `bigint` (signed) | No | `0` | |
 | `reserved_delta_micro` | `bigint` (signed) | No | `0` | |
 | `debt_delta_micro` | `bigint` (signed) | No | `0` | |
 | `gross_amount_micro` | `bigint unsigned`, nullable | Yes | `NULL` | informational only, never authoritative |
 | `currency_id` | `unsignedBigInteger`, FK `currencies.id`, `restrictOnDelete()` | No | — | |
 | `feature_key` | `string(64)`, nullable | Yes | `NULL` | usage-related entries only |
-| `period_key` | `string(7)`, nullable | Yes | `NULL` | **new this round** — for `UsageCharge`/`UsageOverageCharge` entries, copied from the originating reservation's own `period_key` (§15); null for entries with no reservation origin |
+| `period_key` | `string(7)`, nullable | Yes | `NULL` | for `UsageCharge`/`UsageOverageCharge` entries, copied from the originating reservation's own `period_key` (§15); null for entries with no reservation origin |
 | `quantity` | `decimal(14,6)`, nullable | Yes | `NULL` | the caller-supplied exact quantity |
-| `rate_id` / `rate_version` / `retail_rate_micro` / `provider_cost_micro` / `unit_label` / `rounding_rule` | see §11 | Yes | `NULL` | populated for rate-involving entries only |
+| `rate_id` | `unsignedBigInteger`, FK `business_usage_rates.id`, nullable, `restrictOnDelete()` | Yes | `NULL` | populated for rate-involving entries only |
+| `rate_version` | `unsigned int`, nullable | Yes | `NULL` | |
+| `retail_rate_micro` | `bigint unsigned`, nullable | Yes | `NULL` | |
+| `provider_cost_micro` | `bigint unsigned`, nullable | Yes | `NULL` | |
+| `unit_label` | `string(64)`, nullable | Yes | `NULL` | |
+| `rounding_rule` | `string(32)`, enum-backed (`RoundingRule`), nullable | Yes | `NULL` | |
 | `reservation_id` | `unsignedBigInteger`, FK `business_usage_reservations.id`, nullable | Yes | `NULL` | |
 | `funding_attempt_id` | `unsignedBigInteger`, FK `business_funding_attempts.id`, nullable | Yes | `NULL` | set for `PaidTopUp`/`AutoRecharge` entries |
 | `correlation_key` | `string(191)`, unique | No | — | idempotency |
@@ -336,9 +340,45 @@ Sole write authority: `UsageWalletManager`.
 | `actor_user_id` | `unsigned bigint`, nullable, no FK | Yes | `NULL` | null = system-generated |
 | `reason` | `text`, nullable | Yes | `NULL` | mandatory (manager-enforced) for `ManualCredit`, `UsageChargeReversal`, `CorrectionReversal`, `Refund` |
 | `reversed_entry_id` | `unsignedBigInteger`, self-referencing FK, nullable, `restrictOnDelete()` | Yes | `NULL` | set on `UsageChargeReversal`/`CorrectionReversal` rows |
-| `created_at` | `timestamp` | No | `now()` | immutable; the only timestamp this table has |
+| `created_at` | `timestamp` | No | `now()` | immutable |
 
-**Entry types and their delta behavior — twelve types, unchanged in shape from the prior round:**
+**Entry types and their delta behavior — unchanged, twelve types (full table restated in §13's committed-amount section, since that is now the authoritative location for this table).**
+
+**Centralized auto-recharge trigger — unchanged mechanism:** any ledger-entry insert with `available_delta_micro < 0` dispatches `EvaluateBusinessAutoRecharge` after commit; the same shared method clears `low_balance_notified_at` on a positive-delta recovery above threshold.
+
+Each of the three wallet buckets remains an always-consistent cached aggregate of its matching delta column. No cross-Business or cross-currency transfer is ever expressible.
+
+---
+
+## 13. Reservation/commit/release/reversal state machines, and the authoritative committed-amount formula
+
+**`business_usage_reservations`** (composite-FK protected on `(wallet_id, business_id)`). **Corrected this round: the `rate_id`/rate-snapshot bundle and `final_quantity`/`final_amount_micro` (both previously untyped) are individually specified:**
+
+| Column | Type | Nullable | Default | Notes |
+|---|---|---|---|---|
+| `id` | `bigint unsigned` (PK, auto-increment) | No | — | |
+| `business_id` / `wallet_id` | FK, composite-protected | No | — | |
+| `feature_key` | `string(64)` | No | — | |
+| `period_key` | `string(7)` | No | — | snapshotted once at creation from the wallet's then-current `spend_period_key` (§15); immutable for this reservation's lifetime |
+| `status` | `string(16)`, enum-backed (`UsageReservationStatus`) | No | `pending` | `pending` \| `committed` \| `released` \| `expired` |
+| `reserved_amount_micro` | `bigint` | No | — | |
+| `estimated_quantity` | `decimal(14,6)`, nullable | Yes | `NULL` | |
+| `rate_id` | `unsignedBigInteger`, FK `business_usage_rates.id`, `restrictOnDelete()` | No | — | snapshot at reservation time |
+| `rate_version` | `unsigned int` | No | — | |
+| `retail_rate_micro` | `bigint unsigned` | No | — | |
+| `provider_cost_micro` | `bigint unsigned` | No | — | |
+| `rounding_rule` | `string(32)`, enum-backed (`RoundingRule`) | No | — | |
+| `idempotency_key` | `string(191)`, unique | No | — | caller-supplied |
+| `correlation_key` | `string(191)` | No | — | ties `Reservation`/`ReservationRelease`/`UsageCharge`/`UsageOverageCharge` rows together |
+| `reserved_at` | `timestamp` | No | `now()` | |
+| `expires_at` | `timestamp` | No | — | operation-defined TTL |
+| `committed_at` / `released_at` | `timestamp`, nullable | Yes | `NULL` | exactly one set on a terminal row |
+| `final_quantity` | `decimal(14,6)`, nullable | Yes | `NULL` | set only on commit |
+| `final_amount_micro` | `bigint`, nullable | Yes | `NULL` | set only on commit |
+
+Once `status` is `committed`, `released`, or `expired`, the row is never reopened.
+
+**Entry types and their delta behavior — twelve types, restated here as the authoritative source (moved from §12 this round for locality with the committed-amount formula that depends on it):**
 
 | `entry_type` | `available_delta` | `reserved_delta` | `debt_delta` | When |
 |---|---|---|---|---|
@@ -352,43 +392,28 @@ Sole write authority: `UsageWalletManager`.
 | `UsageOverageCharge` | `-min(overage, avail)` | `0` | `+max(0, overage-avail)` | actual cost exceeds the reservation |
 | `Refund` | `-min(amt, avail)` | `0` | `+max(0, amt-avail)` | money returned to the payer |
 | `DisputeChargeback` | `-min(amt, avail)` | `0` | `+max(0, amt-avail)` | provider clawback; also sets `billing_status = 'suspended'` |
-| `UsageChargeReversal` | `+amt` | `0` | `0` | admin reverses a prior usage charge into wallet credit; no real money moves |
+| `UsageChargeReversal` | `+amt` | `0` | `0` | admin reverses a prior usage charge into wallet credit |
 | `CorrectionReversal` | signed by context | signed by context | signed by context | corrects an erroneous prior entry |
 
-**Centralized auto-recharge trigger — corrected this round (§19).** Every ledger-entry insert flows through one shared internal `UsageWalletManager` method; that method dispatches `EvaluateBusinessAutoRecharge` after commit whenever the entry's own `available_delta_micro < 0` — this rule is now structural (baked into the one shared insert path), not an enumerated, easy-to-miss list of call sites, and correctly includes `Reservation` (the prior round's missed case) alongside `UsageOverageCharge`/`Refund`/`DisputeChargeback`/negative `CorrectionReversal`, while correctly excluding a normal within-reservation `UsageCharge` (`available_delta = 0`) and `ReservationRelease` (`available_delta > 0`). The same shared method also **clears `low_balance_notified_at`** whenever an entry's `available_delta_micro > 0` brings `available_balance_micro` back above `auto_recharge_threshold_micro`.
+### The authoritative committed-amount formula — corrected this round
 
-Each of the three wallet buckets remains an always-consistent cached aggregate of its matching delta column. No cross-Business or cross-currency transfer is ever expressible.
+**The prior round's reconciliation formula was mathematically wrong: it reconstructed committed spend from "`available_delta` contributions of `UsageCharge`/`UsageOverageCharge`," but `UsageCharge.available_delta_micro` is always `0` (its charge is represented by `-reserved_delta_micro`), and `UsageOverageCharge` may split its value between an available debit and new debt, so neither entry type's committed contribution is simply its `available_delta`.** Corrected, exact, per-entry-type formula:
 
----
+- **`UsageCharge` committed amount** = `-reserved_delta_micro` (the entry's `reserved_delta_micro` is `-committed_portion`, so negating it yields the positive committed amount).
+- **`UsageOverageCharge` committed amount** = `(-available_delta_micro) + debt_delta_micro` — since `available_delta_micro = -min(overage, avail)` and `debt_delta_micro = +max(0, overage-avail)`, this sum is exactly `min(overage,avail) + max(0,overage-avail) = overage`, regardless of how the overage split between an immediate available debit and new debt.
+- No other entry type contributes to committed spend.
 
-## 13. Reservation/commit/release/reversal state machines
+**Current-period committed spend** = the sum of the above two formulas' results, evaluated over every `UsageCharge`/`UsageOverageCharge` entry whose `period_key` equals the wallet's current `spend_period_key`.
 
-**`business_usage_reservations`** (composite-FK protected on `(wallet_id, business_id)`):
+**This formula is the single source of truth, applied identically everywhere committed spend is computed or cached:** the `commit()` algorithm's own cached-counter update (below), the reconciliation job's independent recomputation (§15), and any read-side "how much has this Business spent this period" query.
 
-| Column | Type | Nullable | Default | Notes |
-|---|---|---|---|---|
-| `id` | `bigint unsigned` (PK) | No | — | |
-| `business_id` / `wallet_id` | FK, composite-protected | No | — | |
-| `feature_key` | `string(64)` | No | — | |
-| `period_key` | `string(7)` | No | — | **new this round** — snapshotted once at creation from the wallet's then-current `spend_period_key` (§15); immutable for this reservation's lifetime |
-| `status` | `string(16)`, enum-backed | No | `pending` | `pending` \| `committed` \| `released` \| `expired` |
-| `reserved_amount_micro` | `bigint` | No | — | |
-| `estimated_quantity` | `decimal(14,6)`, nullable | Yes | `NULL` | |
-| `rate_id` / `rate_version` / `retail_rate_micro` / `provider_cost_micro` / `rounding_rule` | see §11 | No | — | snapshot at reservation time |
-| `idempotency_key` | `string(191)`, unique | No | — | caller-supplied |
-| `correlation_key` | `string(191)` | No | — | ties `Reservation`/`ReservationRelease`/`UsageCharge`/`UsageOverageCharge` rows together |
-| `reserved_at` | `timestamp` | No | `now()` | |
-| `expires_at` | `timestamp` | No | — | operation-defined TTL |
-| `committed_at` / `released_at` | `timestamp`, nullable | Yes | `NULL` | exactly one set on a terminal row |
-| `final_quantity` / `final_amount_micro` | nullable | Yes | `NULL` | set only on commit |
+**Whether `UsageChargeReversal`, `Refund`, `DisputeChargeback`, or `CorrectionReversal` reopens spend-cap headroom — resolved this round: no, not automatically.** None of these four entry types decrements `committed_spend_this_period_micro` — the cap was correctly consumed by the original `UsageCharge`/`UsageOverageCharge` event, and reversing/refunding/charging-back that money afterward does not retroactively un-consume the cap headroom it used at the time. **Only an explicit, audited limit correction (via `business_usage_limit_transitions`, mandatory reason) may adjust the cached counter**, mirroring §19's identical rule for `recharged_this_period_micro`.
 
-Once `status` is `committed`, `released`, or `expired`, the row is never reopened.
+**Algorithms, corrected this round for the `period_key`, centralized-trigger, and committed-amount-formula rules:**
 
-**Algorithms, corrected this round for the `period_key` and centralized-trigger rules:**
-
-- **Reserve** — `UsageWalletManager::reserve()`. `DB::transaction()`, wallet row `findForUpdate()`. **The wallet's period is lazily rolled over first (§15), then `period_key` is read from the now-current `spend_period_key` and stamped onto the new reservation immutably.** Idempotency: caller-supplied `idempotency_key`. Steps: look up the active rate → compute `reserved_amount_micro` (§10's exact arithmetic) → evaluate, in order: `billing_status` → `outstanding_debt` → per-feature limit → Business spend cap → platform safety limit → available-balance sufficiency → insert the reservation row → insert the `Reservation` ledger entry (period-keyed) → update wallet aggregates, including `reserved_spend_this_period_micro += reserved_amount_micro` (always valid, since a brand-new reservation's `period_key` always equals the just-rolled-over current period) → dispatch `EvaluateBusinessAutoRecharge` after commit (the centralized trigger, §12). Result: the reservation id, or a stable denial reason.
-- **Commit/finalize** — `UsageWalletManager::commit()`. Wallet row `findForUpdate()`. Steps: load the `pending` reservation → compare `final_amount_micro` against `reserved_amount_micro` (using the reservation's own snapshotted rate) → insert `UsageCharge` (period-keyed from the reservation) for `min(final, reserved)` → if `final > reserved`, additionally insert `UsageOverageCharge` (same `period_key`) → if `final < reserved`, additionally insert `ReservationRelease` for the unused portion → mark `committed` → **update `committed_spend_this_period_micro` and decrement `reserved_spend_this_period_micro` ONLY IF the reservation's `period_key` equals the wallet's CURRENT `spend_period_key`** — a stale reservation from an already-rolled-over period commits its ledger entry with its own correct historical `period_key` (a permanent, queryable financial fact) but does **not** perturb the wallet's current-period cached counters, which never represented that older period in the first place. Idempotency: repeat commit on an already-`committed` reservation is a no-op.
-- **Release** — `UsageWalletManager::release()`. Same current-period-only counter-decrement rule as commit.
+- **Reserve** — `UsageWalletManager::reserve()`. `DB::transaction()`, wallet row `findForUpdate()`. The wallet's period is lazily rolled over first (§15, calendar-month algorithm), then `period_key` is read from the now-current `spend_period_key` and stamped onto the new reservation immutably. Idempotency: caller-supplied `idempotency_key`. Steps: look up the active rate → compute `reserved_amount_micro` (§10) → evaluate, in order: `billing_status` → `outstanding_debt` → per-feature limit → Business spend cap → platform safety limit → available-balance sufficiency → insert the reservation row → insert the `Reservation` ledger entry → update wallet aggregates, including `reserved_spend_this_period_micro += reserved_amount_micro` → dispatch `EvaluateBusinessAutoRecharge` after commit. Result: the reservation id, or a stable denial reason.
+- **Commit/finalize** — `UsageWalletManager::commit()`. Wallet row `findForUpdate()`. Steps: load the `pending` reservation → compare `final_amount_micro` against `reserved_amount_micro` (using the reservation's own snapshotted rate) → insert `UsageCharge` (period-keyed from the reservation) for `min(final, reserved)` → if `final > reserved`, additionally insert `UsageOverageCharge` (same `period_key`) for the overage → if `final < reserved`, additionally insert `ReservationRelease` for the unused portion → mark `committed` → **update `committed_spend_this_period_micro` by exactly the committed-amount formula above, and decrement `reserved_spend_this_period_micro` by the reservation's own `reserved_amount_micro`, ONLY IF the reservation's `period_key` equals the wallet's CURRENT `spend_period_key`** — a stale reservation from an already-rolled-over period commits its ledger entry with its own correct historical `period_key` but does not perturb the wallet's current-period cached counters. Idempotency: repeat commit on an already-`committed` reservation is a no-op.
+- **Release** — `UsageWalletManager::release()`. Same current-period-only counter-decrement rule as commit, applied to `reserved_spend_this_period_micro` only (a release never contributes to committed spend).
 - **Reservation expiry reconciliation** — `App\Jobs\Usage\ExpireStaleUsageReservations` finds `pending` reservations past `expires_at` and calls `release()`. Never auto-commits a stale reservation.
 
 **Atomicity / no double-charge — unchanged.**
@@ -397,13 +422,13 @@ Once `status` is `committed`, `released`, or `expired`, the row is never reopene
 
 ## 14. Metered-feature classification and usage authorization
 
-**Unchanged in mechanism from the prior round:** `RealUsageAuthorizationGateway::check()` is a coarse, non-mutating gate, always returning exactly `usage_unauthorized` externally on denial, delegating internally to `UsageWalletManager::evaluateCoarseCapacity()`, which returns an internal-only `UsageCapacityDecision` (`wallet_unavailable`, `unsupported_currency`, `billing_suspended`, `outstanding_debt`, `insufficient_available_balance`, `monthly_spend_cap_exceeded`, `feature_limit_exceeded`, `platform_safety_limit_exceeded`) — never surfaced past the gateway boundary.
+**Unchanged in mechanism:** `RealUsageAuthorizationGateway::check()` is a coarse, non-mutating gate, always returning exactly `usage_unauthorized` externally on denial, delegating internally to `UsageWalletManager::evaluateCoarseCapacity()`, which returns an internal-only `UsageCapacityDecision` — never surfaced past the gateway boundary.
 
-**14.1 Feature classification.** `platform_feature_usage_classifications` — full schema, corrected this round (was shorthand-only):
+**14.1 Feature classification.** `platform_feature_usage_classifications`:
 
 | Column | Type | Nullable | Default | Notes |
 |---|---|---|---|---|
-| `id` | `bigint unsigned` (PK) | No | — | |
+| `id` | `bigint unsigned` (PK, auto-increment) | No | — | |
 | `feature_key` | `string(64)`, unique | No | — | `PlatformFeature`-backed |
 | `is_metered` | `boolean` | No | `false` | |
 | `active_rate_id` | `unsignedBigInteger`, FK `business_usage_rates.id`, nullable, `restrictOnDelete()` | Yes | `NULL` | sole pointer §11's activation algorithm maintains |
@@ -412,14 +437,14 @@ Once `status` is `committed`, `released`, or `expired`, the row is never reopene
 
 Backfill: one row per existing `PlatformFeature` case, `is_metered = false`, `active_rate_id = null`. Sole write authority: `UsageWalletManager`.
 
-**`platform_feature_usage_classification_transitions`** — new this round, append-only, tracking metering activation/deactivation **independently from** rate activation (§11's `business_usage_rate_activations` remains the rate-specific record; this table is the metering-on/off record):
+**`platform_feature_usage_classification_transitions`** — append-only, tracking metering activation/deactivation independently from rate activation:
 
 | Column | Type | Nullable | Default | Notes |
 |---|---|---|---|---|
-| `id` | `bigint unsigned` (PK) | No | — | |
+| `id` | `bigint unsigned` (PK, auto-increment) | No | — | |
 | `feature_key` | `string(64)` | No | — | |
 | `from_is_metered` / `to_is_metered` | `boolean` | No | — | |
-| `from_active_rate_id` / `to_active_rate_id` | `unsignedBigInteger`, nullable, FK `business_usage_rates.id` | Yes | `NULL` | recorded for context, never this table's own authority (§11 remains authoritative for rate activation itself) |
+| `from_active_rate_id` / `to_active_rate_id` | `unsignedBigInteger`, nullable, FK `business_usage_rates.id` | Yes | `NULL` | recorded for context, never this table's own authority |
 | `actor_user_id` | `unsigned bigint`, no FK | No | — | |
 | `reason` | `text` | No | — | mandatory |
 | `created_at` | `timestamp` | No | `now()` | |
@@ -431,11 +456,11 @@ Backfill: one row per existing `PlatformFeature` case, `is_metered = false`, `ac
 Three genuinely distinct, non-collapsible controls:
 
 1. **Monthly Business spend cap** (`business_usage_wallets.monthly_spend_cap_micro`).
-2. **Per-feature limits** — `business_feature_usage_limits`, full schema (composite-protected wording removed this round — this table carries `business_id` only, no `wallet_id`):
+2. **Per-feature limits** — `business_feature_usage_limits`:
 
 | Column | Type | Nullable | Default | Notes |
 |---|---|---|---|---|
-| `id` | `bigint unsigned` (PK) | No | — | |
+| `id` | `bigint unsigned` (PK, auto-increment) | No | — | |
 | `business_id` | `unsignedBigInteger`, FK `businesses.id`, `restrictOnDelete()` | No | — | plain FK — no `wallet_id` column on this table |
 | `feature_key` | `string(64)` | No | — | |
 | `monthly_limit_micro` | `bigint`, nullable | Yes | `NULL` | |
@@ -444,23 +469,23 @@ Three genuinely distinct, non-collapsible controls:
 
 Indexes: `UNIQUE (business_id, feature_key)`.
 
-3. **Platform safety limit** — `platform_feature_usage_safety_limits`, full schema:
+3. **Platform safety limit** — `platform_feature_usage_safety_limits`:
 
 | Column | Type | Nullable | Default | Notes |
 |---|---|---|---|---|
-| `id` | `bigint unsigned` (PK) | No | — | |
+| `id` | `bigint unsigned` (PK, auto-increment) | No | — | |
 | `feature_key` | `string(64)`, unique | No | — | platform-scoped, not Business-scoped |
 | `max_monthly_limit_micro` | `bigint` | No | — | |
 | `updated_by_user_id` | `unsigned bigint`, no FK | No | — | |
 | `created_at` / `updated_at` | `timestamp` | No | `now()` | |
 
-**`business_usage_limit_transitions`** — full schema, corrected this round:
+**`business_usage_limit_transitions`:**
 
 | Column | Type | Nullable | Default | Notes |
 |---|---|---|---|---|
-| `id` | `bigint unsigned` (PK) | No | — | |
+| `id` | `bigint unsigned` (PK, auto-increment) | No | — | |
 | `business_id` | `unsignedBigInteger`, FK `businesses.id`, nullable, `restrictOnDelete()` | Yes | `NULL` | null only for `limit_type = platform_safety_limit` rows |
-| `limit_type` | `string(24)`, enum-backed | No | — | `business_spend_cap` \| `feature_limit` \| `platform_safety_limit` |
+| `limit_type` | `string(24)`, enum-backed (`UsageLimitType`) | No | — | `business_spend_cap` \| `feature_limit` \| `platform_safety_limit` |
 | `feature_key` | `string(64)`, nullable | Yes | `NULL` | set only for `feature_limit`/`platform_safety_limit` rows |
 | `from_value_micro` / `to_value_micro` | `bigint`, nullable | Yes | `NULL` | |
 | `actor_user_id` | `unsigned bigint`, no FK | No | — | |
@@ -469,18 +494,26 @@ Indexes: `UNIQUE (business_id, feature_key)`.
 
 **Evaluation order — unchanged:** structural entitlement → Business toggle → `billing_status` → `outstanding_debt` → per-feature limit → Business monthly spend cap → platform safety limit → (reserve path only) available-balance sufficiency.
 
-### Period accounting — fully resolved this round (was self-contradictory in the prior round)
+### Calendar-month period accounting — corrected this round (replaces fixed-duration arithmetic)
 
-**The exact policy: a reservation's period assignment is fixed permanently at creation time, via `period_key` (§13); everything that reservation later commits is attributed to that same period, never the period the commit itself happens in.** This resolves the prior round's contradiction (resetting `reserved_spend_this_period_micro` to zero at rollover, while also claiming it "reconciles against open reservations" — a claim that only holds if every open reservation belongs to the current period, which is false for a reservation still open across a rollover).
+**The prior round's rollover formula, `periods_elapsed = floor((now - period_start) / period_length)`, is invalid for calendar months: months vary from 28 to 31 days, and timezone/DST transitions produce unequal UTC durations for what is the "same" calendar month in local time.** Corrected: every period boundary is derived from genuine calendar-month construction in the Business's own timezone, not a fixed duration.
 
-- **Which period owns a reservation and its eventual committed spend:** the period the reservation was **created** in (`period_key`, snapshotted once, immutable) — never the period it happens to commit or release in.
-- **What period snapshot is stored where:** `business_usage_reservations.period_key` (§13) and `business_usage_ledger_entries.period_key` (§12, copied from the originating reservation for `UsageCharge`/`UsageOverageCharge` rows).
-- **How current-period counters change:** `reserve()` always increments `reserved_spend_this_period_micro` (a new reservation's `period_key` always equals the just-rolled-over current period, by construction). `commit()`/`release()`/expiry decrement `reserved_spend_this_period_micro` and adjust `committed_spend_this_period_micro` **only when** the reservation's own `period_key` still equals the wallet's current `spend_period_key` — a stale reservation terminating late does not touch the current period's cached counters, since it was never part of them.
-- **How rollover handles still-open prior-period reservations:** it does nothing to them. They remain `pending`, fully valid, continuing to hold real `reserved_balance_micro`; they simply no longer contribute to the wallet's *current-period* cached counters (which only ever track the current period) — their prior admission was already validated against their own period's cap at creation time and is not re-litigated.
-- **How reconciliation reconstructs the counters:** `committed_spend_this_period_micro` = `SUM(available_delta contributions of UsageCharge/UsageOverageCharge WHERE period_key = wallet's current spend_period_key)`; `reserved_spend_this_period_micro` = `SUM(reserved_amount_micro) WHERE business_usage_reservations.status = 'pending' AND period_key = wallet's current spend_period_key`. Both independently recomputable from the ledger/reservations tables alone, at any time, with no dependency on the cached values themselves.
-- **Multi-month dormancy — corrected this round.** The lazy rollover check is no longer a single "one period forward" step (which would leave a wallet dormant for 3 periods still 2 periods behind). It computes `periods_elapsed = floor((now() - period_start) / period_length)` **arithmetically, in one step**, then sets `new_period_start = period_start + periods_elapsed × period_length`, `new_period_end = new_period_start + period_length` — a single `UPDATE`, landing exactly in the current period regardless of how many periods were skipped, never a loop of per-period writes.
-- **A Business timezone change affects the next period only** — unchanged.
-- The scheduled `AdvanceUsagePeriodBoundaries` job remains optional proactive maintenance only, never required for correctness.
+**Exact rollover algorithm**, evaluated under the wallet row's own lock, before any cap check runs, whenever `now() >= <period>_end_utc`:
+
+1. Resolve the Business's configured timezone (`businesses.timezone`, confirmed to exist by direct code read this round, §3) — falling back to the platform default timezone if unset.
+2. Convert `now()` to that timezone (Carbon's timezone-aware conversion, the Laravel-idiomatic mechanism already used throughout this repository).
+3. Read the resulting local calendar year and month directly — no arithmetic on elapsed duration at all.
+4. Construct the **local first instant** of that year/month (midnight, day 1) as `<period>_start`, and the local first instant of the **following** month as `<period>_end` — both computed via genuine calendar construction (which correctly handles 28/29/30/31-day months and any DST transition within the month, since it is never expressed as a fixed duration in the first place).
+5. Convert both local instants to UTC for `<period>_start_utc`/`<period>_end_utc`.
+6. Set `<period>_key` from the local year/month (e.g., `'2026-08'`).
+7. Reset the matching cached counter(s) (`committed_spend_this_period_micro`+`reserved_spend_this_period_micro` for the spend period; `recharged_this_period_micro` for the recharge period) to zero.
+8. Apply this same rule **independently** to the spend period and the recharge period — they are separate controls (locked decision 8) and may, in principle, be on different boundaries, though in practice both are typically established together at wallet creation.
+
+**Multi-month dormancy — resolved cleanly by this construction, not merely bounded.** Because step 3 reads the calendar month **directly from `now()`** rather than incrementing forward from the stale `period_start`, a wallet dormant for any number of months — one or twelve — lands exactly in the correct current calendar month in a single `UPDATE`, with no iteration, no fixed-duration assumption, and no possibility of landing one or more months short.
+
+**A Business timezone change affects the next period only** — it never retroactively recomputes an already-in-progress period's boundaries, since the current period's `_start_utc`/`_end_utc` were already fixed in UTC at the time they were last rolled over.
+
+The scheduled `AdvanceUsagePeriodBoundaries` job remains optional proactive maintenance only, never required for correctness.
 
 **Override/adjustment — unchanged:** mandatory actor/reason, recorded in `business_usage_limit_transitions`.
 
@@ -490,41 +523,47 @@ Indexes: `UNIQUE (business_id, feature_key)`.
 
 ## 16. Payer selection and Workspace fallback
 
-**Corrected this round: consent now gates every charge-causing action, not only an explicit payer change (§24 extends this consistently).**
+Consent gates every charge-causing action, not only an explicit payer change (§24 extends this consistently).
 
-**`business_payer_assignments`** — full schema, corrected this round (composite-protected wording removed — no `wallet_id` on this table):
+**`business_payer_assignments`:**
 
 | Column | Type | Nullable | Default | Notes |
 |---|---|---|---|---|
-| `id` | `bigint unsigned` (PK) | No | — | |
+| `id` | `bigint unsigned` (PK, auto-increment) | No | — | |
 | `business_id` | `unsignedBigInteger`, FK `businesses.id`, unique, `restrictOnDelete()` | No | — | plain FK, no `wallet_id` |
-| `payer_type` | `string(16)`, enum-backed | No | — | `business` \| `workspace` \| `agency_rebill` (never activated in v1) |
-| `effective_payment_instrument_id` | `unsignedBigInteger`, FK `business_payment_instruments.id`, nullable, `restrictOnDelete()` | Yes | `NULL` | starts null at backfill/creation regardless of `payer_type` default (§32) |
+| `payer_type` | `string(16)`, enum-backed (`PayerType`) | No | — | `business` \| `workspace` \| `agency_rebill` (never activated in v1) |
+| `effective_payment_instrument_id` | `unsignedBigInteger`, FK `business_payment_instruments.id`, nullable, `restrictOnDelete()` | Yes | `NULL` | starts null at creation regardless of `payer_type` default (§32) |
 | `created_at` / `updated_at` | `timestamp` | No | `now()` | |
 
-**`business_payer_transitions`** — full schema:
+**`business_payer_transitions`:**
 
 | Column | Type | Nullable | Default | Notes |
 |---|---|---|---|---|
-| `id` | `bigint unsigned` (PK) | No | — | |
+| `id` | `bigint unsigned` (PK, auto-increment) | No | — | |
 | `business_id` | `unsignedBigInteger`, FK `businesses.id`, `restrictOnDelete()` | No | — | |
-| `from_payer_type` / `to_payer_type` | `string(16)` | No | — | |
+| `from_payer_type` / `to_payer_type` | `string(16)`, enum-backed (`PayerType`) | No | — | |
 | `from_instrument_id` / `to_instrument_id` | `unsignedBigInteger`, nullable, FK `business_payment_instruments.id` | Yes | `NULL` | |
 | `actor_user_id` | `unsigned bigint`, no FK | No | — | |
 | `reason` | `text` | No | — | mandatory |
 | `created_at` | `timestamp` | No | `now()` | |
 
-**Payer-consent rules — unchanged from the prior round:** setting `payer_type = 'workspace'` requires the Workspace owner or a platform administrator (mandatory reason); setting `payer_type = 'business'` requires the direct Business owner/customer or a platform administrator (mandatory reason); Active Workspace Admin and Staff can never change payer in either direction; no actor may select/charge an instrument owned by a different payer than the one being set; plan-tier defaults are system-authored at backfill/creation but never auto-attach an instrument or authorize a charge.
+**Payer-consent rules — unchanged:** setting `payer_type = 'workspace'` requires the Workspace owner or a platform administrator (mandatory reason); setting `payer_type = 'business'` requires the direct Business owner/customer or a platform administrator (mandatory reason); Active Workspace Admin and Staff can never change payer; no actor may select/charge an instrument owned by a different payer.
 
-### Consent extended to every charge-causing action — new this round (resolving the gap in §24's authority table)
+### Consent extended to every charge-causing action, and platform-administrator authority narrowed — corrected this round
 
-**The prior round's authorization table gated "who may change payer" correctly, but still let a Workspace owner/Admin initiate a top-up or configure auto-recharge even when the *current* effective payer is Business-owned, and vice versa.** Corrected: **any action that causes an actual charge attempt against a stored instrument — initiating a top-up, enabling or changing auto-recharge configuration (threshold/amount/cap/enabled flag), or initiating an add-on-purchase checkout — requires the actor to hold the *same* target-consent authority §16 already defines for payer changes, evaluated against the wallet's *current* `payer_type`, not a static role grant:**
+**Any action that causes an actual charge attempt against a stored instrument — initiating a top-up, enabling or changing auto-recharge configuration, or initiating an additional-slot agreement checkout — requires the actor to hold the target-consent authority §16 defines for payer changes, evaluated against the wallet's current `payer_type`:**
 
-- If `payer_type = 'workspace'`: only the Workspace owner, or a platform administrator (mandatory reason), may initiate a charge-causing action. Active Workspace Admin, Staff, and the direct Business owner may **not** — even though the direct Business owner can still view/configure non-payment settings for their own Business (spend cap, per-feature limits, notification preferences — none of which themselves cause a charge).
-- If `payer_type = 'business'`: only the direct Business owner/customer, or a platform administrator (mandatory reason), may initiate a charge-causing action. Workspace owner/Admin may **not**.
-- **Active Workspace Admin and Staff may never authorize a stored-instrument charge, under any `payer_type`** — extending the "never, either direction" rule already locked for payer changes themselves.
-- **A platform administrator may initiate a charge-causing action on behalf of either payer type, but only with a mandatory reason** — an explicit, audited support/override capability, never treated as itself constituting the payer's own consent; its purpose is narrow support scenarios (e.g., manually completing a stuck payment on a customer's behalf), not a routine path around consent.
-- This distinction — viewing/configuring non-payment limits versus authorizing money movement — is structural in this design: `UsageWalletManager::setFeatureLimit()`/`setSpendCap()` (no charge caused) are gated by the existing broader Business-scope authority (§24, unchanged rows); `UsageBillingCheckoutManager::initiateTopUp()`/`configureAutoRecharge()`/`initiateAddonPurchase()` (each causes or enables a charge) are gated by the new payer-consent rule above.
+- `payer_type = 'workspace'`: only the Workspace owner may initiate a charge-causing action. Active Workspace Admin, Staff, and the direct Business owner may not.
+- `payer_type = 'business'`: only the direct Business owner/customer may initiate a charge-causing action. Workspace owner/Admin may not.
+- Active Workspace Admin and Staff may never authorize a stored-instrument charge, under any `payer_type`.
+
+**Corrected this round: a platform administrator's role alone is no longer sufficient to originate a brand-new charge-causing action.** The prior round's blanket "a platform administrator may initiate a charge-causing action on behalf of either payer type, with mandatory reason" is withdrawn and replaced with a narrower, precisely bounded support posture:
+
+- **A platform administrator may resume or reconcile an already-created, payer-authorized local attempt** (e.g., manually re-triggering a stuck `business_funding_attempts`/`additional_business_slot_renewal_charges` row via `admin_retry`, §17.C/§22) — the payer's own original action already supplied the consent; the administrator is completing it, not originating it. Mandatory reason.
+- **A platform administrator may issue an auditable manual or promotional credit** (§18) — this credits the wallet from the platform's own funds and never debits a customer's stored instrument, so it carries no consent question at all; unchanged.
+- **A platform administrator may never originate a fresh stored-instrument debit — a new top-up, newly enabling auto-recharge, or a new additional-slot agreement checkout — solely because they are a platform administrator.** Doing so would create a new charge against a customer's payment method without that customer's own action ever having authorized it.
+- **Any exceptional operator-initiated fresh debit (e.g., a support-requested manual top-up performed on a customer's explicit verbal/written request) would require its own separately designed and human-authorized policy** — this document does not grant that capability implicitly, and does not design it.
+- This distinction — viewing/configuring non-payment limits versus authorizing/resuming money movement — remains structural: `UsageWalletManager::setFeatureLimit()`/`setSpendCap()` (no charge caused) are gated by the existing broader Business-scope authority (§24); `UsageBillingCheckoutManager::initiateTopUp()`/`configureAutoRecharge()`/`initiateSlotAgreementCheckout()` (each originates a charge) are gated by the payer-consent rule above, with **no** platform-administrator override for origination; `UsageBillingCheckoutManager::retryFundingAttemptAsAdministrator()`/`retrySlotRenewalAsAdministrator()` (each resumes an already-authorized attempt) remain platform-administrator-permitted, mandatory reason.
 
 **Effective payer resolution algorithm — unchanged.**
 
@@ -534,139 +573,165 @@ Indexes: `UNIQUE (business_id, feature_key)`.
 
 ## 17. Billing contact and payment instruments
 
-### A. Billing contact — full schema (was shorthand-only)
+### A. Billing contact
 
-**`business_billing_contacts`** (composite-protected wording removed this round — no `wallet_id` on this table):
+**`business_billing_contacts`:**
 
 | Column | Type | Nullable | Default | Notes |
 |---|---|---|---|---|
-| `id` | `bigint unsigned` (PK) | No | — | |
+| `id` | `bigint unsigned` (PK, auto-increment) | No | — | |
 | `business_id` | `unsignedBigInteger`, FK `businesses.id`, unique, `restrictOnDelete()` | No | — | plain FK |
-| `contact_user_id` | `unsignedBigInteger`, FK `users.id`, nullable, `restrictOnDelete()` | Yes | `NULL` | nullable specifically to support independent contact data |
+| `contact_user_id` | `unsignedBigInteger`, FK `users.id`, nullable, `restrictOnDelete()` | Yes | `NULL` | nullable to support independent contact data |
 | `contact_name` / `contact_email` | `string(191)`, nullable | Yes | `NULL` | required together if `contact_user_id` is null (manager-enforced) |
 | `notification_opt_in` | `boolean` | No | `true` | |
 | `updated_by_user_id` | `unsigned bigint`, no FK | No | — | |
 | `created_at` / `updated_at` | `timestamp` | No | `now()` | |
 
-Sole write authority: `BillingProfileManager`. Privacy/isolation and notification-recipient-selection rules unchanged from the prior round.
+Sole write authority: `BillingProfileManager`.
 
-### B. Provider customers and payment instruments — corrected this round for uniqueness and detach/replace lifecycle
+### B. Provider customers and payment instruments — provider-consistency now schema-enforced (corrected this round)
 
-**Corrected: the prior round's `UNIQUE(provider, business_id)`/`UNIQUE(provider, workspace_id)` constraints, together with an owner-row's `status` permitting `detached`, created an unenforceable contradiction — a genuinely `detached` owner could never get a fresh `active` provider-customer row, since the unique index doesn't care about `status`, only that the owner id is non-null and already used.** Resolved with generated columns, the standard MySQL pattern for a partial/filtered unique index:
+**Corrected: the prior round denormalized `provider` onto `business_payment_instruments` (to support `UNIQUE(provider, provider_payment_method_id)` without a join) but never prevented that denormalized value from disagreeing with its parent `payment_provider_customers.provider` — a manager-only convention masquerading as a schema-level guarantee.** Resolved with the same composite-FK pattern already used for wallet/ledger tenancy protection (§12):
 
 **`payment_provider_customers`:**
 
 | Column | Type | Nullable | Default | Notes |
 |---|---|---|---|---|
-| `id` | `bigint unsigned` (PK) | No | — | |
-| `provider` | `string(16)`, enum-backed | No | `stripe` | |
+| `id` | `bigint unsigned` (PK, auto-increment) | No | — | |
+| `provider` | `string(16)`, enum-backed (`PaymentProvider`, new this round — §26) | No | `stripe` | |
 | `business_id` | `unsignedBigInteger`, FK `businesses.id`, nullable, `restrictOnDelete()` | Yes | `NULL` | exactly one of `business_id`/`workspace_id` set (manager-enforced; `CHECK` where MySQL 8+ confirmed) |
 | `workspace_id` | `unsignedBigInteger`, FK `workspaces.id`, nullable, `restrictOnDelete()` | Yes | `NULL` | |
 | `provider_customer_id` | `string(191)` | No | — | the Stripe Customer id |
-| `status` | `string(16)`, enum-backed | No | `active` | `active` \| `detached` |
-| `active_business_id` | `unsignedBigInteger`, nullable, **generated/stored**: `CASE WHEN status = 'active' THEN business_id ELSE NULL END` | Yes | — | **new this round** — the actual unique-index target |
-| `active_workspace_id` | `unsignedBigInteger`, nullable, **generated/stored**: `CASE WHEN status = 'active' THEN workspace_id ELSE NULL END` | Yes | — | **new this round** |
-| `created_at` / `updated_at` | `timestamp` | No | `now()` | mutable — `status` may change; `business_id`/`workspace_id` themselves are **never** cleared on detach, preserving the historical owner mapping permanently |
+| `status` | `string(16)`, enum-backed (`ProviderCustomerStatus`) | No | `active` | `active` \| `detached` |
+| `active_business_id` | `unsignedBigInteger`, nullable, generated/stored: `CASE WHEN status = 'active' THEN business_id ELSE NULL END` | Yes | — | the unique-index target |
+| `active_workspace_id` | `unsignedBigInteger`, nullable, generated/stored: `CASE WHEN status = 'active' THEN workspace_id ELSE NULL END` | Yes | — | |
+| `created_at` / `updated_at` | `timestamp` | No | `now()` | mutable — `status` may change; `business_id`/`workspace_id` are never cleared on detach |
 
-Indexes, corrected this round:
-- `UNIQUE (provider, provider_customer_id)` — **new this round**, per the explicit requirement — the same Stripe Customer id is never attached to more than one owner row, ever, across the table's full history.
-- `UNIQUE (provider, active_business_id)` and `UNIQUE (provider, active_workspace_id)` — **replace** the prior round's `UNIQUE (provider, business_id)`/`UNIQUE (provider, workspace_id)`. Because a detached row's generated `active_business_id`/`active_workspace_id` is `NULL` (and MySQL's unique index permits unlimited `NULL`s), at most one **active** provider-customer row can ever exist per `(provider, owner)` at a time — while the owner's full detached history remains permanently intact via the never-cleared `business_id`/`workspace_id` columns. This is the coherent lifecycle the correction requires: exactly one active customer per owner, enforced; every historical mapping preserved, never destroyed.
+Indexes: `UNIQUE (provider, provider_customer_id)`; `UNIQUE (provider, active_business_id)`; `UNIQUE (provider, active_workspace_id)`; **`UNIQUE (id, provider)`** — **new this round** — trivially satisfiable (like `business_usage_wallets`' own `UNIQUE(id, business_id)`, §12), and the composite unique key the child-table composite FK below references.
 
-**`business_payment_instruments`** — corrected this round with its own provider-scoped uniqueness:
+**`business_payment_instruments`** — corrected this round with the provider-consistency composite FK:
 
 | Column | Type | Nullable | Default | Notes |
 |---|---|---|---|---|
-| `id` | `bigint unsigned` (PK) | No | — | |
-| `provider_customer_id` | `unsignedBigInteger`, FK `payment_provider_customers.id`, `restrictOnDelete()` | No | — | ownership derives transitively |
-| `provider` | `string(16)`, enum-backed | No | `stripe` | **new this round** — denormalized from the parent `payment_provider_customers.provider`, purely to support the direct uniqueness constraint below without a join |
+| `id` | `bigint unsigned` (PK, auto-increment) | No | — | |
+| `provider_customer_id` | `unsignedBigInteger` | No | — | |
+| `provider` | `string(16)`, enum-backed (`PaymentProvider`, reused) | No | `stripe` | denormalized, but no longer merely by convention — see the composite FK below |
 | `provider_payment_method_id` | `string(191)` | No | — | Stripe PaymentMethod id — token reference only |
-| `type` | `string(24)`, enum-backed | No | — | e.g. `card` |
+| `type` | `string(24)`, enum-backed (`PaymentInstrumentType`, new this round — §26) | No | `card` | |
 | `brand` | `string(24)`, nullable | Yes | `NULL` | safe display metadata only |
 | `last_four` | `string(4)`, nullable | Yes | `NULL` | |
-| `expiry_month` / `expiry_year` | `unsigned tinyint` / `unsigned smallint`, nullable | Yes | `NULL` | card only |
-| `is_default` | `boolean` | No | `false` | one-default-per-provider-customer (§17.B, unchanged locking algorithm) |
-| `status` | `string(16)`, enum-backed | No | `active` | `active` \| `detached` |
-| `created_at` / `detached_at` | `timestamp` / nullable | No / Yes | `now()` / `NULL` | never deleted — detach only |
+| `expiry_month` | `unsigned tinyint`, nullable | Yes | `NULL` | card only |
+| `expiry_year` | `unsigned smallint`, nullable | Yes | `NULL` | card only |
+| `is_default` | `boolean` | No | `false` | one-default-per-provider-customer (locking algorithm below) |
+| `status` | `string(16)`, enum-backed (`PaymentInstrumentStatus`) | No | `active` | `active` \| `detached` |
+| `created_at` | `timestamp` | No | `now()` | |
+| `detached_at` | `timestamp`, nullable | Yes | `NULL` | never deleted — detach only |
 
-Indexes, new this round: `UNIQUE (provider, provider_payment_method_id)` — the same Stripe PaymentMethod id is never attached under two different instrument rows, platform-wide, for that provider.
+**Corrected foreign key: `(provider_customer_id, provider) → payment_provider_customers (id, provider)` — a composite FK, not a plain FK to `id` alone.** This makes an instrument row whose `provider` disagrees with its parent `payment_provider_customers.provider` a **schema-level impossibility** in InnoDB, exactly mirroring the wallet/ledger tenancy-ID protection pattern already established (§12) — no longer a claim resting on manager discipline alone.
 
-**One-default-instrument serialization, detach behavior, and the ownership-authority split — unchanged from the prior round.**
+Indexes: `UNIQUE (provider, provider_payment_method_id)`.
 
-### C. Durable payment/funding-attempt model and historical snapshots
+**One-default-instrument serialization:** `PaymentInstrumentManager::setDefaultInstrument()` locks the owning `payment_provider_customers` row before clearing any other instrument's `is_default` and setting the new default, in one transaction.
 
-**`business_funding_attempts`** (composite-protected on `(wallet_id, business_id)`):
+**Detach behavior and the ownership-authority split — unchanged.**
+
+### C. Durable payment/funding-attempt model and unambiguous provider-object resolution
+
+**`business_funding_attempts`** (composite-protected on `(wallet_id, business_id)`). **Corrected this round: `provider_session_or_intent_reference`, previously a plain nullable string with no uniqueness at all, now carries an explicit nullable-unique index — a verified provider object must never match two local attempts.**
 
 | Column | Type | Nullable | Default | Notes |
 |---|---|---|---|---|
-| `id` | `bigint unsigned` (PK) | No | — | |
+| `id` | `bigint unsigned` (PK, auto-increment) | No | — | |
 | `business_id` / `wallet_id` | FK, composite-protected | No | — | |
-| `purpose` | `string(24)`, enum-backed | No | — | `manual_top_up` \| `auto_recharge` \| `addon_purchase` |
-| `payer_type_snapshot` | `string(16)` | No | — | |
-| `billing_contact_name_snapshot` / `billing_contact_email_snapshot` | `string(191)`, nullable | Yes | `NULL` | the contact **as of this attempt**, never a live lookup |
+| `purpose` | `string(24)`, enum-backed (`FundingAttemptPurpose`) | No | — | `manual_top_up` \| `auto_recharge` \| `addon_purchase` |
+| `payer_type_snapshot` | `string(16)`, enum-backed (`PayerType`, reused, snapshot value — never re-derived) | No | — | |
+| `billing_contact_name_snapshot` / `billing_contact_email_snapshot` | `string(191)`, nullable | Yes | `NULL` | the contact as of this attempt, never a live lookup |
 | `provider_customer_external_id_snapshot` | `string(191)` | No | — | the Stripe Customer id at attempt time |
 | `provider_customer_id` | `unsignedBigInteger`, FK `payment_provider_customers.id`, `restrictOnDelete()` | No | — | traceability only |
 | `payment_method_display_snapshot` | `string(64)` | No | — | e.g. `"visa •••• 4242, exp 12/26"` |
-| `requesting_actor_user_id` | `unsigned bigint`, nullable, no FK | Yes | `NULL` | **explicitly nullable this round** — `NULL` for genuine system-initiated attempts (`purpose = auto_recharge`); the authorizing policy for those remains fully traceable via the Business's own auto-recharge configuration, itself set by a consented actor at configuration time (§16) |
+| `requesting_actor_user_id` | `unsigned bigint`, nullable, no FK | Yes | `NULL` | `NULL` for genuine system-initiated attempts (`purpose = auto_recharge`) |
 | `expected_currency_id` | `unsignedBigInteger`, FK `currencies.id`, `restrictOnDelete()` | No | — | |
 | `expected_amount_micro` | `bigint` | No | — | |
 | `local_idempotency_key` | `string(191)`, unique | No | — | the deterministic key derived for the outbound Stripe call |
-| `provider_session_or_intent_reference` | `string(191)`, nullable | Yes | `NULL` | |
-| `state` | `string(16)`, enum-backed | No | `created` | `created` \| `provider_pending` \| `requires_action` \| `processing` \| `succeeded` \| `failed` \| `canceled` \| `refunded` \| `disputed` |
+| `provider_session_or_intent_reference` | `string(191)`, nullable, **unique** | Yes | `NULL` | **new this round: `UNIQUE`** — once populated, this Stripe object reference resolves to exactly one local attempt |
+| `state` | `string(16)`, enum-backed (`FundingAttemptState`) | No | `created` | `created` \| `provider_pending` \| `requires_action` \| `processing` \| `succeeded` \| `failed` \| `canceled` \| `refunded` \| `disputed` |
 | `failure_reason` | `text`, nullable | Yes | `NULL` | |
-| `created_at` / `updated_at` | `timestamp` | No | `now()` | mutable — full transition history in the table below |
+| `created_at` / `updated_at` | `timestamp` | No | `now()` | mutable — full transition history below |
 
 **`business_funding_attempt_transitions`** — append-only:
 
 | Column | Type | Nullable | Default | Notes |
 |---|---|---|---|---|
-| `id` | `bigint unsigned` (PK) | No | — | |
+| `id` | `bigint unsigned` (PK, auto-increment) | No | — | |
 | `funding_attempt_id` | `unsignedBigInteger`, FK `business_funding_attempts.id`, `restrictOnDelete()` | No | — | |
-| `from_state` / `to_state` | `string(16)` | No | — | |
-| `source` | `string(24)`, enum-backed | No | — | `sync_response` \| `webhook_event` \| `admin_action` \| `reconciliation_job` |
+| `from_state` / `to_state` | `string(16)`, enum-backed (`FundingAttemptState`) | No | — | |
+| `source` | `string(24)`, enum-backed (`TransitionSource`, renamed this round — §26) | No | — | `sync_response` \| `webhook_event` \| `admin_action` \| `reconciliation_job` |
 | `provider_event_id` | `unsignedBigInteger`, FK `payment_provider_events.id`, nullable | Yes | `NULL` | set when `source = webhook_event` |
 | `actor_user_id` | `unsigned bigint`, nullable, no FK | Yes | `NULL` | |
 | `created_at` | `timestamp` | No | `now()` | |
 
-**Circular-FK correction — new this round.** The prior round's `business_funding_attempts.addon_purchase_id` (pointing at `business_usage_addon_purchases`) formed a circular reference against `business_usage_addon_purchases.funding_attempt_id` (pointing back at `business_funding_attempts`) — two tables each holding a live FK to the other. **`business_funding_attempts.addon_purchase_id` is removed entirely.** `business_usage_addon_purchases.funding_attempt_id` (§18) is retained as the **sole authoritative direction** — a purchase points to its own payment attempt, not the reverse — matching the natural ownership shape (the purchase is what was bought; the funding attempt is how it was paid for). Finding the purchase from a given funding attempt, when needed, is a simple indexed reverse query (`business_usage_addon_purchases WHERE funding_attempt_id = ?`), supported by `funding_attempt_id`'s own unique constraint (§18) rather than a second stored FK.
+**Circular-FK correction — unchanged from the prior round:** `business_funding_attempts.addon_purchase_id` remains removed; `business_usage_addon_purchases.funding_attempt_id` (§18) is the sole authoritative direction.
 
-**Historical snapshot rule and retention/privacy — unchanged from the prior round.**
+**Type-aware provider-object resolution algorithm — new this round.** Given an incoming webhook event, resolution never performs a cross-table scan for `provider_object_id`/`provider_session_or_intent_reference`: the event's own `event_type` first classifies it into exactly one subject class (`top_up_or_addon_checkout` → `business_funding_attempts`; `auto_recharge_intent` → `business_funding_attempts` where `purpose = auto_recharge`; `slot_initial_checkout` → `additional_business_slot_agreements`; `slot_renewal_intent` → `additional_business_slot_renewal_charges`), and only that one table's own `UNIQUE`-indexed reference column is queried. Because each of those four reference columns is independently unique within its own table, and resolution never searches more than one table for a single event, **a verified provider object can never match two local attempts, and never matches across two different subject types.**
+
+**Historical snapshot rule and retention/privacy — unchanged.**
 
 ---
 
 ## 18. Manual credit, paid top-up, promotional credit, and add-ons
 
-Unchanged in overall shape, with entry-type delta behavior per §12 and top-up routed through the funding-attempt model (§17.C). **Consent for initiating a top-up is now gated by §16's charge-causing-action rule, not a flat role grant.**
+Unchanged in overall shape, entry-type delta behavior per §13. **Consent for initiating a top-up is gated by §16's charge-causing-action rule — including its platform-administrator narrowing.**
 
-**`business_usage_addon_catalog`** — full schema (was shorthand-only):
+**`business_usage_addon_catalog`:**
 
 | Column | Type | Nullable | Default | Notes |
 |---|---|---|---|---|
-| `id` | `bigint unsigned` (PK) | No | — | |
+| `id` | `bigint unsigned` (PK, auto-increment) | No | — | |
 | `addon_key` | `string(64)`, unique | No | — | |
 | `display_name` | `string(191)` | No | — | |
 | `price_micro` | `bigint` | No | — | |
 | `currency_id` | `unsignedBigInteger`, FK `currencies.id`, `restrictOnDelete()` | No | — | |
-| `fulfillment_mode` | `string(24)`, enum-backed | No | — | `wallet_credit` \| `direct_deliverable` |
+| `fulfillment_mode` | `string(24)`, enum-backed (`AddonFulfillmentMode`) | No | — | `wallet_credit` \| `direct_deliverable` |
 | `is_active` | `boolean` | No | `true` | |
 | `created_at` / `updated_at` | `timestamp` | No | `now()` | |
 
-**Not seeded at M4 launch (zero rows)** — corrected wording, no self-contradiction with "seeded" language.
+Not seeded at M4 launch (zero rows).
 
-**`business_usage_addon_purchases`** — full schema, corrected this round (composite-protected wording removed — no `wallet_id`; `funding_attempt_id` is now the sole authoritative direction, above):
+**`business_usage_addon_purchases`:**
 
 | Column | Type | Nullable | Default | Notes |
 |---|---|---|---|---|
-| `id` | `bigint unsigned` (PK) | No | — | |
+| `id` | `bigint unsigned` (PK, auto-increment) | No | — | |
 | `business_id` | `unsignedBigInteger`, FK `businesses.id`, `restrictOnDelete()` | No | — | plain FK |
 | `addon_key` | `string(64)` | No | — | |
 | `price_micro` | `bigint` | No | — | snapshot at purchase time |
-| `funding_attempt_id` | `unsignedBigInteger`, FK `business_funding_attempts.id`, unique, `restrictOnDelete()` | No | — | sole authoritative direction (§17.C); `UNIQUE` enforces the intended 1:1 |
-| `status` | `string(16)`, enum-backed | No | `pending` | `pending` \| `completed` \| `failed` |
+| `funding_attempt_id` | `unsignedBigInteger`, FK `business_funding_attempts.id`, unique, `restrictOnDelete()` | No | — | sole authoritative direction (§17.C) |
+| `status` | `string(16)`, enum-backed (`AddonPurchaseStatus`) | No | `pending` | `pending` \| `completed` \| `failed` |
 | `requested_by_user_id` | `unsigned bigint`, no FK | No | — | |
 | `completed_at` | `timestamp`, nullable | Yes | `NULL` | |
 | `created_at` | `timestamp` | No | `now()` | |
 
+**`business_usage_addon_purchase_transitions`** — new this round, append-only, closing the gap where the prior round's "every mutable commercially significant state has an append-only audit" claim was false for this table:
+
+| Column | Type | Nullable | Default | Notes |
+|---|---|---|---|---|
+| `id` | `bigint unsigned` (PK, auto-increment) | No | — | |
+| `purchase_id` | `unsignedBigInteger`, FK `business_usage_addon_purchases.id`, `restrictOnDelete()` | No | — | |
+| `from_status` / `to_status` | `string(16)`, enum-backed (`AddonPurchaseStatus`) | No | — | |
+| `source` | `string(24)`, enum-backed (`TransitionSource`, reused) | No | — | |
+| `provider_event_id` | `unsignedBigInteger`, FK `payment_provider_events.id`, nullable | Yes | `NULL` | |
+| `actor_user_id` | `unsigned bigint`, nullable, no FK | Yes | `NULL` | |
+| `failure_reason` | `text`, nullable | Yes | `NULL` | |
+| `created_at` | `timestamp` | No | `now()` | |
+
 `fulfillment_mode` makes the wallet-debit-vs-separate-SKU choice data-driven per add-on; the one worked v1 example (a purchasable audit) is recommended `direct_deliverable` (§39 item 8).
+
+**Reviewing every other "mutable commercially significant state" claim this round, per the explicit instruction to provide the promised history or narrow the claim accurately — the following are deliberately, explicitly narrowed rather than left as an implied blanket guarantee:**
+
+- **Wallet balances** (`available_balance_micro`/`reserved_balance_micro`/`debt_balance_micro`) — their full history **is** `business_usage_ledger_entries` itself (§12/§13); no separate transitions table is needed or added, since the ledger already is the append-only audit for every balance change.
+- **`business_payment_instruments.is_default`/`status` (detach)** — **not** separately transition-audited by its own table in this document. The current `is_default`/`status` values, plus `detached_at`, are the extent of this history; a full multi-event log of every default/detach change is a bounded, separately-authorized future addition if ever needed, not something this document claims to already provide.
+- **`payment_provider_customers.status`** (active/detached lifecycle, §17.B) — likewise not separately transition-audited by its own table; the row's own `status`/`updated_at` plus the never-cleared `business_id`/`workspace_id` history is the extent of what this document provides.
+- **`additional_business_slot_agreements.payment_lapsed`** (§22) — tracked via `payment_lapsed_at`/`payment_lapsed_cleared_at` timestamp pair on the agreement row itself (§22), recording only the most recent lapse/clear instant, not a full multi-cycle history of every lapse-and-recovery — an explicit, bounded scope, stated here rather than implied.
 
 **Cross-Business isolation — unchanged.**
 
@@ -674,22 +739,19 @@ Unchanged in overall shape, with entry-type delta behavior per §12 and top-up r
 
 ## 19. Auto-recharge and low-balance behavior
 
-**Trigger — corrected this round to be structural, not an enumerated call-site list (§12's shared ledger-insert method is now the single source of truth): any ledger entry with `available_delta_micro < 0` dispatches `EvaluateBusinessAutoRecharge` after commit — correctly including `Reservation` (the prior round's missed case, since reservation is the normal operation that decreases available balance), `UsageOverageCharge`, `Refund`, `DisputeChargeback`, and a negative `CorrectionReversal` — and correctly excluding a normal within-reservation `UsageCharge` (`available_delta = 0`, since that money was already decremented at reserve time) and `ReservationRelease` (`available_delta > 0`).**
+**Trigger — unchanged, structural:** any ledger entry with `available_delta_micro < 0` dispatches `EvaluateBusinessAutoRecharge` after commit.
 
-**`App\Jobs\Usage\EvaluateBusinessAutoRecharge`** algorithm — unchanged in shape from the prior round:
+**`App\Jobs\Usage\EvaluateBusinessAutoRecharge`** algorithm — unchanged in shape.
 
-1. Cheap, lock-free pre-check: `auto_recharge_enabled`, `available_balance_micro < auto_recharge_threshold_micro`, no already-open `business_funding_attempts` row of `purpose: auto_recharge`.
-2. If eligible: `DB::transaction()`, wallet row `findForUpdate()`, re-check eligibility under lock, lazily roll the recharge period over if needed (§15), compute the recharge amount bounded by remaining `monthly_recharge_cap_micro` headroom, create the `business_funding_attempts` row.
-3. Outside any transaction, call `PaymentProviderGateway::chargeOffSession()`.
-4. Record the outcome via `UsageWalletManager::recordFundingAttemptOutcome()` (idempotent), inserting a `business_funding_attempt_transitions` row and, on `succeeded`, the `AutoRecharge` ledger entry.
+**Consecutive-failure counter — unchanged:** `business_usage_wallets.consecutive_recharge_failures`, incremented on `failed`/`requires_action`, reset on `succeeded`; **3** is the recommended (category-3) disable threshold.
 
-**Consecutive-failure counter — corrected this round with an actual schema.** `business_usage_wallets.consecutive_recharge_failures` (§12, new this round) is incremented on each `failed`/`requires_action` auto-recharge outcome and reset to `0` on any `succeeded` outcome — the prior round referenced "3 consecutive failures" with no backing schema; this round defines exactly where that count lives and how it changes. **3** remains the recommended (category-3) threshold at which `auto_recharge_enabled` is set `false` in the same transaction, with a distinct "auto-recharge disabled" notification.
+**`requires_action` handling — unchanged.**
 
-**`requires_action` handling — unchanged:** treated identically to `failed` for the consecutive-failure counter, with its own distinct notification.
+**Low-balance notification dedup and reset — unchanged.**
 
-**Low-balance notification dedup and reset — corrected this round with an exact mechanism.** `low_balance_notified_at` is set the first time a period crosses below threshold (via the same shared ledger-insert method, §12); **cleared automatically the moment any entry's `available_delta_micro > 0` brings `available_balance_micro` back above threshold** (not merely "resets," but a concrete, structural clearing rule now); otherwise not re-sent until 24 hours have elapsed. Category-3 recommendation.
+**`recharged_this_period_micro` and refunds/chargebacks — unchanged:** never automatically reopened; only an explicit admin correction may adjust it — the same rule §13 now states for `committed_spend_this_period_micro`.
 
-**`recharged_this_period_micro` and refunds/chargebacks — new this round, resolving the previously unstated interaction.** A `Refund` or `DisputeChargeback` entry **never decrements `recharged_this_period_micro`** — the monthly recharge-cap headroom consumed by an auto-recharge that is later refunded or charged back is **not** automatically reopened. Only an explicit admin correction (via `business_usage_limit_transitions`, mandatory reason) may adjust it, if ever needed. Category-3 recommendation, explicitly stated rather than left implicit.
+**Platform-administrator authority — corrected this round to match §16's narrowing:** an administrator may resume/retry an already-created, stuck auto-recharge attempt (`admin_retry`, mandatory reason), but may never unilaterally **enable** auto-recharge for a Business on the customer's behalf — enabling it authorizes an ongoing series of future off-session charges, which requires the actual payer's own action, not an administrator's alone.
 
 **Zero-balance / reserved-balance behavior — unchanged.**
 
@@ -699,62 +761,63 @@ Unchanged in overall shape, with entry-type delta behavior per §12 and top-up r
 
 ## 20. Stripe/provider boundary
 
-**Resolution unchanged: Stripe-only v1**, behind `PaymentProviderGateway`. Provider-customer ownership lives in `payment_provider_customers` (§17.B, corrected lifecycle this round).
+**Resolution unchanged: Stripe-only v1**, behind `PaymentProviderGateway`. Provider-customer ownership lives in `payment_provider_customers`, now with the composite-FK provider-consistency guarantee (§17.B).
 
 **SetupIntent / instrument attachment — unchanged.**
 
-**Checkout Session vs. PaymentIntent — corrected this round for the additional-slot agreement's own flow (§22 now names an exact model):** top-up and add-on purchase remain one-time Checkout Sessions; auto-recharge remains an off-session PaymentIntent; **the additional-slot agreement's initial charge uses a Checkout Session in `payment` mode with `setup_future_usage: 'off_session'`** (saving the Workspace's payment method and charging the initial amount in one step), and **every subsequent renewal uses an off-session PaymentIntent against that saved instrument** — never a second customer-present Checkout Session per renewal, and never Stripe's own Subscription/Invoice object (§22 states the reasoning).
+**Checkout Session vs. PaymentIntent — unchanged:** top-up/add-on purchase as one-time Checkout Sessions; auto-recharge as an off-session PaymentIntent; the additional-slot agreement's initial charge as a Checkout Session with `setup_future_usage: 'off_session'`, every renewal as an off-session PaymentIntent (§22).
 
-**Webhook verification — unchanged, using both previously-inert config values.**
+**Webhook verification — unchanged.**
 
-**Stripe API version posture — unchanged: pinned explicitly via `Stripe::setApiVersion()`, distinct from the PHP SDK version.**
+**Stripe API version posture — unchanged.**
 
-**Event persistence, replay, claim/lease mechanics, and idempotency — corrected this round with an exact schema and algorithm (§21).**
+**Event persistence, replay, claim/lease mechanics, and idempotency — corrected this round; §21 is now the exact, complete algorithm, including the fix to the stale-processing reclaim branch's missing attempts bound.**
 
-**Reconciliation — extended this round** to also sweep stuck renewal charges (§22) alongside funding attempts and slot-agreement allocation.
+**Reconciliation — unchanged in scope, extended to stuck renewal charges alongside funding attempts and slot-agreement allocation.**
 
 **No outbound Stripe call ever occurs while a database row lock is held — unchanged.**
 
 **Test-mode separation — unchanged.**
 
-**SDK version recommendation — unchanged: retain `stripe/stripe-php ^7.76` (`v7.128.0`) for v1.**
+**SDK version recommendation — unchanged.**
 
-**Payment amount limits — corrected this round (§10): Stripe's documented maximum (currently eight digits in the currency's smallest unit) is validated alongside the documented minimum, for the pinned API version and currency, before every outbound payment — never assumed unbounded.**
+**Payment amount limits — unchanged: both Stripe's documented minimum and eight-digit maximum validated before every outbound payment.**
 
-**Wording — unchanged: "effectively exactly-once local accounting effect under at-least-once delivery," never "exactly-once accounting."**
+**Wording — unchanged: "effectively exactly-once local accounting effect under at-least-once delivery."**
 
 ---
 
 ## 21. Webhook verification, persistence, replay, and reconciliation
 
-**Corrected this round: `payment_provider_events` gains explicit claim-lease fields distinguishing an actively-processing event from a crashed/stuck one, a provider-scoped unique constraint, and an executable payload-purge design.**
+**Corrected this round: the stale-`processing` reclaim branch now also requires `attempts < max_attempts`, exact atomic updates are defined for every terminal/retry outcome, and the ambiguous `processed_at` is replaced by an explicit `completed_at` shared by both `processed` and `ignored` terminal states.**
 
-**`payment_provider_events`** — full corrected schema:
+**`payment_provider_events`:**
 
 | Column | Type | Nullable | Default | Notes |
 |---|---|---|---|---|
-| `id` | `bigint unsigned` (PK) | No | — | |
-| `provider` | `string(16)`, enum-backed | No | `stripe` | |
+| `id` | `bigint unsigned` (PK, auto-increment) | No | — | |
+| `provider` | `string(16)`, enum-backed (`PaymentProvider`, reused) | No | `stripe` | |
 | `provider_event_id` | `string(191)` | No | — | Stripe's own event id |
 | `event_type` | `string(64)` | No | — | |
 | `provider_object_id` | `string(191)` | No | — | the Checkout Session/PaymentIntent/etc. id the event concerns |
-| `payload_encrypted` | `text`/`blob`, encrypted at rest, **nullable** | Yes | — | **corrected this round** — nullable, since it is purged after retention (below) |
+| `payload_encrypted` | `text`/`blob`, encrypted at rest, nullable | Yes | — | nullable, purged after retention (below) |
 | `payload_hash` | `string(64)` | No | — | SHA-256 of the raw verified payload — permanent, survives purge |
-| `payload_purged_at` | `timestamp`, nullable | Yes | `NULL` | **new this round** — set when `payload_encrypted` is nulled out by the retention job; `id`/`provider_event_id`/`payload_hash`/`state` remain permanently available for idempotency/audit even after purge |
-| `state` | `string(16)`, enum-backed | No | `received` | `received` \| `processing` \| `processed` \| `failed` \| `ignored` |
-| `attempts` | `unsigned smallint` | No | `0` | |
-| `processing_started_at` | `timestamp`, nullable | Yes | `NULL` | **new this round** |
-| `lease_expires_at` | `timestamp`, nullable | Yes | `NULL` | **new this round** — the claim lease |
-| `last_attempt_at` | `timestamp`, nullable | Yes | `NULL` | **new this round** |
+| `payload_purged_at` | `timestamp`, nullable | Yes | `NULL` | set when `payload_encrypted` is nulled by the retention job |
+| `state` | `string(16)`, enum-backed (`ProviderEventState`) | No | `received` | `received` \| `processing` \| `processed` \| `failed` \| `ignored` |
+| `attempts` | `unsigned smallint` | No | `0` | incremented on every claim, whether fresh or reclaimed |
+| `processing_started_at` | `timestamp`, nullable | Yes | `NULL` | set on every claim |
+| `lease_expires_at` | `timestamp`, nullable | Yes | `NULL` | the claim lease; **corrected this round — `NULL` outside of `state = 'processing'`, never left stale from a prior processing cycle** |
+| `last_attempt_at` | `timestamp`, nullable | Yes | `NULL` | set on every claim |
 | `last_error` | `text`, nullable | Yes | `NULL` | |
-| `received_at` / `processed_at` | `timestamp` / nullable | No / Yes | `now()` / `NULL` | |
+| `received_at` | `timestamp` | No | `now()` | |
+| `completed_at` | `timestamp`, nullable | Yes | `NULL` | **new/renamed this round, replacing the prior round's ambiguous `processed_at`** — set for **both** `processed` and `ignored` terminal states, never overloaded to mean only one of them |
 
-Indexes, corrected this round: **`UNIQUE (provider, provider_event_id)`** — replacing a bare unique on `provider_event_id` alone, since an event ID is only meaningfully unique **within** a given provider's own ID space, not across providers in general.
+Indexes: `UNIQUE (provider, provider_event_id)`.
 
 **Corrected claim/lease algorithm:**
 
-1. On receipt, insert the event row (`state: received`, `attempts: 0`). The `UNIQUE (provider, provider_event_id)` constraint is the true-duplicate guard — a genuine replay's insert conflicts and is recognized as already-known immediately, without assuming "already known" means "already processed."
-2. **Claim (atomic, single statement, no separate `SELECT` then `UPDATE`):**
+1. On receipt, insert the event row (`state: received`, `attempts: 0`). `UNIQUE (provider, provider_event_id)` is the true-duplicate guard.
+2. **Claim (atomic, single statement) — corrected this round, the stale-processing branch now bounded by the same attempts ceiling as every other retryable branch:**
    ```sql
    UPDATE payment_provider_events
    SET state = 'processing',
@@ -765,134 +828,155 @@ Indexes, corrected this round: **`UNIQUE (provider, provider_event_id)`** — re
    WHERE id = ?
      AND (
        state = 'received'
-       OR (state = 'failed' AND attempts < 5)          -- category-3 recommended max attempts
-       OR (state = 'processing' AND lease_expires_at < NOW())  -- stale-lease recovery
+       OR (state = 'failed' AND attempts < 5)                                    -- category-3 recommended max attempts
+       OR (state = 'processing' AND lease_expires_at < NOW() AND attempts < 5)   -- corrected this round: stale-processing recovery is now also bounded
      )
    ```
-   Only a worker whose `UPDATE` actually affects a row has genuinely claimed it — InnoDB's row-level locking during the `UPDATE`'s own WHERE evaluation makes this compare-and-swap atomic against concurrent claim attempts, without a separate lock statement.
-3. Processing resolves the local subject via `provider_session_or_intent_reference` — never trusting webhook metadata as authoritative on its own — and validates the verified Stripe object's customer, amount, currency, and purpose against the local attempt's own expected values. A mismatch marks the event `failed` (via the same claim-shaped `UPDATE` pattern, setting `state='failed'`, `last_error=...`) and triggers reconciliation rather than blindly applying the event.
-4. On match, the event drives the local `state` transition only if it is a valid forward transition per the funding-attempt/renewal-charge state table (§17.C/§19/§22). An invalid transition (e.g., a `succeeded` event after a `refunded` one already applied) triggers reconciliation against Stripe's current object state rather than blindly overwriting.
-5. **Stale-processing recovery — new this round, the direct answer to the claim-lease requirement:** a worker that crashes after claiming (`state = 'processing'`) but before finishing leaves `lease_expires_at` in the past once that lease's duration elapses — the claim `UPDATE`'s own `OR (state = 'processing' AND lease_expires_at < NOW())` clause picks it back up on the next sweep, with `attempts` incremented again, no manual intervention required.
-6. **Max-attempt exhaustion:** once `attempts >= 5` while still `failed`, the claim `UPDATE`'s `WHERE` clause no longer matches that row (`state = 'failed' AND attempts < 5` fails) — the row becomes **permanently unreclaimed by the automated worker**, a real terminal state distinguishable from an ordinary retryable failure purely by its own `attempts` count, surfaced to a platform-administrator review queue (§30) rather than retried forever.
-7. **Terminal `processed`/`ignored` events are never reclaimed** — neither matches any branch of the claim `WHERE` clause.
-8. Downstream mutations (`recordPaidTopUp`, `recordFundingAttemptOutcome`, slot-agreement allocation/renewal recording) remain independently idempotent on their own keys regardless of event arrival order.
+   **This is the exact fix: the prior round's stale-processing branch, `state = 'processing' AND lease_expires_at < NOW()`, had no `attempts` bound at all — a payload that reliably crashes the worker every time it is claimed could be reclaimed forever, its lease repeatedly expiring, `attempts` incrementing without limit but never actually gating reclaim. It now gates identically to the `failed` branch.**
+3. Processing resolves the local subject via the type-aware algorithm (§17.C) — never trusting webhook metadata alone — and validates the verified object against the local attempt's expected values. A mismatch marks the event `failed` and triggers reconciliation.
+4. On match, the event drives the local `state` transition only if it is a valid forward transition (§17.C/§19/§22's state tables). An invalid transition triggers reconciliation rather than blindly overwriting.
+5. **Exact atomic updates for every terminal/retry outcome — new this round:**
+   - **Successful processing:** `UPDATE ... SET state = 'processed', completed_at = NOW(), lease_expires_at = NULL, last_error = NULL WHERE id = ? AND state = 'processing'`.
+   - **Intentional ignore:** `UPDATE ... SET state = 'ignored', completed_at = NOW(), lease_expires_at = NULL WHERE id = ? AND state = 'processing'`.
+   - **Retryable failure:** `UPDATE ... SET state = 'failed', last_error = ?, lease_expires_at = NULL WHERE id = ? AND state = 'processing'`.
+   - **Stale-processing recovery** is not itself a separate outcome — it is a re-claim via step 2's own corrected `UPDATE`, which re-enters `processing` with a fresh lease and incremented `attempts`, then proceeds through one of the three outcomes above.
+6. **Max-attempt exhaustion — corrected this round to apply uniformly:** once `attempts >= 5`, **neither** a `failed` row **nor** a stale-`processing` row matches any branch of the claim `WHERE` clause — both become permanently unreclaimed by the automated worker, surfaced together in the admin exhausted-events review queue (`WHERE (state = 'failed' AND attempts >= 5) OR (state = 'processing' AND lease_expires_at < NOW() AND attempts >= 5)`, §24/§30).
+7. **Terminal `processed`/`ignored` events are never reclaimed.**
+8. Downstream mutations remain independently idempotent on their own keys regardless of event arrival order.
 
-**Executable payload purge — new this round.** `App\Jobs\Usage\PurgeExpiredWebhookPayloads` (a scheduled job) finds `processed`/`ignored` events past the retention window (recommended: retained only as long as needed for dispute-window reconciliation, exact duration an M3 operational detail) and sets `payload_encrypted = NULL`, `payload_purged_at = NOW()` — leaving `id`, `provider`, `provider_event_id`, `event_type`, `provider_object_id`, `payload_hash`, and `state` permanently intact, so the row continues to serve its idempotency-dedup and audit-trail role indefinitely even with the sensitive payload itself gone.
+**Executable payload purge — unchanged:** `App\Jobs\Usage\PurgeExpiredWebhookPayloads` finds `processed`/`ignored` events past the retention window and sets `payload_encrypted = NULL`, `payload_purged_at = NOW()`.
 
 ---
 
-## 22. Additional Business-slot agreement — recurring provider model resolved this round
+## 22. Additional Business-slot agreement — Option A, with corrected schema, idempotency, and cancellation model
 
-**RFC-004 explicitly describes charges corresponding to already-allocated additional Business slots as *recurring*. This round resolves exactly how: Option A — customer-present initial authorization with a saved Workspace instrument, followed by off-session PaymentIntent renewal charges — chosen over Stripe's own native Billing Subscription object.**
+**RFC-004 describes charges for already-allocated additional Business slots as recurring. Option A — customer-present initial authorization with a saved Workspace instrument, followed by off-session PaymentIntent renewal charges — remains chosen over Stripe's own native Billing Subscription object, for the reasons the prior round recorded (reuse of the same off-session-charge primitive §19 already needs).**
 
-**Why Option A over Option B (Stripe Billing subscriptions):** this design already builds, for auto-recharge (§19), the exact SetupIntent-save-then-off-session-PaymentIntent-charge primitive Option A needs — reusing it here keeps the entire `PaymentProviderGateway` boundary (§9/§20) narrow and uniform, with one off-session-charge code path serving both auto-recharge and slot renewals, rather than introducing Stripe's own Subscription/Invoice webhook model as a second, structurally different integration this design would otherwise never need. Option B is not chosen; it remains available as a future alternative if Option A's manual renewal/dunning logic proves insufficient at scale — but that is not a decision this document makes now.
+**Also carrying the cross-RFC blocker: the allocation step remains `NON-IMPLEMENTATION-READY`.**
 
-**Also carrying the cross-RFC blocker: the allocation step remains `NON-IMPLEMENTATION-READY`.** Everything else in this section — quoting, initial checkout, renewal charges, proration, dunning, refunds — is implementation-ready on its own.
+**Operational prerequisite — unchanged:** an authorized RFC-004 catalog-pricing operator surface remains a prerequisite for this section's own M4.
 
-**Operational prerequisite — unchanged:** RFC-004 ships no HTTP/operator surface for `workspace_plan_catalog` pricing; an authorized pricing tool is a prerequisite for this section's own M4, independent of the allocation blocker.
-
-**`additional_business_slot_agreements`** — full schema, corrected this round:
+**`additional_business_slot_agreements`** — full schema, corrected this round for the total-charge snapshot and the cancellation model:
 
 | Column | Type | Nullable | Default | Notes |
 |---|---|---|---|---|
-| `id` | `bigint unsigned` (PK) | No | — | |
+| `id` | `bigint unsigned` (PK, auto-increment) | No | — | |
 | `workspace_id` | `unsignedBigInteger`, FK `workspaces.id`, `restrictOnDelete()` | No | — | Workspace-scoped, paid via a Workspace-owned instrument only |
 | `current_allocation_count` / `target_allocation_count` | `unsigned tinyint` | No | — | billing-side bookkeeping view; RFC-004's `workspace_plan_assignments.additional_business_slots` remains sole authoritative entitlement value |
 | `paid_delta` | `unsigned tinyint` | No | — | `target - current` at agreement-creation time |
 | `price_per_slot_micro_snapshot` | `bigint` | No | — | from `workspace_plan_catalog.price`/`additional_business_slot_price_ratio` at quote time |
+| `total_amount_micro_snapshot` | `bigint` | No | — | **new this round** — `paid_delta × price_per_slot_micro_snapshot`, computed exactly once at quote time via §10's `bcRoundHalfUp()`; validated against the Checkout Session's actual confirmed amount before the agreement is allowed to advance past `payment_succeeded`; the sole value ever used for historical display — never re-derived from current catalog state |
 | `currency_id_snapshot` | `unsignedBigInteger`, FK `currencies.id`, `restrictOnDelete()` | No | — | |
 | `ratio_snapshot` | `decimal(6,4)` | No | — | |
-| `plan_catalog_id_snapshot` / `plan_tier_snapshot` | `unsignedBigInteger` FK / `string(16)` | No | — | which catalog/tier was quoted against, at initial purchase |
-| `requesting_customer_user_id` | `unsigned bigint`, no FK | No | — | distinguished from the system/payment actor per the blocker's option 3 requirement, even though this document does not build option 3 |
-| `requesting_customer_email_snapshot` | `string(191)` | No | — | **new this round** — this flow's billing-contact-equivalent snapshot (additional-slot agreements are Workspace-scoped and have no separate Workspace-level billing-contact concept the way Business wallets do, §17.A; the requesting owner's own account email serves this role) |
+| `plan_catalog_id_snapshot` | `unsignedBigInteger`, FK `workspace_plan_catalog.id`, `restrictOnDelete()` | No | — | which catalog was quoted against, at initial purchase |
+| `plan_tier_snapshot` | `string(16)` | No | — | |
+| `requesting_customer_user_id` | `unsigned bigint`, no FK | No | — | distinguished from the system/payment actor per the blocker's option 3 requirement |
+| `requesting_customer_email_snapshot` | `string(191)` | No | — | this flow's billing-contact-equivalent snapshot, frozen at agreement creation |
 | `provider_customer_id` | `unsignedBigInteger`, FK `payment_provider_customers.id` (Workspace-owned), `restrictOnDelete()` | No | — | |
 | `payment_method_display_snapshot` | `string(64)` | No | — | |
 | `local_idempotency_key` | `string(191)`, unique | No | — | |
-| `provider_session_or_intent_reference` | `string(191)`, nullable | Yes | `NULL` | the initial Checkout Session id |
-| `billing_cadence` | `string(16)`, enum-backed | No | `monthly` | matching the Workspace plan's own `billing_cycle` |
-| `next_renewal_at` | `timestamp`, nullable | Yes | `NULL` | null once no further renewal is scheduled (`canceled`) |
-| `payment_lapsed` | `boolean` | No | `false` | see renewal-failure handling below |
-| `state` | `string(20)`, enum-backed | No | `quote_created` | `quote_created` \| `checkout_pending` \| `payment_succeeded` \| `allocation_pending` \| `completed` \| `payment_failed` \| `allocation_failed` \| `refund_pending` \| `refunded` \| `canceled` |
-| `created_at` / `updated_at` | `timestamp` | No | `now()` | mutable — transitions recorded in `additional_business_slot_agreement_transitions` (below) |
+| `provider_session_or_intent_reference` | `string(191)`, nullable, **unique** | Yes | `NULL` | the initial Checkout Session id |
+| `billing_cadence` | `string(16)`, enum-backed (`SlotAgreementBillingCadence`, new this round — §26) | No | `monthly` | independent of RFC-004's own **uncast** `workspace_plan_catalog.billing_cycle` string (§3), which has no backing PHP enum to reuse |
+| `next_renewal_at` | `timestamp`, nullable | Yes | `NULL` | **corrected this round — see the cancellation model below: no longer cleared merely by a cancellation request** |
+| `cancel_at_period_end` | `boolean` | No | `false` | **new this round** |
+| `cancellation_requested_at` | `timestamp`, nullable | Yes | `NULL` | **new this round** |
+| `cancellation_effective_at` | `timestamp`, nullable | Yes | `NULL` | **new this round** — frozen, at the moment cancellation is requested, to whatever `next_renewal_at` already held |
+| `payment_lapsed` | `boolean` | No | `false` | |
+| `payment_lapsed_at` | `timestamp`, nullable | Yes | `NULL` | **new this round** — the audit for this flag, per §18's narrowed transition-history statement |
+| `payment_lapsed_cleared_at` | `timestamp`, nullable | Yes | `NULL` | **new this round** |
+| `state` | `string(20)`, enum-backed (`SlotAgreementState`) | No | `quote_created` | `quote_created` \| `checkout_pending` \| `payment_succeeded` \| `allocation_pending` \| `completed` \| `payment_failed` \| `allocation_failed` \| `refund_pending` \| `refunded` \| `canceled` |
+| `created_at` / `updated_at` | `timestamp` | No | `now()` | mutable — transitions recorded in `additional_business_slot_agreement_transitions` |
 
-**`additional_business_slot_agreement_transitions`** — new this round, append-only:
+**`additional_business_slot_agreement_transitions`** — unchanged in shape:
 
 | Column | Type | Nullable | Default | Notes |
 |---|---|---|---|---|
-| `id` | `bigint unsigned` (PK) | No | — | |
+| `id` | `bigint unsigned` (PK, auto-increment) | No | — | |
 | `agreement_id` | `unsignedBigInteger`, FK `additional_business_slot_agreements.id`, `restrictOnDelete()` | No | — | |
-| `from_state` / `to_state` | `string(20)` | No | — | |
-| `source` | `string(24)`, enum-backed | No | — | `sync_response` \| `webhook_event` \| `admin_action` \| `reconciliation_job` |
+| `from_state` / `to_state` | `string(20)`, enum-backed (`SlotAgreementState`) | No | — | |
+| `source` | `string(24)`, enum-backed (`TransitionSource`, renamed) | No | — | |
 | `provider_event_id` | `unsignedBigInteger`, FK `payment_provider_events.id`, nullable | Yes | `NULL` | |
 | `actor_user_id` | `unsigned bigint`, nullable, no FK | Yes | `NULL` | |
 | `created_at` | `timestamp` | No | `now()` | |
 
-**`additional_business_slot_renewal_charges`** — full schema, corrected this round with its own complete historical snapshot (not merely inherited via the parent agreement, since a later renewal may legitimately snapshot a *different*, then-current catalog price, per the proration/price-change rules below):
+**`additional_business_slot_renewal_charges`** — full schema, corrected this round for the frozen contact snapshot, exact-second proration inputs, `charge_kind`, and the deterministic per-operation idempotency key:
 
 | Column | Type | Nullable | Default | Notes |
 |---|---|---|---|---|
-| `id` | `bigint unsigned` (PK) | No | — | |
+| `id` | `bigint unsigned` (PK, auto-increment) | No | — | |
 | `agreement_id` | `unsignedBigInteger`, FK `additional_business_slot_agreements.id`, `restrictOnDelete()` | No | — | |
-| `period_start` / `period_end` | `timestamp` | No | — | |
+| `charge_kind` | `string(24)`, enum-backed (`SlotRenewalChargeKind`, new this round — §26) | No | — | `scheduled_renewal` \| `mid_period_increase` — **orthogonal to `initiated_by` below**: an `admin_retry` may retry either kind |
+| `period_start` / `period_end` | `timestamp` | No | — | for `mid_period_increase`, narrowed to the remainder of the current period; both exact UTC instants, matching the calendar-month boundaries the agreement's own governing period uses (§15's construction, applied at the Workspace level) |
 | `amount_micro_snapshot` | `bigint` | No | — | |
-| `payer_type_snapshot` | `string(16)` | No | `workspace` | stated explicitly for completeness/consistency with §17.C, though always `workspace` for this flow |
+| `requesting_customer_email_snapshot` | `string(191)` | No | — | **new this round** — **frozen and inherited from the parent agreement's own value at charge-creation time, never independently re-snapshotted at each renewal**, since "who originally requested this agreement" is a historical fact about the relationship's start, not something that should drift per renewal (contrast with pricing/payment-method snapshots below, which correctly reflect current state at each renewal) |
+| `payer_type_snapshot` | `string(16)`, enum-backed (`PayerType`, reused) | No | `workspace` | always `workspace` for this flow, stated explicitly for completeness |
 | `provider_customer_external_id_snapshot` | `string(191)` | No | — | |
 | `payment_method_display_snapshot` | `string(64)` | No | — | |
 | `currency_id_snapshot` | `unsignedBigInteger`, FK `currencies.id`, `restrictOnDelete()` | No | — | |
-| `plan_catalog_id_snapshot` / `plan_tier_snapshot` / `ratio_snapshot` | see above | No | — | re-snapshotted **at this renewal's own creation time**, independent of the parent agreement's original values — a price change applies starting from the next renewal created after it (below) |
-| `initiated_by` | `string(16)`, enum-backed | No | `scheduled_job` | `scheduled_job` \| `admin_retry` |
-| `actor_user_id` | `unsigned bigint`, nullable, no FK | Yes | `NULL` | set only when `initiated_by = admin_retry` |
-| `local_idempotency_key` | `string(191)`, unique | No | — | **deterministic**, derived as `sha256(agreement_id . ':' . period_start_iso8601)` — a retried job invocation for the same period never double-charges even before the DB constraint is checked |
-| `provider_session_or_intent_reference` | `string(191)`, nullable | Yes | `NULL` | the renewal's own PaymentIntent id |
-| `state` | `string(16)`, enum-backed | No | `created` | same shape as §17.C's funding-attempt states |
+| `plan_catalog_id_snapshot` | `unsignedBigInteger`, FK `workspace_plan_catalog.id`, `restrictOnDelete()` | No | — | re-snapshotted at this renewal's own creation time, independent of the parent agreement's original values |
+| `plan_tier_snapshot` | `string(16)` | No | — | |
+| `ratio_snapshot` | `decimal(6,4)` | No | — | |
+| `initiated_by` | `string(16)`, enum-backed (`SlotRenewalChargeInitiatedBy`, expanded this round — §26) | No | `scheduled_job` | `scheduled_job` \| `owner_initiated` \| `admin_retry` — **`owner_initiated` is new this round**, the missing initiation path for a synchronous mid-period-increase charge triggered directly by the Workspace owner's own action, distinct from a periodic `scheduled_job` renewal |
+| `actor_user_id` | `unsigned bigint`, nullable, no FK | Yes | `NULL` | set for `owner_initiated`/`admin_retry` |
+| `change_operation_id` | `string(191)`, nullable, **unique** | Yes | `NULL` | **new this round** — a UUID generated once by the customer-facing request handler before any charge-creation logic runs, for `mid_period_increase` charges only (`NULL` for `scheduled_renewal`); reused verbatim on any client retry of the *same* logical increase operation |
+| `local_idempotency_key` | `string(191)`, unique | No | — | **corrected this round — deterministic derivation now branches on `charge_kind`:** for `scheduled_renewal`, `sha256(agreement_id . ':' . 'scheduled' . ':' . period_start_iso8601)`; for `mid_period_increase`, `sha256(agreement_id . ':' . 'increase' . ':' . change_operation_id)` — **this is the exact fix for the prior round's collision risk**: two distinct mid-period increases within the same billing period no longer risk colliding on `(agreement, period_start)` alone, since each increase's own `change_operation_id` — not a re-derived timestamp — anchors its key, while a genuine retry of the *same* increase (same `change_operation_id`, supplied by the client) correctly reuses the same key and is absorbed as a no-op |
+| `provider_session_or_intent_reference` | `string(191)`, nullable, **unique** | Yes | `NULL` | the renewal's own PaymentIntent id |
+| `state` | `string(16)`, enum-backed (`FundingAttemptState`, reused shape) | No | `created` | |
 | `failure_reason` | `text`, nullable | Yes | `NULL` | |
 | `created_at` | `timestamp` | No | `now()` | |
 
-**`additional_business_slot_renewal_charge_transitions`** — new this round, append-only, structurally identical in shape to the agreement-transitions table above but kept as its own table rather than a shared polymorphic one (a polymorphic `subject_type`/`subject_id` pointer without a real, enforced FK would be a real regression against this document's own established discipline of enforcing every reference with an actual foreign key — so two small, properly-FK'd tables are used instead of one unenforced shared one):
+**`additional_business_slot_renewal_charge_transitions`** — unchanged in shape:
 
 | Column | Type | Nullable | Default | Notes |
 |---|---|---|---|---|
-| `id` | `bigint unsigned` (PK) | No | — | |
+| `id` | `bigint unsigned` (PK, auto-increment) | No | — | |
 | `renewal_charge_id` | `unsignedBigInteger`, FK `additional_business_slot_renewal_charges.id`, `restrictOnDelete()` | No | — | |
-| `from_state` / `to_state` | `string(16)` | No | — | |
-| `source` | `string(24)`, enum-backed | No | — | same values as above |
+| `from_state` / `to_state` | `string(16)`, enum-backed (`FundingAttemptState`, reused shape) | No | — | |
+| `source` | `string(24)`, enum-backed (`TransitionSource`, renamed) | No | — | |
 | `provider_event_id` | `unsignedBigInteger`, FK `payment_provider_events.id`, nullable | Yes | `NULL` | |
 | `actor_user_id` | `unsigned bigint`, nullable, no FK | Yes | `NULL` | |
 | `created_at` | `timestamp` | No | `now()` | |
 
-**Saga rule — unchanged: `payment_succeeded` and `completed` are distinct; the agreement is never marked `completed` before allocation succeeds.**
+**Saga rule — unchanged:** `payment_succeeded` and `completed` are distinct; the agreement is never marked `completed` before allocation succeeds.
 
-**Sequence, corrected this round for Option A:** quote (`UsageBillingCheckoutManager::quoteAdditionalSlots()`, read-only) → Checkout Session created in `payment` mode with `setup_future_usage: 'off_session'` for the quoted initial price, agreement `state: checkout_pending` → webhook-authoritative confirmation (the session both charges the initial amount **and** saves the Workspace's payment method in one step) moves the agreement to `payment_succeeded` → `allocation_pending` → (pending the blocker's resolution) `completed`, with `next_renewal_at` set to one billing cadence after the initial purchase.
+**Sequence — unchanged.** **Initial authorization and consent — unchanged**, only the Workspace owner (never a platform administrator originating fresh, per §16's narrowing — an administrator may only resume an already-`checkout_pending` agreement's stuck confirmation, never create a new one).
 
-**Initial authorization and consent — new this round:** the initial Checkout Session may be created only by the Workspace owner (or a platform administrator, mandatory reason) — §16's target-consent rule applied to this Workspace-scoped flow directly, since the instrument saved and charged is always Workspace-owned.
+**Renewal initiation and `requires_action` handling — unchanged in shape**, now creating a `charge_kind: scheduled_renewal` row with `initiated_by: scheduled_job`.
 
-**Renewal initiation and `requires_action` handling — new this round.** A scheduled job (`App\Jobs\Usage\InitiateSlotAgreementRenewal`) finds agreements with `next_renewal_at <= now()`, mirroring §19's auto-recharge job pattern exactly: lock the agreement row, create the `additional_business_slot_renewal_charges` row (`state: created`, `initiated_by: scheduled_job`), release the lock, call `chargeOffSession()` outside any transaction, record the outcome via the same claim/idempotency discipline as §21. A `requires_action` outcome is treated as a renewal failure requiring the Workspace owner's manual intervention (a notification directing them to complete authentication or provide a new payment method) — mirroring §19's `requires_action` handling exactly.
+### Cancellation — corrected this round with an exact model, replacing the prior round's premature `next_renewal_at = NULL`
 
-**Cancellation — new this round.** A Workspace owner (or platform admin, mandatory reason) may cancel an agreement; cancellation is **effective at the end of the current already-paid period** (`next_renewal_at`), never an immediate mid-period revocation of already-paid-for capacity. `next_renewal_at` is set to `null`; the agreement's state moves toward `canceled` once the current period elapses without a further renewal being initiated. Already-allocated slots for the current period remain until that period genuinely ends.
+**The prior round set `next_renewal_at = null` immediately upon a cancellation request — losing the already-known effective end-of-period instant and giving `InitiateSlotAgreementRenewal` no explicit signal to stop scheduling further renewals in the meantime.** Corrected:
 
-**Proration for increases/decreases — new this round.** Increasing `target_allocation_count` mid-period creates an immediate, separate, one-time prorated `additional_business_slot_renewal_charges` row scoped only to the remainder of the current period (`period_start`/`period_end` narrowed accordingly), with `amount_micro_snapshot = bcRoundHalfUp(price_per_slot × additional_slots × remaining_days, total_days_in_period)` (§10's exact rounding algorithm). Decreasing `target_allocation_count` mid-period does **not** retroactively refund the current period's already-paid charge, but **does** reduce the amount charged at the next renewal. Both directions are category-3 recommendations, explicitly adjustable by a future milestone with justification.
+1. On cancellation request (Workspace owner, or platform administrator with mandatory reason — **narrowed this round to a genuine cancellation of an existing, already-authorized agreement, not an origination**): set `cancel_at_period_end = true`, `cancellation_requested_at = now()`, `cancellation_effective_at = <the agreement's current next_renewal_at value>` — frozen at this exact moment, **`next_renewal_at` itself is left unchanged**.
+2. `App\Jobs\Usage\InitiateSlotAgreementRenewal`'s own query is corrected to exclude `WHERE cancel_at_period_end = false` (equivalently, `AND NOT cancel_at_period_end`) — **no renewal is ever initiated for an agreement with a pending cancellation, even though `next_renewal_at` may still technically be non-null right up until the effective instant.**
+3. A new job, `App\Jobs\Usage\FinalizeSlotAgreementCancellation`, finds agreements with `cancel_at_period_end = true AND cancellation_effective_at <= now() AND state != 'canceled'`, and — only then — sets `state: canceled`, `next_renewal_at: null`, recording the transition.
+4. Already-allocated slots for the current, already-paid period remain until `cancellation_effective_at` genuinely passes.
 
-**Retries/dunning and `payment_lapsed` — new this round.** A failed renewal charge triggers retry attempts (recommended: 3 attempts over a bounded window, category-3, mirroring §19's own consecutive-failure count for consistency). After the final retry fails, `payment_lapsed = true` is set on the agreement. **Recovery is automatic** the moment any subsequent renewal charge for that agreement succeeds (including a manually-triggered `admin_retry` after the Workspace owner updates their payment method) — no separate admin action required to clear the flag beyond a successful payment.
+### Proration for increases/decreases — corrected this round with exact-second arithmetic
 
-**Price changes apply only to future, properly-notified renewals — new this round.** A catalog price change never alters an already-created renewal charge's snapshotted `amount_micro_snapshot` (immutable once created). It applies starting from the next renewal charge created *after* the price change — and the Workspace owner **must** receive a notification of the upcoming price change before that next renewal is attempted (the exact notice period is a category-3/M4 implementation detail; the *requirement* that notice precedes the price-changed renewal is locked here, not left implicit).
+**The prior round's "remaining days / total days in period" language was ambiguous and risked off-by-one/fractional-day error.** Corrected: proration uses **exact elapsed/remaining seconds** between the agreement's governing period's stored UTC boundaries (constructed via §15's calendar-month algorithm, applied at the Workspace level): `remaining_seconds = period_end_utc - now()`, `total_seconds = period_end_utc - period_start_utc`, `amount_micro_snapshot = bcRoundHalfUp(bcmul(price_per_slot_micro_snapshot × additional_slots, remaining_seconds), total_seconds)` — using §10's exact `bcRoundHalfUp()` on always-integer second counts, never a "days" approximation. This creates a `charge_kind: mid_period_increase` row (with its own `change_operation_id`-anchored idempotency key, above), `initiated_by: owner_initiated` (or `admin_retry` if a stuck attempt is later manually resumed). Decreasing `target_allocation_count` mid-period does not retroactively refund the current period's already-paid charge, but does reduce the amount charged at the next `scheduled_renewal`. Both directions are category-3 recommendations, explicitly adjustable with justification.
 
-**Provider references, deterministic idempotency, reconciliation — new this round, as specified above** (each renewal's own `provider_session_or_intent_reference`; the deterministic `local_idempotency_key`; the extended reconciliation sweep, §20).
+### Retries/dunning, `payment_lapsed`, and missed-period handling — corrected this round to close the "unbounded silent arrears" gap
 
-**Idempotency (initial purchase), complimentary/Agency-unlimited behavior, and the edge-case list (concurrent checkouts, plan change/complimentary transition mid-checkout, payment-success-then-allocation-failure, retry/reconciliation, refund) — unchanged from the prior round, now grounded in the corrected saga/table shapes above.**
+A failed renewal charge triggers retry attempts (recommended: 3, category-3, mirroring §19). **While retries for a due period are in progress, `next_renewal_at` remains unchanged — still pointing at that same already-due period** — no new `scheduled_renewal` row is created for a later period until the current one either succeeds or is exhausted. After the final retry fails, `payment_lapsed = true` and `payment_lapsed_at = now()` are set, and **`next_renewal_at` is explicitly set to `null`** — no further automatic renewal attempts are scheduled while lapsed, so no unbounded sequence of missed-period charges can ever accumulate. **Recovery:** the moment any subsequent renewal charge succeeds (a manually-triggered `admin_retry`, or the Workspace owner's own `owner_initiated` retry after updating their payment method), `payment_lapsed = false` and `payment_lapsed_cleared_at = now()` are set, and **`next_renewal_at` is recomputed as one billing cadence forward from the recovery moment — never retroactively from the long-past missed period** — so a lapsed Workspace is never retroactively billed for every month it missed; missed periods are **skipped**, not accumulated, and no `additional_business_slot_renewal_charges` row is ever created for a period that was simply skipped due to lapse.
 
-**Admin allocation action for the blocker's Option 1 — sharpened this round.** `UsageBillingCheckoutManager::completeSlotAllocationAsAdministrator(AdditionalBusinessSlotAgreement $agreement, int $realAdministratorActorUserId, string $reason): void` calls `EntitlementManager::setAdditionalBusinessSlots($workspace, $agreement->target_allocation_count, $realAdministratorActorUserId, $reason)` **using the real, currently-authenticated platform administrator's own user id — never a synthetic "system admin" identity, and never a customer's or the scheduled job's own identity.** The agreement is marked `completed` **only after** that call returns successfully; if it throws, the agreement remains `allocation_pending` (or moves to `allocation_failed`), never silently marked complete.
+### Price changes apply only to future, properly-notified renewals — unchanged.
+
+**Idempotency (initial purchase), complimentary/Agency-unlimited behavior, and the edge-case list — unchanged**, now grounded in the corrected schema above.
+
+**Admin allocation action for the blocker's Option 1 — unchanged, already scoped correctly:** this action follows an already-succeeded payment and performs an allocation, not a fresh charge, so it is unaffected by this round's platform-administrator narrowing (§16) and remains platform-administrator-only, mandatory reason, the administrator's own real identity.
 
 ---
 
 ## 23. Refunds, disputes, chargebacks, invoices, receipts, and tax/VAT boundary
 
-Unchanged from the prior round: four structurally distinct entry types (`Refund`, `DisputeChargeback`, `UsageChargeReversal`, `CorrectionReversal`); Stripe-hosted receipts authoritative for v1 via `business_billing_receipts` (composite-protected wording removed this round — no `wallet_id` on this table; full schema below); the legacy `invoices` table remains unreused; production tax/VAT posture remains `NON-IMPLEMENTATION-READY`, a legal/compliance gate, not an ordinary feature-scope preference — this RFC is not legal advice and asserts no tax posture as safe by default.
+Unchanged: four structurally distinct entry types; Stripe-hosted receipts authoritative for v1; the legacy `invoices` table remains unreused; production tax/VAT posture remains `NON-IMPLEMENTATION-READY`, a legal/compliance gate — this RFC is not legal advice.
 
-**`business_billing_receipts`** — full schema (was shorthand-only):
+**`business_billing_receipts`:**
 
 | Column | Type | Nullable | Default | Notes |
 |---|---|---|---|---|
-| `id` | `bigint unsigned` (PK) | No | — | |
+| `id` | `bigint unsigned` (PK, auto-increment) | No | — | |
 | `business_id` | `unsignedBigInteger`, FK `businesses.id`, `restrictOnDelete()` | No | — | plain FK |
 | `ledger_entry_id` | `unsignedBigInteger`, FK `business_usage_ledger_entries.id`, `restrictOnDelete()` | No | — | |
 | `provider_receipt_url` | `string(2048)` | No | — | |
@@ -903,7 +987,7 @@ Unchanged from the prior round: four structurally distinct entry types (`Refund`
 
 ## 24. Authorization and tenant isolation
 
-Five genuinely distinct authority paths — one path's grant never implies another's. **Table corrected this round: "Initiate top-up" and "Configure auto-recharge" are now payer-consent-gated (§16), matching the same target-direction discipline already applied to "Set payer to X" and "Manage [X]-owned payment instrument."**
+Five genuinely distinct authority paths. **Table corrected this round: every platform-administrator "Yes, mandatory reason" cell for a charge-origination action is narrowed to "No — resume/retry only" per §16/§19/§22's corrected posture; a new "resume/retry an already-authorized attempt" row makes the surviving administrator capability explicit.**
 
 | Capability | Workspace owner | Active Workspace Admin | Staff | Direct Business owner/customer | Platform administrator |
 |---|---|---|---|---|---|
@@ -913,21 +997,21 @@ Five genuinely distinct authority paths — one path's grant never implies anoth
 | Manage a Workspace-owned (shared) payment instrument | Yes | No | No | No | Yes |
 | Set payer to `workspace` | Yes | No | No | No | Yes, mandatory reason |
 | Set payer to `business` | No | No | No | Yes, own Business | Yes, mandatory reason |
-| **Initiate top-up, when `payer_type = 'workspace'`** | Yes | No | No | No | Yes, mandatory reason |
-| **Initiate top-up, when `payer_type = 'business'`** | No | No | No | Yes, own Business | Yes, mandatory reason |
-| **Configure/enable auto-recharge, when `payer_type = 'workspace'`** | Yes | No | No | No | Yes, mandatory reason |
-| **Configure/enable auto-recharge, when `payer_type = 'business'`** | No | No | No | Yes, own Business | Yes, mandatory reason |
-| **Initiate an additional-slot agreement checkout/renewal (always Workspace-owned instrument)** | Yes | No | No | No | Yes, mandatory reason |
+| Originate a new top-up, when `payer_type = 'workspace'` | Yes | No | No | No | No — see "resume" row below |
+| Originate a new top-up, when `payer_type = 'business'` | No | No | No | Yes, own Business | No |
+| Newly enable/configure auto-recharge, when `payer_type = 'workspace'` | Yes | No | No | No | No |
+| Newly enable/configure auto-recharge, when `payer_type = 'business'` | No | No | No | Yes, own Business | No |
+| Originate a new additional-slot agreement checkout (always Workspace-owned instrument) | Yes | No | No | No | No |
+| Resume/retry an already-created, payer-authorized attempt (funding attempt or slot renewal) | Yes, own attempt | No | No | Yes, own attempt | Yes, mandatory reason — the sole surviving admin charge-adjacent capability, since the payer's own prior action already supplied consent |
+| Cancel an additional-slot agreement (effective at period end, §22) | Yes | No | No | No | Yes, mandatory reason |
 | Configure Business spend cap / per-feature limits (non-payment) | Yes | Yes, if scope covers it, bounded by the platform safety limit | No | Yes, own Business, bounded by the platform safety limit | Yes, including the platform safety limit itself |
 | Issue manual/promotional credit | No | No | No | No | Yes only |
 | Set/clear `billing_status = 'suspended'` | No | No | No | No | Yes only |
-| Perform the manual additional-slot allocation action (§22, blocker Option 1) | No | No | No | No | Yes only, mandatory reason, own identity — never a synthetic actor |
+| Perform the manual additional-slot allocation action (§22, blocker Option 1) — follows an already-succeeded payment, not a fresh charge | No | No | No | No | Yes only, mandatory reason, own identity — never a synthetic actor |
 | View internal provider cost (`provider_cost_micro`) | No | No | No | No | Yes only |
-| Review exhausted (max-attempts) webhook events | No | No | No | No | Yes only |
+| Review exhausted (max-attempts) webhook events — now includes exhausted stale-`processing` rows alongside exhausted `failed` rows | No | No | No | No | Yes only |
 
-**Distinguishing viewing/configuring non-payment limits from authorizing money movement — new this round, restated from §16:** the spend-cap/per-feature-limit row above causes no charge and uses the existing, unchanged broader Business-scope authority; every row above marked with a `payer_type`-conditional split causes or enables an actual charge and uses the new consent-gated rule.
-
-Unrelated Workspace/Business resources fail closed with a 404-shaped response, never a 403 that would confirm existence. No raw query against any new billing table is permitted outside its owning manager and repository, except an immutable migration/backfill script — enforced by a mechanical boundary test (§35).
+Unrelated Workspace/Business resources fail closed with a 404-shaped response, never a 403. No raw query against any billing table is permitted outside its owning manager and repository, except an immutable migration/backfill script — enforced by a mechanical boundary test (§35).
 
 **Permission category — unchanged:** `Business Usage Billing`.
 
@@ -935,87 +1019,87 @@ Unrelated Workspace/Business resources fail closed with a 404-shaped response, n
 
 ## 25. Schema
 
-**Full table list — 26 tables this round (up from 23: three new append-only transition tables added; no tables removed; one column-level circular-FK fix, not a table-count change).** All `restrictOnDelete()` on tenancy-scoping foreign keys, never `cascade`; no native `ENUM` anywhere; composite foreign keys `(wallet_id, business_id) → business_usage_wallets(id, business_id)` applied **only** to tables that actually carry both columns (§12, corrected this round).
+**Full table list — 27 tables this round (up from 26: one new append-only transition table, `business_usage_addon_purchase_transitions`, item 8).** All `restrictOnDelete()` on tenancy-scoping foreign keys, never `cascade`; no native `ENUM` anywhere; composite foreign keys applied wherever genuinely needed: `(wallet_id, business_id) → business_usage_wallets(id, business_id)` (§12) and, **new this round**, `(provider_customer_id, provider) → payment_provider_customers(id, provider)` (§17.B).
 
 | Table | Change this round | Backfilled? | Sole write authority |
 |---|---|---|---|
-| `business_usage_wallets` | `period_key`/`consecutive_recharge_failures` columns added | Yes | `UsageWalletManager` |
-| `business_usage_ledger_entries` | `period_key` column added | No | `UsageWalletManager` |
-| `business_usage_reservations` | `period_key` column added | No | `UsageWalletManager` |
-| `business_usage_rates` | exact types finalized | No | `UsageWalletManager` |
-| `business_usage_rate_activations` | deterministic tie-break ordering specified | No | `UsageWalletManager` |
-| `platform_feature_usage_classifications` | full schema given | Yes | `UsageWalletManager` |
-| `platform_feature_usage_classification_transitions` | **new** | No | `UsageWalletManager` |
-| `business_feature_usage_limits` | full schema given; "composite-protected" wording removed (no `wallet_id`) | No | `UsageWalletManager` |
-| `platform_feature_usage_safety_limits` | full schema given | No | `UsageWalletManager` |
-| `business_usage_limit_transitions` | full schema given | No | `UsageWalletManager` |
+| `business_usage_wallets` | recharge-period columns individually specified | Yes | `UsageWalletManager` |
+| `business_usage_ledger_entries` | rate-snapshot columns individually specified | No | `UsageWalletManager` |
+| `business_usage_reservations` | rate-snapshot/final columns individually specified | No | `UsageWalletManager` |
+| `business_usage_rates` | unchanged | No | `UsageWalletManager` |
+| `business_usage_rate_activations` | unchanged | No | `UsageWalletManager` |
+| `platform_feature_usage_classifications` | unchanged | Yes | `UsageWalletManager` |
+| `platform_feature_usage_classification_transitions` | unchanged | No | `UsageWalletManager` |
+| `business_feature_usage_limits` | unchanged | No | `UsageWalletManager` |
+| `platform_feature_usage_safety_limits` | unchanged | No | `UsageWalletManager` |
+| `business_usage_limit_transitions` | unchanged | No | `UsageWalletManager` |
 | `business_usage_wallet_billing_status_transitions` | unchanged | No | `UsageWalletManager` |
-| `business_billing_contacts` | full schema given; "composite-protected" wording removed | No | `BillingProfileManager` |
-| `business_payer_assignments` | full schema given; wording removed | Yes | `BillingProfileManager` |
-| `business_payer_transitions` | full schema given | No | `BillingProfileManager` |
-| `payment_provider_customers` | generated-column active-uniqueness lifecycle fix; `UNIQUE(provider, provider_customer_id)` added | No | `PaymentInstrumentManager` |
-| `business_payment_instruments` | `provider` column + `UNIQUE(provider, provider_payment_method_id)` added | No | `PaymentInstrumentManager` |
-| `business_funding_attempts` | `addon_purchase_id` removed (circular-FK fix) | No | `UsageWalletManager` / `UsageBillingCheckoutManager` |
+| `business_billing_contacts` | unchanged | No | `BillingProfileManager` |
+| `business_payer_assignments` | unchanged | Yes, **at M2** (corrected this round, §32) | `BillingProfileManager` |
+| `business_payer_transitions` | unchanged | No | `BillingProfileManager` |
+| `payment_provider_customers` | `UNIQUE(id, provider)` added (§17.B) | No | `PaymentInstrumentManager` |
+| `business_payment_instruments` | composite FK to `(id, provider)` replaces plain FK (§17.B) | No | `PaymentInstrumentManager` |
+| `business_funding_attempts` | `provider_session_or_intent_reference` now unique | No | `UsageWalletManager` / `UsageBillingCheckoutManager` |
 | `business_funding_attempt_transitions` | unchanged | No | `UsageWalletManager` |
-| `additional_business_slot_agreements` | Option A fields added (`next_renewal_at`, `payment_lapsed`, email snapshot) | No | `UsageBillingCheckoutManager` |
-| `additional_business_slot_agreement_transitions` | **new** | No | `UsageBillingCheckoutManager` |
-| `additional_business_slot_renewal_charges` | full historical snapshot added | No | `UsageBillingCheckoutManager` |
-| `additional_business_slot_renewal_charge_transitions` | **new** | No | `UsageBillingCheckoutManager` |
-| `business_usage_addon_catalog` | full schema given | No | `UsageBillingCheckoutManager` |
-| `business_usage_addon_purchases` | full schema given; `funding_attempt_id` unique, wording removed | No | `UsageBillingCheckoutManager` |
-| `business_billing_receipts` | full schema given; wording removed | No | `UsageWalletManager` |
-| `payment_provider_events` | claim-lease fields, `UNIQUE(provider, provider_event_id)`, purge fields added | No | `UsageBillingCheckoutManager` |
+| `additional_business_slot_agreements` | `total_amount_micro_snapshot`, cancellation-model, `payment_lapsed_at`/`_cleared_at` columns added | No | `UsageBillingCheckoutManager` |
+| `additional_business_slot_agreement_transitions` | unchanged | No | `UsageBillingCheckoutManager` |
+| `additional_business_slot_renewal_charges` | frozen contact snapshot, `charge_kind`, `change_operation_id`, corrected idempotency-key derivation | No | `UsageBillingCheckoutManager` |
+| `additional_business_slot_renewal_charge_transitions` | unchanged | No | `UsageBillingCheckoutManager` |
+| `business_usage_addon_catalog` | unchanged | No | `UsageBillingCheckoutManager` |
+| `business_usage_addon_purchases` | unchanged | No | `UsageBillingCheckoutManager` |
+| `business_usage_addon_purchase_transitions` | **new** | No | `UsageBillingCheckoutManager` |
+| `business_billing_receipts` | unchanged | No | `UsageWalletManager` |
+| `payment_provider_events` | `processed_at` renamed `completed_at`; stale-processing claim branch bounded by `attempts` | No | `UsageBillingCheckoutManager` |
 
-Exact columns/types/constraints for each table are given in the section that introduced it (§11–§23, as cross-referenced above). DDL and any data-only backfill operation remain separate migrations.
+Exact columns/types/constraints for each table are given in the section that introduced it (§11–§23). DDL and any data-only backfill operation remain separate migrations.
 
-**`CHECK` constraints and generated columns** (the composite tenancy-ID FKs, §12; `payment_provider_customers.active_business_id`/`active_workspace_id`, §17.B) are recommended where the target MySQL version is confirmed 8.0+; the M1 contract confirms this — including, new this round, confirming the `bcmath` PHP extension is enabled (§10) — before relying on any of them, falling back to manager-level enforcement (already the primary enforcement mechanism throughout this design) where confirmation is not possible.
+**`CHECK` constraints and generated/composite-FK columns** are recommended where the target MySQL version is confirmed 8.0+; the M1 contract confirms this, and confirms the `bcmath` PHP extension is enabled, before relying on any of them, falling back to manager-level enforcement where confirmation is not possible.
 
 ---
 
 ## 26. PHP enums/value objects/models
 
-**Enums — corrected this round to 17 (net +1: one new enum for the slot-renewal-charge initiator; no enums removed):** `UsageLedgerEntryType`, `UsageReservationStatus`, `WalletBillingStatus`, `UsageLimitType`, `PayerType`, `PaymentInstrumentStatus`, `ProviderCustomerStatus`, `FundingAttemptPurpose`, `FundingAttemptState`, `FundingAttemptTransitionSource`, `BillingStatusTransitionSource`, `AddonFulfillmentMode`, `AddonPurchaseStatus`, `SlotAgreementState`, `SlotRenewalChargeInitiatedBy` (**new**, §22 — `scheduled_job` \| `admin_retry`), `ProviderEventState`, `RoundingRule`. (The new transition tables in §14.1/§22 reuse the existing `FundingAttemptTransitionSource`-shaped `source` values — `sync_response`/`webhook_event`/`admin_action`/`reconciliation_job` — rather than each minting its own duplicate enum; `platform_feature_usage_classification_transitions` carries `actor_user_id`/`reason` directly with no `source` enum at all, since a classification change is always an explicit, authored action, never system-triggered.)
+**Enums — corrected this round to 21 (net +4: `PaymentProvider`, `PaymentInstrumentType`, `SlotAgreementBillingCadence`, `SlotRenewalChargeKind`; one renamed for accuracy, no count change from the rename):** `UsageLedgerEntryType`, `UsageReservationStatus`, `WalletBillingStatus`, `UsageLimitType`, `PayerType`, `PaymentInstrumentStatus`, `ProviderCustomerStatus`, `FundingAttemptPurpose`, `FundingAttemptState`, `TransitionSource` (**renamed this round** from `FundingAttemptTransitionSource` — now explicitly shared, and reused as-is, by `business_funding_attempt_transitions`, `additional_business_slot_agreement_transitions`, `additional_business_slot_renewal_charge_transitions`, and `business_usage_addon_purchase_transitions`, rather than each minting its own duplicate 4-value enum), `BillingStatusTransitionSource` (kept distinct — a genuinely different 2-value set, `dispute_webhook`\|`admin_action`, never collapsible into `TransitionSource`), `AddonFulfillmentMode`, `AddonPurchaseStatus`, `SlotAgreementState`, `SlotRenewalChargeInitiatedBy` (expanded this round to three values: `scheduled_job`\|`owner_initiated`\|`admin_retry`), `ProviderEventState`, `RoundingRule`, `PaymentProvider` (**new this round** — `stripe` only, v1; reused by `payment_provider_customers.provider`, `business_payment_instruments.provider`, `payment_provider_events.provider`), `PaymentInstrumentType` (**new this round** — `card` only, v1; `business_payment_instruments.type`), `SlotAgreementBillingCadence` (**new this round** — `monthly` only, v1; `additional_business_slot_agreements.billing_cadence` — confirmed genuinely new, not a reuse, since direct code read this round found RFC-004's own `workspace_plan_catalog.billing_cycle` is an uncast plain string with no backing PHP enum, §3), `SlotRenewalChargeKind` (**new this round** — `scheduled_renewal`\|`mid_period_increase`; `additional_business_slot_renewal_charges.charge_kind`, orthogonal to `initiated_by`).
+
+**Mechanical reconciliation, per the explicit requirement:** every column marked "enum-backed" anywhere in §11–§23 now names its exact PHP enum inline, states whether that enum is new or reused, and is included in the count above — no "enum-backed" column remains unnamed.
 
 **New readonly value objects — unchanged: `ReservationResult`, `CommitResult`, `EffectivePayer`, `CapEvaluation`, `UsageCapacityDecision`.**
 
-**New Eloquent models — 26, one per table in §25**, each `casts` its enum columns.
+**New Eloquent models — 27, one per table in §25**, each `casts` its enum columns.
 
 ---
 
 ## 27. Repository contracts
 
-One contract + one Eloquent implementation per table in §25 — **26 pairs, 52 files** (corrected from the prior round's 23 pairs/46 files), bound in `AppServiceProvider` identically to RFC-004 M1's six-repository pattern.
+One contract + one Eloquent implementation per table in §25 — **27 pairs, 54 files** (corrected from the prior round's 26 pairs/52 files), bound in `AppServiceProvider` identically to RFC-004 M1's six-repository pattern.
 
 ---
 
 ## 28. Manager/domain authority
 
-**Unchanged at five authorities:** `UsageWalletManager` (wallets, ledger, reservations, rates/activations, classifications/classification-transitions, limits/limit-transitions, billing-status/transitions, receipts), `BillingProfileManager` (billing contact, payer assignment/transitions), `PaymentInstrumentManager` (provider customers, payment instruments), `UsageBillingCheckoutManager` (funding attempts' provider-facing leg, additional-slot agreements/renewals/their transition audits, add-on purchases, provider-event ingestion), `StripePaymentProviderGateway`. No controller, job, or event listener ever writes to a table in §25 directly.
+**Unchanged at five authorities**, with method-level additions this round: `UsageWalletManager` (wallets, ledger, reservations, rates/activations, classifications/classification-transitions, limits/limit-transitions, billing-status/transitions, receipts), `BillingProfileManager` (billing contact, payer assignment/transitions — **new this round: `initializePayerAssignmentForBusiness()`, §32**), `PaymentInstrumentManager` (provider customers, payment instruments), `UsageBillingCheckoutManager` (funding attempts' provider-facing leg, additional-slot agreements/renewals/their transition audits, add-on purchases, provider-event ingestion — **new this round: `retryFundingAttemptAsAdministrator()`, `retrySlotRenewalAsAdministrator()`, §16/§19/§22**), `StripePaymentProviderGateway`. No controller, job, or event listener ever writes to a table in §25 directly.
 
 ---
 
 ## 29. Jobs, events, notifications, and scheduling
 
-**Jobs — corrected this round to twelve (was nine; three added):** `ExpireStaleUsageReservations`, `AdvanceUsagePeriodBoundaries` (proactive maintenance only), `EvaluateBusinessAutoRecharge` (centralized trigger, §12/§19), `ProcessPaymentProviderEvent` (the claim-and-process worker, §21), `ReconcileProviderPendingState` (extended), `ReconcileSlotAgreementAllocation`, `InitiateSlotAgreementRenewal` (**new**, §22), `PurgeExpiredWebhookPayloads` (**new**, §21), `SendLowBalanceNotification`, `SendAutoRechargeDisabledNotification`, `SendReceiptNotification`, `SendSlotAgreementPriceChangeNotice` (**new**, §22's mandatory pre-renewal price-change notice). All `App\Jobs\Usage\*`, extending `App\Jobs\Base`, `ShouldQueue` + `ShouldQueueAfterCommit` where dispatched from within a request-handling transaction.
+**Jobs — corrected this round to thirteen (was twelve; one added):** `ExpireStaleUsageReservations`, `AdvanceUsagePeriodBoundaries` (proactive maintenance only), `EvaluateBusinessAutoRecharge`, `ProcessPaymentProviderEvent`, `ReconcileProviderPendingState`, `ReconcileSlotAgreementAllocation`, `InitiateSlotAgreementRenewal` (**corrected this round to exclude `cancel_at_period_end` agreements, §22**), `FinalizeSlotAgreementCancellation` (**new this round**, §22), `PurgeExpiredWebhookPayloads`, `SendLowBalanceNotification`, `SendAutoRechargeDisabledNotification`, `SendReceiptNotification`, `SendSlotAgreementPriceChangeNotice`. All `App\Jobs\Usage\*`, extending `App\Jobs\Base`, `ShouldQueue` + `ShouldQueueAfterCommit` where dispatched from within a request-handling transaction.
 
-**Events — corrected this round to fifteen (was fourteen; one added):** `BusinessWalletCredited`, `BusinessWalletDebited`, `BusinessWalletDebtIncurred`, `BusinessWalletDebtCleared`, `BusinessUsageReserved`, `BusinessUsageCommitted`, `BusinessUsageReservationReleased`, `BusinessPayerChanged`, `BusinessBillingContactChanged`, `BusinessFundingAttemptSucceeded`, `BusinessFundingAttemptFailed`, `BusinessWalletBillingStatusChanged`, `AdditionalBusinessSlotAgreementCompleted`, `AdditionalBusinessSlotAllocationFailed`, `AdditionalBusinessSlotAgreementLapsed` (**new**, §22's `payment_lapsed` transition). All `App\Events\Usage\*`, `implements ShouldDispatchAfterCommit`, carrying IDs/scalars only.
+**Events — corrected this round to seventeen (was fifteen; two added):** `BusinessWalletCredited`, `BusinessWalletDebited`, `BusinessWalletDebtIncurred`, `BusinessWalletDebtCleared`, `BusinessUsageReserved`, `BusinessUsageCommitted`, `BusinessUsageReservationReleased`, `BusinessPayerChanged`, `BusinessBillingContactChanged`, `BusinessFundingAttemptSucceeded`, `BusinessFundingAttemptFailed`, `BusinessWalletBillingStatusChanged`, `AdditionalBusinessSlotAgreementCompleted`, `AdditionalBusinessSlotAllocationFailed`, `AdditionalBusinessSlotAgreementLapsed`, `AdditionalBusinessSlotAgreementCanceled` (**new this round**, §22's `FinalizeSlotAgreementCancellation`), `AdditionalBusinessSlotAgreementPaymentRecovered` (**new this round**, §22's lapse-recovery). All `App\Events\Usage\*`, `implements ShouldDispatchAfterCommit`, carrying IDs/scalars only.
 
-**Listener — new this round:** `App\Listeners\Usage\InitializeUsageWalletForNewBusiness`, subscribed to **both** `BusinessCreated` and `BusinessAssignedToWorkspace` (§32) — calls `UsageWalletManager::initializeForNewBusiness()` idempotently.
+**Listener — renamed this round for accuracy (§9/§32):** `App\Listeners\Usage\InitializeBusinessUsageProfile` (was `InitializeUsageWalletForNewBusiness`), subscribed to both `BusinessCreated` and `BusinessAssignedToWorkspace` — at M1, wallet-only; extended at M2 to also initialize the payer assignment.
 
-**Scheduling — unchanged in shape:** `AdvanceUsagePeriodBoundaries` proactive-only; every other job runs on a bounded interval (exact cadences M1/M3 implementation details).
+**Scheduling — unchanged in shape.**
 
 ---
 
 ## 30. HTTP/admin/customer surfaces and permissions
 
-**Customer surface — corrected this round: additional-slot routes moved out of the Business-nested group, since slot purchases are Workspace-scoped and must never require an arbitrary `businessUid`.**
+**Customer surface — unchanged route shape.**
 
-- Business-scoped (nested under `workspaces/{workspaceUid}/businesses/{businessUid}/usage`, unchanged): balance/ledger view (GET), top-up, payer, billing-contact, instruments, limits, auto-recharge (POST/DELETE), add-on purchase (GET/POST).
-- **Workspace-scoped, corrected this round — moved to `workspaces/{workspaceUid}/slots/{quote,checkout,cancel}` (GET/POST), directly under the `workspaces` prefix, never nested under any particular Business** — matching the actual scope of an additional-slot agreement (a Workspace-level entitlement, RFC-004), never requiring or accepting a `businessUid` at all.
+**Webhook route — unchanged.**
 
-**Webhook route — unchanged:** `POST /webhooks/stripe/usage-billing`, a `VerifyCsrfToken` `$except` entry, never behind session auth.
-
-**Admin surface — extended this round:** `Admin\UsageBillingController` (or similar): read balance/ledger/caps for any Business, issue manual/promotional credit, set/clear `billing_status`, set the platform safety limit, view (never edit) `provider_cost_micro` aggregates, perform the manual additional-slot allocation action (§22, using the administrator's own real identity), and — **new this round** — review webhook events that have exhausted their claim/retry attempts (§21).
+**Admin surface — corrected this round to reflect the narrowed charge-origination authority:** `Admin\UsageBillingController` (or similar): read balance/ledger/caps for any Business, issue manual/promotional credit, set/clear `billing_status`, set the platform safety limit, view (never edit) `provider_cost_micro` aggregates, **resume/retry an already-created, payer-authorized funding attempt or slot renewal (never originate a fresh one, §16/§19/§22)**, perform the manual additional-slot allocation action (using the administrator's own real identity), cancel an additional-slot agreement (mandatory reason), and review webhook events that have exhausted their claim/retry attempts — **now including exhausted stale-`processing` rows, not only exhausted `failed` rows (§21)**.
 
 **Observability — unchanged.**
 
@@ -1023,113 +1107,104 @@ One contract + one Eloquent implementation per table in §25 — **26 pairs, 52 
 
 ## 31. Concurrency, lock order, idempotency, and retry rules
 
-**Canonical lock order — unchanged in shape, extended to the new tables:** Workspace (only when a path already needs one) → Business → wallet → reservation → funding attempt → additional-slot agreement → renewal charge.
+**Canonical lock order — unchanged in shape.**
 
-**Idempotency keys — extended this round:** reservation `idempotency_key`, ledger `correlation_key`, `business_funding_attempts.local_idempotency_key`, `additional_business_slot_agreements.local_idempotency_key`, `additional_business_slot_renewal_charges.local_idempotency_key` (**now deterministically derived**, §22), add-on purchase (via its unique `funding_attempt_id`), `payment_provider_events`'s `UNIQUE (provider, provider_event_id)` (**corrected this round to be provider-scoped**), `payment_provider_customers`'s `UNIQUE (provider, provider_customer_id)` and active-owner uniqueness (**new this round**), `business_payment_instruments`'s `UNIQUE (provider, provider_payment_method_id)` (**new this round**).
+**Idempotency keys — extended this round:** every key from the prior round, plus `payment_provider_customers`'s `UNIQUE (id, provider)` (composite-FK enabler, §17.B), `business_payment_instruments`'s composite FK `(provider_customer_id, provider)`, `business_funding_attempts`/`additional_business_slot_agreements`/`additional_business_slot_renewal_charges`'s now-`UNIQUE` `provider_session_or_intent_reference` (§17.C/§22), and `additional_business_slot_renewal_charges.change_operation_id` (**new this round**, §22's collision fix for repeated mid-period increases).
 
-**"Effectively exactly-once local accounting effect under at-least-once delivery" — unchanged wording, now also grounded in the corrected claim-lease algorithm (§21), which makes "at-least-once processing attempt, exactly-once accounting effect" concretely true rather than merely asserted.**
+**"Effectively exactly-once local accounting effect under at-least-once delivery" — unchanged, now additionally grounded in the corrected, uniformly-bounded claim/lease algorithm (§21).**
 
-**Forced-race test scenarios — extended this round:** two reservations racing the last remaining spend-cap headroom; two `EvaluateBusinessAutoRecharge` dispatches racing the "one open funding attempt" rule; a reservation racing a manual admin credit; two concurrent additional-slot checkouts for one Workspace; two workers racing to claim the same `payment_provider_events` row (only one succeeds); an unrelated-Business reservation proceeding unaffected during another Business's race — all via the real cross-process pattern already established by `EntitlementManagerConcurrencyTest.php`.
+**Forced-race test scenarios — extended this round:** every scenario from the prior round, plus two workers racing to claim the same stale-`processing` (not only fresh-`received`) event row; two mid-period slot-allocation increases racing within the same billing period (must never collide on `local_idempotency_key`, §22).
 
 ---
 
-## 32. Backfill, ongoing Business creation, rollout, compatibility, and rollback safety
+## 32. Backfill, ongoing Business creation, rollout, compatibility, and rollback safety — corrected this round for the M1/M2 initialization-ordering contradiction
 
-**Backfill for existing Businesses — unchanged in intent:** one `business_usage_wallets` row and one `business_payer_assignments` row per existing Business, zero balance/debt, null caps, payer defaulted by Workspace tier, no instrument auto-attached. One `platform_feature_usage_classifications` row per existing `PlatformFeature` case. Zero newly-gated features, zero newly-required payment setup.
+**Backfill for existing Businesses — corrected this round to split by milestone, resolving a real internal contradiction: the prior round's single `initializeForNewBusiness()` wrote to both `business_usage_wallets` (an M1 table) and `business_payer_assignments` (an M2 table) from a listener the M1 contract itself installs — meaning M1's own listener would attempt to write a table that does not exist until M2 deploys.**
 
-### Ongoing (post-rollout) Business creation — new this round, resolving a real, repository-confirmed gap
+**Corrected structure:**
 
-**§3's direct evidence this round: exactly one call site dispatches `BusinessCreated`** (`BusinessManager::applyIdentity()`'s CREATE branch), while a second, genuinely distinct Business-creation code path — `WorkspaceManager::createBusinessInWorkspace()` — dispatches a **different** event, `BusinessAssignedToWorkspace`, and never dispatches `BusinessCreated`. A listener wired only to `BusinessCreated` would silently miss every Business created through the Workspace-flow path — exactly the "no newly created Business may be silently omitted" failure this correction item exists to prevent.
+1. **At M1:** `UsageWalletManager::initializeWalletForNewBusiness(int $businessId): void` — creates only `business_usage_wallets` (with its calendar-month period boundaries, §15), idempotently (checks for an existing wallet first). `App\Listeners\Usage\InitializeBusinessUsageProfile` (§9/§29) is introduced at M1, subscribed to both `BusinessCreated` and `BusinessAssignedToWorkspace`, its handler at this point calling only this one method — the only table that exists yet.
+2. **At M2:** `BillingProfileManager::initializePayerAssignmentForBusiness(int $businessId): void` — creates only `business_payer_assignments` (defaulted by the owning Workspace's current tier, §16), idempotently. **The same listener class, `InitializeBusinessUsageProfile`, is extended with one additional idempotent call to this method** — an ordinary incremental extension of M1's own shipped code by the M2 milestone, not a violation of any path restriction (§9 explains this reasoning). **M2 additionally ships a one-time backfill migration** creating a `business_payer_assignments` row for every Business that already exists at M2 deploy time — covering the gap for any Business created between M1's deploy and M2's deploy, which received a wallet via the M1 listener but no payer assignment, since that table did not exist yet when it was created.
+3. **After M2 deploys**, both confirmed Business-creation events invoke the one, now-fully-orchestrating listener, which idempotently ensures both the wallet and the payer assignment exist for every newly created Business — no method ever attempts to write a table before the milestone that creates it has shipped.
 
-**The sole initialization path: `UsageWalletManager::initializeForNewBusiness(int $businessId): void`** — creates the wallet, payer assignment (defaulted by the owning Workspace's current tier, §16), and initial period boundaries for one Business, in one transaction, **idempotently**: it first checks whether a wallet already exists for `$businessId` and no-ops if so, making it safe to invoke more than once for the same Business without effect.
+**Residual-risk statement — unchanged:** the M1/M2 implementation contracts are each explicitly required to re-verify, via their own fresh code audit at implementation time, that no third Business-creation path exists that dispatches neither `BusinessCreated` nor `BusinessAssignedToWorkspace`; if one is found, that path must call the relevant `initialize*()` method directly, inline, within its own creation transaction.
 
-**Invocation — a proven idempotent after-commit mechanism, not a single fragile call site:** `App\Listeners\Usage\InitializeUsageWalletForNewBusiness` (§29) subscribes to **both** `BusinessCreated::class` and `BusinessAssignedToWorkspace::class` — the two confirmed, currently-real Business-creation events — and calls `initializeForNewBusiness()` from each, relying on the method's own idempotency to make a Business created via one path (dispatching only one of the two events) fully covered, and a hypothetical future path that somehow dispatched both events for the same Business safe rather than double-initializing.
-
-**Explicit residual-risk statement, honestly recorded rather than silently assumed away:** this design covers every Business-creation path confirmed by direct code read at this round's base commit. **The M1/M2 implementation contract is explicitly required to re-verify, via its own fresh code audit at implementation time, that no third Business-creation path exists that dispatches neither `BusinessCreated` nor `BusinessAssignedToWorkspace`** — if one is found, that path must call `initializeForNewBusiness()` directly, inline, within its own creation transaction, as an explicit additional invocation, not merely assumed covered by the listener alone. This document does not claim broader coverage than what it directly verified.
+**Rollout — unchanged:** zero newly-gated features, zero newly-required payment setup at either M1 or M2.
 
 **DDL/data separation — unchanged.**
 
-**Rollback safety — unchanged, now applying to 26 tables:** a `migrate:rollback` proceeding in exact FK-safe reverse order will mechanically drop every RFC-005 table and silently destroy any live data accumulated since deploy. The eventual deployment guide states this explicitly and offers RFC-004's three established recovery paths.
+**Rollback safety — unchanged, now applying to 27 tables.**
 
 ---
 
 ## 33. Security and PCI posture
 
-**Corrected this round: payload retention is now executable, not merely described.** `payment_provider_events.payload_encrypted` is encrypted at rest and **nullable**, purged by `PurgeExpiredWebhookPayloads` (§21) after the retention window, leaving `payload_hash`/`state`/`provider_event_id` etc. permanently intact for idempotency/audit. Access to any still-present payload remains platform-administrator-only; ordinary logs never include a raw webhook body.
-
-**Payment-method display — unchanged:** brand/last-four/expiry only, never a raw token, never rendered to any surface as anything else.
-
-**Provider identity integrity — new this round:** `UNIQUE (provider, provider_customer_id)` and `UNIQUE (provider, provider_payment_method_id)` (§17.B) prevent the same Stripe Customer or PaymentMethod id from ever being attached to more than one local owner row — a real security/data-integrity property, not only a business-logic convention.
-
-Secrets remain environment-only, per the already-established `config/services.php` pattern.
+Unchanged: encrypted, purgeable webhook payloads; brand/last-four/expiry-only instrument display; secrets environment-only. **Provider identity integrity extended this round:** `UNIQUE (provider, provider_customer_id)`, `UNIQUE (provider, provider_payment_method_id)`, and — **new this round** — the composite FK `(provider_customer_id, provider) → payment_provider_customers(id, provider)` together make it a schema-level impossibility for a stored instrument to ever be attributed to the wrong provider or the wrong owner's customer record, not merely a manager-enforced convention.
 
 ---
 
 ## 34. Observability and internal unit-economics controls
 
-Unchanged from the prior round: `provider_cost_micro` is aggregated (never per-transaction, never customer-facing) into an admin-only dashboard implementing Human product requirement 7's internal cost-control target — never an automatic suspension/throttle trigger, never substituted for the customer-facing spend-cap/limit controls.
+Unchanged.
 
 ---
 
 ## 35. Exact test strategy
 
-Every test class below is a **future milestone's** responsibility to write. **List expanded this round with every correction's own required coverage:**
+Every test class below is a **future milestone's** responsibility to write. **List extended this round with every remediation's own required coverage:**
 
-- **Money/precision** — `UsageMoneyPrecisionTest`: the exact `bcRoundHalfUp()` algorithm (§10) at boundary values, including the sanity-ceiling rejection and zero-cent-rejection behavior.
-- **Rate snapshot immutability** — unchanged.
-- **Concurrent initial rate activation** — unchanged.
-- **Deterministic tied-activation-timestamp lookup — new this round** — `UsageRateActivationTieBreakTest`: two activation rows sharing the same `activated_at` resolve deterministically via the `id`-descending tiebreaker (§11).
-- **Classification transition audit — new this round** — `PlatformFeatureUsageClassificationTransitionTest`: `is_metered`/`active_rate_id` flips are recorded independently of `business_usage_rate_activations`, with mandatory actor/reason.
+- **Money/precision, rate snapshot immutability, concurrent initial rate activation, deterministic tied-activation-timestamp lookup, classification transition audit** — unchanged.
 - **Reservation/commit/release lifecycle** — unchanged.
-- **Cross-period reservations and counter reconciliation — new this round** — `UsagePeriodCrossBoundaryTest`: a reservation opened in period N and committed in period N+1 posts its `UsageCharge` with period N's `period_key`, never perturbs period N+1's cached counters, and is correctly reconstructed by reconciliation querying by `period_key` alone.
-- **Multi-month dormancy rollover — new this round** — `UsagePeriodMultiMonthDormancyTest`: a wallet dormant 3+ periods jumps directly to the current period in one arithmetic step, never incrementally.
+- **Committed-spend formula correctness — new this round** — `UsageCommittedSpendFormulaTest`: a mixed sequence of exact-match commits, under-reservation commits, and overage commits (split across available and debt) reconstructs `committed_spend_this_period_micro` exactly via the corrected `-reserved_delta_micro` / `(-available_delta_micro)+debt_delta_micro` formula (§13), independently verified against a from-scratch ledger recomputation.
+- **Spend-cap headroom never auto-reopened — new this round** — `UsageChargeReversalDoesNotReopenSpendCapTest`: a `UsageChargeReversal`/`Refund`/`DisputeChargeback`/`CorrectionReversal` entry never decrements `committed_spend_this_period_micro`; only an explicit `business_usage_limit_transitions` correction does.
+- **Cross-period reservations and counter reconciliation** — unchanged, now asserted against the corrected formula.
+- **Calendar-month rollover — corrected and expanded this round** — `UsageCalendarMonthRolloverTest`: explicit cases for a February rollover (28 and 29 days), a 31-day month, and a DST spring-forward/fall-back boundary in the Business's own timezone, each asserting the constructed `_start_utc`/`_end_utc` pair corresponds to genuine local calendar-month boundaries, never a fixed-duration approximation. `UsagePeriodMultiMonthDormancyTest`: a wallet dormant 3+ months lands directly in the correct current calendar month in one step.
 - **Reservation bucket delta/reconciliation, overage debt, refund/chargeback exceeding available, top-up clears debt first, outstanding debt denies reservations** — unchanged.
-- **Reservation-triggered auto-recharge — new this round** — `ReservationTriggersAutoRechargeTest`: `reserve()` itself (not only `commit()`) correctly dispatches `EvaluateBusinessAutoRecharge` when it decreases available balance below threshold; a normal within-reservation `commit()` (no overage) does **not** re-trigger it.
-- **Low-balance notification reset — new this round** — asserts `low_balance_notified_at` is cleared the moment a positive-delta entry brings the balance back above threshold.
-- **Consecutive-recharge-failure counter — new this round** — `ConsecutiveRechargeFailureCounterTest`: asserts `business_usage_wallets.consecutive_recharge_failures` increments/resets exactly per §19's rule and correctly disables `auto_recharge_enabled` at the threshold.
-- **Refund/chargeback never reopens recharge-cap headroom — new this round** — asserts `recharged_this_period_micro` is unaffected by a `Refund`/`DisputeChargeback` entry absent an explicit admin correction.
-- **Exact RFC-004 nine-key set unchanged** — unchanged, retained.
-- **Missing-wallet/currency coarse gateway behavior** — unchanged.
-- **Cap enforcement, concurrency** — unchanged.
-- **Payer-owner authorization for every charge-causing action — new this round, generalized from the prior round's narrower payer-change-only test** — `PayerConsentForChargeActionsTest`: a Workspace owner cannot initiate a top-up or enable auto-recharge when `payer_type = 'business'`; a direct Business owner cannot do either when `payer_type = 'workspace'`; Active Workspace Admin and Staff can do neither under any `payer_type`; a platform administrator can, only with a mandatory reason recorded.
-- **Workspace instrument isolation** — unchanged.
-- **Historical billing-contact snapshot immutability** — unchanged.
-- **Credit-type distinction, add-on idempotency** — unchanged.
-- **Webhook active lease vs. stale lease recovery — new this round** — `PaymentProviderEventClaimLeaseTest`: a worker holding a valid, unexpired lease blocks a second worker's claim of the same event; once the lease expires, a second worker's claim `UPDATE` correctly picks the row back up, with `attempts` incremented.
-- **Failed-event replay/resume, out-of-order/conflicting events, provider/local amount/currency/customer mismatch** — unchanged, now asserted against the corrected claim-lease algorithm.
-- **Max-attempt exhaustion — new this round** — asserts a `failed` event with `attempts >= 5` is never reclaimed by the automated worker and surfaces in the admin exhausted-events review queue (§24/§30).
-- **Payload purge while preserving replay/idempotency state — new this round** — `WebhookPayloadPurgeTest`: after `PurgeExpiredWebhookPayloads` runs, `payload_encrypted` is null and `payload_purged_at` is set, while `provider_event_id`/`payload_hash`/`state` remain intact and the `UNIQUE (provider, provider_event_id)` constraint still correctly rejects a genuine replay of the now-purged event.
-- **Provider-customer/payment-method uniqueness — new this round** — `ProviderIdentityUniquenessTest`: `UNIQUE (provider, provider_customer_id)` rejects attaching the same Stripe Customer id to a second owner; `UNIQUE (provider, provider_payment_method_id)` rejects the same PaymentMethod id under two instrument rows; detaching a `payment_provider_customers` row and creating a fresh `active` one for the same owner succeeds (the generated-column lifecycle fix, §17.B), while the detached row's `business_id`/`workspace_id` remain permanently intact.
-- **`requires_action` auto-recharge behavior** — unchanged.
-- **Stripe minimum and maximum enforcement — new this round** — `StripeAmountLimitsTest`: an amount below Stripe's documented minimum or above the eight-digit maximum is rejected locally (`amount_below_provider_minimum`/`amount_exceeds_provider_maximum`) before any outbound Stripe call.
-- **Recurring renewal, `requires_action`, cancellation, proration, and recovery — new this round** — `AdditionalBusinessSlotAgreementRenewalTest`: a scheduled renewal correctly charges the saved Workspace instrument off-session; `requires_action` on a renewal behaves identically to §19's own handling; cancellation takes effect only at the current period's end; a mid-period increase produces a correctly-prorated one-time charge (asserted against the exact `bcRoundHalfUp()` computation); a `payment_lapsed` agreement automatically recovers on the next successful charge, whether scheduled or `admin_retry`.
-- **Slot and renewal transition audits — new this round** — `AdditionalBusinessSlotTransitionAuditTest`: every state change in both `additional_business_slot_agreement_transitions` and `additional_business_slot_renewal_charge_transitions` is recorded with the correct `source`.
-- **Slot payment/allocation saga, slot authority blocker** — unchanged.
-- **Post-rollout Business initialization — new this round** — `NewBusinessUsageWalletInitializationTest`: a Business created via `BusinessManager`'s legacy-onboarding path (dispatching `BusinessCreated`) receives a wallet; a Business created via `WorkspaceManager::createBusinessInWorkspace()` (dispatching `BusinessAssignedToWorkspace`, not `BusinessCreated`) **also** receives a wallet; `initializeForNewBusiness()` invoked twice for the same Business (simulating both events firing) creates exactly one wallet, not two.
-- **Cross-table Business/wallet mismatch rejection** — unchanged, now also covering `business_usage_wallet_billing_status_transitions`/`business_funding_attempts`.
-- **Sensitive payload retention/redaction, provider-cost non-disclosure, invoice/receipt boundary, mechanical source-boundary test, webhook/provider fakes, database** — unchanged.
-- **Gate shape — unchanged, retained correctly as six commands:** (1) focused Usage tests, (2) Entitlement, (3) Workspace, (4) Business, (5) Opportunity, (6) full suite.
+- **Reservation-triggered auto-recharge, low-balance notification reset, consecutive-recharge-failure counter, recharge-cap never auto-reopened** — unchanged.
+- **Exact RFC-004 nine-key set unchanged, missing-wallet/currency coarse gateway behavior, cap enforcement, concurrency** — unchanged.
+- **Payer-owner authorization for every charge-causing action, including the narrowed platform-administrator posture — corrected and expanded this round** — `PayerConsentForChargeActionsTest`: a Workspace owner/direct Business owner cannot cross-authorize as before; **and, new this round, a platform administrator cannot originate a fresh top-up, auto-recharge enablement, or slot-agreement checkout under any `payer_type` — only resume an already-created attempt, asserted by attempting both and observing the origination attempt denied while the resume attempt (against a pre-existing attempt row) succeeds with a mandatory reason recorded.**
+- **Workspace instrument isolation, historical billing-contact snapshot immutability, credit-type distinction, add-on idempotency** — unchanged.
+- **Add-on purchase transition audit — new this round** — `AddonPurchaseTransitionAuditTest`: every `business_usage_addon_purchases.status` change is recorded in `business_usage_addon_purchase_transitions` with the correct `source`.
+- **Webhook active lease vs. stale lease recovery, failed-event replay/resume, out-of-order/conflicting events, provider/local amount/currency/customer mismatch** — unchanged, now asserted against the corrected algorithm.
+- **Max-attempt exhaustion, uniformly applied — corrected and expanded this round** — `WebhookClaimExhaustionTest`: a payload that reliably crashes the worker on every claim is reclaimed at most 5 times (the stale-`processing` branch's new `attempts` bound), then becomes permanently unreclaimed and surfaces in the admin exhausted-events queue — **the direct regression test for the exact defect this round fixed** (the prior round's stale-`processing` branch had no bound at all).
+- **Terminal-outcome exactness — new this round** — `WebhookTerminalOutcomeTest`: `processed`/`ignored` both set `completed_at`, never overload `processed_at`'s prior ambiguous meaning; each terminal `UPDATE` clears `lease_expires_at`.
+- **Payload purge while preserving replay/idempotency state** — unchanged.
+- **Provider-customer/payment-method uniqueness, including composite-FK enforcement — corrected and expanded this round** — `ProviderIdentityUniquenessTest`: unchanged assertions, plus a new assertion that an attempted `business_payment_instruments` insert whose `provider` disagrees with its `provider_customer_id`'s actual `payment_provider_customers.provider` is rejected at the schema level by the composite FK, never merely by manager-side validation.
+- **Unambiguous provider-object resolution — new this round** — `ProviderObjectResolutionTest`: a `provider_session_or_intent_reference` value is asserted unique within each of `business_funding_attempts`/`additional_business_slot_agreements`/`additional_business_slot_renewal_charges` independently; the type-aware resolution algorithm never queries more than one table for a single event.
+- **`requires_action` auto-recharge behavior, Stripe minimum and maximum enforcement** — unchanged.
+- **Recurring renewal, `requires_action`, cancellation, proration, and recovery — substantially expanded this round:**
+  - `AdditionalBusinessSlotAgreementCancellationTest`: a cancellation request sets `cancel_at_period_end`/`cancellation_requested_at`/`cancellation_effective_at` without touching `next_renewal_at`; `InitiateSlotAgreementRenewal` correctly skips a `cancel_at_period_end` agreement even while `next_renewal_at` remains non-null; `FinalizeSlotAgreementCancellation` transitions to `canceled` and nulls `next_renewal_at` only once `cancellation_effective_at` has passed.
+  - `AdditionalBusinessSlotAgreementProrationTest`: a mid-period increase's `amount_micro_snapshot` matches the exact-second `bcRoundHalfUp()` computation against the agreement's real stored UTC period boundaries — never a "days" approximation.
+  - `AdditionalBusinessSlotAgreementRepeatedIncreaseTest` — **new, the direct regression test for this round's collision fix** — two distinct mid-period increases within the same billing period produce two distinct `local_idempotency_key` values (via two distinct `change_operation_id`s) and are never treated as duplicates of each other, while a genuine client retry of the *same* increase (same `change_operation_id`) is correctly absorbed as a no-op.
+  - `AdditionalBusinessSlotAgreementFailedPeriodTest` — **new** — while a due period's renewal is being retried, no `scheduled_renewal` row is created for a later period; after exhausting retries, `payment_lapsed`/`payment_lapsed_at` are set and `next_renewal_at` is nulled, preventing any further automatic attempt; recovery recomputes `next_renewal_at` forward from the recovery moment, never retroactively, and no renewal charge is ever created for a skipped period.
+  - `AdditionalBusinessSlotAgreementRenewalContactSnapshotTest` — **new** — every renewal charge's `requesting_customer_email_snapshot` matches the parent agreement's own original value, frozen, regardless of any later (hypothetical) change to that value elsewhere.
+- **Slot and renewal transition audits, slot payment/allocation saga, slot authority blocker** — unchanged.
+- **Post-rollout Business initialization — corrected and split this round to match the M1/M2 ordering fix** — `NewBusinessWalletInitializationTest` (M1 scope): both confirmed Business-creation events result in exactly one wallet, never zero, never two. `NewBusinessPayerAssignmentInitializationTest` (M2 scope, **new**): both events result in exactly one payer assignment after M2 ships; a Business created between M1 and M2 deploy receives its payer assignment via the M2 backfill migration, asserted directly.
+- **Cross-table Business/wallet mismatch rejection, sensitive payload retention/redaction, provider-cost non-disclosure, invoice/receipt boundary, mechanical source-boundary test, webhook/provider fakes, database** — unchanged.
+- **Gate shape — unchanged, six commands.**
 
 ---
 
 ## 36. Milestone decomposition
 
-Each milestone below requires its own separately drafted, human-reviewed, merged implementation contract before work begins. **Content updated this round for the corrected table/state model; milestone count unchanged at six.**
+Each milestone requires its own separately drafted, human-reviewed, merged implementation contract before work begins. **Content corrected this round for the M1/M2 initialization-ordering fix and every other schema/algorithm correction; milestone count unchanged at six.**
 
-1. **M1 — Wallet & Ledger Foundation.** Schema: `business_usage_wallets` (with `period_key`/`consecutive_recharge_failures`), `business_usage_ledger_entries` (delta model, `period_key`), `business_usage_reservations` (`period_key`), `business_usage_rates`, `business_usage_rate_activations`, `platform_feature_usage_classifications`, `platform_feature_usage_classification_transitions`. `UsageWalletManager` (reserve/commit/release/expire with the corrected period-key accounting, rate activation with the classification-lock algorithm, coarse-capacity evaluation, `initializeForNewBusiness()`). `App\Listeners\Usage\InitializeUsageWalletForNewBusiness`, subscribed to both confirmed Business-creation events. Real `RealUsageAuthorizationGateway` bound, every feature non-metered at launch. Backfill. `bcmath` extension confirmed enabled. No HTTP surface, no Stripe. Focused + concurrency tests, including the nine-denial-key regression test, concurrent-rate-activation test, and cross-period-reservation test.
-2. **M2 — Budgets, Limits, Payer, and Billing Contact.** Schema: `business_feature_usage_limits`, `platform_feature_usage_safety_limits`, `business_usage_limit_transitions`, `business_usage_wallet_billing_status_transitions`, `business_billing_contacts`, `business_payer_assignments`, `business_payer_transitions`. `BillingProfileManager`. The full payer-consent authorization model (§16/§24), including the charge-causing-action gating. New permission category.
-3. **M3 — Provider Customers, Instruments, and Stripe Integration.** Schema: `payment_provider_customers` (generated-column active-uniqueness lifecycle), `business_payment_instruments`, `business_funding_attempts`, `business_funding_attempt_transitions`, `payment_provider_events` (claim-lease fields). `PaymentInstrumentManager`. `PaymentProviderGateway`/`StripePaymentProviderGateway`, pinning an explicit Stripe API version, validating Stripe's documented minimum **and** eight-digit maximum. SetupIntent/instrument attachment. Manual top-up. Webhook endpoint with the corrected claim-lease/reconciliation algorithm. `ProcessPaymentProviderEvent` and `PurgeExpiredWebhookPayloads` jobs. Auto-recharge as the centralized after-commit trigger. **This milestone must not imply production tax posture may simply be deferred as a routine choice: whatever this milestone ships, production payment collection remains gated by §23's legal-determination requirement regardless of what M3 itself resolves or defers.**
-4. **M4 — Additional-Slot Agreement and Add-ons.** Schema: `additional_business_slot_agreements`, `additional_business_slot_agreement_transitions`, `additional_business_slot_renewal_charges`, `additional_business_slot_renewal_charge_transitions`, `business_usage_addon_catalog`, `business_usage_addon_purchases`. Option A's full renewal/proration/dunning model. Requires, as preconditions: (a) a human-authorized resolution to the cross-RFC allocation blocker (or scoping to `allocation_pending` with manual admin completion, Option 1) and (b) an authorized RFC-004 catalog-pricing operator surface.
+1. **M1 — Wallet & Ledger Foundation.** Schema: `business_usage_wallets` (calendar-month period columns), `business_usage_ledger_entries`, `business_usage_reservations`, `business_usage_rates`, `business_usage_rate_activations`, `platform_feature_usage_classifications`, `platform_feature_usage_classification_transitions`. `UsageWalletManager` (reserve/commit/release/expire with the corrected committed-amount formula and calendar-month rollover, rate activation, coarse-capacity evaluation, **`initializeWalletForNewBusiness()` only — never a payer assignment, §32**). `App\Listeners\Usage\InitializeBusinessUsageProfile`, subscribed to both confirmed Business-creation events, calling only the wallet initializer at this milestone. Real `RealUsageAuthorizationGateway` bound, every feature non-metered at launch. Backfill. `bcmath` extension confirmed enabled. No HTTP surface, no Stripe. Focused + concurrency tests, including the nine-denial-key regression test, the committed-spend-formula test, and the calendar-month rollover tests (February, 31-day, DST).
+2. **M2 — Budgets, Limits, Payer, and Billing Contact.** Schema: `business_feature_usage_limits`, `platform_feature_usage_safety_limits`, `business_usage_limit_transitions`, `business_usage_wallet_billing_status_transitions`, `business_billing_contacts`, `business_payer_assignments`, `business_payer_transitions`. `BillingProfileManager`, **including `initializePayerAssignmentForBusiness()` (§32) and the one-time backfill migration covering every Business existing at M2 deploy time.** `App\Listeners\Usage\InitializeBusinessUsageProfile` extended with the payer-assignment call. The full payer-consent authorization model (§16/§24), including the narrowed platform-administrator posture. New permission category.
+3. **M3 — Provider Customers, Instruments, and Stripe Integration.** Schema: `payment_provider_customers` (with `UNIQUE(id, provider)`), `business_payment_instruments` (with the composite provider-consistency FK), `business_funding_attempts` (with unique `provider_session_or_intent_reference`), `business_funding_attempt_transitions`, `payment_provider_events` (with the corrected claim-lease fields, `completed_at`). `PaymentInstrumentManager`. `PaymentProviderGateway`/`StripePaymentProviderGateway`, pinning an explicit Stripe API version, validating Stripe's documented minimum **and** eight-digit maximum. The corrected, uniformly-bounded claim/lease/exhaustion algorithm. `ProcessPaymentProviderEvent` and `PurgeExpiredWebhookPayloads` jobs. Auto-recharge as the centralized after-commit trigger, including the narrowed administrator resume-only posture. Production tax posture remains gated by §23 regardless of what this milestone resolves or defers.
+4. **M4 — Additional-Slot Agreement and Add-ons.** Schema: `additional_business_slot_agreements` (with `total_amount_micro_snapshot`, the cancellation model, lapse timestamps), `additional_business_slot_agreement_transitions`, `additional_business_slot_renewal_charges` (with `charge_kind`, `change_operation_id`, the corrected idempotency-key derivation), `additional_business_slot_renewal_charge_transitions`, `business_usage_addon_catalog`, `business_usage_addon_purchases`, `business_usage_addon_purchase_transitions`. Option A's full renewal/proration/cancellation/dunning model, exact-second proration arithmetic. Requires, as preconditions: (a) a human-authorized resolution to the cross-RFC allocation blocker (or scoping to `allocation_pending` with manual admin completion) and (b) an authorized RFC-004 catalog-pricing operator surface.
 5. **M5 — Metered Feature Classification.** The first real feature(s) classified `is_metered = true` (candidate not named by this RFC — §39 item 11).
-6. **M6 — Conformance, Deployment, and Tag.** Full conformance matrix, deployment guide (rollback-danger disclosure across all 26 tables), full six-gate regression, post-merge exact-tag-candidate gate, and — only after separate explicit human authorization — the proposed annotated tag `rfc-005-business-usage-billing-and-wallets`.
+6. **M6 — Conformance, Deployment, and Tag.** Full conformance matrix, deployment guide, full six-gate regression, post-merge exact-tag-candidate gate, and — only after separate explicit human authorization — the proposed annotated tag `rfc-005-business-usage-billing-and-wallets`.
 
 ---
 
 ## 37. Acceptance criteria
 
-Unchanged from the prior round: M1–M4 introduce no feature-accessibility change; M5, and only M5, changes accessibility for its own explicitly-named, human-approved metered feature(s); every other feature remains non-metered indefinitely; activating a feature always requires its own contract, an active rate, configured limits, a rollout plan, and passing tests.
+M1–M4 introduce no feature-accessibility change; M5, and only M5, changes accessibility for its own explicitly-named, human-approved metered feature(s); every other feature remains non-metered indefinitely; activating a feature always requires its own contract, an active rate, configured limits, a rollout plan, and passing tests.
 
-At the RFC level, acceptance-complete only when: every table in §25 exists and is backfilled where required; `NullUsageAuthorizationGateway` has been replaced; the cross-RFC blocker has been resolved before M4 allocates any slot; at least one milestone's conformance document shows every §35 test class passing; and the M6 conformance matrix shows every item in §40 resolved.
+**Corrected this round: the prior round's "at least one milestone's conformance document shows every §35 test class passing" was itself impossible — no single milestone before M6 implements the full scope §35 spans (M1 cannot test Stripe-integration behavior it doesn't yet build; M4 cannot test metered-feature classification it doesn't yet build).** Corrected framing: **each milestone's own conformance document proves the tests within that milestone's own authorized scope pass — no more, no less. M6 alone proves the full aggregate RFC-005 test set (every test class named across §35, cumulatively, once every milestone has shipped) passes together, alongside the complete six-command regression suite.**
+
+At the RFC level, acceptance-complete only when: every table in §25 exists and is backfilled where required (per each table's own milestone, §32); `NullUsageAuthorizationGateway` has been replaced; the cross-RFC blocker has been resolved before M4 allocates any slot; M6's own conformance document shows the full aggregate §35 test set passing; and the M6 conformance matrix shows every item in §40 resolved.
 
 ---
 
@@ -1141,7 +1216,7 @@ Unchanged: no tag before M6; M6's post-merge exact-tag-candidate gate must pass 
 
 ## 39. Open human decisions
 
-Items 1–14 are carried forward unchanged from the prior round (renumbering avoided so every existing cross-reference remains valid); no new item is added this round — every item this round's corrections might otherwise have added (exact lease duration, exact max-attempts, exact retry counts, exact proration formula parameters) was instead resolved as an explicit category-3 recommendation directly in its own section, per the instruction to choose and fully define policy rather than leave it open wherever the evidence and inherited requirements permit a defensible default.
+Items 1–14 are carried forward unchanged from the prior round (renumbering avoided so every existing cross-reference remains valid). **No new item is added by this remediation round** — every defect this round addressed was a correctness/completeness defect in the design's own internal consistency, not a genuinely open commercial/product question; each was resolved with a concrete, justified fix directly in its own section, per the same "choose and fully define" discipline already applied throughout this document, rather than deferred to this list.
 
 1. **Exact initial retail usage rates** per eventually-metered feature. **NON-IMPLEMENTATION-READY** until resolved.
 2. **Exact default Business monthly spend cap.**
@@ -1167,7 +1242,7 @@ Maps every mandatory area from the merged design contract's §5 (A–L) and ever
 | Contract area / requirement | RFC-005 section(s) |
 |---|---|
 | A. Scope and terminology | §5, §6 |
-| B. Money and accounting invariants | §10, §11, §12 |
+| B. Money and accounting invariants | §10, §11, §12, §13 |
 | C. Metering and authorization | §14 |
 | D. Payer, payment instruments, billing contact | §16, §17 |
 | E. Stripe/provider boundary; invoices/tax/receipts; SDK version audit | §20, §21, §23 |
@@ -1189,19 +1264,17 @@ Maps every mandatory area from the merged design contract's §5 (A–L) and ever
 | §4 items 1–16 (locked decisions) | §7 |
 | Design-contract §6 gap rule | Applied throughout; open items in §39 |
 | Cross-RFC allocation authority blocker | Cross-RFC implementation blocker section; §22; §39 item 14 |
-| Corrected accounting/debt model | §10, §12 |
-| Corrected denial-key discipline | §3, §14, §35 |
-| **Complete schema contract (this round)** | §11–§23, §25 |
-| **Missing transition-audit structures (this round)** | §14.1, §22, §25 |
-| **Webhook claim/lease mechanics (this round)** | §21 |
-| **Provider identity constraints/lifecycle (this round)** | §17.B |
-| **Exact payment-limit and rounding arithmetic (this round)** | §10 |
-| **Auto-recharge trigger/failure-state correctness (this round)** | §12, §19 |
-| **Period/reservation accounting resolution (this round)** | §13, §15 |
-| **Payer consent for every charge-causing action (this round)** | §16, §24 |
-| **Recurring additional-slot provider model (this round)** | §22 |
-| **Rate/classification determinism (this round)** | §11, §14.1 |
-| **Ongoing Business creation coverage (this round)** | §32 |
+| **Committed-spend reconciliation formula (this round)** | §13 |
+| **Calendar-month rollover (this round)** | §15 |
+| **Webhook claim termination mechanics (this round)** | §21 |
+| **Business-initialization milestone ordering (this round)** | §9, §28–§32 |
+| **Provider consistency for payment instruments (this round)** | §17.B |
+| **Complete schema contract, every remaining shorthand expanded (this round)** | §11–§23, §25 |
+| **Enum-backed fields mechanically reconciled (this round)** | §26 |
+| **Add-on purchase state auditing (this round)** | §18 |
+| **Recurring slot-agreement schema and idempotency finished (this round)** | §22 |
+| **Platform-administrator charge authority narrowed (this round)** | §16, §19, §22, §24 |
+| **Acceptance/conformance wording corrected (this round)** | §37 |
 
 No area in the merged contract's §5 A–L, and no human product requirement, is unaddressed by this table.
 
