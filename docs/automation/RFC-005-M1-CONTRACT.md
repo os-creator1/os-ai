@@ -26,6 +26,15 @@ This round corrected two independently verified defects in this contract's initi
 
 ---
 
+## Correction Round 2 record (final)
+
+This is **Correction Round 2 of the `maximum_correction_rounds: 2` limit — the final ordinary correction round.** No further correction round may be opened against this contract; any subsequent defect requires either a separately human-authorized exception (mirroring the RFC-005 design document's own remediation-exception precedent) or a fresh contract. This round corrected two independently verified defects discovered only once real implementation work began — both self-identified gaps in this contract's own text, not conflicts with RFC-005 itself:
+
+1. **Listener-registration file omitted from the allowlist — added `app/Providers/EventServiceProvider.php`** (§5.4, §9.3, §10.5, §12, §13, §14, §15, §16). §9.3 always required `InitializeBusinessUsageProfile` to be "subscribed to both `BusinessCreated` and `BusinessAssignedToWorkspace`," but the contract never named the one file this repository's own established convention requires to make that subscription real: direct read of `app/Providers/EventServiceProvider.php` confirms this repository registers every listener through an explicit `$listen` array on that provider (`Registered::class => [SendEmailVerificationNotification::class]` is the sole existing entry) — no event auto-discovery is configured anywhere (`shouldDiscoverEvents()` is not overridden, so Laravel's default `false` applies). Confirmed by direct attempted implementation: the listener class alone, with no `$listen` entry, never fires. Corrected: `app/Providers/EventServiceProvider.php` is added to the allowlist, authorized for exactly two additive `$listen` mappings (`BusinessCreated::class => [InitializeBusinessUsageProfile::class]`, `BusinessAssignedToWorkspace::class => [InitializeBusinessUsageProfile::class]`) plus the two corresponding `use` imports — the existing `Registered`/`SendEmailVerificationNotification` mapping is untouched, and event discovery remains disabled.
+2. **`updated_by_user_id` nullability contradiction resolved — nullable** (§6.4, §9.1, §14, §15). §6.4's schema table declared `platform_feature_usage_classifications.updated_by_user_id` `NOT NULL`, while §9.1's own backfill algorithm explicitly writes `updated_by_user_id = null` for the system-authored bootstrap row — an internal contradiction between the schema and the algorithm the schema is supposed to govern. Resolved in favor of the already-designed system-authored behavior, which is the more specific, deliberately-reasoned statement (citing the RFC-004 `complimentary_granted_by_user_id` nullable/no-FK precedent by name) rather than the schema table's apparent carry-over notation. `updated_by_user_id` is now specified nullable, `NULL` meaning exclusively "system/bootstrap/backfill-authored," never a fake or arbitrary actor.
+
+---
+
 ## 1. Purpose
 
 Implement RFC-005 §36 Milestone 1's exact scope: the **wallet and ledger data/domain foundation only** — seven authoritative tables, their models and enums, `UsageWalletManager`'s reserve/commit/release/expire/rate-activation/coarse-capacity surface, the real `UsageAuthorizationGateway` binding (behaviorally inert until a feature is ever metered — no feature is metered at M1), the Business-initialization listener (wallet-only at this milestone), a deterministic backfill for every Business existing before M1 deploys, and M1-scoped tests. M1 introduces **no** budgets/limits/safety-limit tables (M2), **no** payer/billing-contact tables (M2), **no** Stripe/payment-instrument/webhook code (M3), **no** additional-slot/add-on code (M4), **no** actually-metered feature (M5), and **no** HTTP/admin/customer surface of any kind.
@@ -113,6 +122,7 @@ Direct read of `database/migrations/2026_07_18_120001_create_businesses_table.ph
 - Manager classes: `DB::transaction()` + row lock (`findForUpdate()`/lock-then-mutate) + after-commit event dispatch, matching `BusinessManager`/`WorkspaceManager`/`EntitlementManager`'s own shape.
 - Enum casting: string-backed PHP enums exclusively, no native database `ENUM`, cast via each model's `$casts` array — confirmed the unbroken convention across every RFC-003/RFC-004 table.
 - Events: `App\Events\{Domain}\*`, `implements ShouldDispatchAfterCommit`, carrying IDs/scalars only (confirmed for `BusinessCreated`/`BusinessAssignedToWorkspace` directly, §5.1).
+- **Listener registration — confirmed this round (Correction Round 2), previously unexamined.** Direct read of `app/Providers/EventServiceProvider.php` confirms this repository's sole listener-registration mechanism is its explicit `$listen` array (currently one entry, `Registered::class => [SendEmailVerificationNotification::class]`); `shouldDiscoverEvents()` is not overridden, so Laravel's own default of `false` applies and no event auto-discovery occurs anywhere in this codebase. A listener class alone, with no corresponding `$listen` entry, never fires — confirmed by direct attempted implementation of `InitializeBusinessUsageProfile` without this registration.
 - Jobs: `App\Jobs\Base` is the shared job base class; `App\Jobs\Business\BuildInitialBusinessSnapshot` and RFC-002's opportunity jobs implement both `ShouldQueue` **and** `ShouldQueueAfterCommit` — the established, real precedent for RFC-005's own queued reconciliation work (already recorded in the RFC-005 design contract's own audit, re-confirmed unchanged this round).
 - Migration naming: `{date}_120001_create_{table}_table.php`-style same-day sequential batches, DDL strictly before data-operation migrations, matching RFC-003's seven-migration and RFC-004's eight-migration precedent exactly (§6.10).
 - Concurrency-test precedent: `EntitlementManagerConcurrencyTest.php`'s forced-race pattern (a controlled lock-hold window proving genuine contention, an unrelated-Business/Workspace progress assertion) and `WorkspaceEntitlementBackfillV1ConcurrencyTest.php`'s two-simultaneous-run backfill pattern — both directly reused for M1's own reservation-race and wallet-initialization-race tests (§14).
@@ -251,11 +261,11 @@ Sole write authority: `UsageWalletManager`.
 | `feature_key` | `string(64)`, unique | No | — | `PlatformFeature`-backed |
 | `is_metered` | `boolean` | No | `false` | always `false` for every row at M1 (§3) |
 | `active_rate_id` | `unsignedBigInteger`, FK `business_usage_rates.id`, nullable, `restrictOnDelete()` | Yes | `NULL` | always `NULL` at M1 — no rate is ever activated without an M5-authorized metered feature |
-| `updated_by_user_id` | `unsigned bigint`, no FK | No | — | |
+| `updated_by_user_id` | `unsigned bigint`, nullable, no FK | Yes | `NULL` | **corrected this round — resolved nullable, closing the contradiction with §9.1's own algorithm.** `NULL` means exclusively "this row's current state was last written by a system/bootstrap/backfill process, never a human actor" — never a fake/system `User` record, never an arbitrary platform administrator attributed by convenience. No FK, mirroring RFC-004's `workspace_plan_assignments.complimentary_granted_by_user_id` precedent exactly (a plain scalar historical-actor column that must never block a legitimate user-deletion feature elsewhere in the system). A human-authored change — `setActiveRate()`/`activateMetering()` (§10.1), the only two methods that ever mutate an existing classification row post-backfill — must supply its own real `$actorUserId` and set this column to it; since no other code path ever mutates an already-classified row (the backfill only ever inserts a brand-new row, never updates an existing one, §9.1), a known actor already recorded here can never be silently overwritten back to `NULL` by any M1 code path. The column's own value (`NULL` vs. a real id) is itself the auditable system-vs-human-authorship signal — no separate source/type column is needed on this table for that purpose, unlike the append-only transition tables elsewhere in this schema which use an explicit `source` enum instead. |
 | `created_at` | `timestamp` | No | `now()` | |
 | `updated_at` | `timestamp` | No | `now()` | |
 
-Backfilled: one row per existing `PlatformFeature` case (currently fifteen, RFC-004 §11), `is_metered = false`, `active_rate_id = null` (§9). Sole write authority: `UsageWalletManager`.
+Backfilled: one row per existing `PlatformFeature` case (currently fifteen, RFC-004 §11), `is_metered = false`, `active_rate_id = null`, `updated_by_user_id = null` (§9.1). Sole write authority: `UsageWalletManager`.
 
 ### 6.5 `platform_feature_usage_classification_transitions`
 
@@ -405,7 +415,7 @@ Locked exactly from RFC-005 §10/§12/§13, unchanged by this contract:
 
 ### 9.1 Classification backfill (migration 8, `{impl_date}_120008_backfill_platform_feature_usage_classifications.php`)
 
-Query-builder-only (`DB::table('platform_feature_usage_classifications')`, no Eloquent model dependency), one row per `App\Enums\Entitlement\PlatformFeature::cases()` (currently fifteen, per RFC-004 §11/M1's own registry) not already present, `is_metered = false`, `active_rate_id = null`, `updated_by_user_id = null` *(system migration — the RFC-004 M1 precedent for `complimentary_granted_by_user_id` on a system-authored row already establishes `NULL`/no-FK as the correct convention for a migration-authored actor column; `updated_by_user_id` on this table has no FK per §6.4, so `NULL` is representable)*. Idempotent (checks for an existing row per `feature_key` first, safe under partial rerun). No transition row written (§6.5).
+Query-builder-only (`DB::table('platform_feature_usage_classifications')`, no Eloquent model dependency), one row per `App\Enums\Entitlement\PlatformFeature::cases()` (currently fifteen, per RFC-004 §11/M1's own registry) not already present, `is_metered = false`, `active_rate_id = null`, `updated_by_user_id = null` — **`updated_by_user_id`'s nullability is now the schema's own explicit, non-contradictory declaration (§6.4, corrected this round), not merely an algorithmic detail the schema table disagreed with.** The RFC-004 M1 precedent for `complimentary_granted_by_user_id` on a system-authored row establishes the same `NULL`/no-FK convention for a migration-authored actor column this contract reuses. Idempotent (checks for an existing row per `feature_key` first, safe under partial rerun). No transition row written (§6.5). **This is the only classification-row write M1's own backfill ever performs — an `INSERT` of a brand-new row, never an `UPDATE` of an existing one** — so a backfill rerun can never overwrite a real human actor id a later `setActiveRate()`/`activateMetering()` call (§10.1) may have already recorded on a row that already existed from an earlier backfill pass.
 
 ### 9.2 Wallet backfill (migration 9, `{impl_date}_120009_backfill_business_usage_wallets.php`, invoking `App\Library\Usage\Migration\UsageWalletBackfillV1` directly — never a console-command wrapper, mirroring RFC-003 migration 5 / RFC-004 migration 8's exact precedent)
 
@@ -427,6 +437,30 @@ Query-builder-only (`DB::table('platform_feature_usage_classifications')`, no El
 ### 9.3 Ongoing (post-rollout) Business creation
 
 `App\Listeners\Usage\InitializeBusinessUsageProfile`, subscribed to both `BusinessCreated` and `BusinessAssignedToWorkspace` (§5.1's two confirmed events, both `ShouldDispatchAfterCommit`). At M1, its handler calls only `UsageWalletManager::initializeWalletForNewBusiness(int $businessId): void` — idempotent (checks for an existing wallet first, via the same unique-constraint-catch pattern as §9.2), creating exactly one wallet using §9.2's identical per-Business value construction, evaluated at the moment of the listener's own invocation rather than the backfill's execution instant. **The listener class is introduced fresh at M1**; RFC-005 §9/§32 anticipates M2 extending this same class with one additional idempotent call — that extension is explicitly **not** authorized by this contract (§3) and is M2's own responsibility.
+
+**Registration mechanism — corrected this round, previously unspecified.** Direct read of `app/Providers/EventServiceProvider.php` confirms this repository's sole listener-registration mechanism is its explicit `$listen` array — no event auto-discovery is configured (`shouldDiscoverEvents()` is not overridden; Laravel's own default of `false` applies), so a listener class with no `$listen` entry never fires, confirmed by direct attempted implementation. **`app/Providers/EventServiceProvider.php` is authorized (§12) for exactly two additive `$listen` entries and their two corresponding `use` imports**:
+
+```php
+use App\Events\Business\BusinessCreated;
+use App\Events\Workspace\BusinessAssignedToWorkspace;
+use App\Listeners\Usage\InitializeBusinessUsageProfile;
+
+protected $listen = [
+    Registered::class => [
+        SendEmailVerificationNotification::class,
+    ],
+    BusinessCreated::class => [
+        InitializeBusinessUsageProfile::class,
+    ],
+    BusinessAssignedToWorkspace::class => [
+        InitializeBusinessUsageProfile::class,
+    ],
+];
+```
+
+The existing `Registered::class => [SendEmailVerificationNotification::class]` mapping is untouched. No `boot()` change, no `shouldDiscoverEvents()` override, no provider restructuring, no unrelated formatting change — the two new mappings and their two imports are the entire authorized diff to this file. Each mapping is registered **exactly once** — a duplicate `$listen` entry for the same event would cause the listener to fire twice per event, which would itself violate the wallet-initialization idempotency guarantee's own single-attempt framing (even though the guarantee would still technically hold via the unique-constraint-catch, a duplicate registration is never intentional and is explicitly excluded); a mechanical search proves this (§13).
+
+**Duplicate event delivery, restated precisely for this correction:** if the same event instance is somehow delivered twice (queue redelivery, an at-least-once delivery guarantee, or any other cause), the listener's second invocation calls `initializeWalletForNewBusiness()` again; that method's own idempotent existing-wallet check (or, on a genuine simultaneous race, the unique-constraint-catch, §9.2) means at most one wallet and its exactly-one opening ledger-entry-free row (M1 never writes an opening ledger entry — no credit method exists, §5.7) are ever created — never two.
 
 **Currency-resolution failure during ongoing Business creation — corrected this round, described honestly against the listener's real event timing.** Both `BusinessCreated` and `BusinessAssignedToWorkspace` are `ShouldDispatchAfterCommit` (§5.1, re-confirmed by direct read) — by the time `InitializeBusinessUsageProfile` runs, the Business row is **already committed** to the database. **The listener cannot roll back an already-committed Business, and this contract does not pretend it can.** If `initializeWalletForNewBusiness()` throws `BusinessCurrencyUnresolvableException` (§5.5) for a newly created Business:
 
@@ -454,8 +488,8 @@ Zero newly-gated features at M1 — `RealUsageAuthorizationGateway` is bound (§
 - `reserve(Business $business, string $featureKey, string $idempotencyKey, ?string $estimatedQuantity = null): ReservationResult`
 - `commit(int $reservationId, ?string $finalQuantity = null): CommitResult`
 - `release(int $reservationId): void`
-- `setActiveRate(string $featureKey, string $retailRateMicro, string $providerCostMicro, string $unitLabel, int $currencyId, int $actorUserId, string $reason): void`
-- `activateMetering(string $featureKey, int $actorUserId, string $reason): void` — present at M1 (the method the RFC's own §11 names), but **never called by any M1 code path** (no HTTP surface, no M5 feature yet) — a direct test asserts it is unreachable from any M1-authorized route/console command.
+- `setActiveRate(string $featureKey, string $retailRateMicro, string $providerCostMicro, string $unitLabel, int $currencyId, int $actorUserId, string $reason): void` — **corrected this round:** also sets the classification row's `updated_by_user_id = $actorUserId`, the one and only way that column is ever set to a non-`NULL` value (§6.4/§9.1).
+- `activateMetering(string $featureKey, int $actorUserId, string $reason): void` — present at M1 (the method the RFC's own §11 names), but **never called by any M1 code path** (no HTTP surface, no M5 feature yet) — a direct test asserts it is unreachable from any M1-authorized route/console command. **Corrected this round:** also sets `updated_by_user_id = $actorUserId` on the classification row it mutates, identically to `setActiveRate()`.
 - `evaluateCoarseCapacity(Business $business, PlatformFeature $feature): UsageCapacityDecision` (internal-facing; called by `RealUsageAuthorizationGateway`, never returns past that boundary) — M1's own narrowed evaluation order: `is_metered` (always `false` at M1, short-circuits to authorized) → *(nothing further is ever reached at M1, since no feature is ever metered)*.
 
 ### 10.2 Gateway
@@ -472,7 +506,7 @@ Implemented as a private `UsageWalletManager` method, invoked lazily at the top 
 
 ### 10.5 Authority boundaries
 
-No controller, job, or event listener writes to any M1 table directly — every mutation passes through `UsageWalletManager`. Repositories are plain data-access contracts (matching RFC-004 M1's own "no business-rule/authority logic" boundary, §11 of that contract) — no repository computes a reservation decision, a rate activation, or a coarse-capacity result. No M1 job or listener may create a duplicate wallet or ledger effect — enforced by the idempotency mechanisms in §8/§9. No legacy payment/billing code (`PaymentController.php`, `PaymentMethods`, `Invoices`, `SubscriptionTransaction`) is read, written, or referenced by any M1 code. **Fail-closed until initialized, restated here — §8 item 0:** a Business without a wallet (currency resolution never attempted, or previously failed, §9.2/§9.3) has zero usable wallet/accounting capability at M1 — `reserve()`/`commit()`/`release()` all refuse via `UsageWalletNotFoundException` rather than silently no-op or substitute default state.
+No controller, job, or event listener writes to any M1 table directly — every mutation passes through `UsageWalletManager`. Repositories are plain data-access contracts (matching RFC-004 M1's own "no business-rule/authority logic" boundary, §11 of that contract) — no repository computes a reservation decision, a rate activation, or a coarse-capacity result. No M1 job or listener may create a duplicate wallet or ledger effect — enforced by the idempotency mechanisms in §8/§9. No legacy payment/billing code (`PaymentController.php`, `PaymentMethods`, `Invoices`, `SubscriptionTransaction`) is read, written, or referenced by any M1 code. **Fail-closed until initialized, restated here — §8 item 0:** a Business without a wallet (currency resolution never attempted, or previously failed, §9.2/§9.3) has zero usable wallet/accounting capability at M1 — `reserve()`/`commit()`/`release()` all refuse via `UsageWalletNotFoundException` rather than silently no-op or substitute default state. **Event registration boundary — corrected this round:** `app/Providers/EventServiceProvider.php` is the one exception to "no M1 file besides `AppServiceProvider` is modified" — authorized narrowly for exactly the two additive `$listen` mappings and their imports described in §9.3, never event discovery, never a restructured provider (§12).
 
 ---
 
@@ -492,7 +526,7 @@ No controller, job, or event listener writes to any M1 table directly — every 
 
 ## 12. Exact implementation allowlist
 
-**Rebuilt mechanically this correction round — 69 unique paths total, not the prior round's 70 (recalculated, not preserved for convenience).** Category subtotals sum exactly to the total; no path appears in more than one category: 9 migrations + 4 enums + 3 value objects + 7 models + 7 repository contracts + 7 Eloquent repositories + 1 gateway + 1 manager + 1 listener + **1 job** (was 2 — `EvaluateBusinessAutoRecharge` removed) + 5 exceptions (one renamed, no count change) + **0 config** (was 1 — `config/usage.php` removed entirely, it existed only for the withdrawn default-currency fallback) + 6 backfill/support + **17 tests** (was 16 — one renamed for its corrected purpose, one net addition) = **69**.
+**Rebuilt mechanically this correction round — 70 unique paths total (53 production + 17 test), not the prior round's 69 (recalculated, not preserved for convenience).** Category subtotals sum exactly to the total; no path appears in more than one category: 9 migrations + 4 enums + 3 value objects + 7 models + 7 repository contracts + 7 Eloquent repositories + 1 gateway + 1 manager + 1 listener + 1 job + 5 exceptions + **7 backfill/support** (was 6 — `app/Providers/EventServiceProvider.php` added this round, §5.4/§9.3/§10.5) + 17 tests = **70**.
 
 No path in this list is a glob or pattern matching more than one file. The nine migration entries are the same partial exception §6.10 already explains (date component only). All other entries are complete, literal, exact paths.
 
@@ -577,36 +611,37 @@ No path in this list is a glob or pattern matching more than one file. The nine 
 45. `app/Exceptions/Usage/NoActiveRateForFeatureException.php`
 46. `app/Exceptions/Usage/BusinessCurrencyUnresolvableException.php` — **renamed this round** from the withdrawn `UsageDefaultCurrencyNotConfiguredException`; thrown when a Business's own `currency_code` resolves to zero or multiple active `currencies` rows (§5.5).
 
-### Backfill/support (6 new)
+### Backfill/support (7 new/modified — `EventServiceProvider.php` added this round)
 
 47. `app/Library/Usage/Migration/UsageWalletBackfillV1.php`
-48. `app/Library/Usage/Migration/UsageWalletBackfillResult.php` — **content corrected this round**: adds `currencyResolutionFailures: array` (§9.2).
+48. `app/Library/Usage/Migration/UsageWalletBackfillResult.php` — content corrected the prior round: adds `currencyResolutionFailures: array` (§9.2).
 49. `app/Console/Commands/BackfillUsageWalletsCommand.php`
-50. `app/Exceptions/Usage/UsageWalletBackfillIncompleteException.php` — **content corrected this round**: now also carries the run's currency-resolution failure list (§9.2).
+50. `app/Exceptions/Usage/UsageWalletBackfillIncompleteException.php` — content corrected the prior round: now also carries the run's currency-resolution failure list (§9.2).
 51. `app/Exceptions/Usage/PlatformFeatureUsageClassificationBackfillIncompleteException.php` — mirrors §9.1's own final-assertion discipline; if migration 8's classification backfill is interrupted, this exception carries the exact remaining count, matching §9.2's wallet-backfill exception exactly.
 52. `app/Providers/AppServiceProvider.php` — **modified, not new**: (a) the existing `UsageAuthorizationGateway::class` binding line's implementation target changes from `NullUsageAuthorizationGateway::class` to `RealUsageAuthorizationGateway::class`; (b) exactly seven additive lines appended to the `$bindings` array, one per M1 repository pair, in a new contiguous group immediately following the existing Entitlement group. No other line in this file changes.
+53. `app/Providers/EventServiceProvider.php` — **new this round (§5.4/§9.3/§10.5, Correction Round 2)**, **modified, not new as a file, but newly authorized for M1's own purposes**: exactly two additive `$listen` array entries (`BusinessCreated::class => [InitializeBusinessUsageProfile::class]`, `BusinessAssignedToWorkspace::class => [InitializeBusinessUsageProfile::class]`) and their two corresponding `use` imports. The existing `Registered::class => [SendEmailVerificationNotification::class]` mapping is untouched. No `boot()` change. No `shouldDiscoverEvents()` override — event discovery remains disabled. No other line in this file changes.
 
-### Tests (17 new — one renamed for its corrected purpose, one net addition this round)
+### Tests (17 new)
 
-53. `tests/Unit/Usage/UsageEnumsTest.php`
-54. `tests/Feature/Usage/BusinessUsageWalletSchemaTest.php`
-55. `tests/Feature/Usage/BusinessUsageRateSchemaTest.php`
-56. `tests/Feature/Usage/PlatformFeatureUsageClassificationSchemaTest.php`
-57. `tests/Feature/Usage/BusinessUsageReservationLedgerSchemaTest.php`
-58. `tests/Feature/Usage/UsageWalletManagerReservationLifecycleTest.php`
-59. `tests/Feature/Usage/UsageWalletManagerCommittedSpendFormulaTest.php`
-60. `tests/Feature/Usage/UsageCalendarMonthRolloverTest.php`
-61. `tests/Feature/Usage/UsageWalletManagerConcurrencyTest.php`
-62. `tests/Feature/Usage/UsageWalletBackfillV1Test.php`
-63. `tests/Feature/Usage/UsageWalletBackfillV1ConcurrencyTest.php`
-64. `tests/Feature/Usage/BackfillUsageWalletsCommandTest.php`
-65. `tests/Feature/Usage/NewBusinessWalletInitializationTest.php`
-66. `tests/Feature/Usage/NoAutoRechargeDispatchAtM1Test.php` — **renamed this round** from `EvaluateBusinessAutoRechargeStubTest.php`, whose original purpose (proving an inert M1 stub never calls Stripe) no longer applies since the job itself is removed from M1; this file now proves the opposite and stronger claim directly (§14).
-67. `tests/Feature/Usage/BusinessCurrencyResolutionTest.php` — **new this round** (§14).
-68. `tests/Feature/Usage/RealUsageAuthorizationGatewayTest.php`
-69. `tests/Feature/Entitlement/EntitlementManagerNineKeySurfaceUnchangedTest.php`
+54. `tests/Unit/Usage/UsageEnumsTest.php`
+55. `tests/Feature/Usage/BusinessUsageWalletSchemaTest.php`
+56. `tests/Feature/Usage/BusinessUsageRateSchemaTest.php`
+57. `tests/Feature/Usage/PlatformFeatureUsageClassificationSchemaTest.php`
+58. `tests/Feature/Usage/BusinessUsageReservationLedgerSchemaTest.php`
+59. `tests/Feature/Usage/UsageWalletManagerReservationLifecycleTest.php`
+60. `tests/Feature/Usage/UsageWalletManagerCommittedSpendFormulaTest.php`
+61. `tests/Feature/Usage/UsageCalendarMonthRolloverTest.php`
+62. `tests/Feature/Usage/UsageWalletManagerConcurrencyTest.php`
+63. `tests/Feature/Usage/UsageWalletBackfillV1Test.php`
+64. `tests/Feature/Usage/UsageWalletBackfillV1ConcurrencyTest.php`
+65. `tests/Feature/Usage/BackfillUsageWalletsCommandTest.php`
+66. `tests/Feature/Usage/NewBusinessWalletInitializationTest.php` — **content requirement strengthened this round (§14)**: must prove both real Business-creation paths (via `BusinessManager::createOrUpdateOnboardingBusiness()` and `WorkspaceManager::createBusinessInWorkspace()`, never a hand-rolled event dispatch standing in for them) each result in exactly one wallet through the now-registered listener, and that a genuinely duplicated event delivery for the same Business never creates a second wallet.
+67. `tests/Feature/Usage/NoAutoRechargeDispatchAtM1Test.php` — renamed the prior round from `EvaluateBusinessAutoRechargeStubTest.php`, whose original purpose (proving an inert M1 stub never calls Stripe) no longer applies since the job itself is removed from M1; this file now proves the opposite and stronger claim directly (§14).
+68. `tests/Feature/Usage/BusinessCurrencyResolutionTest.php` — new the prior round (§14).
+69. `tests/Feature/Usage/RealUsageAuthorizationGatewayTest.php`
+70. `tests/Feature/Entitlement/EntitlementManagerNineKeySurfaceUnchangedTest.php`
 
-**Sixty-nine total paths (items 1–69 above), matching §12's own opening count exactly.** **No unrelated path may be authorized.** If M1's own implementation discovers a genuine need for a path not listed above, that is a STOP-and-report condition for a bounded contract amendment (§17) — not something to add silently.
+**Seventy total paths (items 1–70 above): 53 production + 17 test, matching §12's own opening count exactly.** **No unrelated path may be authorized.** If M1's own implementation discovers a genuine need for a path not listed above, that is a STOP-and-report condition for a bounded contract amendment (§17) — not something to add silently.
 
 ---
 
@@ -621,13 +656,14 @@ Exact commands and expected classifications, run before the M1 implementation PR
 5. **Entitlement denial-key drift**: `rg "'(platform_feature_unknown|platform_feature_unavailable|workspace_plan_unassigned|denied_by_workspace_override|not_entitled_by_plan|disabled_for_business|plan_suspended|plan_inactive|usage_unauthorized)'" app/Library/Entitlement/EntitlementManager.php` — expected: exactly the same nine matches present before M1, none added/removed (diffed against the pre-M1 file).
 6. **`UsageAuthorizationGateway` binding drift**: `rg "UsageAuthorizationGateway::class =>" app/Providers/AppServiceProvider.php` — expected: exactly one match, target `RealUsageAuthorizationGateway::class`.
 7. **Legacy payment-file changes**: `git diff --name-only <base>...<head> | rg "PaymentController|PaymentMethods|Invoices|SubscriptionTransaction|CustomerBasedPricingPlan|PlanSendingCreditPrice"` — expected: zero matches.
-8. **Business-creation path coverage**: `rg "BusinessCreated::dispatch|BusinessAssignedToWorkspace::dispatch" app/` — expected: exactly the same two call sites present before M1 (§5.1), plus the new listener's own `#[AsEventListener]`/subscription wiring referencing both event classes — never a third dispatch site.
+8. **Business-creation path coverage**: `rg "BusinessCreated::dispatch|BusinessAssignedToWorkspace::dispatch" app/` — expected: exactly the same two call sites present before M1 (§5.1) — never a third dispatch site.
 9. **Synchronous pre-commit event dispatch**: `rg "class (InitializeBusinessUsageProfile)" -A5 app/Listeners/Usage/` confirmed listening only to events already confirmed `ShouldDispatchAfterCommit` (§5.1) — no new event class is introduced by M1 that lacks `ShouldDispatchAfterCommit`.
 10. **Controllers/routes/views accidentally introduced**: `git diff --name-only <base>...<head> | rg "app/Http/Controllers|routes/|resources/views"` — expected: zero matches.
 11. **RFC-005 concepts outside the authorized allowlist**: `rg "class (BillingProfileManager|PaymentInstrumentManager|UsageBillingCheckoutManager|StripePaymentProviderGateway)" app/` — expected: zero matches (none of these M2/M3/M4 managers exist yet).
 12. **`WorkspaceM1BBoundaryTest` scope check**: confirm `tests/Feature/Workspace/WorkspaceM1BBoundaryTest.php::test_no_rfc005_concepts_exist_yet` still passes unmodified — its own scope (Workspace-named files only, RFC-005-DESIGN-CONTRACT.md's own audit finding) does not flag any Business-scoped M1 class, so no update to that test is required or authorized by this contract.
 13. **No `EvaluateBusinessAutoRecharge` reference at M1 — new this round**: `rg "EvaluateBusinessAutoRecharge" app/` — expected: zero matches anywhere in `app/` (the class, any dispatch call, and any binding are all M3 scope, §5.7); the same command against `tests/Feature/Usage/` is expected to find matches only inside `NoAutoRechargeDispatchAtM1Test.php`, which asserts the class's absence/non-dispatch rather than exercising it.
-14. **No default/fallback currency path remains — new this round**: `rg "default_currency_code|UsageDefaultCurrencyNotConfiguredException|config\('usage" app/ config/` — expected: zero matches anywhere (the withdrawn config key, its exception, and the `config/usage.php` file itself must not exist, §5.5).
+14. **No default/fallback currency path remains**: `rg "default_currency_code|UsageDefaultCurrencyNotConfiguredException|config\('usage" app/ config/` — expected: zero matches anywhere (the withdrawn config key, its exception, and the `config/usage.php` file itself must not exist, §5.5).
+15. **Listener registration exists exactly once per event — new this round (Correction Round 2, §9.3)**: `rg "InitializeBusinessUsageProfile::class" app/Providers/EventServiceProvider.php` — expected: **exactly two matches**, one inside the `BusinessCreated::class` mapping and one inside the `BusinessAssignedToWorkspace::class` mapping; a third match, or a match count of zero or one, is a failure. `rg "shouldDiscoverEvents"` (repository-wide) — expected: zero matches (event discovery is never enabled). `rg "Registered::class" app/Providers/EventServiceProvider.php` — expected: exactly one match, confirming the pre-existing mapping is untouched.
 
 ---
 
@@ -647,7 +683,7 @@ Per-file coverage requirements:
 - **`UsageWalletBackfillV1Test.php`** (Feature): a wallet is created for every existing Business, each with the exact backfilled column values (§9.2), **each resolved from that specific Business's own `currency_code`**; a Business with an unresolvable currency (missing/unknown/inactive/ambiguous match) is skipped with no partial wallet/ledger state, its failure recorded in `UsageWalletBackfillResult::$currencyResolutionFailures`, and processing **continues** to the remaining Businesses in the run (§9.2's continue-and-report discipline) rather than aborting; the final assertion fails with the exact remaining count and failure list when any Business is left unwalleted; no legacy payment/billing table is touched.
 - **`UsageWalletBackfillV1ConcurrencyTest.php`** (Feature): two simultaneous backfill runs create exactly one wallet per never-before-walleted Business; idempotent full-rerun; partial-rerun safety.
 - **`BackfillUsageWalletsCommandTest.php`** (Feature): the command wraps the same action the migration uses; non-zero exit with the exact remaining count on a forced-incomplete scenario.
-- **`NewBusinessWalletInitializationTest.php`** (Feature): both `BusinessCreated` (legacy onboarding) and `BusinessAssignedToWorkspace` (`createBusinessInWorkspace()`) each result in exactly one wallet, never zero, never two; a repeat-fired event (simulated) is a no-op.
+- **`NewBusinessWalletInitializationTest.php`** (Feature) — **strengthened this round (Correction Round 2, §9.3)**: both `App\Library\Business\BusinessManager::createOrUpdateOnboardingBusiness()` (dispatching real `BusinessCreated`) and `App\Library\Workspace\WorkspaceManager::createBusinessInWorkspace()` (dispatching real `BusinessAssignedToWorkspace`) — the genuine production call paths, never a hand-rolled `Event::dispatch()` standing in for them — each result in exactly one wallet, through the now-registered `InitializeBusinessUsageProfile` listener, never zero, never two; a genuinely duplicated delivery of the same event for the same Business (not merely a second direct manager call) never creates a second wallet.
 - **`NoAutoRechargeDispatchAtM1Test.php`** (Feature) — **renamed and redefined this round**: a successful `reserve()` (whose `Reservation` entry has a negative `available_delta_micro`, per RFC-005 §13) dispatches **no job of any kind** related to auto-recharge; `EvaluateBusinessAutoRecharge` is asserted to not exist as a referenced/bound class anywhere in M1's own code (mirroring mechanical search 13, §13); the regression test for §5.7's corrected conclusion that M3, not M1, owns this trigger.
 - **`BusinessCurrencyResolutionTest.php`** (Feature) — **new this round**: a valid, active Business currency resolves to the correct `currency_id`; a Business whose `currency_code` matches no `currencies` row fails closed (`BusinessCurrencyUnresolvableException`, classification `not_found`); a Business whose `currency_code` matches an inactive-only `currencies` row (`status = false`) fails closed identically (also `not_found`, since the `status = true` filter excludes it); a Business whose `currency_code` matches two or more active `currencies` rows fails closed with classification `ambiguous`; no fallback/default currency is ever substituted in any of these cases; no wallet row, no ledger entry, and no other partial accounting state exists after any failure (verified by a direct row-count assertion); correcting the Business's `currency_code` (or the `currencies` data) and retrying `initializeWalletForNewBusiness()`/re-running the backfill command succeeds and creates **exactly one** wallet, never a duplicate from the earlier failed attempt; one Business's currency failure during a backfill run does not prevent a different Business in the same run from succeeding (cross-contamination isolation); a later change to `businesses.currency_code` after a wallet already exists does not alter that wallet's `currency_id` or any existing ledger entry's `currency_id` (§7 invariant 11).
 - **`RealUsageAuthorizationGatewayTest.php`** (Feature): for every one of the fifteen `PlatformFeature` cases, `check()` returns `authorized: true` given the post-M1-backfill classification state (`is_metered = false` universally); `evaluateCoarseCapacity()`'s internal `UsageCapacityDecision` never leaks past the gateway boundary (return-type assertion).
@@ -678,12 +714,13 @@ M1 is acceptance-complete only when each of the following is proven, with implem
 2. `UsageWalletManager::reserve()`/`commit()`/`release()`/expire-via-job all behave exactly per §7/§8, proven by `UsageWalletManagerReservationLifecycleTest`/`UsageWalletManagerCommittedSpendFormulaTest`.
 3. Calendar-month rollover is genuinely calendar-correct, proven by `UsageCalendarMonthRolloverTest`.
 4. Concurrent reservation races resolve to exactly one winner, and unrelated Businesses are provably isolated, proven by `UsageWalletManagerConcurrencyTest`.
-5. Every existing Business, and every newly created Business via both confirmed creation paths, has exactly one wallet **denominated in that Business's own valid currency** — or, for any Business whose currency was unresolvable, no wallet and no partial state at all, with a recorded, retryable failure — proven by `UsageWalletBackfillV1Test`/`UsageWalletBackfillV1ConcurrencyTest`/`NewBusinessWalletInitializationTest`/`BusinessCurrencyResolutionTest`.
+5. Every existing Business, and every newly created Business via both confirmed creation paths — **through the actually-registered `InitializeBusinessUsageProfile` listener** (§9.3, Correction Round 2) — has exactly one wallet **denominated in that Business's own valid currency** — or, for any Business whose currency was unresolvable, no wallet and no partial state at all, with a recorded, retryable failure; a duplicated event delivery for the same Business never creates a second wallet — proven by `UsageWalletBackfillV1Test`/`UsageWalletBackfillV1ConcurrencyTest`/`NewBusinessWalletInitializationTest`/`BusinessCurrencyResolutionTest`.
 6. `RealUsageAuthorizationGateway` is bound, and `EntitlementManager::decide()`'s nine-key surface and overall behavior are byte-for-byte unchanged, proven by `RealUsageAuthorizationGatewayTest`/`EntitlementManagerNineKeySurfaceUnchangedTest` and mechanical search 5/6 (§13).
 7. **No `EvaluateBusinessAutoRecharge` reference, dispatch, or binding exists anywhere in M1's own code** — that trigger is M3's own responsibility per RFC-005 §36 item 3 — proven by `NoAutoRechargeDispatchAtM1Test` and mechanical search 13 (§13).
 8. No legacy payment/billing file, no controller/route/view, no default/fallback currency path, and no M2–M6 RFC-005 concept was touched, proven by mechanical searches 1, 7, 10, 11, 13, 14 (§13) and §16 exact-scope verification.
-9. All six regression gates (§14) pass, with actual results honestly recorded.
-10. No unresolved GAP/BLOCKED item exists (§17).
+9. `EventServiceProvider.php` carries exactly the two authorized `$listen` mappings, event discovery remains disabled, and the pre-existing `Registered` mapping is untouched, proven by mechanical search 15 (§13).
+10. All six regression gates (§14) pass, with actual results honestly recorded.
+11. No unresolved GAP/BLOCKED item exists (§17).
 
 ---
 
@@ -698,10 +735,10 @@ Respecting migration/container-binding/event/deployment dependencies:
 5. **Exceptions** (§12 items 42–46) — no dependency beyond PHP itself; may be built alongside step 4. **No config file** — `config/usage.php` was removed this round along with the fallback it supported.
 6. **`UsageWalletManager`, `RealUsageAuthorizationGateway`** (§12 items 38–39) — depends on repositories, exceptions, value objects.
 7. **`AppServiceProvider` binding update** (§12 item 52) — depends on the gateway and all seven repository pairs existing.
-8. **Events/listeners**: `InitializeBusinessUsageProfile` (§12 item 40) — depends on the manager.
+8. **Events/listeners**: `InitializeBusinessUsageProfile` (§12 item 40) — depends on the manager. **`EventServiceProvider` registration** (§12 item 53, new this round) — depends on the listener class existing; the two `$listen` mappings/imports are the step that actually makes the listener fire (§9.3).
 9. **Initialization and backfill**: `UsageWalletBackfillV1`/`UsageWalletBackfillResult`/`BackfillUsageWalletsCommand`/its two exceptions (§12 items 47–51), migrations 8–9 (§12 items 8–9) — depends on the manager and the classification/wallet tables; migration 8 before migration 9 (classification rows are independent of wallets, but keeping the documented order avoids any ambiguity).
-10. **Jobs**: `ExpireStaleUsageReservations` only (§12 item 41) — depends on the manager. **`EvaluateBusinessAutoRecharge` is not built at M1** (removed this round, §5.7).
-11. **Tests** (§12 items 53–69) — written alongside each corresponding step above, not deferred to the end; schema tests immediately after their migration, manager/lifecycle tests after the manager, backfill and currency-resolution tests after the backfill action, the gateway/nine-key tests after the `AppServiceProvider` change.
+10. **Jobs**: `ExpireStaleUsageReservations` only (§12 item 41) — depends on the manager. **`EvaluateBusinessAutoRecharge` is not built at M1** (removed a prior round, §5.7).
+11. **Tests** (§12 items 54–70) — written alongside each corresponding step above, not deferred to the end; schema tests immediately after their migration, manager/lifecycle tests after the manager, backfill and currency-resolution tests after the backfill action, the gateway/nine-key tests after the `AppServiceProvider` change, `NewBusinessWalletInitializationTest` only after step 8's `EventServiceProvider` registration actually exists (otherwise the real event paths it exercises cannot pass).
 12. **Mechanical searches and full regression** (§13/§14) — last, after every prior step is complete.
 
 ---
@@ -723,13 +760,13 @@ Implementation must stop and report if:
 
 **Do not silently revise the RFC. Do not implement around the gap.** Minor implementation-detail choices this contract or the RFC intentionally leaves to ordinary repository convention (exact PHPDoc style, exact private-method decomposition inside a manager) may be resolved directly during implementation without triggering this rule.
 
-No unresolved conflict remains after this correction round. This round's own two corrections (see "Correction Round 1 record" above) were self-identified defects in this contract's own initial drafting, not conflicts with RFC-005 itself — in both cases, closer reading of already-available repository/RFC evidence (the `Currency` model's real normalization rule; RFC-005 §36 item 3's explicit M3 assignment) showed the initial draft's own resolution was wrong, not that RFC-005 v1.4 contains an internal contradiction requiring a BLOCKED status or a design correction.
+No unresolved conflict remains after this correction round. Both correction rounds' corrections (see "Correction Round 1 record" and "Correction Round 2 record" above) were self-identified defects in this contract's own drafting — Round 1's two (currency-fallback design; the auto-recharge stub) from closer reading of already-available repository/RFC evidence; Round 2's two (the missing `EventServiceProvider.php` allowlist entry; the `updated_by_user_id` nullability contradiction between the schema table and the backfill algorithm) discovered once real implementation was attempted against this contract's own text. None of the four is a conflict with RFC-005 itself requiring a BLOCKED status or a design correction — each was this contract's own drafting getting a narrow, mechanical detail wrong, corrected against evidence that was available at drafting time but not fully applied.
 
 ---
 
 ## 18. Correction-round policy and governance
 
-`maximum_correction_rounds: 2` — matching every prior RFC-003/RFC-004/RFC-005 contract's bounded-correction discipline exactly. A correction round stays inside the exact §12 path list; it does not expand scope.
+`maximum_correction_rounds: 2` — matching every prior RFC-003/RFC-004/RFC-005 contract's bounded-correction discipline exactly. A correction round stays inside the exact §12 path list (extended, not exceeded, by this round's own single narrowly-justified addition, §12); it does not otherwise expand scope. **This document has now used both of its two ordinary correction rounds** (Round 1: currency-fallback and auto-recharge-stub removal; Round 2, this round: listener-registration allowlist gap and the `updated_by_user_id` nullability contradiction) — this is the final ordinary correction round. Any further defect discovered after this round requires either a separately human-authorized exception (mirroring the RFC-005 design document's own remediation-exception precedent, not an ordinary correction round) or a fresh contract.
 
 Locked:
 
@@ -754,8 +791,8 @@ M1 is complete only when:
 
 - this contract is human-merged;
 - a separate, explicit human instruction to begin M1 implementation has been given;
-- the M1 implementation PR stayed inside the exact 69 authorized paths (§12), with no unrelated file touched;
-- all seven tables, their models, four enums, three value objects, seven repository contracts + Eloquent implementations, the manager, the gateway, the listener, the one job (`ExpireStaleUsageReservations` — `EvaluateBusinessAutoRecharge` is not built at M1, §5.7), the five exceptions, and the `AppServiceProvider` binding/repository additions are complete and match §6/§10/§12 exactly;
+- the M1 implementation PR stayed inside the exact 70 authorized paths (§12), with no unrelated file touched;
+- all seven tables, their models, four enums, three value objects, seven repository contracts + Eloquent implementations, the manager, the gateway, the listener, the one job (`ExpireStaleUsageReservations` — `EvaluateBusinessAutoRecharge` is not built at M1, §5.7), the five exceptions, the `AppServiceProvider` binding/repository additions, and the `EventServiceProvider` listener registration (§9.3, Correction Round 2) are complete and match §6/§10/§12 exactly;
 - the classification backfill (§9.1) and the wallet backfill (§9.2) are complete, with each backfill's own final zero-remaining assertion having passed against real data;
 - no unresolved GAP/BLOCKED item exists (§17);
 - all six required human-run regression commands (§14) pass, with actual results honestly recorded — not fabricated, not assumed;
