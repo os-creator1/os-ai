@@ -212,14 +212,18 @@ class EntitlementManagerDecisionTest extends TestCase
         $this->assertTrue($decision->allowed);
     }
 
-    public function test_null_usage_authorization_gateway_always_authorizes(): void
+    public function test_active_usage_authorization_gateway_binding_still_authorizes(): void
     {
         ['workspace' => $workspace, 'business' => $business] = $this->createWorkspaceWithBusiness();
 
         $decision = app(EntitlementManager::class)->decide($workspace, $business, PlatformFeature::Crm->value, $this->createAdmin());
 
         $this->assertTrue($decision->allowed);
-        $this->assertInstanceOf(\App\Library\Entitlement\NullUsageAuthorizationGateway::class, app(\App\Library\Entitlement\Contracts\UsageAuthorizationGateway::class));
+        // RFC-005 M1 §11 authorizes and requires this binding to be
+        // RealUsageAuthorizationGateway, not NullUsageAuthorizationGateway
+        // (see NullUsageAuthorizationGatewayTest.php for Null's own
+        // continued, separately-proven direct behavior).
+        $this->assertInstanceOf(\App\Library\Entitlement\RealUsageAuthorizationGateway::class, app(\App\Library\Entitlement\Contracts\UsageAuthorizationGateway::class));
     }
 
     public function test_all_nine_denial_keys_are_individually_reachable(): void
