@@ -429,6 +429,34 @@ class WorkspaceBusinessReassignmentHttpTest extends TestCase
         $this->assertSame($otherWorkspace->id, $business->fresh()->workspace_id);
     }
 
+    // --- Entitlement capacity gap (RFC-004 Milestone 3 §16) -----------------
+
+    /**
+     * RFC-004 Milestone 3 (§16 of the M3 contract, closing the §3.7 gap):
+     * reassignBusiness() also reaches
+     * EntitlementManager::assertCanCreateAnotherBusiness() against the
+     * target Workspace (WorkspaceManager.php, mirroring
+     * createBusinessInWorkspace()'s identical capacity check) --
+     * WorkspacePlanUnassignedException is now caught and mapped to a
+     * specific flash_error message rather than propagating uncaught.
+     */
+    public function test_reassignment_into_an_intentionally_unassigned_target_workspace_is_now_caught_and_mapped_to_flash_error(): void
+    {
+        $customer = $this->actingAsHttpCustomer();
+        $sourceWorkspace = $this->createWorkspace($customer->user);
+        $targetWorkspace = $this->createWorkspace($customer->user);
+        $business = $this->createBusinessForCustomer($customer->user->id, $sourceWorkspace->id);
+
+        $response = $this->post(
+            route('customer.workspaces.businesses.reassign', [$sourceWorkspace->uid, $business->uid]),
+            ['target_workspace_uid' => $targetWorkspace->uid]
+        );
+
+        $response->assertRedirect();
+        $response->assertSessionHas('flash_error');
+        $this->assertSame($sourceWorkspace->id, $business->fresh()->workspace_id);
+    }
+
     // --- Data integrity and regression --------------------------------------
 
     public function test_successful_reassignment_changes_only_workspace_id(): void

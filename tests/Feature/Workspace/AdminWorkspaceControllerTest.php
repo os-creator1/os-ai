@@ -411,9 +411,18 @@ class AdminWorkspaceControllerTest extends TestCase
         $this->get(url(config('app.admin_path') . '/workspaces/' . $workspace->id))->assertNotFound();
     }
 
-    public function test_no_workspace_mutation_route_exists(): void
+    /**
+     * RFC-004 Milestone 3 (§19 of the M3 contract) legitimately adds 8
+     * Workspace-scoped entitlement mutation routes under the
+     * `admin.workspaces.*` name prefix -- this is no longer a zero-mutation
+     * surface. The exact canonical list below is the full, closed set;
+     * `admin.workspace-plan-catalog.index` is deliberately NOT
+     * `admin.workspaces.*`-named (it is a separate, global, read-only
+     * catalog route) and is asserted separately.
+     */
+    public function test_workspace_mutation_routes_are_exactly_the_m3_entitlement_surface(): void
     {
-        $mutationNames = [
+        $unexpectedMutationNames = [
             'admin.workspaces.store',
             'admin.workspaces.create',
             'admin.workspaces.update',
@@ -423,15 +432,37 @@ class AdminWorkspaceControllerTest extends TestCase
             'admin.workspaces.transfer',
         ];
 
-        foreach ($mutationNames as $name) {
+        foreach ($unexpectedMutationNames as $name) {
             $this->assertFalse(Route::has($name), "Unexpected mutation route registered: {$name}");
+        }
+
+        $canonicalWorkspaceRouteNames = [
+            'admin.workspaces.index',
+            'admin.workspaces.show',
+            'admin.workspaces.plan.assign',
+            'admin.workspaces.plan.change',
+            'admin.workspaces.plan.status',
+            'admin.workspaces.plan.complimentary.grant',
+            'admin.workspaces.plan.complimentary.revoke',
+            'admin.workspaces.plan.additional-slots',
+            'admin.workspaces.entitlement-overrides.store',
+            'admin.workspaces.entitlement-overrides.revert',
+        ];
+
+        foreach ($canonicalWorkspaceRouteNames as $name) {
+            $this->assertTrue(Route::has($name), "Expected canonical route missing: {$name}");
         }
 
         $registeredWorkspaceAdminRoutes = collect(Route::getRoutes())
             ->filter(fn ($route) => str_starts_with((string) $route->getName(), 'admin.workspaces.'))
-            ->count();
+            ->map(fn ($route) => $route->getName())
+            ->unique();
 
-        $this->assertSame(2, $registeredWorkspaceAdminRoutes);
+        $this->assertSame(10, $registeredWorkspaceAdminRoutes->count());
+        $this->assertEqualsCanonicalizing($canonicalWorkspaceRouteNames, $registeredWorkspaceAdminRoutes->values()->all());
+
+        $this->assertTrue(Route::has('admin.workspace-plan-catalog.index'));
+        $this->assertFalse($registeredWorkspaceAdminRoutes->contains('admin.workspace-plan-catalog.index'));
     }
 
     /**
@@ -458,6 +489,79 @@ class AdminWorkspaceControllerTest extends TestCase
             'admin-workspace-show'
         );
         $this->assertNoMutationControls($showSection);
+    }
+
+    /**
+     * RFC-004 Milestone 3: the two new entitlement cards are deliberately
+     * separate, distinct sections from #admin-workspace-show (§19) --
+     * proving the M5 read-only section's own no-mutation-controls
+     * assertion above remains valid unchanged, while the new cards
+     * correctly gate their controls by the new `manage workspace plans`
+     * permission rather than the existing read-only `view workspace`.
+     */
+    public function test_plan_entitlement_mutation_controls_are_gated_by_manage_permission(): void
+    {
+        $workspace = $this->createWorkspace($this->createCustomer()->user);
+
+        $this->actingAsAdmin(['access backend', 'view workspace', 'view workspace plans']);
+        $viewOnlyResponse = $this->get(route('admin.workspaces.show', $workspace))->assertOk();
+        $viewOnlySection = $this->extractSection($viewOnlyResponse->getContent(), 'admin-workspace-plan-entitlement');
+        $this->assertNoMutationControls($viewOnlySection);
+        $this->assertStringNotContainsString('id="admin-workspace-plan-mutate"', $viewOnlyResponse->getContent());
+
+        $this->actingAsAdmin(['access backend', 'view workspace', 'view workspace plans', 'manage workspace plans']);
+        $manageResponse = $this->get(route('admin.workspaces.show', $workspace))->assertOk();
+        $mutateSection = $this->extractSection($manageResponse->getContent(), 'admin-workspace-plan-mutate');
+        $this->assertStringContainsString('method="POST"', $mutateSection);
+    }
+
+    /**
+     * RFC-004 Milestone 3 correction round 1, item 2: `view workspace plans`
+     * and `manage workspace plans` are independent permissions -- an admin
+     * can legitimately hold `manage workspace plans` without `view
+     * workspace plans`. Both cards render from the same entitlementSummary,
+     * so it must be loaded whenever either permission is present; the read
+     * card itself must still stay invisible without `view workspace plans`.
+     */
+    public function test_manage_permission_without_view_permission_does_not_crash_and_shows_only_the_mutate_card(): void
+    {
+        $workspace = $this->createWorkspace($this->createCustomer()->user);
+        $this->actingAsAdmin(['access backend', 'view workspace', 'manage workspace plans']);
+
+        $response = $this->get(route('admin.workspaces.show', $workspace))->assertOk();
+
+        $response->assertSee('id="admin-workspace-plan-mutate"', false);
+        $response->assertDontSee('id="admin-workspace-plan-entitlement"', false);
+    }
+
+    /**
+     * RFC-004 Milestone 3 correction round 1, item 5: the effective-
+     * entitlement explanation query's unknown-feature-key and
+     * Business-outside-this-Workspace boundaries both fail closed with
+     * 404, matching Blocker 4's addressability rule.
+     */
+    public function test_explanation_with_an_unknown_feature_key_is_not_found(): void
+    {
+        $owner = $this->createCustomer()->user;
+        $workspace = $this->createWorkspace($owner);
+        $business = $this->createBusinessForCustomer($owner->id, $workspace->id);
+        $this->actingAsAdmin(['access backend', 'view workspace', 'view workspace plans']);
+
+        $this->get(route('admin.workspaces.show', $workspace) . '?business_uid=' . $business->uid . '&feature_key=not-a-real-feature')
+            ->assertNotFound();
+    }
+
+    public function test_explanation_with_a_business_uid_outside_this_workspace_is_not_found(): void
+    {
+        $owner = $this->createCustomer()->user;
+        $workspace = $this->createWorkspace($owner);
+        $foreignOwner = $this->createCustomer()->user;
+        $foreignWorkspace = $this->createWorkspace($foreignOwner);
+        $foreignBusiness = $this->createBusinessForCustomer($foreignOwner->id, $foreignWorkspace->id);
+        $this->actingAsAdmin(['access backend', 'view workspace', 'view workspace plans']);
+
+        $this->get(route('admin.workspaces.show', $workspace) . '?business_uid=' . $foreignBusiness->uid . '&feature_key=crm')
+            ->assertNotFound();
     }
 
     private function extractSection(string $html, string $sectionId): string

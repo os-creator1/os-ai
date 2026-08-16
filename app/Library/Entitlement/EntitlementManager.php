@@ -224,6 +224,117 @@ final class EntitlementManager
     }
 
     // =====================================================================
+    // Read / presentation (M3 §8 — no repository outside this class's own
+    // dependencies is ever queried directly by a controller or view)
+    // =====================================================================
+
+    /**
+     * @return array<int, WorkspacePlanCatalogSummary> exactly 3 entries, in Core/Growth/Agency order.
+     */
+    public function listPlanCatalogSummaries(): array
+    {
+        $summaries = [];
+
+        foreach (WorkspacePlanTier::cases() as $tier) {
+            $catalog = $this->catalogRepository->findByTier($tier);
+
+            if ($catalog === null) {
+                throw new RuntimeException("Workspace plan catalog tier [{$tier->value}] does not exist.");
+            }
+
+            $planFeatureKeys = $this->planFeatureRepository->featureKeysForCatalog($catalog)->all();
+            $featureAvailability = [];
+
+            foreach ($planFeatureKeys as $featureKey) {
+                $featureAvailability[$featureKey] = PlatformFeatureRegistry::isAvailable($featureKey);
+            }
+
+            $summaries[] = new WorkspacePlanCatalogSummary(
+                $catalog->id,
+                $tier,
+                $catalog->display_name,
+                $catalog->price,
+                $catalog->currency_id,
+                $catalog->billing_cycle,
+                $catalog->business_slot_included,
+                $catalog->business_slot_max,
+                $catalog->unlimited_business_slots,
+                $catalog->additional_business_slot_price_ratio,
+                $catalog->is_active,
+                $planFeatureKeys,
+                $featureAvailability,
+            );
+        }
+
+        return $summaries;
+    }
+
+    public function getWorkspaceEntitlementSummary(Workspace $workspace): WorkspaceEntitlementSummary
+    {
+        $assignment = $this->assignmentRepository->findByWorkspaceId((int) $workspace->id);
+        $capacity = $this->decideBusinessSlotCapacity($workspace);
+
+        $overrides = [];
+
+        foreach (PlatformFeature::cases() as $feature) {
+            $override = $this->overrideRepository->findByWorkspaceAndFeature((int) $workspace->id, $feature->value);
+
+            if ($override !== null) {
+                $overrides[$feature->value] = $override->state;
+            }
+        }
+
+        if ($assignment === null) {
+            return new WorkspaceEntitlementSummary(false, null, null, null, null, [], $overrides, $capacity);
+        }
+
+        $catalog = $this->catalogRepository->findById($assignment->workspace_plan_catalog_id);
+        $planFeatureKeys = $catalog !== null ? $this->planFeatureRepository->featureKeysForCatalog($catalog)->all() : [];
+
+        return new WorkspaceEntitlementSummary(
+            true,
+            $catalog?->tier,
+            $catalog?->display_name,
+            $assignment->status,
+            $assignment->is_complimentary,
+            $planFeatureKeys,
+            $overrides,
+            $capacity,
+        );
+    }
+
+    /**
+     * @return array<string, array{decision: EntitlementDecision, disablePreferenceRecorded: bool}>
+     *         keyed by PlatformFeature value; empty array if the Business is no
+     *         longer authoritatively part of $workspace as of this read.
+     */
+    public function decideAvailableFeaturesForBusiness(Workspace $workspace, Business $business, int $actorUserId): array
+    {
+        $decisions = [];
+
+        foreach (PlatformFeature::cases() as $feature) {
+            if (! PlatformFeatureRegistry::isAvailable($feature->value)) {
+                continue;
+            }
+
+            try {
+                $decision = $this->decide($workspace, $business, $feature->value, $actorUserId);
+            } catch (WorkspaceBusinessNotFoundException|BusinessWorkspaceMismatchException) {
+                return [];
+            }
+
+            $toggle = $this->toggleRepository->findByBusinessAndFeature($business->id, $feature->value);
+
+            $decisions[$feature->value] = [
+                'decision' => $decision,
+                'disablePreferenceRecorded' => $toggle !== null,
+            ];
+        }
+
+        return $decisions;
+    }
+
+    // =====================================================================
     // Plan assignment
     // =====================================================================
 

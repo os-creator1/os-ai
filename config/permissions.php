@@ -872,6 +872,17 @@
             'category'     => 'Workspace',
         ],
 
+        // Workspace Plans Module (RFC-004 Milestone 3)
+        'view workspace plans' => [
+            'display_name' => 'read',
+            'category'     => 'Workspace Plans',
+        ],
+
+        'manage workspace plans' => [
+            'display_name' => 'update',
+            'category'     => 'Workspace Plans',
+        ],
+
         // Opportunity Module (RFC-002)
         'view opportunities' => [
             'display_name' => 'read',

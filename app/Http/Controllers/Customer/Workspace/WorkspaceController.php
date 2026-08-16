@@ -3,8 +3,14 @@
 namespace App\Http\Controllers\Customer\Workspace;
 
 use App\DTO\Workspace\WorkspaceOwnershipTransferDisposition;
+use App\Enums\Entitlement\PlatformFeature;
 use App\Enums\Workspace\WorkspaceBusinessAccessScope;
 use App\Enums\Workspace\WorkspaceMembershipRole;
+use App\Exceptions\Entitlement\BusinessSlotAllocationRequiredException;
+use App\Exceptions\Entitlement\BusinessSlotLimitExceededException;
+use App\Exceptions\Entitlement\InactiveWorkspacePlanException;
+use App\Exceptions\Entitlement\SuspendedWorkspacePlanException;
+use App\Exceptions\Entitlement\WorkspacePlanUnassignedException;
 use App\Exceptions\Workspace\BusinessWorkspaceMismatchException;
 use App\Exceptions\Workspace\CrossWorkspaceAssignmentException;
 use App\Exceptions\Workspace\InactiveWorkspaceMembershipMutationException;
@@ -26,6 +32,7 @@ use App\Http\Requests\Customer\Workspace\StoreWorkspaceRequest;
 use App\Http\Requests\Customer\Workspace\TransferWorkspaceOwnershipRequest;
 use App\Http\Requests\Customer\Workspace\UpdateWorkspaceMemberAccessRequest;
 use App\Http\Requests\Customer\Workspace\UpdateWorkspaceMemberRoleRequest;
+use App\Library\Entitlement\EntitlementManager;
 use App\Library\Workspace\WorkspaceManager;
 use App\Models\Business;
 use App\Models\User;
@@ -38,6 +45,7 @@ use Illuminate\Contracts\View\View;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Auth;
+use RuntimeException;
 
 class WorkspaceController extends CustomerBaseController
 {
@@ -52,6 +60,7 @@ class WorkspaceController extends CustomerBaseController
         private readonly WorkspaceMembershipRepository $membershipRepository,
         private readonly WorkspaceMembershipBusinessRepository $membershipBusinessRepository,
         private readonly WorkspaceManager $workspaceManager,
+        private readonly EntitlementManager $entitlementManager,
     ) {
     }
 
@@ -112,6 +121,7 @@ class WorkspaceController extends CustomerBaseController
         ];
 
         if (in_array($roleKey, ['owner', 'admin'], true)) {
+            $viewData['entitlement'] = $this->entitlementViewData($workspace, $userId);
             $viewData['directory'] = $this->membershipDirectory($workspace);
             $viewData['manageableBusinesses'] = $this->manageableBusinesses($workspace, $userId);
 
@@ -240,6 +250,16 @@ class WorkspaceController extends CustomerBaseController
             return redirect()->back()->with('flash_error', 'You are not authorized to create a Business in this Workspace.');
         } catch (InactiveWorkspaceMutationException) {
             return redirect()->back()->with('flash_error', 'An inactive Workspace cannot receive a new Business.');
+        } catch (WorkspacePlanUnassignedException) {
+            return redirect()->back()->with('flash_error', 'This Workspace has no plan assigned yet; contact support.');
+        } catch (InactiveWorkspacePlanException) {
+            return redirect()->back()->with('flash_error', 'This Workspace plan is currently inactive.');
+        } catch (SuspendedWorkspacePlanException) {
+            return redirect()->back()->with('flash_error', 'This Workspace plan is currently suspended.');
+        } catch (BusinessSlotAllocationRequiredException) {
+            return redirect()->back()->with('flash_error', 'This Workspace needs an additional Business slot allocated before another Business can be created.');
+        } catch (BusinessSlotLimitExceededException) {
+            return redirect()->back()->with('flash_error', 'This Workspace has reached its Business slot limit.');
         }
 
         return redirect()
@@ -280,6 +300,16 @@ class WorkspaceController extends CustomerBaseController
             return redirect()->back()->with('flash_error', 'An inactive Workspace cannot be involved in a Business reassignment.');
         } catch (WorkspaceAccessDeniedException|WorkspaceNotFoundException|WorkspaceBusinessNotFoundException|BusinessWorkspaceMismatchException) {
             abort(404);
+        } catch (WorkspacePlanUnassignedException) {
+            return redirect()->back()->with('flash_error', 'The target Workspace has no plan assigned yet; contact support.');
+        } catch (InactiveWorkspacePlanException) {
+            return redirect()->back()->with('flash_error', 'The target Workspace plan is currently inactive.');
+        } catch (SuspendedWorkspacePlanException) {
+            return redirect()->back()->with('flash_error', 'The target Workspace plan is currently suspended.');
+        } catch (BusinessSlotAllocationRequiredException) {
+            return redirect()->back()->with('flash_error', 'The target Workspace needs an additional Business slot allocated before this Business can be reassigned there.');
+        } catch (BusinessSlotLimitExceededException) {
+            return redirect()->back()->with('flash_error', 'The target Workspace has reached its Business slot limit.');
         }
 
         return redirect()
@@ -750,6 +780,96 @@ class WorkspaceController extends CustomerBaseController
         return $this->accessibleBusinesses($workspace, $userId)
             ->map(fn (Business $business) => ['uid' => $business->uid, 'name' => $business->name])
             ->all();
+    }
+
+    /**
+     * RFC-004 Milestone 3 §12: Owner/active-Admin-only plan/capacity/
+     * per-Business feature view data, assembled entirely from
+     * EntitlementManager's own presentation API (§8) -- never a repository
+     * read here. One decideAvailableFeaturesForBusiness() call per Business
+     * already shown by effectiveBusinesses() for this role.
+     *
+     * @return array{summary: \App\Library\Entitlement\WorkspaceEntitlementSummary, features: array<string, array<string, array{decision: \App\Library\Entitlement\EntitlementDecision, disablePreferenceRecorded: bool}>>}
+     */
+    private function entitlementViewData(Workspace $workspace, int $userId): array
+    {
+        $features = [];
+
+        foreach ($this->accessibleBusinesses($workspace, $userId) as $business) {
+            $features[$business->uid] = $this->entitlementManager->decideAvailableFeaturesForBusiness($workspace, $business, $userId);
+        }
+
+        return [
+            'summary' => $this->entitlementManager->getWorkspaceEntitlementSummary($workspace),
+            'features' => $features,
+        ];
+    }
+
+    /**
+     * RFC-004 Milestone 3 §12/§13: records a Business-level disable
+     * preference for a currently-entitled feature. This is a stored
+     * preference, never claimed runtime enforcement (§13) -- the legacy
+     * CRM/Conversations/Automations modules do not yet consult it.
+     */
+    public function disableBusinessFeature(string $workspaceUid, string $businessUid, string $featureKey): RedirectResponse
+    {
+        $actorUserId = (int) Auth::id();
+        $workspace = $this->resolveAccessibleWorkspace($workspaceUid, $actorUserId);
+        $feature = PlatformFeature::tryFrom($featureKey);
+
+        if ($feature === null) {
+            abort(404);
+        }
+
+        $business = $this->resolveWorkspaceBusiness($workspace, $businessUid);
+
+        try {
+            $this->entitlementManager->disableBusinessFeature($business, $feature, $actorUserId);
+        } catch (WorkspaceBusinessNotFoundException|BusinessWorkspaceMismatchException) {
+            abort(404);
+        } catch (UnauthorizedWorkspaceManagementException) {
+            return redirect()->back()->with('flash_error', 'You are not authorized to change this Business\'s feature preferences.');
+        } catch (InactiveWorkspaceMutationException) {
+            return redirect()->back()->with('flash_error', 'An inactive Workspace cannot have its feature preferences changed.');
+        } catch (RuntimeException) {
+            return redirect()->back()->with('flash_error', 'This Business is not currently entitled to this feature.');
+        }
+
+        return redirect()
+            ->route('customer.workspaces.show', $workspaceUid)
+            ->with('flash_success', 'Disable preference recorded.');
+    }
+
+    /**
+     * RFC-004 Milestone 3 §12/§13: removes a previously-recorded disable
+     * preference, regardless of the feature's current effective decision
+     * (§13's exact case 1 rule).
+     */
+    public function enableBusinessFeature(string $workspaceUid, string $businessUid, string $featureKey): RedirectResponse
+    {
+        $actorUserId = (int) Auth::id();
+        $workspace = $this->resolveAccessibleWorkspace($workspaceUid, $actorUserId);
+        $feature = PlatformFeature::tryFrom($featureKey);
+
+        if ($feature === null) {
+            abort(404);
+        }
+
+        $business = $this->resolveWorkspaceBusiness($workspace, $businessUid);
+
+        try {
+            $this->entitlementManager->enableBusinessFeature($business, $feature, $actorUserId);
+        } catch (WorkspaceBusinessNotFoundException|BusinessWorkspaceMismatchException) {
+            abort(404);
+        } catch (UnauthorizedWorkspaceManagementException) {
+            return redirect()->back()->with('flash_error', 'You are not authorized to change this Business\'s feature preferences.');
+        } catch (InactiveWorkspaceMutationException) {
+            return redirect()->back()->with('flash_error', 'An inactive Workspace cannot have its feature preferences changed.');
+        }
+
+        return redirect()
+            ->route('customer.workspaces.show', $workspaceUid)
+            ->with('flash_success', 'Disable preference removed.');
     }
 
     /**

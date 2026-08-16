@@ -2,10 +2,17 @@
 
 namespace App\Http\Controllers\Admin;
 
+use App\Enums\Entitlement\PlatformFeature;
+use App\Exceptions\Workspace\BusinessWorkspaceMismatchException;
+use App\Exceptions\Workspace\WorkspaceBusinessNotFoundException;
 use App\Http\Requests\Workspace\AdminWorkspaceIndexRequest;
+use App\Library\Entitlement\EntitlementManager;
 use App\Models\Workspace;
 use App\Repositories\Contracts\WorkspaceRepository;
 use Illuminate\Contracts\View\View;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Gate;
 
 /**
  * Admin-only, intentionally cross-tenant, READ-ONLY Workspace inspection
@@ -20,6 +27,7 @@ class WorkspaceController extends AdminBaseController
 {
     public function __construct(
         private readonly WorkspaceRepository $workspaceRepository,
+        private readonly EntitlementManager $entitlementManager,
     ) {
     }
 
@@ -46,16 +54,82 @@ class WorkspaceController extends AdminBaseController
         ]);
     }
 
-    public function show(Workspace $workspace): View
+    public function show(Request $request, Workspace $workspace): View
     {
         $this->authorize('view workspace');
 
         $workspace->loadMissing(['owner', 'businesses.customer.user', 'memberships.user', 'memberships.assignedBusinesses']);
 
-        return view('admin.workspaces.show', [
+        $viewData = [
             'workspace' => $workspace,
             'breadcrumbs' => $this->breadcrumbs($workspace),
-        ]);
+        ];
+
+        // The read card (§14, gated by @can('view workspace plans')) and the
+        // mutate card (gated by @can('manage workspace plans')) are
+        // independent permissions -- an administrator can legitimately hold
+        // either without the other. Both cards render from the same
+        // entitlementSummary, so it must be loaded whenever either
+        // permission is present; the explanation query is exclusively the
+        // read card's own feature and stays gated to that one permission.
+        if (Gate::allows('view workspace plans') || Gate::allows('manage workspace plans')) {
+            $viewData['entitlementSummary'] = $this->entitlementManager->getWorkspaceEntitlementSummary($workspace);
+        }
+
+        if (Gate::allows('view workspace plans')) {
+            $viewData['entitlementExplanation'] = $this->resolveEntitlementExplanation($request, $workspace);
+        }
+
+        return view('admin.workspaces.show', $viewData);
+    }
+
+    /**
+     * §11's optional effective-entitlement explanation block: only computed
+     * when both business_uid and feature_key query parameters are present.
+     * An unknown feature_key or a business_uid that does not belong to this
+     * already-loaded Workspace both fail closed with 404 -- addressability
+     * failures, matching Blocker 4's rule applied identically here.
+     *
+     * @return array{business: \App\Models\Business, feature: PlatformFeature, decision: \App\Library\Entitlement\EntitlementDecision}|null
+     */
+    private function resolveEntitlementExplanation(Request $request, Workspace $workspace): ?array
+    {
+        $businessUid = $request->query('business_uid');
+        $featureKey = $request->query('feature_key');
+
+        if ($businessUid === null || $featureKey === null) {
+            return null;
+        }
+
+        $feature = PlatformFeature::tryFrom((string) $featureKey);
+
+        if ($feature === null) {
+            abort(404);
+        }
+
+        $business = $workspace->businesses->firstWhere('uid', $businessUid);
+
+        if ($business === null) {
+            abort(404);
+        }
+
+        // decide() re-reads the authoritative Business and can throw if it
+        // was deleted/reassigned between the eager-loaded read above and
+        // this call -- an addressability/stale-target race, not an
+        // authority failure, so it fails closed with 404 rather than
+        // leaking an uncaught 500 (Blocker 4's rule, applied identically
+        // here).
+        try {
+            $decision = $this->entitlementManager->decide($workspace, $business, $feature->value, (int) Auth::id());
+        } catch (WorkspaceBusinessNotFoundException|BusinessWorkspaceMismatchException) {
+            abort(404);
+        }
+
+        return [
+            'business' => $business,
+            'feature' => $feature,
+            'decision' => $decision,
+        ];
     }
 
     /**
