@@ -28,6 +28,7 @@
             '/payment/*',
             'dlr/*',
             'maintenance/notify',
+            'stripe/webhook/usage-billing',
         ];
 
     }

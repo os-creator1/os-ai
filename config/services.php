@@ -44,6 +44,9 @@
                 'secret'    => env('STRIPE_WEBHOOK_SECRET'),
                 'tolerance' => env('STRIPE_WEBHOOK_TOLERANCE', 300),
             ],
+            // RFC-005 M3 contract §19 — new keys, additive only.
+            'mode'         => env('STRIPE_MODE', 'test'),
+            'api_version'  => env('STRIPE_API_VERSION'),
         ],
 
 

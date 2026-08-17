@@ -261,7 +261,49 @@
                         <h4 class="card-title">Payment methods</h4>
                     </div>
                     <div class="card-body">
-                        <p class="mb-0 text-muted">Payment methods and top-ups are not yet configured.</p>
+                        @if (! $dashboard->providerConfigured)
+                            <p class="mb-0 text-muted">Payment methods and top-ups are not yet configured.</p>
+                        @else
+                            @include('customer.business.usage-billing.partials.payment-method', ['dashboard' => $dashboard, 'workspaceUid' => $workspaceUid, 'businessUid' => $businessUid])
+
+                            <hr>
+
+                            <h5>Top up</h5>
+                            <form method="POST" action="{{ route('customer.workspaces.businesses.usage-billing.top-up.initiate', [$workspaceUid, $businessUid]) }}" id="usage-billing-top-up-form" class="d-flex align-items-end mb-3">
+                                @csrf
+                                <div class="me-1">
+                                    <label class="form-label" for="usage-billing-top-up-amount">Amount ({{ $dashboard->wallet['currency_code'] ?? '' }})</label>
+                                    <input type="number" step="0.01" min="0.01" class="form-control" id="usage-billing-top-up-amount" name="amount_micro_display">
+                                    <input type="hidden" name="amount_micro" id="usage-billing-top-up-amount-micro">
+                                </div>
+                                <button type="submit" class="btn btn-outline-primary">Initiate top-up</button>
+                            </form>
+
+                            <h5>Auto-recharge</h5>
+                            <form method="POST" action="{{ route('customer.workspaces.businesses.usage-billing.auto-recharge.configure', [$workspaceUid, $businessUid]) }}" id="usage-billing-auto-recharge-form">
+                                @csrf
+                                <div class="form-check mb-1">
+                                    <input class="form-check-input" type="checkbox" name="auto_recharge_enabled" id="usage-billing-auto-recharge-enabled" value="1" @checked($dashboard->autoRecharge['enabled'])>
+                                    <label class="form-check-label" for="usage-billing-auto-recharge-enabled">Enable auto-recharge</label>
+                                </div>
+                                <div class="mb-1">
+                                    <label class="form-label" for="usage-billing-auto-recharge-threshold">Recharge when balance falls below</label>
+                                    <input type="number" step="0.01" min="0" class="form-control" id="usage-billing-auto-recharge-threshold" name="auto_recharge_threshold_micro_display" value="{{ old('auto_recharge_threshold_micro_display', $dashboard->autoRecharge['threshold_micro'] !== null ? bcdiv($dashboard->autoRecharge['threshold_micro'], '1000000', 2) : '') }}">
+                                    <input type="hidden" name="auto_recharge_threshold_micro" id="usage-billing-auto-recharge-threshold-micro">
+                                </div>
+                                <div class="mb-1">
+                                    <label class="form-label" for="usage-billing-auto-recharge-amount">Recharge amount</label>
+                                    <input type="number" step="0.01" min="0" class="form-control" id="usage-billing-auto-recharge-amount" name="auto_recharge_amount_micro_display" value="{{ old('auto_recharge_amount_micro_display', $dashboard->autoRecharge['amount_micro'] !== null ? bcdiv($dashboard->autoRecharge['amount_micro'], '1000000', 2) : '') }}">
+                                    <input type="hidden" name="auto_recharge_amount_micro" id="usage-billing-auto-recharge-amount-micro">
+                                </div>
+                                <div class="mb-1">
+                                    <label class="form-label" for="usage-billing-auto-recharge-cap">Monthly recharge cap (leave blank for no cap)</label>
+                                    <input type="number" step="0.01" min="0" class="form-control" id="usage-billing-auto-recharge-cap" name="monthly_recharge_cap_micro_display" value="{{ old('monthly_recharge_cap_micro_display', $dashboard->autoRecharge['monthly_cap_micro'] !== null ? bcdiv($dashboard->autoRecharge['monthly_cap_micro'], '1000000', 2) : '') }}">
+                                    <input type="hidden" name="monthly_recharge_cap_micro" id="usage-billing-auto-recharge-cap-micro">
+                                </div>
+                                <button type="submit" class="btn btn-outline-primary">Save auto-recharge settings</button>
+                            </form>
+                        @endif
                     </div>
                 </div>
             </div>
@@ -305,6 +347,48 @@
                     </div>
                 </div>
             </div>
+
+            <div class="col-12">
+                <div class="card" id="usage-billing-funding-history">
+                    <div class="card-header">
+                        <h4 class="card-title">Funding history</h4>
+                    </div>
+                    <div class="card-body">
+                        @if ($dashboard->fundingHistory->isEmpty())
+                            <p class="mb-0">No funding activity yet.</p>
+                        @else
+                            <div class="table-responsive">
+                                <table class="table table-sm">
+                                    <thead>
+                                        <tr>
+                                            <th>Date</th>
+                                            <th>Purpose</th>
+                                            <th>Payment method</th>
+                                            <th>Amount</th>
+                                            <th>State</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach ($dashboard->fundingHistory as $attempt)
+                                            <tr>
+                                                <td>{{ $attempt['created_at']->format('Y-m-d H:i') }}</td>
+                                                <td>{{ $attempt['purpose'] }}</td>
+                                                <td>{{ $attempt['payment_method_display'] }}</td>
+                                                <td>{{ $money($attempt['amount_micro'], $dashboard->wallet['currency_code'] ?? '') }}</td>
+                                                <td>{{ $attempt['state'] }}</td>
+                                            </tr>
+                                        @endforeach
+                                    </tbody>
+                                </table>
+                            </div>
+
+                            <div class="mt-2">
+                                {{ $dashboard->fundingHistory->links() }}
+                            </div>
+                        @endif
+                    </div>
+                </div>
+            </div>
         </div>
     </section>
 
@@ -336,6 +420,95 @@
                     var basePath = window.location.pathname.replace(/\/+$/, '');
                     featureLimitForm.setAttribute('action', basePath + '/feature-limits/' + encodeURIComponent(featureKey));
                 });
+            }
+
+            var topUpForm = document.getElementById('usage-billing-top-up-form');
+
+            if (topUpForm) {
+                topUpForm.addEventListener('submit', function () {
+                    var display = document.getElementById('usage-billing-top-up-amount').value;
+                    document.getElementById('usage-billing-top-up-amount-micro').value = display === '' ? '' : Math.round(parseFloat(display) * 1000000);
+                });
+            }
+
+            var autoRechargeForm = document.getElementById('usage-billing-auto-recharge-form');
+
+            if (autoRechargeForm) {
+                autoRechargeForm.addEventListener('submit', function () {
+                    ['threshold', 'amount', 'cap'].forEach(function (field) {
+                        var displayId = field === 'cap' ? 'usage-billing-auto-recharge-cap' : 'usage-billing-auto-recharge-' + field;
+                        var microId = displayId + '-micro';
+                        var display = document.getElementById(displayId).value;
+                        document.getElementById(microId).value = display === '' ? '' : Math.round(parseFloat(display) * 1000000);
+                    });
+                });
+            }
+
+            // RFC-005 M3 contract §18/§18.2 — Stripe.js is loaded only when
+            // the payment-method setup button is actually rendered (i.e.
+            // providerConfigured === true). The publishable key is the only
+            // Stripe-related value embedded server-side; the client_secret
+            // is fetched per-request and never stored.
+            var paymentMethodButton = document.getElementById('usage-billing-payment-method-submit');
+
+            if (paymentMethodButton) {
+                var stripeScript = document.createElement('script');
+                stripeScript.src = 'https://js.stripe.com/v3/';
+                stripeScript.onload = function () {
+                    var stripe = Stripe(paymentMethodButton.getAttribute('data-publishable-key'));
+                    var elements = stripe.elements();
+                    var card = elements.create('card');
+                    card.mount('#usage-billing-card-element');
+
+                    paymentMethodButton.addEventListener('click', function () {
+                        var errorEl = document.getElementById('usage-billing-card-errors');
+                        errorEl.textContent = '';
+
+                        fetch(paymentMethodButton.getAttribute('data-action-url'), {
+                            method: 'POST',
+                            headers: {
+                                'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]') ? document.querySelector('meta[name="csrf-token"]').getAttribute('content') : '',
+                                'Accept': 'application/json',
+                            },
+                        })
+                            .then(function (response) { return response.json(); })
+                            .then(function (data) {
+                                if (data.error) {
+                                    errorEl.textContent = data.error;
+                                    return;
+                                }
+
+                                return stripe.confirmCardSetup(data.client_secret, {
+                                    payment_method: { card: card },
+                                }).then(function (result) {
+                                    if (result.error) {
+                                        errorEl.textContent = result.error.message;
+                                        return;
+                                    }
+
+                                    var confirmForm = document.createElement('form');
+                                    confirmForm.method = 'POST';
+                                    confirmForm.action = paymentMethodButton.getAttribute('data-confirm-url');
+
+                                    var csrfInput = document.createElement('input');
+                                    csrfInput.type = 'hidden';
+                                    csrfInput.name = '_token';
+                                    csrfInput.value = document.querySelector('meta[name="csrf-token"]') ? document.querySelector('meta[name="csrf-token"]').getAttribute('content') : '';
+                                    confirmForm.appendChild(csrfInput);
+
+                                    var setupIntentInput = document.createElement('input');
+                                    setupIntentInput.type = 'hidden';
+                                    setupIntentInput.name = 'setup_intent';
+                                    setupIntentInput.value = result.setupIntent.id;
+                                    confirmForm.appendChild(setupIntentInput);
+
+                                    document.body.appendChild(confirmForm);
+                                    confirmForm.submit();
+                                });
+                            });
+                    });
+                };
+                document.head.appendChild(stripeScript);
             }
         })();
     </script>
