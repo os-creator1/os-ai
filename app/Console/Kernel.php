@@ -23,6 +23,8 @@
     use App\Console\Commands\uSupportDemo;
     use App\Console\Commands\VisionUpInboundMessage;
     use App\Console\Commands\WarmDashboardCache;
+    use App\Jobs\Usage\PurgeExpiredWebhookPayloads;
+    use App\Jobs\Usage\ReconcileProviderPendingState;
     use Illuminate\Console\Scheduling\Schedule;
     use Illuminate\Foundation\Console\Kernel as ConsoleKernel;
 
@@ -97,6 +99,13 @@
                 // scheduler.
                 $schedule->command('opportunity:sweep-expired-snoozes')
                     ->cron('*/' . $this->opportunitySnoozeSweepCronMinutes() . ' * * * *');
+
+                // RFC-005 Milestone 3 (Correction Round 1, item 110) —
+                // without these, both jobs are permanently unreachable
+                // (unlike ProcessPaymentProviderEvent/EvaluateBusinessAutoRecharge,
+                // neither is dispatched by any event/controller/manager).
+                $schedule->job(new PurgeExpiredWebhookPayloads())->hourly();
+                $schedule->job(new ReconcileProviderPendingState())->everyFiveMinutes();
             }
         }
 

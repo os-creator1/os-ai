@@ -683,6 +683,18 @@
         */
         Route::get('workspace-plan-catalog', 'WorkspacePlanCatalogController@index')->name('workspace-plan-catalog.index');
 
+        /*
+        |--------------------------------------------------------------------------
+        | Payment provider events (RFC-005 Milestone 3, Correction Round 1, item 109)
+        |--------------------------------------------------------------------------
+        |
+        | Same no-literal-"admin/"-segment, no-"admin."-name-prefix shape as
+        | workspace-plan-catalog.index above.
+        |
+        */
+        Route::get('provider-events', 'PaymentProviderEventController@index')->name('provider-events.index');
+        Route::post('provider-events/{event}/dispose', 'PaymentProviderEventController@dispose')->name('provider-events.dispose');
+
         Route::prefix('workspaces/{workspace}')->name('workspaces.')->whereUuid('workspace')->group(function () {
             Route::post('plan', 'WorkspaceEntitlementController@assignPlan')->name('plan.assign');
             Route::post('plan/change', 'WorkspaceEntitlementController@changePlan')->name('plan.change');

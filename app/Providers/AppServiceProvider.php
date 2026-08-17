@@ -170,6 +170,12 @@
                 \App\Repositories\Contracts\BusinessBillingContactRepository::class => \App\Repositories\Eloquent\EloquentBusinessBillingContactRepository::class,
                 \App\Repositories\Contracts\BusinessPayerAssignmentRepository::class => \App\Repositories\Eloquent\EloquentBusinessPayerAssignmentRepository::class,
                 \App\Repositories\Contracts\BusinessPayerTransitionRepository::class => \App\Repositories\Eloquent\EloquentBusinessPayerTransitionRepository::class,
+                \App\Repositories\Contracts\PaymentProviderCustomerRepository::class => \App\Repositories\Eloquent\EloquentPaymentProviderCustomerRepository::class,
+                \App\Repositories\Contracts\BusinessPaymentInstrumentRepository::class => \App\Repositories\Eloquent\EloquentBusinessPaymentInstrumentRepository::class,
+                \App\Repositories\Contracts\BusinessFundingAttemptRepository::class => \App\Repositories\Eloquent\EloquentBusinessFundingAttemptRepository::class,
+                \App\Repositories\Contracts\BusinessFundingAttemptTransitionRepository::class => \App\Repositories\Eloquent\EloquentBusinessFundingAttemptTransitionRepository::class,
+                \App\Repositories\Contracts\PaymentProviderEventRepository::class => \App\Repositories\Eloquent\EloquentPaymentProviderEventRepository::class,
+                \App\Library\Usage\Contracts\PaymentProviderGateway::class => \App\Library\Usage\StripePaymentProviderGateway::class,
             ];
 
             foreach ($bindings as $interface => $implementation) {

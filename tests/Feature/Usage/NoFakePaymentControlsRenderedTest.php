@@ -3,7 +3,12 @@
 namespace Tests\Feature\Usage;
 
 use App\Enums\Entitlement\WorkspacePlanTier;
+use App\Enums\Usage\PayerType;
 use App\Library\Entitlement\EntitlementManager;
+use App\Library\Usage\BillingProfileManager;
+use App\Library\Usage\Contracts\PaymentProviderGateway;
+use App\Library\Usage\FakePaymentProviderGateway;
+use App\Library\Usage\UsageWalletManager;
 use App\Models\AppConfig;
 use App\Models\Currency;
 use App\Models\Customer;
@@ -16,11 +21,15 @@ use Tests\Feature\Workspace\Concerns\CreatesWorkspaceTestData;
 use Tests\TestCase;
 
 /**
- * RFC-005 M2 contract §5 — direct regression test for the exclusion
- * list: the rendered dashboard never contains a functional-looking
- * control for adding a card, Stripe Checkout, top-ups, refunds,
- * auto-recharge execution, invoices/receipts, add-ons, or additional-slot
- * purchases. Honest informational text is used instead.
+ * RFC-005 M2 contract §5, extended RFC-005 M3 contract §18.2 (Correction
+ * Round 1, item 111) — the M2-era method below is scoped to the
+ * providerConfigured === false case only, preserving its exact existing
+ * assertions unchanged; the new method proves the inverse: when
+ * providerConfigured === true and a real payment instrument/funding
+ * history exist, the placeholder is genuinely gone from the
+ * payment-methods card and the real controls genuinely render. Together
+ * they prove the placeholder is removed exactly where, and only where,
+ * real functionality replaces it.
  */
 class NoFakePaymentControlsRenderedTest extends TestCase
 {
@@ -97,5 +106,36 @@ class NoFakePaymentControlsRenderedTest extends TestCase
         foreach (['Add card', 'Add Card', 'Stripe Checkout', 'Top up', 'Top-up', 'Refund', 'Auto-recharge', 'Enable auto-recharge', 'Invoice', 'Receipt', 'Buy add-on', 'Purchase add-on', 'Buy additional slot', 'Purchase slot'] as $forbidden) {
             $this->assertStringNotContainsString($forbidden, $html, "Dashboard must not render a fake payment control containing \"{$forbidden}\".");
         }
+    }
+
+    /**
+     * M3 contract §18.2/§25 item 111 (Correction Round 1) — when the
+     * provider is genuinely configured, the M2 placeholder is genuinely
+     * absent and the real payment-method/top-up/auto-recharge controls
+     * genuinely render.
+     */
+    public function test_dashboard_renders_real_m3_controls_when_provider_is_configured(): void
+    {
+        config([
+            'services.stripe.key' => 'pk_test_fixture',
+            'services.stripe.secret' => 'sk_test_fixture',
+            'services.stripe.webhook.secret' => 'whsec_fixture',
+            'services.stripe.mode' => 'test',
+        ]);
+        app()->instance(PaymentProviderGateway::class, new FakePaymentProviderGateway());
+
+        $customer = $this->actingAsHttpCustomer();
+        $workspace = $this->entitledWorkspace($customer->user);
+        $business = app(BusinessRepository::class)->createForCustomerInWorkspace($customer, $workspace, $this->businessAttributes());
+        app(UsageWalletManager::class)->initializeWalletForNewBusiness($business->id);
+        app(BillingProfileManager::class)->changePayer($business, PayerType::Workspace, $customer->user_id, 'Test.');
+
+        $response = $this->get(route('customer.workspaces.businesses.usage-billing.show', [$workspace->uid, $business->uid]))
+            ->assertOk();
+
+        $response->assertDontSee('Payment methods and top-ups are not yet configured.');
+        $response->assertSee('Set up payment method');
+        $response->assertSee('Initiate top-up');
+        $response->assertSee('Enable auto-recharge');
     }
 }

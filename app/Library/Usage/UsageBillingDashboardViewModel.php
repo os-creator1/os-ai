@@ -5,9 +5,10 @@ namespace App\Library\Usage;
 use Illuminate\Pagination\LengthAwarePaginator;
 
 /**
- * RFC-005 M2 contract §9/§10 — the complete, presentation-only read model
- * for the customer-visible Usage & Billing dashboard. Assembled exclusively
- * by UsageBillingPresenter from repository read calls; Blade performs no
+ * RFC-005 M2 contract §9/§10, extended RFC-005 M3 contract §18.1 (Correction
+ * Round 1, items 105-106) — the complete, presentation-only read model for
+ * the customer-visible Usage & Billing dashboard. Assembled exclusively by
+ * UsageBillingPresenter from repository read calls; Blade performs no
  * balance, cap, headroom, or entitlement recomputation against it.
  *
  * @param  array{name: string, billing_status: string}  $business
@@ -16,6 +17,9 @@ use Illuminate\Pagination\LengthAwarePaginator;
  * @param  array{payer_type: string}|null  $payer
  * @param  array{name: ?string, email: ?string, notification_opt_in: bool}|null  $billingContact
  * @param  LengthAwarePaginator<int, UsageLedgerEntryPresentationRow>  $ledger
+ * @param  array{id: int, brand: ?string, last_four: ?string, expiry_month: ?int, expiry_year: ?int}|null  $paymentMethod
+ * @param  array{enabled: bool, threshold_micro: ?string, amount_micro: ?string, monthly_cap_micro: ?string, recharged_this_period_micro: string, consecutive_recharge_failures: int}  $autoRecharge
+ * @param  LengthAwarePaginator<int, array{state: string, purpose: string, amount_micro: string, payment_method_display: string, created_at: \Carbon\CarbonImmutable, failure_reason: ?string}>  $fundingHistory
  */
 final readonly class UsageBillingDashboardViewModel
 {
@@ -26,6 +30,10 @@ final readonly class UsageBillingDashboardViewModel
         public ?array $payer,
         public ?array $billingContact,
         public LengthAwarePaginator $ledger,
+        public ?array $paymentMethod,
+        public array $autoRecharge,
+        public LengthAwarePaginator $fundingHistory,
+        public bool $providerConfigured,
     ) {
     }
 }

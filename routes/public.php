@@ -138,6 +138,18 @@
 
     Route::any('inbound/evolution-api/{gateway?}', 'Customer\DLRController@inboundEvolutionApi')->name('inbound.evolution.api');
 
+    /*
+    |--------------------------------------------------------------------------
+    | RFC-005 Milestone 3 (Correction Round 1, item 108): Stripe webhook
+    |--------------------------------------------------------------------------
+    |
+    | Unauthenticated, signature-verified — no CSRF (VerifyCsrfToken.php's
+    | own $except array, item 102), no session, no authenticated-user
+    | assumption. StripePaymentProviderGateway::verifyWebhookSignature()
+    | rejects any request before any row is inserted or any mutation occurs.
+    |
+    */
+    Route::post('stripe/webhook/usage-billing', 'StripeWebhookController@handle')->name('webhooks.stripe.usage-billing');
 
     /*
     |--------------------------------------------------------------------------

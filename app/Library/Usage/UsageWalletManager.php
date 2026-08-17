@@ -37,6 +37,7 @@ use App\Repositories\Contracts\PlatformFeatureUsageClassificationTransitionRepos
 use App\Repositories\Contracts\PlatformFeatureUsageSafetyLimitRepository;
 use App\Repositories\Contracts\WorkspaceMembershipBusinessRepository;
 use App\Repositories\Contracts\WorkspaceMembershipRepository;
+use App\Jobs\Usage\EvaluateBusinessAutoRecharge;
 use Illuminate\Database\QueryException;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Carbon;
@@ -44,10 +45,15 @@ use Illuminate\Support\Facades\DB;
 
 /**
  * Sole write authority for all seven RFC-005 Milestone 1 tables (M1
- * contract §10.1). No credit/top-up/debt-clearing/billing-status-transition
- * method exists here — those are M2+/M3+/M4 scope (M1 contract §5.7). No
- * auto-recharge dispatch of any kind occurs from any method in this class
- * (Correction Round 1, §5.7).
+ * contract §10.1), extended at M2 (creditFromFunding() debt-clearing
+ * formula) and M3 (configureAutoRecharge(), and the
+ * EvaluateBusinessAutoRecharge::dispatch() trigger — M3 contract §15,
+ * item 100). Dispatched only after the owning DB::transaction() closure
+ * returns, never from inside an open transaction/lock, and only when the
+ * write that just occurred actually produced a negative
+ * available_delta_micro (reserve()'s reservation insert; commit()'s
+ * overage-from-available portion) — never for an idempotent no-op repeat,
+ * a zero-amount reservation, or an overage fully absorbed by debt.
  */
 class UsageWalletManager
 {
@@ -219,8 +225,10 @@ class UsageWalletManager
      * RFC-005 §13's reserve() algorithm, narrowed to M1's own evaluation
      * order (per-feature limit, Business spend cap, and platform safety
      * limit are skipped — their tables do not exist until M2, M1 contract
-     * §8 item 1). No EvaluateBusinessAutoRecharge dispatch of any kind
-     * (Correction Round 1, §5.7).
+     * §8 item 1). M3 contract §15 — dispatches EvaluateBusinessAutoRecharge
+     * after commit, only for a genuine new negative-available_delta_micro
+     * reservation (never the idempotent-repeat early return above, and
+     * never a zero-amount reservation).
      */
     public function reserve(Business $business, string $featureKey, string $idempotencyKey, ?string $estimatedQuantity = null): ReservationResult
     {
@@ -230,7 +238,9 @@ class UsageWalletManager
             return new ReservationResult(true, $existing->id, null);
         }
 
-        return DB::transaction(function () use ($business, $featureKey, $idempotencyKey, $estimatedQuantity) {
+        $shouldDispatchAutoRecharge = false;
+
+        $result = DB::transaction(function () use ($business, $featureKey, $idempotencyKey, $estimatedQuantity, &$shouldDispatchAutoRecharge) {
             $wallet = $this->walletRepository->findForUpdateByBusinessId($business->id);
 
             if ($wallet === null) {
@@ -312,6 +322,10 @@ class UsageWalletManager
                 'created_at' => $reservedAt,
             ]);
 
+            if ($reservedAmountMicro > 0) {
+                $shouldDispatchAutoRecharge = true;
+            }
+
             $this->walletRepository->update($wallet, [
                 'available_balance_micro' => $wallet->available_balance_micro - $reservedAmountMicro,
                 'reserved_balance_micro' => $wallet->reserved_balance_micro + $reservedAmountMicro,
@@ -320,16 +334,29 @@ class UsageWalletManager
 
             return new ReservationResult(true, $reservation->id, null);
         });
+
+        if ($shouldDispatchAutoRecharge) {
+            EvaluateBusinessAutoRecharge::dispatch((int) $business->id);
+        }
+
+        return $result;
     }
 
     /**
      * RFC-005 §13's commit() algorithm, using the corrected committed-
      * amount formula. Idempotent: a repeat commit on an already-committed
      * reservation is a no-op that reconstructs the original CommitResult.
+     * M3 contract §15 — dispatches EvaluateBusinessAutoRecharge after
+     * commit, only when the overage-charge entry's available_delta_micro
+     * portion is genuinely negative (an overage fully absorbed by debt,
+     * with zero taken from available balance, does not dispatch).
      */
     public function commit(int $reservationId, ?string $finalQuantity = null): CommitResult
     {
-        return DB::transaction(function () use ($reservationId, $finalQuantity) {
+        $shouldDispatchAutoRecharge = false;
+        $dispatchBusinessId = null;
+
+        $result = DB::transaction(function () use ($reservationId, $finalQuantity, &$shouldDispatchAutoRecharge, &$dispatchBusinessId) {
             $peek = $this->reservationRepository->findById($reservationId);
 
             if ($peek === null) {
@@ -437,6 +464,11 @@ class UsageWalletManager
                 $availableDelta -= $overageFromAvailable;
                 $debtDelta += $overageToDebt;
                 $committedFormulaAmount += $overageFromAvailable + $overageToDebt;
+
+                if ($overageFromAvailable > 0) {
+                    $shouldDispatchAutoRecharge = true;
+                    $dispatchBusinessId = (int) $reservation->business_id;
+                }
             } elseif ($finalAmountMicro < $reservedAmountMicro) {
                 $hadUnusedRelease = true;
                 $unused = $reservedAmountMicro - $finalAmountMicro;
@@ -488,6 +520,12 @@ class UsageWalletManager
                 $hadUnusedRelease,
             );
         });
+
+        if ($shouldDispatchAutoRecharge) {
+            EvaluateBusinessAutoRecharge::dispatch($dispatchBusinessId);
+        }
+
+        return $result;
     }
 
     /**
@@ -566,6 +604,71 @@ class UsageWalletManager
 
             if ($reservation->period_key === $wallet->spend_period_key) {
                 $walletUpdate['reserved_spend_this_period_micro'] = $wallet->reserved_spend_this_period_micro - $amount;
+            }
+
+            $this->walletRepository->update($wallet, $walletUpdate);
+        });
+    }
+
+    /**
+     * M3 contract §11 item 7/§15 — the single wallet-crediting mechanism
+     * for both a confirmed manual top-up (UsageLedgerEntryType::PaidTopUp)
+     * and a confirmed auto-recharge (UsageLedgerEntryType::AutoRecharge).
+     * Called only by UsageBillingCheckoutManager, only after authoritative
+     * provider confirmation (never a browser redirect alone) — this
+     * method itself performs no provider call and makes no confirmation
+     * decision; it is purely the accounting effect of an already-verified
+     * successful charge. Debt-clearing follows RFC-005 §13's own formula
+     * for these two entry types exactly: available_delta = +remainder
+     * after debt-clear, reserved_delta = 0, debt_delta = -min(amt, debt).
+     * Idempotent at the caller's own layer (UsageBillingCheckoutManager
+     * never calls this twice for the same funding_attempt_id, §11 item 8)
+     * — this method itself does not re-check funding-attempt state, since
+     * it has no FK/visibility into that M3 table by design (M1's own
+     * sole-write-authority boundary is preserved: this class still never
+     * references a table outside RFC-005 §12/§13's original seven).
+     */
+    public function creditFromFunding(
+        int $businessId,
+        UsageLedgerEntryType $entryType,
+        int $amountMicro,
+        int $fundingAttemptId,
+        string $correlationKey,
+    ): void {
+        DB::transaction(function () use ($businessId, $entryType, $amountMicro, $fundingAttemptId, $correlationKey) {
+            $wallet = $this->walletRepository->findForUpdateByBusinessId($businessId);
+
+            if ($wallet === null) {
+                throw new UsageWalletNotFoundException($businessId);
+            }
+
+            $business = $wallet->business;
+            $wallet = $this->rollOverPeriodsIfNeeded($wallet, $business);
+
+            $debtCleared = min($amountMicro, max(0, $wallet->debt_balance_micro));
+            $remainder = $amountMicro - $debtCleared;
+
+            $this->ledgerRepository->create([
+                'business_id' => $businessId,
+                'wallet_id' => $wallet->id,
+                'entry_type' => $entryType->value,
+                'available_delta_micro' => $remainder,
+                'reserved_delta_micro' => 0,
+                'debt_delta_micro' => -$debtCleared,
+                'currency_id' => $wallet->currency_id,
+                'funding_attempt_id' => $fundingAttemptId,
+                'correlation_key' => $correlationKey,
+                'created_at' => Carbon::now(),
+            ]);
+
+            $walletUpdate = [
+                'available_balance_micro' => $wallet->available_balance_micro + $remainder,
+                'debt_balance_micro' => $wallet->debt_balance_micro - $debtCleared,
+            ];
+
+            if ($entryType === UsageLedgerEntryType::AutoRecharge && $wallet->recharge_period_key !== null) {
+                $walletUpdate['recharged_this_period_micro'] = $wallet->recharged_this_period_micro + $amountMicro;
+                $walletUpdate['consecutive_recharge_failures'] = 0;
             }
 
             $this->walletRepository->update($wallet, $walletUpdate);
@@ -901,6 +1004,99 @@ class UsageWalletManager
 
             BusinessWalletBillingStatusChanged::dispatch((int) $business->id, $fromStatus->value, $status->value);
         });
+    }
+
+    /**
+     * M3 contract §15/§17/§18 — configures the four M1-shipped auto-
+     * recharge wallet columns. Charge-adjacent, gated by the identical
+     * narrower payer-consent authority §16 of the RFC extends to every
+     * charge-causing action (never the broader
+     * assertCanManageBusinessUsageBilling() non-payment authority) — no
+     * platform-administrator override exists for newly enabling
+     * auto-recharge (M3 contract §15/§17). No default threshold/amount/
+     * cap value is ever invented here — every value comes directly from
+     * the caller, or is null (M3 contract §5 item 4).
+     */
+    public function configureAutoRecharge(
+        Business $business,
+        bool $enabled,
+        ?string $thresholdMicro,
+        ?string $amountMicro,
+        ?string $monthlyCapMicro,
+        int $actorUserId,
+    ): void {
+        $this->assertChargeCausingConsentForAutoRecharge($business, $actorUserId);
+
+        DB::transaction(function () use ($business, $enabled, $thresholdMicro, $amountMicro, $monthlyCapMicro) {
+            $wallet = $this->walletRepository->findForUpdateByBusinessId((int) $business->id);
+
+            if ($wallet === null) {
+                throw new UsageWalletNotFoundException((int) $business->id);
+            }
+
+            $this->walletRepository->update($wallet, [
+                'auto_recharge_enabled' => $enabled,
+                'auto_recharge_threshold_micro' => $enabled ? $thresholdMicro : null,
+                'auto_recharge_amount_micro' => $enabled ? $amountMicro : null,
+                'monthly_recharge_cap_micro' => $monthlyCapMicro,
+            ]);
+        });
+    }
+
+    /**
+     * M3 contract §15 — "Failed payment behavior: consecutive_recharge_failures
+     * incremented (M1 column, first written by M3)." Called only by
+     * EvaluateBusinessAutoRecharge, only when a triggered auto-recharge
+     * attempt reaches FundingAttemptState::Failed within that same job
+     * execution (never on requires_action, never a retry loop). Preserves
+     * this class's sole write authority for business_usage_wallets — the
+     * job itself never writes this table directly.
+     */
+    public function recordAutoRechargeFailure(int $businessId): void
+    {
+        DB::transaction(function () use ($businessId) {
+            $wallet = $this->walletRepository->findForUpdateByBusinessId($businessId);
+
+            if ($wallet === null) {
+                throw new UsageWalletNotFoundException($businessId);
+            }
+
+            $this->walletRepository->update($wallet, [
+                'consecutive_recharge_failures' => $wallet->consecutive_recharge_failures + 1,
+            ]);
+        });
+    }
+
+    /**
+     * RFC-005 §16's "consent extended to every charge-causing action" rule
+     * — evaluated against the wallet's CURRENT payer_type, mirroring
+     * BillingProfileManager::assertPayerConsent() and
+     * PaymentInstrumentManager/UsageBillingCheckoutManager's own identical
+     * private method exactly (duplicated rather than shared, matching
+     * this class's own existing assertCanManageBusinessUsageBilling()
+     * duplication precedent — no common ancestor is authorized by any
+     * merged contract).
+     */
+    private function assertChargeCausingConsentForAutoRecharge(Business $business, int $actorUserId): void
+    {
+        $business->loadMissing('workspace');
+
+        $assignment = app(\App\Repositories\Contracts\BusinessPayerAssignmentRepository::class)->findByBusinessId((int) $business->id);
+        $payerType = $assignment?->payer_type ?? \App\Enums\Usage\PayerType::Workspace;
+
+        if ($payerType === \App\Enums\Usage\PayerType::Workspace) {
+            if ((int) $business->workspace->owner_user_id === $actorUserId) {
+                return;
+            }
+
+            throw new UnauthorizedUsageBillingManagementException($actorUserId, (int) $business->id);
+        }
+
+        if ((int) $business->customer_id === $actorUserId) {
+            return;
+        }
+
+        throw new UnauthorizedUsageBillingManagementException($actorUserId, (int) $business->id);
     }
 
     /**
