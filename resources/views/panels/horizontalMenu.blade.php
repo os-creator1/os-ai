@@ -3,7 +3,7 @@
 @endphp
 {{-- Horizontal Menu --}}
 <div class="horizontal-menu-wrapper">
-    <div class="header-navbar navbar-expand-sm navbar navbar-horizontal
+    <div class="header-navbar navbar-expand-sm navbar navbar-horizontal transition-base
   {{$configData['horizontalMenuClass']}}
     {{($configData['theme'] === 'dark') ? 'navbar-dark' : 'navbar-light' }}
             navbar-shadow menu-border

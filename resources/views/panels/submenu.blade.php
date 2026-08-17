@@ -15,7 +15,7 @@
             {{-- FIX: Use @canany to handle pipe-separated permissions --}}
             @canany($permission, auth()->user())
                 <li class="{{ isset($submenu->slug) && str_contains(request()->path(),$submenu->slug) ? 'active' : '' }}">
-                    <a href="{{isset($submenu->url) ? url($submenu->url):'javascript:void(0)'}}" class="d-flex align-items-center">
+                    <a href="{{isset($submenu->url) ? url($submenu->url):'javascript:void(0)'}}" class="d-flex align-items-center transition-fast">
                         @if(isset($submenu->icon))
                             <i data-feather="{{ $submenu->icon ?? "" }}"></i>
                         @endif

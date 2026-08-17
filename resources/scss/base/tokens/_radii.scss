@@ -1,0 +1,19 @@
+// Design System Contract, Milestone 1, §9 item 4 — the derived radius
+// scale (§7 item 3): ~10px controls, 14px cards, 16–18px overlays (§4),
+// avoiding excessive pill-shaped elements — $radius-full exists only for
+// genuinely circular/pill elements (avatars, dot indicators), never used
+// as a default for buttons/inputs/cards.
+
+$radius-sm: 0.375rem;  // 6px  — badges, small chips
+$radius-md: 0.625rem;  // 10px — buttons, inputs, selects, other controls
+$radius-lg: 0.875rem;  // 14px — cards
+$radius-xl: 1.125rem;  // 18px — modals, dropdown menus, large overlays
+$radius-full: 999px;   // circular/pill — avatars, status dots only
+
+:root {
+    --radius-sm: #{$radius-sm};
+    --radius-md: #{$radius-md};
+    --radius-lg: #{$radius-lg};
+    --radius-xl: #{$radius-xl};
+    --radius-full: #{$radius-full};
+}

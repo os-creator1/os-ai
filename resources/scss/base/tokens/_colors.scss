@@ -1,0 +1,39 @@
+// Design System Contract, Milestone 1, §9 item 1 — the 12 locked color
+// tokens (contract §4), as both SCSS variables (consumed at compile time
+// by Bootstrap's own component SCSS via bootstrap-extended/_variables.scss)
+// and CSS custom properties (consumed at runtime by new components/JS
+// without a rebuild). This is the single source of truth for every color
+// in the application — no other file may hardcode one of these hex values
+// a second time (enforced by mechanical search, contract §12 item 2).
+
+$color-accent-primary: #B5524C;
+$color-accent-dark: #980E0E;
+$color-accent-hover: #A83D38;
+$color-accent-soft-bg: #F4E6E4;
+$color-accent-border: #E3C3BF;
+
+$color-canvas: #F7F6F2;
+$color-sidebar-bg: #F2F0EB;
+$color-surface-primary: #FFFFFF;
+$color-surface-secondary: #FBFAF7;
+$color-border-neutral: #E5E1DA;
+
+$color-text-primary: #262522;
+$color-text-muted: #6F6D67;
+
+:root {
+    --color-accent-primary: #{$color-accent-primary};
+    --color-accent-dark: #{$color-accent-dark};
+    --color-accent-hover: #{$color-accent-hover};
+    --color-accent-soft-bg: #{$color-accent-soft-bg};
+    --color-accent-border: #{$color-accent-border};
+
+    --color-canvas: #{$color-canvas};
+    --color-sidebar-bg: #{$color-sidebar-bg};
+    --color-surface-primary: #{$color-surface-primary};
+    --color-surface-secondary: #{$color-surface-secondary};
+    --color-border-neutral: #{$color-border-neutral};
+
+    --color-text-primary: #{$color-text-primary};
+    --color-text-muted: #{$color-text-muted};
+}

@@ -20,8 +20,9 @@
 
     <title>@yield('title') - {{config('app.title')}}</title>
     <link rel="shortcut icon" type="image/x-icon" href="<?php echo asset(config('app.favicon')); ?>" />
-    <link href="https://fonts.googleapis.com/css2?family=Montserrat:ital,wght@0,300;0,400;0,500;0,600;1,400;1,500;1,600"
-          rel="stylesheet">
+    {{-- Design System Contract, Milestone 1, §9 item 36 — Geist Sans is
+    self-hosted (resources/scss/base/tokens/_typography.scss), compiled
+    into core.css below; the Montserrat Google Fonts link is removed. --}}
 
     {{-- Include core + vendor Styles --}}
     @include('panels/styles')

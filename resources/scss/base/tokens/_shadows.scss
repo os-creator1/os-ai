@@ -1,0 +1,23 @@
+// Design System Contract, Milestone 1, §9 item 5 — the soft-shadow scale
+// (§4 "restrained depth created by borders, tonal layering and very soft
+// shadows"). Tinted from the warm primary-text color rather than pure
+// black, matching the "warm layered backgrounds" requirement; low opacity
+// throughout so borders/surface-layering carry most of the visual depth,
+// shadows only reinforce it.
+
+$shadow-color: 38, 37, 34; // rgb of $color-text-primary (#262522)
+
+// Built as an unquoted string (not passed to Sass's rgba() function)
+// because $shadow-color is a comma-separated r,g,b list — Sass's 2-arg
+// rgba(color, alpha) form requires a color value, not a list, and even
+// interpolating just the list still leaves rgba() parsed as a function
+// call. unquote() emits valid CSS rgba() syntax directly instead.
+$shadow-sm: 0 1px 2px unquote('rgba(#{$shadow-color}, 0.04)');
+$shadow-md: 0 2px 8px unquote('rgba(#{$shadow-color}, 0.06)');
+$shadow-lg: 0 8px 24px unquote('rgba(#{$shadow-color}, 0.08)');
+
+:root {
+    --shadow-sm: #{$shadow-sm};
+    --shadow-md: #{$shadow-md};
+    --shadow-lg: #{$shadow-lg};
+}

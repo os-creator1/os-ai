@@ -33,6 +33,12 @@
 @import 'components/timeline';
 @import 'components/custom-options';
 
+// Design System Contract, Milestone 1 — new reusable Blade component
+// library support styles (self-identified necessary completion of
+// already-authorized §9 items 14-26, documented in the implementation
+// report).
+@import 'components/ds-components';
+
 // Plugins
 // ------------------------------
 @import 'plugins/ui/breakpoints';

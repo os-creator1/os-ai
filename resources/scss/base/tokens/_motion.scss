@@ -1,0 +1,38 @@
+// Design System Contract, Milestone 1, §9 item 6 — the three named motion
+// durations, the named easing curve (§4), and a prefers-reduced-motion
+// guard. New components consume these as CSS custom properties/utility
+// classes; never a hand-rolled transition duration/easing elsewhere.
+
+:root {
+    --duration-fast: 140ms;   // immediate feedback (press states, small toggles)
+    --duration-base: 180ms;  // standard transitions (hover, color/opacity changes)
+    --duration-slow: 240ms;  // overlays (modal/dropdown enter-exit)
+    --ease-standard: cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.transition-fast {
+    transition-duration: var(--duration-fast);
+    transition-timing-function: var(--ease-standard);
+}
+
+.transition-base {
+    transition-duration: var(--duration-base);
+    transition-timing-function: var(--ease-standard);
+}
+
+.transition-slow {
+    transition-duration: var(--duration-slow);
+    transition-timing-function: var(--ease-standard);
+}
+
+// §4 "respect prefers-reduced-motion" — collapses every token-driven
+// duration to near-zero rather than disabling transitions ad hoc per
+// component, so the guard applies uniformly everywhere these tokens are
+// used, present and future.
+@media (prefers-reduced-motion: reduce) {
+    :root {
+        --duration-fast: 0.01ms;
+        --duration-base: 0.01ms;
+        --duration-slow: 0.01ms;
+    }
+}
