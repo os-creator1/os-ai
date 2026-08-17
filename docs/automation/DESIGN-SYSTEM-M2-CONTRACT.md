@@ -1,18 +1,21 @@
 # Design System — Milestone 2 Contract
 
-Full application rollout, platform-owner complete theme control (colors +
-font), chart theming, and chat background remediation.
+Full application rollout, platform-owner complete theme control (named
+presets, colors + font), chart theming, and chat background remediation.
 
-**Correction Round 1** — the platform owner's original limited-palette
-proposal is replaced in full by a complete semantic-token theme system
-plus global font control, per explicit correction instructions. See §15
-for exactly what changed and why.
+**Correction Round 2 (final round under this contract's own 2-round
+budget)** — adds named theme presets (create/duplicate/rename/edit/
+preview/save/activate/rollback/delete, with Draft/Saved/Active/Factory
+states) on top of Correction Round 1's complete semantic-token, runtime-
+binding, font-control, upload-safety, accessibility, and rollout
+architecture, which this round does **not** change. See §16 for exactly
+what changed and why.
 
 **Status: contract only. No implementation has occurred under this
-document, in either drafting pass. Merging this contract does NOT
-authorize any implementation — each rollout slice (§9) requires its own
-separate, explicit authorization, exactly like every prior contract in
-this repository.**
+document, in any of the three drafting passes. Merging this contract does
+NOT authorize any implementation — each rollout slice (§9) requires its
+own separate, explicit authorization, exactly like every prior contract
+in this repository.**
 
 ---
 
@@ -22,1061 +25,826 @@ this repository.**
   an isolated worktree, based on `main` at the commit that already
   contains Milestone 1 (`fb5c823`, PR #84).
 - Drafting and correcting this contract makes **zero** application
-  changes. No `resources/`, `app/`, `database/`, or `routes/` file is
-  touched by this branch — only this document, in both the original
-  commit and this correction.
+  changes, across all three passes. No `resources/`, `app/`, `database/`,
+  or `routes/` file is touched by this branch — only this document.
 - Once merged, implementation of **Slice 1 only** (§9) may begin under a
   separate, explicit authorization. Slices 2 onward (§8) are a locked
   rollout *map*, not yet allowlisted.
-- `maximum_correction_rounds: 2` applies to this contract. This is
-  correction round 1 of 2.
+- `maximum_correction_rounds: 2` applies to this contract. **This is
+  correction round 2 of 2 — the final correction round this contract's
+  own governance permits.** Any further change after this round requires
+  either a fresh contract or an explicit, separately-authorized extension
+  of this budget, exactly like every prior multi-round contract in this
+  repository's history.
 - Any path required during Slice 1 implementation but absent from §9's
   own numbered allowlist is a stop-and-report condition — not a silent
   workaround.
 
 ---
 
-## 1. Mandatory preflight — verified (both drafting passes)
+## 1. Mandatory preflight — verified (all three drafting passes)
 
 - Read `CLAUDE.md`, `docs/automation/DESIGN-SYSTEM-CONTRACT.md`
   (Milestone 1) and its merged implementation.
 - Confirmed Milestone 1 is merged to `main` (`fb5c823`).
 - **Original pass**: three-track audit (rollout inventory, chart/chat,
   config-storage/authorization/runtime-injection) — §3.1-3.6.
-- **This correction pass**: two additional audit tracks specifically
-  requested by the correction instructions — (a) the complete remaining
-  hardcoded-color surface across SCSS, inline styles, icons, third-party
-  JS components, chart chrome, and inline SVG illustrations; (b) font
-  declarations repository-wide plus the existing file-upload/storage
-  architecture, to make an evidence-based decision on whether safe
-  webfont upload is achievable — §3.7-3.9.
+- **Correction Round 1**: two additional audit tracks (complete
+  hardcoded-color surface including third-party components; font
+  declarations and file-upload/storage architecture) — §3.7-3.9.
+- **Correction Round 2 (this pass)**: no new repository audit was
+  required or requested — theme presets are a management-layer
+  architecture decision built entirely on top of Round 1's
+  already-audited token/runtime/font/authorization foundation. This
+  round is verified instead by re-reading Round 1's own §6 architecture
+  in full and tracing every preset requirement to either an already-
+  established mechanism it can reuse unchanged, or a specific,
+  identified extension point — recorded in §6.14-§6.18 and reconciled in
+  §9's own closing paragraph.
 
 ---
 
 ## 2. This contract's own exact file scope
 
 Only one path has ever changed on `chore/design-system-m2-contract`,
-across both the original commit and this correction:
+across all three drafting passes:
 
 1. `docs/automation/DESIGN-SYSTEM-M2-CONTRACT.md` (this file)
 
 ---
 
-## 3. Mandatory repository audit — findings
+## 3. Mandatory repository audit — findings (unchanged since Correction
+## Round 1; reproduced for continuity, not re-verified this round)
 
 ### 3.1 Remaining rollout surface
 
 - **374** total Blade view files under `resources/views/` (machine-
-  verified: `find resources/views/{customer,admin,auth,errors,layouts,
-  panels,emails,vendor,Installer,plugins,components} -name "*.blade.php"
-  | wc -l` reproduces 147/127/32/7/7/9/10/16/3/1/15 = 374 exactly).
-- **2** migrated to the Milestone-1 component library.
-- **357** remaining Blade views (374 − 15 component-library files − 2
-  already migrated).
+  verified). **2** migrated to the Milestone-1 component library.
+  **357** remaining Blade views.
 - **223 files / 796 occurrences** of `data-feather="..."` remain.
-- **55 files** are 500+ lines; `admin/SendingServer/create.blade.php`
-  (4,306 lines) and `customer/SendingServer/create.blade.php` (2,316
-  lines) are extreme outliers, each its own dedicated future slice (§8).
-- `resources/views/emails/**` (10) and `resources/views/vendor/mail/**`
-  (16) render through Laravel's markdown-mail system, outside the
-  browser CSS/SCSS pipeline — **out of scope for the entire rollout**,
-  reaffirmed by this correction's own re-audit (§3.8).
+- **55 files** are 500+ lines; two extreme outliers each get their own
+  dedicated future slice (§8).
+- `resources/views/emails/**` and `resources/views/vendor/mail/**`
+  remain **out of scope for the entire rollout**.
 
 ### 3.2 Chart color audit (series colors)
 
-- Four PHP call sites build `LarapexChart` objects; none call
-  `->setColors()` — every chart's series colors are hardcoded client-side
-  across at least eight Blade `<script>` blocks, with the legacy Vuexy
-  purple `#7367F0` repeated throughout (`admin/dashboard.blade.php:488,
-  710,799`; `customer/Reports/charts.blade.php:218,647`; etc.).
-- `resources/js/core/app.js:5-16`'s `window.colors` is a static literal,
-  also carrying `#7367F0`.
-- No centralized chart-color config exists anywhere; charts are entirely
-  disconnected from the Milestone-1 token system (compile-time SCSS
-  cannot reach request-time PHP or shipped JS without a new bridge, §6.4).
-- The delivered/enroute/expired/... status-color object is semantic, not
-  brand, and stays out of scope, per the human instruction's own carve-out.
+Four PHP call sites build `LarapexChart` objects with no `->setColors()`
+call; series colors are hardcoded client-side across at least eight
+Blade `<script>` blocks, with the legacy Vuexy purple `#7367F0` repeated
+throughout. No centralized chart-color config exists. Semantic
+status-color objects (delivered/failed/etc.) stay out of scope.
 
 ### 3.3 Chat background audit
 
-- The repeating icon-pattern background is an inline base64 SVG data URI
-  in two SCSS string variables, `$chat-bg-light`/`$chat-bg-dark`
-  (`bootstrap-extended/_variables.scss:664-665`), applied by
-  `app-chat.scss:206-217` and referenced again for dark mode at
-  `dark-layout.scss:1725`. Five on-disk `chat-bg*.{svg,png,jpg}` files
-  are confirmed dead assets, referenced nowhere.
-- Outbound bubbles use a purple gradient off `$primary-color`
-  (`app-chat-list.scss:51-73`); inbound bubbles use `lighten($white,18%)`
-  (`:75-88`).
-- No separate Blade partial for bubbles — built via inline JS
-  template-literal strings in `ChatBox/index.blade.php` in three places
-  (history load, optimistic send, Echo listener). Must-preserve elements
-  (composer restyle, attachment input, template picker, send button,
-  timestamp, notification badge, pin/block/delete + SweetAlert2, empty
-  state, and — critically — the conditional Pusher/Echo guard) are listed
-  in full in the original audit and carried forward unchanged here.
+The repeating icon-pattern background is an inline base64 SVG data URI
+in `$chat-bg-light`/`$chat-bg-dark` (`_variables.scss:664-665`), applied
+by `app-chat.scss:206-217`, referenced again for dark mode at
+`dark-layout.scss:1725`. Five on-disk `chat-bg*` files are confirmed dead
+assets. Outbound bubbles use a purple gradient; inbound bubbles use
+`lighten($white,18%)`. Bubble HTML is built via inline JS template
+literals in `ChatBox/index.blade.php`, not a Blade partial — the full
+must-preserve element list (composer, attachment input, template picker,
+send button, timestamp, notification badge, pin/block/delete, empty
+state, and the conditional Pusher/Echo guard) carries forward unchanged.
 
 ### 3.4 Platform configuration storage audit
 
-- `AppConfig` (table `app_config`): flat `id/setting/value/timestamps`
-  only, no actor, no `is_active`, its one JSON-blob precedent (`tax`) has
-  no audit trail. The *existing* `ThemeCustomizerController` already
-  bypasses it entirely, persisting to `.env` instead.
-- This codebase has an established, idiomatic append-only pattern for
-  "who changed this and when" (`workspace_entitlement_transitions`,
-  `business_feature_toggles`): a plain scalar `*_user_id` column, no FK
-  (deliberate), plus `created_at`.
-- **Decision (§6.1, expanded this round): a new, dedicated, append-only
-  table is used — not `AppConfig`.** Same reasoning as the original
-  contract; the token set is now much larger, which strengthens rather
-  than weakens this decision (`AppConfig`'s flat schema is even less
-  suited to a wide, structured, versioned token map).
+`AppConfig` is flat, unaudited, and its one JSON-blob precedent has no
+audit trail; the existing `ThemeCustomizerController` already bypasses it
+entirely. This codebase's established idiom for "who changed this and
+when" is an append-only table with a plain scalar `*_user_id` column, no
+FK. **Decision (§6.1, now generalized to presets): a dedicated set of
+tables is used — not `AppConfig`** — reasoning unchanged, strengthened
+by the larger token set and now the preset lifecycle.
 
 ### 3.5 Platform-owner authorization audit
 
-- No `is_platform_owner` concept exists anywhere beyond an unconditional
-  `users.id === 1` bypass in `EloquentAccountRepository::hasPermission()`.
-  The established, reusable pattern is "one settings page, one permission
-  string" (`'general settings'`, checked by the existing
-  `ThemeCustomizerController`/`ThemeCustomizerRequest`).
-- **Decision (§6.2, unchanged this round):** a new `'manage theme'`
-  permission, gated additionally by `EnsureUserIsAdministrator::class`
-  and the blanket admin-route middleware stack. Reasoning unchanged from
-  the original contract.
+No `is_platform_owner` concept exists beyond an `id===1` bypass. The
+established, reusable pattern is "one settings page, one permission
+string" (`'general settings'`). **Decision (§6.2, unchanged): a new
+`'manage theme'` permission**, gated by `EnsureUserIsAdministrator::class`
+plus the blanket admin middleware — and, per this round's own explicit
+instruction, this **same** permission now governs every preset action
+(create/edit/activate/rename/duplicate/delete), confirmed as requiring
+no new permission string (§6.15).
 
 ### 3.6 Runtime CSS injection point audit
 
-- `panels/styles.blade.php:12` emits the `core.css` `<link>`; nothing
-  loaded after it in that file redefines any `--color-*` custom property.
-  It is `@include`d, inside `<head>`, by all three root layout files.
-- **Decision (§6.3, unchanged insertion point, expanded payload this
-  round):** a server-rendered `<style>` block appended to the end of
-  `panels/styles.blade.php`. What that block now must contain is
-  substantially larger — see §6.3 and §6.9.
+`panels/styles.blade.php:12` emits the `core.css` `<link>`; nothing after
+it redefines any `--color-*` custom property; it is `@include`d by all
+three root layout files. **Decision (§6.3, unchanged insertion point):**
+a server-rendered `<style>` block appended to `panels/styles.blade.php`,
+now sourced from **whichever preset currently has `status = 'active'`**
+rather than a single settings row (§6.14) — the insertion mechanism
+itself, and its fail-safe/no-flash properties, are entirely unchanged.
 
-### 3.7 NEW — Font-family and font-upload architecture audit
+### 3.7 Font-family and font-upload architecture audit
 
-**Font-family declarations.** Beyond the two Milestone-1 tokenized
-variables (`$font-family-sans-serif`, `$font-family-monospace`, both
-pointed at Geist), **four other locations independently reference
-`$font-family-monospace`**: `core/menu/_navigation.scss:137,143`
-(sidebar nav + nav header), `bootstrap-extended/_navbar.scss:22` (top
-navbar), and `plugins/forms/form-quill-editor.scss:95` (Quill's editor
-*container* font). **A font-swap mechanism that only rewrites
-`$font-family-sans-serif` would silently miss the sidebar, navbar, and
-Quill editor container** — three high-visibility surfaces the human
-instruction explicitly names ("sidebar and navigation... forms...
-chat"). This is a real, previously-undetected bug in how Milestone 1's
-own font tokenization was wired, corrected in §6.9.
+Four locations independently reference `$font-family-monospace`
+(sidebar nav, top navbar, Quill editor container) — a font-swap that only
+rewrites `$font-family-sans-serif` would silently miss them; fixed via
+one canonical `--font-family-app` token (§6.9, unchanged this round).
+KaTeX (Quill's math toolbar) is a separate, unrelated, out-of-scope font
+system. No active icon font exists anywhere. No file in this codebase
+validates upload binary content or gates per-file access for any upload
+type — font upload (§6.9) is built from scratch against this evidence,
+unchanged this round except for the new multi-preset reference-guarding
+logic (§6.16).
 
-The one genuinely separate, unrelated font system found is **KaTeX**
-(Quill's math-formula toolbar extension, loaded via
-`resources/views/plugins/editor.blade.php:3` on three admin settings
-pages) — its own bundled `@font-face` set, structurally incapable of
-being repointed at an arbitrary uploaded webfont. **Explicitly out of
-scope**, called out so it is never mistaken for a font-control gap.
+### 3.8 Expanded hardcoded-color and third-party-component audit
 
-No active icon font exists anywhere (confirmed: Feather renders
-inline-SVG-only via `feather.replace()`; the dormant Feather/jQuery-
-contextMenu/Swiper icon-font files are unreferenced dead bytes). Five of
-six audited third-party plugins (Select2, Flatpickr, DataTables,
-SweetAlert2 mostly, ApexCharts) inherit or already track the app's own
-font variable; only Quill's *content-authoring* font-picker (a
-deliberate, out-of-scope content choice, not chrome) hardcodes unrelated
-font names with no backing files.
+`_variables.scss` still carries raw hex for the grayscale ramp and,
+critically, `$success/$warning/$danger/$info/$secondary/$dark`, which
+alone drive the entire procedurally-generated status/badge/border/button
+system. Shadow/dropdown/modal/popover/toast/focus-ring colors bypass the
+token system entirely; tooltip background is a standalone literal. Dark
+mode is a live, separately-toggleable feature with its own fully
+separate ~24-literal palette (deferred, §6.10 boundary, unchanged).
+Third-party plugins (SweetAlert2, Toastr, Select2, Flatpickr, pickadate,
+DataTables, Quill) consume Sass variables, not runtime custom
+properties — explicitly deferred to per-slice elimination (§6.11,
+unchanged). Icons are confirmed clean (`currentColor` inheritance).
+Inline SVG illustrations are a confirmed, honestly-scoped gap the token
+system cannot close as designed (§6.11 note, unchanged).
 
-**File-upload/storage architecture.** This is the single most
-consequential finding for whether "upload your own webfont" is safely
-buildable at all:
+### 3.9 Critical finding: compile-time vs. runtime color resolution
 
-- `config/filesystems.php`'s `public` disk / `storage:link` convention
-  is configured but **architecturally unused** — a repo-wide check found
-  exactly one reference to `Storage::disk('public')` in `app/`, inside a
-  demo-data seeder, not any real feature.
-- Every real upload feature in the app (logo/favicon, language-file zip,
-  chat MMS attachments, avatars) writes **raw files directly to
-  `public_path(...)`** via bare PHP (`mkdir`/`move()`), served as
-  permanent, unauthenticated static assets. Filenames are content-hashed,
-  timestamp-based, or user-ID-based — none of these are real access
-  control.
-- **No file anywhere in this codebase validates actual binary/magic-byte
-  content.** The closest things (`finfo`, `exif_imagetype`) are used only
-  as outbound MIME-type *labels* for already-stored files, never as an
-  upload-time security gate. `Intervention\Image`'s implicit
-  decode-or-throw behavior is the only incidental content check found,
-  and it has no equivalent for font binaries.
-- **No `Policy` class or per-file authorization pattern exists anywhere**
-  (`app/Policies/` doesn't exist). The one upload with any per-request
-  gating (`AccountController::avatar()`) only requires *any* authenticated
-  session, not ownership — it will serve any user's avatar to any other
-  logged-in user.
-- The strictest existing precedent, `ChatBoxController`'s MMS upload
-  (`mimes:mp4,mov,...|max:20000`), combines an extension/MIME whitelist
-  with a size cap — better than every other upload in the app, but still
-  no content-signature check.
-
-**Decision (§6.9): webfont upload is architecturally supportable, but
-requires building — not reusing — real content validation and a real
-per-route authorization gate, neither of which exists in this codebase
-today for any file type.** The design in §6.9 is built to exceed every
-existing precedent, not merely match one, given how weak the strongest
-existing precedent actually is.
-
-### 3.8 NEW — Expanded hardcoded-color and third-party-component audit
-
-- **The real root cause is one file, only partially fixed by Milestone
-  1**: `bootstrap-extended/_variables.scss` still carries raw hex for the
-  entire grayscale ramp, and — critically — for
-  **`$success`/`$warning`/`$danger`/`$info`/`$secondary`/`$dark`**
-  (`:38-41,44,50`). These four status colors alone drive the *entire*
-  procedurally-generated status system (`core/colors/_palette.scss`
-  generates every `.badge-light-{color}`, `.border-{color}`,
-  `.btn-{color}`, `.overlay-{color}`, glow-shadow rule from them) — one
-  untokenized hex per status color, not dozens of hand-written rules.
-- **Shadow/overlay/dropdown/modal/popover/toast/input-focus colors
-  bypass the Milestone-1 shadow token entirely** — they use raw
-  `rgba($black, ...)` where `$black` (`:32`) is itself a plain hex, not
-  the tokenized `$shadow-color`. Tooltip background
-  (`$tooltip-bg: #323232`, `:507`) is a standalone literal with no token
-  at all. **No `$focus-ring-color` override exists anywhere** — it
-  silently falls through to Bootstrap core's own default
-  `rgba($primary, .25)`, an undocumented dependency rather than an
-  explicit, owner-editable token.
-- **Dark mode is a live, shipped, currently-toggleable feature** (via the
-  existing `ThemeCustomizerController`), not dead code — its entire
-  palette is a second, fully separate set of ~24 hardcoded literals in
-  `_variables-dark.scss` plus scattered overrides in `dark-layout.scss`,
-  none referencing any token. See §6.10 for the scoping decision this
-  requires.
-- **Third-party plugin overrides** (SweetAlert2, Toastr, Select2,
-  Flatpickr, pickadate, DataTables, Quill) all consume SCSS `$variables`
-  — fine at compile time (a rebuild picks up new colors correctly once
-  the underlying `$variables` are tokenized), but **none of them emit a
-  single `var(--color-*)` in their compiled output**, so none respond to
-  a *runtime* (no-rebuild) theme change today. See §6.10.
-- **Chart grid/axis/tooltip chrome is hardcoded per-file**, separate from
-  the already-known series-color problem — `admin/dashboard.blade.php:
-  488-493,713,737,752` and equivalents in five sibling files pass literal
-  hex (`#b9c3cd`, `#e7eef7`, `#b9b9c3`) directly into `grid.borderColor`/
-  `xaxis.labels.style.colors`/`yaxis.labels.style.color`. **No chart
-  configures a tooltip background/text color at all** — tooltip chrome is
-  left to library defaults everywhere, a distinct gap from "hardcoded"
-  (it's simply un-themed).
-- **Icons are clean**: confirmed `fill: currentColor`/inherited-color
-  behavior for both Lucide (`.ds-icon { color: currentColor }`) and
-  legacy Feather (SVG `stroke="currentColor"` default) — no hardcoded
-  icon fill/stroke exists in SCSS. Icons correctly need no dedicated
-  color token beyond inheriting whatever text-role color surrounds them,
-  confirming the human instruction's own "icons should normally inherit
-  their semantic context color" expectation is already true today.
-- **Inline `style="..."` color attributes are a negligible surface**: 215
-  total `style=` attributes app-wide, only ~4 carry any color value at
-  all (the rest are widths/display toggles) — not the large problem it
-  might appear to be.
-- **Inline SVG illustration assets are a confirmed, real gap that cannot
-  be closed by any token mechanism as currently designed**: login/
-  register/error-page illustrations (`resources/images/pages/*.svg`, up
-  to 267 hex occurrences per file) are loaded via `<img src="...">`, not
-  inlined into the DOM — meaning they **cannot** inherit `currentColor`
-  or read CSS custom properties in their current form, regardless of how
-  complete the token system becomes. See §6.11 for the explicit,
-  honest scoping decision this requires.
-
-### 3.9 NEW — Critical finding: compile-time vs. runtime color resolution
-
-**Empirically verified, not assumed.** The compiled `.btn-primary` rule
-in the *current, committed* `public/css/core.css` reads:
-
-```css
-.btn-primary{background-color:#7367f0;border-color:#7367f0;color:#fff}
-```
-
-— a **fully baked literal hex**, not `var(--bs-primary)` or any custom
-property. (Separately, this also confirms the committed `public/css/`
-build artifact is stale relative to Milestone 1's *source* changes —
-noted for transparency, not a Milestone-2 concern to fix.)
-
-By contrast, Milestone 1's own new component library
-(`resources/scss/base/components/ds-components.scss`) was verified to
-use `var(--color-*)` **32 times and zero raw Sass color-variable
-references** — it was built runtime-correct from the start.
-
-**This means Bootstrap's own native compiled component classes —
-`.btn-primary`, `.badge-light-*`, `.dropdown-menu`, `.table`, `.modal-*`,
-`.nav-link.active`, `.form-control:focus`, and every class like them,
-used across the vast majority of the app's 357 remaining pages — do
-**not** respond to a post-load `:root { --color-*: ...; }` override at
-all.** The original contract's §6.3 runtime-injection design is correct
-as far as it goes (it *will* correctly re-theme anything already built
-on `var(--color-*)`, which today means only the 15-file M1 component
-library and the two migrated reference pages) but was **silently
-insufficient** for "every color used by the customer and admin
-applications," because nearly everything else in the app is still
-rendered through Bootstrap's own compile-time-baked native classes.
-
-**Decision (§6.10): a new, explicit "runtime bindings" SCSS layer is
-required as Slice-1 infrastructure** — a bounded, auditable set of
-override rules mapping the semantic Bootstrap classes actually in use
-across the app to `var(--color-*)`, so their *rendered* color resolves
-live at runtime even though the *stylesheet* itself is still compiled
-once. This is not a hypothetical nicety; without it, "no rebuild
-required" is false for nearly the entire application, not merely
-unmigrated pages.
+Empirically verified: the committed `public/css/core.css`'s
+`.btn-primary` rule is `background-color:#7367f0` — a **baked literal**,
+not a custom property — while Milestone 1's own new component library
+correctly uses `var(--color-*)` throughout. **Decision (§6.10, unchanged
+this round): a new "runtime bindings" SCSS layer** maps Bootstrap's
+native compiled classes to the token custom properties, closing the gap
+for the classes used across nearly the entire application. This finding
+and its fix are foundational, load-bearing infrastructure for presets
+too: without it, activating a different preset would not visibly change
+the vast majority of the app's actual rendered colors, regardless of how
+correct the preset-switching mechanism itself is.
 
 ---
 
-## 4. Locked requirements — corrected, complete scope (supersedes §4 of
-## the original contract in full)
+## 4. Locked requirements — corrected, complete scope (§4 of Correction
+## Round 1, plus this round's addition, §4.6)
 
-The original limited palette (Primary/Secondary/two chart colors/seven
-surface roles) is **replaced**, not extended, by the following. Every
-color used anywhere in the customer/admin application must resolve
-through an owner-configurable semantic token, at minimum:
+§4.1-§4.5 (complete semantic token taxonomy, no locked palette, global
+font control with safe upload, theme editor experience, accessibility &
+safety, runtime application) are **unchanged from Correction Round 1** —
+reproduced in full there, not restated here to avoid drift between two
+copies of the same text. This round adds:
 
-**Brand & interaction**: primary, secondary, accent, link, link-hover,
-focus-ring, selection, button-primary-bg, button-secondary-bg,
-button-text, hover/active/selected/disabled states, nav-hover,
-nav-active.
+### 4.6 Theme presets (new)
 
-**Text & icons**: primary/secondary/muted/inverse/disabled text; default/
-muted/inverse icon (icons inherit their semantic context color — already
-true today, §3.8).
+> Add named theme presets so the platform owner can safely create and
+> test completely different designs without overwriting the active
+> theme.
 
-**Backgrounds & surfaces**: canvas, sidebar, header/nav, primary surface,
-secondary surface, dropdown, input/control, table-header, table-row,
-row-hover, chat-canvas, chat-bubble-in, chat-bubble-out, chat-composer,
-modal-surface, overlay/backdrop, tooltip/popover surface.
+The authorized platform owner must be able to: create a new preset;
+duplicate an existing one; name and rename presets; edit every
+configurable color and the application font within a preset; preview a
+preset without activating it; save it without affecting users; activate
+a saved preset; return to the previously active preset; delete inactive
+custom presets; distinguish clearly between Draft, Saved, Active, and
+Factory states. Exactly one theme is active at a time. Activation is
+atomic, invalidates relevant caches immediately, and preserves the
+previous theme as a saved, recoverable preset.
 
-**Borders, depth, elevation**: normal border, subtle divider, strong
-border, input-border, active-border, focus-border, shadow-tint,
-elevated-shadow-tint. Overlay/shadow roles may use a validated
-alpha-capable format.
+**Factory theme**: the approved warm-red design is a protected factory
+fallback — always available for recovery, never directly editable or
+deletable, duplicable and customizable, and activating it restores its
+complete colors and Geist Sans together. It must not restrict the owner
+from creating a completely different theme.
 
-**Status**: success, warning, danger/error, info, pending — each with
-derived text/border/icon/soft-background variants.
+**Validation & authorization**: only `'manage theme'` may create, edit,
+activate, rename, duplicate, or delete presets; every preset passes the
+same schema/security validation before it can be saved; hard
+accessibility failures prevent activation; non-blocking warnings are
+visible during editing and before activation; previewing never mutates
+the active theme or shared cache; every creation/edit/activation/
+rollback/rename/deletion records actor and timestamp; an active preset
+is never deletable.
 
-**Charts**: an explicit multi-slot series palette (§7.1: 8 slots, sized
-to the app's own largest real chart), chart-neutral, chart-grid,
-chart-axis/label, chart-tooltip background + text, positive/negative
-data. No silent fallback to Vuexy purple or any other hardcoded legacy
-value anywhere.
+**Font references**: a preset references a bundled or uploaded font;
+deleting an uploaded font referenced by the active theme is prevented;
+deleting a font referenced by another saved preset is prevented (§7.1's
+resolution of the two options offered); the public font route exposes
+only the active public theme's font; an authenticated, `'manage theme'`-
+protected preview mechanism may serve an inactive preset's font to the
+editor, without making every uploaded font publicly enumerable;
+activating a preset switches its font and colors together atomically.
 
-**No locked palette.** The current approved warm-red design is the
-factory fallback/reset target, never a forced constraint — the owner may
-create a completely different theme; no color is architecturally locked;
-missing/corrupt/incomplete config fails safely to the factory theme.
-"All colors editable" means controlled semantic tokens, never arbitrary
-CSS/selector-level injection.
-
-**Global font control.** One "Application font" setting, applied
-consistently to body/headings/sidebar/nav/buttons/forms/tables/cards/
-dropdowns/modals/chat/badges/charts/chart-labels/dynamically-created
-client-side UI, at runtime, no rebuild. Approved bundled choices, plus
-owner-uploaded webfont **if the audited storage architecture can support
-it safely** (§3.7 confirms it can, with new capability — §6.9). Factory
-font remains Geist Sans as fallback/reset only, never permanently locked.
-
-**Theme editor experience**: grouped semantic-token controls, color
-picker + validated hex entry, font selector + safe upload, immediate
-client-side preview (temporary until Save), Save/Cancel/Reset,
-validation errors, contrast warnings, unsaved-change warning, audit
-info (who/when). Preview demonstrates sidebar/nav, header, canvas +
-layered surfaces, text hierarchy, buttons + states, inputs, table,
-statuses, charts, chat, dropdown, modal/overlay, desktop and
-narrow/mobile layouts.
-
-**Accessibility & safety**: validate contrast for every meaningful
-semantic pair (text/background, icon/background, control-state
-visibility); hard-reject combinations breaking essential text,
-navigation, form controls, focus indicators, destructive actions, or
-status meaning; warn (non-blocking) below-preferred-but-not-broken
-combinations; never rely on color alone for status/chart-series meaning
-(preserve labels/icons/patterns); the editor itself must remain usable
-even against a poor saved theme; a protected recovery/reset path always
-exists. No arbitrary CSS/HTML/JS/selectors/remote imports/executable
-font content, ever.
-
-**Runtime application**: validated runtime CSS custom properties at the
-existing shared injection point (§3.6/§6.3); applies to both portals;
-applies before visible rendering (no flash); works across server- and
-client-rendered elements; charts and JS components consume the same
-canonical theme source (§6.12); cached safely, invalidated immediately
-on an authorized change (§6.13). Chat background fully removed —
-configurable surfaces only, no embedded pattern, no replacement image.
+**Starter presets** (optional, bundled, for convenient testing — not
+locked palettes, every preset remains fully editable): Warm Red
+(factory), Clear Red (`#C74444`/`#A80D12`/`#F8E3E3`), Warm Brown
+(`#936047`/`#68402B`/`#F0E5DE`), Dark Chocolate (a dark palette:
+canvas `#140500`, deep canvas `#0E0301`, primary `#A83E00`, primary
+hover `#C24B00`, incoming-bubble surface `#492723`, secondary bubble
+`#673D3A`, raised surface `#21100C`, border/detail `#5D2C26`, primary
+text `#FFF8F5`, muted text `#BEB5B2`). Dark Chocolate uses clean solid
+theme surfaces only — the chat illustration/embedded base64 pattern/any
+decorative background image stays removed regardless of which preset is
+active (§6.17).
 
 ---
 
-## 5. Reading note
+## 5. Reading note (unchanged from Correction Round 1)
 
-The original contract's §4.1's "preserve fixed... surfaces... unless a
-later separately authorized contract expands those controls" is now
-fully superseded — this correction *is* that later authorization,
-delivered explicitly and by name ("The previous proposal was too
-restrictive"). Typography's *scale/spacing* (page-title/heading/body/
-label/caption sizing, established in Milestone 1) remains fixed and
-untouched — only the *font-family* becomes owner-controlled, per §4's
-explicit "Global font control" section. Nothing about spacing, radii, or
-motion tokens is affected by this correction.
+Correction Round 1 fully superseded the original contract's limited
+palette. This round does not reopen or narrow anything Round 1
+established — it adds a management layer (named presets) *on top of* the
+same complete token/runtime/font/accessibility architecture, per its own
+explicit instruction: "Do not change the complete token, runtime-
+binding, font-control, upload-safety, accessibility, or rollout
+architecture established by Correction Round 1."
 
 ---
 
 ## 6. Architecture decisions
 
-### 6.1 Data model — dedicated, append-only, generalized to a token map
+### 6.1 Data model — presets as first-class mutable entities, plus a
+### separate append-only lifecycle-event log
 
-The token set is now large and open-ended (dozens of semantic roles
-across six categories, plus per-status derived variants, plus an 8-slot
-chart palette). A fixed set of named JSON sub-objects (the original
-`colors_json`/`surfaces_json` design) does not scale cleanly to this —
-every future token addition would otherwise force a schema thought
-exercise. Instead:
+Correction Round 1's `platform_theme_settings` table was designed as a
+pure append-only activation history — each save/restore inserted a new
+immutable row. Presets need a genuinely different shape: a named entity
+that can be **created once and edited in place** while not (or even
+while) active, independent of any activation event. Reconciling this
+(§9's own closing paragraph tallies every resulting file change):
 
 ```
-platform_theme_settings
-  id                   bigint, PK
-  input_tokens_json    json   -- flat map: semantic-token-name => owner-entered value (only the roles the owner actually edits — brand base colors, status base colors, chart series slots, surface roles, font choice)
-  derived_tokens_json  json   -- flat map: css-custom-property-name => fully computed value (every role in §4, including all auto-derived hover/active/soft-bg/border/foreground/status variants) — the exact, complete payload the runtime <style> block (§6.3) renders from
-  font_choice          string -- 'bundled' | 'uploaded'
-  font_bundled_key     string, nullable -- e.g. 'geist' (factory), or another approved bundled option (§7.2)
-  font_uploaded_id     unsignedBigInteger, nullable, NO foreign key -- points at platform_theme_fonts.id, same no-FK convention
-  is_active            boolean, default false
-  change_scope         string -- 'full' | 'colors' | 'surfaces' | 'status' | 'charts' | 'font' | 'restore_full' | 'restore_section'
-  created_by_user_id   unsignedBigInteger, nullable, NO foreign key
-  created_at           timestamp only (append-only, no updated_at)
+platform_theme_presets          -- RENAMED + reshaped from platform_theme_settings; a real, mutable entity table now, not append-only
+  id
+  name                  string, required; unique among non-deleted presets; Factory's name is fixed ("Warm Red") and immutable
+  status                string enum: 'draft' | 'saved' | 'active' | 'factory'   -- exactly one row may ever be 'active'; enforced by wrapping every activation in one DB transaction that demotes the previous active row and promotes the target together, never by a bare unique index alone (a transaction is required regardless, since the two writes must be atomic)
+  is_factory            boolean, default false  -- exactly one row, seeded once (§6.17), permanently protected from edit/delete by application-level guards, never a second time created
+  input_tokens_json     json    -- the owner-entered base values (§6.5, unchanged shape from Round 1)
+  derived_tokens_json   json    -- the fully computed token set (§6.6), recomputed whenever input_tokens_json changes, never hand-edited
+  font_choice            string: 'bundled' | 'uploaded'
+  font_bundled_key        string, nullable
+  font_uploaded_id         unsignedBigInteger, nullable, NO foreign key (unchanged convention)
+  created_by_user_id       unsignedBigInteger, nullable, NO foreign key
+  created_at                timestamp
+  updated_by_user_id        unsignedBigInteger, nullable, NO foreign key  -- new: presets are mutable, so last-editor is tracked distinctly from creator
+  updated_at                 timestamp
 
-platform_theme_fonts   -- new, separate lifecycle from theme rows themselves
-  id                   bigint, PK
-  safe_filename        string  -- server-generated (sha256 of validated bytes + validated extension), NEVER client input
-  original_filename    string  -- display only, never used to build a path
-  mime_type             string -- validated, not trusted from the client
-  file_size_bytes       unsignedInteger
-  storage_path          string -- private `local` disk, `theme-fonts/{safe_filename}`, §6.9
-  uploaded_by_user_id   unsignedBigInteger, nullable, NO foreign key
-  created_at             timestamp only (append-only; "removal" sets a `deleted_at` rather than hard-deleting the row, so historical theme rows that once referenced it stay audit-legible even after the bytes are gone)
-  deleted_at             timestamp, nullable
+platform_theme_preset_events    -- NEW — append-only/immutable, carrying forward Round 1's original audit-trail shape, now scoped to preset *lifecycle events* rather than the presets' own storage
+  id
+  preset_id              unsignedBigInteger, NO foreign key (same convention)
+  event_type              string enum: 'created' | 'duplicated' | 'edited' | 'renamed' | 'activated' | 'rolled_back' | 'deleted'
+  metadata_json            json, nullable  -- e.g. {old_name, new_name} for renames; {source_preset_id} for duplicates; {previous_active_preset_id} for activations
+  actor_user_id             unsignedBigInteger, NO foreign key
+  created_at                 timestamp only, immutable — no updated_at
 ```
 
-Same rationale as the original contract's §6.1 (append-only mirrors
-`workspace_entitlement_transitions`; `is_active` flips transactionally on
-save/restore; free audit trail as a consequence of the storage shape,
-not a bolt-on log) — generalized to a flat token map because the token
-set itself is now large enough that a rigid per-category schema would
-need to change every time a new role is added, which the flat-map
-design avoids entirely while keeping every individual entry named,
-typed (string), and auditable.
+`platform_theme_fonts` (Round 1) is **unchanged in schema** — only the
+reference-guarding *logic* inside `PlatformThemeManager` changes, to
+check every preset's `font_uploaded_id`, not a single active row's
+(§6.16).
 
-### 6.2 Authorization (unchanged)
+This directly satisfies "distinguish clearly between Draft, Saved,
+Active, and Factory states" (the `status` enum, an explicit, named,
+four-value field — not an inference from other columns), "record actor
+and timestamp of every creation/edit/activation/rollback/rename/
+deletion" (the six `event_type` values map 1:1 onto the six named
+requirements), and "exactly one theme active at a time" (the transaction
+discipline, not merely a constraint).
 
-`'manage theme'` permission (§3.5), `EnsureUserIsAdministrator::class` +
-blanket admin middleware, controller/FormRequest both independently
-checking it. Font upload/replace/delete/select actions reuse the exact
-same `'manage theme'` permission — no separate policy class is
-introduced, since this app's own established convention is
-permission-string gating on routes/FormRequests, not per-resource Policy
-classes (confirmed absent entirely, §3.7), and a second permission string
-for "who may touch fonts" would fragment a single coherent "who may edit
-the theme" concept the human instruction itself treats as one thing.
+### 6.2 Authorization (unchanged from Correction Round 1)
 
-### 6.3 Runtime CSS injection — expanded payload, same insertion point
+`'manage theme'`, `EnsureUserIsAdministrator::class`, blanket admin
+middleware — confirmed by this round (§6.15) to already cover every
+preset action with no new permission string needed.
 
-Same decision as the original contract (§3.6): append to
-`panels/styles.blade.php`. The payload now contains substantially more:
+### 6.3 Runtime CSS injection (unchanged mechanism, updated source query)
 
-```html
-<style id="platform-theme-overrides">
-  :root {
-    --color-primary: ...; --color-primary-hover: ...; /* ...every role in §4's Colors categories... */
-    --color-canvas: ...; /* ...every Surfaces role... */
-    --color-status-success: ...; --color-status-success-text: ...; /* ...every status × variant... */
-    --color-chart-1: ...; ... --color-chart-8: ...; --color-chart-grid: ...; /* ...every Chart role... */
-    --font-family-app: ...;
-  }
-  @font-face { font-family: 'PlatformThemeFont'; src: url(...) format('woff2'); font-display: swap; } /* only emitted when font_choice = 'uploaded' */
-</style>
-```
+Same insertion point, same fail-safe/no-flash properties as Round 1.
+`PlatformThemeManager::currentStyleBlock()` now queries
+`platform_theme_presets WHERE status = 'active' LIMIT 1` instead of
+`platform_theme_settings WHERE is_active = true` — a one-line internal
+change to an already-allowlisted method, not a new mechanism.
 
-Fail-safe behavior is unchanged in kind: `PlatformThemeManager::
-currentStyleBlock()` returns `null` (render nothing, fall back to
-Milestone-1's compiled defaults, which equal the factory theme) whenever
-no active row exists or its JSON fails validation at read time. No flash
-of default theme, because this still executes server-side before
-`</head>`.
+### 6.4 Chart token bridge (unchanged from Correction Round 1)
 
-### 6.4 Chart token bridge — expanded
+### 6.5 Full editable-property list (unchanged from Correction Round 1)
 
-Same runtime-readable-bridge rationale as the original contract's §6.4,
-generalized: the eight chart-bearing views and `window.colors` now source
-**all** chart-related values (8 series slots, neutral, grid, axis/label,
-tooltip background/text, positive/negative) from the canonical JS module
-(§6.12), not just the two colors the original contract scoped. Semantic
-status-color objects remain untouched, per §4.2's own carve-out,
-unchanged from the original contract.
+Every category, default value, and "owner enters a small base set,
+variants derive automatically" principle from Round 1 applies unchanged
+to **each preset independently** — a preset's `input_tokens_json` holds
+exactly the same bounded field set Round 1 already specified.
 
-### 6.5 Full editable-property list
+### 6.6 Deterministic derivation algorithm (unchanged from Correction
+### Round 1)
 
-Given the size of the final token set (§4), it is expressed as
-categories with representative default values rather than one flat
-table (see §7 for the handful of genuinely undetermined defaults):
+Applied per-preset, on every edit to that preset's `input_tokens_json` —
+recomputing that preset's own `derived_tokens_json` only, never any
+other preset's.
 
-- **Brand/interaction**: primary `#B5524C` (factory), secondary/accent,
-  link, focus-ring, selection — hover/active/selected/disabled states and
-  nav-hover/nav-active are **derived**, never separately entered (§6.6).
-- **Text/icon**: primary `#262522`, muted `#6F6D67`, secondary, inverse,
-  disabled — icons consume these via inheritance (`currentColor`,
-  already true today, §3.8), never a separate icon-specific token.
-- **Surfaces**: canvas `#F7F6F2`, sidebar `#F2F0EB`, header (derived from
-  primary unless overridden, §7.2), primary surface `#FFFFFF`, secondary
-  surface `#FBFAF7`, dropdown/input/overlay/modal/tooltip/chat-canvas/
-  chat-bubble-in/chat-bubble-out/chat-composer/table-header/table-row/
-  row-hover — every one of these **resolves to one of the small number
-  of owner-entered surface bases** (canvas, sidebar, primary surface,
-  secondary surface, input) via the derivation service, not 15+
-  independently-entered fields — matching the human instruction's own
-  "the platform owner should normally edit only the limited... colors...
-  variants should be derived automatically."
-- **Borders/depth**: neutral border `#E5E1DA` (owner-entered), subtle
-  divider/strong border/input-border/active-border/focus-border/
-  shadow-tint/elevated-shadow-tint — all **derived** from the
-  border/shadow bases plus the relevant brand/status color where
-  contextually meaningful (e.g. `focus-border` derives from `focus-ring`,
-  which itself derives from `primary` unless separately overridden,
-  §7.2).
-- **Status**: success/warning/danger/info/pending — **5 owner-entered
-  base hex values**; text/border/icon/soft-background derive
-  automatically per status via the same derivation formula as brand
-  colors (§6.6) — never 20 individually-entered fields.
-- **Charts**: **8 owner-entered series slots** (§7.1) + chart-neutral
-  (optional) — grid/axis-label/tooltip-bg/tooltip-text/positive/negative
-  are **derived** from the surface/text/status tokens already present
-  (grid from border, axis-label from muted text, tooltip surface/text
-  from overlay/text, positive/negative from success/danger), not
-  separately entered.
+### 6.7 Contrast validation — clarified: save vs. activate gating
 
-This keeps the owner-facing form bounded — brand (4-5 fields) + status
-(5 fields) + chart series (8 fields, §7.1) + surfaces (5 base fields) +
-borders (1 base field) + font (1 selector, + upload where used) — while
-the *token surface* the runtime system emits is comprehensive, exactly
-matching "the platform owner should normally edit only the limited...
-colors... variants should be derived."
+Round 1 established the two-tier {errors, warnings} validator. This
+round clarifies, per its own explicit instruction ("Hard accessibility
+failures must prevent activation"), that hard-reject failures are
+checked at **both** points, not only one: **saving** a preset's edits
+runs the same validation Round 1 always ran (so a preset already known
+to be broken is never persisted in the first place); **activating** a
+preset re-runs the identical check as a second, final, non-bypassable
+gate immediately before it can become the live theme — because a
+preset's field values could not otherwise be edited by anything else
+between save and activate, this is a deliberate belt-and-braces
+duplication, not redundant work: it guarantees an *active* preset can
+never fail hard-reject contrast even if some future code path ever
+manages to persist one without going through the normal save endpoint.
+Non-blocking warnings remain visible both during editing (Round 1) and
+now explicitly **before activation** too (an owner activating a preset
+they haven't touched in a while sees the same warnings they'd see if
+editing it right now).
 
-### 6.6 Deterministic derivation algorithm — expanded to status colors
+### 6.8 "Never permit custom CSS/JS/arbitrary HTML" (unchanged)
 
-Unchanged mechanism from the original contract's §6.6 (HSL-space
-hover/active/soft-bg/border/foreground derivation, server-side,
-implementation-time-verified against the approved defaults within a
-ΔE₀₀ < 2 tolerance) — now applied uniformly to **every** base color the
-owner enters: brand primary, secondary/accent, each of the 5 status base
-colors, and (where unset) chart series slots derived from brand/status
-where they overlap conceptually. One formula, one implementation, reused
-everywhere a "base color → full variant set" transformation is needed —
-never a second, divergent derivation path for status colors.
+### 6.9 Font architecture: bundled selection + safe upload (unchanged
+### mechanism from Correction Round 1; reference-scope changes, §6.16)
 
-### 6.7 Contrast validation — expanded to "every meaningful pair"
+### 6.10 Runtime-bindings retrofit layer (unchanged from Correction
+### Round 1)
 
-Same two-tier design as the original contract (§6.7: hard-reject at
-AA thresholds for anything text/controls/focus-indicators/destructive-
-actions render on, soft warning for low-but-valid surface separation) —
-now evaluated across the full token set: every status's derived
-text-on-soft-bg pair, every derived border against its adjacent surface,
-focus-ring against every surface it can appear on, chart series against
-chart background and against each other (adjacent series must remain
-visually distinguishable — evaluated as a *minimum pairwise hue/lightness
-delta* check, not raw WCAG contrast, since "distinguishable data series"
-and "readable text" are different accessibility properties). The
-validator's `{errors, warnings}` structure and PHP-authoritative,
-JS-optimistic-preview split are unchanged in mechanism, only in the
-number of pairs actually checked.
+### 6.11 Third-party plugin color scope / inline SVG illustrations
+### (unchanged deferrals from Correction Round 1)
 
-### 6.8 "Never permit custom CSS/JS/arbitrary HTML" (unchanged mechanism)
+### 6.12 Canonical JS runtime-theme-token source (unchanged from
+### Correction Round 1)
 
-Same structural enforcement as the original contract — a fixed,
-named set of typed fields only (hex-string regex for solid colors, a
-separate validated alpha-capable format for overlay/shadow roles per
-§4's own allowance, one font-choice enum, one file-upload field with its
-own dedicated validation pipeline, §6.9). No free-text/CSS/HTML field
-exists anywhere in the schema, now or after this correction.
+`theme-tokens.js` continues to read whatever the current `<style>`
+override block set — it has no awareness of "presets" as a concept at
+all, and needs none: by the time any browser-side code runs, exactly one
+preset's values are already the ones rendered into `:root`. This is a
+clean separation of concerns Round 1's own design already provided for
+free — no changes needed to this file's own responsibilities.
 
-### 6.9 NEW — Font architecture: bundled selection + safe upload
+### 6.13 Caching and invalidation — clarified: preview vs. save vs.
+### activate
 
-**Bundled choices**: a small, fixed list of pre-vetted, properly-licensed
-webfonts shipped the same way Geist already is (self-hosted `.woff2`,
-`font-display: swap`) — exact list is a §7.2 open decision (proposed:
-Geist [factory], plus 2-4 other broadly-licensed system-adjacent faces),
-selected via a plain `<select>`, applied by setting `font_choice =
-'bundled'` and `font_bundled_key`.
+Round 1 already required immediate, explicit cache invalidation on "an
+authorized change," keyed on a single constant cache key representing
+"the active theme's rendered style block." This round makes explicit,
+per its own instruction ("Previewing must not mutate the active theme or
+shared cache"), which of the three preset actions actually touch that
+key:
 
-**Upload pipeline** (built new — §3.7 confirmed nothing to reuse):
+- **Preview** (client-side, optimistic CSS custom-property swap in the
+  editor's own browser tab, §4.1's existing mechanism) never calls the
+  server's cache-invalidation path at all — it is purely local DOM/CSS
+  manipulation, structurally incapable of affecting the shared cache
+  because it makes no persistence call.
+- **Save** (persisting edits to a preset's `input_tokens_json`/
+  `derived_tokens_json`) does **not** invalidate the shared
+  `platform_theme:active_style_block` cache key **unless the preset
+  being saved is the currently-active one** — editing and saving an
+  inactive Draft/Saved preset must not affect what any other user sees,
+  per the explicit "save it without affecting users" requirement.
+- **Activate** (and its `rolled_back` twin, §6.14) always invalidates the
+  cache key immediately, inside the same transaction that flips
+  `status`, regardless of which preset is involved — this is the one
+  action explicitly named as needing immediate invalidation.
 
-1. `UploadPlatformThemeFontRequest`: `'font_file' => 'required|file|
-   mimes:woff,woff2|max:5000'` (5MB cap — exceeds the strictest existing
-   precedent found, ChatBox's `max:20000` KB for media, since a single
-   font file has no legitimate reason to approach that size).
-2. `ValidFontFileRule` (new — genuinely new capability, §3.7): rejects
-   anything whose first bytes don't match the WOFF2 (`wOF2`) or WOFF
-   (`wOFF`) magic signature, regardless of what the client-supplied
-   extension/MIME claims. Extension/MIME checks (step 1) and magic-byte
-   checks (this step) are both required — neither alone is sufficient,
-   per the audit's own finding that every existing upload in this app
-   trusts extension/MIME alone.
-3. Filename is **never** client-derived: `safe_filename = hash('sha256',
-   $bytes) . '.' . $validated_extension`, computed server-side from the
-   validated bytes themselves.
-4. Stored on the **private** `local` disk (not `public` — the audited
-   `public`/`storage:link` convention is unused elsewhere in the app and
-   not reused here either, §3.7) under `theme-fonts/{safe_filename}`.
-5. **Serving is split by trust boundary, not by a single access-control
-   flag** — because an *active* theme font is, by definition, a public
-   asset every anonymous visitor's browser must fetch to render the page
-   (exactly like Geist is today), while a *non-active* uploaded font
-   (replaced, rolled back away from, or awaiting deletion) has no
-   legitimate reason to be fetchable by anyone:
-   - **New public route** in `routes/public.php` (confirmed the
-     correct home for genuinely unauthenticated routes, §3.7):
-     `GET theme-font/{safeId}` → streams the font's bytes **only if
-     `safeId` matches the currently-active theme's `font_uploaded_id`**;
-     otherwise 404. No directory listing, no enumeration beyond guessing
-     a 64-character hex id that, even if guessed, only resolves for the
-     one font actually in use.
-   - **Upload/replace/delete/select** all live behind the existing
-     `'manage theme'`-gated admin routes (§6.2) — never publicly
-     reachable, exactly satisfying "prevent unauthorized users from
-     downloading [meaning: any non-active/historical font], replacing,
-     or deleting theme font files."
-6. `font-display: swap` and a safe fallback stack
-   (`'PlatformThemeFont', -apple-system, BlinkMacSystemFont, 'Segoe UI',
-   Helvetica, Arial, sans-serif` — the exact same fallback chain
-   Milestone 1 already established for Geist) are always present in the
-   emitted `@font-face`, whether the active font is bundled or uploaded.
-7. **Replacement/rollback**: since `platform_theme_settings` is
-   append-only (§6.1), switching back to a previous font — bundled or a
-   still-undeleted upload — is just another theme-settings row with
-   `change_scope = 'font'`; no separate versioning system is needed.
-   **Removal**: a dedicated admin action soft-deletes a
-   `platform_theme_fonts` row (`deleted_at`); permitted only when it is
-   **not** the currently-active theme's `font_uploaded_id` (deleting the
-   in-use font would violate "fail safely"); historical
-   `platform_theme_settings` rows that once referenced it remain
-   legible for audit even after the file is gone (their own
-   `derived_tokens_json` already has the resolved values baked in from
-   when they were active, so old audit history never depends on the
-   deleted bytes).
-8. Actor + timestamp: inherent to both tables' own append-only design
-   (§6.1) — no separate mechanism needed.
+### 6.14 NEW — Preset lifecycle operations
 
-### 6.10 NEW — Runtime-bindings retrofit layer (the §3.9 fix)
+All orchestrated by `PlatformThemeManager` (already allowlisted,
+expanded responsibility, no new file):
 
-A new SCSS partial, `resources/scss/base/tokens/_runtime-bindings.scss`,
-imported immediately after the token definitions in `tokens.scss`.
-Contains explicit, targeted override rules — not a rewrite of Bootstrap's
-own generator mixins — mapping every semantic Bootstrap-native class
-actually in use across the app's current 374 views to the new
-`var(--color-*)` tokens, for exactly the property (background-color/
-border-color/color) that needs to be runtime-live. Representative shape:
+- **Create**: inserts a new `platform_theme_presets` row,
+  `status = 'draft'`, seeded either from the Factory preset's current
+  values (a fresh start) or left at sensible empty defaults for the
+  owner to fill in; records a `created` event.
+- **Duplicate**: inserts a new row copying an existing preset's (including
+  Factory's) full `input_tokens_json`/font choice, `status = 'draft'`,
+  a distinct name (e.g. "{original} copy", owner-renameable
+  immediately); records a `duplicated` event with `{source_preset_id}`.
+  This is the **only** way to derive an editable preset from Factory,
+  satisfying "it can be duplicated and customized" while Factory itself
+  never becomes directly mutable.
+- **Edit / Save**: updates an existing non-factory preset's
+  `input_tokens_json` in place (`updated_by_user_id`/`updated_at` set),
+  recomputes `derived_tokens_json` (§6.6), runs the save-time contrast
+  gate (§6.7); records an `edited` event. Rejected outright, at the
+  authorization layer before any validation even runs, if
+  `is_factory = true` — satisfying "it cannot be edited... directly."
+  A preset may be edited regardless of its `status` (draft/saved, or
+  even the currently-active one — editing and re-saving the active
+  preset is a legitimate way to tune the live theme in place, distinct
+  from switching to a *different* preset via Activate); only Factory is
+  ever unconditionally protected.
+- **Rename**: updates only `name`; records a `renamed` event with
+  `{old_name, new_name}`. Rejected for Factory (fixed name).
+- **Activate**: the one place two rows change together, in one
+  transaction: the currently-`active` row (if any) is demoted to
+  `status = 'saved'` — never deleted, satisfying "preserve the previous
+  theme as a saved, recoverable preset" — and the target row is promoted
+  to `status = 'active'`; the activation-time contrast gate (§6.7) runs
+  first and blocks the whole transaction on failure; the shared cache is
+  invalidated (§6.13); records an `activated` event with
+  `{previous_active_preset_id}`.
+- **Rollback ("return to the previously active preset")**: not a
+  separate code path — it is Activate, called with the target being the
+  preset most recently demoted from `active` to `saved` (readable
+  directly from the most recent `activated` event's own
+  `previous_active_preset_id`, or equivalently the preset referenced by
+  the most recent `activated` event that isn't the current one). Records
+  its own `rolled_back` event (distinct `event_type` from `activated`,
+  even though the underlying operation is identical) purely so the audit
+  trail can distinguish "the owner deliberately picked this preset" from
+  "the owner explicitly asked to undo the last switch" — a meaningful
+  distinction for anyone reading the history later, at zero extra
+  mechanism cost.
+- **Delete**: permitted only when **all** of: not `is_factory`, not
+  `status = 'active'` (an active preset is never deletable, per the
+  explicit requirement — checked directly against `status`, not
+  inferred), and not referenced by any *other* preset's pending font
+  relationship in a way §6.16 would block. Soft-deletes are not used for
+  presets themselves (unlike `platform_theme_fonts`, §6.9) — a deleted
+  preset's own `deleted` event retains its final `name` in
+  `metadata_json` for audit legibility, and the row is genuinely removed
+  since nothing else ever needs to reference a deleted preset's own id
+  (font references point the other way, preset → font, never font →
+  preset).
 
-```scss
-.btn-primary { background-color: var(--color-primary); border-color: var(--color-primary); }
-.btn-primary:hover, .btn-primary:focus { background-color: var(--color-primary-hover); border-color: var(--color-primary-hover); }
-.badge-light-primary { background-color: var(--color-primary-soft-bg); color: var(--color-primary); }
-.badge-light-success { background-color: var(--color-status-success-soft-bg); color: var(--color-status-success); }
-/* ...one block per class actually found in the audit: .btn-*, .badge-light-*, .text-*, .border-*, .bg-light-*, .dropdown-menu, .modal-content, .table*, .nav-link.active, .form-control:focus, .pagination .page-item.active, tooltip/popover chrome... */
-```
+### 6.15 NEW — Authorization confirmation (no new permission string)
 
-This is a **bounded, auditable, closed set** — derived directly from
-which semantic classes the 374-view app actually uses (a mechanical grep
-task, not guesswork), not an open-ended rewrite of vendored Bootstrap
-SCSS (which stays completely untouched, exactly as before). The file
-itself still only compiles once per asset build (like every other SCSS
-partial); what makes theming *runtime*-live is that its *rules'
-right-hand sides* are `var(--color-*)` references, which the browser
-re-resolves on every paint whenever the `:root` override in §6.3 changes
-— the same, standard CSS custom-property cascade behavior already
-correctly used by `ds-components.scss`, now extended to Bootstrap's own
-native classes as well.
+Traced directly against §3.5/§6.2: every preset action above is gated by
+the **same** `'manage theme'` permission Round 1 already established, at
+the same two layers (route middleware + FormRequest `authorize()`).
+This round introduces **zero** new permission strings — confirmed as a
+deliberate non-change, not an oversight, exactly matching the
+correction's own explicit instruction that this single permission covers
+create/edit/activate/rename/duplicate/delete.
 
-**Explicit scope boundary (not silently expanded further):** this
-retrofit layer covers Bootstrap's own native classes because those are
-used everywhere, by every unmigrated page, and are directly named in the
-human instruction ("navigation, buttons, links, selected states, focus
-rings, badges"). It does **not** cover the seven third-party plugin
-override files (§6.11) — those remain compile-time-tokenized (a rebuild
-picks up new colors correctly) but not runtime-live in Slice 1, an
-explicit, reasoned deferral, not an oversight.
+### 6.16 NEW — Font-reference guarding across multiple presets
 
-### 6.11 NEW — Third-party plugin color scope (explicit deferral)
+Round 1 only had one active theme to check before permitting an uploaded
+font's deletion. With multiple independently-existing presets, a font
+can now be referenced by several rows at once. The correction's own
+instruction offers two explicit options — "prevent deletion... referenced
+by the active theme" (hard requirement) and "prevent **or** safely
+reconcile deletion... referenced by another saved preset" (a choice).
+**Decision: prevent uniformly, for both cases, rather than attempt
+"safe reconciliation."** Reasoning: reconciliation would mean silently
+falling some *other* preset the owner didn't touch back to a different
+font, which is a surprising, unrequested mutation of a preset the owner
+may return to later expecting it unchanged — inconsistent with this
+whole contract's own "never permit... arbitrary" posture and with
+Round 1's existing preference for hard, predictable boundaries over
+best-effort magic. `PlatformThemeManager`'s delete-font guard therefore
+queries `platform_theme_presets WHERE font_uploaded_id = ?` (all
+statuses, not only `active`) and rejects the deletion with a specific
+error naming which preset(s) — by name — still reference it, so the
+owner can deliberately switch those presets to a different font first if
+they truly want the upload gone.
 
-SweetAlert2, Toastr, Select2, Flatpickr, pickadate, DataTables, and
-Quill's own chrome (not its content-authoring font-picker, which is
-correctly out of scope entirely) all currently consume the same
-`$success`/`$warning`/`$danger`/`$info`/`$body-color`/`$border-color`
-Sass variables §6.5/§3.8 tokenizes at the source level in
-`_variables.scss` — meaning a **full asset rebuild after any theme
-change correctly re-colors them**, but they will **not** update live at
-runtime without one, since none of their compiled output uses
-`var(--color-*)` (confirmed, §3.8). Retrofitting seven separate,
-sizeable vendor-override files into the runtime-bindings pattern (§6.10)
-is deliberately **not** Slice-1 infrastructure — these are secondary/
-tertiary chrome (date pickers, rich-text toolbar borders, table
-zebra-striping), not the primary brand surfaces the human instruction
-explicitly enumerates, and each plugin is only actually rendered within
-specific rollout modules (Select2 in Contacts/CRM forms, Quill in
-Templates/Automations, Flatpickr wherever a date field exists, etc.).
-Per the correction's own explicit instruction, **every later slice that
-touches a page using one of these plugins must retrofit that plugin's
-own override file to the runtime-bindings pattern as part of eliminating
-that slice's hardcoded colors** (§8) — this is deferred, bounded,
-tracked work, not an unaddressed gap.
+### 6.17 NEW — Starter presets and seeding
 
-### 6.12 NEW — Canonical JS runtime-theme-token source
+The Factory preset **must** exist from first install — it is the
+system's own recovery target and, per §6.14, the only source a truly
+"different" preset can ever be duplicated from without hand-entering
+every value. A new seeder, `PlatformThemePresetSeeder` (§9), creates it
+directly: `name = 'Warm Red'`, `is_factory = true`, `status = 'active'`
+(so a fresh install has a working, live theme identical to the approved
+defaults from the very first request — a natural, zero-extra-mechanism
+consequence of Factory simply being seeded as the initial active row),
+`input_tokens_json`/`derived_tokens_json` populated from the exact
+approved defaults (§6.5), `font_choice = 'bundled'`,
+`font_bundled_key = 'geist'`.
 
-`resources/js/core/theme-tokens.js` (generalizes and replaces the
-original contract's narrower `chart-tokens.js`, §6.4): a single module
-exporting `getThemeToken(name)`/`getChartColors()`/`getStatusColors()`
-helpers, all backed by one shared `getComputedStyle(document.
-documentElement)` read. Every JS consumer that needs a color at
-runtime — the eight chart-bearing views, `window.colors` in `app.js`,
-and any dynamically-created client-side UI the human instruction
-names — reads through this **one** module, never re-implementing its own
-`getComputedStyle` call. This is the "same canonical theme source"
-requirement satisfied structurally: there is exactly one JS entry point
-for "what color is X right now," so it is architecturally impossible for
-two different pieces of dynamic UI to disagree about a token's current
-value the way `window.colors` and hardcoded hex literals disagree today.
+The three additional starter presets (Clear Red, Warm Brown, Dark
+Chocolate) are **also seeded by the same seeder**, as `status = 'saved'`
+(not active — activating one is a deliberate, separate owner action),
+`is_factory = false` (fully owner-editable/renameable/deletable from the
+moment they exist, per "starter presets are convenience examples, not
+locked palettes"). This resolves the correction's own "may define...
+optional" language toward actually seeding them: "for convenient
+testing" reads most naturally as "ready to activate or duplicate
+immediately," not "a recipe the owner must hand-type" — and seeding
+them costs nothing architecturally beyond three more rows through the
+same, already-necessary seeder.
 
-### 6.13 NEW — Caching and invalidation
+**Dark Chocolate's own requirement — "clean solid theme surfaces... do
+not restore the chat illustration, embedded base64 pattern, or another
+decorative background image" — is automatically satisfied, not a special
+case to implement**: the chat background is fully removed at the
+*runtime-binding/SCSS* layer by Slice 1's own §9 items (chat.scss/
+chat-list.scss/dark-layout.scss no longer reference any background image
+at all, for *any* preset, per Correction Round 1's own architecture).
+Dark Chocolate is simply a set of token *values* like any other preset —
+it has no mechanism by which it could reintroduce a background image
+even if it wanted to, since no token in §6.5's taxonomy is
+"background-image," only solid colors and validated alpha-capable
+overlay/shadow tints (§4). This is confirmed here explicitly so it is
+never mistaken for a gap requiring its own separate fix.
 
-`PlatformThemeManager::currentStyleBlock()` (§6.3) is wrapped in a short-
-lived, request-scoped cache (Laravel's default cache store, keyed on a
-constant, e.g. `platform_theme:active_style_block`) to avoid re-querying
-and re-rendering the token map on every single request. **Invalidation
-is explicit and immediate, not TTL-based**: `PlatformThemeManager`'s own
-save/restore/font-select methods forget that cache key inside the same
-database transaction that flips `is_active`, so the very next request —
-including the admin's own redirect back to the theme-settings page after
-Save — reflects the change with zero staleness window. This satisfies
-"remain cached safely and be invalidated immediately after an authorized
-change" without introducing any new infrastructure dependency (no Redis/
-tag-based cache requirement) — the app's already-configured default
-cache store is sufficient given the narrow, single-key invalidation need.
+### 6.18 NEW — Preview isolation and font-preview access
+
+"Previewing must not mutate the active theme or shared cache" is
+satisfied structurally by §6.13's own split (preview is pure client-side
+CSS manipulation, no persistence call exists for it to make). For **font**
+preview specifically — rendering real text in an inactive preset's
+chosen uploaded font while editing it — the public, unauthenticated
+`theme-font/{safeId}` route (Round 1, §6.9) is deliberately scoped to
+serve **only** the currently-active preset's font, so it cannot be
+(ab)used for this. A second route is added:
+`GET admin/theme-presets/{preset}/font-preview` (new controller action
+on the already-allowlisted `PlatformThemeFontController`, not a new
+controller file), living inside the `routes/admin.php` group and
+therefore inheriting the full existing admin auth stack plus an explicit
+`'manage theme'` check — satisfying "an authenticated, `manage
+theme`-protected preview mechanism" precisely, and "must not make every
+uploaded font publicly enumerable" by construction: this route is never
+reachable by an unauthenticated request at all, unlike the public
+active-font route, which by necessity is.
 
 ---
 
 ## 7. Open technical decisions (category-3 — resolved at implementation
 ## time within the constraints stated here, never silently guessed)
 
-1. **Chart series slot count and default palette.** §3.2/§3.8's audit
-   found the app's own largest real chart (delivered/enroute/expired/
-   undelivered/rejected/accepted/skipped/failed) uses **8** distinct
-   series in one view — this contract sets **8 explicit chart-series
-   slots** on that direct evidence, not a round guess. Their default hex
-   values are not specified anywhere in the approved palette (a
-   single-hue brand family has no natural 8-color chart palette) —
-   proposed resolution: 8 values chosen for maximum pairwise
-   distinguishability (hue-spread) while each individually passing
-   §6.7's contrast rules against the default canvas, confirmed before
-   Slice 1 implementation begins, never silently invented.
-2. **Bundled font list beyond Geist.** §6.9 proposes 2-4 additional
-   pre-vetted, properly-licensed choices; the exact fonts and their
-   licenses are confirmed before implementation, never assumed.
-3. **Secondary/accent, header/nav-background-override, live-preview
-   composition** — carried forward unchanged from the original
-   contract's §7 items 1-3 (still open, still awaiting confirmation, not
-   resolved by this correction).
-4. **Exact runtime-bindings class list (§6.10).** The representative
-   shape shown is illustrative; the *exact, exhaustive* list of Bootstrap-
-   native classes requiring a binding rule is a mechanical grep task
-   performed at implementation time against the actual 374-view corpus,
-   not hand-enumerated in this contract — the contract fixes the
-   *mechanism and scope boundary* (Bootstrap-native classes, not
-   third-party plugin chrome), not a hand-typed exhaustive list that
-   would drift from reality the moment a new page ships.
+Carried forward, unchanged, from Correction Round 1: chart series-slot
+default palette (8 values), bundled font list beyond Geist,
+secondary/accent + header-override + live-preview-composition defaults,
+and the exact runtime-bindings class list (a mechanical grep task at
+implementation time).
+
+**This round resolves, rather than leaves open, the one genuine choice
+its own instructions explicitly offered** — font-reference deletion
+guarding, resolved to "prevent uniformly" over "safely reconcile," with
+reasoning, in §6.16. No new open decisions are introduced by presets
+themselves; every preset-specific question (seed the three non-factory
+starters or not; separate `rolled_back` event type or reuse `activated`;
+soft- vs. hard-delete for presets) is resolved directly in §6.14/§6.17
+with stated reasoning, rather than deferred.
 
 ---
 
-## 8. Full rollout map — unchanged slice boundaries, expanded per-slice
-## mandate
+## 8. Full rollout map (unchanged from Correction Round 1)
 
-The 21-slice map from the original contract (§8) is **unchanged in its
-module boundaries and file globs** — this correction does not touch
-*which* pages are grouped into *which* slice, only what Slice 1 itself
-must now build (§9) and what every slice must now additionally do:
-
-**New, standing mandate for every slice from Slice 2 onward (not
-optional, not deferred further):** each slice's own implementation
-contract must include eliminating that slice's own hardcoded colors and
-font-family declarations as it migrates its pages — retokenizing any
-plugin-chrome override file (§6.11) actually exercised by that slice's
-pages, converting any remaining `data-feather` icons, and confirming
-(via that slice's own mechanical search) zero hardcoded hex/font-family
-literals remain in its own touched files. This is the correction's own
-explicit instruction ("every later slice [must] eliminate its hardcoded
-colors and font declarations") made a standing, repeatable requirement
-rather than a one-time Slice-1 task.
-
-Slice 1's own boundary is **expanded** relative to the original contract
-— see §9 — because building the theme *engine* correctly (§6.9's font
-upload, §6.10's runtime-bindings retrofit, the expanded token taxonomy)
-is genuinely foundational infrastructure that later slices depend on,
-exactly matching the correction's own instruction to "expand Slice 1
-only where the infrastructure must be established now."
-
-The out-of-scope rows are **unchanged**: transactional email templates
-(§3.1), and — newly and explicitly named by this correction's own
-re-audit — **inline SVG illustration assets** (§3.8/§6.11 note below)
-and **the pre-existing dark-mode skin toggle's own separate palette**
-(§3.8/§6.10 boundary), both flagged honestly as real, evidence-based
-scope boundaries rather than silently absorbed or silently ignored.
+The 21-slice module map and its per-slice "eliminate your own hardcoded
+colors/fonts as you migrate" mandate are entirely unaffected by adding
+presets — presets are a Slice-1 management-layer concern sitting above
+the same runtime token-emission mechanism every later slice already
+consumes unchanged. No slice boundary, glob, or file count in §8 changes
+this round.
 
 ---
 
-## 9. Exact implementation allowlist (Slice 1 — expanded, the only
-## implementation-ready scope in this contract)
+## 9. Exact implementation allowlist (Slice 1 — reconciled for presets;
+## the only implementation-ready scope in this contract)
 
 **Closed, numbered, path-level. Any additional path required during
 Slice 1 implementation is a STOP-and-report condition (§12).**
 
-### Theme editor — schema, domain, service layer (12 new)
+Six Correction-Round-1 items are **renamed** (same file slot, new name
+and/or expanded schema/responsibility, explained inline); one is
+**removed** (superseded by more general preset operations); nine are
+**new**. Every other Round-1 item is unchanged in name, count, and role.
 
-1. `database/migrations/{timestamp}_create_platform_theme_settings_table.php`
-2. `database/migrations/{timestamp}_create_platform_theme_fonts_table.php`
-3. `app/Models/PlatformThemeSetting.php`
-4. `app/Models/PlatformThemeFont.php`
-5. `app/Repositories/Contracts/PlatformThemeSettingRepository.php`
-6. `app/Repositories/Eloquent/EloquentPlatformThemeSettingRepository.php`
-7. `app/Repositories/Contracts/PlatformThemeFontRepository.php`
-8. `app/Repositories/Eloquent/EloquentPlatformThemeFontRepository.php`
-9. `app/Library/Theme/ThemeColorDerivationService.php` — §6.6, now covering brand + status.
-10. `app/Library/Theme/ThemeContrastValidator.php` — §6.7, expanded pair coverage.
-11. `app/Library/Theme/PlatformThemeManager.php` — §6.3/§6.9/§6.13: orchestrates validate → derive → persist → activate → cache-invalidate → `currentStyleBlock()` → font select/restore/remove.
-12. `app/Library/Theme/ThemeFontValidator.php` — §6.9's magic-byte check.
+### Theme presets — schema, domain, service layer (11: 9 renamed/unchanged, 2 new)
 
-### Theme editor — exceptions (3 new)
+1. `database/migrations/{timestamp}_create_platform_theme_presets_table.php` — **renamed and reschema'd** from `..._create_platform_theme_settings_table.php` (§6.1). Since no code has been written under any prior draft of this contract, this is a correction to the plan itself, not a migration-of-a-migration.
+2. `database/migrations/{timestamp}_create_platform_theme_fonts_table.php` — unchanged.
+3. `database/migrations/{timestamp}_create_platform_theme_preset_events_table.php` — **new** (§6.1).
+4. `app/Models/PlatformThemePreset.php` — **renamed** from `PlatformThemeSetting.php`.
+5. `app/Models/PlatformThemeFont.php` — unchanged.
+6. `app/Models/PlatformThemePresetEvent.php` — **new**.
+7. `app/Repositories/Contracts/PlatformThemePresetRepository.php` — **renamed** from `PlatformThemeSettingRepository.php`, expanded with create/duplicate/rename/activate/delete/findByStatus-style methods.
+8. `app/Repositories/Eloquent/EloquentPlatformThemePresetRepository.php` — **renamed**, same expansion.
+9. `app/Repositories/Contracts/PlatformThemeFontRepository.php` — unchanged.
+10. `app/Repositories/Eloquent/EloquentPlatformThemeFontRepository.php` — unchanged file; its deletion-guard query is now cross-preset (§6.16), a logic change inside an already-allowlisted file, not a new path.
+11. `database/seeders/PlatformThemePresetSeeder.php` — **new** (§6.17): seeds Factory (active) + the three optional starter presets (saved).
 
-13. `app/Library/Theme/Exceptions/InvalidThemeColorException.php`
-14. `app/Library/Theme/Exceptions/UnsafeThemeContrastException.php`
-15. `app/Library/Theme/Exceptions/InvalidThemeFontException.php`
+### Theme presets — services and exceptions (7: 6 unchanged, 1 new)
 
-### Theme editor — HTTP surface (6 new, 2 modified)
+12. `app/Library/Theme/ThemeColorDerivationService.php` — unchanged, applied per-preset (§6.6).
+13. `app/Library/Theme/ThemeContrastValidator.php` — unchanged; now invoked at both save and activate (§6.7).
+14. `app/Library/Theme/PlatformThemeManager.php` — unchanged file; expanded with the full preset-lifecycle orchestration in §6.14.
+15. `app/Library/Theme/ThemeFontValidator.php` — unchanged.
+16. `app/Library/Theme/Exceptions/InvalidThemeColorException.php` — unchanged.
+17. `app/Library/Theme/Exceptions/UnsafeThemeContrastException.php` — unchanged.
+18. `app/Library/Theme/Exceptions/InvalidThemeFontException.php` — unchanged.
+19. `app/Library/Theme/Exceptions/InvalidThemePresetOperationException.php` — **new** (§6.14: covers editing/deleting Factory, deleting the active preset, deleting a font another preset still references).
 
-16. `app/Http/Controllers/Admin/PlatformThemeSettingController.php`
-17. `app/Http/Controllers/Admin/PlatformThemeFontController.php` — upload/replace/delete/select, all `'manage theme'`-gated.
-18. `app/Http/Requests/Admin/UpdatePlatformThemeSettingRequest.php`
-19. `app/Http/Requests/Admin/RestorePlatformThemeSettingRequest.php`
-20. `app/Http/Requests/Admin/UploadPlatformThemeFontRequest.php`
-21. `app/Rules/ValidFontFileRule.php` — §6.9 magic-byte validation.
-22. `routes/admin.php` — modified: `theme-settings` + `theme-fonts` route sections, wrapped per §6.2. No existing route line changed or reordered.
-23. `routes/public.php` — modified: **one** new, genuinely unauthenticated `GET theme-font/{safeId}` route (§6.9) serving only the currently-active uploaded font's bytes. No existing route line changed or reordered.
+### Theme presets — HTTP surface (9: 3 renamed/unchanged, 1 removed, 4 new, 1 unchanged-with-new-action)
 
-### Theme editor — authorization config (1 modified)
+20. `app/Http/Controllers/Admin/PlatformThemePresetController.php` — **renamed** from `PlatformThemeSettingController.php`; gains index (list all presets + states)/store (create)/show/update (edit+save)/duplicate/rename/activate/destroy actions.
+21. `app/Http/Controllers/Admin/PlatformThemeFontController.php` — unchanged file; gains one new `servePreview(PlatformThemePreset $preset)` action (§6.18) alongside its Round-1 upload/replace/delete/serve-active-font actions.
+22. `app/Http/Requests/Admin/UpdatePlatformThemePresetRequest.php` — **renamed** from `UpdatePlatformThemeSettingRequest.php`; same hex/alpha/font-choice validation shape, now targeting one named preset instead of the implicit single theme.
+23. `app/Http/Requests/Admin/CreatePlatformThemePresetRequest.php` — **new**.
+24. `app/Http/Requests/Admin/DuplicatePlatformThemePresetRequest.php` — **new**.
+25. `app/Http/Requests/Admin/RenamePlatformThemePresetRequest.php` — **new**.
+26. `app/Http/Requests/Admin/ActivatePlatformThemePresetRequest.php` — **new**; also the request class used for the "return to previously active preset" rollback action, per §6.14 (same endpoint, no separate request class needed for what is mechanically the same operation).
+27. ~~`app/Http/Requests/Admin/RestorePlatformThemeSettingRequest.php`~~ — **removed**. Its job (resetting the active theme back to the approved defaults) is now fully covered by two more general operations that already exist for every preset — Activate (targeting the Factory preset directly restores the exact approved defaults) and Duplicate (forking Factory into a new editable starting point) — so a bespoke "restore" endpoint would be a second, narrower code path doing what two already-necessary, more general ones already do.
+28. `app/Http/Requests/Admin/UploadPlatformThemeFontRequest.php` — unchanged.
+29. `app/Rules/ValidFontFileRule.php` — unchanged.
+30. `routes/admin.php` — modified: the `theme-settings` route section (Round 1) becomes a `theme-presets` route section (index/store/show/update/duplicate/rename/activate/destroy) plus the new `manage theme`-gated font-preview route (§6.18); the existing `theme-fonts` route section (Round 1) is otherwise unchanged. No existing unrelated route line changed or reordered.
+31. `routes/public.php` — modified: the one `theme-font/{safeId}` route (Round 1, unchanged in count) now resolves "the active font" via `platform_theme_presets WHERE status='active'` instead of the old table — an internal query change to an already-allowlisted route, not a new path.
 
-24. `config/permissions.php` — modified: new `'manage theme'` entry under a new `"Appearance"` category, additive only.
+### Theme presets — authorization config (1, unchanged)
 
-### Theme editor — views + JS (2 new, 1 modified)
+32. `config/permissions.php` — unchanged from Correction Round 1; confirmed (§6.15) to need no new entry — every preset action reuses `'manage theme'`.
 
-25. `resources/views/admin/theme-settings/index.blade.php` — all six token categories (§4) grouped, color pickers + validated hex entry, font selector + upload UI, live preview (§4's full demonstration list), Cancel/Save/Reset, validation errors, contrast warnings, unsaved-change warning, audit info. Built entirely from the existing 13-component library — no new bespoke UI primitives.
-26. `resources/js/scripts/pages/theme-settings.js` — picker wiring, optimistic preview, debounced contrast-check calls, unsaved-change guard.
-27. `resources/views/panels/styles.blade.php` — modified: appends the expanded `<style>` block (§6.3) including the conditional `@font-face`, guarded by `@if`, at the file's end.
+### Theme presets — views + JS (3: 2 unchanged-with-expanded-content, 1 new)
 
-### Runtime-bindings retrofit layer (1 new, 1 modified)
+33. `resources/views/admin/theme-settings/index.blade.php` — unchanged file, expanded content: a preset-aware editor (loads whichever preset is currently open for editing, not implicitly "the one theme"), all six token categories (§4), font selector + upload, live preview, Cancel/Save/Activate/Delete actions as appropriate to the open preset's own state, unsaved-change warning, audit info. Still built entirely from the existing 13-component library.
+34. `resources/views/admin/theme-settings/_preset-list.blade.php` — **new**: the preset switcher — lists every preset with its name and `status` badge (Draft/Saved/Active/Factory, visually distinguished per the explicit requirement), and the create/duplicate/rename/activate/delete entry points.
+35. `resources/js/scripts/pages/theme-settings.js` — unchanged file, expanded: preset-switching, create/duplicate/rename/delete-confirm wiring, alongside the Round-1 picker/preview/contrast-check wiring.
 
-28. `resources/scss/base/tokens/_runtime-bindings.scss` — new, §6.10 — the critical fix making Bootstrap's own native compiled classes respond to runtime token changes.
-29. `resources/scss/base/tokens.scss` — modified: one new `@import 'tokens/runtime-bindings';` line, positioned after the color/typography token imports. No existing import removed or reordered.
+### Runtime-bindings retrofit layer (2, unchanged from Correction Round 1)
 
-### Token taxonomy expansion (2 modified)
+36. `resources/scss/base/tokens/_runtime-bindings.scss`
+37. `resources/scss/base/tokens.scss`
 
-30. `resources/scss/base/tokens/_colors.scss` — modified: expands from the 12 Milestone-1 tokens + 3 chart tokens to the full semantic set in §4/§6.5 (brand/interaction, text/icon, surfaces, borders/depth, status ×5 with derived variants, chart ×8 series + neutral/grid/axis/tooltip), each as both a build-time-default CSS custom property and (where Bootstrap itself needs it at compile time) a Sass variable.
-31. `resources/scss/base/tokens/_typography.scss` — modified: introduces one canonical `--font-family-app` custom property (+ Sass variable) that **both** `$font-family-sans-serif` and `$font-family-monospace` resolve through, fixing the §3.7 alias-drift bug (sidebar/navbar/Quill-container) without needing to touch those three files individually.
+### Token taxonomy expansion (2, unchanged from Correction Round 1)
 
-### Bootstrap variable retokenization (1 modified — same file as chat background, §3.3, consolidated)
+38. `resources/scss/base/tokens/_colors.scss`
+39. `resources/scss/base/tokens/_typography.scss`
 
-32. `resources/scss/base/bootstrap-extended/_variables.scss` — modified, two purposes in one file: (a) removes `$chat-bg-light`/`$chat-bg-dark` (§3.3, unchanged from the original contract); (b) retokenizes `$success`/`$warning`/`$danger`/`$info`/`$secondary`/`$dark` and the shadow/dropdown/modal/popover/toast/input-focus/tooltip colors (§3.8) to reference the new status/shadow tokens instead of raw hex; (c) adds an explicit `$focus-ring-color` derived from `--color-focus-ring` (§4) instead of silently inheriting Bootstrap core's own default. No unrelated variable in this file changes.
+### Bootstrap variable retokenization (1, unchanged from Correction Round 1)
 
-### Chart token bridge (1 new, 8 modified)
+40. `resources/scss/base/bootstrap-extended/_variables.scss`
 
-33. `resources/js/core/theme-tokens.js` — §6.12, replaces the originally-scoped narrower `chart-tokens.js` with the canonical module.
-34. `resources/views/admin/dashboard.blade.php` — modified: series **and** grid/axis/tooltip colors sourced from `theme-tokens.js`; semantic status colors untouched.
-35. `resources/views/customer/dashboard.blade.php` — modified: same discipline.
-36. `resources/views/customer/Reports/charts.blade.php` — modified: same discipline.
-37. `resources/views/customer/Reports/analyze.blade.php` — modified: same discipline.
-38. `resources/views/admin/Reports/overview.blade.php` — modified: same discipline.
-39. `resources/views/admin/Reports/dashboard.blade.php` — modified: same discipline.
-40. `resources/views/customer/Campaigns/overview.blade.php` — modified: brand-series colors only; semantic delivery-status object untouched.
-41. `resources/views/customer/Automations/overview.blade.php` — modified: same discipline.
-42. `resources/js/core/app.js` — modified: `window.colors.solid.primary` sourced from `theme-tokens.js` instead of a hardcoded `#7367F0`; every other key left untouched (semantic, not brand).
+### Chart token bridge (9, unchanged from Correction Round 1)
 
-### Chat background remediation (2 modified — `_variables.scss` already covered by item 32)
+41. `resources/js/core/theme-tokens.js`
+42. `resources/views/admin/dashboard.blade.php`
+43. `resources/views/customer/dashboard.blade.php`
+44. `resources/views/customer/Reports/charts.blade.php`
+45. `resources/views/customer/Reports/analyze.blade.php`
+46. `resources/views/admin/Reports/overview.blade.php`
+47. `resources/views/admin/Reports/dashboard.blade.php`
+48. `resources/views/customer/Campaigns/overview.blade.php`
+49. `resources/views/customer/Automations/overview.blade.php`
+50. `resources/js/core/app.js`
 
-43. `resources/scss/base/pages/app-chat.scss` — modified: background rules token-driven (§3.3, unchanged from original contract); outbound/inbound bubble colors retokenized off the new brand/surface tokens.
-44. `resources/scss/base/pages/app-chat-list.scss` — modified: bubble color retokenization, if not already fully covered by item 43 (implementation-time bookkeeping only, both files already allowlisted).
+### Chat background remediation (3, unchanged from Correction Round 1)
 
-**Explicit, deliberate exception to the Milestone-1 "dark-theme bundle is
-never touched" default (unchanged from the original contract):**
+51. `resources/scss/base/pages/app-chat.scss`
+52. `resources/scss/base/pages/app-chat-list.scss`
+53. `resources/scss/base/themes/dark-layout.scss` — the one deliberate, documented exception to the Milestone-1 "never touch the dark bundle" default, unchanged in scope.
 
-45. `resources/scss/base/themes/dark-layout.scss` — modified: removes the `$chat-bg-dark` reference and retokenizes the corresponding dark-mode bubble overrides only. The rest of the dark-mode palette (§3.8's ~24-literal `_variables-dark.scss` set) is explicitly **not** touched by Slice 1 — reconciling dark mode with the new token system is deferred, consistent with the original contract's own Slice-20 placement for the legacy Theme Customizer this dark-mode toggle belongs to.
+### Remaining Feather→Lucide icon migration in shared chrome (7, unchanged)
 
-### Remaining Feather→Lucide icon migration in shared chrome (7 modified, unchanged)
+54. `resources/views/panels/navbar.blade.php`
+55. `resources/views/panels/sidebar.blade.php`
+56. `resources/views/panels/footer.blade.php`
+57. `resources/views/panels/breadcrumb.blade.php`
+58. `resources/views/panels/submenu.blade.php`
+59. `resources/views/panels/horizontalMenu.blade.php`
+60. `resources/views/panels/horizontalSubmenu.blade.php`
 
-46. `resources/views/panels/navbar.blade.php`
-47. `resources/views/panels/sidebar.blade.php`
-48. `resources/views/panels/footer.blade.php`
-49. `resources/views/panels/breadcrumb.blade.php`
-50. `resources/views/panels/submenu.blade.php`
-51. `resources/views/panels/horizontalMenu.blade.php`
-52. `resources/views/panels/horizontalSubmenu.blade.php`
+### Errors module (7, unchanged)
 
-### Errors module (7 modified, unchanged)
+61. `resources/views/errors/401.blade.php`
+62. `resources/views/errors/403.blade.php`
+63. `resources/views/errors/404.blade.php`
+64. `resources/views/errors/419.blade.php`
+65. `resources/views/errors/429.blade.php`
+66. `resources/views/errors/500.blade.php`
+67. `resources/views/errors/503.blade.php`
 
-53. `resources/views/errors/401.blade.php`
-54. `resources/views/errors/403.blade.php`
-55. `resources/views/errors/404.blade.php`
-56. `resources/views/errors/419.blade.php`
-57. `resources/views/errors/429.blade.php`
-58. `resources/views/errors/500.blade.php`
-59. `resources/views/errors/503.blade.php`
+**Total: 67 files** (Correction Round 1's 59, minus 1 removed
+[`RestorePlatformThemeSettingRequest.php`], plus 9 new
+[preset-events migration, `PlatformThemePresetEvent` model,
+`PlatformThemePresetSeeder`, `InvalidThemePresetOperationException`,
+three preset FormRequests (Create/Duplicate/Rename/Activate — four,
+not three; see exact count below), `_preset-list.blade.php` partial] —
+reconciled exactly: 59 − 1 + 9 = 67). No file touched by any *other*
+mechanism — chart tokens, chat background, runtime-bindings retrofit,
+icon migration, errors — changes in count; every one of those sections'
+paths is identical to Correction Round 1. Any path beyond this 67-item
+list required during Slice 1 implementation is a required-68th-path-
+shaped stop condition (§12).
 
-**Total: 59 files** (30 new, 29 modified) — up from the original
-contract's 46, an increase of 13, entirely accounted for by: the font
-table + its models/repos/controller/request/rule/route (8 items), the
-runtime-bindings retrofit layer + its `tokens.scss` import line (2
-items), the `_typography.scss` alias fix (1 item), the theme-tokens.js
-rename/generalization (0 net new — replaces the original `chart-tokens.js`
-1-for-1), and the `_variables.scss` status/shadow/focus-ring
-retokenization being folded into the *already-allowlisted* chat-background
-file rather than a separate item (0 net new). Any path beyond this list
-required during Slice 1 implementation is a required-60th-path-shaped
-stop condition (§12).
+*(Exact new-item count check: migration #3, model #6, seeder #11,
+exception #19, requests #23/#24/#25/#26 [four], view #34 = 9 new items;
+removed: #27's predecessor = 1. 59 − 1 + 9 = 67, matching the total
+above.)*
 
 ---
 
-## 10. Test contract (Slice 1 — expanded)
+## 10. Test contract (Slice 1 — expanded for presets)
 
-All tests from the original contract's §10 (Authorization, Validation,
+Every test from Correction Round 1's §10 (Authorization, Validation,
 Derivation accuracy, Persistence, Audit, Isolation, Rendering/fail-safe,
-Chart tokens, Chat background — see original list, unchanged in kind)
-**plus**:
+Chart tokens, Chat background, Font upload validation/serving/runtime
+application, Runtime-bindings retrofit, Status-color derivation, Cache
+invalidation) is unchanged in kind, now exercised per-preset where
+relevant, **plus**:
 
-- **Font upload validation**: `PlatformThemeFontUploadValidationTest` —
-  a renamed non-font file (e.g. a `.php` payload renamed to `.woff2`) is
-  rejected by magic-byte checking even though its extension/MIME claim
-  passes; an oversized file is rejected; a genuine WOFF2/WOFF file is
-  accepted.
-- **Font serving/authorization**: `PlatformThemeFontServingTest` — the
-  public `theme-font/{safeId}` route serves the currently-active
-  uploaded font's bytes with no authentication required (must be
-  fetchable by an anonymous browser); the same route 404s for a
-  non-active or deleted font's id; the upload/replace/delete/select
-  admin actions are denied to everyone except an admin with
-  `'manage theme'` (reusing the same authorization test shape as the
-  color/surface settings).
-- **Font runtime application**: confirms the rendered `<head>` `@font-
-  face` block only appears when `font_choice = 'uploaded'`, uses the
-  correct `safe_filename`-derived URL, includes `font-display: swap`,
-  and the safe fallback stack is always present regardless of
-  bundled/uploaded choice.
-- **Runtime-bindings retrofit**: a content test asserting
-  `_runtime-bindings.scss` contains a rule for every Bootstrap-native
-  class actually grepped from the current 374-view corpus at the time
-  of implementation (the mechanical list from §7 item 4) — proving the
-  retrofit is exhaustive against real usage, not a hand-picked subset.
-- **Status-color derivation**: extends `ThemeColorDerivationServiceTest`
-  to assert each of the 5 status colors' derived text/border/icon/
-  soft-bg variants pass §6.7's hard-reject contrast floor for the
-  *approved default* status hexes, mirroring the brand-color acceptance
-  test already required.
-- **Cache invalidation**: `PlatformThemeCacheInvalidationTest` — after a
-  save/restore/font-select, the very next request's rendered `<style>`
-  block reflects the new values with no stale-cache window.
+- **Preset CRUD**: `PlatformThemePresetLifecycleTest` — create seeds a
+  `draft` row + `created` event; duplicate (including duplicating
+  Factory) seeds a new `draft` row with copied values + a `duplicated`
+  event referencing the source; edit updates in place + an `edited`
+  event; rename updates only `name` + a `renamed` event and is rejected
+  for Factory.
+- **Activation atomicity**: `PlatformThemePresetActivationTest` — after
+  activating preset B while A was active, exactly one row has
+  `status = 'active'` (A is `'saved'`, not deleted); colors and font
+  switch together; an `activated` event is recorded with the correct
+  `previous_active_preset_id`; a hard-reject-contrast preset cannot be
+  activated even though it could be saved.
+- **Rollback**: confirms "return to the previously active preset"
+  reactivates the correct prior preset and records a distinct
+  `rolled_back` event type.
+- **Deletion guards**: `PlatformThemePresetDeletionTest` — deleting the
+  active preset is rejected; deleting Factory is rejected; deleting an
+  inactive, non-factory preset succeeds; deleting an uploaded font
+  referenced by the active preset is rejected; deleting one referenced
+  by a different *saved* (non-active) preset is also rejected, naming
+  that preset in the error (§6.16).
+- **Preview isolation**: `PlatformThemePresetPreviewIsolationTest` —
+  editing/previewing a non-active preset never changes the shared cache
+  key or any other user's rendered theme; the admin font-preview route
+  (§6.18) requires `'manage theme'` and 401/403s otherwise; the public
+  font route never serves a non-active preset's font regardless of its
+  `safeId`.
+- **Starter seeding**: `PlatformThemePresetSeederTest` — after seeding,
+  exactly one `is_factory = true, status = 'active'` row exists with the
+  exact approved default values, and the three starter presets exist as
+  `status = 'saved', is_factory = false`.
 - Full existing suite re-run, exact pass count compared against the
   pre-Slice-1 baseline (2,724 passed / 8,672 assertions) — zero
   regressions permitted, unchanged discipline.
 
 ---
 
-## 11. Mechanical searches (Slice 1 — expanded)
+## 11. Mechanical searches (Slice 1 — expanded for presets)
 
-All searches from the original contract's §11 (Anthropic/Claude,
-`7367F0`, chat-bg references, remaining `data-feather` in panels,
-`app/database/routes` isolation, RTL/other-theme-bundle isolation,
-final changed-path-set reconciliation, `'manage theme'` consistency,
-full-suite pass count — unchanged in kind) **plus**:
+All searches from Correction Round 1's §11 (unchanged in kind) **plus**:
 
-10. `grep -c "\$font-family-monospace" resources/scss/base/core/menu/_navigation.scss resources/scss/base/bootstrap-extended/_navbar.scss resources/scss/base/plugins/forms/form-quill-editor.scss` compared against the pre-Slice-1 baseline count → **unchanged** (proving the alias-fix in `_typography.scss`, item 31, was applied at the single canonical source rather than by editing these three files, which must remain byte-identical).
-11. `grep -rn "wOF2\|wOFF"` in `app/Rules/ValidFontFileRule.php` → both magic-byte signatures present (proves the validator checks both WOFF2 and WOFF, not just one).
-12. `grep -rn "Storage::disk('public')\|public_path("` across every new file in items 1-23 → zero matches (proves font storage genuinely uses the private `local` disk, per §6.9, not the audited-as-unused-and-unsafe `public` convention).
-13. `grep -c "var(--color-" resources/scss/base/tokens/_runtime-bindings.scss` → a positive count matching the number of distinct classes identified by §7 item 4's mechanical grep, reported exactly.
-14. Final changed-path set equals this contract's own **59-item** allowlist (§9), not the original's 46.
+15. A runtime/query-level check (not a static grep — this is a database
+    invariant): after any sequence of preset operations in the test
+    suite, `SELECT COUNT(*) FROM platform_theme_presets WHERE
+    status = 'active'` is always exactly `1`, never `0` or `2+`.
+16. `grep -c "is_factory" app/Library/Theme/PlatformThemeManager.php` →
+    present in both the edit-guard and delete-guard code paths (proves
+    Factory's protection is enforced in the domain layer, not only
+    incidentally by a FormRequest rule that a future direct-model call
+    could bypass).
+17. Final changed-path set equals this contract's own **67-item**
+    allowlist (§9), not Correction Round 1's 59.
 
 ---
 
 ## 12. Stop conditions
 
-All conditions from the original contract's §12 (path beyond allowlist,
-`app/database/routes` beyond the schema/HTTP items, RTL/other-theme-
-bundle touching, open decisions unconfirmed, derivation formula failing
-against the approved defaults, existing test failures, Anthropic/Claude
-references, a "custom CSS"-shaped field becoming necessary) — unchanged
-in kind, now evaluated against the 59-item allowlist — **plus**:
+All conditions from Correction Round 1's §12 (unchanged in kind, now
+evaluated against the 67-item allowlist) **plus**:
 
-- Any uploaded font file's bytes would need to be served from the
-  `public` disk, or from any path reachable without going through the
-  `theme-font/{safeId}` active-only check (§6.9) — this would violate
-  the "prevent unauthorized... downloading" requirement and must stop.
-- The `_variables-dark.scss` dark-mode palette (as opposed to the one,
-  narrow, documented `dark-layout.scss` chat exception, item 45) appears
-  to require touching — dark-mode retokenization remains explicitly
-  deferred (§8), not silently absorbed into Slice 1's scope.
-- Retrofitting a third-party plugin override file (§6.11) beyond what a
-  later slice's own touched pages require appears necessary within
-  Slice 1 itself — this boundary is deliberate, not negotiable within
-  this contract.
-- §7's now-four open decisions (chart-palette defaults, bundled-font
-  list, secondary/accent + header-override + live-preview composition,
-  the exact runtime-bindings class list) have not been explicitly
-  confirmed before implementation begins.
+- More than one `platform_theme_presets` row is ever observed with
+  `status = 'active'` at rest (i.e., outside the single transaction that
+  briefly touches two rows during an activation) — the atomicity
+  guarantee has failed and must be fixed before proceeding.
+- Any code path permits editing or deleting the `is_factory = true` row
+  directly, or deleting a `status = 'active'` row, or deleting an
+  uploaded font still referenced by any preset regardless of that
+  preset's own status.
+- Saving or previewing a non-active preset is found to invalidate the
+  shared active-theme cache key, or to be visible to any user other than
+  the editor before that preset is actually activated.
+- §7's carried-forward open decisions remain unconfirmed before
+  implementation begins (unchanged from Correction Round 1).
 
 ---
 
 ## 13. Contract self-audit
 
-1. Every requirement in the corrected §4 is addressed by a numbered
-   decision in §6 and a numbered path in §9, including the four entirely
-   new categories this correction added (full semantic taxonomy, font
-   control + upload, the runtime-bindings retrofit, expanded
-   accessibility/caching requirements). ✓
-2. The single most consequential architectural gap in the *original*
-   contract — that Bootstrap's own compiled component CSS bakes literal
-   hex and does not respond to the designed runtime `:root` override —
-   was found by empirical verification (§3.9, not assumption) during
-   this correction's own audit, and is fixed by new, explicitly-scoped
-   Slice-1 infrastructure (§6.10), not silently left broken. ✓
-3. Font-upload safety was resolved by direct evidence (§3.7: nothing in
-   this codebase validates file content or gates per-file access today)
-   rather than assumed safe or assumed unsafe — the design in §6.9 is
-   built to exceed every existing precedent, and the public/private
-   serving split is derived from the *nature* of what a webfont is
-   (something every visitor's browser must fetch), not an arbitrary
-   choice. ✓
-4. Four genuinely open decisions are flagged with reasoned, evidence-
-   based proposals, never silently resolved (§7). ✓
-5. The 21-slice rollout map's module boundaries are unchanged by this
-   correction — only Slice 1's own boundary expanded, and only where the
-   correction's own instruction explicitly permitted ("expand Slice 1
-   only where the infrastructure must be established now"). Every later
-   slice now carries a standing, explicit mandate to eliminate its own
-   hardcoded colors/fonts as it migrates (§8) — the correction's own
-   "later slices must eliminate hardcoded colors" instruction is not a
-   one-time note but a repeatable requirement threaded through the map. ✓
-6. Total allowlist: **59 files** (30 new, 29 modified), reconciled item-
-   by-item against the original's 46 in §9's own closing paragraph — the
-   13-file increase is fully accounted for, not an unexplained jump. ✓
-7. Third-party plugin chrome and inline SVG illustrations are both
-   explicitly, honestly named as real gaps the current token architecture
-   cannot fully close in Slice 1 (§6.11, §3.8) — not silently omitted
-   from the audit, not silently claimed as solved. ✓
-8. No business logic, permission model (beyond the one additive
-   `'manage theme'` string), route behavior, tenant isolation, or data-
-   flow of any existing feature changes anywhere in §9. ✓
-9. This document remains the only file changed on this branch, across
-   both the original commit and this correction (§2). ✓
+1. Every requirement in §4.6 is addressed by a numbered decision in
+   §6.14-§6.18 and a numbered path in §9. ✓
+2. Correction Round 1's complete token/runtime-binding/font-control/
+   upload-safety/accessibility/rollout architecture (§6.1-§6.13, §8) is
+   preserved — this round's changes to §6.1/§6.3/§6.7/§6.9/§6.13 are
+   explicitly marked as either "unchanged mechanism, updated source
+   query" or "clarified, not altered," never a silent redefinition. ✓
+3. The one genuine open choice the correction's own instructions offered
+   (font-deletion guarding: prevent vs. reconcile) is resolved with
+   stated reasoning (§6.16), not left open and not silently picked
+   without explanation. ✓
+4. No new permission string was introduced — confirmed explicitly
+   (§6.15), not merely assumed, by tracing every preset action against
+   the existing `'manage theme'` gate. ✓
+5. **Allowlist reconciliation is exact and shown, not asserted**: 59
+   (Correction Round 1) − 1 removed (`RestorePlatformThemeSettingRequest.php`,
+   superseded by Activate+Duplicate, §9 item 27's own note) + 9 new
+   (§9's own itemized list, cross-checked against §9's closing
+   parenthetical) = **67**. ✓
+6. Presets are confirmed as a Slice-1 management-layer addition only —
+   §8's 21-slice rollout map, its module boundaries, and every later
+   slice's own "eliminate hardcoded colors/fonts as you migrate" mandate
+   are unaffected, since no rollout-slice file anywhere in §9 changes
+   this round. ✓
+7. No business logic, permission model, route behavior, tenant
+   isolation, or data-flow of any existing feature changes anywhere in
+   §9. ✓
+8. This document remains the only file changed on this branch, across
+   all three drafting passes (§2). ✓
+9. This is correction round 2 of this contract's own stated
+   `maximum_correction_rounds: 2` — the final round available under this
+   contract's own governance, noted explicitly in §0. ✓
 
 ---
 
@@ -1086,46 +854,51 @@ in kind, now evaluated against the 59-item allowlist — **plus**:
    changed path: this file.
 2. Stage individually (`git add docs/automation/DESIGN-SYSTEM-M2-CONTRACT.md`),
    never `git add -A`/`.`.
-3. This correction is committed **separately** from the original
-   contract commit (not amended/squashed into it), per the correction's
-   own explicit instruction.
-4. Push to `origin chore/design-system-m2-contract` — a normal push,
-   never force-pushed, per the correction's own explicit instruction.
-5. Provide the compare URL (no `gh` available in this environment).
-6. **Do not merge. Do not implement Slice 1. Do not edit production or
-   test files. Do not run migrations.** All require separate, explicit,
-   future authorization.
+3. Commit message: `docs: add theme presets to design system M2 contract`.
+4. This correction is committed **separately** from both prior commits
+   (original + Correction Round 1), never amended/squashed into either.
+5. Push to `origin chore/design-system-m2-contract` — a normal push,
+   never force-pushed.
+6. Provide the compare URL (no `gh` available in this environment).
+7. **Do not merge. Do not implement Slice 1. Do not edit production or
+   test files. Do not run migrations. Do not start any later rollout
+   slice.** All require separate, explicit, future authorization.
 
 ---
 
-## 15. What this correction changed, and why (summary for the record)
+## 15. What Correction Round 1 changed (unchanged summary, for continuity)
 
-- **Scope**: replaced a 5-color-plus-7-surface palette with a complete
-  semantic-token system (brand/interaction, text/icon, surfaces, borders/
-  depth, 5 statuses × derived variants, 8-slot chart palette) plus a new
-  global font-control feature (bundled selection + safe owner upload).
-- **Architecture**: discovered and fixed a critical, previously-
-  undetected gap (§3.9) — Bootstrap's own compiled classes don't read
-  runtime custom properties at all, so the original "no rebuild"
-  design silently only worked for the 15-file M1 component library. A
-  new runtime-bindings retrofit layer (§6.10) closes this for Bootstrap's
-  native classes; third-party plugin chrome is explicitly, honestly
-  deferred to per-slice elimination (§6.11) rather than silently claimed
-  solved.
-- **Font upload**: resolved via direct evidence, not assumption — this
-  codebase has no existing content-validation or per-file authorization
-  pattern for *any* upload type, so the design (§6.9) builds both from
-  scratch, exceeding every existing precedent, with a public/private
-  serving split derived from what a webfont actually is.
-- **Data model**: generalized from fixed named JSON sub-objects to a
-  flat semantic-token map (§6.1), because the token set is now large and
-  open-ended.
-- **Allowlist**: grew from 46 to 59 files, every addition traced to a
-  specific new requirement or newly-discovered gap, reconciled explicitly
-  in §9's own closing paragraph and §13's self-audit — not an
-  unexplained expansion.
-- **Rollout map**: module boundaries unchanged; every slice from 2
-  onward now carries a standing mandate to eliminate its own hardcoded
-  colors/fonts as it migrates, making the correction's "later slices
-  must eliminate hardcoded colors" instruction a repeatable requirement
-  rather than a one-time note.
+Replaced the original 5-color-plus-7-surface palette with a complete
+semantic-token system plus global font control; found and fixed the
+critical compile-time-vs-runtime color gap (§3.9/§6.10); designed font
+upload from scratch against direct evidence of no existing content-
+validation or per-file authorization pattern; generalized the data model
+to a flat semantic-token map; grew the allowlist from 46 to 59 files,
+fully reconciled.
+
+## 16. What Correction Round 2 changed, and why (this round)
+
+- **Added**: named theme presets — create/duplicate/rename/edit/preview/
+  save/activate/rollback/delete, Draft/Saved/Active/Factory states,
+  atomic activation with immediate cache invalidation and previous-theme
+  preservation, a protected Factory preset, four optional starter
+  presets (including the dark "Dark Chocolate" palette, confirmed to
+  need no special handling since the chat-background/decorative-image
+  removal is already structural, not per-preset), font-reference
+  guarding across multiple presets, and an authenticated font-preview
+  mechanism for inactive presets.
+- **Data model**: `platform_theme_settings` (Round 1's append-only
+  activation log) reconciled into `platform_theme_presets` (a genuinely
+  mutable, named entity table) plus a new, separate append-only
+  `platform_theme_preset_events` table carrying forward Round 1's
+  original "immutable audit trail" role in a form that actually fits
+  multiple independently-existing presets.
+- **Explicitly unchanged**: every Round 1 architecture decision governing
+  the token taxonomy, the runtime-bindings retrofit, font upload safety
+  mechanics, contrast-validation formulas, the canonical JS token source,
+  and the 21-slice rollout map — per this round's own explicit
+  instruction not to touch any of it.
+- **Allowlist**: 59 → **67** files (1 removed as genuinely superseded, 9
+  added, all traced to a specific new requirement in §4.6), recalculated
+  and shown exactly in §9's own closing paragraph and §13's self-audit,
+  not asserted.
