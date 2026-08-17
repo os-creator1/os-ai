@@ -1,0 +1,166 @@
+// Design System Contract, Milestone 1 — supporting styles for the new
+// reusable Blade component library (resources/views/components/*.blade.php,
+// contract §9 items 14-26). Self-identified as necessary implementation
+// infrastructure for those already-authorized components to actually
+// render styled (not bare markup) — documented plainly in the
+// implementation report as a narrow completion of already-authorized
+// scope, not new scope in itself. Every rule below consumes the token
+// layer (resources/scss/base/tokens/*) exclusively — no new hardcoded
+// color/spacing/radius/shadow/duration value is introduced here.
+
+.ds-icon {
+    color: currentColor;
+    flex-shrink: 0;
+}
+
+.ds-card {
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--color-border-neutral);
+    background-color: var(--color-surface-primary);
+}
+
+.ds-field .form-label {
+    color: var(--color-text-primary);
+    margin-bottom: var(--space-2);
+}
+
+.ds-table {
+    thead th {
+        border-bottom: 1px solid var(--color-border-neutral);
+        padding-block: var(--space-3);
+    }
+
+    tbody td {
+        padding-block: var(--space-3);
+        border-color: var(--color-border-neutral);
+    }
+}
+
+.ds-tabs {
+    border-bottom-color: var(--color-border-neutral);
+
+    .nav-link {
+        color: var(--color-text-muted);
+        border: none;
+        border-bottom: 2px solid transparent;
+
+        &.active {
+            color: var(--color-accent-primary);
+            border-bottom-color: var(--color-accent-primary);
+            background: transparent;
+        }
+
+        &:hover:not(.active) {
+            color: var(--color-text-primary);
+        }
+    }
+}
+
+.ds-menu-list {
+    border-radius: var(--radius-xl);
+    border: 1px solid var(--color-border-neutral);
+    box-shadow: var(--shadow-lg);
+    padding: var(--space-2);
+
+    .dropdown-item {
+        border-radius: var(--radius-sm);
+        padding: var(--space-2) var(--space-3);
+
+        &:hover, &:focus {
+            background-color: var(--color-accent-soft-bg);
+            color: var(--color-accent-dark);
+        }
+    }
+}
+
+.ds-dialog .modal-content {
+    border-radius: var(--radius-xl);
+    border: 1px solid var(--color-border-neutral);
+    box-shadow: var(--shadow-lg);
+}
+
+.ds-alert {
+    border-radius: var(--radius-md);
+    border: 1px solid var(--color-border-neutral);
+}
+
+.ds-pagination .page-link {
+    border-radius: var(--radius-sm);
+    border-color: var(--color-border-neutral);
+    color: var(--color-text-primary);
+}
+
+.ds-pagination .page-item.disabled .page-link {
+    color: var(--color-text-muted);
+}
+
+.ds-empty-state {
+    color: var(--color-text-muted);
+}
+
+.ds-empty-state-icon {
+    width: 3rem;
+    height: 3rem;
+    border-radius: var(--radius-full);
+    background-color: var(--color-accent-soft-bg);
+    color: var(--color-accent-primary);
+}
+
+.ds-tooltip-trigger {
+    cursor: help;
+}
+
+// Quiet default states, emphasis reserved for selected/primary actions
+// (contract §4) — focus ring uses the accent border token, never a
+// browser-default blue outline.
+.btn:focus-visible,
+.form-control:focus-visible,
+.form-select:focus-visible,
+a:focus-visible {
+    outline: 2px solid var(--color-accent-border);
+    outline-offset: 2px;
+}
+
+// Shared-chrome polish (contract §9 items 27-34) — the sidebar/navbar/
+// footer/breadcrumb, restyled to the token layer. Deliberately CSS-only:
+// every one of these components' underlying Blade markup and menu/auth/
+// badge logic is preserved byte-for-byte (contract §6 exclusions), only
+// the visual layer changes.
+.main-menu {
+    background-color: var(--color-sidebar-bg);
+    border-right: 1px solid var(--color-border-neutral);
+    box-shadow: none;
+
+    .navigation > li > a {
+        border-radius: var(--radius-sm);
+    }
+
+    .navigation-header span {
+        color: var(--color-text-muted);
+    }
+}
+
+.header-navbar {
+    background-color: var(--color-surface-primary);
+    border-bottom: 1px solid var(--color-border-neutral);
+    box-shadow: none;
+}
+
+.footer {
+    background-color: var(--color-surface-secondary);
+    border-top: 1px solid var(--color-border-neutral);
+}
+
+.breadcrumb {
+    .breadcrumb-item {
+        color: var(--color-text-muted);
+
+        a {
+            color: var(--color-text-muted);
+        }
+
+        &.active {
+            color: var(--color-text-primary);
+        }
+    }
+}

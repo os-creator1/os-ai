@@ -1,0 +1,115 @@
+// Design System Contract, Milestone 1, §9 item 2 — Geist Sans font loading
+// (self-hosted, §7 item 1: @fontsource-variable/geist v5.3.0, SIL Open
+// Font License 1.1, WOFF2 files copied into resources/fonts/geist/, latin
+// + latin-ext subsets, normal style, variable weight axis 100–900) and the
+// derived type scale (§7 item 3) for page titles, section headings, body
+// text, labels, captions, and numeric values.
+
+@font-face {
+    font-family: 'Geist Variable';
+    font-style: normal;
+    font-display: swap;
+    font-weight: 100 900;
+    src: url('/fonts/geist/geist-latin-wght-normal.woff2') format('woff2-variations');
+    unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+2000-206F, U+2074, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+    font-family: 'Geist Variable';
+    font-style: normal;
+    font-display: swap;
+    font-weight: 100 900;
+    src: url('/fonts/geist/geist-latin-ext-wght-normal.woff2') format('woff2-variations');
+    unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+$font-family-geist: 'Geist Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+
+// §7 item 3 — the derived complete type scale, anchored to the contract's
+// own "calm typography hierarchy... comfortable line height... no
+// oversized SaaS-dashboard type" requirement. Every value below is a
+// deliberate, stated choice, never left implicit.
+$type-page-title-size: 1.5rem;      // 24px
+$type-page-title-line: 2rem;        // 32px
+$type-page-title-weight: 600;
+
+$type-section-heading-size: 1.125rem; // 18px
+$type-section-heading-line: 1.75rem;  // 28px
+$type-section-heading-weight: 600;
+
+$type-body-size: 0.875rem;   // 14px
+$type-body-line: 1.375rem;   // 22px
+$type-body-weight: 400;
+
+$type-label-size: 0.8125rem; // 13px
+$type-label-line: 1.125rem;  // 18px
+$type-label-weight: 500;
+
+$type-caption-size: 0.75rem; // 12px
+$type-caption-line: 1rem;    // 16px
+$type-caption-weight: 400;
+
+$type-numeric-size: 0.875rem; // 14px
+$type-numeric-line: 1.25rem;  // 20px
+$type-numeric-weight: 500;
+
+:root {
+    --font-family-base: #{$font-family-geist};
+
+    --type-page-title-size: #{$type-page-title-size};
+    --type-page-title-line: #{$type-page-title-line};
+    --type-page-title-weight: #{$type-page-title-weight};
+
+    --type-section-heading-size: #{$type-section-heading-size};
+    --type-section-heading-line: #{$type-section-heading-line};
+    --type-section-heading-weight: #{$type-section-heading-weight};
+
+    --type-body-size: #{$type-body-size};
+    --type-body-line: #{$type-body-line};
+    --type-body-weight: #{$type-body-weight};
+
+    --type-label-size: #{$type-label-size};
+    --type-label-line: #{$type-label-line};
+    --type-label-weight: #{$type-label-weight};
+
+    --type-caption-size: #{$type-caption-size};
+    --type-caption-line: #{$type-caption-line};
+    --type-caption-weight: #{$type-caption-weight};
+
+    --type-numeric-size: #{$type-numeric-size};
+    --type-numeric-line: #{$type-numeric-line};
+    --type-numeric-weight: #{$type-numeric-weight};
+    --type-numeric-feature: 'tnum' 1; // tabular numerals for aligned figures
+}
+
+.text-page-title {
+    font-size: var(--type-page-title-size);
+    line-height: var(--type-page-title-line);
+    font-weight: var(--type-page-title-weight);
+}
+
+.text-section-heading {
+    font-size: var(--type-section-heading-size);
+    line-height: var(--type-section-heading-line);
+    font-weight: var(--type-section-heading-weight);
+}
+
+.text-label {
+    font-size: var(--type-label-size);
+    line-height: var(--type-label-line);
+    font-weight: var(--type-label-weight);
+}
+
+.text-caption {
+    font-size: var(--type-caption-size);
+    line-height: var(--type-caption-line);
+    font-weight: var(--type-caption-weight);
+    color: var(--color-text-muted);
+}
+
+.text-numeric {
+    font-size: var(--type-numeric-size);
+    line-height: var(--type-numeric-line);
+    font-weight: var(--type-numeric-weight);
+    font-feature-settings: var(--type-numeric-feature);
+}

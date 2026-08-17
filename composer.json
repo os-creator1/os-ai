@@ -72,6 +72,7 @@
     "stevebauman/location": "^7.5",
     "stripe/stripe-php": "^7.76",
     "symfony/yaml": "^6.0",
+    "technikermathe/blade-lucide-icons": "^3.166",
     "twig/twig": "^3.6",
     "twilio/sdk": "^6.37",
     "ultramsg/whatsapp-php-sdk": "^2.0",

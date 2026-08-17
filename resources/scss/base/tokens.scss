@@ -1,0 +1,14 @@
+// Design System Contract, Milestone 1, §9 item 7 — token aggregator,
+// imported once near the top of core.scss (before base/bootstrap-extended,
+// so Bootstrap's own SCSS variables can consume these token values) and
+// once in style.scss's own chain. Import order matters: colors before
+// typography/spacing/radii/shadows/motion, since none of the later files
+// depend on each other but all may reference color tokens in comments/
+// documentation.
+
+@import 'tokens/colors';
+@import 'tokens/typography';
+@import 'tokens/spacing';
+@import 'tokens/radii';
+@import 'tokens/shadows';
+@import 'tokens/motion';

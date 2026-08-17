@@ -6,6 +6,16 @@
 // Author: Codeglen
 // Author URL: https://codecanyon.net/user/codeglen
 //  ================================================================================================
+
+// Design System Contract, Milestone 1, §9 item 9 — imported here (rather
+// than relying solely on core.scss's own item-8 import) because this file
+// is reached independently by six separate compiled entries (core, the
+// dark/bordered/semi-dark themes, the RTL bundle, overrides.scss), each of
+// which imports `bootstrap-extended/include` directly, not through
+// core.scss. The token variables this file references below must already
+// be in scope wherever it is parsed.
+@import '../tokens';
+
 // Color system
 
 $white: #fff !default;
@@ -21,7 +31,10 @@ $gray-800: #1e1e1e !default; // $gray-dark
 $gray-900: #2a2e30 !default;
 $black: #22292f !default; // 231f48 22292f
 
-$purple: #7367f0 !default; //$primary
+// Design System Contract, Milestone 1, §9 item 9 — $purple/$primary now
+// reference the locked primary-accent token (resources/scss/base/tokens/
+// _colors.scss) instead of the original Vuexy theme hex value.
+$purple: $color-accent-primary !default; //$primary
 $green: #28c76f !default; //$success
 $blue: #00cfe8 !default; //$info
 $orange: #ff9f43 !default; //$warning
@@ -102,8 +115,10 @@ $spacers: map-merge(
 // Body
 //
 // Settings for the `<body>` element.
-$body-bg: #f8f8f8 !default;
-$body-color: #6e6b7b !default;
+// Design System Contract, Milestone 1, §9 item 9 — warm application
+// canvas + primary text color, replacing the original cold-grey values.
+$body-bg: $color-canvas !default;
+$body-color: $color-text-primary !default;
 
 // Links
 //
@@ -125,14 +140,18 @@ $grid-gutter-width: 2rem !default;
 //
 // Define common padding and border radius sizes and more.
 
+// Design System Contract, Milestone 1, §9 item 9 — border color and
+// radius/shadow scale now reference the locked tokens (resources/scss/
+// base/tokens/_radii.scss, _shadows.scss, _colors.scss) instead of the
+// original Vuexy theme values.
 $border-width: 1px !default;
-$border-color: #ebe9f1 !default;
-$border-radius: 0.357rem !default;
-$border-radius-lg: 0.6rem !default;
-$border-radius-sm: 0.25rem !default;
+$border-color: $color-border-neutral !default;
+$border-radius: $radius-md !default;
+$border-radius-lg: $radius-lg !default;
+$border-radius-sm: $radius-sm !default;
 
 // shadow
-$box-shadow: 0 4px 24px 0 rgba($black, 0.1) !default;
+$box-shadow: $shadow-md !default;
 
 $component-active-color: $white !default;
 $component-active-bg: $primary !default;
@@ -143,8 +162,11 @@ $component-active-bg: $primary !default;
 // Font, line-height, and color for body text, headings, and more.
 
 // stylelint-disable value-keyword-case
-$font-family-sans-serif: 'Montserrat', Helvetica, Arial, serif !default;
-$font-family-monospace: 'Montserrat', Helvetica, Arial, serif !default;
+// Design System Contract, Milestone 1, §9 item 9 — Geist Sans (self-
+// hosted, resources/scss/base/tokens/_typography.scss), replacing
+// Montserrat.
+$font-family-sans-serif: $font-family-geist !default;
+$font-family-monospace: $font-family-geist !default;
 
 // stylelint-enable value-keyword-case
 $font-size-base: 1rem !default;

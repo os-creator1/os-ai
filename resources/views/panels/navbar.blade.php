@@ -1,6 +1,6 @@
 @php use App\Library\Tool;use App\Models\Notifications; @endphp
 @if(isset($configData["mainLayoutType"]) && $configData["mainLayoutType"] == 'horizontal')
-    <nav class="header-navbar navbar-expand-lg navbar navbar-fixed align-items-center navbar-shadow navbar-brand-center {{ $configData['navbarColor'] }}"
+    <nav class="header-navbar navbar-expand-lg navbar navbar-fixed align-items-center navbar-shadow navbar-brand-center transition-base {{ $configData['navbarColor'] }}"
          data-nav="brand-center">
         <div class="navbar-header d-xl-block d-none">
             <ul class="nav navbar-nav">
@@ -18,7 +18,7 @@
             </ul>
         </div>
         @else
-            <nav class="header-navbar navbar navbar-expand-lg align-items-center {{ $configData['navbarClass'] }} navbar-light navbar-shadow {{ $configData['navbarColor'] }} {{$configData['layoutWidth'] === 'boxed' && $configData['verticalMenuNavbarType'] === 'navbar-floating' ? 'container-xxl' : '' }}">
+            <nav class="header-navbar navbar navbar-expand-lg align-items-center transition-base {{ $configData['navbarClass'] }} navbar-light navbar-shadow {{ $configData['navbarColor'] }} {{$configData['layoutWidth'] === 'boxed' && $configData['verticalMenuNavbarType'] === 'navbar-floating' ? 'container-xxl' : '' }}">
                 @endif
 
 
