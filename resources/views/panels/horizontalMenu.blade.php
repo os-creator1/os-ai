@@ -20,7 +20,7 @@
                 </li>
                 <li class="nav-item nav-toggle">
                     <a class="nav-link modern-nav-toggle pe-0" data-bs-toggle="collapse">
-                        <i class="d-block d-xl-none text-primary toggle-icon font-medium-4" data-feather="x"></i>
+                        <x-ds-icon name="x" class="d-block d-xl-none text-primary toggle-icon font-medium-4" />
                     </a>
                 </li>
             </ul>
@@ -62,7 +62,7 @@
                             <li class="nav-item @if(isset($menu->submenu)){{'dropdown'}}@endif {{ $custom_classes }} {{ isset($menu->slug) &&  str_contains(request()->path(),$menu->slug) ? 'active' : '' }}"
                             @if(isset($menu->submenu)){{'data-menu=dropdown'}}@endif>
                                 <a href="{{isset($menu->url)? url($menu->url):'javascript:void(0)'}}" class="nav-link d-flex align-items-center @if(isset($menu->submenu)){{'dropdown-toggle'}}@endif" target="{{isset($menu->newTab) ? '_blank':'_self'}}"  @if(isset($menu->submenu)){{'data-bs-toggle=dropdown'}}@endif>
-                                    <i data-feather="{{ $menu->icon }}"></i>
+                                    <x-ds-icon name="{{ $menu->icon }}" />
                                     <span data-i18n="{{ $translation }}">{{ __('locale.menu.'.$menu->name) }}</span>
                                 </a>
                                 @if(isset($menu->submenu))

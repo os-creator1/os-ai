@@ -33,5 +33,5 @@
         @endif
     </p>
 </footer>
-<button class="btn btn-primary btn-icon scroll-top transition-fast" type="button"><i data-feather="arrow-up"></i></button>
+<button class="btn btn-primary btn-icon scroll-top transition-fast" type="button"><x-ds-icon name="arrow-up" /></button>
 <!-- END: Footer-->

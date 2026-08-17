@@ -25,6 +25,19 @@
 
 $font-family-geist: 'Geist Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
 
+// Design System M2 Slice 1 contract §3.7/§9 item 39. One canonical Sass
+// variable both $font-family-sans-serif and $font-family-monospace
+// resolve through (bootstrap-extended/_variables.scss), fixing the
+// alias-drift bug where navbar/sidebar/Quill independently reference
+// $font-family-monospace, not $font-family-sans-serif. Compiled as
+// `var(--font-family-app), <build-time fallback stack>` rather than a
+// literal font list, so every one of those compile-time call sites keeps
+// responding to a runtime font change (PlatformThemeManager's injected
+// `--font-family-app` custom property, §6.12) without any of them ever
+// being touched directly.
+$font-family-app: $font-family-geist !default;
+$font-family-app-runtime: unquote('var(--font-family-app), #{$font-family-app}');
+
 // §7 item 3 — the derived complete type scale, anchored to the contract's
 // own "calm typography hierarchy... comfortable line height... no
 // oversized SaaS-dashboard type" requirement. Every value below is a
@@ -55,6 +68,7 @@ $type-numeric-weight: 500;
 
 :root {
     --font-family-base: #{$font-family-geist};
+    --font-family-app: #{$font-family-app};
 
     --type-page-title-size: #{$type-page-title-size};
     --type-page-title-line: #{$type-page-title-line};

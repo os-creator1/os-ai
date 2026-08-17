@@ -9,6 +9,7 @@
 
 <!-- BEGIN: Theme JS-->
 <script src="{{ asset(mix('js/core/app-menu.js')) }}"></script>
+<script src="{{ asset(mix('js/core/theme-tokens.js')) }}"></script>
 <script src="{{ asset(mix('js/core/app.js')) }}"></script>
 
 <!-- custom scripts file for user -->

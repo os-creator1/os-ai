@@ -41,3 +41,11 @@
     {{-- user custom styles --}}
     <link rel="stylesheet" href="{{ asset(mix('css/style.css')) }}"/>
 @endif
+
+{{-- Design System M2 §6.3: runtime platform theme override, applied
+     before visible rendering. Fails safe to the compiled defaults above
+     whenever no active preset exists or its token data is unusable. --}}
+@php $platformThemeStyleBlock = app(\App\Library\Theme\PlatformThemeManager::class)->currentStyleBlock(); @endphp
+@if ($platformThemeStyleBlock)
+    {!! $platformThemeStyleBlock !!}
+@endif

@@ -16,7 +16,9 @@
 @import 'bootstrap/scss/mixins/gradients';
 
 //Variables
-$chat-image-back-color: #f2f0f7;
+// Design System M2 Slice 1 contract §6.17/§9 item 52: retokenized to the
+// chat-canvas token (was a locally hardcoded #f2f0f7), matching app-chat.scss.
+$chat-image-back-color: $color-canvas;
 $chat-head-footer-height: 65px;
 $chat-widget-head-footer-height: 56px;
 $chat-widget-height: 390px;

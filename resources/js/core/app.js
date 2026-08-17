@@ -4,7 +4,10 @@
 ==========================================================================================*/
 window.colors = {
   solid: {
-    primary: '#7367F0',
+    // Design System M2 Slice 1 contract §9 item 50: sourced from the
+    // same runtime token theme-tokens.js reads, instead of a second
+    // hardcoded #7367F0 literal. Every other key here is untouched.
+    primary: window.PlatformTheme.primary(),
     secondary: '#82868b',
     success: '#28C76F',
     info: '#00cfe8',

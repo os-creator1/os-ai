@@ -705,4 +705,47 @@
             Route::post('entitlement-overrides', 'WorkspaceEntitlementController@storeOverride')->name('entitlement-overrides.store');
             Route::delete('entitlement-overrides/{featureKey}', 'WorkspaceEntitlementController@revertOverride')->name('entitlement-overrides.revert');
         });
+
+        /*
+        |--------------------------------------------------------------------------
+        | Platform theme presets (Design System Milestone 2)
+        |--------------------------------------------------------------------------
+        |
+        | docs/automation/DESIGN-SYSTEM-M2-CONTRACT.md §9 item 30. {preset}
+        | binds via uid (§6.1's HasUid convention), same whereUuid()
+        | constraint shape as {workspace} above.
+        |
+        */
+        Route::prefix('theme-presets')->name('theme-presets.')->group(function () {
+            Route::get('/', 'PlatformThemePresetController@index')->name('index');
+            Route::post('/', 'PlatformThemePresetController@store')->name('store');
+            Route::post('validate', 'PlatformThemePresetController@validateTokens')->name('validate');
+
+            Route::prefix('{preset}')->whereUuid('preset')->group(function () {
+                Route::get('/', 'PlatformThemePresetController@show')->name('show');
+                Route::put('/', 'PlatformThemePresetController@update')->name('update');
+                Route::post('duplicate', 'PlatformThemePresetController@duplicate')->name('duplicate');
+                Route::post('rename', 'PlatformThemePresetController@rename')->name('rename');
+                Route::post('activate', 'PlatformThemePresetController@activate')->name('activate');
+                Route::delete('/', 'PlatformThemePresetController@destroy')->name('destroy');
+            });
+        });
+
+        /*
+        |--------------------------------------------------------------------------
+        | Platform theme fonts (Design System Milestone 2)
+        |--------------------------------------------------------------------------
+        |
+        | §9 item 30. "Replace" (§4.6) reuses `upload` — a fresh upload
+        | always produces its own content-addressed row (§6.9), so no
+        | separate replace route exists. The public active-font route
+        | lives in routes/public.php (§9 item 31); servePreview here is
+        | the 'manage theme'-protected inactive-font preview (§6.18).
+        |
+        */
+        Route::prefix('theme-fonts')->name('theme-fonts.')->group(function () {
+            Route::post('/', 'PlatformThemeFontController@upload')->name('upload');
+            Route::delete('{font}', 'PlatformThemeFontController@destroy')->name('destroy');
+            Route::get('{font}/preview', 'PlatformThemeFontController@servePreview')->name('preview');
+        });
     });

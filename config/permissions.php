@@ -894,4 +894,10 @@
             'category'     => 'Opportunities',
         ],
 
+        // Appearance Module (Design System Milestone 2)
+        'manage theme' => [
+            'display_name' => 'update',
+            'category'     => 'Appearance',
+        ],
+
     ];

@@ -206,3 +206,13 @@
             ]);
         });
     });
+
+    /*
+     * Platform theme active font (Design System Milestone 2)
+     *
+     * docs/automation/DESIGN-SYSTEM-M2-CONTRACT.md §9 item 31. Resolves
+     * "the active font" via platform_theme_presets WHERE status='active'
+     * (§3.7) -- the requested {safeId} is never trusted alone; it must
+     * match whatever font the active preset actually references.
+     */
+    Route::get('theme-font/{safeId}', 'Admin\PlatformThemeFontController@serveActive')->name('theme-font.active');

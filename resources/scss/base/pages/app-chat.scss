@@ -16,7 +16,9 @@
 @import 'bootstrap/scss/mixins/gradients';
 
 //Variables
-$chat-image-back-color: #f2f0f7;
+// Design System M2 Slice 1 contract §6.17/§9 item 51: retokenized to the
+// chat-canvas token (was a locally hardcoded #f2f0f7).
+$chat-image-back-color: $color-canvas;
 $chat-head-footer-height: 65px;
 $chat-profile-sidebar-head-height: 200px;
 
@@ -210,10 +212,11 @@ $chat-profile-sidebar-head-height: 200px;
     // Before starting chat
     .start-chat-area,
     .user-chats {
-      background-image: url($chat-bg-light);
+      // Design System M2 Slice 1 contract §6.17/§9 item 51: the embedded
+      // base64 background-image pattern is removed structurally — a
+      // configurable theme surface color only, never a decorative image,
+      // regardless of which preset is active.
       background-color: $chat-image-back-color;
-      background-repeat: repeat;
-      background-size: 210px;
     }
     .start-chat-area {
       height: inherit;

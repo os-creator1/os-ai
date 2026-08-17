@@ -23,6 +23,7 @@
             $this->call(PaymentMethodsSeeder::class);
             $this->call(PlanSeeder::class);
             $this->call(SenderIdPlanSeeder::class);
+            $this->call(PlatformThemePresetSeeder::class);
             //  $this->call(BlacklistSeeder::class);
             //  $this->call(KeywordsSeeder::class);
             //  $this->call(PhoneNumberSeeder::class);

@@ -523,11 +523,11 @@
 
       $(window).on("load", function() {
 
-        let $strok_color = "#b9c3cd";
-        let $label_color = "#e7eef7";
-        let $purple = "#df87f2";
-        let $textMutedColor = "#b9b9c3";
-        let $stroke_color_2 = "#d0ccff";
+        let $strok_color = PlatformTheme.chartPalette()[0];
+        let $label_color = PlatformTheme.chartGrid();
+        let $purple = PlatformTheme.secondary();
+        let $textMutedColor = PlatformTheme.chartAxis();
+        let $stroke_color_2 = PlatformTheme.chartPalette()[1];
 
         let $plainSmsData = document.querySelector("#plain_sms_data");
         let $unicodeSmsData = document.querySelector("#unicode_sms_data");
@@ -696,7 +696,7 @@
           stroke: {
             width: 4
           },
-          colors: ["#7367F0", "#EA5455"]
+          colors: [PlatformTheme.primary(), "#EA5455"]
         };
 
         let smsHistoryChart = new ApexCharts(
