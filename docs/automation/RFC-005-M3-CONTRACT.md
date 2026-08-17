@@ -39,16 +39,28 @@ Neither correction expands M3's production scope beyond what §6/§18 already de
 
 ---
 
+## Correction Round 2 record (final ordinary correction round)
+
+A resumed implementation attempt on `agent/rfc-005-m3` (base `3162006`, Correction Round 1's own merged commit) implemented the full corrected 112-path allowlist, found and fixed six genuine implementation-time defects entirely within already-allowlisted files (a Laravel `Blueprint::foreign()` naming defect that silently created zero composite foreign keys on two tables — fixed by passing the constraint name as `foreign()`'s own second argument rather than a no-op chained `->name()` call; a completely absent fail-closed configuration check in `StripePaymentProviderGateway`'s constructor, required by §19 but never implemented; the §12 currency-exponent map this contract's own Correction Round 1 specified but which the manager still hard-coded to exponent 2; Stripe's documented amount minimum/eight-digit maximum, required by §12 but never enforced; a completely absent amount/currency/customer validation in `ProcessPaymentProviderEvent`, required by §13 step 10 but never implemented — a genuine pre-mutation security gap, not merely a missing test; and an eager-dependency-injection defect where `EvaluateBusinessAutoRecharge::handle()`'s method-injected `UsageBillingCheckoutManager` parameter forced Laravel to construct the real, now-correctly-fail-closed Stripe gateway on every dispatch, even the overwhelmingly common auto-recharge-disabled no-op case, breaking every M1/M2 test that reserves or commits) — then ran the full `tests/Unit/Usage`/`tests/Feature/Usage` regression suite and found **one further pre-existing M2 test requiring modification that Correction Round 1's own audit missed**.
+
+**Finding:** `tests/Feature/Usage/NoStripeOrProviderCodeAtM2Test.php` mechanically asserts that a fixed list of "M2 production paths" — including `resources/views/customer/business/usage-billing/show.blade.php` (item 104), `app/Library/Usage/UsageBillingPresenter.php` (item 105), `app/Library/Usage/UsageBillingDashboardViewModel.php` (item 106), and `app/Library/Usage/UsageWalletManager.php` (item 100) — never contain the string `"Stripe"` or any M3 table name. That invariant was correct for M2 and is deliberately no longer true: Correction Round 1 itself authorized exactly these four files to gain Stripe-related content (the payment-method partial include and Stripe.js loader in `show.blade.php`; the new `paymentMethod`/`providerConfigured` fields in the presenter/view-model; the `EvaluateBusinessAutoRecharge::dispatch()` call in `UsageWalletManager.php`). Correction Round 1's own "existing M2 dashboard tests, individually inspected" audit (above) checked five test files matching `UsageBilling*`/`NoFakePaymentControlsRendered*` naming but did not discover this file, since its name does not match that pattern — a genuine audit miss, not new scope. **Added as item 113 (modified).**
+
+**Resolution:** `NoStripeOrProviderCodeAtM2Test.php`'s `M2_PRODUCTION_PATHS` constant drops exactly the four paths listed above (items 100/104/105/106) and gains one clarifying comment explaining why — every other path in that list, and the test's own `FORBIDDEN_TERMS` scan logic, is unchanged. The test continues to prove, for every M2 file that was never authorized to change for M3, that zero Stripe/M3-table leakage exists — narrowed to stay true, not weakened or removed.
+
+**No production code changes as a result of this correction.** This is a docs-only, single-test-file-scoped correction. Neither correction expands M3's production scope, invents a financial default, or authorizes resumed implementation — a separate, explicit human instruction remains required before implementation may resume. **This is Correction Round 2 of the maximum 2 correction rounds this contract permits, and is the final ordinary correction round** (`maximum_correction_rounds: 2`, unchanged). No third ordinary correction round remains under this contract.
+
+---
+
 ## 0. Governance
 
 - Verified base SHA: `a25809d7bceef54a66fe55f3eb6a6dd03b9f92ec` (`main`, confirmed `HEAD == origin/main` at drafting time, preflight §1 below).
 - Governing RFC-005 design document: `docs/rfcs/RFC-005-BUSINESS-USAGE-BILLING-AND-WALLETS.md`, version 1.4, governed by `docs/automation/RFC-005-DESIGN-CONTRACT.md` (merged commit `0e74f199bcf13eaf86e0770858c13901323b0eab`, confirmed an ancestor of the base SHA).
 - Governing M1 contract: `docs/automation/RFC-005-M1-CONTRACT.md`, M1 implementation commit `9b53097c9f1571aee65f2b522d56f94d74341b6f` (confirmed an ancestor).
 - Governing M2 contract: `docs/automation/RFC-005-M2-CONTRACT.md`, final merged correction commit `2442e65fc9a7c01e3e904e425bc85a684fd6b5f0` (confirmed an ancestor); M2 implementation commit `3178f6d255d83fe9e15a534af6d85ea635e03195` (confirmed an ancestor, merged to `main` via PR #78).
-- Branch: `chore/rfc-005-m3-contract` (original); `chore/rfc-005-m3-contract-correction-1` (this correction round).
-- Contract status: **READY_FOR_TEST_MODE_IMPLEMENTATION.** No open RFC-005 decision prevents a deterministic, fully test-mode-verifiable implementation of M3's own exact scope (§6); as of Correction Round 1, every pre-existing M1/M2 file this contract's own prose requires touching is now individually allowlisted (§23), and the one internally contradictory schema claim (§12, currency exponent) is resolved deterministically with no invented column and no invented default. **BLOCKED_FOR_LIVE_CHARGING** — production payment collection under this design remains gated by all four RFC-level implementation-readiness gates (RFC §"Implementation readiness"), of which two are still unresolved at M3 drafting time (additional-slot allocation authority; RFC-004 catalog-pricing operator surface) and one is a legal gate outside M3's own scope entirely (production tax/VAT sufficiency, §23) — **none of the three is M3's own responsibility to resolve, since M3 owns no additional-slot or tax behavior at all (§7)** — plus every live-specific gate this contract itself defines (§4).
+- Branch: `chore/rfc-005-m3-contract` (original); `chore/rfc-005-m3-contract-correction-1` (Correction Round 1); `chore/rfc-005-m3-contract-correction-2` (this correction round).
+- Contract status: **READY_FOR_TEST_MODE_IMPLEMENTATION.** No open RFC-005 decision prevents a deterministic, fully test-mode-verifiable implementation of M3's own exact scope (§6); as of Correction Round 1, every pre-existing M1/M2 file this contract's own prose requires touching is now individually allowlisted (§23), and the one internally contradictory schema claim (§12, currency exponent) is resolved deterministically with no invented column and no invented default; as of Correction Round 2, the one further pre-existing M2 test Correction Round 1's own audit missed (`NoStripeOrProviderCodeAtM2Test.php`) is resolved, with no other scope discrepancy found by a full resumed-implementation regression run (§"Correction Round 2 record" above). **BLOCKED_FOR_LIVE_CHARGING** — production payment collection under this design remains gated by all four RFC-level implementation-readiness gates (RFC §"Implementation readiness"), of which two are still unresolved at M3 drafting time (additional-slot allocation authority; RFC-004 catalog-pricing operator surface) and one is a legal gate outside M3's own scope entirely (production tax/VAT sufficiency, §23) — **none of the three is M3's own responsibility to resolve, since M3 owns no additional-slot or tax behavior at all (§7)** — plus every live-specific gate this contract itself defines (§4).
 - Merge policy: **human-only**. This contract's own merge does not automatically start implementation — a separate, explicit human instruction is required, exactly as M1 and M2 each required after their own contracts merged, and exactly as required again after this correction round merges.
-- `maximum_correction_rounds: 2`, identical discipline to every prior RFC-004/RFC-005 contract in this repository, reset for this new milestone contract. **This is Correction Round 1 of 2.**
+- `maximum_correction_rounds: 2`, identical discipline to every prior RFC-004/RFC-005 contract in this repository, reset for this new milestone contract. **This is Correction Round 2 of 2 — the final ordinary correction round this contract permits.** No further ordinary correction round may be requested under this contract.
 - `docs/automation/AI-AUTONOMY-STATE.json` carries no authorization weight for this contract and is not modified by it (confirmed stale/historical, still referencing RFC-003 Milestone 4, read only).
 - No RFC document, RFC-004 document, or automation-state file is modified by this contract. No tag is created. No direct push to `main`.
 
@@ -823,9 +835,15 @@ Sole write authority: `UsageBillingCheckoutManager`. **No generated active-owner
 111. `tests/Feature/Usage/NoFakePaymentControlsRenderedTest.php` — **modified, not new**: `test_dashboard_shows_the_honest_unavailable_message_and_no_fake_controls()` is scoped to the `providerConfigured === false` case only (asserting the M2 placeholder plus the absence of every forbidden control, exactly as today) — proven by a test fixture that leaves `STRIPE_SECRET`/`STRIPE_KEY` unset/empty. A **new** test method, `test_dashboard_renders_real_m3_controls_when_provider_is_configured()`, is added to the same file/class asserting the placeholder is genuinely absent and the real controls (`Set up payment method`, a top-up amount field, an auto-recharge toggle) are genuinely present when a test-mode-configured `FakePaymentProviderGateway` is bound. No other existing test method, `setUp()`, or fixture helper in this file changes.
 112. `tests/Feature/Usage/UsageBillingDashboardStripeIntegrationTest.php` — **new**: proves the full item-104–110 wiring end-to-end — the dashboard route renders the payment-method partial and funding-history card only when a payment instrument/provider customer/funding attempts exist and `providerConfigured` is true; the placeholder remains exactly where M3 does not apply; a paginated funding-history list renders state/purpose/amount/timestamp and never a raw provider payload; no live network call occurs (via `FakePaymentProviderGateway`); cross-Business isolation is preserved (reusing `resolveViewableBusiness()`, unmodified); no secret/client-secret is ever present in the rendered HTML.
 
-**Counts (corrected, Correction Round 1):** 5 migrations + 8 enums + 9 value objects + 5 models + 5 repository contracts + 5 Eloquent repositories + 4 gateway files + 2 managers + 6 events/jobs + 7 exceptions + 1 configuration file + 9 HTTP files + 2 views = **68 new production** (unchanged). + 4 modified production (items 100–103, item 100's description widened) + 7 modified production (items 104–110, Correction Round 1) = **79 production total.** 31 new tests (items 69–99) + 1 new test (item 112) + 1 modified test (item 111) = **33 test total.** **79 + 33 = 112 total paths.**
+### Correction Round 2 additions (1 — item 113; see "Correction Round 2 record" above for the full audit)
 
-Any path discovered necessary beyond this list during implementation is a STOP-and-report condition (§27) — the stop threshold is any required **113th path**.
+**Modified test path (1):**
+
+113. `tests/Feature/Usage/NoStripeOrProviderCodeAtM2Test.php` — **modified, not new**: `M2_PRODUCTION_PATHS` drops exactly four entries — `resources/views/customer/business/usage-billing/show.blade.php` (item 104), `app/Library/Usage/UsageBillingPresenter.php` (item 105), `app/Library/Usage/UsageBillingDashboardViewModel.php` (item 106), `app/Library/Usage/UsageWalletManager.php` (item 100) — each now legitimately Stripe-referencing per Correction Round 1's own authorization, plus one clarifying comment explaining the exclusion. Every other path in the constant, and the `FORBIDDEN_TERMS` scan/assertion logic itself, is byte-for-byte unchanged — the test continues to prove zero Stripe/M3-table leakage into every M2 file that was never authorized to change.
+
+**Counts (corrected, Correction Round 2):** 5 migrations + 8 enums + 9 value objects + 5 models + 5 repository contracts + 5 Eloquent repositories + 4 gateway files + 2 managers + 6 events/jobs + 7 exceptions + 1 configuration file + 9 HTTP files + 2 views = **68 new production** (unchanged). + 4 modified production (items 100–103, item 100's description widened) + 7 modified production (items 104–110, Correction Round 1) = **79 production total** (unchanged). 31 new tests (items 69–99) + 1 new test (item 112) + 2 modified tests (items 111, 113) = **34 test total.** **79 + 34 = 113 total paths.**
+
+Any path discovered necessary beyond this list during implementation is a STOP-and-report condition (§27) — the stop threshold is any required **114th path**.
 
 ---
 
@@ -848,7 +866,7 @@ Run from repository root, PHP 8.3.30, against `ultimatesms_testing` only, once i
 13. `php artisan test tests/Unit/Usage tests/Feature/Usage` (pre-existing M1/M2 files only, excluding M3's own new files) → unchanged pass count from the M2 implementation's own last confirmed regression-gate result, proving M1/M2 invariants unaffected.
 14. `grep -n "platform_feature_unknown\|platform_feature_unavailable\|workspace_plan_unassigned\|denied_by_workspace_override\|not_entitled_by_plan\|disabled_for_business\|plan_suspended\|plan_inactive\|usage_unauthorized" app/Library/Entitlement/EntitlementManager.php | wc -l` → `15` (unchanged from every prior round).
 15. `git diff --stat app/Library/Entitlement/EntitlementManager.php` → empty (unmodified).
-16. Final changed-path set (`git diff --name-only` + `git ls-files --others --exclude-standard`, sorted, `{impl_date}` normalized in the five migration filenames) equals §23's exact 112-path list (corrected, Correction Round 1).
+16. Final changed-path set (`git diff --name-only` + `git ls-files --others --exclude-standard`, sorted, `{impl_date}` normalized in the five migration filenames) equals §23's exact 113-path list (corrected, Correction Round 2).
 17. **(Correction Round 1)** `grep -c "usage-billing/payment-method\|usage-billing/top-up\|usage-billing/auto-recharge" routes/customer.php` → `5` (all five new item-107 routes exist exactly once); `git diff routes/customer.php` (against this correction's own base) shows only additive lines — no existing route removed, reordered, or altered.
 18. **(Correction Round 1)** `grep -c "stripe/webhook/usage-billing" routes/public.php` → `1`; `grep -n "auth\b" routes/public.php` → zero matches (confirms the webhook route sits outside any authenticated group).
 19. **(Correction Round 1)** `grep -c "provider-events" routes/admin.php` → `2` (the two new item-109 routes); `git diff routes/admin.php` shows only additive lines inside the existing `EnsureUserIsAdministrator` block.
@@ -856,6 +874,7 @@ Run from repository root, PHP 8.3.30, against `ultimatesms_testing` only, once i
 21. **(Correction Round 1)** `git diff --stat -- app/Http/Controllers/Customer/Business/UsageBillingController.php` (against this correction's own base) → empty — proves the corrected §3.7/§18 claim that this file needs no change.
 22. **(Correction Round 1)** `grep -rn "decimal_places" app database` → zero matches (the nonexistent-column reference is fully removed, §12).
 23. **(Correction Round 1)** `response()->getContent()` assertion in item 112's test: `assertStringNotContainsString('Payment methods and top-ups are not yet configured.', ...)` when `providerConfigured === true`, proving the placeholder is genuinely removed only where real functionality replaces it.
+24. **(Correction Round 2)** `grep -c "show.blade.php\|UsageBillingPresenter.php\|UsageBillingDashboardViewModel.php\|UsageWalletManager.php" tests/Feature/Usage/NoStripeOrProviderCodeAtM2Test.php` → `0` (all four now-legitimately-Stripe-touching paths removed from `M2_PRODUCTION_PATHS`); `git diff tests/Feature/Usage/NoStripeOrProviderCodeAtM2Test.php` (against this correction's own base) shows only the four removed array entries plus one added comment — the `FORBIDDEN_TERMS` constant and the test method body are byte-for-byte unchanged.
 
 Run `git diff --check` as part of every gate.
 
@@ -894,12 +913,13 @@ Every file named in §23's Tests section, with its required proof:
 - **99 `CrossBusinessPaymentIsolationTest`** — Business A's instruments/funding history/provider-event status are never visible from Business B's own dashboard request or repository lookup, even within the same Workspace, mirroring `CrossBusinessBillingIsolationTest`'s own M2 pattern exactly.
 - **111 `NoFakePaymentControlsRenderedTest` (modified, Correction Round 1)** — the existing method is scoped to `providerConfigured === false` only, preserving its exact existing assertions (placeholder present, every forbidden control absent) unchanged; the new method proves the inverse — when `providerConfigured === true` and a real payment instrument/funding history exist, the placeholder is genuinely gone from the payment-methods card and the real controls genuinely render — the two methods together prove the placeholder is removed exactly where, and only where, real functionality replaces it, never more broadly.
 - **112 `UsageBillingDashboardStripeIntegrationTest` (new, Correction Round 1)** — end-to-end proof that items 104–110 are wired and reachable, not dead code: the payment-method partial (item 67) actually renders when included; the funding-history card paginates real `BusinessFundingAttempt` rows (state/purpose/amount/timestamp only, never `provider_session_or_intent_reference`/raw payload); `providerConfigured === false` renders the honest unavailable state with zero new controls; every new item-107 route responds through its named controller action; `resolveViewableBusiness()` isolation is preserved (an unrelated Workspace member gets 404 on every new route, mirroring test 99); zero live Stripe network call (via `FakePaymentProviderGateway`); no secret/client-secret ever appears in the rendered HTML (mechanical search 2, re-asserted at the HTTP-response level).
+- **113 `NoStripeOrProviderCodeAtM2Test` (modified, Correction Round 2)** — `M2_PRODUCTION_PATHS` drops items 100/104/105/106 (each now legitimately Stripe-referencing per Correction Round 1); every other M2 path in the list, and the `FORBIDDEN_TERMS` scan itself, is unchanged — the test continues to prove zero Stripe/M3-table leakage into any M2 file that was never authorized to change.
 
 **Every test above uses `FakePaymentProviderGateway` (or an equivalently fully-faked/mocked provider boundary) — zero live Stripe network access in any automated test or regression gate.**
 
 **Six mandatory regression gates** (`ultimatesms_testing` only, never a predicted count, every count reported only after the gate actually runs):
 
-1. `php artisan test tests/Unit/Usage tests/Feature/Usage` — RFC-005/M3-focused (includes every M1/M2 Usage test, plus all 31 new M3 files, plus item 111's modified file and item 112's new file, Correction Round 1).
+1. `php artisan test tests/Unit/Usage tests/Feature/Usage` — RFC-005/M3-focused (includes every M1/M2 Usage test, plus all 31 new M3 files, plus item 111's and item 113's modified files and item 112's new file, Correction Rounds 1–2).
 2. `php artisan test tests/Unit/Entitlement tests/Feature/Entitlement` — Entitlement.
 3. `php artisan test tests/Unit/Workspace tests/Feature/Workspace` — Workspace.
 4. `php artisan test tests/Feature/Business` — Business.
@@ -925,11 +945,12 @@ Gates must be run **sequentially, never concurrently against the shared test dat
 9. No M4/M5 concept is implemented — proven by mechanical searches 11–12.
 10. `EntitlementManager.php` and the nine RFC-004 denial keys are unchanged — proven by mechanical searches 14–15 and regression gate 2.
 11. All six regression gates pass with exact reported counts, run sequentially.
-12. The final changed-path set equals §23's 112 paths exactly (corrected, Correction Round 1) — proven by mechanical search 16.
+12. The final changed-path set equals §23's 113 paths exactly (corrected, Correction Round 2) — proven by mechanical search 16.
 13. The local test-mode preview (§20) is verified working, using only test-mode keys and a non-production database/URL.
 14. **(Correction Round 1)** The dashboard genuinely renders the M3 payment-method/top-up/auto-recharge/funding-history sections when `providerConfigured === true`, and genuinely preserves the M2 placeholder when it is `false` — proven by tests 111–112.
 15. **(Correction Round 1)** `UsageBillingController.php` is byte-for-byte unchanged — proven by mechanical search 21.
 16. **(Correction Round 1)** `PurgeExpiredWebhookPayloads`/`ReconcileProviderPendingState` are both actually scheduled, not dead code — proven by mechanical search 20.
+17. **(Correction Round 2)** `NoStripeOrProviderCodeAtM2Test.php` passes with its narrowed `M2_PRODUCTION_PATHS` list — proven by regression gate 1 — and every other file in that list still contains zero Stripe/M3-table references.
 
 **Implementation sequence:**
 
@@ -943,7 +964,7 @@ Gates must be run **sequentially, never concurrently against the shared test dat
 8. Authorization (§17, enforced inside the manager methods and the controllers' role resolution).
 9. HTTP/UI (items 58–68), plus route registration (items 107–109, Correction Round 1) and scheduler registration (item 110, Correction Round 1) — without which items 58–62 are unreachable.
 10. Dashboard integration (items 104–106, Correction Round 1) — presenter/view-model extension, then the Blade card changes (§18.1/§18.2).
-11. Tests (items 69–99), plus the modified test (item 111) and the new dashboard-integration test (item 112, Correction Round 1), plus the four modified M1/M2 regression files (items 100–103).
+11. Tests (items 69–99), plus the modified tests (items 111, 113) and the new dashboard-integration test (item 112, Correction Rounds 1–2), plus the four modified M1/M2 regression files (items 100–103).
 12. Local test-mode preview preparation and verification (§20).
 13. Mechanical searches (§24) and all six regression gates (§25), run sequentially.
 
@@ -953,7 +974,7 @@ Gates must be run **sequentially, never concurrently against the shared test dat
 
 Future implementation must stop, leave the working tree unstaged, and report rather than proceed, if:
 
-- Any path beyond §23's 112 (corrected, Correction Round 1) is required (i.e., any required 113th path).
+- Any path beyond §23's 113 (corrected, Correction Round 2) is required (i.e., any required 114th path).
 - Live credentials of any kind are needed for any step this contract authorizes.
 - Production database access is required.
 - Any unresolved financial default (auto-recharge threshold/amount, monthly cap, retention window) must be invented rather than left explicitly configured per-fixture/per-environment.
@@ -963,7 +984,7 @@ Future implementation must stop, leave the working tree unstaged, and report rat
 - Any legacy payment path (`PaymentController.php`, `PaymentMethods`, the five raw-Stripe-call repositories, any legacy route) must change.
 - An RFC-004 amendment is required.
 - Any additional-slot-agreement, add-on-purchase, or metered-feature-classification concept becomes necessary to satisfy a requirement believed to be M3 scope.
-- Any of the six regression gates fails for a reason not fixable within the 112-path allowlist (corrected, Correction Round 1).
+- Any of the six regression gates fails for a reason not fixable within the 113-path allowlist (corrected, Correction Round 2).
 - `ultimatesms_testing` cannot be confirmed as the effective test database.
 - A live Stripe API call, or a request to obtain/generate a live secret key, appears necessary for any reason.
 
@@ -983,15 +1004,16 @@ Future implementation must stop, leave the working tree unstaged, and report rat
 10. **Provider/customer/instrument ownership is isolated** — §9, proven by tests 78, 99.
 11. **Payload retention is bounded** — §14, no unbounded retention path exists; disposition is the sole gate to purge for exhausted events.
 12. **M4/M5 scope is absent** — §7, §22 (no eager Stripe-customer creation), enforced by mechanical searches 11–12.
-13. **Every path is individually allowlisted** — §23, numbered 1–112 (corrected, Correction Round 1), all 112 authorized (the stop threshold is any required 113th path).
-14. **Counts match** — §23: 79 production + 33 test = 112 (corrected, Correction Round 1).
+13. **Every path is individually allowlisted** — §23, numbered 1–113 (corrected, Correction Round 2), all 113 authorized (the stop threshold is any required 114th path).
+14. **Counts match** — §23: 79 production + 34 test = 113 (corrected, Correction Round 2).
 15. **Six gates are exact** — §25, identical shape to M1/M2's own six gates, sequential execution explicitly required.
 16. **Local test-mode preview requirements are complete** — §20 covers URL, database, env-var names, Stripe CLI command (corrected path, Correction Round 1), webhook URL, click path, test card numbers, expected states, cleanup, and an explicit no-live-no-production confirmation.
-17. **Contract merge does not start implementation** — §0, stated explicitly, matching M1/M2's own identical restraint; explicitly restated for this correction round in "Correction Round 1 record" above.
+17. **Contract merge does not start implementation** — §0, stated explicitly, matching M1/M2's own identical restraint; explicitly restated for this correction round in "Correction Round 1 record" and "Correction Round 2 record" above.
 18. **No production/test file changed** — confirmed by §29's own verification commands before staging (this correction round changes exactly one file, §29 below).
 19. **(Correction Round 1)** Every pre-existing M1/M2 file this contract's own prose requires touching is now individually allowlisted — §"Correction Round 1 record" documents the full prose-to-allowlist audit (routes/customer.php, routes/public.php, routes/admin.php, UsageBillingPresenter.php, UsageBillingDashboardViewModel.php, show.blade.php, Kernel.php) and the one file incorrectly believed to need touching (`UsageBillingController.php`) is now correctly excluded with direct code evidence.
 20. **(Correction Round 1)** No schema column is invented — §12's corrected currency-exponent resolution uses only `currencies.code` (a column that exists) via a static, provider-authoritative map, never `currencies.decimal_places` (a column that does not exist) and never a new migration.
 21. **(Correction Round 1)** No scheduled job is left unreachable — item 110 (`Kernel.php`) schedules both `PurgeExpiredWebhookPayloads` and `ReconcileProviderPendingState`; `ProcessPaymentProviderEvent`/`EvaluateBusinessAutoRecharge` remain event-dispatched (unaffected, already reachable via the webhook controller and the wallet manager respectively).
+22. **(Correction Round 2)** Every pre-existing M2 test whose own invariant Correction Round 1 broke is now individually allowlisted — item 113 (`NoStripeOrProviderCodeAtM2Test.php`), found only by a full resumed-implementation regression run, not by the original per-file audit (which checked test files by `UsageBilling*`-shaped naming and missed this one).
 
 ---
 
@@ -1018,6 +1040,17 @@ Future implementation must stop, leave the working tree unstaged, and report rat
 - If `gh` is available, open a PR into `main`. Otherwise report the exact GitHub comparison URL.
 - PHP tests are not required for this one-file docs-only correction and are not run — reported honestly as not run, no count fabricated.
 
+**Correction Round 2's own verification (this correction round):**
+- `git diff --check` — clean.
+- `git diff --name-only` — exactly `docs/automation/RFC-005-M3-CONTRACT.md`.
+- `git status --short` — exactly ` M docs/automation/RFC-005-M3-CONTRACT.md`.
+- `git diff --cached --name-only` — empty before staging.
+- Stage the one file by its exact path only (never `git add -A`/`git add .`).
+- Commit exactly: `docs: correct RFC-005 M3 test boundary allowlist`.
+- Push normally to `origin chore/rfc-005-m3-contract-correction-2`. No force push. Do not push `main`.
+- If `gh` is available, open a PR into `main`. Otherwise report the exact GitHub comparison URL.
+- PHP tests are not required for this one-file docs-only correction and are not run — reported honestly as not run, no count fabricated.
+
 ---
 
-*End of RFC-005 Milestone 3 contract. Implementation requires a separate, explicit human instruction. This contract's own merge, and this correction round's own merge, do not start or resume it.*
+*End of RFC-005 Milestone 3 contract. Implementation requires a separate, explicit human instruction. This contract's own merge, and each correction round's own merge, do not start or resume it.*
