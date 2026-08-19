@@ -42,21 +42,22 @@
 
             <div class="col-lg-9">
                 <x-card :padded="false">
-                    <x-slot:actions>
-                        <span id="theme-preset-status-badge"></span>
-                        <button type="button" class="btn btn-sm btn-outline-secondary" id="theme-preset-rename-btn" data-bs-toggle="modal" data-bs-target="#theme-preset-rename-modal">Rename</button>
-                        <button type="button" class="btn btn-sm btn-outline-secondary" id="theme-preset-duplicate-btn">Duplicate</button>
-                        <button type="button" class="btn btn-sm btn-outline-danger" id="theme-preset-delete-btn">Delete</button>
-                        <button type="button" class="btn btn-sm btn-success" id="theme-preset-activate-btn">Activate</button>
-                    </x-slot:actions>
-
                     <div class="card-body">
-                        <h4 class="card-title mb-1" id="theme-preset-name-heading">&nbsp;</h4>
+                        <div class="d-flex justify-content-between align-items-start flex-wrap gap-2 mb-1">
+                            <h4 class="card-title mb-0" id="theme-preset-name-heading">&nbsp;</h4>
+                            <div class="d-flex align-items-center gap-2">
+                                <span id="theme-preset-status-badge"></span>
+                                <button type="button" class="btn btn-sm btn-outline-secondary" id="theme-preset-rename-btn" data-bs-toggle="modal" data-bs-target="#theme-preset-rename-modal">Rename</button>
+                                <button type="button" class="btn btn-sm btn-outline-secondary" id="theme-preset-duplicate-btn">Duplicate</button>
+                                <button type="button" class="btn btn-sm btn-outline-danger" id="theme-preset-delete-btn">Delete</button>
+                                <button type="button" class="btn btn-sm btn-success" id="theme-preset-activate-btn">Activate</button>
+                            </div>
+                        </div>
                         <p class="text-caption text-muted mb-3" id="theme-preset-audit-info"></p>
 
-                        <form id="theme-preset-form" novalidate>
+                        <form id="theme-preset-form" method="POST" novalidate>
                             @csrf
-                            <input type="hidden" name="_method" value="PUT">
+                            @method('PUT')
                             <input type="hidden" id="theme-preset-uid" value="">
 
                             <div id="theme-preset-readonly-notice" class="d-none">

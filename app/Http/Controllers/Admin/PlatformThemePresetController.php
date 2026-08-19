@@ -63,9 +63,8 @@ class PlatformThemePresetController extends AdminBaseController
         );
 
         return redirect()
-            ->route('admin.theme-presets.index')
-            ->with('success', 'Preset created.')
-            ->with('selected_preset_uid', $preset->uid);
+            ->route('admin.theme-presets.index', ['preset' => $preset->uid])
+            ->with('success', 'Preset created.');
     }
 
     public function show(PlatformThemePreset $preset): JsonResponse
@@ -117,7 +116,7 @@ class PlatformThemePresetController extends AdminBaseController
         $warnings = $this->contrastValidator->validate($updated->derived_tokens_json)['warnings'];
 
         return redirect()
-            ->route('admin.theme-presets.index')
+            ->route('admin.theme-presets.index', ['preset' => $updated->uid])
             ->with('success', 'Preset saved.')
             ->with('warnings', $warnings);
     }
@@ -151,9 +150,8 @@ class PlatformThemePresetController extends AdminBaseController
         $duplicate = $this->themeManager->duplicate($preset, Auth::id());
 
         return redirect()
-            ->route('admin.theme-presets.index')
-            ->with('success', "Duplicated as \"{$duplicate->name}\".")
-            ->with('selected_preset_uid', $duplicate->uid);
+            ->route('admin.theme-presets.index', ['preset' => $duplicate->uid])
+            ->with('success', "Duplicated as \"{$duplicate->name}\".");
     }
 
     public function rename(RenamePlatformThemePresetRequest $request, PlatformThemePreset $preset): RedirectResponse
@@ -166,7 +164,9 @@ class PlatformThemePresetController extends AdminBaseController
             return back()->withErrors(['preset' => $e->getMessage()]);
         }
 
-        return redirect()->route('admin.theme-presets.index')->with('success', 'Preset renamed.');
+        return redirect()
+            ->route('admin.theme-presets.index', ['preset' => $preset->uid])
+            ->with('success', 'Preset renamed.');
     }
 
     public function activate(ActivatePlatformThemePresetRequest $request, PlatformThemePreset $preset): RedirectResponse
