@@ -9,11 +9,16 @@ namespace App\Library\Theme;
  * caller decides when to call validate(), this class only ever computes
  * the same {errors, warnings} result from a derived token set.
  *
- * Hard-reject floor: 4.5:1 for normal-text pairs, 3:1 for large-text/
- * UI-component pairs (borders, focus rings). Soft-warning floor: 1.15:1
+ * Hard-reject floor: 4.5:1 for normal-text pairs, 3:1 for UI pairs that
+ * identify an interactive component's boundary (focus rings, focus
+ * borders) — the genuine WCAG 1.4.11 concern. Soft-warning floor: 1.15:1
  * absolute luminance-ratio for adjacent, non-text surface pairs
- * (canvas/surface/input/overlay) that are technically valid but provide
- * very little visual separation.
+ * (canvas/surface/input/overlay/border) that are technically valid but
+ * provide very little visual separation. A generic `color-border` token
+ * (table borders, card dividers) is deliberately NOT hard-gated at 3:1:
+ * unlike a focus ring, it does not identify an interactive element's
+ * boundary, and the approved Factory default (a subtle warm-neutral
+ * divider on white) is itself well below that ratio by design.
  */
 class ThemeContrastValidator
 {
@@ -63,7 +68,6 @@ class ThemeContrastValidator
         $uiPairs = [
             'focus-ring on surface' => ['color-focus-ring', 'color-surface'],
             'focus-border on input-bg' => ['color-focus-border', 'color-input-bg'],
-            'border on surface' => ['color-border', 'color-surface'],
         ];
 
         foreach ($uiPairs as $label => [$fgKey, $bgKey]) {
@@ -108,11 +112,17 @@ class ThemeContrastValidator
         }
 
         // Soft warnings — low-separation but technically valid surfaces.
+        // `border on surface` moved here from the hard-gated $uiPairs
+        // above: a generic divider/border color does not identify an
+        // interactive component's boundary the way a focus ring does,
+        // and the approved Factory default is itself a subtle,
+        // deliberately low-contrast warm-neutral divider.
         $surfacePairs = [
             'canvas vs surface' => ['color-canvas', 'color-surface'],
             'surface vs surface-secondary' => ['color-surface', 'color-surface-secondary'],
             'surface vs input-bg' => ['color-surface', 'color-input-bg'],
             'surface vs overlay' => ['color-surface', 'color-overlay'],
+            'border vs surface' => ['color-border', 'color-surface'],
         ];
 
         foreach ($surfacePairs as $label => [$aKey, $bKey]) {
