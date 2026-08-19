@@ -17,4 +17,11 @@ interface WorkspaceEntitlementTransitionRepository extends BaseRepository
      * @return Collection<int, WorkspaceEntitlementTransition>
      */
     public function forWorkspace(int $workspaceId): Collection;
+
+    /**
+     * RFC-004 Amendment 1 §6/§8 — the single indexed lookup
+     * allocateAdditionalBusinessSlotsFromVerifiedPayment()'s own
+     * idempotency check uses.
+     */
+    public function findByPaymentIdempotencyKey(string $key): ?WorkspaceEntitlementTransition;
 }

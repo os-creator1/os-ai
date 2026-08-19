@@ -27,6 +27,7 @@ class WorkspaceEntitlementTransition extends Model
         'workspace_id',
         'transition_type',
         'actor_user_id',
+        'requesting_customer_user_id',
         'from_plan_catalog_id',
         'to_plan_catalog_id',
         'feature_key',
@@ -37,6 +38,7 @@ class WorkspaceEntitlementTransition extends Model
         'from_status',
         'to_status',
         'reason',
+        'payment_idempotency_key',
     ];
 
     protected $casts = [

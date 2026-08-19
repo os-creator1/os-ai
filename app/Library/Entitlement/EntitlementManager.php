@@ -17,8 +17,12 @@ use App\Events\Entitlement\WorkspacePlanChanged;
 use App\Events\Entitlement\WorkspacePlanStatusChanged;
 use App\Exceptions\Entitlement\BusinessSlotAllocationRequiredException;
 use App\Exceptions\Entitlement\BusinessSlotLimitExceededException;
+use App\Exceptions\Entitlement\ComplimentaryWorkspaceCannotAllocatePaidSlotsException;
 use App\Exceptions\Entitlement\InactiveWorkspacePlanException;
 use App\Exceptions\Entitlement\InvalidAdditionalBusinessSlotsException;
+use App\Exceptions\Entitlement\InvalidPaymentAllocationEvidenceException;
+use App\Exceptions\Entitlement\PaymentAllocationIdempotencyConflictException;
+use App\Exceptions\Entitlement\PaymentAllocationWorkspaceMismatchException;
 use App\Exceptions\Entitlement\PlanCatalogPricingInUseException;
 use App\Exceptions\Entitlement\SuspendedWorkspacePlanException;
 use App\Exceptions\Entitlement\UnavailablePlatformFeatureOverrideException;
@@ -65,6 +69,14 @@ use RuntimeException;
 final class EntitlementManager
 {
     private const LEGACY_COMPATIBILITY_REASON = 'Legacy onboarding Workspace — auto-provisioned complimentary Core assignment continuing Milestone 1\'s backfill posture for a brand-new Workspace created by the legacy resolver.';
+
+    /**
+     * RFC-004 Amendment 1 §7's fixed reason prefix, distinguishing
+     * allocateAdditionalBusinessSlotsFromVerifiedPayment()'s own null-actor
+     * transition rows from createLegacyOnboardingCompatibilityAssignment()'s
+     * own fixed reason string.
+     */
+    private const PAYMENT_VERIFIED_ALLOCATION_REASON_PREFIX = 'payment_verified_allocation';
 
     public function __construct(
         private readonly WorkspaceRepository $workspaceRepository,
@@ -734,6 +746,112 @@ final class EntitlementManager
             ]);
 
             WorkspaceAdditionalBusinessSlotsChanged::dispatch($lockedWorkspace->id, $fromCount, $count, $actorUserId);
+
+            return $updated;
+        });
+    }
+
+    /**
+     * RFC-004 Amendment 1 §5 — narrow, payment-proof-provenance-only path —
+     * reachable only from a future RFC-005 Milestone 4 checkout/webhook-
+     * completion manager, after that caller has already independently
+     * verified a durable, successful, idempotent payment record for exactly
+     * this allocation (§7). This method itself performs no provider call,
+     * makes no payment-confirmation decision, and trusts the caller's prior
+     * verification exactly as UsageWalletManager::creditFromFunding() trusts
+     * UsageBillingCheckoutManager's own prior verification (RFC-005 §22/M3
+     * precedent) — its own responsibility is confined to: re-asserting the
+     * proof's own recorded Workspace matches the target Workspace (§7),
+     * enforcing this method's own independent idempotency guarantee (§8)
+     * under the same Workspace row lock every other EntitlementManager
+     * mutator uses (§9), applying the exact same tier/pricing validation
+     * setAdditionalBusinessSlots() already applies (§9), and writing the
+     * exact same durable audit trail with two additional, purely additive
+     * columns (§6). Never a general admin-bypass precedent. Never callable
+     * from customer-facing input.
+     */
+    public function allocateAdditionalBusinessSlotsFromVerifiedPayment(
+        Workspace $workspace,
+        int $additionalSlotsToAdd,
+        int $requestingCustomerUserId,
+        int $paymentVerifiedForWorkspaceId,
+        string $paymentIdempotencyKey,
+        string $paymentProviderReference,
+        ?string $reason = null,
+    ): WorkspacePlanAssignment {
+        return DB::transaction(function () use (
+            $workspace,
+            $additionalSlotsToAdd,
+            $requestingCustomerUserId,
+            $paymentVerifiedForWorkspaceId,
+            $paymentIdempotencyKey,
+            $paymentProviderReference,
+            $reason,
+        ) {
+            $lockedWorkspace = $this->workspaceRepository->findForUpdate($workspace->id);
+
+            if ($lockedWorkspace === null) {
+                throw new WorkspaceNotFoundException($workspace->id);
+            }
+
+            if ($paymentVerifiedForWorkspaceId !== $lockedWorkspace->id) {
+                throw new PaymentAllocationWorkspaceMismatchException($lockedWorkspace->id, $paymentVerifiedForWorkspaceId);
+            }
+
+            if ($paymentIdempotencyKey === '' || $paymentProviderReference === '' || $additionalSlotsToAdd <= 0) {
+                throw new InvalidPaymentAllocationEvidenceException($lockedWorkspace->id);
+            }
+
+            $assignment = $this->assignmentRepository->findByWorkspaceId($lockedWorkspace->id);
+
+            if ($assignment === null) {
+                throw new WorkspacePlanUnassignedException($lockedWorkspace->id);
+            }
+
+            $fromCount = $assignment->additional_business_slots;
+            $toCount = $fromCount + $additionalSlotsToAdd;
+
+            $existingTransition = $this->transitionRepository->findByPaymentIdempotencyKey($paymentIdempotencyKey);
+
+            if ($existingTransition !== null) {
+                $isExactReplay = (int) $existingTransition->workspace_id === $lockedWorkspace->id
+                    && (int) $existingTransition->requesting_customer_user_id === $requestingCustomerUserId
+                    && (int) $existingTransition->to_additional_business_slots === $toCount;
+
+                if (! $isExactReplay) {
+                    throw new PaymentAllocationIdempotencyConflictException($paymentIdempotencyKey);
+                }
+
+                return $assignment;
+            }
+
+            if ($assignment->is_complimentary) {
+                throw new ComplimentaryWorkspaceCannotAllocatePaidSlotsException($lockedWorkspace->id);
+            }
+
+            $catalog = $this->catalogRepository->findById($assignment->workspace_plan_catalog_id);
+            $tier = $catalog?->tier ?? WorkspacePlanTier::Core;
+
+            $this->assertValidAdditionalBusinessSlots($tier, $toCount);
+
+            $lockedCatalog = $this->catalogRepository->findForUpdate($assignment->workspace_plan_catalog_id);
+            $this->assertBasePricingDefined($lockedCatalog);
+            $this->assertSlotRatioDefined($lockedCatalog);
+
+            $updated = $this->assignmentRepository->update($assignment, ['additional_business_slots' => $toCount]);
+
+            $this->transitionRepository->create([
+                'workspace_id' => $lockedWorkspace->id,
+                'transition_type' => WorkspaceEntitlementTransitionType::AdditionalBusinessSlotsChanged,
+                'actor_user_id' => null,
+                'requesting_customer_user_id' => $requestingCustomerUserId,
+                'from_additional_business_slots' => $fromCount,
+                'to_additional_business_slots' => $toCount,
+                'reason' => self::PAYMENT_VERIFIED_ALLOCATION_REASON_PREFIX . ": provider_reference={$paymentProviderReference}" . ($reason !== null ? " {$reason}" : ''),
+                'payment_idempotency_key' => $paymentIdempotencyKey,
+            ]);
+
+            WorkspaceAdditionalBusinessSlotsChanged::dispatch($lockedWorkspace->id, $fromCount, $toCount, null);
 
             return $updated;
         });

@@ -82,6 +82,34 @@ class WorkspaceEntitlementTransitionRepositoryTest extends TestCase
         $this->assertTrue($result->last()->is($second));
     }
 
+    public function test_find_by_payment_idempotency_key_returns_matching_row(): void
+    {
+        $repository = app(WorkspaceEntitlementTransitionRepository::class);
+        $workspace = $this->createWorkspace($this->createCustomer()->user);
+
+        $transition = $repository->create([
+            'workspace_id' => $workspace->id,
+            'transition_type' => WorkspaceEntitlementTransitionType::AdditionalBusinessSlotsChanged,
+            'actor_user_id' => null,
+            'requesting_customer_user_id' => 42,
+            'from_additional_business_slots' => 0,
+            'to_additional_business_slots' => 1,
+            'payment_idempotency_key' => 'idem-key-' . uniqid(),
+        ]);
+
+        $found = $repository->findByPaymentIdempotencyKey($transition->payment_idempotency_key);
+
+        $this->assertNotNull($found);
+        $this->assertTrue($found->is($transition));
+    }
+
+    public function test_find_by_payment_idempotency_key_returns_null_when_absent(): void
+    {
+        $repository = app(WorkspaceEntitlementTransitionRepository::class);
+
+        $this->assertNull($repository->findByPaymentIdempotencyKey('nonexistent-key-' . uniqid()));
+    }
+
     public function test_no_update_method_exists_on_this_repository(): void
     {
         $reflection = new ReflectionClass(EloquentWorkspaceEntitlementTransitionRepository::class);
