@@ -9,7 +9,37 @@
 
 <!-- BEGIN: Theme JS-->
 <script src="{{ asset(mix('js/core/app-menu.js')) }}"></script>
-<script src="{{ asset(mix('js/core/theme-tokens.js')) }}"></script>
+@php
+    // Design System M2 Slice 1 contract §9 item 71. Deliberately not
+    // mix('js/core/theme-tokens.js'): Illuminate\Foundation\Mix::__invoke()
+    // caches the decoded manifest in a `static $manifests` array scoped to
+    // that one method, populated once on first use and never re-read again
+    // for the rest of the PHP process. A process whose first Mix lookup
+    // anywhere happens before this asset's entry is visible (e.g. a test
+    // run whose first HTTP request lands before a rebuild is fully visible
+    // to that process) keeps serving that stale snapshot to every later
+    // request or test in the same process, even once the file on disk is
+    // correct -- exactly the failure mode this reference must not have,
+    // since theme-tokens.js is brand new and every other cached entry in
+    // the same manifest predates it. This reads the manifest fresh on
+    // every render instead, reproducing mix()'s own lookup and
+    // debug-mode-aware failure behavior exactly, without the stale cache.
+    // Every other asset reference in this file keeps using mix() normally.
+    $themeTokensManifestPath = public_path('mix-manifest.json');
+    $themeTokensManifest = is_file($themeTokensManifestPath)
+        ? json_decode(file_get_contents($themeTokensManifestPath), true)
+        : null;
+    $themeTokensKey = '/js/core/theme-tokens.js';
+    if (! is_array($themeTokensManifest) || ! isset($themeTokensManifest[$themeTokensKey])) {
+        $themeTokensException = new \Illuminate\Foundation\MixFileNotFoundException("Unable to locate Mix file: {$themeTokensKey}.");
+        if (config('app.debug')) {
+            throw $themeTokensException;
+        }
+        report($themeTokensException);
+    }
+    $themeTokensSrc = $themeTokensManifest[$themeTokensKey] ?? $themeTokensKey;
+@endphp
+<script src="{{ asset($themeTokensSrc) }}"></script>
 <script src="{{ asset(mix('js/core/app.js')) }}"></script>
 
 <!-- custom scripts file for user -->
