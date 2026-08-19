@@ -50,5 +50,35 @@
   "completed_pull_request": 52,
   "completed_product_head_sha": "99f3e218094f40a283bab3ded6a097734b68787b",
   "completed_merge_commit_sha": "db7829d2c33ff3eb77a5bd42820eb39e349f6d94",
-  "aggregate_regression_run": 31159820708
+  "aggregate_regression_run": 31159820708,
+  "manual_verification": {
+    "subject": "Design System M2 Slice 1 — independent of this file's currently tracked idle RFC-003 Milestone 4 state; active_rfc, active_milestone, current_slice, and active_pull_request above are unrelated and unchanged by this record",
+    "repository": "os-creator1/os-ai",
+    "implementation_pull_request": 87,
+    "implementation_branch": "agent/design-system-m2-slice1",
+    "verified_head_sha": "a65602ebe3d11b63b704ccff635a88f8162383ca",
+    "environment": "human developer's local Windows/Laragon environment",
+    "php_version": "8.3.30",
+    "laravel_test_environment": ".env.testing",
+    "test_database": "MySQL ultimatesms_testing",
+    "build_command_run": "npx mix --production",
+    "build_result": "passed",
+    "package_discovery_cache_note": "php artisan package:discover was run locally because the tracked package-discovery caches were stale; the regenerated cache files were not committed",
+    "theme_suite": {
+      "scope": "tests/Feature/Theme (13 files)",
+      "tests_passed": 61,
+      "tests_failed": 0,
+      "assertions": 213,
+      "exit_code": 0
+    },
+    "complete_regression_suite": {
+      "result": "passed",
+      "exit_code": 0,
+      "test_count_note": "the complete suite contained more than 2,000 tests, but its exact final test and assertion counts were not retained because the terminal output exceeded its scrollback; no exact complete-suite count is claimed"
+    },
+    "generated_assets_and_regenerated_caches_restored_afterward": true,
+    "final_implementation_worktree_status": "no tracked modifications and nothing staged; only .claude/ remains untracked",
+    "verification_type": "local manual verification only — no GitHub Actions, CI, staging, deployment, or production verification is claimed",
+    "verified_by": "human developer, manual Claude Code session"
+  }
 }
