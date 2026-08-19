@@ -48,9 +48,9 @@
                             <label class="form-label" for="email">{{ __('locale.labels.email') }}</label>
                             <input id="email" type="email" class="form-control @error('email') is-invalid @enderror" name="email" placeholder="{{ __('locale.labels.email') }}" value="{{ $email ?? old('email') }}" required autocomplete="email">
                             @error('email')
-                            <div class="alert alert-danger" role="alert">
+                            <x-alert variant="danger">
                                 <strong>{{ $message }}</strong>
-                            </div>
+                            </x-alert>
                             @enderror
                         </div>
 
@@ -60,12 +60,12 @@
                             </div>
                             <div class="input-group input-group-merge form-password-toggle">
                                 <input id="password" type="password" class="form-control form-control-merge @error('password') is-invalid @enderror" name="password" placeholder="{{ __('locale.labels.password') }}" required autocomplete="new-password" autofocus tabindex="1">
-                                <span class="input-group-text cursor-pointer"><i data-feather="eye"></i></span>
+                                <span class="input-group-text cursor-pointer"><x-ds-icon name="eye" /></span>
                             </div>
                             @error('password')
-                            <div class="alert alert-danger">
+                            <x-alert variant="danger">
                                 <strong>{{ $message }}</strong>
-                            </div>
+                            </x-alert>
                             @enderror
                         </div>
 
@@ -75,7 +75,7 @@
                             </div>
                             <div class="input-group input-group-merge form-password-toggle">
                                 <input id="password-confirm" type="password" class="form-control form-control-merge" name="password_confirmation" placeholder="{{ __('locale.labels.password_confirmation') }}" required autocomplete="new-password">
-                                <span class="input-group-text cursor-pointer"><i data-feather="eye"></i></span>
+                                <span class="input-group-text cursor-pointer"><x-ds-icon name="eye" /></span>
                             </div>
                         </div>
 
@@ -90,7 +90,7 @@
                     </form>
                     <p class="text-center mt-2">
                         <a href="{{url('login')}}">
-                            <i data-feather="chevron-left"></i> {{ __('locale.auth.back_to_login') }}
+                            <x-ds-icon name="chevron-left" /> {{ __('locale.auth.back_to_login') }}
                         </a>
                     </p>
                 </div>

@@ -47,7 +47,7 @@
                             <div class="step" data-target="#account-details" role="tab" id="account-details-trigger">
                                 <button type="button" class="step-trigger">
                                     <span class="bs-stepper-box">
-                                      <i data-feather="home" class="font-medium-3"></i>
+                                      <x-ds-icon name="home" class="font-medium-3" />
                                     </span>
                                     <span class="bs-stepper-label">
                                         <span class="bs-stepper-title">{{ __('locale.labels.account') }}</span>
@@ -58,13 +58,13 @@
 
 
                             <div class="line">
-                                <i data-feather="chevron-right" class="font-medium-2"></i>
+                                <x-ds-icon name="chevron-right" class="font-medium-2" />
                             </div>
 
                             <div class="step" data-target="#personal-info" role="tab" id="personal-info-trigger">
                                 <button type="button" class="step-trigger">
                                     <span class="bs-stepper-box">
-                                        <i data-feather="user" class="font-medium-3"></i>
+                                        <x-ds-icon name="user" class="font-medium-3" />
                                     </span>
 
                                     <span class="bs-stepper-label">
@@ -76,12 +76,12 @@
 
 
                             <div class="line">
-                                <i data-feather="chevron-right" class="font-medium-2"></i>
+                                <x-ds-icon name="chevron-right" class="font-medium-2" />
                             </div>
                             <div class="step" data-target="#billing" role="tab" id="billing-trigger">
                                 <button type="button" class="step-trigger">
                                     <span class="bs-stepper-box">
-                                      <i data-feather="credit-card" class="font-medium-3"></i>
+                                      <x-ds-icon name="credit-card" class="font-medium-3" />
                                     </span>
 
                                     <span class="bs-stepper-label">
@@ -97,9 +97,9 @@
                             @if ($errors->any())
 
                                 @foreach ($errors->all() as $error)
-                                    <div class="alert alert-danger" role="alert">
+                                    <x-alert variant="danger">
                                         <div class="alert-body">{{ $error }}</div>
-                                    </div>
+                                    </x-alert>
                                 @endforeach
 
                             @endif
@@ -137,7 +137,7 @@
                                                 <input type="password" id="password"
                                                        class="form-control @error('password') is-invalid @enderror"
                                                        value="{{ old('password') }}" name="password" required/>
-                                                <span class="input-group-text cursor-pointer"><i data-feather="eye"></i></span>
+                                                <span class="input-group-text cursor-pointer"><x-ds-icon name="eye" /></span>
                                             </div>
 
                                             @error('password')
@@ -155,7 +155,7 @@
                                                        class="form-control @error('password_confirmation') is-invalid @enderror"
                                                        value="{{ old('password_confirmation') }}"
                                                        name="password_confirmation" required/>
-                                                <span class="input-group-text cursor-pointer"><i data-feather="eye"></i></span>
+                                                <span class="input-group-text cursor-pointer"><x-ds-icon name="eye" /></span>
                                             </div>
                                         </div>
 
@@ -197,7 +197,7 @@
 
                                         <p class="mt-2">
                                             <a href="{{url('login')}}">
-                                                <i data-feather="chevron-left"></i> {{ __('locale.auth.back_to_login') }}
+                                                <x-ds-icon name="chevron-left" /> {{ __('locale.auth.back_to_login') }}
                                             </a>
                                         </p>
 
@@ -205,12 +205,12 @@
 
                                     <div class="d-flex justify-content-between mt-2">
                                         <button class="btn btn-outline-secondary btn-prev" disabled type="button">
-                                            <i data-feather="chevron-left" class="align-middle me-sm-25 me-0"></i>
+                                            <x-ds-icon name="chevron-left" class="align-middle me-sm-25 me-0" />
                                             <span class="align-middle d-sm-inline-block d-none">{{ __('locale.datatables.previous') }}</span>
                                         </button>
                                         <button class="btn btn-primary btn-next" type="button">
                                             <span class="align-middle d-sm-inline-block d-none">{{ __('locale.datatables.next') }}</span>
-                                            <i data-feather="chevron-right" class="align-middle ms-sm-25 ms-0"></i>
+                                            <x-ds-icon name="chevron-right" class="align-middle ms-sm-25 ms-0" />
                                         </button>
                                     </div>
                                 </div>
@@ -340,18 +340,18 @@
 
                                     <p class=" mt-1 mb-1">
                                         <a href="{{url('login')}}">
-                                            <i data-feather="chevron-left"></i> {{ __('locale.auth.back_to_login') }}
+                                            <x-ds-icon name="chevron-left" /> {{ __('locale.auth.back_to_login') }}
                                         </a>
                                     </p>
 
                                     <div class="d-flex justify-content-between mt-2">
                                         <button class="btn btn-primary btn-prev" type="button">
-                                            <i data-feather="chevron-left" class="align-middle me-sm-25 me-0"></i>
+                                            <x-ds-icon name="chevron-left" class="align-middle me-sm-25 me-0" />
                                             <span class="align-middle d-sm-inline-block d-none">{{ __('locale.datatables.previous') }}</span>
                                         </button>
                                         <button class="btn btn-primary btn-save" type="button">
                                             <span class="align-middle d-sm-inline-block d-none">{{ __('locale.datatables.next') }}</span>
-                                            <i data-feather="chevron-right" class="align-middle ms-sm-25 ms-0"></i>
+                                            <x-ds-icon name="chevron-right" class="align-middle ms-sm-25 ms-0" />
                                         </button>
                                     </div>
                                 </div>
@@ -414,17 +414,17 @@
                                     </div>
                                     <p class="mt-1 mb-1">
                                         <a href="{{url('login')}}">
-                                            <i data-feather="chevron-left"></i> {{ __('locale.auth.back_to_login') }}
+                                            <x-ds-icon name="chevron-left" /> {{ __('locale.auth.back_to_login') }}
                                         </a>
                                     </p>
 
                                     <div class="d-flex justify-content-between mt-1">
                                         <button class="btn btn-primary btn-prev" type="button">
-                                            <i data-feather="chevron-left" class="align-middle me-sm-25 me-0"></i>
+                                            <x-ds-icon name="chevron-left" class="align-middle me-sm-25 me-0" />
                                             <span class="align-middle d-sm-inline-block d-none">{{ __('locale.datatables.previous') }}</span>
                                         </button>
                                         <button class="btn btn-success btn-submit" type="submit">
-                                            <i data-feather="check" class="align-middle me-sm-25 me-0"></i>
+                                            <x-ds-icon name="check" class="align-middle me-sm-25 me-0" />
                                             <span class="align-middle d-sm-inline-block d-none">{{ __('locale.buttons.submit') }}</span>
                                         </button>
                                     </div>

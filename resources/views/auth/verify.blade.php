@@ -39,9 +39,9 @@
                 <div class="col-12 col-sm-8 col-md-6 col-lg-12 px-xl-2 mx-auto">
 
                     @if (session('status'))
-                        <div class="alert alert-success" role="alert">
+                        <x-alert variant="success">
                             {{ __('locale.auth.fresh_verification_link') }}
-                        </div>
+                        </x-alert>
                     @endif
 
                     <h2 class="card-title fw-bold mb-1">{{ __('locale.auth.verify_email_address') }}</h2>

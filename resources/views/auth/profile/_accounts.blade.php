@@ -13,7 +13,7 @@
             <div class="d-flex align-items-end mt-75 ms-1">
                 <div>
                     @include('auth.profile._update_avatar')
-                    <button id="remove-avatar" data-id="{{$user->uid}}" class="btn btn-sm btn-danger mb-75 me-75"><i data-feather="trash-2"></i> {{__('locale.labels.remove')}}</button>
+                    <button id="remove-avatar" data-id="{{$user->uid}}" class="btn btn-sm btn-danger mb-75 me-75"><x-ds-icon name="trash-2" /> {{__('locale.labels.remove')}}</button>
                     <p class="mb-0"> {{__('locale.customer.profile_image_size')}} </p>
                 </div>
             </div>
@@ -91,7 +91,7 @@
                 </div>
 
                 <div class="col-12 d-flex flex-sm-row flex-column justify-content-end mt-1">
-                    <button type="submit" class="btn btn-primary mt-1 me-1"><i data-feather="save"></i> {{__('locale.buttons.save_changes')}}</button>
+                    <button type="submit" class="btn btn-primary mt-1 me-1"><x-ds-icon name="save" /> {{__('locale.buttons.save_changes')}}</button>
                 </div>
 
             </div>
@@ -107,12 +107,12 @@
             <h4 class="card-title">{{ __('locale.auth.delete_account') }}</h4>
         </div>
         <div class="card-body py-2 my-25">
-            <div class="alert alert-warning">
+            <x-alert variant="warning">
                 <h4 class="alert-heading">{{ __('locale.auth.want_to_delete_your_account') }}?</h4>
                 <div class="alert-body fw-normal">
                     {{ __('locale.auth.once_you_delete_your_account') }}
                 </div>
-            </div>
+            </x-alert>
 
             <form id="formAccountDeactivation" class="validate-form" onsubmit="return false">
                 <div class="form-check">

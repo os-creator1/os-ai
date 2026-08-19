@@ -26,14 +26,14 @@
                 <a class="nav-link @if ((old('tab') == 'account' || old('tab') == null) && request()->input('tab') == null) active @endif"
                    id="account-tab" data-bs-toggle="tab" href="#account" aria-controls="account" role="tab"
                    aria-selected="true">
-                    <i data-feather="user"></i> {{__('locale.labels.account')}}
+                    <x-ds-icon name="user" /> {{__('locale.labels.account')}}
                 </a>
             </li>
 
             <li class="nav-item">
                 <a class="nav-link {{ old('tab') == 'security' ? 'active':null }}" id="security-tab"
                    data-bs-toggle="tab" href="#security" aria-controls="security" role="tab" aria-selected="true">
-                    <i data-feather="lock"></i> {{__('locale.labels.security')}}
+                    <x-ds-icon name="lock" /> {{__('locale.labels.security')}}
                 </a>
             </li>
 
@@ -41,7 +41,7 @@
                 <a class="nav-link {{ request()->input('tab') == 'notification' ? 'active':null }}"
                    id="notification-tab" data-bs-toggle="tab" href="#notification" aria-controls="notification"
                    role="tab" aria-selected="false">
-                    <i data-feather="bell"></i> {{__('locale.labels.notifications')}}
+                    <x-ds-icon name="bell" /> {{__('locale.labels.notifications')}}
                 </a>
             </li>
 
@@ -51,7 +51,7 @@
                     <a class="nav-link {{ old('tab') == 'two_factor' ? 'active':null }}" id="two-factor-tab"
                        data-bs-toggle="tab" href="#two-factor" aria-controls="two-factor" role="tab"
                        aria-selected="false">
-                        <i data-feather="log-in"></i> {{__('locale.labels.two_factor_authentication')}}
+                        <x-ds-icon name="log-in" /> {{__('locale.labels.two_factor_authentication')}}
                     </a>
                 </li>
             @endif
@@ -61,14 +61,14 @@
                     <a class="nav-link {{ old('tab') == 'information' ? 'active':null }}" id="information-tab"
                        data-bs-toggle="tab" href="#information" aria-controls="information" role="tab"
                        aria-selected="false">
-                        <i data-feather="info"></i>{{__('locale.labels.information')}}
+                        <x-ds-icon name="info" />{{__('locale.labels.information')}}
                     </a>
                 </li>
 
                 <li class="nav-item">
                     <a class="nav-link {{ old('tab') == 'webhook' ? 'active':null }}" id="webhook-tab"
                        data-bs-toggle="tab" href="#webhook" aria-controls="webhook" role="tab" aria-selected="false">
-                        <i data-feather="link"></i> {{__('locale.developers.webhook_url')}}
+                        <x-ds-icon name="link" /> {{__('locale.developers.webhook_url')}}
                     </a>
                 </li>
             @endif
@@ -83,7 +83,7 @@
                     <a class="nav-link {{ old('tab') == 'dlt_entity_id' ? 'active':null }}"
                        id="dlt_entity_id-tab" data-bs-toggle="tab" href="#dlt_entity_id"
                        aria-controls="dlt_entity_id" role="tab" aria-selected="false">
-                        <i data-feather="key" class="font-medium-3 me-50"></i>
+                        <x-ds-icon name="key" class="font-medium-3 me-50" />
                         <span class="fw-bold">{{ __('locale.labels.dlt') }} {{ __('locale.labels.entity_id') }}</span>
                     </a>
                 </li>
@@ -92,7 +92,7 @@
                     <a class="nav-link {{ old('tab') == 'dlt_telemarketer_id' ? 'active':null }}"
                        id="dlt_telemarketer_id-tab" data-bs-toggle="tab" href="#dlt_telemarketer_id"
                        aria-controls="dlt_telemarketer_id" role="tab" aria-selected="false">
-                        <i data-feather="headphones" class="font-medium-3 me-50"></i>
+                        <x-ds-icon name="headphones" class="font-medium-3 me-50" />
                         <span class="fw-bold">{{ __('locale.labels.dlt') }} {{ __('locale.labels.telemarketer_id') }}</span>
                     </a>
                 </li>

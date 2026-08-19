@@ -11,29 +11,6 @@
     <link rel="stylesheet" href="{{ asset(mix('css/base/plugins/forms/form-wizard.css')) }}">
     <link rel="stylesheet" href="{{ asset(mix('css/base/plugins/forms/form-validation.css')) }}">
     <link rel="stylesheet" href="{{ asset(mix('css/base/pages/authentication.css')) }}">
-
-
-    <style>
-
-        table {
-            width: 100%;
-            padding: 10px;
-            border-radius: 3px;
-        }
-
-        table thead th {
-            text-align: left;
-            padding: 5px 0 5px 0;
-        }
-
-        table tbody td {
-            padding: 5px 0;
-        }
-
-        table tbody td:last-child, table thead th:last-child {
-            text-align: right;
-        }
-    </style>
 @endsection
 
 @section('content')
@@ -62,7 +39,7 @@
                             <div class="step" data-target="#system_configuration" role="tab" id="system_configuration-trigger">
                                 <button type="button" class="step-trigger">
                                     <span class="bs-stepper-box">
-                                      <i data-feather="server" class="font-medium-3"></i>
+                                      <x-ds-icon name="server" class="font-medium-3" />
                                     </span>
                                     <span class="bs-stepper-label">
                                         <span class="bs-stepper-title">System Compatibility</span>
@@ -73,13 +50,13 @@
 
 
                             <div class="line">
-                                <i data-feather="chevron-right" class="font-medium-2"></i>
+                                <x-ds-icon name="chevron-right" class="font-medium-2" />
                             </div>
 
                             <div class="step" data-target="#check-permissions" role="tab" id="check-permissions-trigger">
                                 <button type="button" class="step-trigger">
                                     <span class="bs-stepper-box">
-                                        <i data-feather="shield-off" class="font-medium-3"></i>
+                                        <x-ds-icon name="shield-off" class="font-medium-3" />
                                     </span>
 
                                     <span class="bs-stepper-label">
@@ -91,13 +68,13 @@
 
 
                             <div class="line">
-                                <i data-feather="chevron-right" class="font-medium-2"></i>
+                                <x-ds-icon name="chevron-right" class="font-medium-2" />
                             </div>
 
                             <div class="step" data-target="#verification" role="tab" id="verification-trigger">
                                 <button type="button" class="step-trigger">
                                     <span class="bs-stepper-box">
-                                      <i data-feather="check-square" class="font-medium-3"></i>
+                                      <x-ds-icon name="check-square" class="font-medium-3" />
                                     </span>
 
                                     <span class="bs-stepper-label">
@@ -114,9 +91,9 @@
                             @if ($errors->any())
 
                                 @foreach ($errors->all() as $error)
-                                    <div class="alert alert-danger" role="alert">
+                                    <x-alert variant="danger">
                                         <div class="alert-body">{{ $error }}</div>
-                                    </div>
+                                    </x-alert>
                                 @endforeach
 
                             @endif
@@ -130,64 +107,48 @@
 
                                 <div class="row">
 
-                                    <div class="table-responsive">
-                                        <table class="table table-borderless">
-                                            <thead>
-                                            <tr>
-                                                <th style="width: 500px">Requirements</th>
-                                                <th>Result</th>
-                                            </tr>
-                                            </thead>
-                                            <tbody>
+                                    <x-table :headers="['Requirements', 'Result']">
+                                        @foreach($requirements['requirements'] as $type => $requirement)
 
-                                            @foreach($requirements['requirements'] as $type => $requirement)
+                                            @if($type == 'php')
+                                                <tr>
+                                                    <td style="width: 500px">PHP {{ $phpSupportInfo['minimum'] }} </td>
 
-                                                @if($type == 'php')
-                                                    <tr>
-                                                        <td>PHP {{ $phpSupportInfo['minimum'] }} </td>
+                                                    <td>
+                                                        <x-badge :variant="$phpSupportInfo['supported'] ? 'success' : 'danger'">{{ $phpSupportInfo['current'] }}</x-badge>
+                                                    </td>
+                                                </tr>
+                                            @endif
 
-                                                        <td>
-                                                            <div class="badge bg-{{ $phpSupportInfo['supported'] ? 'success' : 'danger' }} text-uppercase mr-1 mb-1"><span>{{ $phpSupportInfo['current'] }}</span></div>
-                                                        </td>
-                                                    </tr>
-                                                @endif
-
-                                                @foreach($requirements['requirements'][$type] as $extention => $enabled)
-                                                    <tr>
-                                                        <td>{{ ucfirst($extention) }} PHP Extension</td>
-                                                        <td>
-                                                            @if($enabled)
-                                                                <div class="badge bg-success text-uppercase mr-1 mb-1">
-                                                                    Enabled
-                                                                </div>
-                                                            @else
-
-                                                                <div class="badge bg-danger text-uppercase mr-1 mb-1">
-                                                                    Not Enabled
-                                                                </div>
-                                                            @endif
-                                                        </td>
-                                                    </tr>
-                                                @endforeach
-
-
+                                            @foreach($requirements['requirements'][$type] as $extention => $enabled)
+                                                <tr>
+                                                    <td>{{ ucfirst($extention) }} PHP Extension</td>
+                                                    <td>
+                                                        @if($enabled)
+                                                            <x-badge variant="success">Enabled</x-badge>
+                                                        @else
+                                                            <x-badge variant="danger">Not Enabled</x-badge>
+                                                        @endif
+                                                    </td>
+                                                </tr>
                                             @endforeach
-                                            </tbody>
-                                        </table>
-                                    </div>
+
+
+                                        @endforeach
+                                    </x-table>
 
                                 </div>
 
                                 <div class="d-flex justify-content-between mt-2">
                                     <button class="btn btn-outline-secondary btn-prev" disabled type="button">
-                                        <i data-feather="chevron-left" class="align-middle me-sm-25 me-0"></i>
+                                        <x-ds-icon name="chevron-left" class="align-middle me-sm-25 me-0" />
                                         <span class="align-middle d-sm-inline-block d-none">{{ __('locale.datatables.previous') }}</span>
                                     </button>
 
                                     @if ( ! isset($requirements['errors']) && $phpSupportInfo['supported'] )
                                         <button class="btn btn-primary btn-next" type="button" data-id="is_valid">
                                             <span class="align-middle d-sm-inline-block d-none">{{ __('locale.datatables.next') }}</span>
-                                            <i data-feather="chevron-right" class="align-middle ms-sm-25 ms-0"></i>
+                                            <x-ds-icon name="chevron-right" class="align-middle ms-sm-25 ms-0" />
                                         </button>
                                     @endif
                                 </div>
@@ -202,43 +163,30 @@
 
                                 <div class="row">
 
-                                    <div class="table-responsive">
-                                        <table class="table table-borderless">
-                                            <thead>
+                                    <x-table :headers="['Folder', 'Permission']">
+                                        @foreach($permissions['permissions'] as $permission)
                                             <tr>
-                                                <th>Folder</th>
-                                                <th>Permission</th>
+                                                <td>{{ $permission['folder'] }} </td>
+
+                                                <td>
+                                                    <x-badge :variant="$permission['isSet'] ? 'success' : 'danger'">{{ $permission['permission'] }}</x-badge>
+                                                </td>
                                             </tr>
-                                            </thead>
-                                            <tbody>
 
-                                            @foreach($permissions['permissions'] as $permission)
-                                                <tr>
-                                                    <td>{{ $permission['folder'] }} </td>
-
-                                                    <td>
-                                                        <div class="badge bg-{{ $permission['isSet'] ? 'success' : 'danger' }} text-uppercase mr-1 mb-1">
-                                                            <span>{{ $permission['permission'] }}</span>
-                                                        </div>
-                                                    </td>
-                                                </tr>
-
-                                            @endforeach
-                                            </tbody>
-                                        </table>
-                                    </div>
+                                        @endforeach
+                                    </x-table>
                                 </div>
 
                                 <div class="d-flex justify-content-between mt-2">
                                     <button class="btn btn-primary btn-prev" type="button">
-                                        <i data-feather="chevron-left" class="align-middle me-sm-25 me-0"></i>
+                                        <x-ds-icon name="chevron-left" class="align-middle me-sm-25 me-0" />
                                         <span class="align-middle d-sm-inline-block d-none">{{ __('locale.datatables.previous') }}</span>
                                     </button>
 
                                     @if ( ! isset($permissions['errors']))
                                         <button class="btn btn-primary btn-next" type="button" data-id="is_valid">
                                             <span class="align-middle d-sm-inline-block d-none">{{ __('locale.datatables.next') }}</span>
-                                            <i data-feather="chevron-right" class="align-middle ms-sm-25 ms-0"></i>
+                                            <x-ds-icon name="chevron-right" class="align-middle ms-sm-25 ms-0" />
                                         </button>
                                     @endif
                                 </div>
@@ -270,11 +218,11 @@
 
                                     <div class="d-flex justify-content-between mt-1">
                                         <button class="btn btn-primary btn-prev" type="button">
-                                            <i data-feather="chevron-left" class="align-middle me-sm-25 me-0"></i>
+                                            <x-ds-icon name="chevron-left" class="align-middle me-sm-25 me-0" />
                                             <span class="align-middle d-sm-inline-block d-none">Previous</span>
                                         </button>
                                         <button class="btn btn-success btn-submit" type="submit">
-                                            <i data-feather="check" class="align-middle me-sm-25 me-0"></i>
+                                            <x-ds-icon name="check" class="align-middle me-sm-25 me-0" />
                                             <span class="align-middle d-sm-inline-block d-none">Update</span>
                                         </button>
                                     </div>

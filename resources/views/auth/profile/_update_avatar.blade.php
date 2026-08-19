@@ -1,4 +1,4 @@
-<button type="button" class="btn btn-sm btn-primary mb-75 me-75" data-bs-toggle="modal" data-bs-target="#updateAvatar"><i data-feather="upload"></i> {{__('locale.labels.upload')}}</button>
+<button type="button" class="btn btn-sm btn-primary mb-75 me-75" data-bs-toggle="modal" data-bs-target="#updateAvatar"><x-ds-icon name="upload" /> {{__('locale.labels.upload')}}</button>
 
 {{-- Modal --}}
 <div class="modal fade text-left" id="updateAvatar" tabindex="-1" role="dialog" aria-labelledby="myModalLabel33" aria-hidden="true">

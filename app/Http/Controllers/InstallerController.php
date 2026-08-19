@@ -250,6 +250,21 @@
 
 
                 (new FinalInstallManager())->runFinal();
+
+                /*
+                 * Design System M2 Slice 2 contract §7 Part B. The very
+                 * first Installer render (before this method ever runs)
+                 * may have cached a `null` theme style block because
+                 * platform_theme_presets did not exist yet
+                 * (PlatformThemeManager::currentStyleBlock() §7 Part A).
+                 * Migrations/seeding just completed above, so the table
+                 * and its Factory row now genuinely exist -- force a
+                 * cache miss on the very next render (the login redirect
+                 * target) instead of letting that pre-database fallback
+                 * outlive the install.
+                 */
+                app(\App\Library\Theme\PlatformThemeManager::class)->invalidateCache();
+
                 (new InstalledFileManager())->update();
 
                 AppConfig::setEnv('APP_STAGE', 'Live');

@@ -28,8 +28,7 @@
 
 
             <div class="col-12 d-flex flex-sm-row flex-column mt-1">
-                <button type="submit" class="btn btn-primary glow mb-1 mb-sm-0"><i
-                            data-feather="save"></i> {{__('locale.buttons.save_changes')}}</button>
+                <button type="submit" class="btn btn-primary glow mb-1 mb-sm-0"><x-ds-icon name="save" /> {{__('locale.buttons.save_changes')}}</button>
             </div>
 
         </form>
