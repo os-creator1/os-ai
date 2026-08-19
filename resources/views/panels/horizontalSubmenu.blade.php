@@ -20,7 +20,7 @@
                        class="dropdown-item {{ (isset($submenu->submenu)) ? 'dropdown-toggle' : ''}} d-flex align-items-center transition-fast"
                        {{ (isset($submenu->submenu)) ? 'data-bs-toggle=dropdown' : '' }} target="{{isset($submenu->newTab) && $submenu->newTab === true  ? '_blank':'_self'}}">
                         @if (isset($submenu->icon))
-                            <i data-feather="{{ $submenu->icon }}"></i>
+                            <x-ds-icon name="{{ $submenu->icon }}" />
                         @endif
                         <span>{{ __('locale.menu.'.$submenu->name) }}</span>
                     </a>

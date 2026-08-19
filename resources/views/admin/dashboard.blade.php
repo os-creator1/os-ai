@@ -485,12 +485,12 @@
 
         $(window).on("load", function () {
 
-            let $primary = '#7367F0';
-            let $strok_color = '#b9c3cd';
-            let $label_color = '#e7eef7';
-            let $purple = '#df87f2';
-            let $textMutedColor = '#b9b9c3';
-            let $stroke_color_2 = '#d0ccff';
+            let $primary = PlatformTheme.primary();
+            let $strok_color = PlatformTheme.chartAxis();
+            let $label_color = PlatformTheme.chartGrid();
+            let $purple = PlatformTheme.secondary();
+            let $textMutedColor = PlatformTheme.chartAxis();
+            let $stroke_color_2 = PlatformTheme.chartPalette()[0];
 
             let $plainSmsData = document.querySelector('#plain_sms_data');
             let $unicodeSmsData = document.querySelector('#unicode_sms_data');
@@ -707,10 +707,10 @@
                     columnWidth: '70%'
                 }
             },
-            colors: ['#7367F0'],
+            colors: [PlatformTheme.primary()],
             series: {!! $customer_growth->dataSet() !!},
             grid: {
-                borderColor: '#e7eef7',
+                borderColor: PlatformTheme.chartGrid(),
                 padding: {
                     left: 0,
                     right: 0
@@ -734,7 +734,7 @@
             xaxis: {
                 labels: {
                     style: {
-                        colors: '#b9c3cd',
+                        colors: PlatformTheme.chartAxis(),
                     }
                 },
                 axisTicks: {
@@ -749,7 +749,7 @@
                 tickAmount: 5,
                 labels: {
                     style: {
-                        color: '#b9c3cd',
+                        color: PlatformTheme.chartAxis(),
                     },
                     formatter: function (val) {
                         return val.toFixed(1)
@@ -796,7 +796,7 @@
             stroke: {
                 width: 5
             },
-            colors: ['#7367F0', '#EA5455'],
+            colors: [PlatformTheme.primary(), '#EA5455'],
             fill: {
                 type: 'gradient',
                 gradient: {

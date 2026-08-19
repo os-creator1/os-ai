@@ -22,7 +22,7 @@
             <div class="w-100 text-center">
                 <h2 class="mb-1">{{__('locale.http.404.title')}}!️</h2>
                 <p class="mb-2">{{ __($exception->getMessage() ?: __('locale.http.404.description')) }}</p>
-                <a class="btn btn-primary mb-2 btn-sm-block" href="{{ route('login') }}">{{__('locale.labels.back_to_home')}}</a>
+                <x-button variant="primary" href="{{ route('login') }}" class="mb-2 btn-sm-block">{{__('locale.labels.back_to_home')}}</x-button>
                 @if($configData['theme'] === 'dark')
                     <img class="img-fluid" src="{{asset('images/pages/error-dark.svg')}}" alt="Error page" />
                 @else

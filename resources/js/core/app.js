@@ -4,7 +4,10 @@
 ==========================================================================================*/
 window.colors = {
   solid: {
-    primary: '#7367F0',
+    // Design System M2 Slice 1 contract §9 item 50: sourced from the
+    // same runtime token theme-tokens.js reads. Every other key here is
+    // untouched.
+    primary: window.PlatformTheme.primary(),
     secondary: '#82868b',
     success: '#28C76F',
     info: '#00cfe8',
@@ -16,7 +19,11 @@ window.colors = {
     body: '#f8f8f8'
   },
   light: {
-    primary: '#7367F01a',
+    // Resolves the item 50/§11-check-2 contradiction in favor of the
+    // completed theme system: the last literal Vuexy purple is replaced
+    // by the canonical primary-soft token (theme-tokens.js), not by
+    // another hardcoded color.
+    primary: window.PlatformTheme.color('color-primary-soft-bg'),
     secondary: '#82868b1a',
     success: '#28C76F1a',
     info: '#00cfe81a',

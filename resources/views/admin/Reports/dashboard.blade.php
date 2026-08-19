@@ -288,12 +288,12 @@
             let isRtl = $('html').attr('data-textdirection') === 'rtl',
                 chartColors = {
                     column: {
-                        unicode: '#00FFD2',
-                        whatsapp: '#FFFFD2',
-                        mms: '#C5FAD5',
-                        voice: '#AA96DA',
-                        sms: '#F7C5CC',
-                        bg: '#f8d3ff'
+                        unicode: PlatformTheme.chartPalette()[0],
+                        whatsapp: PlatformTheme.chartPalette()[1],
+                        mms: PlatformTheme.chartPalette()[2],
+                        voice: PlatformTheme.chartPalette()[3],
+                        sms: PlatformTheme.chartPalette()[4],
+                        bg: PlatformTheme.chartNeutral()
                     },
 
                 };

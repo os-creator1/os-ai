@@ -94,9 +94,9 @@
 
           let chartColors = {
             column: {
-              series1: "#826af9",
-              series2: "#d2b0ff",
-              bg: "#f8d3ff"
+              series1: PlatformTheme.chartPalette()[0],
+              series2: PlatformTheme.chartPalette()[1],
+              bg: PlatformTheme.chartNeutral()
             },
             success: {
               shade_100: "#7eefc7",
@@ -113,9 +113,9 @@
               failed: "#e74c3c"
             },
             area: {
-              series3: "#a4f8cd",
-              series2: "#60f2ca",
-              series1: "#2bdac7"
+              series3: PlatformTheme.chartPalette()[2],
+              series2: PlatformTheme.chartPalette()[3],
+              series1: PlatformTheme.chartPalette()[4]
             }
           };
 

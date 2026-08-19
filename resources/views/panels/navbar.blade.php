@@ -25,9 +25,7 @@
                 <div class="navbar-container d-flex content">
                     <div class="bookmark-wrapper d-flex align-items-center">
                         <ul class="nav navbar-nav d-xl-none">
-                            <li class="nav-item"><a class="nav-link menu-toggle" href="javascript:void(0);"><i
-                                            class="ficon"
-                                            data-feather="menu"></i></a></li>
+                            <li class="nav-item"><a class="nav-link menu-toggle" href="javascript:void(0);"><x-ds-icon name="menu" class="ficon" /></a></li>
                         </ul>
                         @if(config('app.stage') == 'demo')
                             <ul class="nav navbar-nav bookmark-icons d-sm-flex d-none">
@@ -78,13 +76,13 @@
 
                         {{--Dark and light option. It will be theme manager option--}}
                         {{--                        <li class="nav-item d-none d-lg-block">--}}
-                        {{--                            <a class="nav-link nav-link-style"><i class="ficon" data-feather="{{ $configData['theme'] === 'dark' ? 'sun' : 'moon' }}"></i></a>--}}
+                        {{--                            <a class="nav-link nav-link-style"><x-ds-icon name="{{ $configData['theme'] === 'dark' ? 'sun' : 'moon' }}" class="ficon" /></a>--}}
                         {{--                        </li>--}}
 
                         {{--Notification dropdown--}}
                         <li class="nav-item dropdown dropdown-notification me-25">
                             <a class="nav-link" href="javascript:void(0);" data-bs-toggle="dropdown">
-                                <i class="ficon" data-feather="bell"></i>
+                                <x-ds-icon name="bell" class="ficon" />
                                 @php
                                     $count = Notifications::where('user_id', Auth::user()->id)->where('mark_read', 0)->count();
                                 @endphp
@@ -111,8 +109,7 @@
                                                     @case('user')
                                                         <div class="me-1">
                                                             <div class="avatar bg-light-primary">
-                                                                <div class="avatar-content"><i class="avatar-icon"
-                                                                                               data-feather="user"></i>
+                                                                <div class="avatar-content"><x-ds-icon name="user" class="avatar-icon" />
                                                                 </div>
                                                             </div>
                                                         </div>
@@ -128,8 +125,7 @@
                                                     @case('plan')
                                                         <div class="me-1">
                                                             <div class="avatar bg-light-success">
-                                                                <div class="avatar-content"><i class="avatar-icon"
-                                                                                               data-feather="shopping-cart"></i>
+                                                                <div class="avatar-content"><x-ds-icon name="shopping-cart" class="avatar-icon" />
                                                                 </div>
                                                             </div>
                                                         </div>
@@ -146,8 +142,7 @@
                                                     @case('senderid')
                                                         <div class="me-1">
                                                             <div class="avatar bg-light-danger">
-                                                                <div class="avatar-content"><i class="avatar-icon"
-                                                                                               data-feather="user-check"></i>
+                                                                <div class="avatar-content"><x-ds-icon name="user-check" class="avatar-icon" />
                                                                 </div>
                                                             </div>
                                                         </div>
@@ -163,8 +158,7 @@
                                                     @case('number')
                                                         <div class="me-1">
                                                             <div class="avatar bg-light-info">
-                                                                <div class="avatar-content"><i class="avatar-icon"
-                                                                                               data-feather="phone"></i>
+                                                                <div class="avatar-content"><x-ds-icon name="phone" class="avatar-icon" />
                                                                 </div>
                                                             </div>
                                                         </div>
@@ -179,8 +173,7 @@
                                                     @case('keyword')
                                                         <div class="me-1">
                                                             <div class="avatar bg-light-warning">
-                                                                <div class="avatar-content"><i class="avatar-icon"
-                                                                                               data-feather="clipboard"></i>
+                                                                <div class="avatar-content"><x-ds-icon name="clipboard" class="avatar-icon" />
                                                                 </div>
                                                             </div>
                                                         </div>
@@ -195,8 +188,7 @@
                                                     @case('chatbox')
                                                         <div class="me-1">
                                                             <div class="avatar bg-light-danger">
-                                                                <div class="avatar-content"><i class="avatar-icon"
-                                                                                               data-feather="message-square"></i>
+                                                                <div class="avatar-content"><x-ds-icon name="message-square" class="avatar-icon" />
                                                                 </div>
                                                             </div>
                                                         </div>
@@ -212,8 +204,7 @@
                                                     @case('subscription')
                                                         <div class="me-1">
                                                             <div class="avatar bg-light-danger">
-                                                                <div class="avatar-content"><i class="avatar-icon"
-                                                                                               data-feather="shopping-cart"></i>
+                                                                <div class="avatar-content"><x-ds-icon name="shopping-cart" class="avatar-icon" />
                                                                 </div>
                                                             </div>
                                                         </div>
@@ -228,8 +219,7 @@
                                                     @case('smsunit')
                                                         <div class="me-1">
                                                             <div class="avatar bg-light-danger">
-                                                                <div class="avatar-content"><i class="avatar-icon"
-                                                                                               data-feather="message-square"></i>
+                                                                <div class="avatar-content"><x-ds-icon name="message-square" class="avatar-icon" />
                                                                 </div>
                                                             </div>
                                                         </div>
@@ -244,8 +234,7 @@
                                                     @case('topup')
                                                         <div class="me-1">
                                                             <div class="avatar bg-light-danger">
-                                                                <div class="avatar-content"><i class="avatar-icon"
-                                                                                               data-feather="shopping-cart"></i>
+                                                                <div class="avatar-content"><x-ds-icon name="shopping-cart" class="avatar-icon" />
                                                                 </div>
                                                             </div>
                                                         </div>
@@ -312,16 +301,14 @@
                             <div class="dropdown-menu dropdown-menu-end" aria-labelledby="dropdown-user">
                                 @if(Auth::user()->active_portal == 'admin' && Auth::user()->is_customer == 1)
                                     <a class="dropdown-item"
-                                       href="{{ route('user.switch_view', ['portal' => 'customer']) }}"><i class="me-50"
-                                                                                                           data-feather="log-in"></i>{{ __('locale.labels.switch_view') }}
+                                       href="{{ route('user.switch_view', ['portal' => 'customer']) }}"><x-ds-icon name="log-in" class="me-50" />{{ __('locale.labels.switch_view') }}
                                     </a>
                                     <div class="dropdown-divider"></div>
                                 @endif
 
                                 @if(Auth::user()->active_portal == 'customer' && Auth::user()->is_admin == 1)
                                     <a class="dropdown-item"
-                                       href="{{ route('user.switch_view', ['portal' => 'admin']) }}"><i class="me-50"
-                                                                                                        data-feather="log-in"></i>{{ __('locale.labels.switch_view') }}
+                                       href="{{ route('user.switch_view', ['portal' => 'admin']) }}"><x-ds-icon name="log-in" class="me-50" />{{ __('locale.labels.switch_view') }}
                                     </a>
                                     <div class="dropdown-divider"></div>
                                 @endif
@@ -336,29 +323,28 @@
 
                                 @if(! $isParentImpersonation)
 
-                                    <a class="dropdown-item" href="{{ route('user.account') }}"><i class="me-50"
-                                                                                                   data-feather="user"></i>{{ __('locale.labels.profile') }}
+                                    <a class="dropdown-item" href="{{ route('user.account') }}"><x-ds-icon name="user" class="me-50" />{{ __('locale.labels.profile') }}
                                     </a>
 
                                     @if(Auth::user()->active_portal == 'customer' && Auth::user()->is_customer == 1)
                                         <a class="dropdown-item" href="{{route('customer.subscriptions.index')}}">
-                                            <i class="me-50" data-feather="shopping-cart"></i>
+                                            <x-ds-icon name="shopping-cart" class="me-50" />
                                             {{ __('locale.labels.billing') }}
                                         </a>
 
                                         <a class="dropdown-item" href="{{route('user.account.pricing')}}">
-                                            <i class="me-50" data-feather="tag"></i>
+                                            <x-ds-icon name="tag" class="me-50" />
                                             {{ __('locale.plans.pricing') }}
                                         </a>
 
                                         <a class="dropdown-item" href="{{route('user.account.announcement')}}">
-                                            <i class="me-50" data-feather="tv"></i>
+                                            <x-ds-icon name="tv" class="me-50" />
                                             {{ __('locale.menu.Announcements') }}
                                         </a>
 
                                         @if(config('account.create_subaccount'))
                                             <a class="dropdown-item" href="{{route('customer.sub_accounts.index')}}">
-                                                <i class="me-50" data-feather="users"></i>
+                                                <x-ds-icon name="users" class="me-50" />
                                                 {{ __('locale.labels.sub_accounts') }}
                                             </a>
                                         @endif
@@ -370,8 +356,7 @@
 
 
                                 <a class="dropdown-item" href="{{ route('logout') }}"
-                                   onclick="event.preventDefault(); document.getElementById('logout-form').submit();"><i
-                                            class="me-50" data-feather="power"></i> {{__('locale.menu.Logout')}}</a>
+                                   onclick="event.preventDefault(); document.getElementById('logout-form').submit();"><x-ds-icon name="power" class="me-50" /> {{__('locale.menu.Logout')}}</a>
                                 <form id="logout-form" action="{{ route('logout') }}" method="POST"
                                       style="display: none;">
                                     {{ csrf_field() }}

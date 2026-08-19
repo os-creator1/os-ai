@@ -215,11 +215,11 @@
 
             $(window).on("load", function () {
 
-                let $primary = '#7367F0';
-                let $success = '#00db89';
-                let $strok_color = '#b9c3cd';
-                let $label_color = '#e7eef7';
-                let $purple = '#df87f2';
+                let $primary = PlatformTheme.primary();
+                let $success = PlatformTheme.chartPalette()[0];
+                let $strok_color = PlatformTheme.chartAxis();
+                let $label_color = PlatformTheme.chartGrid();
+                let $purple = PlatformTheme.secondary();
 
 
                 // outbound sms
@@ -447,7 +447,7 @@
                             shade: 'dark',
                             type: 'horizontal',
                             shadeIntensity: 0.5,
-                            gradientToColors: ['#00b5b5'],
+                            gradientToColors: [PlatformTheme.chartPalette()[1]],
                             inverseColors: true,
                             opacityFrom: 1,
                             opacityTo: 1,
@@ -517,7 +517,7 @@
                             shade: 'dark',
                             type: 'horizontal',
                             shadeIntensity: 0.5,
-                            gradientToColors: ['#00b5b5'],
+                            gradientToColors: [PlatformTheme.chartPalette()[1]],
                             inverseColors: true,
                             opacityFrom: 1,
                             opacityTo: 1,
@@ -588,7 +588,7 @@
                             shade: 'dark',
                             type: 'horizontal',
                             shadeIntensity: 0.5,
-                            gradientToColors: ['#00b5b5'],
+                            gradientToColors: [PlatformTheme.chartPalette()[1]],
                             inverseColors: true,
                             opacityFrom: 1,
                             opacityTo: 1,
@@ -644,11 +644,11 @@
 
             $(window).on("load", function () {
 
-                let $primary = '#7367F0';
-                let $success = '#00db89';
-                let $strok_color = '#b9c3cd';
-                let $label_color = '#e7eef7';
-                let $purple = '#df87f2';
+                let $primary = PlatformTheme.primary();
+                let $success = PlatformTheme.chartPalette()[0];
+                let $strok_color = PlatformTheme.chartAxis();
+                let $label_color = PlatformTheme.chartGrid();
+                let $purple = PlatformTheme.secondary();
 
 
                 // outbound sms
@@ -876,7 +876,7 @@
                             shade: 'dark',
                             type: 'horizontal',
                             shadeIntensity: 0.5,
-                            gradientToColors: ['#00b5b5'],
+                            gradientToColors: [PlatformTheme.chartPalette()[1]],
                             inverseColors: true,
                             opacityFrom: 1,
                             opacityTo: 1,
@@ -946,7 +946,7 @@
                             shade: 'dark',
                             type: 'horizontal',
                             shadeIntensity: 0.5,
-                            gradientToColors: ['#00b5b5'],
+                            gradientToColors: [PlatformTheme.chartPalette()[1]],
                             inverseColors: true,
                             opacityFrom: 1,
                             opacityTo: 1,
@@ -1017,7 +1017,7 @@
                             shade: 'dark',
                             type: 'horizontal',
                             shadeIntensity: 0.5,
-                            gradientToColors: ['#00b5b5'],
+                            gradientToColors: [PlatformTheme.chartPalette()[1]],
                             inverseColors: true,
                             opacityFrom: 1,
                             opacityTo: 1,

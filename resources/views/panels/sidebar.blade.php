@@ -27,9 +27,9 @@
 
             <li class="nav-item nav-toggle">
                 <a class="nav-link modern-nav-toggle pe-0 transition-fast" data-toggle="collapse">
-                    <i class="d-block d-xl-none text-primary toggle-icon font-medium-4" data-feather="x"></i>
-                    <i class="d-none d-xl-block collapse-toggle-icon font-medium-4 text-primary" data-feather="disc"
-                       data-ticon="disc"></i>
+                    <x-ds-icon name="x" class="d-block d-xl-none text-primary toggle-icon font-medium-4" />
+                    <x-ds-icon name="disc" class="d-none d-xl-block collapse-toggle-icon font-medium-4 text-primary"
+                       data-ticon="disc" />
                 </a>
             </li>
         </ul>
@@ -53,7 +53,7 @@
                     @if(isset($menu->navheader))
                         <li class="navigation-header">
                             <span>{{ $menu->navheader }}</span>
-                            <i data-feather="more-horizontal"></i>
+                            <x-ds-icon name="more-horizontal" />
 
                             @if (isset($menu->badge))
                                     <?php $badgeClasses = 'badge rounded-pill badge-light-primary ms-auto me-1'; ?>
@@ -77,7 +77,7 @@
 
                             <li class="nav-item {{ isset($menu->slug) &&  str_contains(request()->path(),$menu->slug) ? 'active' : '' }} {{ $custom_classes }}">
                                 <a href="{{ $menu->url }}" class="d-flex align-items-center">
-                                    <i data-feather="{{ $menu->icon }}"></i>
+                                    <x-ds-icon name="{{ $menu->icon }}" />
                                     <span class="menu-title text-truncate"
                                           data-i18n="{{ $translation }}">{{ __('locale.menu.'.$menu->name) }}</span>
                                     @if (isset($menu->badge))

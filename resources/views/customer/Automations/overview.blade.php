@@ -90,8 +90,8 @@
 
             $(window).on("load", function () {
 
-                let $success = '#00db89',
-                    $strok_color = '#b9c3cd';
+                let $success = PlatformTheme.chartPalette()[0],
+                    $strok_color = PlatformTheme.chartAxis();
 
 
                 // Customer Chart
@@ -117,7 +117,7 @@
                     stroke: {
                         width: 4
                     },
-                    colors: ['#7367F0', '#EA5455'],
+                    colors: [PlatformTheme.primary(), '#EA5455'],
                 }
 
                 let customerChart = new ApexCharts(
@@ -177,7 +177,7 @@
                             shade: 'dark',
                             type: 'horizontal',
                             shadeIntensity: 0.5,
-                            gradientToColors: ['#00b5b5'],
+                            gradientToColors: [PlatformTheme.chartPalette()[1]],
                             inverseColors: true,
                             opacityFrom: 1,
                             opacityTo: 1,

@@ -1,0 +1,154 @@
+// Design System M2 Slice 1 contract §6.10/§9 item 36. The critical fix:
+// Bootstrap's own compiled component SCSS bakes literal hex values from
+// $primary/$secondary/$success/$warning/$danger/$info at BUILD time
+// (e.g. the compiled `.btn-primary` rule reads
+// `background-color:#7367f0` — verified empirically, §3.7/§6.10) — those
+// SCSS variables are already retokenized (bootstrap-extended/_variables.scss)
+// so the compiled DEFAULT is correct, but a runtime preset activation can
+// only ever change a CSS custom property, never re-run Sass. This file is
+// the retrofit layer: real, grep-evidenced Bootstrap-native selectors,
+// rebound to var(--color-*) so they respond to a runtime theme change the
+// same way Milestone 1's own new component library (ds-components.scss)
+// already does. `!important` is used deliberately and only here, scoped
+// to color-only properties, because this file's entire purpose is to win
+// against Bootstrap's own later, equal-specificity compiled rules for the
+// same selectors — the standard, well-known technique for exactly this
+// "runtime override on top of a compiled framework" problem.
+
+// --- Buttons (solid) ---
+.btn-primary {
+    background-color: var(--color-primary) !important;
+    border-color: var(--color-primary) !important;
+    color: var(--color-button-text) !important;
+
+    &:hover, &:focus, &:active {
+        background-color: var(--color-primary-hover) !important;
+        border-color: var(--color-primary-hover) !important;
+    }
+}
+
+.btn-secondary {
+    background-color: var(--color-secondary) !important;
+    border-color: var(--color-secondary) !important;
+
+    &:hover, &:focus, &:active {
+        background-color: var(--color-secondary-hover) !important;
+        border-color: var(--color-secondary-hover) !important;
+    }
+}
+
+// --- Buttons (outline / flat) ---
+.btn-outline-primary {
+    color: var(--color-primary) !important;
+    border-color: var(--color-primary) !important;
+
+    &:hover, &:focus, &:active {
+        background-color: var(--color-primary) !important;
+        border-color: var(--color-primary) !important;
+        color: var(--color-button-text) !important;
+    }
+}
+
+.btn-flat-primary,
+.btn-flat-secondary {
+    color: var(--color-primary) !important;
+
+    &:hover, &:focus {
+        background-color: var(--color-primary-soft-bg) !important;
+    }
+}
+
+// --- Text / background / border utilities ---
+.text-primary { color: var(--color-primary) !important; }
+.bg-primary { background-color: var(--color-primary) !important; }
+.border-primary { border-color: var(--color-primary) !important; }
+
+// --- Links ---
+a:not(.btn) { color: var(--color-link); }
+a:not(.btn):hover { color: var(--color-link-hover); }
+
+// --- Badges / alerts / soft backgrounds ---
+.badge-light-primary,
+.bg-light-primary {
+    background-color: var(--color-primary-soft-bg) !important;
+    color: var(--color-primary) !important;
+}
+
+.badge.badge-primary { background-color: var(--color-primary) !important; }
+
+.alert-primary {
+    background-color: var(--color-primary-soft-bg) !important;
+    border-color: var(--color-primary-border) !important;
+    color: var(--color-primary) !important;
+}
+
+// --- Nav / tabs / pills / menu active state ---
+.nav-pills .nav-link.active,
+.nav-tabs .nav-link.active {
+    background-color: var(--color-primary) !important;
+    color: var(--color-button-text) !important;
+}
+
+.nav-link.active { color: var(--color-primary); }
+
+// --- Pagination ---
+.page-item.active .page-link {
+    background-color: var(--color-primary) !important;
+    border-color: var(--color-primary) !important;
+}
+.page-link { color: var(--color-primary); }
+
+// --- Forms: checkboxes, radios, switches, focus ---
+.form-check-input:checked {
+    background-color: var(--color-primary) !important;
+    border-color: var(--color-primary) !important;
+}
+.form-check-primary .form-check-input:checked {
+    background-color: var(--color-primary) !important;
+    border-color: var(--color-primary) !important;
+}
+.form-control:focus,
+.form-select:focus {
+    border-color: var(--color-focus-border) !important;
+}
+
+// --- Progress bars ---
+.progress-bar { background-color: var(--color-primary) !important; }
+
+// --- Dropdown items ---
+.dropdown-item:hover,
+.dropdown-item:focus,
+.dropdown-item.active {
+    background-color: var(--color-primary-soft-bg) !important;
+    color: var(--color-primary) !important;
+}
+
+// --- Status colors: success/warning/danger/info, same pattern ---
+@each $status, $var-base in (success: 'success', warning: 'warning', danger: 'danger', info: 'info') {
+    .btn-#{$status} {
+        background-color: var(--color-status-#{$var-base}) !important;
+        border-color: var(--color-status-#{$var-base}) !important;
+    }
+    .btn-outline-#{$status} {
+        color: var(--color-status-#{$var-base}) !important;
+        border-color: var(--color-status-#{$var-base}) !important;
+
+        &:hover, &:focus, &:active {
+            background-color: var(--color-status-#{$var-base}) !important;
+        }
+    }
+    .text-#{$status} { color: var(--color-status-#{$var-base}) !important; }
+    .bg-#{$status} { background-color: var(--color-status-#{$var-base}) !important; }
+    .border-#{$status} { border-color: var(--color-status-#{$var-base}) !important; }
+    .badge-light-#{$status},
+    .bg-light-#{$status} {
+        background-color: var(--color-status-#{$var-base}-soft-bg) !important;
+        color: var(--color-status-#{$var-base}) !important;
+    }
+    .badge.badge-#{$status} { background-color: var(--color-status-#{$var-base}) !important; }
+    .alert-#{$status} {
+        background-color: var(--color-status-#{$var-base}-soft-bg) !important;
+        border-color: var(--color-status-#{$var-base}-border) !important;
+        color: var(--color-status-#{$var-base}) !important;
+    }
+}

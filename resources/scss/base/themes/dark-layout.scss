@@ -1722,7 +1722,11 @@
         }
         .start-chat-area,
         .user-chats {
-          background-image: url($chat-bg-dark);
+          // Design System M2 Slice 1 contract §6.17/§9 item 53: the
+          // embedded base64 dark-mode background-image pattern is
+          // removed structurally, matching the light-mode fix
+          // (app-chat.scss, item 51). The rest of this dark theme
+          // bundle's own palette is deliberately left untouched.
           background-color: #1e232f;
         }
         .user-chats {

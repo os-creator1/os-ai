@@ -40,7 +40,7 @@
                         @enderror
                     </div>
                     <div class="col-12 d-md-block d-grid ps-md-0 ps-auto">
-                        <button class="btn btn-primary mb-1 btn-sm-block" type="submit">Notify</button>
+                        <x-button type="submit" variant="primary" class="mb-1 btn-sm-block">Notify</x-button>
                     </div>
                 </form>
 

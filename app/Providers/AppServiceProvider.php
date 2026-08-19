@@ -176,6 +176,8 @@
                 \App\Repositories\Contracts\BusinessFundingAttemptTransitionRepository::class => \App\Repositories\Eloquent\EloquentBusinessFundingAttemptTransitionRepository::class,
                 \App\Repositories\Contracts\PaymentProviderEventRepository::class => \App\Repositories\Eloquent\EloquentPaymentProviderEventRepository::class,
                 \App\Library\Usage\Contracts\PaymentProviderGateway::class => \App\Library\Usage\StripePaymentProviderGateway::class,
+                \App\Repositories\Contracts\PlatformThemePresetRepository::class => \App\Repositories\Eloquent\EloquentPlatformThemePresetRepository::class,
+                \App\Repositories\Contracts\PlatformThemeFontRepository::class => \App\Repositories\Eloquent\EloquentPlatformThemeFontRepository::class,
             ];
 
             foreach ($bindings as $interface => $implementation) {

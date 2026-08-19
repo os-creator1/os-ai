@@ -17,7 +17,7 @@
                 <li class="{{ isset($submenu->slug) && str_contains(request()->path(),$submenu->slug) ? 'active' : '' }}">
                     <a href="{{isset($submenu->url) ? url($submenu->url):'javascript:void(0)'}}" class="d-flex align-items-center transition-fast">
                         @if(isset($submenu->icon))
-                            <i data-feather="{{ $submenu->icon ?? "" }}"></i>
+                            <x-ds-icon name="{{ $submenu->icon ?? "" }}" />
                         @endif
                         {{-- Use corrected $submenuTranslation --}}
                         <span class="menu-item text-truncate" data-i18n="{{ $submenuTranslation }}">{{ __('locale.menu.'.$submenu->name) }}</span>
