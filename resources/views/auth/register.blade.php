@@ -1,4 +1,4 @@
-@php use App\Helpers\Helper;use App\Library\Tool; @endphp
+@php use App\Helpers\Helper;use App\Library\Tool;$configData = Helper::applClasses(); @endphp
 @extends('layouts/fullLayoutMaster')
 
 @section('title', __('locale.auth.register'))
@@ -31,8 +31,12 @@
             <!-- Left Text-->
             <div class="col-lg-3 d-none d-lg-flex align-items-center p-0">
                 <div class="w-100 d-lg-flex align-items-center justify-content-center">
-                    <img class="img-fluid w-100" src="{{asset('images/pages/create-account.svg')}}"
-                         alt="{{config('app.name')}}"/>
+                    @if (config('app.auth_illustration'))
+                        <x-branding-illustration surface="auth" :dark="$configData['theme'] === 'dark'" class="w-100" />
+                    @else
+                        <img class="img-fluid w-100" src="{{asset('images/pages/create-account.svg')}}"
+                             alt="{{config('app.name')}}"/>
+                    @endif
                 </div>
             </div>
             <!-- /Left Text-->
