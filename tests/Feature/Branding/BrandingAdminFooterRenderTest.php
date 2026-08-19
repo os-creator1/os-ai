@@ -57,6 +57,49 @@ class BrandingAdminFooterRenderTest extends TestCase
         );
     }
 
+    /**
+     * Remediation exception (DESIGN-SYSTEM-M2-PLATFORM-BRANDING-REMEDIATION-EXCEPTION.md):
+     * panels/footer.blade.php previously appended a hardcoded, unconditional
+     * legacy "All rights reserved." fragment after <x-branding-footer />,
+     * so an owner-configured footer_copyright_text rendered doubled, e.g.
+     * "All rights reserved worldwide All rights reserved.". <x-branding-footer />
+     * must be the sole rendered copyright/company/wording line, with no
+     * second, legacy suffix appended after it.
+     */
+    public function test_admin_footer_does_not_append_a_legacy_rights_reserved_suffix_after_the_configured_wording(): void
+    {
+        config([
+            'app.footer_company_name' => 'Acme Test Co',
+            'app.footer_copyright_text' => 'All rights reserved worldwide',
+        ]);
+        Cache::forget(BrandingPresenter::CACHE_KEY);
+
+        $this->actingAsAdmin(['access backend', 'manage theme']);
+
+        $html = $this->get(route('admin.home'))->assertOk()->getContent();
+
+        $this->assertMatchesRegularExpression('#<footer\b.*?</footer>#s', $html, 'Expected a <footer> element in the response.');
+        preg_match('#<footer\b.*?</footer>#s', $html, $matches);
+        $footerHtml = $matches[0];
+
+        $this->assertStringContainsString('All rights reserved worldwide', $footerHtml);
+        $this->assertSame(
+            1,
+            substr_count($footerHtml, 'Acme Test Co'),
+            'The footer company name must appear exactly once, not duplicated.'
+        );
+        $this->assertDoesNotMatchRegularExpression(
+            '#All rights reserved worldwide\s*All rights reserved\.#',
+            $footerHtml,
+            'The configured wording must not be followed by a second, legacy "All rights reserved." suffix.'
+        );
+        $this->assertSame(
+            0,
+            substr_count($footerHtml, __('locale.labels.all_rights_reserved')),
+            'The legacy locale.labels.all_rights_reserved string must not render in the footer at all — <x-branding-footer /> is the sole copyright line.'
+        );
+    }
+
     private function ensureRequiredAppConfigRowsExist(): void
     {
         $existing = AppConfig::whereIn('setting', ['license', 'customer_permissions', 'custom_script'])
