@@ -21,8 +21,7 @@
 
 
                     <div class="col-12 mt-1">
-                        <button type="submit" class="btn btn-primary mt-1 me-1"><i
-                                    data-feather="save"></i> {{__('locale.buttons.save')}}</button>
+                        <button type="submit" class="btn btn-primary mt-1 me-1"><x-ds-icon name="save" /> {{__('locale.buttons.save')}}</button>
                     </div>
 
                 </div>

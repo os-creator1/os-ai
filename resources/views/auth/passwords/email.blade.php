@@ -67,7 +67,7 @@
                     </form>
                     <p class="text-center mt-2">
                         <a href="{{url('login')}}">
-                            <i data-feather="chevron-left"></i> {{ __('locale.auth.back_to_login') }}
+                            <x-ds-icon name="chevron-left" /> {{ __('locale.auth.back_to_login') }}
                         </a>
                     </p>
                 </div>

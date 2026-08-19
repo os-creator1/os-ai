@@ -52,8 +52,7 @@
                                     <input type="password" id="password"
                                            class="form-control @error('password') is-invalid @enderror"
                                            name="password" />
-                                    <span class="input-group-text cursor-pointer"><i
-                                                data-feather="eye"></i></span>
+                                    <span class="input-group-text cursor-pointer"><x-ds-icon name="eye" /></span>
                                 </div>
                                 @error('password')
                                 <div class="invalid-feedback">{{ $message }}</div>
@@ -69,8 +68,7 @@
                                     <input type="password" id="password_confirmation"
                                            class="form-control @error('password_confirmation') is-invalid @enderror"
                                            name="password_confirmation" />
-                                    <span class="input-group-text cursor-pointer"><i
-                                                data-feather="eye"></i></span>
+                                    <span class="input-group-text cursor-pointer"><x-ds-icon name="eye" /></span>
                                 </div>
                             </div>
                         </div>
@@ -81,7 +79,7 @@
                     </form>
                     <p class="text-center mt-2">
                         <a href="{{url('login')}}">
-                            <i data-feather="chevron-left"></i> {{ __('locale.auth.back_to_login') }}
+                            <x-ds-icon name="chevron-left" /> {{ __('locale.auth.back_to_login') }}
                         </a>
                     </p>
                 </div>

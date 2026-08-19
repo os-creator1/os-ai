@@ -4,7 +4,7 @@
 @endphp
 
 @if ($isAdminImpersonation || $isParentImpersonation)
-   <div class="alert alert-success" role="alert">
+   <x-alert variant="success">
       <h4 class="alert-heading">{{ __('locale.labels.attention') }}</h4>
       <div class="alert-body">
          {!! __('locale.labels.login_as', [
@@ -13,5 +13,5 @@
              'admin' => $isAdminImpersonation ? session('admin_user_name') : session('parent_user_name')
          ]) !!}
       </div>
-   </div>
+   </x-alert>
 @endif

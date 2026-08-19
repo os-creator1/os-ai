@@ -11,7 +11,7 @@
                             <div class="input-group input-group-merge form-password-toggle">
                                 <input type="password" id="current_password" class="form-control @error('current_password') is-invalid @enderror"
                                        value="{{ old('current_password') }}" name="current_password">
-                                <span class="input-group-text cursor-pointer"><i data-feather="eye"></i></span>
+                                <span class="input-group-text cursor-pointer"><x-ds-icon name="eye" /></span>
                             </div>
 
                             @error('current_password')
@@ -25,7 +25,7 @@
                             <label class="form-label required" for="password">{{ __('locale.labels.new_password') }}</label>
                             <div class="input-group input-group-merge form-password-toggle">
                                 <input type="password" id="password" class="form-control @error('password') is-invalid @enderror" value="{{ old('password') }}" name="password">
-                                <span class="input-group-text cursor-pointer"><i data-feather="eye"></i></span>
+                                <span class="input-group-text cursor-pointer"><x-ds-icon name="eye" /></span>
                             </div>
 
                             @error('password')
@@ -40,7 +40,7 @@
                             <div class="input-group input-group-merge form-password-toggle">
                                 <input type="password" id="password_confirmation" class="form-control @error('password_confirmation') is-invalid @enderror"
                                        value="{{ old('password_confirmation') }}" name="password_confirmation">
-                                <span class="input-group-text cursor-pointer"><i data-feather="eye"></i></span>
+                                <span class="input-group-text cursor-pointer"><x-ds-icon name="eye" /></span>
                             </div>
 
                             @error('password_confirmation')
@@ -53,7 +53,7 @@
 
 
                 <div class="col-12 d-flex flex-sm-row flex-column mt-1">
-                    <button type="submit" class="btn btn-primary glow mb-1 mb-sm-0"><i data-feather="save"></i> {{__('locale.buttons.save_changes')}}</button>
+                    <button type="submit" class="btn btn-primary glow mb-1 mb-sm-0"><x-ds-icon name="save" /> {{__('locale.buttons.save_changes')}}</button>
                 </div>
 
             </div>

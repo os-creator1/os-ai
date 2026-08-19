@@ -11,6 +11,7 @@ use App\Repositories\Contracts\PlatformThemeFontRepository;
 use App\Repositories\Contracts\PlatformThemePresetRepository;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 /**
  * Design System M2 Slice 1 contract §6.13/§6.14/§9 item 14. Orchestrates
@@ -36,10 +37,23 @@ class PlatformThemeManager
      * defaults stand) whenever no active preset exists or its JSON is
      * unusable, so "missing/invalid config" and "Factory active"
      * produce visually identical output.
+     *
+     * Design System M2 Slice 2 contract §7 Part A: also fails safe when
+     * `platform_theme_presets` does not exist yet — the Installer's very
+     * first page renders before migrations run. The check is inside this
+     * cache closure (not outside it) so it only ever runs while the
+     * cache is genuinely cold, never on every request. §7 Part B
+     * (`invalidateCache()`, called from `InstallerController::database()`
+     * once migrations/seeding finish) is what stops this pre-database
+     * `null` from outliving the install.
      */
     public function currentStyleBlock(): ?string
     {
         return Cache::rememberForever(self::CACHE_KEY, function () {
+            if (! Schema::hasTable('platform_theme_presets')) {
+                return null;
+            }
+
             $active = $this->presets->findActive();
 
             if ($active === null || empty($active->derived_tokens_json)) {
@@ -75,7 +89,17 @@ class PlatformThemeManager
         return '<style id="platform-theme-overrides">' . $fontFace . $css . '</style>';
     }
 
-    private function invalidateCache(): void
+    /**
+     * Design System M2 Slice 2 contract §7 Part B: made public so
+     * `InstallerController::database()` can force a cache miss on the
+     * very next render once migrations/seeding complete, closing the
+     * window where the pre-database `null` from `currentStyleBlock()`
+     * (§7 Part A) would otherwise be cached forever. `DB::afterCommit`
+     * still applies — with no active transaction (the Installer's own
+     * call site) Laravel runs the callback immediately; from within
+     * `activate()`'s transaction it still defers correctly.
+     */
+    public function invalidateCache(): void
     {
         DB::afterCommit(function () {
             Cache::forget(self::CACHE_KEY);

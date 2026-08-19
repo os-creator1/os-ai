@@ -33,8 +33,7 @@
                             </button>
                             <div class="dropdown-menu" aria-labelledby="bulk_actions">
 
-                                <a class="dropdown-item bulk-read" href="#"><i
-                                            data-feather="check"></i> {{ __('locale.labels.mark_as_read') }}</a>
+                                <a class="dropdown-item bulk-read" href="#"><x-ds-icon name="check" /> {{ __('locale.labels.mark_as_read') }}</a>
                             </div>
                         </div>
                     </div>

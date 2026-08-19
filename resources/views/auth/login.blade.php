@@ -71,21 +71,21 @@
                                    required autocomplete="email" autofocus>
 
                             @error('email')
-                            <div class="alert alert-danger mt-1 alert-validation-msg" role="alert">
+                            <x-alert variant="danger" class="mt-1 alert-validation-msg">
                                 <div class="alert-body d-flex align-items-center">
-                                    <i data-feather="info" class="me-50"></i>
+                                    <x-ds-icon name="info" class="me-50" />
                                     <span>{{ $message }}</span>
                                 </div>
-                            </div>
+                            </x-alert>
                             @enderror
 
                             @error('g-recaptcha-response')
-                            <div class="alert alert-danger mt-1 alert-validation-msg" role="alert">
+                            <x-alert variant="danger" class="mt-1 alert-validation-msg">
                                 <div class="alert-body d-flex align-items-center">
-                                    <i data-feather="info" class="me-50"></i>
+                                    <x-ds-icon name="info" class="me-50" />
                                     <span>{{ __('locale.labels.g-recaptcha-response') }}</span>
                                 </div>
-                            </div>
+                            </x-alert>
                             @enderror
                         </div>
 
@@ -106,7 +106,7 @@
                                        placeholder="{{__('locale.labels.password')}}"
                                        required autocomplete="password"
                                        @if(config('app.stage') == 'demo') value="12345678" @endif>
-                                <span class="input-group-text cursor-pointer"><i data-feather="eye"></i></span>
+                                <span class="input-group-text cursor-pointer"><x-ds-icon name="eye" /></span>
                             </div>
                         </div>
 
@@ -146,28 +146,28 @@
                             @if(config('services.facebook.active'))
                                 <a class="btn btn-facebook" href="{{route('social.login', 'facebook')}}"
                                    data-bs-toggle="tooltip" data-bs-placement="top" title="Facebook">
-                                    <i data-feather="facebook"></i>
+                                    <x-ds-icon name="facebook" />
                                 </a>
                             @endif
 
                             @if(config('services.twitter.active'))
                                 <a class="btn btn-twitter" href="{{route('social.login', 'twitter')}}"
                                    data-bs-toggle="tooltip" data-bs-placement="top" title="Twitter">
-                                    <i data-feather="twitter"></i>
+                                    <x-ds-icon name="twitter" />
                                 </a>
                             @endif
 
                             @if(config('services.google.active'))
                                 <a class="btn btn-google" href="{{route('social.login', 'google')}}"
                                    data-bs-toggle="tooltip" data-bs-placement="top" title="Google">
-                                    <i data-feather="mail"></i>
+                                    <x-ds-icon name="mail" />
                                 </a>
                             @endif
 
                             @if(config('services.github.active'))
                                 <a class="btn btn-github" href="{{route('social.login', 'github')}}"
                                    data-bs-toggle="tooltip" data-bs-placement="top" title="Github">
-                                    <i data-feather="github"></i>
+                                    <x-ds-icon name="github" />
                                 </a>
                             @endif
 

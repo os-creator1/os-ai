@@ -25,12 +25,10 @@
                         @php $isRead = Auth::user()->announcements->find($announcement->id)->pivot->read_at !== null; @endphp
 
                         @if(!$isRead)
-                            <button class="btn btn-success btn-sm mark_read" data-id="{{$announcement->uid}}"><i
-                                        data-feather="check"></i> {{ __('locale.labels.mark_as_read') }}</button>
+                            <button class="btn btn-success btn-sm mark_read" data-id="{{$announcement->uid}}"><x-ds-icon name="check" /> {{ __('locale.labels.mark_as_read') }}</button>
                         @endif
 
-                        <a href="{{ route('user.account.announcement') }}" class="btn btn-primary btn-sm"><i
-                                    data-feather="list"></i> {{ __('locale.buttons.back') }}</a>
+                        <a href="{{ route('user.account.announcement') }}" class="btn btn-primary btn-sm"><x-ds-icon name="list" /> {{ __('locale.buttons.back') }}</a>
 
                     </div>
                 </div>
