@@ -52,32 +52,58 @@
   "completed_merge_commit_sha": "db7829d2c33ff3eb77a5bd42820eb39e349f6d94",
   "aggregate_regression_run": 31159820708,
   "manual_verification": {
-    "subject": "Design System M2 Slice 1 — independent of this file's currently tracked idle RFC-003 Milestone 4 state; active_rfc, active_milestone, current_slice, and active_pull_request above are unrelated and unchanged by this record",
+    "subject": "Design System M2 Slice 2 — independent of this file's currently tracked idle RFC-003 Milestone 4 state; active_rfc, active_milestone, current_slice, and active_pull_request above are unrelated and unchanged by this record",
     "repository": "os-creator1/os-ai",
-    "implementation_pull_request": 87,
-    "implementation_branch": "agent/design-system-m2-slice1",
-    "verified_head_sha": "a65602ebe3d11b63b704ccff635a88f8162383ca",
+    "implementation_pull_request": 90,
+    "implementation_branch": "agent/design-system-m2-slice2",
+    "verified_head_sha": "a5b53466321a706bf35d395ca9d97c51973dcf9e",
     "environment": "human developer's local Windows/Laragon environment",
     "php_version": "8.3.30",
     "laravel_test_environment": ".env.testing",
     "test_database": "MySQL ultimatesms_testing",
     "build_command_run": "npx mix --production",
     "build_result": "passed",
-    "package_discovery_cache_note": "php artisan package:discover was run locally because the tracked package-discovery caches were stale; the regenerated cache files were not committed",
+    "auth_suite": {
+      "scope": "tests/Feature/Auth",
+      "tests_passed": 22,
+      "tests_failed": 0,
+      "assertions": 137
+    },
+    "installer_suite": {
+      "scope": "tests/Feature/Installer",
+      "tests_passed": 3,
+      "tests_failed": 0,
+      "assertions": 6
+    },
     "theme_suite": {
-      "scope": "tests/Feature/Theme (13 files)",
+      "scope": "tests/Feature/Theme",
       "tests_passed": 61,
       "tests_failed": 0,
-      "assertions": 213,
-      "exit_code": 0
+      "assertions": 213
     },
     "complete_regression_suite": {
       "result": "passed",
-      "exit_code": 0,
-      "test_count_note": "the complete suite contained more than 2,000 tests, but its exact final test and assertion counts were not retained because the terminal output exceeded its scrollback; no exact complete-suite count is claimed"
+      "tests_passed": 2810,
+      "assertions": 9028,
+      "exit_code": 0
     },
-    "generated_assets_and_regenerated_caches_restored_afterward": true,
-    "final_implementation_worktree_status": "no tracked modifications and nothing staged; only .claude/ remains untracked",
+    "manual_login_round_trip": {
+      "result": "succeeded",
+      "authenticated_account_page_status": 200
+    },
+    "visual_verification": {
+      "desktop": "completed",
+      "mobile": "completed at approximately 400x644",
+      "pages_covered": "login, password recovery, email verification, two-factor, profile tabs/forms, and installer/purchase-code presentation rendered responsively",
+      "layout_findings": "no horizontal overflow or unusable controls were observed"
+    },
+    "accepted_deferred_findings_outside_slice_2": [
+      "Ultimate SMS/Codeglen names, footer and illustrations remain",
+      "Platform logo/favicon and authentication artwork must become configurable in the next launch-critical branding slice",
+      "Broken logo/avatar fallback must be corrected in that branding slice",
+      "Terms/Privacy were blank because the disposable test database contained no policy content",
+      "Registration remained blocked by the pre-existing geo-IP/seeded-country gate"
+    ],
     "verification_type": "local manual verification only — no GitHub Actions, CI, staging, deployment, or production verification is claimed",
     "verified_by": "human developer, manual Claude Code session"
   }
