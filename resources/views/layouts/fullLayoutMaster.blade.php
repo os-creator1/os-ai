@@ -17,7 +17,7 @@
     <meta name="csrf-token" content="{{ csrf_token() }}">
 
     <title>@yield('title') - {{config('app.title')}}</title>
-    <link rel="shortcut icon" type="image/x-icon" href="<?php echo asset(config('app.favicon')); ?>"/>
+    <x-branding-favicon />
     {{-- Design System Contract, Milestone 1, §9 item 38 — Geist Sans is
     self-hosted (resources/scss/base/tokens/_typography.scss), compiled
     into core.css below; the Montserrat Google Fonts link is removed. --}}

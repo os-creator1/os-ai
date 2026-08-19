@@ -56,11 +56,24 @@
 
                 <div class="col-12">
                     <div class="mb-1">
-                        <label for="footer_text"
-                               class="form-label required">{{ __('locale.settings.footer_text') }}</label>
-                        <input type="text" id="footer_text" name="footer_text" class="form-control"
-                               value="{!! config('app.footer_text') !!}" required>
-                        @error('footer_text')
+                        <label for="footer_company_name" class="form-label">Footer company name</label>
+                        <input type="text" id="footer_company_name" name="footer_company_name" class="form-control"
+                               value="{{ config('app.footer_company_name') }}">
+                        <p><small class="text-primary">Optional. Falls back to the application name when not set.</small></p>
+                        @error('footer_company_name')
+                        <p><small class="text-danger">{{ $message }}</small></p>
+                        @enderror
+                    </div>
+                </div>
+
+                <div class="col-12">
+                    <div class="mb-1">
+                        <label for="footer_copyright_text" class="form-label">Footer copyright wording</label>
+                        <input type="text" id="footer_copyright_text" name="footer_copyright_text" class="form-control"
+                               value="{{ config('app.footer_copyright_text') }}" placeholder="e.g. All rights reserved">
+                        <p><small class="text-primary">Optional short suffix shown after the copyright line. The copyright year is always current and computed automatically — it is not an input here.</small></p>
+                        <p><small class="text-muted">Preview: <x-branding-footer /></small></p>
+                        @error('footer_copyright_text')
                         <p><small class="text-danger">{{ $message }}</small></p>
                         @enderror
                     </div>
@@ -69,7 +82,8 @@
                 <div class="col-12">
                     <div class="mb-1">
                         <label for="app_logo" class="form-label">{{ __('locale.settings.logo') }}</label>
-                        <input type="file" name="app_logo" class="form-control" id="app_logo" accept="image/*" />
+                        <div class="mb-1"><x-branding-logo variant="full" background="light" /></div>
+                        <input type="file" name="app_logo" class="form-control" id="app_logo" accept="image/png,image/jpeg,image/webp" />
                         <p><small class="text-primary"> {{__('locale.settings.logo_size')}} </small></p>
 
                         @error('app_logo')
@@ -80,10 +94,58 @@
 
                 <div class="col-12">
                     <div class="mb-1">
+                        <label for="logo_compact" class="form-label">Compact / sidebar logo</label>
+                        <div class="mb-1"><x-branding-logo variant="compact" background="light" /></div>
+                        <input type="file" name="logo_compact" class="form-control" id="logo_compact" accept="image/png,image/jpeg,image/webp" />
+                        <p><small class="text-primary">Optional. Used for the collapsed sidebar and mobile header. Falls back to the full logo when not set.</small></p>
+                        @error('logo_compact')
+                        <p><small class="text-danger">{{ $message }}</small></p>
+                        @enderror
+                    </div>
+                </div>
+
+                <div class="col-12">
+                    <div class="mb-1">
+                        <label for="logo_dark" class="form-label">Dark-background logo</label>
+                        <div class="mb-1"><x-branding-logo variant="full" background="dark" /></div>
+                        <input type="file" name="logo_dark" class="form-control" id="logo_dark" accept="image/png,image/jpeg,image/webp" />
+                        <p><small class="text-primary">Optional. Used wherever the logo is placed on a dark background. Falls back to the full, light-background logo when not set.</small></p>
+                        @error('logo_dark')
+                        <p><small class="text-danger">{{ $message }}</small></p>
+                        @enderror
+                    </div>
+                </div>
+
+                <div class="col-12">
+                    <div class="mb-1">
                         <label for="app_favicon" class="form-label">{{ __('locale.settings.favicon') }}</label>
-                        <input type="file" name="app_favicon" class="form-control" id="app_favicon" accept="image/*" />
+                        <div class="mb-1"><x-branding-favicon /></div>
+                        <input type="file" name="app_favicon" class="form-control" id="app_favicon" accept="image/png,image/jpeg,image/webp,image/x-icon" />
                         <p><small class="text-primary"> {{__('locale.settings.favicon_size')}} </small></p>
                         @error('app_favicon')
+                        <p><small class="text-danger">{{ $message }}</small></p>
+                        @enderror
+                    </div>
+                </div>
+
+                <div class="col-12">
+                    <div class="mb-1">
+                        <label for="auth_illustration" class="form-label">Authentication-page illustration</label>
+                        <input type="file" name="auth_illustration" class="form-control" id="auth_illustration" accept="image/png,image/jpeg,image/webp" />
+                        <p><small class="text-primary">Optional. Falls back to the bundled illustration when not set.</small></p>
+                        @error('auth_illustration')
+                        <p><small class="text-danger">{{ $message }}</small></p>
+                        @enderror
+                    </div>
+                </div>
+
+                <div class="col-12">
+                    <div class="mb-1">
+                        <label for="installer_illustration" class="form-label">Installer illustration</label>
+                        <div class="mb-1"><x-branding-illustration surface="installer" /></div>
+                        <input type="file" name="installer_illustration" class="form-control" id="installer_illustration" accept="image/png,image/jpeg,image/webp" />
+                        <p><small class="text-primary">Optional. Falls back to the bundled illustration when not set.</small></p>
+                        @error('installer_illustration')
                         <p><small class="text-danger">{{ $message }}</small></p>
                         @enderror
                     </div>

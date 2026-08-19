@@ -2,9 +2,7 @@
 <footer
         class="footer footer-light transition-base {{ $configData['footerType'] === 'footer-hidden' ? 'd-none' : '' }} {{ $configData['footerType'] }}">
     <p class="clearfix mb-0">
-        <span class="float-md-left d-block d-md-inline-block mt-25"> {!! config('app.footer_text') !!}
-            <a class="ms-25" href="{{ route('login') }}">{{ config('app.name') }},</a>
-            <span class="d-none d-sm-inline-block">{{ __('locale.labels.all_rights_reserved') }}</span>
+        <span class="float-md-left d-block d-md-inline-block mt-25"> <x-branding-footer />
         </span>
 
 

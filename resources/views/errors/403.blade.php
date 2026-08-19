@@ -15,7 +15,7 @@
     <div class="misc-wrapper">
 
         <a class="brand-logo" href="{{route('login')}}">
-            <img src="{{asset(config('app.logo'))}}" alt="{{config('app.name')}}"/>
+            <x-branding-logo variant="full" background="light" />
         </a>
 
         <div class="misc-inner p-2 p-sm-3">

@@ -20,14 +20,16 @@
         <div class="auth-inner row m-0">
             <!-- Brand logo-->
             <a class="brand-logo" href="{{route('login')}}">
-                <img src="{{asset(config('app.logo'))}}" alt="{{config('app.name')}}"/>
+                <x-branding-logo variant="full" background="light" />
             </a>
             <!-- /Brand logo-->
 
             <!-- Left Text-->
             <div class="d-none d-lg-flex col-lg-8 align-items-center p-5">
                 <div class="w-100 d-lg-flex align-items-center justify-content-center px-5">
-                    @if($configData['theme'] === 'dark')
+                    @if (config('app.auth_illustration'))
+                        <x-branding-illustration surface="auth" :dark="$configData['theme'] === 'dark'" />
+                    @elseif($configData['theme'] === 'dark')
                         <img src="{{asset('images/pages/reset-password-v2-dark.svg')}}" class="img-fluid" alt="Register V2"/>
                     @else
                         <img src="{{asset('images/pages/reset-password-v2.svg')}}" class="img-fluid" alt="Register V2"/>

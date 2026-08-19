@@ -14,14 +14,16 @@
         <div class="auth-inner row m-0">
             <!-- Brand logo-->
             <a class="brand-logo" href="{{route('login')}}">
-                <img src="{{asset(config('app.logo'))}}" alt="{{config('app.name')}}"/>
+                <x-branding-logo variant="full" background="light" />
             </a>
             <!-- /Brand logo-->
 
             <!-- Left Text-->
             <div class="d-none d-lg-flex col-lg-8 align-items-center p-5">
                 <div class="w-100 d-lg-flex align-items-center justify-content-center px-5">
-                    @if($configData['theme'] === 'dark')
+                    @if (config('app.auth_illustration'))
+                        <x-branding-illustration surface="auth" :dark="$configData['theme'] === 'dark'" />
+                    @elseif($configData['theme'] === 'dark')
                         <img class="img-fluid" src="{{asset('images/pages/two-steps-verification-illustration-dark.svg')}}" alt="two steps verification"/>
                     @else
                         <img class="img-fluid" src="{{asset('images/pages/two-steps-verification-illustration.svg')}}" alt="two steps verification"/>

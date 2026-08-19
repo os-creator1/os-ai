@@ -1,6 +1,6 @@
 @extends('layouts/fullLayoutMaster')
 
-@section('title', 'Ultimate SMS Auto Installer')
+@section('title', config('app.name') . ' Installer')
 
 
 @section('vendor-style')
@@ -19,14 +19,14 @@
         <div class="auth-inner row m-0">
             <!-- Brand logo-->
             <a class="brand-logo" href="{{route('login')}}">
-                <img src="{{asset(config('app.logo'))}}" alt="{{config('app.name')}}"/>
+                <x-branding-logo variant="full" background="light" />
             </a>
             <!-- /Brand logo-->
 
             <!-- Left Text-->
             <div class="col-lg-3 d-none d-lg-flex align-items-center p-0">
                 <div class="w-100 d-lg-flex align-items-center justify-content-center">
-                    <img class="img-fluid w-100" src="{{asset('images/pages/create-account.svg')}}" alt="{{config('app.name')}}"/>
+                    <x-branding-illustration surface="installer" class="w-100" />
                 </div>
             </div>
             <!-- /Left Text-->

@@ -15,7 +15,7 @@
             <ul class="nav navbar-nav flex-row">
                 <li class="nav-item me-auto">
                     <a class="navbar-brand" href="{{route('login')}}">
-                        <span class="brand-logo"><img src="{{asset(config('app.logo'))}}" alt="{{config('app.name')}}"/></span>
+                        <span class="brand-logo"><x-branding-logo variant="full" background="light" /></span>
                     </a>
                 </li>
                 <li class="nav-item nav-toggle">

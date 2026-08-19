@@ -15,7 +15,7 @@
         |
         */
 
-        'name' => env('APP_NAME', 'Ultimate SMS'),
+        'name' => env('APP_NAME', 'AI Business OS'),
 
 
         /*
@@ -29,7 +29,7 @@
         |
         */
 
-        'title' => env('APP_TITLE', 'Bulk SMS Application For Marketing'),
+        'title' => env('APP_TITLE', 'Business Operations Platform'),
 
 
         /*
@@ -41,7 +41,7 @@
         |
         */
 
-        'keyword'       => env('APP_KEYWORD', 'ultimate sms, codeglen, bulk sms, sms, sms marketing, laravel, framework'),
+        'keyword'       => env('APP_KEYWORD', 'business operations, automation, ai business os, workspace, crm, messaging'),
 
 
         /*
@@ -52,7 +52,38 @@
         | This is the logo of your application.
         |
         */
-        'logo'          => env('APP_LOGO', ''),
+        'logo'          => env('APP_LOGO', 'images/branding/default-logo.svg'),
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Application logo - compact/sidebar variant
+        |--------------------------------------------------------------------------
+        |
+        | This is the compact/collapsed-sidebar/mobile-header logo variant of
+        | your application. Falls back to the full logo, then to a neutral mark,
+        | if not configured. Deliberately not named APP_LOGO_COMPACT:
+        | AppConfig::setEnv()'s own find/replace is a substring match on the
+        | key, so any .env key containing "APP_LOGO" as a substring would be
+        | silently corrupted by an update to the plain APP_LOGO key.
+        |
+        */
+        'logo_compact'  => env('APP_COMPACT_LOGO', null),
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Application logo - dark-background variant
+        |--------------------------------------------------------------------------
+        |
+        | This is the optional dark-background logo variant of your application.
+        | Falls back to the full, light-background logo, then to a neutral mark,
+        | if not configured. Deliberately not named APP_LOGO_DARK -- see the
+        | APP_COMPACT_LOGO note above; the same substring-collision risk
+        | applies identically here.
+        |
+        */
+        'logo_dark'     => env('APP_DARK_LOGO', null),
 
 
         /*
@@ -63,18 +94,57 @@
         | This is the favicon of your application.
         |
         */
-        'favicon'       => env('APP_FAVICON', ''),
+        'favicon'       => env('APP_FAVICON', 'images/branding/default-favicon.svg'),
 
 
         /*
         |--------------------------------------------------------------------------
-        | Application footer text
+        | Authentication-page illustration
         |--------------------------------------------------------------------------
         |
-        | This is the footer text of your application.
+        | Optional owner-configured illustration shown on the authentication
+        | surface. Falls back to the bundled illustration when not configured.
         |
         */
-        'footer_text'   => env('APP_FOOTER_TEXT', 'Copyright &copy; Codeglen - 2020'),
+        'auth_illustration' => env('APP_AUTH_ILLUSTRATION', null),
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Installer illustration
+        |--------------------------------------------------------------------------
+        |
+        | Optional owner-configured illustration shown on the Installer surface.
+        | Falls back to the bundled illustration when not configured.
+        |
+        */
+        'installer_illustration' => env('APP_INSTALLER_ILLUSTRATION', null),
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Footer company name
+        |--------------------------------------------------------------------------
+        |
+        | Optional owner-configured company name shown in the footer copyright
+        | line. Falls back to the application name when not configured.
+        |
+        */
+        'footer_company_name' => env('APP_FOOTER_COMPANY_NAME', null),
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Footer copyright wording
+        |--------------------------------------------------------------------------
+        |
+        | Optional short owner-configured suffix appended to the footer
+        | copyright line (e.g. "All rights reserved"). The copyright year
+        | itself is always computed automatically at render time, never
+        | stored here.
+        |
+        */
+        'footer_copyright_text' => env('APP_FOOTER_COPYRIGHT_TEXT', null),
 
 
         /*

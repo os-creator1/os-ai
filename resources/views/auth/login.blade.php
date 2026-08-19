@@ -28,21 +28,14 @@
         <div class="auth-inner row m-0">
             <!-- Brand logo-->
             <a class="brand-logo" href="{{route('login')}}">
-                <img src="{{asset(config('app.logo'))}}" alt="{{config('app.name')}}" />
+                <x-branding-logo variant="full" background="light" />
             </a>
             <!-- /Brand logo-->
 
             <!-- Left Text-->
             <div class="d-none d-lg-flex col-lg-8 align-items-center p-5">
                 <div class="w-100 d-lg-flex align-items-center justify-content-center px-5">
-                    @if($configData['theme'] === 'dark')
-                        <img class="img-fluid" src="{{asset('images/pages/login-v2-dark.svg')}}"
-                             alt="{{config('app.name')}}" />
-                    @else
-                        <img class="img-fluid" src="{{asset('images/pages/login-v2.svg')}}"
-                             alt="{{config('app.name')}}" />
-                    @endif
-
+                    <x-branding-illustration surface="auth" :dark="$configData['theme'] === 'dark'" />
                 </div>
             </div>
             <!-- /Left Text-->
@@ -209,15 +202,15 @@
 @push('scripts')
     <script>
       $(".admin-login").on("click", function() {
-        $("#email").val("admin@codeglen.com");
+        $("#email").val("admin@example.test");
       });
 
       $(".customer-login").on("click", function() {
-        $("#email").val("customer@codeglen.com");
+        $("#email").val("customer@example.test");
       });
 
       $(".dlt-login").on("click", function() {
-        $("#email").val("dlt@codeglen.com");
+        $("#email").val("dlt@example.test");
       });
     </script>
 @endpush
