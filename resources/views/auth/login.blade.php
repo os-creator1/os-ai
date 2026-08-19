@@ -28,7 +28,7 @@
         <div class="auth-inner row m-0">
             <!-- Brand logo-->
             <a class="brand-logo" href="{{route('login')}}">
-                <img src="{{asset(config('app.logo'))}}" alt="{{config('app.name')}}" />
+                <x-branding-logo variant="full" background="light" />
             </a>
             <!-- /Brand logo-->
 
@@ -209,15 +209,15 @@
 @push('scripts')
     <script>
       $(".admin-login").on("click", function() {
-        $("#email").val("admin@codeglen.com");
+        $("#email").val("admin@example.test");
       });
 
       $(".customer-login").on("click", function() {
-        $("#email").val("customer@codeglen.com");
+        $("#email").val("customer@example.test");
       });
 
       $(".dlt-login").on("click", function() {
-        $("#email").val("dlt@codeglen.com");
+        $("#email").val("dlt@example.test");
       });
     </script>
 @endpush

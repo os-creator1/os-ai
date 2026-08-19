@@ -10,7 +10,7 @@
                 <li class="nav-item me-auto">
                     <a class="navbar-brand" href="{{route('user.home')}}">
                         <div class="brand-logo">
-                            <img src="{{asset(config('app.logo'))}}" alt="{{ config('app.name') }}" />
+                            <x-branding-logo variant="full" background="light" />
                         </div>
                     </a>
                 </li>
@@ -19,7 +19,7 @@
                 <li class="nav-item me-auto">
                     <a class="navbar-brand" href="{{route('admin.home')}}">
                         <div class="brand-logo">
-                            <img src="{{asset(config('app.logo'))}}" alt="{{ config('app.name') }}" />
+                            <x-branding-logo variant="full" background="light" />
                         </div>
                     </a>
                 </li>

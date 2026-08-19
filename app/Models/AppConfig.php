@@ -47,15 +47,15 @@
             return [
                 [
                     'setting' => 'app_name',
-                    'value'   => 'Ultimate SMS',
+                    'value'   => 'AI Business OS',
                 ],
                 [
                     'setting' => 'app_title',
-                    'value'   => 'Bulk SMS Application For Marketing',
+                    'value'   => 'Business Operations Platform',
                 ],
                 [
                     'setting' => 'app_keyword',
-                    'value'   => 'ultimate sms, codeglen, bulk sms, sms, sms marketing, laravel, framework',
+                    'value'   => 'business operations, automation, ai business os, workspace, crm, messaging',
                 ],
                 [
                     'setting' => 'license',
@@ -75,7 +75,7 @@
                 ],
                 [
                     'setting' => 'from_name',
-                    'value'   => 'Ultimate SMS',
+                    'value'   => 'AI Business OS',
                 ],
                 [
                     'setting' => 'company_address',
@@ -87,7 +87,7 @@
                 ],
                 [
                     'setting' => 'footer_text',
-                    'value'   => 'Copyright &copy; Codeglen - 2025',
+                    'value'   => 'Copyright &copy; ' . date('Y'),
                 ],
                 [
                     'setting' => 'app_logo',
@@ -96,6 +96,30 @@
                 [
                     'setting' => 'app_favicon',
                     'value'   => 'images/logo/428eedaaee070f72c0a4f14aa08be0c4.png',
+                ],
+                [
+                    'setting' => 'app_logo_compact',
+                    'value'   => '',
+                ],
+                [
+                    'setting' => 'app_logo_dark',
+                    'value'   => '',
+                ],
+                [
+                    'setting' => 'app_auth_illustration',
+                    'value'   => '',
+                ],
+                [
+                    'setting' => 'app_installer_illustration',
+                    'value'   => '',
+                ],
+                [
+                    'setting' => 'app_footer_company_name',
+                    'value'   => '',
+                ],
+                [
+                    'setting' => 'app_footer_copyright_text',
+                    'value'   => '',
                 ],
                 [
                     'setting' => 'country',

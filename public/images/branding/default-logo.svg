@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 40" width="200" height="40" role="img" aria-labelledby="ds-default-logo-title">
+  <title id="ds-default-logo-title">AI Business OS</title>
+  <rect x="0" y="2" width="36" height="36" rx="10" fill="#B5524C"/>
+  <text x="18" y="26" font-family="Arial, Helvetica, sans-serif" font-size="16" font-weight="700" fill="#FFFFFF" text-anchor="middle">AI</text>
+  <text x="46" y="25" font-family="Arial, Helvetica, sans-serif" font-size="17" font-weight="700" fill="#262522">Business OS</text>
+</svg>

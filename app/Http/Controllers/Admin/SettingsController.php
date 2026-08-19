@@ -182,12 +182,20 @@
             }
 
 
-            if (isset($request->app_logo) && $request->hasFile('app_logo') && $request->file('app_logo')->isValid()) {
-                AppConfig::uploadFile($request->file('app_logo'), 'app_logo');
-            }
+            /*
+             * Design System M2 Platform Branding contract §6.3/§11 items
+             * 14-15. Every branding upload field routes through
+             * BrandingUploadService (safe content-hashed filenames,
+             * magic-byte-validated by ValidBrandingImageRule, §6.3) —
+             * AppConfig::uploadFile()'s client-extension-derived filename
+             * is no longer used for any field.
+             */
+            $brandingUploadService = app(\App\Library\Branding\BrandingUploadService::class);
 
-            if (isset($request->app_favicon) && $request->hasFile('app_favicon') && $request->file('app_favicon')->isValid()) {
-                AppConfig::uploadFile($request->file('app_favicon'), 'app_favicon');
+            foreach (['app_logo' => 'logo', 'app_favicon' => 'favicon', 'logo_compact' => 'logo_compact', 'logo_dark' => 'logo_dark', 'auth_illustration' => 'auth_illustration', 'installer_illustration' => 'installer_illustration'] as $field => $configKey) {
+                if ($request->hasFile($field) && $request->file($field)->isValid()) {
+                    $brandingUploadService->store($request->file($field), $configKey);
+                }
             }
 
             if ($request->input('app_name') != config('app.name')) {
@@ -226,8 +234,12 @@
                 AppConfig::setEnv('APP_KEYWORD', $request->input('app_keyword'));
             }
 
-            if ($request->input('footer_text') != config('app.footer_text')) {
-                AppConfig::setEnv('APP_FOOTER_TEXT', $request->input('footer_text'));
+            if ($request->input('footer_company_name') != config('app.footer_company_name')) {
+                AppConfig::setEnv('APP_FOOTER_COMPANY_NAME', (string) $request->input('footer_company_name'));
+            }
+
+            if ($request->input('footer_copyright_text') != config('app.footer_copyright_text')) {
+                AppConfig::setEnv('APP_FOOTER_COPYRIGHT_TEXT', (string) $request->input('footer_copyright_text'));
             }
 
             $checkCustomScript = Helper::app_config('custom_script');
@@ -242,7 +254,17 @@
 
             }
 
-            $this->settings->general($request->except('_token', 'app_logo', 'app_favicon'));
+            $this->settings->general($request->except(
+                '_token',
+                'app_logo',
+                'app_favicon',
+                'logo_compact',
+                'logo_dark',
+                'auth_illustration',
+                'installer_illustration',
+                'footer_company_name',
+                'footer_copyright_text',
+            ));
 
             return redirect()->route('admin.settings.general')->withInput(['tab' => 'general'])->with([
                 'status'  => 'success',
