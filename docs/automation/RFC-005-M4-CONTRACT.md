@@ -223,6 +223,88 @@ Direct reads performed for this contract, each finding relied upon below:
    contract's own prior draft's "Refund paths ... remain their own
    distinct states" phrasing is corrected to say this explicitly rather
    than imply an executable path this contract does not actually define.
+7g. **(This refinement) Stripe's own Checkout Session API requires `mode:
+   'payment'` to carry at least one `line_items` entry — confirmed against
+   Stripe's own documented request shape.** The prior draft's §15a sketch
+   passed `amount`/`currency` directly to the Session create call with no
+   `line_items` at all — a request Stripe would reject outright. Corrected
+   to one non-adjustable line item built from inline `price_data`
+   (`currency`, `unit_amount`, `product_data.name`), never a
+   separately-created Stripe Price/Product — `unit_amount` derives only
+   from the frozen agreement amount, never an independent retail price
+   (§15a).
+7h. **(This refinement) `CheckoutSessionResult::$redirectUrl` was declared
+   non-nullable, but Stripe's own Checkout Session `url` field exists only
+   while the Session is `open`** — a `retrieveCheckoutSession()` call
+   against an already-`complete` Session legitimately returns `url: null`,
+   confirmed against Stripe's own documented object shape. Corrected to
+   `?string` (§15a); `createCheckoutSession()` itself still fails closed if
+   a **newly-created** Session unexpectedly carries no `url`, since the
+   browser cannot continue without one.
+7i. **(This refinement) No field on any existing or drafted DTO captures
+   the actual `PaymentMethod` a completed Checkout Session used.** The
+   Session's own `payment_intent` reference alone is insufficient — the
+   underlying PaymentIntent must itself be resolved (via expansion or an
+   equivalent exact retrieval) to learn which PaymentMethod the customer
+   ultimately paid with, since hosted Checkout does not guarantee the
+   locally-assumed default card is the one actually charged.
+   `CheckoutSessionResult` gains `public ?string $providerPaymentMethodId`
+   (§15a).
+7j. **(This refinement) `PaymentInstrumentManager`'s existing methods
+   (`resolveProviderCustomer()`, `confirmSetupIntentAndAttach()`,
+   `detachInstrument()`, `setDefaultInstrument()`) are all `Business`-scoped,
+   gated by `assertChargeCausingConsent()`'s Business-payer-authority
+   split** — confirmed by direct read of
+   `app/Library/Usage/PaymentInstrumentManager.php`. No Workspace-owner-only
+   method exists to reconcile a Checkout-selected `PaymentMethod` into
+   `business_payment_instruments` as the Workspace's own default
+   usage-billing instrument. This is a genuine gap: hosted Checkout can
+   result in a card different from any previously-saved default, and M4
+   must not later display or renew against the wrong instrument. A
+   narrowly-scoped new method is authorized (§15c, §21, §25 item 94),
+   reusing the class's own existing repository/gateway calls verbatim
+   (`PaymentProviderCustomerRepository::findActiveByWorkspaceId()`,
+   `PaymentProviderGateway::retrievePaymentMethod()`,
+   `BusinessPaymentInstrumentRepository::findByProviderPaymentMethodId()`/
+   `create()`/`clearDefaultForProviderCustomer()`) — confirmed sufficient
+   without any schema change and without touching any other M3
+   payment-instrument path.
+7k. **(This refinement) M4's own prior §14 draft described
+   `retrySlotRenewalAsAdministrator()` as mirroring
+   `retryFundingAttemptAsAdministrator()`'s exact shape** — confirmed by
+   direct read that M3's method (already merged, unchanged this milestone)
+   only re-**retrieves** an already-created PaymentIntent from the
+   provider; it never re-drives payment. That is correct, sufficient
+   reconciliation behavior for M3's own scope, but it cannot satisfy M4's
+   own "3 attempts" retry requirement, which requires a genuine second
+   provider-side attempt after a card decline — merely re-retrieving an
+   already-failed PaymentIntent can never turn it into a success. No
+   gateway method exists to re-confirm an existing PaymentIntent against a
+   (possibly new) payment method. A narrow `confirmPaymentIntent()`
+   gateway addition is authorized (§15a), added to the already-allowlisted
+   gateway files (items 88–90, no new path) — M3's own
+   `retryFundingAttemptAsAdministrator()` remains completely unmodified.
+7l. **(This refinement) `UsageBillingCheckoutManager` has no
+   `assertPlatformAdministrator()`-equivalent helper of its own** —
+   confirmed absent by a direct, targeted search of the file. The
+   established precedent for this exact check already exists elsewhere in
+   the same `app/Library/Usage/*` family:
+   `UsageWalletManager::assertPlatformAdministrator()`, a direct
+   `users.is_admin` read mirroring `EntitlementManager::assertPlatformAdministrator()`'s
+   exact shape (RFC-004 §20). M4's own three "AsAdministrator"-named
+   manager methods must not rely solely on being reached through the admin
+   route/middleware — each must independently verify the supplied actor is
+   a real platform administrator before any mutation or provider call
+   (§21).
+7m. **(This refinement) Test #86's own drafted description asserts an
+   impossible repository-wide claim** — "no file outside
+   `EntitlementManager` and six repositories references
+   `workspace_plan_catalog`/`workspace_plan_assignments`/
+   `workspace_entitlement_transitions`" is false on its face, since
+   RFC-004's own models, migrations, and tests legitimately reference their
+   own tables. Corrected to the actual, narrower M4 source-boundary
+   invariant: no *M4-authorized production path* imports, resolves, or
+   raw-queries an RFC-004 repository or table directly (§25 item 86).
 8. **`ProcessPaymentProviderEvent.php` hardcodes `'funding_attempt'` as the
    only recognized `app_subject_kind`** (`app/Jobs/Usage/ProcessPaymentProviderEvent.php:68`:
    `($metadata['app_subject_kind'] ?? null) !== 'funding_attempt'` →
@@ -616,6 +698,22 @@ contract's own scope:
    and the administrator's own manual-allocation action all call this one
    routine — never a copy of its logic, never a fake administrator id
    standing in for a real one (§21).
+7. **(This refinement) The initial Checkout Session's own actual
+   `PaymentMethod` — not necessarily the Workspace's previously-saved
+   default — is reconciled into `business_payment_instruments` before the
+   agreement is permitted to reach `completed`.** `confirmSlotAgreementFromReturn()`/
+   `confirmSlotAgreementFromWebhook()` (§21) call
+   `PaymentInstrumentManager::syncWorkspaceCheckoutPaymentMethod()` (§15c)
+   immediately after the Checkout Session's own payment is verified
+   `paid` and its actual PaymentMethod resolved — strictly before
+   `performVerifiedAllocation()` is invoked. `PaymentInstrumentManager`
+   remains the sole write authority for `business_payment_instruments`
+   (unchanged M3 discipline) — no other M4 code path ever writes to that
+   table. The agreement's own `payment_method_display_snapshot` (§18) is
+   provisional while `quote_created`/`checkout_pending`; this call updates
+   it exactly once, to the actual paid card's display value, and it is
+   then frozen for historical display, matching every other snapshot
+   column's own frozen-after-first-confirmation discipline.
 
 ---
 
@@ -792,7 +890,17 @@ actually own.** Accordingly:
   `PaymentProviderGateway::createOffSessionPaymentIntent()` M3 already
   established, with `metadata = ['app_subject_kind' => 'slot_renewal_charge',
   'app_subject_id' => (string) $renewalCharge->id, 'app_operation_id' =>
-  $localIdempotencyKey]`.
+  $localIdempotencyKey]`. **The Stripe-facing `idempotency_key` argument
+  itself is a distinct, per-attempt value, corrected this refinement
+  (§13, §23) — `sha256($localIdempotencyKey . ':attempt:1')` for this
+  initial call, never the bare `$localIdempotencyKey`.** `local_idempotency_key`
+  (the column) and `app_operation_id` (the metadata) are completely
+  unaffected by this — both remain exactly the row-identity value already
+  derived above; only the value Stripe itself receives as `idempotency_key`
+  is ordinal-suffixed, so that each of up to 3 real provider attempts
+  against the same logical charge gets Stripe's own independent
+  request-level idempotency, while local routing/dedup continues to key
+  off the unchanged, unsuffixed `local_idempotency_key`.
 - **`requires_action` handling** mirrors M3's own funding-attempt shape
   exactly — a `requires_action` PaymentIntent status leaves the charge row
   in a pending state awaiting either an owner-driven confirmation or the
@@ -882,28 +990,59 @@ actually own.** Accordingly:
 
 ## 13. Dunning, `payment_lapsed`, and recovery — exact, no revocation
 
-- A failed renewal charge triggers **exactly 3** retry attempts — locked,
-  matching RFC-005's own recorded recommendation and M3's own
-  auto-recharge retry posture (§5 of this contract's own item 5). This is
-  no longer an implementation-time choice; a future change to this count
-  requires its own separate authorization/configuration, never an ad hoc
-  implementation-time decision.
+- **Maximum 3 total provider payment attempts per logical renewal charge
+  — corrected this refinement to remove the "3 retries" ambiguity (§3
+  item 7k):** the initial provider attempt (`scheduled_job`/
+  `owner_initiated` creation, §11) **is attempt 1**; at most **2**
+  subsequent retries follow (`owner_initiated` via `retrySlotRenewalAsOwner()`
+  or `admin_retry` via `retrySlotRenewalAsAdministrator()`, in either
+  order/mix); **failure of attempt 3 causes `payment_lapsed`**. This is
+  never phrased as "3 retries" (which would mean 4 total). Locked,
+  matching RFC-005 §22's own recorded recommendation ("recommended: 3")
+  read as 3 total attempts, not 3 retries beyond an initial one — this is
+  no longer an implementation-time choice; a future change requires its
+  own separate authorization/configuration.
+- **RFC-005 §22 itself confirms retries are manually triggered, not a
+  separate automatic dunning scheduler** — its own recovery language
+  names only "a manually-triggered `admin_retry`" and "the Workspace
+  owner's own `owner_initiated` retry," never a scheduled retry job; no
+  such job is authorized or created by M4 (§25's allowlist has exactly
+  four new jobs, none of them a retry scheduler).
+- **A retry must actually drive the payment provider again — merely
+  retrieving an already-failed PaymentIntent is reconciliation, not a
+  retry (§3 item 7k).** `retrySlotRenewalAsOwner()`/
+  `retrySlotRenewalAsAdministrator()` (§21) call the new
+  `PaymentProviderGateway::confirmPaymentIntent()` (§15a) against the
+  charge's own existing `provider_session_or_intent_reference` and the
+  Workspace's **current** default payment instrument — never merely
+  `retrievePaymentIntent()` — so a retry after the owner has corrected
+  their payment method can genuinely succeed. This deliberately diverges
+  from M3's own already-shipped `retryFundingAttemptAsAdministrator()`
+  shape (retrieve-only, unmodified this milestone, §14) — that method's
+  own scope is resuming a stuck-but-still-viable attempt, not recovering
+  from a definite decline.
+- **Attempt-ordinal derivation — exact, deterministic, crash-safe, using
+  only the existing `additional_business_slot_renewal_charge_transitions`
+  table, no new schema column (§23 has the full algorithm).**
 - **While retries for a due period are in progress, `next_renewal_at`
   remains unchanged**, still pointing at that same already-due period — no
   new `scheduled_renewal` row is created for a later period until the
   current one either succeeds or is exhausted (all 3 attempts fail).
-- **After the 3rd retry fails:** `payment_lapsed = true`,
+- **After attempt 3 fails:** `payment_lapsed = true`,
   `payment_lapsed_at = now()`, and `next_renewal_at` is explicitly set to
-  `null` — no further automatic renewal attempts are scheduled while
-  lapsed. `AdditionalBusinessSlotAgreementLapsed` dispatches.
+  `null` — no further attempts are possible while lapsed (a 4th attempt
+  is never reachable — §23's own ordinal cap enforces this independently
+  of caller behavior). `AdditionalBusinessSlotAgreementLapsed` dispatches.
 - **Recovery — `UsageBillingCheckoutManager::retrySlotRenewalAsOwner(AdditionalBusinessSlotRenewalCharge
   $charge, int $actorUserId): SlotRenewalChargeResult`** (§21, new — the
   owner-recovery manager method §3 item 7d's audit found missing; distinct
   from `retrySlotRenewalAsAdministrator()`, which remains admin-only,
-  mandatory-reason). The moment any subsequent renewal charge succeeds (an
-  `admin_retry` via `retrySlotRenewalAsAdministrator()`, §14, or the
-  owner's own `owner_initiated` retry via `retrySlotRenewalAsOwner()`
-  after updating their payment method), `payment_lapsed = false` and
+  mandatory-reason, and now explicitly verifies the actor is a real
+  platform administrator before acting, §3 item 7l/§21). The moment any
+  subsequent renewal charge succeeds (an `admin_retry` via
+  `retrySlotRenewalAsAdministrator()`, §14, or the owner's own
+  `owner_initiated` retry via `retrySlotRenewalAsOwner()` after updating
+  their payment method), `payment_lapsed = false` and
   `payment_lapsed_cleared_at = now()` are set, `next_renewal_at` is
   **recomputed one billing cadence forward from the recovery moment —
   never retroactively from the missed period**, and
@@ -962,10 +1101,29 @@ unaffected:
   into RFC-004's own `$reason` parameter on that call (§8 item 3), but the
   administrator's identity itself is never passed as, and never
   substitutes for, `$requestingCustomerUserId`.
-- `retrySlotRenewalAsAdministrator()` (§21) mirrors
-  `retryFundingAttemptAsAdministrator()`'s own exact shape (M3, already
-  merged) — re-drives an already-created, stuck attempt by re-retrieving
-  its PaymentIntent from the provider, never creating a new one.
+- **`retrySlotRenewalAsAdministrator()` (§21) — corrected this refinement
+  (§3 item 7k): it does NOT mirror `retryFundingAttemptAsAdministrator()`'s
+  retrieve-only shape.** M3's method (already merged, unmodified this
+  milestone) only re-retrieves an already-created PaymentIntent — correct
+  for its own resume-a-stuck-attempt scope, but incapable of recovering a
+  genuinely *declined* charge. `retrySlotRenewalAsAdministrator()` instead
+  calls the new `PaymentProviderGateway::confirmPaymentIntent()` (§15a)
+  against the Workspace's current default instrument, a real second
+  provider-side attempt — see §13/§21/§23 for the exact mechanism.
+- **Every M4 "AsAdministrator"-named method independently, explicitly
+  verifies the supplied actor is a real platform administrator before any
+  mutation or provider call — never relying solely on the admin
+  route/middleware (§3 item 7l).** `retrySlotRenewalAsAdministrator()`,
+  `allocateSlotAgreementAsAdministrator()`, and the administrator branch
+  of `requestSlotAgreementCancellation()` each call a new private
+  `assertPlatformAdministrator(int $actorUserId): void` helper added to
+  `UsageBillingCheckoutManager` (§21, §25 item 41 — an authorized internal
+  addition to the already-allowlisted file, no new path), mirroring
+  `UsageWalletManager::assertPlatformAdministrator()`'s exact shape (a
+  direct `users.is_admin` read) and throwing
+  `UnauthorizedSlotAgreementActionException` (§19, already allowlisted)
+  on failure — before the mandatory-`$reason` check and before any
+  mutation or outbound call.
 
 ---
 
@@ -1045,10 +1203,10 @@ a kind.
 
 **Authorized because RFC-005 §22 requires a genuine customer-present
 Checkout Session for the initial additional-slot purchase, and no such
-seam exists in the merged `PaymentProviderGateway`** (§3 items 7a–7c).
-This is the **only** addition to the gateway boundary M4 authorizes —
-every existing method (SetupIntent, off-session PaymentIntent, customer,
-payment-method) is unchanged.
+seam exists in the merged `PaymentProviderGateway`** (§3 items 7a–7c,
+7g–7k). This remains the **only** addition to the gateway boundary M4
+authorizes — every existing method (SetupIntent, off-session PaymentIntent,
+customer, payment-method) is unchanged.
 
 **New interface methods**, added to `PaymentProviderGateway` (§25):
 
@@ -1057,6 +1215,7 @@ public function createCheckoutSession(
     string $providerCustomerId,
     int $amountMinorUnits,
     string $currencyCode,
+    string $lineItemName,
     string $successUrl,
     string $cancelUrl,
     string $idempotencyKey,
@@ -1064,56 +1223,146 @@ public function createCheckoutSession(
 ): CheckoutSessionResult;
 
 public function retrieveCheckoutSession(string $providerCheckoutSessionId): CheckoutSessionResult;
+
+public function confirmPaymentIntent(
+    string $providerPaymentIntentId,
+    string $providerPaymentMethodId,
+    string $idempotencyKey,
+): PaymentIntentResult;
 ```
+
+**`confirmPaymentIntent()`** (§3 item 7k) is the exact, narrow addition
+that makes an M4 renewal retry a genuine second provider-side attempt,
+never a bare re-retrieval — see §21/§23 for the deterministic 3-attempt
+mechanism that calls it. It reuses the existing `PaymentIntentResult` DTO
+unchanged (§25 items 88–90 — no new path for any of the three new
+methods; the same three already-allowlisted gateway files absorb all of
+it).
+
+**Corrected Checkout Session request shape (§3 item 7g)** — Stripe's own
+`mode: 'payment'` requires at least one `line_items` entry; the amount is
+represented as **one non-adjustable line item, built from inline
+`price_data`, never a separately-created Stripe Price/Product**:
+
+```php
+'mode' => 'payment',
+'customer' => $providerCustomerId,
+'payment_method_types' => ['card'],
+'line_items' => [[
+    'price_data' => [
+        'currency' => strtolower($currencyCode),
+        'unit_amount' => $amountMinorUnits,
+        'product_data' => [
+            'name' => $lineItemName,
+        ],
+    ],
+    'quantity' => 1,
+]],
+'payment_intent_data' => [
+    'setup_future_usage' => 'off_session',
+],
+'success_url' => $successUrl,
+'cancel_url' => $cancelUrl,
+'metadata' => $metadata,
+```
+
+`unit_amount` derives **only** from the frozen agreement amount, converted
+through the exact currency rules §12 (M3 contract) already establishes —
+no independent Stripe retail price is invented, no adjustable quantity, no
+promotion code, no customer-editable amount. `payment_intent_data.setup_future_usage:
+'off_session'` is kept because this initial customer-present payment is
+explicitly establishing a card for later off-session renewal (§11).
+`initiateSlotAgreementCheckout()` (§21) supplies `$lineItemName = 'Additional
+Business slots'` — the already-defined feature's own truthful name, not a
+new commercial product or price.
 
 **New normalized DTO**, `App\Library\Usage\CheckoutSessionResult` (§25,
 new — no existing DTO can represent this shape without conflating two
-different provider objects, §3 item 7c):
+different provider objects, §3 item 7c) — **corrected this refinement for
+nullability and actual-payment-method capture (§3 items 7h–7i):**
 
 ```php
 final readonly class CheckoutSessionResult
 {
     public function __construct(
         public string $providerCheckoutSessionId,
-        public string $status,           // Stripe Checkout Session's own 'status': open|complete|expired
-        public string $paymentStatus,    // Stripe's own 'payment_status': unpaid|paid|no_payment_required
-        public string $redirectUrl,      // the Session's own 'url' — the customer-present continuation
-        public int $amountMinorUnits,    // from 'amount_total', never 'amount' (§15b)
+        public string $status,                    // Stripe Checkout Session's own 'status': open|complete|expired
+        public string $paymentStatus,             // Stripe's own 'payment_status': unpaid|paid|no_payment_required
+        public ?string $redirectUrl,              // the Session's own 'url' — null once the Session is no longer 'open' (§3 item 7h)
+        public int $amountMinorUnits,              // from 'amount_total', never 'amount' (§15b)
         public string $currencyCode,
         public string $providerCustomerId,
-        public ?string $providerPaymentIntentId, // the Session's own 'payment_intent', for later traceability only — never re-read for pricing (§9 item 4)
+        public ?string $providerPaymentIntentId,  // the Session's own 'payment_intent', for later traceability only — never re-read for pricing (§9 item 4)
+        public ?string $providerPaymentMethodId,  // the actual PaymentMethod that paid, resolved on retrieve of a completed Session (§3 item 7i)
     ) {
     }
 }
 ```
 
-**`initiateSlotAgreementCheckout()` (§21) calls `createCheckoutSession()`
-exclusively for the initial purchase — never `createOffSessionPaymentIntent()`**,
-preserving RFC-005's own customer-present design rather than silently
-substituting an off-session charge. `confirmSlotAgreementFromReturn()`
-calls `retrieveCheckoutSession()` (mirroring `retrievePaymentIntent()`'s
-own existing browser-return-verification role, never trusting the
-redirect alone). `metadata` for `createCheckoutSession()` follows the
-identical shape every other M4 outbound call already establishes:
-`['app_subject_kind' => 'slot_agreement', 'app_subject_id' => (string)
-$agreement->id, 'app_operation_id' => $agreement->local_idempotency_key]`.
+**`redirectUrl` nullability rule — exact:** `createCheckoutSession()`
+**fails closed** (throws `ProviderInvalidRequestException`, the identical
+existing gateway exception every other malformed-response case already
+uses) if the newly-created Session unexpectedly carries no `url` — the
+browser cannot continue without one, so a null `redirectUrl` from a
+*create* call is always a hard error, never silently passed through.
+`retrieveCheckoutSession()` **may legitimately return `redirectUrl: null`**
+for an already-`complete` Session — callers (`confirmSlotAgreementFromReturn()`/
+webhook confirmation, §21) never depend on it being present.
 
-**`StripePaymentProviderGateway`** (§25, modified) implements both new
-methods via `$this->client->checkout->sessions->create([...])`/
-`->retrieve()`, mapping Stripe's own `CheckoutSession` object
-(`id`, `status`, `payment_status`, `url`, `amount_total`, `currency`,
-`customer`, `payment_intent`) into `CheckoutSessionResult` exactly —
-`mode: 'payment'`, `customer: $providerCustomerId`,
-`payment_method_types: ['card']` (matching M3's own `card`-only v1 scope,
-`PaymentInstrumentType`), `success_url`/`cancel_url` as supplied,
-`metadata` passed through unchanged, `idempotency_key` on create.
+**`providerPaymentMethodId` resolution — exact:** on `retrieveCheckoutSession()`
+of a `complete` Session, the gateway resolves the actual PaymentMethod
+via Stripe's own PaymentIntent expansion (`expand: ['payment_intent.payment_method']`)
+or an equivalent exact retrieval — **never assumed to be the Workspace's
+locally-saved default**, since hosted Checkout does not guarantee that.
+For an `open`/`expired` Session (no completed payment yet),
+`providerPaymentMethodId` is `null`.
+
+**Required-verified conditions — exact, all of the following, before M4
+treats a Checkout Session payment as verified (§3 item 7h, §21):**
+
+1. `status === 'complete'`;
+2. `payment_status === 'paid'`;
+3. the retrieved Session's own id matches the agreement's own expected
+   `provider_session_or_intent_reference`;
+4. the confirmed `amountMinorUnits` matches the agreement's own frozen
+   `total_amount_micro_snapshot` (converted, §9 item 4);
+5. the confirmed `currencyCode` matches the agreement's own frozen
+   `currency_id_snapshot`;
+6. `providerCustomerId` matches the Workspace's own expected provider
+   customer;
+7. `providerPaymentIntentId` is non-null;
+8. `providerPaymentMethodId` is non-null.
+
+Any condition failing leaves the agreement in its current pending state —
+no partial advance, no allocation, no payment-instrument sync. **The
+webhook path (`slot_agreement` branch, §15) additionally requires
+`payment_status === 'paid'` explicitly** — `checkout.session.completed`
+firing by itself is not, on its own, sufficient payment evidence (Stripe
+dispatches this event even for a Session that completed with
+`payment_status: 'unpaid'`, e.g. a free/zero-amount edge case that cannot
+occur here given §9's own pricing floor, but the check is asserted
+unconditionally rather than relying on that floor never changing).
+
+**`StripePaymentProviderGateway`** (§25, modified) implements all three
+new methods — `createCheckoutSession()`/`retrieveCheckoutSession()` via
+`$this->client->checkout->sessions->create([...])`/`->retrieve()` (the
+corrected request/response shape above); `confirmPaymentIntent()` via
+`$this->client->paymentIntents->confirm($providerPaymentIntentId,
+['payment_method' => $providerPaymentMethodId], ['idempotency_key' =>
+$idempotencyKey])`, returning the same `PaymentIntentResult` shape
+`createOffSessionPaymentIntent()`/`retrievePaymentIntent()` already use.
 
 **`FakePaymentProviderGateway`** (§25, modified) implements a
-deterministic, test-controlled equivalent of both methods, mirroring its
-own existing `createOffSessionPaymentIntent()`/`registerPaymentMethod()`
+deterministic, test-controlled equivalent of all three methods, mirroring
+its own existing `createOffSessionPaymentIntent()`/`registerPaymentMethod()`
 test-configuration pattern exactly — tests configure the fake's next
-Checkout Session result (status/payment_status/amount) before exercising
-a manager method, the identical established convention.
+Checkout Session result (status/payment_status/amount/payment method) and
+each `confirmPaymentIntent()` call's own outcome before exercising a
+manager method, the identical established convention. The fake's own
+`confirmPaymentIntent()` implementation records each call it receives
+(idempotency key and payment method), so a test can assert a genuine
+second call actually occurred — never merely that the same PaymentIntent
+was re-retrieved (§3 item 7k).
 
 ### 15b. Webhook amount normalization — Checkout Session widening
 
@@ -1135,6 +1384,66 @@ is consulted only as the fallback a Checkout Session event actually needs.
 `WebhookVerificationResult`'s own shape (§25, unchanged — no new field) is
 sufficient as-is; only the extraction logic inside this one method
 changes.
+
+### 15c. Payment-instrument reconciliation — the actual Checkout card
+
+**Authorized because §3 item 7j confirmed a genuine gap: hosted Checkout
+can result in a different card being used than any Workspace-saved
+default, and M4 must not later display or renew against the wrong
+instrument.** `PaymentInstrumentManager` (§25 item 94, modified) remains
+the **sole write authority** for `business_payment_instruments` —
+unchanged M3 discipline; M4 adds exactly one new, narrowly-scoped public
+method to this already-existing class:
+
+```php
+public function syncWorkspaceCheckoutPaymentMethod(
+    Workspace $workspace,
+    int $actorUserId,
+    string $providerPaymentMethodId,
+): BusinessPaymentInstrument
+```
+
+**Locked behavior — reuses the class's own existing repository/gateway
+calls verbatim, no schema change, no other M3 payment-instrument path
+touched (§3 item 7j):**
+
+1. **Workspace owner only** — `$actorUserId === $workspace->owner_user_id`,
+   or `UnauthorizedPayerAssignmentException` (the identical, existing
+   exception type this class already throws) — narrower than
+   `assertChargeCausingConsent()`'s dual Business/Workspace-payer split,
+   since M4's own additional-slot flow is unconditionally Workspace-scoped
+   (RFC-004). **No platform-admin bypass** — this method is never called
+   from an administrator-actor context.
+2. Resolve the Workspace's own existing active provider customer via
+   `PaymentProviderCustomerRepository::findActiveByWorkspaceId()`
+   (existing method, already used by `resolveProviderCustomer()`) — throws
+   if none exists (a Checkout Session cannot have completed without one).
+3. Retrieve the PaymentMethod via `PaymentProviderGateway::retrievePaymentMethod()`
+   (existing method).
+4. **Require the retrieved PaymentMethod's own `providerCustomerId` to
+   match the resolved provider customer's `provider_customer_id`
+   exactly** — the identical mismatch guard `confirmSetupIntentAndAttach()`
+   already applies, reused verbatim.
+5. **Idempotently reuse the local instrument** if
+   `BusinessPaymentInstrumentRepository::findByProviderPaymentMethodId()`
+   already finds one (existing method) — no duplicate row.
+6. **Otherwise create it** through the repository's own existing
+   `create()` authority (existing method, identical attribute shape
+   `confirmSetupIntentAndAttach()` already writes).
+7. **Make it the provider customer's current default usage-billing
+   instrument** — `clearDefaultForProviderCustomer()` then `update(...,
+   ['is_default' => true])` (both existing methods, the identical pair
+   `setDefaultInstrument()` already uses) — because this Checkout is the
+   Workspace owner's own explicit customer-present authorization for later
+   off-session renewals (§11), not merely an incidental attach.
+
+**Called by exactly `confirmSlotAgreementFromReturn()`/
+`confirmSlotAgreementFromWebhook()`** (§8 item 7, §21), after the
+Checkout Session's payment is verified `paid` (§15a's eight conditions)
+and strictly before `performVerifiedAllocation()` — never called from any
+other M4 site, never called for a renewal/retry confirmation (renewal
+retries select the *existing* current default instrument, §21/§23; they
+do not change it).
 
 ---
 
@@ -1406,7 +1715,14 @@ named manager method here — §3 item 7d's audit found four missing
 entirely** (`requestSlotAgreementIncrease()`, the scheduled-renewal
 creation method, `retrySlotRenewalAsOwner()`,
 `finalizeSlotAgreementCancellation()`) **and one requiring a shared
-routine to avoid a synthetic administrator id** (§3 item 7e).
+routine to avoid a synthetic administrator id** (§3 item 7e). **This
+refinement additionally corrects: the two retry methods to genuinely
+re-drive payment rather than merely re-retrieve (§3 item 7k); a new
+private `assertPlatformAdministrator()` helper explicit inside every
+"AsAdministrator"-named method (§3 item 7l); and the Checkout confirmation
+methods to verify all eight of §15a's required conditions and reconcile
+the actual paid PaymentMethod via `PaymentInstrumentManager` before
+allocation (§3 items 7h–7j).**
 
 **Quote/checkout/confirmation:**
 
@@ -1418,15 +1734,30 @@ routine to avoid a synthetic administrator id** (§3 item 7e).
   item 2), creates the agreement row in `state: quote_created`.
 - `initiateSlotAgreementCheckout(AdditionalBusinessSlotAgreement $agreement, int $actorUserId): SlotAgreementCheckoutResult`
   — creates the initial **Checkout Session** via
-  `PaymentProviderGateway::createCheckoutSession()` (§15a) — **never**
+  `PaymentProviderGateway::createCheckoutSession()` (§15a), supplying
+  `$lineItemName = 'Additional Business slots'` — **never**
   `createOffSessionPaymentIntent()`, preserving RFC-005's own
   customer-present design — transitions to `checkout_pending`.
 - `confirmSlotAgreementFromReturn(AdditionalBusinessSlotAgreement $agreement): SlotAgreementCheckoutResult`
   — mirrors `confirmAttemptFromReturn()` exactly, via
   `retrieveCheckoutSession()` (§15a); never trusts the redirect alone.
+  **Corrected this refinement (§3 items 7h–7j, §15a/§15c):** advances past
+  `payment_succeeded` only once all eight of §15a's required-verified
+  conditions hold (`status === 'complete'`, `payment_status === 'paid'`,
+  matching session id/amount/currency/provider customer, non-null
+  PaymentIntent and PaymentMethod references); on success, calls
+  `PaymentInstrumentManager::syncWorkspaceCheckoutPaymentMethod()` (§15c,
+  §8 item 7) with the resolved `providerPaymentMethodId` **before**
+  `performVerifiedAllocation()`, and updates the agreement's own
+  `payment_method_display_snapshot` exactly once to the actual paid
+  card's display value.
 - `confirmSlotAgreementFromWebhook(AdditionalBusinessSlotAgreement $agreement, PaymentProviderEvent $event): void`
-  — transitions to `payment_succeeded`, then calls the shared allocation
-  routine below.
+  — identical §15a eight-condition verification and §15c payment-instrument
+  sync as `confirmSlotAgreementFromReturn()` above (corrected this
+  refinement), additionally requiring `payment_status === 'paid'`
+  explicitly rather than trusting `checkout.session.completed` alone (§15a)
+  — then transitions to `payment_succeeded` and calls the shared
+  allocation routine below.
 
 **Renewal:**
 
@@ -1438,18 +1769,34 @@ routine to avoid a synthetic administrator id** (§3 item 7e).
   proration (§11), never regenerates `$changeOperationId` (§11's own
   view/form contract supplies it already-stable).
 - `retrySlotRenewalAsAdministrator(AdditionalBusinessSlotRenewalCharge $charge, int $actorUserId, string $reason): SlotRenewalChargeResult`
-  — mirrors `retryFundingAttemptAsAdministrator()` exactly (§14).
+  — **corrected this refinement (§3 items 7k–7l, §13, §14): does not
+  mirror `retryFundingAttemptAsAdministrator()`'s retrieve-only shape.**
+  Calls the new private `assertPlatformAdministrator($actorUserId)`
+  helper first (§14, throws `UnauthorizedSlotAgreementActionException` if
+  not a real admin), requires `$reason` non-empty, then re-drives payment
+  via `confirmPaymentIntent()` (§15a/§23) against the Workspace's current
+  default instrument at the next attempt ordinal — never a mere
+  `retrievePaymentIntent()` call.
 - `retrySlotRenewalAsOwner(AdditionalBusinessSlotRenewalCharge $charge, int $actorUserId): SlotRenewalChargeResult`
   — new (§3 item 7d, §13) — the Workspace owner's own lapse/failure
   recovery path after correcting their payment method; owner-only
   consent check, no reason required (mirrors the owner's own original
-  consent, not an administrator override).
+  consent, not an administrator override). **Corrected this refinement
+  (§3 item 7k, §13, §23): calls `confirmPaymentIntent()` against the
+  Workspace's current default instrument at the next attempt ordinal —
+  the identical real-retry mechanism `retrySlotRenewalAsAdministrator()`
+  uses, minus the admin check/mandatory reason.**
 
 **Cancellation:**
 
 - `requestSlotAgreementCancellation(AdditionalBusinessSlotAgreement $agreement, int $actorUserId, ?string $reason = null): AdditionalBusinessSlotAgreement`
   — `$reason` mandatory when `$actorUserId` is an administrator, optional
-  for the owner's own agreement (§12/§14).
+  for the owner's own agreement (§12/§14). **Corrected this refinement
+  (§3 item 7l):** the administrator branch calls the same private
+  `assertPlatformAdministrator($actorUserId)` helper before accepting the
+  action as an administrator cancellation — an actor who is not a real
+  platform administrator and not the agreement's own Workspace owner is
+  rejected outright, never silently treated as "owner, reason optional."
 - `finalizeSlotAgreementCancellation(AdditionalBusinessSlotAgreement $agreement): AdditionalBusinessSlotAgreement`
   — new (§3 item 7d, §12) — the method `FinalizeSlotAgreementCancellation`
   calls once per due agreement; the job itself creates no row.
@@ -1482,6 +1829,27 @@ routine to avoid a synthetic administrator id** (§3 item 7e).
   — the manual allocation action (§8 item 3, §14) — a thin wrapper
   around `performVerifiedAllocation($agreement, $actorUserId, $reason)`,
   never a fresh charge, never its own separate allocation logic.
+  **Corrected this refinement (§3 item 7l):** calls
+  `assertPlatformAdministrator($actorUserId)` first, before `$reason` is
+  even checked for non-emptiness — never relies solely on the admin
+  route/middleware to have already enforced this.
+
+**Internal authority helper (new private method, §3 item 7l — an
+authorized addition to the already-allowlisted manager file, item 41, no
+new path):**
+
+```php
+private function assertPlatformAdministrator(int $actorUserId): void
+```
+
+Mirrors `UsageWalletManager::assertPlatformAdministrator()`'s exact shape
+(a direct `users.is_admin` read via `DB::table('users')`) but throws
+`UnauthorizedSlotAgreementActionException` (§19, already allowlisted,
+M4's own typed exception) rather than M3's `UnauthorizedUsageBillingManagementException`
+— called at the start of `retrySlotRenewalAsAdministrator()`,
+`allocateSlotAgreementAsAdministrator()`, and the administrator branch of
+`requestSlotAgreementCancellation()`, before any mutation or provider
+call.
 
 **Add-ons:**
 
@@ -1673,7 +2041,64 @@ event/job-dispatched, never scheduled.
   `change_operation_id`) racing its own original attempt; concurrent
   `ReconcileSlotAgreementAllocation` and administrator manual-allocation
   attempts for the same stuck agreement (must compose via Amendment 1's
-  own idempotency guarantee, never double-allocate, §8 item 4).
+  own idempotency guarantee, never double-allocate, §8 item 4); a genuine
+  retry racing a crash/re-entry of a prior retry for the same renewal
+  charge (must reuse the same attempt ordinal, never skip or double-count,
+  below).
+
+### Attempt-ordinal derivation — exact, durable, no new schema column (§3 item 7k)
+
+**Confirmed by a targeted read of `additional_business_slot_renewal_charges`/
+`additional_business_slot_renewal_charge_transitions`' own schema (§18):
+neither table has an attempt-counter, retry-ordinal, or lease column — the
+per-instruction bar for using the existing transitions table rather than
+inventing one.** The following algorithm is durable and crash-safe using
+only existing columns:
+
+1. **The current attempt ordinal for a renewal charge = 1 + the count of
+   already-recorded `to_state = 'failed'` rows in
+   `additional_business_slot_renewal_charge_transitions` for that exact
+   `renewal_charge_id`**, read within the same agreement/charge-row lock
+   (§23's own canonical lock order) that begins the attempt — **never**
+   cached in job/process memory, **never** inferred from any other column,
+   always freshly computed from the durable, append-only transitions
+   table (this table has no `update()` method, §20 — a `failed` transition,
+   once written, is a permanent historical fact, never revised).
+2. **A `failed` transition is written only strictly after Stripe's own
+   definitive failure response for that specific attempt** — identical
+   discipline to M3's own `markFailed()` (never written speculatively
+   before the provider call, never written for a merely-pending/
+   `requires_action` outcome).
+3. **The Stripe-facing `idempotency_key` for attempt N is
+   `sha256($renewalCharge->local_idempotency_key . ':attempt:' . N)`**
+   (§11) — attempt 1 uses `createOffSessionPaymentIntent()`; attempts 2
+   and 3 use the new `confirmPaymentIntent()` (§15a) against the charge's
+   own existing `provider_session_or_intent_reference` and the Workspace's
+   **current** default instrument (which may have changed since attempt
+   1, §15c).
+4. **Crash/re-entry safety — by construction, not by extra bookkeeping:**
+   if a retry crashes before Stripe's response is known, no `failed`
+   transition was written, so a re-entry recomputes the identical ordinal
+   N and the identical idempotency key; Stripe's own idempotency guarantee
+   returns the cached result of the original request (success or failure)
+   rather than performing a second charge attempt — the local write then
+   completes correctly on this re-entry. **The worker restarting never, by
+   itself, advances the ordinal** — only a definitively-recorded `failed`
+   transition does.
+5. **Cap:** once the count of `failed` transitions for a charge reaches 3
+   (i.e., attempt 3 itself has failed), no further attempt is possible —
+   `retrySlotRenewalAsOwner()`/`retrySlotRenewalAsAdministrator()` instead
+   observe `payment_lapsed = true` (§13) and return without calling the
+   gateway again; this cap is enforced by the ordinal computation itself
+   (ordinal would compute to 4), independent of any caller's own
+   discipline.
+6. **A race between two concurrent retry invocations for the same charge**
+   (e.g., a double-submitted owner retry) is absorbed at two independent
+   layers: the agreement/charge-row lock (§23's canonical order) serializes
+   the ordinal *read*, and even if both somehow computed the same ordinal
+   before serialization, Stripe's own idempotency guarantee on the
+   *identical* derived key ensures at most one real charge attempt
+   results.
 
 ---
 
@@ -1693,12 +2118,15 @@ as the template, not re-specified line-by-line in this contract.
 ## 25. Exact implementation allowlist
 
 **Closed, numbered, path-level. Any additional path required during
-implementation is a stop-and-report condition (§29). 93 paths total —
-corrected this refinement from 87: 87 is no longer preserved as a target
-count (per explicit instruction); the six new/modified gateway-boundary
-paths §15a/§15b genuinely require (items 88–93) were not, and could not
-honestly have been, part of the original count, since the original draft
-incorrectly believed the gateway needed zero changes (§3 items 7a–7c).**
+implementation is a stop-and-report condition (§29). 95 paths total —
+corrected this refinement from 93: the Checkout Session
+line-item/PaymentMethod-capture/`confirmPaymentIntent()` corrections
+(§3 items 7g–7k) are absorbed entirely by the already-allowlisted gateway
+files (items 88–90, no new path), but the payment-instrument
+reconciliation fix (§3 item 7j, §15c) genuinely requires two further
+paths — one modified manager-adjacent file and one modified test (items
+94–95) — that could not honestly have been part of the prior count, since
+that gap was not yet found.**
 
 ### Migrations (7 new)
 
@@ -1772,7 +2200,7 @@ incorrectly believed the gateway needed zero changes (§3 items 7a–7c).**
     — public in visibility, since `ReconcileSlotAgreementAllocation` must
     call it directly as an external caller, §22, but narrowly scoped and
     named to signal it is not a general-purpose entry point, matching the
-    "shared internal routine" role §8 item 6 requires), plus two
+    "shared internal routine" role §8 item 6 requires), plus three
     authorized internal refactors to this same file's own existing
     private methods, neither of which is a new path: `initiateCharge()`
     gains an optional post-attempt-creation, still-in-transaction hook
@@ -1783,10 +2211,14 @@ incorrectly believed the gateway needed zero changes (§3 items 7a–7c).**
     `confirmAttemptFromReturn()`/`confirmAttemptFromWebhook()`'s own
     already-`Succeeded` early-return guards gain the narrow
     `AddonPurchase`-only re-finalization check (§21, the replay-hole
-    fix). **`ManualTopUp`/`AutoRecharge`'s own observable behavior is
-    unchanged** — same wallet-credit entry type, same amount, same
-    idempotency suffix, same ordering, same already-`Succeeded` no-op;
-    only `AddonPurchase` (never set by any M3 code path, §3 item 6) gains
+    fix); a new private `assertPlatformAdministrator()` helper is added
+    (§3 item 7l, §21, §14), called by `retrySlotRenewalAsAdministrator()`,
+    `allocateSlotAgreementAsAdministrator()`, and the administrator branch
+    of `requestSlotAgreementCancellation()`. **`ManualTopUp`/`AutoRecharge`'s
+    own observable behavior is unchanged** — same wallet-credit entry
+    type, same amount, same idempotency suffix, same ordering, same
+    already-`Succeeded` no-op; only `AddonPurchase` (never set by any M3
+    code path, §3 item 6) gains
     new behavior where none previously existed.
 
 ### Jobs (4 new)
@@ -1874,9 +2306,15 @@ incorrectly believed the gateway needed zero changes (§3 items 7a–7c).**
     a *different* `change_operation_id` (simulating a fresh render)
     produces a genuinely distinct renewal-charge row.
 77. `tests/Feature/Usage/AdditionalBusinessSlotAgreementFailedPeriodTest.php`
-    — **strengthened this refinement (§13, §5):** asserts **exactly 3**
-    retry attempts, not merely "bounded" — a 4th automatic attempt is
-    explicitly asserted never to occur before `payment_lapsed` is set.
+    — **strengthened this refinement (§13, §23, §3 item 7k):** asserts
+    **exactly 3 total attempts** (the initial attempt plus 2 retries, never
+    phrased as "3 retries") — a 4th attempt is explicitly asserted to be
+    unreachable once `payment_lapsed` is set (the ordinal-cap mechanism
+    itself, §23, not merely a caller-side check). **Asserts each retry is
+    a genuine second provider-side call** — via the fake gateway's own new
+    call-recording (§15a), a retry's `confirmPaymentIntent()` invocation
+    is asserted to actually occur, with the ordinal-derived idempotency
+    key, not merely that the existing PaymentIntent was re-retrieved.
 78. `tests/Feature/Usage/AdditionalBusinessSlotAgreementRenewalContactSnapshotTest.php`
 79. `tests/Feature/Usage/AddonPurchaseTransitionAuditTest.php` —
     **strengthened this refinement (§21, §3 item 3):** in addition to its
@@ -1905,7 +2343,15 @@ incorrectly believed the gateway needed zero changes (§3 items 7a–7c).**
     administrator manual-allocation action) produce the identical
     `requesting_customer_user_id` on the resulting RFC-004 transition —
     the original Workspace owner in every case, never the calling
-    context's own identity.
+    context's own identity. **Further strengthened this refinement (§3
+    item 7j, §8 item 7, §15c):** the fake gateway is configured so the
+    Checkout Session's actual PaymentMethod differs from the Workspace's
+    previously-saved default instrument; asserts
+    `syncWorkspaceCheckoutPaymentMethod()` reconciles it as the new
+    default in `business_payment_instruments`, and that the agreement's
+    own `payment_method_display_snapshot` reflects the **actual paid
+    card**, not the stale prior default — proving the snapshot
+    corresponds to the card genuinely charged.
 81. `tests/Feature/Usage/SlotAgreementQuoteSnapshotImmutabilityTest.php` —
     §9 items 2/4/5: **explicitly proves the price × ratio formula** —
     two quotes taken against catalog rows differing only in
@@ -1934,6 +2380,14 @@ incorrectly believed the gateway needed zero changes (§3 items 7a–7c).**
     `actor_user_id` equals the *administrator's* real id, proving the two
     records are genuinely separate, never conflated, and the
     administrator is never substituted for `requesting_customer_user_id`.
+    **Strengthened this refinement (§3 item 7l, §21):** a non-admin actor
+    directly invoking `retrySlotRenewalAsAdministrator()`,
+    `allocateSlotAgreementAsAdministrator()`, or the administrator branch
+    of `requestSlotAgreementCancellation()` **on the manager itself** —
+    bypassing the HTTP layer and its admin-only middleware entirely — is
+    asserted denied by the manager's own internal
+    `assertPlatformAdministrator()` check, proving the authority check
+    does not depend on route/middleware placement.
 83. `tests/Feature/Usage/WebhookSlotAgreementSubjectRoutingTest.php` — §15:
     `ProcessPaymentProviderEvent` correctly routes exactly the three
     canonical `app_subject_kind` values (`funding_attempt`,
@@ -1974,12 +2428,23 @@ incorrectly believed the gateway needed zero changes (§3 items 7a–7c).**
     own no-revocation requirement, made directly testable rather than
     merely asserted in prose).
 86. `tests/Feature/Usage/EntitlementCatalogSourceBoundaryTest.php` — the
-    required mechanical source-boundary test (§3 item 18): a fresh
-    repository-wide mechanical search confirms no file outside
-    `EntitlementManager` and its own six RFC-004 repositories references
-    `workspace_plan_catalog`, `workspace_plan_assignments`, or
-    `workspace_entitlement_transitions` directly, and no M4 file calls
-    `updateCatalogPricing()` or any RFC-004 repository directly.
+    required mechanical source-boundary test (§3 item 18). **Corrected
+    this refinement (§3 item 7m):** the prior description asserted an
+    impossible repository-wide claim (no file *anywhere* references the
+    three RFC-004 tables — false on its face, since RFC-004's own models,
+    migrations, and tests legitimately reference their own tables). The
+    actual, narrower M4 source-boundary invariant this test proves,
+    scoped exclusively to §25's own M4-authorized production PHP paths:
+    (a) no M4 production file imports or resolves any RFC-004 repository
+    contract directly; (b) no M4 production file performs raw
+    `DB::table(...)`, query-builder, Eloquent, or repository access
+    against `workspace_plan_catalog`, `workspace_plan_assignments`, or
+    `workspace_entitlement_transitions`; (c) `UsageBillingCheckoutManager`
+    calls only the three specifically-authorized public `EntitlementManager`
+    seams (§3 items 1/3/4); (d) no M4 controller or job calls
+    `allocateAdditionalBusinessSlotsFromVerifiedPayment()` directly
+    (only `performVerifiedAllocation()`, §8 item 6, may); (e) no M4 code
+    calls `updateCatalogPricing()` anywhere (§9).
 87. `tests/Feature/Usage/AddonCatalogZeroSeedTest.php` — §10:
     `business_usage_addon_catalog` contains exactly zero rows immediately
     after every M4 migration runs, and no seeder class of any kind exists
@@ -1991,47 +2456,97 @@ keep their exact original numbers; the prior draft claimed the gateway
 required zero changes, §3 items 7a–7c found this false)
 
 88. `app/Library/Usage/Contracts/PaymentProviderGateway.php` — modified;
-    adds `createCheckoutSession()`/`retrieveCheckoutSession()` (§15a); no
+    adds `createCheckoutSession()` (with the `$lineItemName` parameter
+    and corrected line-item request shape, §15a, corrected this
+    refinement — §3 item 7g), `retrieveCheckoutSession()`, and
+    `confirmPaymentIntent()` (new this refinement — §3 item 7k, §15a); no
     existing method signature changes.
 89. `app/Library/Usage/StripePaymentProviderGateway.php` — modified;
-    implements both new methods against Stripe's own `checkout->sessions`
-    resource (§15a); widens `verifyWebhookSignature()`'s amount extraction
-    to fall back to `amount_total` when `amount` is absent (§15b);
-    existing PaymentIntent-event normalization and every other existing
-    method are unchanged.
+    implements all three new methods (§15a, corrected this refinement for
+    the `line_items`/`price_data` request shape, nullable-`redirectUrl`
+    fail-closed-on-create rule, PaymentMethod-expansion-on-retrieve
+    resolution, and `confirmPaymentIntent()`'s `paymentIntents->confirm()`
+    call); widens `verifyWebhookSignature()`'s amount extraction to fall
+    back to `amount_total` when `amount` is absent (§15b); existing
+    PaymentIntent-event normalization and every other existing method are
+    unchanged.
 90. `app/Library/Usage/FakePaymentProviderGateway.php` — modified;
-    implements a deterministic, test-controlled equivalent of both new
-    methods, mirroring its own existing test-configuration pattern (§15a);
-    every existing method is unchanged.
-91. `app/Library/Usage/CheckoutSessionResult.php` — new DTO (§15a, §3 item
-    7c).
+    implements a deterministic, test-controlled equivalent of all three
+    new methods, mirroring its own existing test-configuration pattern
+    (§15a) — including recording each `confirmPaymentIntent()` call
+    (idempotency key, payment method) so a test can assert a genuine
+    second attempt actually occurred (§3 item 7k); every existing method
+    is unchanged.
+91. `app/Library/Usage/CheckoutSessionResult.php` — new DTO (§15a, §3
+    items 7c, 7h–7i) — **corrected this refinement:** `$redirectUrl` is
+    `?string` (nullable), and a new `?string $providerPaymentMethodId`
+    field is added.
 
 ### Gateway tests (2 modified)
 
 92. `tests/Feature/Usage/FakePaymentProviderGatewayTest.php` — modified;
     extended with Checkout Session create/retrieve coverage against the
-    fake (§15a); every existing test is unchanged.
+    fake (§15a), including nullable-`redirectUrl` and
+    `providerPaymentMethodId` assertions, and `confirmPaymentIntent()`
+    call-recording coverage (§3 item 7k); every existing test is
+    unchanged.
 93. `tests/Feature/Usage/StripePaymentProviderGatewayCompatibilityTest.php`
     — modified; extended with Checkout Session create/retrieve coverage
-    and the `amount`-vs-`amount_total` webhook normalization fix (§15b);
-    every existing test is unchanged.
+    and the `amount`-vs-`amount_total` webhook normalization fix (§15b).
+    **Corrected/strengthened this refinement (§3 items 7g–7k):** asserts
+    the exact `line_items`/`price_data` request shape §15a locks — a
+    Checkout Session create request built without the required
+    `line_items` structure is asserted to fail this test; asserts
+    `createCheckoutSession()` fails closed (throws) when the fake/mock
+    response carries no `url`; asserts `retrieveCheckoutSession()` against
+    a `complete` Session with `url: null` succeeds and resolves
+    `providerPaymentMethodId`; asserts `confirmPaymentIntent()`'s own
+    request shape (`payment_method`, `idempotency_key`); every existing
+    test is unchanged.
+
+### Payment-instrument reconciliation (2 modified — §15c, §3 item 7j)
+
+94. `app/Library/Usage/PaymentInstrumentManager.php` — modified; adds
+    `syncWorkspaceCheckoutPaymentMethod()` (§15c) — Workspace-owner-only,
+    reuses the class's own existing repository/gateway calls verbatim, no
+    schema change; every existing method (`resolveProviderCustomer()`,
+    `createSetupIntent()`, `confirmSetupIntentAndAttach()`,
+    `detachInstrument()`, `setDefaultInstrument()`) is unchanged.
+95. `tests/Feature/Usage/PaymentInstrumentAttachDetachTest.php` —
+    modified; extended with `syncWorkspaceCheckoutPaymentMethod()`
+    coverage only (§15c) — owner-only consent, provider-customer-mismatch
+    rejection, idempotent reuse of an already-attached instrument,
+    creation of a genuinely new one, and it becoming the provider
+    customer's default; no platform-admin bypass path exists to test, by
+    construction. Every existing test in this file is unchanged.
 
 **Explicitly not authorized by this allowlist:** any RFC-004 file (§7);
 any change to `PaymentProviderGateway`, `StripePaymentProviderGateway`, or
 `FakePaymentProviderGateway` **beyond exactly the Checkout Session
-extension and webhook amount-fallback widening items 88–90 define** — no
-other method, no behavior change to SetupIntent/off-session-PaymentIntent
-flows; any change to `StripeWebhookController` (§3 item 9) or
-`ReconcileProviderPendingState.php` (§3 item 10); any add-on catalog seed
-data or migration data-insert (§10); any executable refund trigger, job,
-manager method, or gateway call reaching `refund_pending`/`refunded` (§8a
-— reserved schema states only); any
+extension (including its corrected line-item shape and PaymentMethod
+capture), `confirmPaymentIntent()`, and the webhook amount-fallback
+widening items 88–90 define** — no other method, no behavior change to
+SetupIntent/off-session-PaymentIntent flows; any change to
+`PaymentInstrumentManager` beyond exactly
+`syncWorkspaceCheckoutPaymentMethod()` (item 94) — no change to
+`resolveProviderCustomer()`/`confirmSetupIntentAndAttach()`/
+`detachInstrument()`/`setDefaultInstrument()`, no new schema column, no
+platform-admin bypass of any kind; any change to `StripeWebhookController`
+(§3 item 9) or `ReconcileProviderPendingState.php` (§3 item 10); any
+add-on catalog seed data or migration data-insert (§10); any executable
+refund trigger, job, manager method, or gateway call reaching
+`refund_pending`/`refunded` (§8a — reserved schema states only); any
 `business_billing_receipts`, `AdvanceUsagePeriodBoundaries`,
 `SendLowBalanceNotification`, `SendAutoRechargeDisabledNotification`, or
 `SendReceiptNotification` work (§3 items 16–17, a pre-existing M1–M3 gap);
 a unified `Admin\UsageBillingController` (§3 item 14); any
 `payment_lapsed` revocation logic (§4, §13); any scheduler interval or
-retry-count value other than the four values §13/§22 now lock exactly.
+attempt-count value other than the four values §13/§22 now lock exactly
+(1 initial attempt + 2 retries = 3 total, never "3 retries"; 5-minute/
+5-minute/hourly scheduling); any attempt-ordinal tracking mechanism other
+than the exact §23 algorithm (no new column, no process-memory counter,
+no unreliable inference from any column other than the count of `failed`
+transitions).
 
 ---
 
@@ -2071,6 +2586,39 @@ the actual current repository before writing the final allowlist:
    Form-Request-per-action convention and its exact directory shape (§3
    item 15).
 
+**This refinement's own bounded audit (Checkout/payment-instrument/retry
+files only, per the explicit instruction — no broad repository audit, no
+research agent):**
+
+10. Direct read of `app/Library/Usage/Contracts/PaymentProviderGateway.php`,
+    `StripePaymentProviderGateway.php`, `FakePaymentProviderGateway.php`,
+    and `PaymentIntentResult.php` — confirmed no `line_items`-shaped
+    Checkout Session request exists, no `confirmPaymentIntent()`-shaped
+    method exists, and `verifyWebhookSignature()`'s exact prior code
+    (§3 items 7g, 7k).
+11. Direct read of `app/Library/Usage/PaymentInstrumentManager.php`,
+    `app/Models/BusinessPaymentInstrument.php`, and
+    `app/Repositories/Contracts/BusinessPaymentInstrumentRepository.php`
+    — confirmed all existing methods are Business-scoped, confirmed the
+    exact existing repository methods `syncWorkspaceCheckoutPaymentMethod()`
+    reuses, confirmed no schema change is required (§3 item 7j, §15c).
+12. Targeted re-read of RFC-005's own `additional_business_slot_renewal_charges`/
+    `additional_business_slot_renewal_charge_transitions` schema (§18,
+    already reproduced in this contract) — confirmed neither table has an
+    attempt-counter, retry-ordinal, or lease column, and confirmed the
+    `to_state = 'failed'`-count algorithm is derivable from the existing
+    append-only transitions table alone (§3 item 7k, §23).
+13. `grep -n "assertPlatformAdministrator" app/Library/Usage/UsageBillingCheckoutManager.php`
+    — zero matches, confirming the helper does not yet exist; direct read
+    of `UsageWalletManager::assertPlatformAdministrator()`'s exact
+    existing shape as the precedent to mirror (§3 item 7l).
+14. Direct read of `app/Library/Usage/UsageBillingCheckoutManager.php:297`
+    (`retryFundingAttemptAsAdministrator()`) — confirmed it only calls
+    `retrievePaymentIntent()`, never re-drives payment, confirming the
+    prior draft's §14 claim that M4's own retry methods "mirror" this
+    shape was incorrect for M4's own genuine-retry requirement (§3 item
+    7k).
+
 No repository-wide, unbounded search was performed at any point — every
 search above was scoped to a specific M4 prose claim, matching the
 explicit efficiency instruction.
@@ -2079,8 +2627,8 @@ explicit efficiency instruction.
 
 ## 27. Test contract
 
-**Focused M4 tests** — every test in §25's test groups (67–87, 92–93),
-run together as the first, narrowest gate.
+**Focused M4 tests** — every test in §25's test groups (67–87, 92–93,
+95), run together as the first, narrowest gate.
 
 **Complete regression** — `php artisan test tests/Unit/Usage
 tests/Feature/Usage`, zero failures required, exact passing/assertion
@@ -2096,11 +2644,14 @@ modifies no RFC-004 file.
 
 **Full suite** — `php artisan test --stop-on-failure`, must exit `0`.
 
-**Concurrency/idempotency** — §23's forced-race scenarios (test 84),
-independently confirmed passing.
+**Concurrency/idempotency** — §23's forced-race scenarios (test 84) —
+**corrected this refinement: these are future tests that must pass
+during implementation, not tests already confirmed passing** (no M4 test
+exists yet; nothing has run).
 
-**Mechanical source-boundary** — test 86, independently confirmed
-passing, the direct proof for §8/§9's own locked boundary claims.
+**Mechanical source-boundary** — test 86 — **corrected this refinement:
+must pass during implementation**, the direct proof for §8/§9's own
+locked boundary claims once written and run.
 
 **Before any of the above:** `.env.testing`'s `APP_NAME` and any branding
 overrides confirmed neutral first (this session's own established
@@ -2135,7 +2686,7 @@ M1–M3's own established bottom-up sequencing.
 Future implementation must stop, leave the working tree unstaged, and
 report rather than proceed, if:
 
-- Any path beyond §25's 93 is required — the **94th** path.
+- Any path beyond §25's 95 is required — the **96th** path.
 - Any RFC-004 file requires a change of any kind (§7).
 - Any code path is found necessary to mutate an RFC-004 entitlement/
   catalog table directly, bypass `EntitlementManager`, or use a fake/
@@ -2149,22 +2700,35 @@ report rather than proceed, if:
   needed for any step this contract authorizes.
 - `PaymentProviderGateway`, `StripePaymentProviderGateway`, or
   `FakePaymentProviderGateway` is found to require any change beyond
-  exactly the Checkout Session extension and webhook amount-fallback
-  widening §15a/§15b/items 88–90 authorize; or `StripeWebhookController`
-  is found to require any change at all (§3 item 9).
+  exactly the Checkout Session extension (line-item shape and
+  PaymentMethod capture included), `confirmPaymentIntent()`, and the
+  webhook amount-fallback widening §15a/§15b/items 88–90 authorize; or
+  `StripeWebhookController` is found to require any change at all (§3
+  item 9).
+- `PaymentInstrumentManager` is found to require any change beyond
+  exactly `syncWorkspaceCheckoutPaymentMethod()` (§15c, item 94) — or a
+  schema change is found necessary to implement it (§3 item 7j locks that
+  none is required; a future finding otherwise is itself a stop
+  condition, not license to invent one).
+- The attempt-ordinal derivation is found not to be reliably recoverable
+  from the existing `additional_business_slot_renewal_charge_transitions`
+  table by the exact §23 algorithm — a genuine need for a new
+  schema column requires its own separate authorization, never a
+  process-memory counter or an unreliable inference substituted quietly.
 - Any executable refund trigger, job, gateway method, or manager method
   reaching `refund_pending`/`refunded` is found necessary — these remain
   reserved schema states only (§8a); a genuine need for one requires its
   own separate RFC-005 amendment/correction, not invention here.
-- A different scheduler interval or retry-count value than the four §13/
-  §22 now lock exactly (3 retries; 5-minute/5-minute/hourly scheduling) is
-  found necessary — a change requires its own separate authorization.
+- A different scheduler interval or attempt-count value than the four
+  §13/§22 now lock exactly (1 initial + 2 retries = 3 total; 5-minute/
+  5-minute/hourly scheduling) is found necessary — a change requires its
+  own separate authorization.
 - A unified, all-milestone `Admin\UsageBillingController` (or any M1–M3
   admin capability — balance view, credit issuance, billing-status
   toggle, webhook-event disposition) is found necessary to satisfy an M4
   requirement — a pre-existing gap, not M4's to fix (§3 item 14, §7).
 - Any of the four §27 regression gates fails for a reason not fixable
-  within the 93-path allowlist.
+  within the 95-path allowlist.
 - `ultimatesms_testing` cannot be confirmed as the effective test
   database.
 - An M5 (metered feature) or M6 (conformance/tag) concept becomes
@@ -2215,16 +2779,18 @@ report rather than proceed, if:
     controller/reconciliation job).
 14. **Pre-existing M1–M3 scope gaps are named and explicitly excluded, not
     silently absorbed into M4's own scope** — §3 items 16–17, §7.
-15. **Every path is individually allowlisted** — §25, numbered 1–93 (items
-    88–93 appended, corrected this refinement — §26), the stop threshold
-    is the required 94th path (§29).
+15. **Every path is individually allowlisted** — §25, numbered 1–95
+    (items 88–93 appended in the prior refinement, items 94–95 appended
+    this refinement — §26 items 10–14), the stop threshold is the
+    required 96th path (§29).
 16. **Counts match** — §25: 7 migrations + 6 enums + 4 DTOs + 2 exceptions
     + 7 models + 7 contracts + 7 Eloquent repositories + 1 modified
     manager + 4 new jobs + 1 modified job + 5 events + 2 controllers + 6
     requests + 3 views + 2 modified routes + 1 modified scheduler + 1
     modified DI + 7 schema tests + 6 RFC-named tests + 8 additional tests
     + 4 gateway paths (3 modified, 1 new DTO) + 2 modified gateway tests
-    = 93.
+    + 2 payment-instrument-reconciliation paths (1 modified, 1 modified
+    test) = 95.
 17. **Four regression gates are exact, sequential, and named precisely**
     — §27, matching the task's own required gate list exactly.
 18. **Contract merge does not start implementation** — §0, stated
@@ -2312,10 +2878,12 @@ report rather than proceed, if:
     by the manager or controller** — §11, §17; test 76's own strengthened
     assertion proves the manager never regenerates a caller-supplied
     value.
-31. **(This refinement) Retry count and scheduler intervals are locked to
-    exact values, no longer implementation-time choices** — §13 (3
-    retries), §22 (5 min / 5 min / hourly) — test 77's own strengthened
-    assertion proves exactly 3, not merely "bounded."
+31. **(Superseded by item 37 below — "3 retries" was itself an ambiguous
+    phrasing this later refinement corrected to "3 total attempts.")**
+    Retry count and scheduler intervals are locked to exact values, no
+    longer implementation-time choices — §13 (3 retries), §22 (5 min / 5
+    min / hourly) — test 77's own strengthened assertion proves exactly
+    3, not merely "bounded."
 32. **(This refinement) Refund states are honestly disclosed as reserved,
     not executable** — §8a, added after a targeted re-read of RFC-005
     §22–§23 found no executable trigger, job, gateway call, or manager
@@ -2323,6 +2891,71 @@ report rather than proceed, if:
     policy is invented; the prior draft's "Refund paths ... remain their
     own distinct states" phrasing (§8 item 5) is corrected to avoid
     implying an executable path this contract does not define.
+33. **(This refinement) The Checkout Session request is now genuinely
+    Stripe-valid** — §3 item 7g, §15a: `mode: 'payment'` carries exactly
+    one non-adjustable `line_items` entry built from inline `price_data`,
+    never a separately-created Stripe Price/Product; `unit_amount` derives
+    only from the frozen agreement amount; test 93's own strengthened
+    assertion proves a request missing `line_items` fails.
+34. **(This refinement) `CheckoutSessionResult`'s nullability and
+    actual-payment-method capture are corrected** — §3 items 7h–7i, §15a:
+    `redirectUrl` is `?string` (a completed Session legitimately has none);
+    `createCheckoutSession()` still fails closed if a newly-created
+    Session lacks one; a new `providerPaymentMethodId` field is resolved
+    on retrieve of a completed Session, never assumed to be the locally-
+    saved default. Eight exact conditions (§15a) gate "verified" — status,
+    payment_status, session id, amount, currency, provider customer,
+    PaymentIntent reference, PaymentMethod reference — independently
+    testable via test 93's own strengthened assertions; the webhook path
+    additionally requires `payment_status === 'paid'` explicitly (§15a,
+    §21).
+35. **(This refinement) The actual Checkout-selected card is reconciled
+    into `business_payment_instruments`, never left mismatched with the
+    agreement's own display snapshot** — §3 item 7j, §8 item 7, §15c: a
+    new, narrowly-scoped `PaymentInstrumentManager::syncWorkspaceCheckoutPaymentMethod()`
+    reuses 100% of the class's own existing repository/gateway calls, no
+    schema change, no other M3 payment-instrument path touched, Workspace
+    owner only, no admin bypass — independently testable via test 80's own
+    strengthened assertion that the frozen snapshot matches the card
+    actually charged, and test 95's own dedicated coverage.
+36. **(This refinement) A renewal retry now genuinely re-drives payment**
+    — §3 item 7k, §13, §15a, §21, §23: the new `confirmPaymentIntent()`
+    gateway method re-confirms the existing PaymentIntent against the
+    Workspace's current default instrument; M3's own
+    `retryFundingAttemptAsAdministrator()` is confirmed unmodified; the
+    exact deterministic attempt-ordinal algorithm (1 + count of `failed`
+    transitions for that charge, no new schema column, crash-safe by
+    construction) is locked in §23 — independently testable via test 77's
+    own strengthened assertion that a genuine second provider call
+    occurs.
+37. **(This refinement) "3 attempts" is now unambiguous — 1 initial + 2
+    retries, never "3 retries"** — §13, superseding item 31 above; failure
+    of attempt 3 causes `payment_lapsed`, enforced by the ordinal
+    computation itself (§23), not merely by caller discipline.
+38. **(This refinement) Every M4 "AsAdministrator"-named manager method
+    independently verifies real platform-administrator identity** — §3
+    item 7l, §14, §21: a new private `assertPlatformAdministrator()`
+    helper (mirroring `UsageWalletManager`'s own existing shape) is called
+    by `retrySlotRenewalAsAdministrator()`, `allocateSlotAgreementAsAdministrator()`,
+    and the administrator branch of `requestSlotAgreementCancellation()`,
+    before the mandatory-reason check and before any mutation — never
+    relying solely on route/middleware placement; independently testable
+    via test 82's own strengthened assertion (direct manager invocation,
+    HTTP layer bypassed).
+39. **(This refinement) Test #86's own description is corrected from an
+    impossible repository-wide absence claim to the actual, narrower
+    M4-scoped source-boundary invariant** — §3 item 7m, §25 item 86; §27's
+    own "independently confirmed passing" language for tests 84/86 is
+    corrected to "must pass during implementation" throughout, since no
+    M4 test exists yet and nothing has actually run.
+40. **(This refinement) The allowlist count is honestly recomputed to 95,
+    stop threshold to 96** — §25, §26 items 10–14, §29: items 94–95 (the
+    `PaymentInstrumentManager` reconciliation fix, §3 item 7j) are the
+    only genuinely new paths this refinement requires; the Checkout
+    Session/`confirmPaymentIntent()`/admin-check corrections (§3 items
+    7g–7l, 7k) are absorbed entirely by prose changes to already-
+    allowlisted paths (items 88–90/93, 41) — confirmed by direct
+    re-audit, not assumed.
 
 ---
 
@@ -2330,20 +2963,21 @@ report rather than proceed, if:
 
 - `git diff --check` — clean.
 - `git status --short` — exactly
-  `M docs/automation/RFC-005-M4-CONTRACT.md` (this is the third commit to
-  this Draft contract on this branch — the file is already tracked from
-  the initial draft and first refinement; it is not untracked).
+  `M docs/automation/RFC-005-M4-CONTRACT.md` (this is the fourth commit
+  to this Draft contract on this branch — the file is already tracked
+  from the initial draft and two prior refinements; it is not untracked).
 - `git diff --name-only` — exactly one path:
   `docs/automation/RFC-005-M4-CONTRACT.md`.
 - `git diff --cached --name-only` — empty before staging.
 - Stage the one file by its exact path only (never `git add -A`/
   `git add .`).
-- Commit with a descriptive message identifying this as the second
-  in-place refinement (Checkout Session gateway seam, manager authority
-  completion, add-on replay-hole close, retry-stable
-  `change_operation_id`, exact retry/scheduler values, refund-state
-  audit) — not `docs: prepare RFC-005 Milestone 4 contract`, which
-  described only the original draft commit.
+- Commit with a descriptive message identifying this as the third
+  in-place refinement (Checkout Session line-item/PaymentMethod-capture
+  correction, payment-instrument reconciliation, genuine renewal-retry
+  mechanism with a deterministic attempt-ordinal algorithm, explicit
+  in-manager administrator checks, corrected source-boundary test
+  description) — not the generic message prior commits used, which
+  described only their own prior scope.
 - Push normally to `origin chore/rfc-005-m4-contract` (the existing PR
   #103 branch). No force push. Do not push `main`.
 - This is a Draft contract refinement, not a merge event — PR #103
