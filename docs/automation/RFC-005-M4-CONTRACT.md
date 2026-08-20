@@ -145,8 +145,16 @@ Direct reads performed for this contract, each finding relied upon below:
    'app_operation_id' => ...]`). The gateway interface, `StripePaymentProviderGateway`,
    and `FakePaymentProviderGateway` require **zero** changes for M4 — the
    metadata shape is already fully generic; only the *values* M4 supplies
-   differ (`app_subject_kind` values `slot_agreement`,
-   `slot_renewal_charge`, `addon_purchase`).
+   differ. **Exactly two new `app_subject_kind` values are introduced:
+   `slot_agreement` and `slot_renewal_charge` — RFC-005 §17.C's own
+   canonical set, confirmed by direct re-read.** Add-on purchases
+   deliberately charge through the existing `funding_attempt` machinery
+   (`business_usage_addon_purchases.funding_attempt_id` is the sole
+   authoritative link, §18) — an add-on's outbound PaymentIntent metadata
+   remains `app_subject_kind: 'funding_attempt'`, distinguished from a
+   `ManualTopUp`/`AutoRecharge` attempt only by its own persisted
+   `purpose = FundingAttemptPurpose::AddonPurchase` (§15, §21) — never a
+   fourth subject kind.
 8. **`ProcessPaymentProviderEvent.php` hardcodes `'funding_attempt'` as the
    only recognized `app_subject_kind`** (`app/Jobs/Usage/ProcessPaymentProviderEvent.php:68`:
    `($metadata['app_subject_kind'] ?? null) !== 'funding_attempt'` →
@@ -272,10 +280,20 @@ test-mode implementation; it is a permanent, explicit non-goal until a
 separate, future, human-authorized decision defines a revocation policy
 (§13).
 
-**Production live-charging readiness: BLOCKED.** Regardless of test-mode
-completeness, live charging remains blocked until **every one** of the
-following is separately, explicitly satisfied — none may be inferred from
-test-mode success, mirroring M3 §4 exactly:
+**Production live-charging readiness: BLOCKED for both M4 features, on
+independent, non-identical gate sets — corrected this refinement to
+resolve a structural contradiction between this section and §5's own,
+already-correct, per-item classification.** The prior draft listed the
+add-on roster/pricing decision inside one unified "every one of the
+following" list alongside the universal gates, which read as "unresolved
+add-ons block all live charging" — contradicting §5 item 8's own explicit
+"blocks live commercial launch of add-ons only." Corrected: **zero seeded
+add-ons is itself a valid, permanent M4 launch state, in production
+exactly as in test-mode** (§10) — an unresolved add-on roster never blocks
+going live with the additional-slot agreement feature alone.
+
+**Universal gates — block any live charge of any kind (slot-agreement or
+add-on), none may be inferred from test-mode success:**
 
 1. Live Stripe API keys are provisioned and stored via the platform
    operator's own secret-management process — never generated, requested,
@@ -290,19 +308,37 @@ test-mode success, mirroring M3 §4 exactly:
 4. A separate, explicit human decision authorizes production use for this
    specific deployment, distinct from and in addition to any contract
    merge.
-5. **M4-specific:** a separate, explicit human decision resolves RFC-005
-   §39 item 13 (the `payment_lapsed` revocation policy) **before** any
-   production Workspace is permitted to remain in a lapsed state
-   indefinitely without consequence — test-mode implementation does not
-   require this resolution (no revocation is implemented either way,
-   §4 qualifier above), but a live deployment carrying real, uncollected
-   recurring charges indefinitely is a business-risk decision this
-   contract does not make on a human's behalf.
-6. **M4-specific:** the exact v1 add-on roster and pricing (RFC-005 §39
-   item 8) remains unresolved — irrelevant to M4's own structural
-   implementation (§10, zero seeded rows), but a live deployment offering
-   zero purchasable add-ons is a product decision, not a technical
-   blocker this contract resolves.
+
+**Additional-slot-agreement-specific live gate — beyond the four universal
+gates above, before any production Workspace may carry a real recurring
+additional-slot charge:**
+
+5. A separate, explicit human decision resolves RFC-005 §39 item 13 (the
+   `payment_lapsed` revocation policy) **before** any production Workspace
+   is permitted to remain in a lapsed state indefinitely without
+   consequence — test-mode implementation does not require this
+   resolution (no revocation is implemented either way, §4 qualifier
+   above), but a live deployment carrying real, uncollected recurring
+   charges indefinitely is a business-risk decision this contract does
+   not make on a human's behalf. **This gate applies only to the
+   additional-slot-agreement feature** — add-ons are one-time purchases
+   with no renewal/lapse concept (§18), so this gate has no bearing on
+   whether add-ons may go live.
+
+**Add-on-specific live gate — independent of the additional-slot gate
+above, blocks only offering a real, purchasable add-on, never the
+additional-slot-agreement feature:**
+
+6. The exact v1 add-on roster and pricing (RFC-005 §39 item 8) remains
+   unresolved. This blocks only the live commercial launch of add-on
+   purchases specifically — a live deployment may run the
+   additional-slot-agreement feature in production, fully live, with
+   `business_usage_addon_catalog` correctly holding zero rows
+   indefinitely; that is not a degraded or partial state, it is exactly
+   what RFC-005 §18 itself specifies. Resolving this gate means a human
+   choosing a real `addon_key`/price/currency/fulfillment product and
+   inserting it — an action this contract does not perform and does not
+   invent a placeholder for merely to appear "resolved."
 
 **Contract merge never authorizes production Stripe keys, live charges, a
 live-mode deployment, an add-on catalog seed, or a `payment_lapsed`
@@ -368,8 +404,10 @@ Derived exclusively from RFC-005 §36 item 4, §18, and §22:
 - **Narrowed administrator authority extension** — resume/retry a stuck
   renewal, manual allocation action, mandatory-reason cancellation (§14).
 - **Webhook subject-kind widening** — `ProcessPaymentProviderEvent`
-  recognizes `slot_agreement`, `slot_renewal_charge`, and
-  `addon_purchase` alongside the existing `funding_attempt` (§16).
+  recognizes exactly two new subject kinds, `slot_agreement` and
+  `slot_renewal_charge`, alongside the existing `funding_attempt`, whose
+  own confirmation path becomes purpose-aware to also finalize an
+  `AddonPurchase`-purpose attempt (§15).
 - **Customer/admin HTTP surfaces** — narrowly scoped to M4's own three
   admin capabilities and the Workspace-level customer checkout/manage
   surface (§13, §17).
@@ -513,21 +551,39 @@ contract's own scope:
    `EntitlementManager::updateCatalogPricing()` — a capability M4 does not
    expose, extend, or reach from any M4 controller, job, or manager
    method.
-2. **Quote construction reads, once, at quote-creation time:** the
-   Workspace's current tier and complimentary status via
-   `getWorkspaceEntitlementSummary()` (§3 item 4), then the matching
-   `WorkspacePlanCatalogSummary` via `listPlanCatalogSummaries()` (§3 item
-   3) filtered to that tier. From that summary, the quote snapshots, in
-   one atomic write inside the agreement-creation transaction:
-   `plan_catalog_id_snapshot` (the summary's own `id`), `plan_tier_snapshot`,
-   `price_per_slot_micro_snapshot` (derived from the summary's `price`,
-   converted to micro-units via the same currency-exponent resolution
-   `UsageBillingCheckoutManager::microToMinorUnits()`'s own inverse
-   already establishes — reused, not reinvented), `currency_id_snapshot`,
-   `ratio_snapshot`, and `total_amount_micro_snapshot` (`paid_delta ×
-   price_per_slot_micro_snapshot`, computed exactly once via the existing
-   `bcRoundHalfUp()`/`bcmath` discipline M3 already established for every
-   other monetary computation in this codebase).
+2. **Quote construction reads, once, at quote-creation time, and computes
+   the per-slot price as the base plan price multiplied by the ratio —
+   never the base plan price alone:** the Workspace's current tier and
+   complimentary status via `getWorkspaceEntitlementSummary()` (§3 item
+   4), then the matching `WorkspacePlanCatalogSummary` via
+   `listPlanCatalogSummaries()` (§3 item 3) filtered to that tier. From
+   that summary, the quote computes and snapshots, in one atomic write
+   inside the agreement-creation transaction:
+   - `ratio_snapshot` — the summary's own `additionalBusinessSlotPriceRatio`,
+     copied verbatim (already an exact `DECIMAL(6,4)`-shaped string, per
+     Amendment 2's own `normalizeRatio()` discipline — never re-derived or
+     re-rounded here).
+   - `currency_id_snapshot`/`plan_catalog_id_snapshot`/`plan_tier_snapshot`
+     — copied verbatim from the summary.
+   - the summary's own base `price` converted to exact micro-units via the
+     same currency-exponent resolution
+     `UsageBillingCheckoutManager::microToMinorUnits()`'s own inverse
+     already establishes — reused, not reinvented — call this
+     `basePlanPriceMicro`.
+   - `price_per_slot_micro_snapshot = bcRoundHalfUp(bcmul(basePlanPriceMicro,
+     ratio_snapshot), '1')` — the base plan price **multiplied by the
+     ratio**, rounded half-up to an integer micro amount via the exact
+     same `bcRoundHalfUp()`/`bcmath` discipline every other monetary
+     computation in this codebase already uses. **This is precisely the
+     quantity Amendment 2's own `additional_business_slot_price_ratio`
+     column exists for M4 to consume — an additional slot is never priced
+     at the full base-plan price unless the configured ratio itself
+     mathematically produces that result (e.g. a ratio of `1.0000`); a
+     `0.5000` ratio (RFC-004's own seeded Core/Growth value) halves it, by
+     construction, not by a separate discount step.**
+   - `total_amount_micro_snapshot = paid_delta × price_per_slot_micro_snapshot`,
+     computed exactly once via the same `bcRoundHalfUp()`/`bcmath`
+     discipline.
 3. **A catalog row with `null` `price`/`currency_id` (RFC-004 §12.5's
    "undefined pricing" case) or `null` `additional_business_slot_price_ratio`
    for a Core/Growth tier produces no quote at all** — the quote-creation
@@ -549,16 +605,25 @@ contract's own scope:
 5. **Renewal price-change behavior follows RFC-005's existing rule
    exactly:** a `scheduled_renewal` charge **re-snapshots**
    `plan_catalog_id_snapshot`/`plan_tier_snapshot`/`ratio_snapshot`/
-   `currency_id_snapshot`/`amount_micro_snapshot` fresh, from the
-   catalog's *current* state at that renewal's own creation time — this is
-   the one place a later catalog edit legitimately does affect a future
+   `currency_id_snapshot` fresh, from the catalog's *current* state at
+   that renewal's own creation time, and **recomputes its own
+   `amount_micro_snapshot` using the identical price × ratio formula item
+   2 above defines** (`bcRoundHalfUp(bcmul(basePlanPriceMicro,
+   ratio_snapshot), '1')`, then multiplied by the currently-allocated slot
+   count for a `scheduled_renewal`, or proportioned per §11 for a
+   `mid_period_increase`) — never the prior period's own frozen amount
+   copied forward, and never the base price alone. This is the one place
+   a later catalog price *or ratio* edit legitimately does affect a future
    charge, exactly as RFC-005 §22 specifies ("Price changes apply only to
    future, properly-notified renewals"), and exactly as
    `additional_business_slot_renewal_charges`' own schema already
    distinguishes from the parent agreement's frozen *original* snapshot
-   (§18). `SendSlotAgreementPriceChangeNotice` (§22) fires whenever a
-   computed renewal amount differs from the prior period's own recorded
-   amount, before the off-session charge is attempted.
+   (§18) — a change to `additional_business_slot_price_ratio` alone (price
+   unchanged) still produces a different renewal amount, since the ratio
+   is one of the two multiplicands, not a fixed constant. `SendSlotAgreementPriceChangeNotice`
+   (§22) fires whenever a computed renewal amount differs from the prior
+   period's own recorded amount, before the off-session charge is
+   attempted.
 
 ---
 
@@ -725,6 +790,23 @@ unaffected:
   already-payer-authorized attempt or acts on an already-succeeded
   payment — never originates a new charge, never bypasses the Workspace
   owner's own initial consent.
+- **Administrator identity provenance — exact, two separate records, never
+  conflated.** RFC-004's `allocateAdditionalBusinessSlotsFromVerifiedPayment()`
+  signature itself carries no actor parameter at all (§8 item 3) — its own
+  `workspace_entitlement_transitions` row it writes therefore always
+  records `actor_user_id = null`, the real `requesting_customer_user_id`
+  (never the administrator's id, §8 item 3), and the same payment
+  idempotency key, **regardless of whether the call was reached via the
+  ordinary payment-triggered path or the administrator's manual allocation
+  action** — this is unchanged by, and unaffected by, who triggered the
+  M4-side call. **M4's own `additional_business_slot_agreement_transitions`
+  row for that same manual-allocation action is a separate record**, and
+  *that* row's own `actor_user_id` durably records the administrator's own
+  real user id (§18) — the one place the administrator's identity is
+  actually persisted. The mandatory admin `$reason` string passes through
+  into RFC-004's own `$reason` parameter on that call (§8 item 3), but the
+  administrator's identity itself is never passed as, and never
+  substitutes for, `$requestingCustomerUserId`.
 - `retrySlotRenewalAsAdministrator()` (§21) mirrors
   `retryFundingAttemptAsAdministrator()`'s own exact shape (M3, already
   merged) — re-drives an already-created, stuck attempt by re-retrieving
@@ -737,36 +819,54 @@ unaffected:
 `ProcessPaymentProviderEvent.php` (§3 item 8, existing, modified — the
 **only** provider/webhook-boundary file this contract touches) is widened
 from a single hardcoded `'funding_attempt'` subject-kind check to a small,
-explicit dispatch over four recognized kinds:
+explicit dispatch over **exactly three** recognized kinds — RFC-005
+§17.C's own canonical set, confirmed by direct re-read:
 
 ```php
 match ($metadata['app_subject_kind'] ?? null) {
     'funding_attempt' => $this->processFundingAttempt($event, $metadata, ...),
     'slot_renewal_charge' => $this->processSlotRenewalCharge($event, $metadata, ...),
     'slot_agreement' => $this->processSlotAgreementInitialCheckout($event, $metadata, ...),
-    'addon_purchase' => $this->processAddonPurchase($event, $metadata, ...),
     default => $eventRepository->markFailed($event->id, 'missing_or_unrecognized_metadata'),
 };
 ```
 
-- Every branch **independently** re-implements the identical pre-mutation
-  validation sequence M3 already established for `funding_attempt`
-  (provider object id match, operation id match, amount match, currency
-  match, customer match — all against the *local* record's own frozen
-  expectations, never trusting the event's own claims) before any
-  mutation — no branch is permitted to skip a check another branch
-  performs, and no branch introduces an `event_type`-as-local-purpose
-  shortcut (the exact defect class RFC-005 §21/§35 already names and
-  tests against for `funding_attempt`).
-- `slot_agreement` routes the **initial** checkout PaymentIntent's
+**No `addon_purchase` subject kind exists, is emitted, or is accepted
+anywhere in M4.** An add-on's own outbound PaymentIntent metadata is
+identical in shape to a `ManualTopUp`/`AutoRecharge` attempt's own —
+`app_subject_kind: 'funding_attempt'`, `app_subject_id: (string)
+$attempt->id`, `app_operation_id: $attempt->local_idempotency_key` — set
+by `UsageBillingCheckoutManager::initiateCharge()` exactly as it already
+does for every other purpose (§21); nothing in the outbound call, the
+webhook payload, or this job's own routing ever names `addon_purchase` as
+a kind.
+
+- **The `funding_attempt` branch becomes purpose-aware, after — never
+  instead of — the existing full pre-mutation validation sequence.** The
+  branch first re-implements the identical validation M3 already
+  established (provider object id match, operation id match, amount
+  match, currency match, customer match — all against the attempt's own
+  frozen, persisted expectations, never trusting the event's own claims)
+  exactly as before; only once every check has passed does it inspect the
+  now-validated local attempt's own `purpose` column: `ManualTopUp`/
+  `AutoRecharge` route to the manager's existing confirmation call
+  unchanged; `AddonPurchase` routes to the same confirmation call, whose
+  own internal behavior is now purpose-aware (§21) rather than
+  unconditionally crediting the wallet.
+- `slot_agreement` and `slot_renewal_charge` are the two genuinely new
+  kinds. `slot_agreement` routes the **initial** checkout PaymentIntent's
   webhook confirmation (`payment_succeeded` transition, §8 item 5);
   `slot_renewal_charge` routes every renewal/mid-period-increase charge's
-  webhook confirmation; both ultimately call
-  `UsageBillingCheckoutManager`'s own new methods (§21), never
-  `EntitlementManager` directly from this job.
+  webhook confirmation. Both branches independently re-implement the
+  identical pre-mutation validation sequence — no branch is permitted to
+  skip a check another branch performs, and no branch introduces an
+  `event_type`-as-local-purpose shortcut (the exact defect class RFC-005
+  §21/§35 already names and tests against for `funding_attempt`). Both
+  ultimately call `UsageBillingCheckoutManager`'s own new methods (§21),
+  never `EntitlementManager` directly from this job.
 - **`app_subject_kind` remains an untrusted routing hint only** — exactly
-  M3's own established discipline, restated and re-applied to all three
-  new kinds, never elevated to a trust boundary of its own.
+  M3's own established discipline, restated and re-applied to both new
+  kinds, never elevated to a trust boundary of its own.
 - `StripeWebhookController.php`, `PaymentProviderGateway` (interface and
   both implementations), and `ReconcileProviderPendingState.php` all
   require **zero** changes (§3 items 7, 9, 10) — confirmed by direct read,
@@ -1050,21 +1150,73 @@ confirm/record" shape M3's own `initiateTopUp()`/`confirmAttemptFromReturn()`/
   — `$reason` mandatory when `$actorUserId` is an administrator, optional
   for the owner's own agreement (§12/§14).
 - `initiateAddonPurchase(Business $business, string $addonKey, int $actorUserId): AddonPurchaseResult`
-  — looks up the (test-created only, §10) catalog row by `addon_key`,
-  fails closed if absent or inactive, reuses `initiateCharge()`'s existing
-  private sequence via a new `purpose`-equivalent branch
-  (`FundingAttemptPurpose::AddonPurchase`, already defined at the enum
-  level by M3 but never set by any M3 code path, confirmed by the merged
-  M3 contract's own §6 finding — M4 is the first to actually set it),
-  creates the `business_usage_addon_purchases` row keyed to the resulting
-  `funding_attempt_id`.
-- `confirmAddonPurchaseFromWebhook(BusinessUsageAddonPurchase $purchase, PaymentProviderEvent $event): void`
-  — transitions to `completed`, applying the catalog row's own
-  `fulfillment_mode` (a wallet credit via the existing
-  `UsageWalletManager` ledger-insert mechanism for `wallet_credit`, or a
-  no-op structural completion for `direct_deliverable`, which this
-  contract implements as pure state machinery with no actual delivery
-  mechanism invented, §10).
+  — looks up the (test-created only, §10) active catalog row by
+  `addon_key`, fails closed if absent or inactive, then calls
+  `initiateCharge()` with `purpose: FundingAttemptPurpose::AddonPurchase`
+  (already defined at the enum level by M3 but never set by any M3 code
+  path, confirmed by the merged M3 contract's own §6 finding — M4 is the
+  first to actually set it). **The outbound PaymentIntent's own metadata
+  remains `app_subject_kind: 'funding_attempt'`** (§15) — this method
+  introduces no new metadata shape.
+- **`initiateCharge()`'s own existing private sequence (§3 item 6) is
+  internally extended, inside this already-allowlisted file, with an
+  optional post-attempt-creation hook** — a narrow, authorized internal
+  refactor, not a new path (§25 item 41) — so that, for
+  `purpose: AddonPurchase` only, the exact ordering below holds, closing
+  the webhook race the naive "create attempt, call provider, create
+  purchase row afterward" sequence would otherwise leave open:
+  1. create the local `business_funding_attempts` row (unchanged,
+     existing step);
+  2. **immediately, still inside that same transaction**, create the
+     linked `business_usage_addon_purchases` row
+     (`business_id`, `addon_key`, `price_micro` snapshotted from the
+     catalog row, `funding_attempt_id: $attempt->id`,
+     `requested_by_user_id: $actorUserId`, `status: pending`) — the new
+     hook's own sole responsibility;
+  3. commit that local transaction (unchanged, existing step);
+  4. only then perform the outbound `createOffSessionPaymentIntent()`
+     call, strictly outside any open transaction/lock (unchanged, exactly
+     M3's own existing discipline, §8/§16 of the M3 contract);
+  5. persist the returned provider reference/state (unchanged, existing
+     step).
+  For `ManualTopUp`/`AutoRecharge`, the hook is simply absent — their own
+  existing behavior, ordering, and observable outcome are **entirely
+  unchanged**.
+- **`confirmSucceeded()` (private, existing) becomes purpose-aware,
+  replacing its own current unconditional "anything that isn't
+  `AutoRecharge` is `PaidTopUp`" ternary** — the exact defect this
+  refinement corrects (a validated `AddonPurchase` attempt must never fall
+  through to an unconditional wallet credit). The corrected dispatch:
+  `AutoRecharge` → credit the wallet with a `UsageLedgerEntryType::AutoRecharge`
+  entry (unchanged); `ManualTopUp` → credit the wallet with a
+  `UsageLedgerEntryType::PaidTopUp` entry (unchanged); `AddonPurchase` →
+  locate the unique `business_usage_addon_purchases` row by
+  `funding_attempt_id`, then finalize it (below) — **never** an
+  unconditional wallet credit. `ManualTopUp`/`AutoRecharge`'s own
+  observable behavior — same entry type, same amount, same
+  `local_idempotency_key.':credit'` idempotency suffix — is byte-for-byte
+  unchanged by this refactor; only `AddonPurchase` gains new behavior
+  where none existed before (M3 never set this purpose, §3 item 6).
+- **Add-on purchase finalization (new private logic, inside the same
+  already-allowlisted manager)** — idempotent: if the purchase row is
+  already `completed`, no-op. Otherwise, transitions the purchase to
+  `completed`, records the transition with the correct `source`
+  (`TransitionSource::SyncResponse` for a synchronous provider-succeeded
+  result, `TransitionSource::WebhookEvent` plus the real
+  `provider_event_id` for a webhook confirmation — reusing `TransitionSource`
+  exactly as every other M4 transition table already does) and applies
+  the catalog row's own `fulfillment_mode`: a wallet credit via the
+  existing `UsageWalletManager` ledger-insert mechanism **only** when
+  `fulfillment_mode: wallet_credit`; a pure state-machine completion, no
+  wallet mutation, when `fulfillment_mode: direct_deliverable` (no actual
+  delivery mechanism is invented by this contract, §10). **Because both
+  `confirmAttemptFromReturn()`'s own synchronous path and
+  `confirmAttemptFromWebhook()`'s own webhook path already converge on
+  the identical `confirmSucceeded()` call (confirmed by direct read of
+  the merged M3 code, §3 item 6), a synchronous provider-succeeded result
+  and a later webhook success necessarily converge on this exact same
+  finalization logic by construction — no separate convergence point is
+  needed or added.**
 
 Every method above validates every applicable persisted expectation
 (provider object id, operation id, amount, currency, customer) before any
@@ -1223,8 +1375,18 @@ implementation is a stop-and-report condition (§29). 87 paths total.**
 ### Manager (1 modified)
 
 41. `app/Library/Usage/UsageBillingCheckoutManager.php` — extended with
-    the nine new public methods (§21); no existing method's behavior
-    changes.
+    the eight new public methods (§21), plus two authorized internal
+    refactors to this same file's own existing private methods, neither
+    of which is a new path: `initiateCharge()` gains an optional
+    post-attempt-creation, still-in-transaction hook (used only for
+    `AddonPurchase`, §21's exact 5-step ordering); `confirmSucceeded()`
+    becomes purpose-aware (§21), replacing its own unconditional
+    `AutoRecharge`-or-`PaidTopUp` ternary with a three-way dispatch that
+    adds an `AddonPurchase` branch. **`ManualTopUp`/`AutoRecharge`'s own
+    observable behavior is unchanged** — same wallet-credit entry type,
+    same amount, same idempotency suffix, same ordering; only
+    `AddonPurchase` (never set by any M3 code path, §3 item 6) gains new
+    behavior where none previously existed.
 
 ### Jobs (4 new)
 
@@ -1312,20 +1474,48 @@ implementation is a stop-and-report condition (§29). 87 paths total.**
     `allocation_failed` saga, against the real, merged
     `EntitlementManager::allocateAdditionalBusinessSlotsFromVerifiedPayment()`.
 81. `tests/Feature/Usage/SlotAgreementQuoteSnapshotImmutabilityTest.php` —
-    §9 item 4: a catalog price/ratio edit after quote creation never
-    changes an already-created agreement's own snapshot columns.
+    §9 items 2/4/5: **explicitly proves the price × ratio formula** —
+    two quotes taken against catalog rows differing only in
+    `additional_business_slot_price_ratio` (base price held constant)
+    produce two different `price_per_slot_micro_snapshot`/
+    `total_amount_micro_snapshot` values, in the exact proportion the
+    ratio itself dictates (e.g. a `1.0000` ratio prices the slot at the
+    full base plan price; a `0.5000` ratio exactly halves it) — the
+    direct regression test for this refinement's own correction. Then
+    proves immutability: editing the catalog's `price`/ratio **after** an
+    agreement already exists changes neither that agreement's own frozen
+    `*_snapshot` columns nor its already-computed
+    `total_amount_micro_snapshot`, while a **renewal charge** created
+    after that same edit correctly re-snapshots and recomputes from the
+    *new* price/ratio (§9 item 5) — proving the frozen-original-vs.-
+    fresh-renewal distinction directly, not merely asserted in prose.
 82. `tests/Feature/Usage/SlotAgreementAdminAuthorityTest.php` — §14's full
     table: origination denied for administrators; resume/retry, manual
     allocation, and cancellation each succeed only with a mandatory
-    reason and the administrator's own real identity, never a synthetic
-    actor, never substituting for `requesting_customer_user_id` (§8 item
-    3).
+    reason. **Asserts the exact identity-provenance split (§14):** the
+    resulting RFC-004 `workspace_entitlement_transitions` row has
+    `actor_user_id === null` and `requesting_customer_user_id` equal to
+    the *original* Workspace owner who created the agreement — never the
+    administrator's own id — while the corresponding M4
+    `additional_business_slot_agreement_transitions` row's own
+    `actor_user_id` equals the *administrator's* real id, proving the two
+    records are genuinely separate, never conflated, and the
+    administrator is never substituted for `requesting_customer_user_id`.
 83. `tests/Feature/Usage/WebhookSlotAgreementSubjectRoutingTest.php` — §15:
-    `ProcessPaymentProviderEvent` correctly routes all four
-    `app_subject_kind` values, still fails closed on missing/unrecognized
-    metadata, and the pre-existing `funding_attempt` branch's own behavior
-    is unchanged (a direct regression check against M3's own existing
-    `WebhookMetadataMismatchTest`-equivalent assertions).
+    `ProcessPaymentProviderEvent` correctly routes exactly the three
+    canonical `app_subject_kind` values (`funding_attempt`,
+    `slot_agreement`, `slot_renewal_charge`), still fails closed on
+    missing/unrecognized metadata (including a probe asserting
+    `app_subject_kind: 'addon_purchase'` is itself unrecognized and fails
+    closed — never a fourth accepted kind), and **explicitly proves an
+    add-on purchase's own webhook event arrives through the existing
+    `funding_attempt` subject and is correctly distinguished, after full
+    validation, by the attempt's own persisted `purpose ===
+    FundingAttemptPurpose::AddonPurchase` — never by a separate subject
+    kind.** Also asserts `ManualTopUp`/`AutoRecharge`'s own existing
+    confirmation behavior is observably unchanged by `confirmSucceeded()`'s
+    new purpose-aware dispatch (§21) — a direct regression check against
+    M3's own existing `WebhookMetadataMismatchTest`-equivalent assertions.
 84. `tests/Feature/Usage/SlotAgreementConcurrencyTest.php` — §23's forced-
     race scenarios: concurrent checkout, concurrent webhook processing,
     two distinct mid-period increases, a genuine increase retry, and
@@ -1494,10 +1684,14 @@ report rather than proceed, if:
 
 ## 30. Contract self-audit
 
-1. **M4 test-mode and live-production readiness are separate** — §4
-   states both independently, with the one M4-specific qualifier
-   (`payment_lapsed` revocation) named explicitly rather than silently
-   folded into either bucket.
+1. **M4 test-mode and live-production readiness are separate, and the two
+   M4-specific live gates are themselves independent of each other and of
+   the four universal gates** — §4, corrected this refinement to resolve
+   a structural contradiction: the additional-slot-agreement gate
+   (`payment_lapsed` revocation, item 5) and the add-on gate (roster/
+   pricing, item 6) no longer read as one unified "any unresolved item
+   blocks everything" list; zero seeded add-ons is stated explicitly as a
+   valid *production*, not merely test-mode, launch state.
 2. **No live charging is authorized** — §0, §4, §7, §24, §29 each
    independently restate this.
 3. **Both cross-RFC prerequisites are confirmed merged, by exact commit,
@@ -1546,6 +1740,49 @@ report rather than proceed, if:
 19. **No production/test file is changed by this document** — confirmed
     by §31's own verification commands before staging (this document
     changes exactly one file).
+20. **(This refinement) The quote/renewal price formula is corrected to
+    price × ratio, never price alone** — §9 items 2/5, §18's schema
+    unchanged (no new column — `ratio_snapshot` already existed, it was
+    only unused by the formula), independently testable via test 81's own
+    strengthened assertion.
+21. **(This refinement) `app_subject_kind` is corrected to exactly the
+    three RFC-005 §17.C canonical values** — §3 item 7, §6, §15; add-on
+    purchases are confirmed to route through the existing
+    `funding_attempt` machinery, distinguished only by their own
+    persisted `purpose`, never a fourth subject kind — independently
+    testable via test 83's own strengthened assertion, including an
+    explicit probe that `addon_purchase` itself is rejected as
+    unrecognized.
+22. **(This refinement) `confirmSucceeded()`'s own pre-existing
+    unconditional wallet-credit behavior for any non-`AutoRecharge`
+    purpose is corrected before M4 can safely set `AddonPurchase`** — §21,
+    §25 item 41 — authorized as an internal refactor to the
+    already-allowlisted manager file, not a new path;
+    `ManualTopUp`/`AutoRecharge`'s own observable behavior is explicitly
+    preserved, only `AddonPurchase` gains new (previously unreachable)
+    behavior. The pre-provider-call creation ordering (attempt row →
+    purchase row → commit → provider call → persist reference) closes the
+    webhook race the naive ordering would otherwise leave open.
+23. **(This refinement) Administrator identity provenance is made
+    explicit as two separate, non-conflated records** — §14: RFC-004's own
+    transition always records `actor_user_id = null` regardless of who
+    triggered the M4-side call (the method itself accepts no actor
+    parameter, confirmed by direct re-read of its signature, §8 item 3);
+    M4's own agreement-transition row is the one place the
+    administrator's real identity is durably recorded — independently
+    testable via test 82's own strengthened assertion.
+24. **(This refinement) §4's live-readiness structure no longer
+    contradicts §5's own per-item classification** — the additional-slot
+    and add-on live gates are stated as independent, non-unified
+    conditions; zero seeded add-ons is confirmed a valid *production*
+    launch state, not merely a test-mode one; no add-on product is
+    invented merely to appear "resolved."
+25. **(This refinement) The implementation allowlist count is unchanged at
+    87** — every correction above was satisfied entirely through prose
+    changes to already-allowlisted paths (the manager file, §25 item 41;
+    the webhook job, §25 item 46; existing test descriptions, §25 items
+    81–83) — no path was added, removed, or renumbered (§25, self-audit
+    item 16 recomputed and reconfirmed unchanged below).
 
 ---
 
