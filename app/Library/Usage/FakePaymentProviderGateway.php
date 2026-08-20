@@ -24,9 +24,45 @@ class FakePaymentProviderGateway implements PaymentProviderGateway
 
     public bool $nextWebhookSignatureIsValid = true;
 
+    /**
+     * M4 contract §15a — keyed by the idempotency key supplied to
+     * createCheckoutSession(); configures what retrieveCheckoutSession()
+     * later returns for that exact session ('*' is the same test-only
+     * wildcard fallback createOffSessionPaymentIntent() already
+     * establishes). Unconfigured defaults to a fully paid, complete
+     * Session — the happy path most tests exercise.
+     *
+     * @var array<string, array{status?: string, paymentStatus?: string, providerPaymentMethodId?: ?string}>
+     */
+    public array $checkoutSessionOutcomes = [];
+
+    /**
+     * M4 contract §15a/§23 — keyed by the idempotency key
+     * confirmPaymentIntent() itself receives; configures that call's own
+     * outcome, identically to $paymentIntentOutcomes for the initial
+     * off-session create.
+     *
+     * @var array<string, string>
+     */
+    public array $confirmPaymentIntentOutcomes = [];
+
+    /**
+     * M4 contract §3 item 7k — records every confirmPaymentIntent() call
+     * received (provider PaymentIntent id, payment method, idempotency
+     * key), so a test can assert a genuine second provider-side attempt
+     * actually occurred, never merely that the existing PaymentIntent was
+     * re-retrieved.
+     *
+     * @var array<int, array{providerPaymentIntentId: string, providerPaymentMethodId: string, idempotencyKey: string}>
+     */
+    public array $confirmPaymentIntentCalls = [];
+
     private array $createdCustomers = [];
 
     private array $createdPaymentMethods = [];
+
+    /** @var array<string, array{idempotencyKey: string, amountMinorUnits: int, currencyCode: string, providerCustomerId: string, providerPaymentIntentId: string}> */
+    private array $createdCheckoutSessions = [];
 
     public function createOrRetrieveCustomer(?string $existingProviderCustomerId, string $idempotencyKey): ProviderCustomerResult
     {
@@ -132,5 +168,101 @@ class FakePaymentProviderGateway implements PaymentProviderGateway
     public function registerPaymentMethod(PaymentMethodResult $result): void
     {
         $this->createdPaymentMethods[$result->providerPaymentMethodId] = $result;
+    }
+
+    /**
+     * M4 contract §15a — a freshly created Session is always 'open'/
+     * 'unpaid' with a redirect url (never immediately paid, mirroring
+     * real Stripe Checkout), with no PaymentIntent/PaymentMethod reference
+     * yet. Session state is configured via $checkoutSessionOutcomes for
+     * the later retrieveCheckoutSession() call.
+     */
+    public function createCheckoutSession(
+        string $providerCustomerId,
+        int $amountMinorUnits,
+        string $currencyCode,
+        string $lineItemName,
+        string $successUrl,
+        string $cancelUrl,
+        string $idempotencyKey,
+        array $metadata,
+    ): CheckoutSessionResult {
+        $id = 'cs_fake_'.Str::random(16);
+        $paymentIntentId = 'pi_fake_'.Str::random(16);
+
+        $this->createdCheckoutSessions[$id] = [
+            'idempotencyKey' => $idempotencyKey,
+            'amountMinorUnits' => $amountMinorUnits,
+            'currencyCode' => $currencyCode,
+            'providerCustomerId' => $providerCustomerId,
+            'providerPaymentIntentId' => $paymentIntentId,
+        ];
+
+        return new CheckoutSessionResult(
+            $id,
+            'open',
+            'unpaid',
+            'https://checkout.fake.stripe.test/'.$id,
+            $amountMinorUnits,
+            $currencyCode,
+            $providerCustomerId,
+            null,
+            null,
+        );
+    }
+
+    public function retrieveCheckoutSession(string $providerCheckoutSessionId): CheckoutSessionResult
+    {
+        $session = $this->createdCheckoutSessions[$providerCheckoutSessionId] ?? null;
+
+        if ($session === null) {
+            // Deterministic fallback for a session this fake never itself
+            // created (e.g. a test constructing a webhook event against a
+            // manually chosen id) — treated as already paid by default,
+            // mirroring createOffSessionPaymentIntent()'s own succeeded
+            // default.
+            return new CheckoutSessionResult($providerCheckoutSessionId, 'complete', 'paid', null, 0, 'USD', 'cus_fake_unknown', 'pi_fake_'.Str::random(16), 'pm_fake_'.Str::random(16));
+        }
+
+        $outcome = $this->checkoutSessionOutcomes[$session['idempotencyKey']] ?? $this->checkoutSessionOutcomes['*'] ?? [];
+        $status = $outcome['status'] ?? 'complete';
+        $paymentStatus = $outcome['paymentStatus'] ?? 'paid';
+        $providerPaymentMethodId = array_key_exists('providerPaymentMethodId', $outcome)
+            ? $outcome['providerPaymentMethodId']
+            : ($status === 'complete' ? 'pm_fake_'.substr($session['providerPaymentIntentId'], strlen('pi_fake_')) : null);
+
+        return new CheckoutSessionResult(
+            $providerCheckoutSessionId,
+            $status,
+            $paymentStatus,
+            $status === 'open' ? 'https://checkout.fake.stripe.test/'.$providerCheckoutSessionId : null,
+            $session['amountMinorUnits'],
+            $session['currencyCode'],
+            $session['providerCustomerId'],
+            $status === 'complete' ? $session['providerPaymentIntentId'] : null,
+            $providerPaymentMethodId,
+        );
+    }
+
+    public function confirmPaymentIntent(
+        string $providerPaymentIntentId,
+        string $providerPaymentMethodId,
+        string $idempotencyKey,
+    ): PaymentIntentResult {
+        $this->confirmPaymentIntentCalls[] = [
+            'providerPaymentIntentId' => $providerPaymentIntentId,
+            'providerPaymentMethodId' => $providerPaymentMethodId,
+            'idempotencyKey' => $idempotencyKey,
+        ];
+
+        $outcome = $this->confirmPaymentIntentOutcomes[$idempotencyKey] ?? $this->confirmPaymentIntentOutcomes['*'] ?? 'succeeded';
+
+        if ($outcome === 'declined') {
+            throw new ProviderCardDeclinedException('generic_decline');
+        }
+
+        $status = $outcome === 'requires_action' ? 'requires_action' : 'succeeded';
+
+        return new PaymentIntentResult($providerPaymentIntentId, $status, $status === 'requires_action' ? 'pi_fake_secret_'.Str::random(8) : null, 0, 'USD');
     }
 }

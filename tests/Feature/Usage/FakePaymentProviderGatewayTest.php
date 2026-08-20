@@ -103,4 +103,72 @@ class FakePaymentProviderGatewayTest extends TestCase
         $fallback = $gateway->retrievePaymentMethod('pm_to_detach');
         $this->assertNotSame($result, $fallback);
     }
+
+    /**
+     * M4 contract §15a — a freshly created Session is always open/unpaid
+     * with a redirect url and no PaymentMethod/PaymentIntent reference
+     * yet; retrieveCheckoutSession() defaults to complete/paid with a
+     * null redirectUrl once configured (or by its own default), never
+     * carrying a redirect for an already-completed Session.
+     */
+    public function test_checkout_session_create_then_retrieve_defaults_to_a_complete_paid_session_with_no_redirect_url(): void
+    {
+        $gateway = new FakePaymentProviderGateway();
+
+        $created = $gateway->createCheckoutSession('cus_x', 2000, 'USD', 'Additional Business slots', 'https://success.test', 'https://cancel.test', 'idem-checkout-1', []);
+        $this->assertSame('open', $created->status);
+        $this->assertSame('unpaid', $created->paymentStatus);
+        $this->assertNotNull($created->redirectUrl);
+        $this->assertNull($created->providerPaymentMethodId);
+        $this->assertNull($created->providerPaymentIntentId);
+
+        $retrieved = $gateway->retrieveCheckoutSession($created->providerCheckoutSessionId);
+        $this->assertSame('complete', $retrieved->status);
+        $this->assertSame('paid', $retrieved->paymentStatus);
+        $this->assertNull($retrieved->redirectUrl);
+        $this->assertNotNull($retrieved->providerPaymentMethodId);
+        $this->assertNotNull($retrieved->providerPaymentIntentId);
+        $this->assertSame(2000, $retrieved->amountMinorUnits);
+        $this->assertSame('USD', $retrieved->currencyCode);
+        $this->assertSame('cus_x', $retrieved->providerCustomerId);
+    }
+
+    public function test_checkout_session_outcome_is_configurable_per_idempotency_key(): void
+    {
+        $gateway = new FakePaymentProviderGateway();
+        $created = $gateway->createCheckoutSession('cus_x', 2000, 'USD', 'Additional Business slots', 'https://success.test', 'https://cancel.test', 'idem-checkout-2', []);
+
+        $gateway->checkoutSessionOutcomes['idem-checkout-2'] = ['status' => 'expired', 'paymentStatus' => 'unpaid'];
+
+        $retrieved = $gateway->retrieveCheckoutSession($created->providerCheckoutSessionId);
+        $this->assertSame('expired', $retrieved->status);
+        $this->assertNull($retrieved->providerPaymentMethodId);
+        $this->assertNull($retrieved->providerPaymentIntentId);
+    }
+
+    /**
+     * M4 contract §3 item 7k — confirmPaymentIntent() records every call
+     * it receives, so a test can assert a genuine second provider-side
+     * attempt actually occurred, never merely that the existing
+     * PaymentIntent was re-retrieved.
+     */
+    public function test_confirm_payment_intent_is_configurable_and_records_every_call(): void
+    {
+        $gateway = new FakePaymentProviderGateway();
+
+        $succeeded = $gateway->confirmPaymentIntent('pi_fake_x', 'pm_fake_y', 'idem-confirm-succeed');
+        $this->assertSame('succeeded', $succeeded->status);
+
+        $gateway->confirmPaymentIntentOutcomes['idem-confirm-decline'] = 'declined';
+        $this->expectException(ProviderCardDeclinedException::class);
+
+        try {
+            $gateway->confirmPaymentIntent('pi_fake_x', 'pm_fake_z', 'idem-confirm-decline');
+        } finally {
+            $this->assertCount(2, $gateway->confirmPaymentIntentCalls);
+            $this->assertSame('pi_fake_x', $gateway->confirmPaymentIntentCalls[0]['providerPaymentIntentId']);
+            $this->assertSame('pm_fake_y', $gateway->confirmPaymentIntentCalls[0]['providerPaymentMethodId']);
+            $this->assertSame('idem-confirm-succeed', $gateway->confirmPaymentIntentCalls[0]['idempotencyKey']);
+        }
+    }
 }

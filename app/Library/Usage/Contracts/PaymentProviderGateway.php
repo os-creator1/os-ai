@@ -2,6 +2,7 @@
 
 namespace App\Library\Usage\Contracts;
 
+use App\Library\Usage\CheckoutSessionResult;
 use App\Library\Usage\PaymentIntentResult;
 use App\Library\Usage\PaymentMethodResult;
 use App\Library\Usage\ProviderCustomerResult;
@@ -40,4 +41,41 @@ interface PaymentProviderGateway
     public function retrievePaymentIntent(string $providerPaymentIntentId): PaymentIntentResult;
 
     public function verifyWebhookSignature(string $rawBody, string $signatureHeader, string $webhookSecret): WebhookVerificationResult;
+
+    /**
+     * M4 contract §15a — the customer-present initial additional-slot
+     * purchase's own Checkout Session create. $lineItemName is the
+     * already-defined feature's own truthful label ('Additional Business
+     * slots'), never a new commercial product or price. Fails closed
+     * (throws) if the newly-created Session unexpectedly carries no url.
+     */
+    public function createCheckoutSession(
+        string $providerCustomerId,
+        int $amountMinorUnits,
+        string $currencyCode,
+        string $lineItemName,
+        string $successUrl,
+        string $cancelUrl,
+        string $idempotencyKey,
+        array $metadata,
+    ): CheckoutSessionResult;
+
+    /**
+     * M4 contract §15a — never trusts the browser redirect alone. May
+     * legitimately return redirectUrl: null for an already-complete
+     * Session.
+     */
+    public function retrieveCheckoutSession(string $providerCheckoutSessionId): CheckoutSessionResult;
+
+    /**
+     * M4 contract §15a/§23 — the exact, narrow addition that makes an M4
+     * renewal retry a genuine second provider-side attempt: re-confirms
+     * an existing PaymentIntent against a (possibly new) payment method,
+     * never a bare re-retrieval.
+     */
+    public function confirmPaymentIntent(
+        string $providerPaymentIntentId,
+        string $providerPaymentMethodId,
+        string $idempotencyKey,
+    ): PaymentIntentResult;
 }

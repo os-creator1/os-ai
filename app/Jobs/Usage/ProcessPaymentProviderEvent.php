@@ -4,6 +4,8 @@ namespace App\Jobs\Usage;
 
 use App\Jobs\Base;
 use App\Library\Usage\UsageBillingCheckoutManager;
+use App\Repositories\Contracts\AdditionalBusinessSlotAgreementRepository;
+use App\Repositories\Contracts\AdditionalBusinessSlotRenewalChargeRepository;
 use App\Repositories\Contracts\BusinessFundingAttemptRepository;
 use App\Repositories\Contracts\PaymentProviderEventRepository;
 use Illuminate\Support\Facades\Log;
@@ -16,6 +18,12 @@ use Illuminate\Support\Facades\Log;
  * mutation. Missing/malformed/unknown/ambiguous/mismatched metadata or a
  * validation failure causes zero mutation and marks the event failed,
  * routing it to reconciliation (§14's exhausted-event queue).
+ *
+ * M4 contract §15 (Correction Round 1 §A) — widened from a single
+ * hardcoded 'funding_attempt' subject-kind check to a small, explicit
+ * dispatch over exactly three recognized kinds. This job never mutates a
+ * renewal-charge or agreement row itself — every mutation routes through
+ * UsageBillingCheckoutManager's own named methods.
  */
 class ProcessPaymentProviderEvent extends Base
 {
@@ -27,6 +35,8 @@ class ProcessPaymentProviderEvent extends Base
     public function handle(
         PaymentProviderEventRepository $eventRepository,
         BusinessFundingAttemptRepository $attemptRepository,
+        AdditionalBusinessSlotAgreementRepository $agreementRepository,
+        AdditionalBusinessSlotRenewalChargeRepository $renewalChargeRepository,
         UsageBillingCheckoutManager $checkoutManager,
     ): void {
         $leaseMinutes = (int) config('usage_billing.webhook_event.lease_minutes');
@@ -45,7 +55,22 @@ class ProcessPaymentProviderEvent extends Base
         }
 
         try {
-            $this->process($event, $attemptRepository, $checkoutManager, $eventRepository);
+            $metadata = null;
+            $decoded = null;
+
+            if ($event->payload_encrypted !== null) {
+                $decoded = json_decode($event->payload_encrypted, true);
+                $metadata = $decoded['data']['object']['metadata'] ?? null;
+            }
+
+            $subjectKind = is_array($metadata) ? ($metadata['app_subject_kind'] ?? null) : null;
+
+            match ($subjectKind) {
+                'funding_attempt' => $this->processFundingAttempt($event, $metadata, $decoded, $attemptRepository, $checkoutManager, $eventRepository),
+                'slot_renewal_charge' => $this->processSlotRenewalCharge($event, $metadata, $decoded, $renewalChargeRepository, $checkoutManager, $eventRepository),
+                'slot_agreement' => $this->processSlotAgreementInitialCheckout($event, $metadata, $decoded, $agreementRepository, $checkoutManager, $eventRepository),
+                default => $eventRepository->markFailed($event->id, 'missing_or_unrecognized_metadata'),
+            };
         } catch (\Throwable $e) {
             Log::warning('Payment provider event processing failed.', [
                 'event_id' => $event->id,
@@ -56,16 +81,16 @@ class ProcessPaymentProviderEvent extends Base
         }
     }
 
-    private function process($event, BusinessFundingAttemptRepository $attemptRepository, UsageBillingCheckoutManager $checkoutManager, PaymentProviderEventRepository $eventRepository): void
+    /**
+     * M3 contract §13 — unchanged behavior. The purpose-aware dispatch
+     * (ManualTopUp/AutoRecharge/AddonPurchase) lives entirely inside
+     * UsageBillingCheckoutManager's own confirmAttemptFromWebhook()/
+     * confirmSucceeded() (M4 contract §21) — this branch never inspects
+     * purpose itself.
+     */
+    private function processFundingAttempt($event, array $metadata, ?array $decoded, BusinessFundingAttemptRepository $attemptRepository, UsageBillingCheckoutManager $checkoutManager, PaymentProviderEventRepository $eventRepository): void
     {
-        $metadata = null;
-
-        if ($event->payload_encrypted !== null) {
-            $decoded = json_decode($event->payload_encrypted, true);
-            $metadata = $decoded['data']['object']['metadata'] ?? null;
-        }
-
-        if (! is_array($metadata) || ($metadata['app_subject_kind'] ?? null) !== 'funding_attempt' || empty($metadata['app_subject_id'])) {
+        if (empty($metadata['app_subject_id'])) {
             $eventRepository->markFailed($event->id, 'missing_or_unrecognized_metadata');
 
             return;
@@ -79,10 +104,6 @@ class ProcessPaymentProviderEvent extends Base
             return;
         }
 
-        // Validate every applicable persisted expectation before any
-        // mutation (M3 contract §13 step 10) — provider object id and
-        // operation identifier against this exact attempt's own frozen
-        // values.
         if ($attempt->provider_session_or_intent_reference !== $event->provider_object_id) {
             $eventRepository->markFailed($event->id, 'provider_object_id_mismatch');
 
@@ -132,6 +153,151 @@ class ProcessPaymentProviderEvent extends Base
         // Any other event_type (e.g. .requires_action, .created) carries
         // only provider-object lifecycle information this job does not
         // need to act on — intentionally ignored, never a mutation.
+        $eventRepository->markIgnored($event->id);
+    }
+
+    /**
+     * M4 contract §15 (Correction Round 1 §A) — every renewal/mid-period-
+     * increase charge's own off-session PaymentIntent webhook
+     * confirmation. Never mutates the charge itself — dispatches to
+     * confirmSlotRenewalChargeFromWebhook()/markSlotRenewalChargeFailedFromWebhook()
+     * once the identical pre-mutation validation sequence has passed.
+     */
+    private function processSlotRenewalCharge($event, array $metadata, ?array $decoded, AdditionalBusinessSlotRenewalChargeRepository $renewalChargeRepository, UsageBillingCheckoutManager $checkoutManager, PaymentProviderEventRepository $eventRepository): void
+    {
+        if (empty($metadata['app_subject_id'])) {
+            $eventRepository->markFailed($event->id, 'missing_or_unrecognized_metadata');
+
+            return;
+        }
+
+        $charge = $renewalChargeRepository->findById((int) $metadata['app_subject_id']);
+
+        if ($charge === null) {
+            $eventRepository->markFailed($event->id, 'no_matching_local_record');
+
+            return;
+        }
+
+        if ($charge->provider_session_or_intent_reference !== $event->provider_object_id) {
+            $eventRepository->markFailed($event->id, 'provider_object_id_mismatch');
+
+            return;
+        }
+
+        if (($metadata['app_operation_id'] ?? null) !== $charge->local_idempotency_key) {
+            $eventRepository->markFailed($event->id, 'operation_id_mismatch');
+
+            return;
+        }
+
+        $object = $decoded['data']['object'] ?? [];
+
+        if (array_key_exists('amount', $object) && (int) $object['amount'] !== $checkoutManager->expectedMinorUnitsForRenewalCharge($charge)) {
+            $eventRepository->markFailed($event->id, 'amount_mismatch');
+
+            return;
+        }
+
+        if (array_key_exists('currency', $object) && strtoupper((string) $object['currency']) !== $checkoutManager->expectedCurrencyCodeForRenewalCharge($charge)) {
+            $eventRepository->markFailed($event->id, 'currency_mismatch');
+
+            return;
+        }
+
+        if (array_key_exists('customer', $object) && (string) $object['customer'] !== $charge->provider_customer_external_id_snapshot) {
+            $eventRepository->markFailed($event->id, 'customer_mismatch');
+
+            return;
+        }
+
+        if (str_ends_with((string) $event->event_type, '.succeeded')) {
+            $checkoutManager->confirmSlotRenewalChargeFromWebhook($charge, $event);
+            $eventRepository->markProcessed($event->id);
+
+            return;
+        }
+
+        if (str_ends_with((string) $event->event_type, '.payment_failed') || str_contains((string) $event->event_type, 'canceled')) {
+            $checkoutManager->markSlotRenewalChargeFailedFromWebhook($charge, 'provider_reported_failure', $event);
+            $eventRepository->markProcessed($event->id);
+
+            return;
+        }
+
+        $eventRepository->markIgnored($event->id);
+    }
+
+    /**
+     * M4 contract §15/§15a — the initial Checkout Session's own webhook
+     * confirmation. Never a PaymentIntent event for this step. Amount
+     * comparison falls back to amount_total (M4 contract §15b) since a
+     * Checkout Session's own payload carries no top-level 'amount' field.
+     */
+    private function processSlotAgreementInitialCheckout($event, array $metadata, ?array $decoded, AdditionalBusinessSlotAgreementRepository $agreementRepository, UsageBillingCheckoutManager $checkoutManager, PaymentProviderEventRepository $eventRepository): void
+    {
+        if (empty($metadata['app_subject_id'])) {
+            $eventRepository->markFailed($event->id, 'missing_or_unrecognized_metadata');
+
+            return;
+        }
+
+        $agreement = $agreementRepository->findById((int) $metadata['app_subject_id']);
+
+        if ($agreement === null) {
+            $eventRepository->markFailed($event->id, 'no_matching_local_record');
+
+            return;
+        }
+
+        if ($agreement->provider_session_or_intent_reference !== $event->provider_object_id) {
+            $eventRepository->markFailed($event->id, 'provider_object_id_mismatch');
+
+            return;
+        }
+
+        if (($metadata['app_operation_id'] ?? null) !== $agreement->local_idempotency_key) {
+            $eventRepository->markFailed($event->id, 'operation_id_mismatch');
+
+            return;
+        }
+
+        $object = $decoded['data']['object'] ?? [];
+        $amount = $object['amount'] ?? $object['amount_total'] ?? null;
+
+        if ($amount !== null && (int) $amount !== $checkoutManager->expectedMinorUnitsForAgreement($agreement)) {
+            $eventRepository->markFailed($event->id, 'amount_mismatch');
+
+            return;
+        }
+
+        if (array_key_exists('currency', $object) && strtoupper((string) $object['currency']) !== $checkoutManager->expectedCurrencyCodeForAgreement($agreement)) {
+            $eventRepository->markFailed($event->id, 'currency_mismatch');
+
+            return;
+        }
+
+        if (array_key_exists('customer', $object)) {
+            $agreement->loadMissing('providerCustomer');
+
+            if ($agreement->providerCustomer === null || (string) $object['customer'] !== $agreement->providerCustomer->provider_customer_id) {
+                $eventRepository->markFailed($event->id, 'customer_mismatch');
+
+                return;
+            }
+        }
+
+        if (str_ends_with((string) $event->event_type, '.completed') || str_ends_with((string) $event->event_type, '.async_payment_succeeded')) {
+            $checkoutManager->confirmSlotAgreementFromWebhook($agreement, $event);
+            $eventRepository->markProcessed($event->id);
+
+            return;
+        }
+
+        // Session expiry/async-payment-failure carries no authorized
+        // recovery path (M4 contract §21 names no
+        // markSlotAgreementFailedFromWebhook()-shaped method) —
+        // intentionally ignored, never a mutation.
         $eventRepository->markIgnored($event->id);
     }
 }

@@ -3,10 +3,12 @@
 namespace Tests\Feature\Usage;
 
 use App\Library\Usage\StripePaymentProviderGateway;
+use Stripe\Checkout\Session;
 use Stripe\Customer;
 use Stripe\PaymentIntent;
 use Stripe\PaymentMethod;
 use Stripe\SetupIntent;
+use Stripe\Service\Checkout\SessionService;
 use Stripe\Service\CustomerService;
 use Stripe\Service\PaymentIntentService;
 use Stripe\Service\PaymentMethodService;
@@ -33,6 +35,64 @@ class StripePaymentProviderGatewayCompatibilityTest extends TestCase
         $this->assertTrue(method_exists(PaymentMethodService::class, 'detach'));
         $this->assertTrue(method_exists(PaymentIntentService::class, 'create'));
         $this->assertTrue(method_exists(Webhook::class, 'constructEvent'));
+
+        // M4 contract §15a — the Checkout Session and PaymentIntent
+        // confirmation seams the gateway extension calls.
+        $this->assertTrue(method_exists(SessionService::class, 'create'));
+        $this->assertTrue(method_exists(SessionService::class, 'retrieve'));
+        $this->assertTrue(method_exists(PaymentIntentService::class, 'confirm'));
+    }
+
+    public function test_installed_sdk_checkout_session_response_object_class_exists(): void
+    {
+        $this->assertTrue(class_exists(Session::class));
+    }
+
+    /**
+     * M4 contract §15a (Correction Round 1) — the exact, corrected
+     * Checkout Session request shape: mode: 'payment' with exactly one
+     * line_items entry built from inline price_data, never a separately-
+     * created Stripe Price/Product. Verified at the source level (this
+     * file's own established zero-live-network-call discipline) — a
+     * Checkout Session create request missing the required line_items
+     * structure would fail this assertion.
+     */
+    public function test_checkout_session_create_request_includes_the_required_line_items_structure(): void
+    {
+        $source = file_get_contents(app_path('Library/Usage/StripePaymentProviderGateway.php'));
+
+        $this->assertStringContainsString("'mode' => 'payment'", $source);
+        $this->assertStringContainsString("'line_items'", $source);
+        $this->assertStringContainsString("'price_data'", $source);
+        $this->assertStringContainsString("'unit_amount' => \$amountMinorUnits", $source);
+        $this->assertStringContainsString("'quantity' => 1", $source);
+        $this->assertStringContainsString("'setup_future_usage' => 'off_session'", $source);
+        // Never a separately-created Stripe Price/Product id.
+        $this->assertStringNotContainsString("'price' =>", $source);
+    }
+
+    /**
+     * M4 contract §15a — createCheckoutSession() fails closed when the
+     * newly-created Session unexpectedly carries no redirect url;
+     * retrieveCheckoutSession() resolves the actual PaymentMethod via
+     * PaymentIntent expansion on a complete Session, never assuming the
+     * locally-saved default.
+     */
+    public function test_gateway_source_fails_closed_on_a_missing_redirect_url_and_resolves_payment_method_via_expansion(): void
+    {
+        $source = file_get_contents(app_path('Library/Usage/StripePaymentProviderGateway.php'));
+
+        $this->assertStringContainsString('blank($session->url)', $source);
+        $this->assertStringContainsString('ProviderInvalidRequestException', $source);
+        $this->assertStringContainsString("'expand' => ['payment_intent.payment_method']", $source);
+    }
+
+    public function test_confirm_payment_intent_request_shape_includes_payment_method_and_idempotency_key(): void
+    {
+        $source = file_get_contents(app_path('Library/Usage/StripePaymentProviderGateway.php'));
+
+        $this->assertStringContainsString("'payment_method' => \$providerPaymentMethodId", $source);
+        $this->assertStringContainsString("'idempotency_key' => \$idempotencyKey", $source);
     }
 
     public function test_installed_sdk_exposes_every_exception_class_the_gateway_catches(): void

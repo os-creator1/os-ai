@@ -177,6 +177,13 @@
                 \App\Repositories\Contracts\BusinessFundingAttemptTransitionRepository::class => \App\Repositories\Eloquent\EloquentBusinessFundingAttemptTransitionRepository::class,
                 \App\Repositories\Contracts\PaymentProviderEventRepository::class => \App\Repositories\Eloquent\EloquentPaymentProviderEventRepository::class,
                 \App\Library\Usage\Contracts\PaymentProviderGateway::class => \App\Library\Usage\StripePaymentProviderGateway::class,
+                \App\Repositories\Contracts\AdditionalBusinessSlotAgreementRepository::class => \App\Repositories\Eloquent\EloquentAdditionalBusinessSlotAgreementRepository::class,
+                \App\Repositories\Contracts\AdditionalBusinessSlotAgreementTransitionRepository::class => \App\Repositories\Eloquent\EloquentAdditionalBusinessSlotAgreementTransitionRepository::class,
+                \App\Repositories\Contracts\AdditionalBusinessSlotRenewalChargeRepository::class => \App\Repositories\Eloquent\EloquentAdditionalBusinessSlotRenewalChargeRepository::class,
+                \App\Repositories\Contracts\AdditionalBusinessSlotRenewalChargeTransitionRepository::class => \App\Repositories\Eloquent\EloquentAdditionalBusinessSlotRenewalChargeTransitionRepository::class,
+                \App\Repositories\Contracts\BusinessUsageAddonCatalogRepository::class => \App\Repositories\Eloquent\EloquentBusinessUsageAddonCatalogRepository::class,
+                \App\Repositories\Contracts\BusinessUsageAddonPurchaseRepository::class => \App\Repositories\Eloquent\EloquentBusinessUsageAddonPurchaseRepository::class,
+                \App\Repositories\Contracts\BusinessUsageAddonPurchaseTransitionRepository::class => \App\Repositories\Eloquent\EloquentBusinessUsageAddonPurchaseTransitionRepository::class,
                 \App\Repositories\Contracts\PlatformThemePresetRepository::class => \App\Repositories\Eloquent\EloquentPlatformThemePresetRepository::class,
                 \App\Repositories\Contracts\PlatformThemeFontRepository::class => \App\Repositories\Eloquent\EloquentPlatformThemeFontRepository::class,
             ];

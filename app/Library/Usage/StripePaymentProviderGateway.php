@@ -181,15 +181,132 @@ class StripePaymentProviderGateway implements PaymentProviderGateway
         $object = $event->data->object;
         $metadata = isset($object->metadata) ? $object->metadata->toArray() : [];
 
+        // M4 contract §15b — a Checkout Session event carries amount_total,
+        // never amount; every existing PaymentIntent/Charge-shaped event
+        // still normalizes via amount first, unchanged.
+        $amountMinorUnits = $object->amount ?? $object->amount_total ?? null;
+
         return new WebhookVerificationResult(
             $event->id,
             $event->type,
             $object->id,
             $rawBody,
             $metadata,
-            $object->amount ?? null,
+            $amountMinorUnits,
             isset($object->currency) ? strtoupper($object->currency) : null,
             isset($object->customer) ? (string) $object->customer : null,
+        );
+    }
+
+    /**
+     * M4 contract §15a — mode: 'payment' with exactly one non-adjustable
+     * line item built from inline price_data (never a separately-created
+     * Stripe Price/Product); unit_amount derives only from the caller's
+     * own frozen amount. setup_future_usage: 'off_session' establishes the
+     * card for later off-session renewal.
+     */
+    public function createCheckoutSession(
+        string $providerCustomerId,
+        int $amountMinorUnits,
+        string $currencyCode,
+        string $lineItemName,
+        string $successUrl,
+        string $cancelUrl,
+        string $idempotencyKey,
+        array $metadata,
+    ): CheckoutSessionResult {
+        $session = $this->call(
+            fn () => $this->client->checkout->sessions->create([
+                'mode' => 'payment',
+                'customer' => $providerCustomerId,
+                'payment_method_types' => ['card'],
+                'line_items' => [[
+                    'price_data' => [
+                        'currency' => strtolower($currencyCode),
+                        'unit_amount' => $amountMinorUnits,
+                        'product_data' => [
+                            'name' => $lineItemName,
+                        ],
+                    ],
+                    'quantity' => 1,
+                ]],
+                'payment_intent_data' => [
+                    'setup_future_usage' => 'off_session',
+                ],
+                'success_url' => $successUrl,
+                'cancel_url' => $cancelUrl,
+                'metadata' => $metadata,
+            ], ['idempotency_key' => $idempotencyKey]),
+        );
+
+        if (blank($session->url)) {
+            throw new ProviderInvalidRequestException('Checkout Session was created with no redirect url.');
+        }
+
+        return $this->mapCheckoutSession($session, null);
+    }
+
+    public function retrieveCheckoutSession(string $providerCheckoutSessionId): CheckoutSessionResult
+    {
+        $session = $this->call(
+            fn () => $this->client->checkout->sessions->retrieve($providerCheckoutSessionId, [
+                'expand' => ['payment_intent.payment_method'],
+            ]),
+        );
+
+        $providerPaymentMethodId = null;
+
+        if ($session->status === 'complete' && isset($session->payment_intent->payment_method)) {
+            $paymentMethod = $session->payment_intent->payment_method;
+            $providerPaymentMethodId = is_string($paymentMethod) ? $paymentMethod : ($paymentMethod->id ?? null);
+        }
+
+        return $this->mapCheckoutSession($session, $providerPaymentMethodId);
+    }
+
+    /**
+     * M4 contract §23 — re-confirms an existing PaymentIntent against a
+     * (possibly new) payment method; a genuine second provider-side
+     * attempt, never a bare re-retrieval.
+     */
+    public function confirmPaymentIntent(
+        string $providerPaymentIntentId,
+        string $providerPaymentMethodId,
+        string $idempotencyKey,
+    ): PaymentIntentResult {
+        $paymentIntent = $this->call(
+            fn () => $this->client->paymentIntents->confirm($providerPaymentIntentId, [
+                'payment_method' => $providerPaymentMethodId,
+            ], ['idempotency_key' => $idempotencyKey]),
+        );
+
+        return new PaymentIntentResult(
+            $paymentIntent->id,
+            $paymentIntent->status,
+            $paymentIntent->client_secret,
+            $paymentIntent->amount,
+            strtoupper($paymentIntent->currency),
+        );
+    }
+
+    private function mapCheckoutSession($session, ?string $providerPaymentMethodId): CheckoutSessionResult
+    {
+        $paymentIntentId = $session->payment_intent ?? null;
+
+        if (! is_string($paymentIntentId)) {
+            $paymentIntentId = $paymentIntentId->id ?? null;
+        }
+
+        return new CheckoutSessionResult(
+            $session->id,
+            $session->status,
+            $session->payment_status,
+            $session->url ?? null,
+            (int) $session->amount_total,
+            strtoupper($session->currency),
+            (string) $session->customer,
+            $paymentIntentId,
+            $providerPaymentMethodId,
         );
     }
 

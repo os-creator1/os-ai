@@ -695,6 +695,22 @@
         Route::get('provider-events', 'PaymentProviderEventController@index')->name('provider-events.index');
         Route::post('provider-events/{event}/dispose', 'PaymentProviderEventController@dispose')->name('provider-events.dispose');
 
+        /*
+        |--------------------------------------------------------------------------
+        | Additional-slot agreements (RFC-005 Milestone 4, §3 item 14)
+        |--------------------------------------------------------------------------
+        |
+        | Same no-literal-"admin/"-segment, no-"admin."-name-prefix shape as
+        | provider-events above. Narrowly scoped to M4's own three admin
+        | capabilities; no unified Usage Billing admin controller.
+        |
+        */
+        Route::get('additional-business-slot-agreements', 'AdditionalBusinessSlotAgreementController@index')->name('additional-business-slot-agreements.index');
+        Route::get('additional-business-slot-agreements/{agreement}', 'AdditionalBusinessSlotAgreementController@show')->name('additional-business-slot-agreements.show')->whereNumber('agreement');
+        Route::post('additional-business-slot-agreements/{agreement}/renewals/{charge}/retry', 'AdditionalBusinessSlotAgreementController@retryRenewal')->name('additional-business-slot-agreements.retry-renewal')->whereNumber('agreement')->whereNumber('charge');
+        Route::post('additional-business-slot-agreements/{agreement}/allocate', 'AdditionalBusinessSlotAgreementController@allocate')->name('additional-business-slot-agreements.allocate')->whereNumber('agreement');
+        Route::post('additional-business-slot-agreements/{agreement}/cancel', 'AdditionalBusinessSlotAgreementController@cancel')->name('additional-business-slot-agreements.cancel')->whereNumber('agreement');
+
         Route::prefix('workspaces/{workspace}')->name('workspaces.')->whereUuid('workspace')->group(function () {
             Route::post('plan', 'WorkspaceEntitlementController@assignPlan')->name('plan.assign');
             Route::post('plan/change', 'WorkspaceEntitlementController@changePlan')->name('plan.change');
