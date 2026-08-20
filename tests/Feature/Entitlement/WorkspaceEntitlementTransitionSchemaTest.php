@@ -36,6 +36,7 @@ class WorkspaceEntitlementTransitionSchemaTest extends TestCase
             'workspace_id' => 'NO',
             'transition_type' => 'NO',
             'actor_user_id' => 'YES',
+            'requesting_customer_user_id' => 'YES',
             'from_plan_catalog_id' => 'YES',
             'to_plan_catalog_id' => 'YES',
             'feature_key' => 'YES',
@@ -46,6 +47,7 @@ class WorkspaceEntitlementTransitionSchemaTest extends TestCase
             'from_status' => 'YES',
             'to_status' => 'YES',
             'reason' => 'YES',
+            'payment_idempotency_key' => 'YES',
             'created_at' => 'NO',
         ];
 

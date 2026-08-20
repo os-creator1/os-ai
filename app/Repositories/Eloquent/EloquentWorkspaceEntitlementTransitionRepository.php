@@ -33,4 +33,9 @@ class EloquentWorkspaceEntitlementTransitionRepository extends EloquentBaseRepos
             ->orderBy('id')
             ->get();
     }
+
+    public function findByPaymentIdempotencyKey(string $key): ?WorkspaceEntitlementTransition
+    {
+        return $this->query()->where('payment_idempotency_key', $key)->first();
+    }
 }
