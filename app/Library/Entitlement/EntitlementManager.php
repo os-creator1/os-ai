@@ -809,14 +809,15 @@ final class EntitlementManager
             }
 
             $fromCount = $assignment->additional_business_slots;
-            $toCount = $fromCount + $additionalSlotsToAdd;
 
             $existingTransition = $this->transitionRepository->findByPaymentIdempotencyKey($paymentIdempotencyKey);
 
             if ($existingTransition !== null) {
+                $recordedDelta = $existingTransition->to_additional_business_slots - $existingTransition->from_additional_business_slots;
+
                 $isExactReplay = (int) $existingTransition->workspace_id === $lockedWorkspace->id
                     && (int) $existingTransition->requesting_customer_user_id === $requestingCustomerUserId
-                    && (int) $existingTransition->to_additional_business_slots === $toCount;
+                    && $recordedDelta === $additionalSlotsToAdd;
 
                 if (! $isExactReplay) {
                     throw new PaymentAllocationIdempotencyConflictException($paymentIdempotencyKey);
@@ -824,6 +825,8 @@ final class EntitlementManager
 
                 return $assignment;
             }
+
+            $toCount = $fromCount + $additionalSlotsToAdd;
 
             if ($assignment->is_complimentary) {
                 throw new ComplimentaryWorkspaceCannotAllocatePaidSlotsException($lockedWorkspace->id);

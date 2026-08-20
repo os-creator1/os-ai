@@ -234,6 +234,7 @@ class EntitlementManagerAdditionalSlotsTest extends TestCase
 
     public function test_empty_idempotency_key_is_rejected(): void
     {
+        $this->definePricing(WorkspacePlanTier::Core);
         $workspace = $this->assignedWorkspace(WorkspacePlanTier::Core, false, 0);
 
         $this->expectException(InvalidPaymentAllocationEvidenceException::class);
@@ -242,6 +243,7 @@ class EntitlementManagerAdditionalSlotsTest extends TestCase
 
     public function test_empty_provider_reference_is_rejected(): void
     {
+        $this->definePricing(WorkspacePlanTier::Core);
         $workspace = $this->assignedWorkspace(WorkspacePlanTier::Core, false, 0);
 
         $this->expectException(InvalidPaymentAllocationEvidenceException::class);
@@ -250,6 +252,7 @@ class EntitlementManagerAdditionalSlotsTest extends TestCase
 
     public function test_non_positive_delta_is_rejected(): void
     {
+        $this->definePricing(WorkspacePlanTier::Core);
         $workspace = $this->assignedWorkspace(WorkspacePlanTier::Core, false, 0);
 
         $this->expectException(InvalidPaymentAllocationEvidenceException::class);
