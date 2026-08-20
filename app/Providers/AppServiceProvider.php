@@ -150,6 +150,7 @@
                 WorkspaceMembershipBusinessRepository::class => EloquentWorkspaceMembershipBusinessRepository::class,
                 WorkspaceTransitionRepository::class => EloquentWorkspaceTransitionRepository::class,
                 \App\Repositories\Contracts\WorkspacePlanCatalogRepository::class => \App\Repositories\Eloquent\EloquentWorkspacePlanCatalogRepository::class,
+                \App\Repositories\Contracts\WorkspacePlanCatalogPricingChangeRepository::class => \App\Repositories\Eloquent\EloquentWorkspacePlanCatalogPricingChangeRepository::class,
                 \App\Repositories\Contracts\WorkspacePlanFeatureRepository::class => \App\Repositories\Eloquent\EloquentWorkspacePlanFeatureRepository::class,
                 \App\Repositories\Contracts\WorkspacePlanAssignmentRepository::class => \App\Repositories\Eloquent\EloquentWorkspacePlanAssignmentRepository::class,
                 \App\Repositories\Contracts\WorkspaceEntitlementOverrideRepository::class => \App\Repositories\Eloquent\EloquentWorkspaceEntitlementOverrideRepository::class,

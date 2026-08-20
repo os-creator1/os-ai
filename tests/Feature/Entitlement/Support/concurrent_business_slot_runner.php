@@ -144,7 +144,9 @@ function runMode(string $mode, array $argv, $app): void
                 $catalog,
                 null,
                 null,
+                null,
                 (int) $actorUserId,
+                'Concurrency runner fixture pricing clear.',
             );
             fwrite(STDOUT, sprintf("OK catalog_id=%d cleared\n", $catalog->id));
 
