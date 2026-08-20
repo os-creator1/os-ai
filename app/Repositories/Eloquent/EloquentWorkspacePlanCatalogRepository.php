@@ -44,6 +44,7 @@ class EloquentWorkspacePlanCatalogRepository extends EloquentBaseRepository impl
             'price',
             'currency_id',
             'is_active',
+            'additional_business_slot_price_ratio',
         ]));
         $catalog->save();
 

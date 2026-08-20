@@ -118,6 +118,14 @@ class EntitlementManagerConcurrencyTest extends TestCase
         }
 
         if ($this->createdUserIds !== []) {
+            // workspace_plan_catalog_pricing_changes.actor_user_id
+            // restrictOnDelete()s against users (RFC-004 Amendment 2 §8) —
+            // scenarios 6/7's real updateCatalogPricing() calls durably
+            // record every admin actor this test created, so those rows
+            // must be cleared, scoped to this test's own $createdUserIds,
+            // before the user delete below.
+            DB::table('workspace_plan_catalog_pricing_changes')->whereIn('actor_user_id', $this->createdUserIds)->delete();
+
             DB::table('customers')->whereIn('user_id', $this->createdUserIds)->delete();
             DB::table('users')->whereIn('id', $this->createdUserIds)->delete();
         }
@@ -292,7 +300,7 @@ class EntitlementManagerConcurrencyTest extends TestCase
         $currencyId = $this->createdCurrencyId = Currency::create(['name' => 'USD', 'code' => 'USD', 'format' => '$', 'status' => true])->id;
         $catalog = WorkspacePlanCatalog::where('tier', 'core')->first();
         $admin = $this->createAdminUserId();
-        app(EntitlementManager::class)->updateCatalogPricing($catalog, '49.00', $currencyId, $admin);
+        app(EntitlementManager::class)->updateCatalogPricing($catalog, '49.00', $currencyId, null, $admin, 'Concurrency scenario fixture pricing.');
 
         // Direction A: catalog-clear holds the catalog row lock first and
         // commits null/null pricing; the waiting paid assignFirstPlan()
@@ -314,7 +322,7 @@ class EntitlementManagerConcurrencyTest extends TestCase
 
         // Restore pricing so Direction B starts from the same known,
         // fully-defined baseline as Direction A did.
-        app(EntitlementManager::class)->updateCatalogPricing($catalog, '49.00', $currencyId, $admin);
+        app(EntitlementManager::class)->updateCatalogPricing($catalog, '49.00', $currencyId, null, $admin, 'Concurrency scenario fixture pricing.');
 
         // Direction B: assignFirstPlan()'s real lock order is
         // Workspace -> catalog (never the reverse) — the holder must
@@ -351,7 +359,7 @@ class EntitlementManagerConcurrencyTest extends TestCase
         $currencyId = $this->createdCurrencyId = Currency::create(['name' => 'USD', 'code' => 'USD', 'format' => '$', 'status' => true])->id;
         $catalog = WorkspacePlanCatalog::where('tier', 'core')->first();
         $admin = $this->createAdminUserId();
-        app(EntitlementManager::class)->updateCatalogPricing($catalog, '49.00', $currencyId, $admin);
+        app(EntitlementManager::class)->updateCatalogPricing($catalog, '49.00', $currencyId, null, $admin, 'Concurrency scenario fixture pricing.');
 
         // Direction A: catalog-clear holds the catalog lock first and
         // commits null/null pricing; the waiting revokeComplimentaryStatus()
@@ -375,7 +383,7 @@ class EntitlementManagerConcurrencyTest extends TestCase
 
         // Restore pricing so Direction B starts from the same known,
         // fully-defined baseline as Direction A did.
-        app(EntitlementManager::class)->updateCatalogPricing($catalog, '49.00', $currencyId, $admin);
+        app(EntitlementManager::class)->updateCatalogPricing($catalog, '49.00', $currencyId, null, $admin, 'Concurrency scenario fixture pricing.');
 
         // Direction B: revokeComplimentaryStatus()'s real lock order is
         // also Workspace -> catalog — the holder reproduces that exact

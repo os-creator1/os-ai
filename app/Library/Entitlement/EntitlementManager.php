@@ -13,6 +13,7 @@ use App\Events\Entitlement\WorkspaceAdditionalBusinessSlotsChanged;
 use App\Events\Entitlement\WorkspaceComplimentaryStatusChanged;
 use App\Events\Entitlement\WorkspaceEntitlementOverrideChanged;
 use App\Events\Entitlement\WorkspacePlanAssigned;
+use App\Events\Entitlement\WorkspacePlanCatalogPricingChanged;
 use App\Events\Entitlement\WorkspacePlanChanged;
 use App\Events\Entitlement\WorkspacePlanStatusChanged;
 use App\Exceptions\Entitlement\BusinessSlotAllocationRequiredException;
@@ -43,11 +44,13 @@ use App\Models\WorkspacePlanAssignment;
 use App\Models\WorkspacePlanCatalog;
 use App\Repositories\Contracts\BusinessFeatureToggleRepository;
 use App\Repositories\Contracts\BusinessRepository;
+use App\Repositories\Contracts\CurrencyRepository;
 use App\Repositories\Contracts\UserRepository;
 use App\Repositories\Contracts\WorkspaceEntitlementOverrideRepository;
 use App\Repositories\Contracts\WorkspaceEntitlementTransitionRepository;
 use App\Repositories\Contracts\WorkspaceMembershipRepository;
 use App\Repositories\Contracts\WorkspacePlanAssignmentRepository;
+use App\Repositories\Contracts\WorkspacePlanCatalogPricingChangeRepository;
 use App\Repositories\Contracts\WorkspacePlanCatalogRepository;
 use App\Repositories\Contracts\WorkspacePlanFeatureRepository;
 use App\Repositories\Contracts\WorkspaceRepository;
@@ -90,6 +93,8 @@ final class EntitlementManager
         private readonly BusinessFeatureToggleRepository $toggleRepository,
         private readonly WorkspaceEntitlementTransitionRepository $transitionRepository,
         private readonly UsageAuthorizationGateway $usageAuthorizationGateway,
+        private readonly CurrencyRepository $currencyRepository,
+        private readonly WorkspacePlanCatalogPricingChangeRepository $pricingChangeRepository,
     ) {
     }
 
@@ -1072,17 +1077,28 @@ final class EntitlementManager
     // =====================================================================
 
     /**
-     * The entire authority-check-through-update sequence is one real
-     * transaction: findForUpdate()'s SELECT ... FOR UPDATE only holds its
-     * row lock across subsequent statements while an ambient transaction is
-     * open — executed outside one, MySQL's autocommit mode releases the
-     * lock the instant that single SELECT completes, before the
-     * non-complimentary-reference check or the update ever runs.
+     * The entire authority-check-through-update-through-audit-write
+     * sequence is one real transaction: findForUpdate()'s SELECT ... FOR
+     * UPDATE only holds its row lock across subsequent statements while an
+     * ambient transaction is open — executed outside one, MySQL's
+     * autocommit mode releases the lock the instant that single SELECT
+     * completes, before the non-complimentary-reference check, the update,
+     * or the audit-row write ever runs (RFC-004 Amendment 2 §7).
      */
-    public function updateCatalogPricing(WorkspacePlanCatalog $catalog, ?string $price, ?int $currencyId, int $actorUserId): WorkspacePlanCatalog
-    {
-        return DB::transaction(function () use ($catalog, $price, $currencyId, $actorUserId) {
+    public function updateCatalogPricing(
+        WorkspacePlanCatalog $catalog,
+        ?string $price,
+        ?int $currencyId,
+        ?string $additionalBusinessSlotPriceRatio,
+        int $actorUserId,
+        string $reason,
+    ): WorkspacePlanCatalog {
+        return DB::transaction(function () use ($catalog, $price, $currencyId, $additionalBusinessSlotPriceRatio, $actorUserId, $reason) {
             $this->assertPlatformAdministrator($actorUserId);
+
+            if (trim($reason) === '') {
+                throw new InvalidArgumentException('Workspace plan catalog pricing changes require a non-empty reason.');
+            }
 
             $lockedCatalog = $this->catalogRepository->findForUpdate($catalog->id);
 
@@ -1096,14 +1112,45 @@ final class EntitlementManager
                 throw new InvalidArgumentException('Workspace plan catalog price and currency_id must both be null or both be populated.');
             }
 
+            if ($currencyId !== null) {
+                $this->assertCurrencyExistsAndActive($currencyId);
+            }
+
             if ($normalizedPrice === null && $this->assignmentRepository->hasNonComplimentaryForCatalogForUpdate($lockedCatalog->id)) {
                 throw new PlanCatalogPricingInUseException($lockedCatalog->id);
             }
 
-            return $this->catalogRepository->update($lockedCatalog, [
+            $normalizedRatio = $additionalBusinessSlotPriceRatio === null ? null : $this->normalizeRatio($additionalBusinessSlotPriceRatio);
+
+            if ($normalizedRatio !== null && $lockedCatalog->tier === WorkspacePlanTier::Agency) {
+                throw new InvalidArgumentException("Workspace plan catalog tier [{$lockedCatalog->tier->value}] does not support an additional-Business-slot price ratio.");
+            }
+
+            $fromPrice = $lockedCatalog->price;
+            $fromCurrencyId = $lockedCatalog->currency_id;
+            $fromRatio = $lockedCatalog->additional_business_slot_price_ratio;
+
+            $updated = $this->catalogRepository->update($lockedCatalog, [
                 'price' => $normalizedPrice,
                 'currency_id' => $currencyId,
+                'additional_business_slot_price_ratio' => $normalizedRatio,
             ]);
+
+            $this->pricingChangeRepository->create([
+                'workspace_plan_catalog_id' => $lockedCatalog->id,
+                'actor_user_id' => $actorUserId,
+                'reason' => $reason,
+                'from_price' => $fromPrice,
+                'to_price' => $normalizedPrice,
+                'from_currency_id' => $fromCurrencyId,
+                'to_currency_id' => $currencyId,
+                'from_additional_business_slot_price_ratio' => $fromRatio,
+                'to_additional_business_slot_price_ratio' => $normalizedRatio,
+            ]);
+
+            WorkspacePlanCatalogPricingChanged::dispatch($lockedCatalog->id, $actorUserId);
+
+            return $updated;
         });
     }
 
@@ -1133,6 +1180,55 @@ final class EntitlementManager
         };
 
         return "{$integerPart}.{$fractionalPart}";
+    }
+
+    /**
+     * Exact DECIMAL(6,4) decimal-string validation/normalization (RFC-004
+     * Amendment 2 §6) — never casts through a PHP float anywhere in this
+     * path, mirroring normalizePrice()'s identical discipline. Enforces
+     * only DECIMAL(6,4)'s own storage boundary (2 integer digits, 4
+     * fractional digits) — no additional, narrower commercial-policy upper
+     * bound is introduced here (Amendment 2 §6, locked).
+     */
+    private function normalizeRatio(string $ratio): string
+    {
+        if (! preg_match('/^\d+(\.\d{1,4})?$/', $ratio)) {
+            throw new InvalidArgumentException("Workspace plan catalog additional-Business-slot price ratio [{$ratio}] is not a valid non-negative decimal string.");
+        }
+
+        $parts = explode('.', $ratio, 2);
+        $integerPart = ltrim($parts[0], '0');
+        $integerPart = $integerPart === '' ? '0' : $integerPart;
+
+        if (strlen($integerPart) > 2) {
+            throw new InvalidArgumentException("Workspace plan catalog additional-Business-slot price ratio [{$ratio}] exceeds the maximum precision of DECIMAL(6,4).");
+        }
+
+        $fractionalPart = $parts[1] ?? '';
+        $fractionalPart = match (strlen($fractionalPart)) {
+            0 => '0000',
+            1 => $fractionalPart . '000',
+            2 => $fractionalPart . '00',
+            3 => $fractionalPart . '0',
+            default => $fractionalPart,
+        };
+
+        return "{$integerPart}.{$fractionalPart}";
+    }
+
+    /**
+     * RFC-004 Amendment 2 §6 — a supplied currency_id must reference an
+     * existing, active currency. Reuses the existing, unmodified
+     * CurrencyRepository via its query() builder, the identical pattern
+     * assertPlatformAdministrator() already uses against userRepository.
+     */
+    private function assertCurrencyExistsAndActive(int $currencyId): void
+    {
+        $exists = $this->currencyRepository->query()->whereKey($currencyId)->where('status', true)->exists();
+
+        if (! $exists) {
+            throw new InvalidArgumentException("Currency [{$currencyId}] does not exist or is not active.");
+        }
     }
 
     // =====================================================================
