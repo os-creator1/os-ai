@@ -262,18 +262,25 @@ public function updateCatalogPricing(
 - **`price`** — unchanged: existing `normalizePrice()`, existing
   `DECIMAL(16,2)`/14-integer-digit boundary, existing rejection of any
   non-decimal-string shape.
-- **`additional_business_slot_price_ratio`** — new `normalizeRatio()`,
-  structurally mirroring `normalizePrice()`: must match a plain
-  non-negative decimal string, at most 4 fractional digits, at most 2
-  integer digits (the `DECIMAL(6,4)` boundary — 2 integer + 4 fractional =
-  6 total significant digits) — rejected otherwise with
-  `InvalidArgumentException`, the same exception class the existing
-  pairing check already uses in this method. **This amendment does not fix
-  an upper bound below `DECIMAL(6,4)`'s own ceiling** (e.g. whether a ratio
-  above `1.0000` should ever be rejected as a product-policy matter, versus
-  merely a precision/shape matter) — an open technical decision, resolved
-  at implementation time within `DECIMAL(6,4)`'s own hard ceiling, never
-  guessed here (§14).
+- **`additional_business_slot_price_ratio`** — **locked, exact.** Nullable.
+  When non-null, must be a plain, exact, non-negative decimal string —
+  never a PHP `float` — validated and normalized by a new
+  `normalizeRatio()`, structurally mirroring `normalizePrice()`: at most 4
+  fractional digits, at most 2 integer digits (the `DECIMAL(6,4)` storage
+  boundary — 2 integer + 4 fractional = 6 total significant digits),
+  rejected otherwise with `InvalidArgumentException`, the same exception
+  class the existing pairing check already uses in this method. **The
+  maximum precision/scale this amendment enforces is exactly
+  `DECIMAL(6,4)`'s own storage boundary — no additional, narrower
+  product/commercial-policy upper bound (e.g. rejecting a ratio at or above
+  `1.0000`) is introduced by Amendment 2.** This is deliberate: Amendment 2
+  is an authority/integrity amendment (who may write, under what locking,
+  with what durable record), not a pricing-policy amendment — RFC-004 §8
+  already establishes that this repository does not invent commercial
+  values, and a narrower cap would itself be a commercial-policy choice.
+  **A future product-policy cap, if ever desired, requires its own
+  separate, explicit authorization — it is not introduced by, implied by,
+  or left as a discretionary implementation choice under this contract.**
 - **`currency_id` — new existence/active check.** When non-null, must
   reference an existing `currencies` row with `status = true` — checked via
   the existing (reused, unmodified) `CurrencyRepository`'s `query()`
@@ -397,16 +404,21 @@ Schema::create('workspace_plan_catalog_pricing_changes', function (Blueprint $ta
   never has to reconstruct "what was true before" from a preceding row.
   Mirrors `workspace_entitlement_transitions.from_status`/`to_status`'s own
   established shape.
-- **Currency FKs are deliberately plain `unsignedBigInteger`, not
-  `restrictOnDelete()`-constrained `currencies` foreign keys** — matching
-  `workspace_plan_catalog.currency_id`'s own existing FK only being
-  "enforced when non-null" via a nullable FK; for this narrower audit
-  table, a plain scalar avoids taking a second dependency on the legacy
-  `currencies` table's own deletion behavior for a field that is
-  historical record, not a live relationship. (An open implementation
-  detail either way — a real nullable FK is equally defensible and may be
-  chosen instead at implementation time; not a locked requirement of this
-  contract.)
+- **`from_currency_id`/`to_currency_id` — locked, exact.** Nullable plain
+  `unsignedBigInteger` scalars — **no foreign key of any kind**, not to
+  `currencies`, not `restrictOnDelete()`-constrained or otherwise. This is
+  a locked requirement of this contract, not an implementation-time choice:
+  the audit table is immutable historical evidence, and a historical
+  pricing row must remain readable exactly as recorded even after a later
+  currency lifecycle change or deletion — a foreign key here would let a
+  legitimate future currency-maintenance action (deactivation, deletion, or
+  reconciliation of the legacy `currencies` table) be blocked by, or forced
+  to cascade into, an unrelated historical audit row. **Current-value
+  currency validity/activity is already fully verified at mutation time**
+  by §6's existence/active check against the live `currencies` table before
+  any write occurs — these two columns exist purely to preserve what was
+  historically true, not to re-assert a live relationship, so no
+  referential constraint is added or needed here.
 - **New model**: `app/Models/WorkspacePlanCatalogPricingChange.php` —
   plain Eloquent model, `$fillable` for all columns above, `catalog(): BelongsTo`
   relation only. No business logic on the model itself, matching every
@@ -599,23 +611,7 @@ explicitly does **not**:
 
 ---
 
-## 14. Open technical decisions (category-3, resolved at implementation time within the constraints stated here, never silently guessed)
-
-1. **The exact upper-bound policy for `additional_business_slot_price_ratio`**
-   beyond `DECIMAL(6,4)`'s own hard precision ceiling (§6) — e.g. whether a
-   product rule should reject a ratio at or above `1.0000` — is not fixed
-   by this contract; the implementation may leave it unbounded within the
-   column's own precision, or add a stricter check, but must not guess a
-   specific product policy this document does not state.
-2. **Whether the two new currency-history columns
-   (`from_currency_id`/`to_currency_id`) on the new audit table use a real
-   foreign key or a plain scalar** (§8) is left to implementation-time
-   judgment within the stated rationale — either choice satisfies this
-   contract.
-
----
-
-## 15. Stop conditions
+## 14. Stop conditions
 
 Implementation must stop, leave the working tree unstaged, and report
 rather than proceed, if:
@@ -642,7 +638,7 @@ rather than proceed, if:
 
 ---
 
-## 16. Contract self-audit
+## 15. Contract self-audit
 
 1. The prerequisite is quoted verbatim from its own source and is confirmed
    distinct from the prerequisite Amendment 1 already resolved (§0/§1). ✓
@@ -676,16 +672,20 @@ rather than proceed, if:
     excludes everything not required (§11). ✓
 11. Non-goals are stated explicitly and completely, matching the task's own
     list (§13). ✓
-12. Genuine open decisions are surfaced by name rather than silently
-    resolved by guess (§14). ✓
+12. The two decisions previously left open (the ratio's upper bound, the
+    audit table's currency-column FK shape) are now locked with explicit
+    reasoning rather than left discretionary — no unresolved
+    implementation-time decision remains anywhere in this document (§6,
+    §8). ✓
 13. No retail price, currency, or ratio value is invented anywhere in this
-    document. ✓
+    document, and locking the ratio's precision boundary in §6
+    deliberately does not introduce a commercial-policy cap. ✓
 14. This document itself changes exactly one file, verified mechanically
-    before commit (§17). ✓
+    before commit (§16). ✓
 
 ---
 
-## 17. Verification and publication (this document only)
+## 16. Verification and publication (this document only)
 
 Performed, in order, before commit:
 
