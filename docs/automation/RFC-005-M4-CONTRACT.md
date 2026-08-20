@@ -1030,26 +1030,65 @@ actually own.** Accordingly:
   current one either succeeds or is exhausted (all 3 attempts fail).
 - **After attempt 3 fails:** `payment_lapsed = true`,
   `payment_lapsed_at = now()`, and `next_renewal_at` is explicitly set to
-  `null` — no further attempts are possible while lapsed (a 4th attempt
-  is never reachable — §23's own ordinal cap enforces this independently
-  of caller behavior). `AdditionalBusinessSlotAgreementLapsed` dispatches.
+  `null`. **Corrected this refinement — the precise rule is "a 4th
+  automatic/pre-lapse attempt is never reachable; ordinal 4+ exists only
+  through explicit post-lapse owner/admin recovery," not the prior,
+  contradictory "a 4th attempt is never reachable" (which collided with
+  this same section's own recovery rule below).** `AdditionalBusinessSlotAgreementLapsed`
+  dispatches.
+- **Pre-lapse dunning is strictly bounded at 3 — no scheduler or
+  automatic process may make attempt 4.** `InitiateSlotAgreementRenewal`
+  (§11, §22) never calls `retrySlotRenewalAsOwner()`/
+  `retrySlotRenewalAsAdministrator()`, and no other scheduled job does
+  either — §25's allowlist has exactly four new jobs, none of them a
+  retry scheduler (restated from above). This bound is closed and
+  complete on its own; it does not describe what happens after lapse —
+  see post-lapse recovery below.
+- **Post-lapse manual recovery — corrected this refinement to resolve the
+  contradiction between the pre-lapse cap and RFC-005's own required
+  recovery mechanism.** Once `payment_lapsed === true`, the *automatic*
+  dunning cap remains permanently closed for that missed period — but the
+  Workspace owner or a real platform administrator may explicitly invoke
+  `retrySlotRenewalAsOwner()`/`retrySlotRenewalAsAdministrator()` (§21) at
+  any later time, exactly as already authorized. Each explicit invocation
+  performs exactly one real provider confirmation attempt
+  (`confirmPaymentIntent()`, §15a) against the Workspace's current default
+  instrument. **These post-lapse attempts continue the same durable
+  ordinal sequence the pre-lapse attempts used — 4, 5, 6, ... — via the
+  identical §23 formula** (`ordinal = 1 + count(failed transitions for
+  this renewal charge)`, `provider_idempotency_key = sha256(local_idempotency_key
+  . ':attempt:' . ordinal)`) — the *same* `additional_business_slot_renewal_charges`
+  row is the payment object being recovered; no new renewal-charge row,
+  no new schema column, no new manager method. A crash/re-entry before
+  the failure/success transition is durably recorded recomputes the same
+  ordinal and reuses the same idempotency key, identically to the
+  pre-lapse mechanism (§23). A definitively-failed manual recovery writes
+  one additional `failed` transition and leaves the agreement lapsed —
+  another recovery requires its own new explicit owner/admin action;
+  **there is never an automatic loop, and no code path retries a lapsed
+  agreement without an explicit invocation.**
 - **Recovery — `UsageBillingCheckoutManager::retrySlotRenewalAsOwner(AdditionalBusinessSlotRenewalCharge
   $charge, int $actorUserId): SlotRenewalChargeResult`** (§21, new — the
   owner-recovery manager method §3 item 7d's audit found missing; distinct
   from `retrySlotRenewalAsAdministrator()`, which remains admin-only,
   mandatory-reason, and now explicitly verifies the actor is a real
-  platform administrator before acting, §3 item 7l/§21). The moment any
-  subsequent renewal charge succeeds (an `admin_retry` via
+  platform administrator before acting, §3 item 7l/§21). **Both methods
+  now serve two distinct ordinal ranges of the identical charge row,
+  distinguished only by the agreement's own current `payment_lapsed`
+  value at call time (§21) — ordinals 2–3 pre-lapse, ordinal 4+
+  post-lapse — never a different method, never a different code path.**
+  The moment any subsequent renewal charge succeeds (an `admin_retry` via
   `retrySlotRenewalAsAdministrator()`, §14, or the owner's own
   `owner_initiated` retry via `retrySlotRenewalAsOwner()` after updating
-  their payment method), `payment_lapsed = false` and
-  `payment_lapsed_cleared_at = now()` are set, `next_renewal_at` is
-  **recomputed one billing cadence forward from the recovery moment —
-  never retroactively from the missed period**, and
-  `AdditionalBusinessSlotAgreementPaymentRecovered` dispatches. Missed
-  periods are **skipped**, never accumulated or back-billed — no
-  `additional_business_slot_renewal_charges` row is ever created for a
-  period that was simply skipped due to lapse.
+  their payment method, at whatever ordinal that success actually
+  occurred at), `payment_lapsed = false` and `payment_lapsed_cleared_at =
+  now()` are set, `next_renewal_at` is **recomputed one billing cadence
+  forward from the recovery moment — never retroactively from the missed
+  period**, and `AdditionalBusinessSlotAgreementPaymentRecovered`
+  dispatches. Missed periods are **skipped**, never accumulated or
+  back-billed — no `additional_business_slot_renewal_charges` row is ever
+  created for a period that was simply skipped due to lapse, and no
+  missed period is synthesized by recovery itself.
 - **`payment_lapsed`'s own audit is exactly the two timestamp columns on
   the agreement row itself** (`payment_lapsed_at`/`payment_lapsed_cleared_at`),
   per RFC-005 §18's own explicit, bounded scope statement — recording only
@@ -1776,7 +1815,15 @@ allocation (§3 items 7h–7j).**
   not a real admin), requires `$reason` non-empty, then re-drives payment
   via `confirmPaymentIntent()` (§15a/§23) against the Workspace's current
   default instrument at the next attempt ordinal — never a mere
-  `retrievePaymentIntent()` call.
+  `retrievePaymentIntent()` call. **Ordinal permission — corrected this
+  refinement to resolve the lapse/recovery contradiction (§13):** before
+  lapse (`payment_lapsed === false`), only ordinals 2–3 are reachable, as
+  already defined; after lapse (`payment_lapsed === true`), this same
+  method is the *sole* path to ordinal 4+ — an explicit, one-attempt-per-
+  invocation post-lapse recovery, never a loop. **Never called by
+  `InitiateSlotAgreementRenewal` or any other scheduled job, in either
+  ordinal range** — this method exists only to be invoked by the
+  narrowly-scoped admin controller action (§17).
 - `retrySlotRenewalAsOwner(AdditionalBusinessSlotRenewalCharge $charge, int $actorUserId): SlotRenewalChargeResult`
   — new (§3 item 7d, §13) — the Workspace owner's own lapse/failure
   recovery path after correcting their payment method; owner-only
@@ -1785,7 +1832,11 @@ allocation (§3 items 7h–7j).**
   (§3 item 7k, §13, §23): calls `confirmPaymentIntent()` against the
   Workspace's current default instrument at the next attempt ordinal —
   the identical real-retry mechanism `retrySlotRenewalAsAdministrator()`
-  uses, minus the admin check/mandatory reason.**
+  uses, minus the admin check/mandatory reason.** **Ordinal permission —
+  identical split to `retrySlotRenewalAsAdministrator()` above:** ordinals
+  2–3 pre-lapse, ordinal 4+ (one attempt per explicit invocation) is this
+  method's own sole post-lapse role once `payment_lapsed === true`. Never
+  called by `InitiateSlotAgreementRenewal` or any other scheduled job.
 
 **Cancellation:**
 
@@ -2071,11 +2122,14 @@ only existing columns:
    `requires_action` outcome).
 3. **The Stripe-facing `idempotency_key` for attempt N is
    `sha256($renewalCharge->local_idempotency_key . ':attempt:' . N)`**
-   (§11) — attempt 1 uses `createOffSessionPaymentIntent()`; attempts 2
-   and 3 use the new `confirmPaymentIntent()` (§15a) against the charge's
-   own existing `provider_session_or_intent_reference` and the Workspace's
+   (§11) — attempt 1 uses `createOffSessionPaymentIntent()`; **every
+   attempt from ordinal 2 onward, with no upper bound on N itself, uses
+   the new `confirmPaymentIntent()`** (§15a) against the charge's own
+   existing `provider_session_or_intent_reference` and the Workspace's
    **current** default instrument (which may have changed since attempt
-   1, §15c).
+   1, §15c) — this applies identically whether ordinal N is a pre-lapse
+   retry (2 or 3) or a post-lapse manual recovery attempt (4, 5, 6, ...,
+   §13).
 4. **Crash/re-entry safety — by construction, not by extra bookkeeping:**
    if a retry crashes before Stripe's response is known, no `failed`
    transition was written, so a re-entry recomputes the identical ordinal
@@ -2084,21 +2138,33 @@ only existing columns:
    rather than performing a second charge attempt — the local write then
    completes correctly on this re-entry. **The worker restarting never, by
    itself, advances the ordinal** — only a definitively-recorded `failed`
-   transition does.
-5. **Cap:** once the count of `failed` transitions for a charge reaches 3
-   (i.e., attempt 3 itself has failed), no further attempt is possible —
-   `retrySlotRenewalAsOwner()`/`retrySlotRenewalAsAdministrator()` instead
-   observe `payment_lapsed = true` (§13) and return without calling the
-   gateway again; this cap is enforced by the ordinal computation itself
-   (ordinal would compute to 4), independent of any caller's own
-   discipline.
+   transition does. This holds identically at ordinal 4+ (§13) — a crash
+   during a post-lapse manual recovery reuses the same ordinal on
+   re-entry, exactly as a pre-lapse retry does.
+5. **The bound at 3 is on *automatic/pre-lapse* attempts only, never on
+   the ordinal sequence itself — corrected this refinement to resolve the
+   lapse/recovery contradiction (§13).** Once the count of `failed`
+   transitions for a charge reaches 3 (i.e., attempt 3 itself has
+   failed), `payment_lapsed` is set (§13) and **no scheduled job or
+   automatic process ever computes or acts on ordinal 4+** — that
+   guarantee is what "bounded at 3" actually means. It does **not** mean
+   the ordinal computation itself refuses to produce 4 — `retrySlotRenewalAsOwner()`/
+   `retrySlotRenewalAsAdministrator()`, called *explicitly* by the owner
+   or a real administrator after lapse, compute and use ordinal 4 (then
+   5, then 6, ...) via the identical formula in item 1 above, precisely
+   because RFC-005's own recovery mechanism (§13) requires a further real
+   provider attempt to clear a lapse. The only true, absolute limit is:
+   **no attempt of any ordinal ever occurs without either (a) being one
+   of the two automatic pre-lapse attempts §11/§13 authorize, or (b)
+   being triggered by one explicit, authenticated owner/admin invocation**
+   — never a loop, never a scheduler, at any ordinal.
 6. **A race between two concurrent retry invocations for the same charge**
-   (e.g., a double-submitted owner retry) is absorbed at two independent
-   layers: the agreement/charge-row lock (§23's canonical order) serializes
-   the ordinal *read*, and even if both somehow computed the same ordinal
-   before serialization, Stripe's own idempotency guarantee on the
-   *identical* derived key ensures at most one real charge attempt
-   results.
+   (e.g., a double-submitted owner retry, whether pre- or post-lapse) is
+   absorbed at two independent layers: the agreement/charge-row lock
+   (§23's canonical order) serializes the ordinal *read*, and even if both
+   somehow computed the same ordinal before serialization, Stripe's own
+   idempotency guarantee on the *identical* derived key ensures at most
+   one real charge attempt results.
 
 ---
 
@@ -2307,14 +2373,20 @@ that gap was not yet found.**
     produces a genuinely distinct renewal-charge row.
 77. `tests/Feature/Usage/AdditionalBusinessSlotAgreementFailedPeriodTest.php`
     — **strengthened this refinement (§13, §23, §3 item 7k):** asserts
-    **exactly 3 total attempts** (the initial attempt plus 2 retries, never
-    phrased as "3 retries") — a 4th attempt is explicitly asserted to be
-    unreachable once `payment_lapsed` is set (the ordinal-cap mechanism
-    itself, §23, not merely a caller-side check). **Asserts each retry is
-    a genuine second provider-side call** — via the fake gateway's own new
-    call-recording (§15a), a retry's `confirmPaymentIntent()` invocation
-    is asserted to actually occur, with the ordinal-derived idempotency
-    key, not merely that the existing PaymentIntent was re-retrieved.
+    **exactly 3 total pre-lapse attempts** (the initial attempt plus 2
+    retries, never phrased as "3 retries") produce `payment_lapsed = true`
+    — **corrected this refinement to remove the lapse/recovery
+    contradiction:** asserts no *automatic/scheduled* 4th attempt ever
+    occurs (`InitiateSlotAgreementRenewal`'s own due-agreement query
+    excludes `payment_lapsed = true`, §11, and no other scheduled job
+    calls either retry method, §13) — **never** asserts ordinal 4 itself
+    is unreachable, since an explicit post-lapse owner/admin recovery
+    genuinely reaches it (see test 85's own strengthened assertions
+    below). **Asserts each pre-lapse retry is a genuine second
+    provider-side call** — via the fake gateway's own new call-recording
+    (§15a), a retry's `confirmPaymentIntent()` invocation is asserted to
+    actually occur, with the ordinal-derived idempotency key, not merely
+    that the existing PaymentIntent was re-retrieved.
 78. `tests/Feature/Usage/AdditionalBusinessSlotAgreementRenewalContactSnapshotTest.php`
 79. `tests/Feature/Usage/AddonPurchaseTransitionAuditTest.php` —
     **strengthened this refinement (§21, §3 item 3):** in addition to its
@@ -2417,16 +2489,46 @@ that gap was not yet found.**
     both converge on the same `performVerifiedAllocation()` routine and
     the same idempotency guarantee, never a duplicate allocation, never a
     synthetic administrator id anywhere in the reconciliation path** (§8
-    item 6, §22).
-85. `tests/Feature/Usage/SlotAgreementLapseRecoveryTest.php` — §13:
-    bounded retries, `payment_lapsed`/`payment_lapsed_at` set, no further
-    automatic attempt, forward-only recomputed `next_renewal_at` on
-    recovery, **and an explicit assertion that
+    item 6, §22). **Strengthened this refinement (§13, §23):** a
+    post-lapse manual recovery's own crash-then-re-entry at the same
+    ordinal (simulating a worker restart between Stripe's response and
+    the local `failed`/`succeeded` transition write) is asserted to reuse
+    the identical ordinal and identical provider idempotency key on
+    re-entry, never advancing the ordinal merely because the worker
+    restarted — the general §23 crash-safety rule, exercised specifically
+    at a post-lapse ordinal (4) rather than only a pre-lapse one.
+85. `tests/Feature/Usage/SlotAgreementLapseRecoveryTest.php` — §13.
+    **Corrected/strengthened this refinement to resolve the lapse/recovery
+    contradiction and prove the full pre-lapse/post-lapse sequence
+    end-to-end, in order:**
+    1. exactly 3 failed pre-lapse provider attempts (ordinals 1–3)
+       produce `payment_lapsed = true`/`payment_lapsed_at` set;
+    2. no automatic 4th attempt ever occurs — `InitiateSlotAgreementRenewal`
+       is asserted to skip the lapsed agreement entirely on its own next
+       scheduled run;
+    3. an explicit `retrySlotRenewalAsOwner()`/`retrySlotRenewalAsAdministrator()`
+       invocation after lapse is asserted to compute and use **ordinal
+       4** (via `confirmPaymentIntent()`, the same formula as pre-lapse
+       ordinals);
+    4. a simulated crash/re-entry of that same post-lapse recovery is
+       asserted to reuse ordinal 4 and the identical idempotency key, not
+       ordinal 5;
+    5. a **failed** manual recovery attempt is asserted to write one
+       additional `failed` transition and leave `payment_lapsed = true`
+       unchanged;
+    6. a **later**, separate explicit recovery invocation is asserted to
+       compute **ordinal 5** (1 + 4 failed transitions);
+    7. a **successful** manual recovery (at whichever ordinal it
+       succeeds) is asserted to clear `payment_lapsed`, set
+       `payment_lapsed_cleared_at`, recompute `next_renewal_at` **one
+       cadence forward from the recovery instant** — never retroactively
+       — and create no synthesized/back-billed row for any period missed
+       while lapsed.
+    Also retains the existing assertion that
     `workspace_plan_assignments.additional_business_slots` is never
     decremented and `EntitlementManager::setAdditionalBusinessSlots()` is
-    never called** by any lapse-reacting code path (§4 qualifier, §13's
-    own no-revocation requirement, made directly testable rather than
-    merely asserted in prose).
+    never called by any lapse-reacting code path, at any ordinal (§4
+    qualifier, §13's own no-revocation requirement).
 86. `tests/Feature/Usage/EntitlementCatalogSourceBoundaryTest.php` — the
     required mechanical source-boundary test (§3 item 18). **Corrected
     this refinement (§3 item 7m):** the prior description asserted an
@@ -2928,10 +3030,13 @@ report rather than proceed, if:
     construction) is locked in §23 — independently testable via test 77's
     own strengthened assertion that a genuine second provider call
     occurs.
-37. **(This refinement) "3 attempts" is now unambiguous — 1 initial + 2
-    retries, never "3 retries"** — §13, superseding item 31 above; failure
-    of attempt 3 causes `payment_lapsed`, enforced by the ordinal
-    computation itself (§23), not merely by caller discipline.
+37. **(Superseded by item 41 below — "enforced by the ordinal computation
+    itself" was itself imprecise and, combined with §13's own separately-
+    required recovery rule, produced a genuine contradiction a later
+    refinement had to resolve.)** "3 attempts" is now unambiguous — 1
+    initial + 2 retries, never "3 retries" — §13, superseding item 31
+    above; failure of attempt 3 causes `payment_lapsed`, enforced by the
+    ordinal computation itself (§23), not merely by caller discipline.
 38. **(This refinement) Every M4 "AsAdministrator"-named manager method
     independently verifies real platform-administrator identity** — §3
     item 7l, §14, §21: a new private `assertPlatformAdministrator()`
@@ -2956,6 +3061,28 @@ report rather than proceed, if:
     7g–7l, 7k) are absorbed entirely by prose changes to already-
     allowlisted paths (items 88–90/93, 41) — confirmed by direct
     re-audit, not assumed.
+41. **(This refinement) The lapse/recovery contradiction is resolved —
+    "bounded at 3" and "manual recovery after lapse" are no longer
+    mutually exclusive claims.** §13's own recovery rule (a subsequent
+    `admin_retry`/`owner_initiated` success clears `payment_lapsed`) and
+    §13's own pre-lapse cap ("failure of attempt 3 causes
+    `payment_lapsed`," previously glossed as "a 4th attempt is never
+    reachable") directly contradicted each other — the prior text gave no
+    way for the very recovery mechanism it also required to ever occur.
+    Corrected, precisely: **the automatic/pre-lapse dunning cap is
+    strictly 3 (no scheduler ever computes or acts on ordinal 4+, §13);
+    ordinal 4+ exists exclusively through an explicit, one-attempt-per-
+    invocation owner/admin recovery call, using the identical §23 ordinal
+    formula, the identical renewal-charge row, no new schema column, no
+    automatic loop at any ordinal.** `retrySlotRenewalAsOwner()`/
+    `retrySlotRenewalAsAdministrator()` (§21) are now documented as
+    serving both ordinal ranges of the same charge, distinguished only by
+    the agreement's own `payment_lapsed` value at call time, never a
+    different method or code path — independently testable via test 85's
+    own rewritten, ordered seven-assertion sequence and test 84's own
+    strengthened post-lapse crash/re-entry scenario. This required no new
+    implementation path — the 95-path allowlist and 96th stop threshold
+    (item 40) are unchanged by this correction.
 
 ---
 
