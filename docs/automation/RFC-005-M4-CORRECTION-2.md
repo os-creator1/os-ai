@@ -93,42 +93,108 @@ honor this:
   agreement is silently abandoned, since reconciliation does not select
   `payment_succeeded` either.
 
-**Locked correction.**
+**Locked correction — three explicit crash-safe phases.**
+`performVerifiedAllocation()` is split into three explicit phases, closing
+this correction's own original ambiguity about how long the agreement
+transaction stays open, and removing an RFC-004 repository-boundary
+violation that original wording introduced (an already-`completed` replay
+must never resolve `WorkspacePlanAssignmentRepository` directly — M4
+reaches RFC-004 only through the three already-authorized
+`EntitlementManager` seams; `EntitlementCatalogSourceBoundaryTest.php`
+(§25 item 86)'s own already-authorized, unchanged forbidden-class list
+already names `WorkspacePlanAssignmentRepository`/
+`EloquentWorkspacePlanAssignmentRepository` explicitly, and already scans
+`UsageBillingCheckoutManager.php` by name — the original wording would
+have failed that already-merged test).
 
 1. **Recoverable initial-allocation states.** `performVerifiedAllocation()`
    accepts exactly `payment_succeeded`, `allocation_pending`, and
    `allocation_failed` — never an unverified payment state
    (`quote_created`, `checkout_pending`). The existing
-   `blank($agreement->provider_session_or_intent_reference)` guard is
-   unchanged and still applies to all three.
-2. **Reload/lock before acting.** `performVerifiedAllocation()` must, as
-   its first action after the state/reference checks pass on the
-   caller-supplied model (a cheap pre-check to fail fast on an obviously
-   wrong actor call), call
-   `$this->agreementRepository->findForUpdateById((int) $agreement->id)`
-   inside a `DB::transaction(...)` and re-run the exact same state/reference
-   checks against the freshly locked row before any mutation. All
-   subsequent reads/writes in the method operate on this locked row, never
-   the caller-supplied one.
-3. **Idempotent `already completed` no-op.** If the locked row's state is
-   already `completed`, the method returns the existing
-   `WorkspacePlanAssignment` (via
-   `WorkspacePlanAssignmentRepository::findByWorkspaceId()`) without any
-   further mutation, without recording a new `completed` transition, and
-   without dispatching `AdditionalBusinessSlotAgreementCompleted` again.
-   This is what makes re-entry from a stale caller-held `allocation_pending`
-   model (SlotAgreementConcurrencyTest's own reconciliation-vs-administrator
-   scenario) a true no-op at the M4 layer, not merely relying on RFC-004's
-   own idempotency-key replay to silently absorb a redundant call.
-4. **`current_allocation_count` synchronization.** On successful RFC-004
-   allocation, `current_allocation_count` is set from
-   `$assignment->additional_business_slots` (the value
+   `blank(...->provider_session_or_intent_reference)` guard is unchanged
+   and still applies to all three.
+
+2. **Phase 1 — local preparation transaction.**
+   1. Begin `DB::transaction(...)`.
+   2. Reload/lock the persisted agreement by id:
+      `$this->agreementRepository->findForUpdateById((int) $agreement->id)`.
+      The caller-supplied Eloquent object's own in-memory state is never
+      authoritative from this point on — every subsequent read in this
+      method uses the locked row.
+   3. If the locked row's state is already `completed`, this phase writes
+      nothing and this method proceeds straight to Phase 2 using this
+      agreement's own frozen, already-durable evidence — RFC-004's own
+      idempotency guarantee is what produces the no-op there, never a
+      second, parallel M4-side check against a repository M4 is not
+      authorized to touch.
+   4. Otherwise require the locked state to be exactly one of
+      `payment_succeeded`, `allocation_pending`, or `allocation_failed` —
+      anything else (an unverified payment state, or `canceled`) throws
+      `UnauthorizedSlotAgreementActionException` immediately, unchanged
+      from this correction's own original wording.
+   5. Require the durable provider payment reference on the locked row
+      (unchanged guard, re-run against the locked row rather than the
+      caller-supplied one).
+   6. Transition to `allocation_pending` only when a transition is
+      actually required — i.e., only when the locked state is exactly
+      `payment_succeeded`; `allocation_pending` and `allocation_failed`
+      are left exactly as they are, unchanged from the existing
+      implementation's own behavior for those two states.
+   7. Commit.
+
+3. **Phase 2 — RFC-004 allocation call.** Outside the M4 agreement
+   transaction (no transaction open), invoke the one already-authorized
    `EntitlementManager::allocateAdditionalBusinessSlotsFromVerifiedPayment()`
-   actually returns), never blindly from `target_allocation_count` — the
-   identical rule Correction Round 1 §D already locked for
-   `performVerifiedRenewalChargeAllocation()`, now applied to the initial
-   allocation path too, for the same reason: the returned value is the
-   sole authoritative post-allocation truth.
+   seam with the agreement's own exact, frozen evidence — identical
+   whether Phase 1 found a genuinely resumable state or an already-`completed`
+   row to replay: the same `Workspace`, the same `paid_delta`, the same
+   original `requesting_customer_user_id`, the same `workspace_id` for
+   verification, the same deterministic
+   `'slot-agreement-allocation-'.$agreement->local_idempotency_key`
+   payment-allocation idempotency key, and the same
+   `provider_session_or_intent_reference`. Amendment 1's own idempotency
+   guarantee (the exact-replay comparison already locked in RFC-004) is
+   what makes a replay call for an already-completed agreement a true
+   no-op: RFC-004 returns the existing `WorkspacePlanAssignment`, writes
+   no second `workspace_entitlement_transitions` row, and dispatches no
+   second RFC-004 event.
+
+4. **Phase 3 — local result transaction.**
+
+   *On success* (the call returns a `WorkspacePlanAssignment`, whether
+   freshly allocated or an idempotent replay result):
+   1. Re-lock the persisted agreement.
+   2. If it is already `completed` — true both for a genuine replay and
+      for a race where another caller completed it between Phase 1 and
+      here — do not duplicate its transition or event: return the
+      returned assignment as-is.
+   3. Otherwise set `current_allocation_count = $assignment->additional_business_slots`
+      (the returned value — never blindly from `target_allocation_count`,
+      the identical rule Correction Round 1 §D already locked for
+      `performVerifiedRenewalChargeAllocation()`) and `state = completed`.
+   4. Record exactly one completion transition and dispatch
+      `AdditionalBusinessSlotAgreementCompleted` exactly once.
+   5. Commit.
+
+   *On an RFC-004 exception*:
+   1. Start/re-enter a local transaction.
+   2. Re-lock the persisted agreement.
+   3. If it is still incomplete (not already `completed` — protecting
+      against regressing an already-completed agreement if a replay call
+      somehow raised `PaymentAllocationIdempotencyConflictException` after
+      the fact), persist `allocation_failed` and record its
+      transition/event.
+   4. Commit that failure state.
+   5. Only *after* the transaction commits, rethrow the original
+      exception.
+
+   This ordering is required so `allocation_failed` is durably committed
+   and therefore recoverable (this section, plus reconciliation/
+   administrator recovery below) even though the method still rethrows —
+   a caller that lets the exception propagate (as every current caller
+   does) does not silently roll back the very failure state this
+   correction exists to make recoverable.
+
 5. **`ReconcileSlotAgreementAllocation` selection.** Rename
    `findStuckInAllocationPending()` to `findRequiringAllocationRecovery()`
    (same file, same repository — a rename/widen, not a new method) to
@@ -140,11 +206,10 @@ honor this:
    - `allocation_pending`, age-bounded — identical, already-existing
      behavior.
    - `allocation_failed` — unconditional, no age bound. This state is only
-     ever reached after `performVerifiedAllocation()`'s own catch block has
-     already completed and returned control to its caller, so there is
-     never a synchronous call still in flight for a row in this state;
-     gating it would only delay recovery with no corresponding safety
-     benefit.
+     ever reached after Phase 3's own exception branch has already
+     committed and returned control to its caller, so there is never a
+     synchronous call still in flight for a row in this state; gating it
+     would only delay recovery with no corresponding safety benefit.
 
    `ReconcileSlotAgreementAllocation`'s own `handle()` body is otherwise
    unchanged: it still calls `performVerifiedAllocation($agreement)` with
@@ -154,13 +219,19 @@ honor this:
 6. **Administrator recovery.** `allocateSlotAgreementAsAdministrator()` is
    unchanged (it is already a thin wrapper around
    `performVerifiedAllocation()` after its own real-admin + mandatory-reason
-   checks) and automatically inherits the corrected recoverable-state set
-   and reload/lock discipline through that delegation — no separate fix is
-   needed in that method itself.
-7. The existing RFC-004 boundary (the three authorized `EntitlementManager`
-   seams; no direct table/repository access) is preserved exactly — this
-   correction touches only the M4-side state guard, locking discipline,
-   and reconciliation selection.
+   checks) and automatically inherits the three-phase structure and
+   corrected recoverable-state set through that delegation — no separate
+   fix is needed in that method itself.
+7. **RFC-004 boundary — explicitly preserved.** `performVerifiedAllocation()`
+   resolves RFC-004 state exclusively through
+   `EntitlementManager::allocateAdditionalBusinessSlotsFromVerifiedPayment()`
+   in Phase 2 — no direct `WorkspacePlanAssignmentRepository`/
+   `EloquentWorkspacePlanAssignmentRepository` dependency is introduced or
+   authorized anywhere in this correction. `EntitlementCatalogSourceBoundaryTest.php`'s
+   existing `test_no_m4_production_file_imports_an_rfc004_repository_contract`
+   is retained exactly as-is — no change to that test is authorized or
+   needed; it already proves this boundary, and every path in this
+   correction is written to keep passing it.
 
 **Tests.** Strengthen `SlotAgreementAllocationSagaTest.php` (§25 item 80)
 and `SlotAgreementConcurrencyTest.php` (§25 item 84) to prove: an
@@ -169,10 +240,17 @@ direct call and `allocateSlotAgreementAsAdministrator()`; a
 `payment_succeeded` agreement stuck past the crash window is discovered by
 `findRequiringAllocationRecovery()`; a stale caller-held `allocation_pending`
 model racing an already-`completed` persisted row produces zero additional
-RFC-004 transitions and zero additional `completed` transitions/events; a
-successful allocation's `current_allocation_count` matches the returned
-assignment exactly, never `target_allocation_count`, in a scenario where
-the two values could otherwise diverge if synced incorrectly.
+RFC-004 transitions and zero additional `completed` transitions/events
+purely through the Phase-3 already-`completed` check and RFC-004's own
+idempotency guarantee, never a direct `WorkspacePlanAssignmentRepository`
+read; a successful allocation's `current_allocation_count` matches the
+returned assignment exactly, never `target_allocation_count`; an RFC-004
+exception during Phase 2 leaves `allocation_failed` durably committed
+(queryable in a fresh connection) even though the triggering exception is
+still observed by the caller. Explicitly re-run (unchanged)
+`EntitlementCatalogSourceBoundaryTest.php` (§25 item 86) as part of this
+correction's own required coverage, confirming it still passes with zero
+modification to that test file.
 
 ---
 
@@ -272,6 +350,40 @@ call `applyRenewalChargeFailure()`. This is corrected to:
   under the existing mechanism with no new one invented. "We don't know"
   is never silently promoted to "the card was definitively declined."
 
+**Locked correction — hard-decline evidence null case.** A second, bounded
+re-read of `ErrorObject.php`'s own docblock
+(`@property PaymentIntent $payment_intent The PaymentIntent object for
+errors returned on a request involving a PaymentIntent`) confirms the SDK
+*documents* this field as populated for a PaymentIntent-involving error —
+exactly what a `create`-with-`confirm: true` decline is — but declares it
+as an ordinary, nullable object property, not a type-enforced guarantee;
+it is populated from whatever the server's own JSON error body actually
+contains, not synthesized or defaulted by the client SDK. A bounded read of
+vendored source cannot itself prove the server always includes it for
+every card-error variant. This correction therefore does **not** claim the
+id is guaranteed, and locks an explicit fail-closed behavior for its
+absence instead of assuming it:
+
+- If `ProviderCardDeclinedException::$providerPaymentIntentId` is `null`
+  despite a definitive card decline (the evidence Stripe's own response
+  was expected, but did not in this instance, carry), the manager must
+  **not** write a definitive `failed` transition — doing so would recreate
+  exactly the original bug this correction exists to fix (a `failed`
+  charge with no reference, permanently unretryable).
+- Instead, `driveRenewalChargeAttempt1()`'s catch treats this exact
+  combination identically to a non-definitive outcome: no state
+  transition, charge left in `Created`, no ordinal consumed, the decline
+  reason surfaced for logging/alerting only (this is a genuine anomaly —
+  Stripe returning a card decline without its own documented reference —
+  worth operational visibility even though it is handled safely).
+- This composes with no new mechanism: item 5 above (re-driving
+  `driveRenewalChargeAttempt1()` against a still-`Created` charge on the
+  next scheduled/owner-triggered call) already covers exactly this case,
+  and re-issuing the identical, ordinal-1 Stripe idempotency key on that
+  next attempt is safe under Stripe's own idempotency guarantee even
+  though no reference was ever captured the first time.
+- No reference is ever invented, guessed, or derived from any other field.
+
 **New/authorized path.** `app/Exceptions/Usage/ProviderCardDeclinedException.php`
 is added to the M4 allowlist (§F) — a pre-existing M3 file, not previously
 M4-authorized, now genuinely requiring modification to carry this evidence.
@@ -303,7 +415,12 @@ matching Correction Round 1's own established assertion pattern); (4) no
 test proving a `ProviderApiUnavailableException` during a retry writes zero
 new transitions, leaves the ordinal (and therefore the next retry's
 idempotency key) unchanged, and never sets `payment_lapsed`/never releases
-a mid-period-increase reservation.
+a mid-period-increase reservation. Add a test proving a
+`ProviderCardDeclinedException` whose `providerPaymentIntentId` is `null`
+writes zero transitions, leaves the charge `Created`, consumes no ordinal,
+and that a subsequent `createScheduledRenewalCharge()`/
+`requestSlotAgreementIncrease()` call for the same period/change-operation
+re-drives attempt 1 against the identical idempotency key.
 
 ---
 
@@ -403,35 +520,55 @@ currently 3 — the constant is reused, not duplicated, since it already
 means "the number of attempts this system allows before treating a renewal
 charge as exhausted," a definition that applies unchanged to an increase
 charge), the agreement's `target_allocation_count` is decremented by
-exactly that charge's own frozen `allocation_delta`, under the same
-locked/reload discipline Correction A (§A.2) establishes:
+exactly that charge's own frozen `allocation_delta`, tied atomically to the
+corrected §E.2 result-application dedup rule rather than to any separate
+assumption about how many times a method can be entered:
 
 1. Add `maybeReleaseTerminalIncreaseReservation(AdditionalBusinessSlotRenewalCharge $charge)`,
    directly mirroring `maybeSetPaymentLapsed()`'s own shape: returns
    immediately unless `$charge->charge_kind === SlotRenewalChargeKind::MidPeriodIncrease`;
-   returns immediately if the failure count (`countFailedForCharge()`) is
-   below the threshold.
-2. When the threshold is met, lock the parent agreement
+   returns immediately if the failure count is below the threshold.
+2. **Atomic tie to the unique terminal failure.** Per §E.2's corrected
+   result-application rule, a `failed` transition is only ever actually
+   inserted once per attempt ordinal — the branch that inserts the
+   threshold-reaching (3rd) `failed` transition is the *only* branch that
+   ever calls this method; the no-op branch (an already-applied,
+   racing-duplicate result) never does. Call
+   `maybeReleaseTerminalIncreaseReservation()` from inside that same
+   locked result-application transaction, immediately after the
+   threshold-reaching `failed` transition is inserted — never from a
+   separate, later transaction, and never on a replay/duplicate result
+   where that exact transition already exists. This is what makes the
+   release exactly-once: it is not a property of `applyRenewalChargeFailure()`
+   being entered only once (which §E.2 explicitly does not assume), but a
+   property of the specific transition insert it is atomically paired
+   with, which §E.2 already guarantees happens exactly once.
+3. Within that same transaction, lock the parent agreement
    (`findForUpdateById((int) $charge->agreement_id)`) and decrement
-   `target_allocation_count` by `(int) $charge->allocation_delta`.
-3. Call this method from `applyRenewalChargeFailure()` alongside (never
-   instead of) `maybeSetPaymentLapsed()` — the two are mutually exclusive
-   by `charge_kind`, exactly as `applyRenewalChargeSuccess()`'s own
-   `charge_kind`-branched behavior already establishes for the success
-   side.
-4. No additional idempotency guard beyond the `charge_kind` + threshold
-   check is required: `driveRenewalChargeRetry()`'s own ordinal-4+ gate
-   (unchanged) permanently blocks any further attempt against this exact
-   charge once it reaches the threshold, so `applyRenewalChargeFailure()`
-   can never be called again for it — the release fires exactly once by
-   the same mechanism that already guarantees exactly-once dunning for
-   scheduled renewals.
-5. No agreement-state transition is recorded for the release itself,
+   `target_allocation_count` by exactly `(int) $charge->allocation_delta` —
+   never more, never derived from any other value.
+4. **Floor guard.** The decremented `target_allocation_count` must never
+   fall below the agreement's own authoritative, currently-allocated
+   capacity (`current_allocation_count`, or the workspace's own RFC-004
+   `additional_business_slots` if that is ever the stricter of the two) —
+   assert this invariant when applying the decrement. Since the released
+   delta is exactly the amount this specific charge itself reserved and
+   never allocated, and other still-pending reservations remain untouched
+   by this release (composability, below), this floor is expected to hold
+   by construction; the assertion exists to fail loudly rather than
+   silently under-report capacity if that invariant is ever violated by a
+   future change.
+5. Later, still-pending reservations (an independent increase charge
+   created before or after this one, not yet resolved) remain fully
+   composable: the decrement is this charge's own frozen delta, applied
+   once, under lock, independent of any other charge's own reservation or
+   resolution order.
+6. No agreement-state transition is recorded for the release itself,
    consistent with the reservation bump (`requestSlotAgreementIncrease()`'s
    own `target_allocation_count` update) never having been transition-logged
    either — both are plain field mutations on the agreement row, not
    state-machine transitions.
-6. `current_allocation_count` is never touched by this release — it
+7. `current_allocation_count` is never touched by this release — it
    already only ever advances via a successful RFC-004 allocation (§A.4),
    and a terminally-failed increase never reached that step.
 
@@ -467,7 +604,11 @@ computes its delta against the corrected (post-release) baseline; (4) the
 final RFC-004 `additional_business_slots` value matches exactly the sum of
 every successfully-paid delta, never including the failed one; (5)
 `current_allocation_count`/`target_allocation_count` are coherent (equal)
-once every in-flight charge has resolved.
+once every in-flight charge has resolved; (6) a racing duplicate
+application of the exact same terminal (3rd) failed result — the §E.2
+no-op branch — releases the reservation exactly once, never twice, proving
+the release is tied to the unique transition insert and not merely to the
+threshold check running.
 
 ---
 
@@ -508,22 +649,76 @@ provider/Stripe network call may ever execute while a transaction is open.
 
 **E.2 — Retry race.** Two concurrent retries against the same charge must
 never both consume the same Stripe-idempotent provider result and each
-append their own `failed` (or `succeeded`) transition — the durable
-attempt ordinal must remain exactly one transition per actual provider
-attempt. The corrected mechanism: `driveRenewalChargeRetry()` locks the
-charge row (inside `DB::transaction(...)`), re-validates its own
-top-of-method preconditions against the freshly locked row (not the
-caller-supplied one), computes the ordinal, and transitions the charge to
-`FundingAttemptState::ProviderPending` (already an existing, valid charge
-state — not a new one) as an in-flight claim before committing that first
-transaction and only then making the provider call. A second concurrent
-caller's own lock-and-revalidate step then finds the charge already in
-`ProviderPending` — outside `[Failed, RequiresAction]` — and is rejected by
-the existing top-of-method state guard, never reaching the provider call
-or the result-application step at all. The result-application step
-(success or failure) then re-locks and applies exactly once, per E.1's
-general pattern. `SlotAgreementConcurrencyTest.php` (§25 item 84) is
-strengthened to prove this race directly (see E.7).
+append their own transition — the durable attempt ordinal must remain
+exactly one transition per actual provider attempt. This correction's own
+original wording proposed persisting `FundingAttemptState::ProviderPending`
+as an in-flight claim before the provider call — that is removed: it
+contradicts this same document's own non-definitive-failure rule (§B) and
+opens its own crash window (state changed to `ProviderPending`, transaction
+commits, process dies before the Stripe call ever happens, and the charge
+is now stuck outside the `[Failed, RequiresAction]` states
+`driveRenewalChargeRetry()`'s own top-of-method guard requires — permanently
+unretryable with no provider attempt ever having occurred). No pre-provider
+state mutation of any kind is authorized. Concurrency is instead locked
+using the attempt ordinal, Stripe's own idempotency key, and dedup at
+result-application time:
+
+1. In a short transaction, lock/reload the charge and its agreement,
+   validate authority/state against the locked rows, and compute the
+   attempted ordinal `N` (`currentAttemptOrdinal()`, unchanged formula).
+   Commit **without changing the charge's state**.
+2. Call Stripe outside the transaction using
+   `hash('sha256', $charge->local_idempotency_key.':attempt:'.$N)` —
+   unchanged from Correction Round 1's own formula.
+3. Apply the result in another transaction, after re-locking the charge.
+
+**Applying a definitive failure at attempted ordinal `N`:**
+- Re-count durable `failed` transitions for this charge while locked.
+- If that count is already `>= N`, this exact Stripe-idempotent result was
+  already applied by a racing caller — no-op; return the current
+  (already-applied) result.
+- Otherwise the count must be exactly `N - 1` (the expected pre-attempt
+  count); append exactly one `failed` transition.
+- Run `maybeSetPaymentLapsed()`/`maybeReleaseTerminalIncreaseReservation()`
+  (§D) **only** inside the branch that actually inserted this new `failed`
+  transition — never on the no-op branch. This applies identically to
+  pre-lapse ordinals 2–3 and to an explicit post-lapse ordinal 4+ recovery
+  attempt: the same count-and-compare rule is the sole gate in both cases,
+  with no separate mechanism for either.
+
+**Applying success:** if the re-locked charge is already `Succeeded`,
+perform only the already-contracted downstream replay repair
+(`applyScheduledRenewalSuccess()`/`performVerifiedRenewalChargeAllocation()`,
+§E.3) and do not append a second `succeeded` transition. Otherwise apply
+success once, exactly as already contracted.
+
+**Applying `requires_action`:** if the re-locked charge is already
+`RequiresAction`, this exact result was already applied by a racing
+caller — no-op, no second transition. Otherwise persist the state and
+record the transition once.
+
+**Applying a transient/non-definitive outcome (§B):** write no state
+transition whatsoever; leave the charge exactly in its pre-call state;
+the durable `failed`-transition count is therefore unchanged, so the next
+invocation recomputes the identical ordinal `N` and reuses the identical
+Stripe idempotency key — the same reconciliation this document's §B
+already locks.
+
+This makes the durable count-vs-`N` comparison the single source of
+truth for "has this exact attempt's result already been applied," rather
+than a fragile assumption that `applyRenewalChargeFailure()`/
+`applyRenewalChargeSuccess()` can never be entered twice for the same
+attempt — they can, under real concurrency, and each must independently
+converge on the identical, single durable outcome.
+
+`SlotAgreementConcurrencyTest.php` (§25 item 84) is strengthened, using the
+real cross-process concurrency harness (§E.7), to prove: two genuinely
+concurrent retries against the same charge, both configured to receive the
+identical Stripe-idempotent declined result, produce at most one real
+provider attempt (asserted via the fake gateway's own call recording in
+the single-process variant, and via the real harness's own process-level
+proof for the forced-race variant), exactly one durable `failed`
+transition, and exactly one ordinal advancement — never two.
 
 **E.3 — Scheduled-renewal success replay.** `applyRenewalChargeSuccess()`
 currently calls `applyScheduledRenewalSuccess()` only inside the
@@ -758,11 +953,50 @@ its own two new paths.
 12. No commercial/financial default is invented anywhere in this document.
     ✓
 
+**Post-refinement additions** (this document was refined once, in place, on
+`chore/rfc-005-m4-correction-2` / Draft PR #106, before any human merge —
+still Correction Round 2 of 2, not a third round):
+
+13. §A no longer authorizes any direct `WorkspacePlanAssignmentRepository`/
+    `EloquentWorkspacePlanAssignmentRepository` dependency — the
+    already-`completed` replay case resolves its assignment exclusively by
+    replaying `EntitlementManager::allocateAdditionalBusinessSlotsFromVerifiedPayment()`
+    with the agreement's own frozen evidence, relying on RFC-004's own
+    idempotency guarantee; `EntitlementCatalogSourceBoundaryTest.php`
+    remains unmodified and still passes. ✓
+14. §A's `performVerifiedAllocation()` is locked into three explicit
+    phases with an exact transaction boundary for each, including the
+    exact durable-commit-before-rethrow ordering on an RFC-004 exception.
+    ✓
+15. §E.2 no longer authorizes any persisted pre-provider state mutation
+    (`ProviderPending` or otherwise); concurrency is locked entirely via
+    the attempt ordinal, Stripe's own idempotency key, and an exact
+    result-application dedup rule, with transient/non-definitive outcomes
+    explicitly leaving state and ordinal unchanged. ✓
+16. §D's terminal-increase-reservation release is now atomically tied to
+    the unique result-application branch that inserts the threshold-
+    reaching `failed` transition (never to a separate assumption about
+    call count), with an explicit floor guard against reducing
+    `target_allocation_count` below authoritative allocated capacity. ✓
+17. §B locks an explicit fail-closed behavior for a definitive card
+    decline whose `providerPaymentIntentId` evidence is unexpectedly
+    absent — no reference is ever invented; the charge is left exactly as
+    a non-definitive outcome would leave it. ✓
+18. The implementation allowlist remains unchanged by this refinement:
+    97 paths, stop threshold the 98th — no new path is required by any of
+    §13–§17's fixes; every one lands inside the same two newly-authorized
+    paths (or already-authorized paths) §F already named. ✓
+
 ---
 
 ## J. Verification and publication (this document only)
 
-Performed, in order, before commit:
+**Publication history.** Initially committed as `2ad3343e2f80d2971d61f9957990a9e91b8c1122`
+on `chore/rfc-005-m4-correction-2` (Draft PR #106). Refined once, in
+place, per the review that produced §13–§18 above — a new commit on the
+same branch/PR, still unmerged, still Correction Round 2 of 2.
+
+Performed, in order, before this refinement's own commit:
 
 1. `git status --porcelain` inside `../rfc-005-m4-impl-worktree` (the
    existing implementation worktree, branch `agent/rfc-005-m4`) — confirms
@@ -771,16 +1005,19 @@ Performed, in order, before commit:
    environment-only artifacts (`bootstrap/cache/packages.php`,
    `bootstrap/cache/services.php`, `public/mix-manifest.json`,
    `public/images/branding/logo_compact/...`), nothing else — confirming
-   this document's drafting touched neither the branch nor the worktree.
+   both this document's original drafting and this refinement touched
+   neither the branch nor the worktree, and PR #105 remains exactly at
+   that commit.
 2. `git status --porcelain` inside this document's own worktree
-   (`../rfc-005-m4-correction-2-worktree`) — exactly one untracked path,
+   (`../rfc-005-m4-correction-2-worktree`) — exactly one modified path,
    `docs/automation/RFC-005-M4-CORRECTION-2.md`, nothing else, nothing
    staged.
 3. `git diff --check` — clean.
 4. Stage the one file by its exact path only
    (`git add docs/automation/RFC-005-M4-CORRECTION-2.md`), never
    `git add -A`/`.`.
-5. Commit exactly: `docs: authorize RFC-005 Milestone 4 correction round 2`.
-6. Push normally to `origin chore/rfc-005-m4-correction-2`. No force push.
-7. Open a Draft PR if tooling permits; report the comparison URL
-   otherwise. **Do not merge.**
+5. Commit exactly: `docs: refine RFC-005 Milestone 4 correction round 2`.
+6. Push normally to `origin chore/rfc-005-m4-correction-2`. No force push —
+   a new commit on top of the existing branch, never a rewrite.
+7. PR #106 already exists on this branch; no new PR is opened. **Do not
+   merge either PR.**
