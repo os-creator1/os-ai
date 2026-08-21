@@ -11,14 +11,18 @@ Merging this document does **not** itself write any `app/`, `database/`,
 any real retail/provider rate, does not begin M6 in any way, and does not
 authorize any live charge to any real Business.
 
-**Revision note (third refinement pass):** independent review found the
-`reserved_at`/`preCallAt` freshness heuristic is not concurrency-safe;
-that the Twilio/TwilioCopilot caught-exception path was misclassified as
-definitive when it is not; and that gateway-*type* scoping does not pin
-the actual price-determining dimension (`sending_server` + `country_id`).
-All three are re-audited and resolved below, together with a fourth,
-narrower fix to §6.2's manual-resolution command. Still pre-merge
-refinement — no correction round is consumed.
+**Revision note (fourth refinement pass):** independent review found the
+prior pass's Twilio-outcome classification factually wrong — the literal
+string `'Rejected'` never actually reaches `quickSend()`, because
+`sendPlainSMS()`'s own shared post-processing collapses `customer_status`
+to exactly `'Delivered'`/`'Failed'` before returning, erasing the
+distinction entirely. No existing field can safely separate a genuine
+provider rejection from a caught, potentially-ambiguous exception. This
+pass authorizes the smallest bounded production change
+(`app/Models/SendCampaignSMS.php`, M5-only, opt-in) to make that
+distinction explicit, and separately tightens the unique-constraint catch
+so it cannot mask an unrelated DB error. Still pre-merge refinement — no
+correction round is consumed.
 
 ---
 
@@ -32,20 +36,16 @@ refinement — no correction round is consumed.
 - Stop threshold is the allowlist's final count **plus one**.
 - This refinement makes **zero** application changes — only this
   document is touched.
-- **Audit discipline, this pass:** `UsageWalletManager::reserve()` and
-  `ReservationResult.php` re-read for the exact transaction/return
-  shape; `UsageBillingCheckoutManager::finalizeAddonPurchaseIfPending()`'s
-  existing `UniqueConstraintViolationException`-absorption idiom (the
-  established precedent this fix reuses, not invents); the exact Twilio
-  and TwilioCopilot branches of `SendCampaignSMS::sendPlainSMS()`
-  (lines 460-520) re-read character-by-character, together with
-  `EloquentCampaignRepository::quickSend()`'s own
-  `substr_count($data->status, 'Delivered')` check; `SendingServerBasedPricingPlans`'
-  schema (keyed by `sending_server` + `country_id`) re-confirmed. No new
-  files were created; no vendor package was newly inspected (the
-  `vendor/twilio` absence noted in the prior pass is unchanged and still
-  not required for this pass's fix, which relies only on this
-  repository's own code).
+- **Audit discipline, this pass:** `app/Models/SendCampaignSMS.php`
+  lines 71-13429 (the full `sendPlainSMS()` boundary) re-read
+  end-to-end, specifically the two Twilio/TwilioCopilot case blocks
+  (lines 457-520, confirmed the *only* two occurrences of
+  `SendingServer::TYPE_TWILIO`/`TYPE_TWILIOCOPILOT` inside this
+  method's own boundary) together with the shared post-processing at
+  lines 13379-13424 (`$cost`, `$customer_status` normalization,
+  `Reports::create()`, and the return). `UsageWalletManager::reserve()`'s
+  proposed catch block re-read against the independent review's own
+  "don't swallow an unrelated unique-constraint failure" requirement.
 
 ---
 
@@ -65,213 +65,206 @@ Unchanged: `origin/main` at `24fd1730e535d2360bb3a6fef7caf97f3272457c`.
 
 ### 3.1–3.4a
 
-Unchanged from the prior pass, **except 3.4a is corrected below.**
+Unchanged from the prior pass, except `ReservationResult`'s default
+value is corrected below (§3.4a).
 
-### 3.4a `reserve()`'s idempotency lookup — corrected: the freshness heuristic is unsound
+### 3.4a `reserve()`'s atomic claim — corrected: default must be `false`, and the catch must verify before treating a race as idempotent success
 
-**The prior pass's design — capturing `$preCallAt = Carbon::now()` before
-calling `reserve()`, then comparing it to the returned row's
-`reserved_at` to infer "did I create this row" — is withdrawn. It is not
-concurrency-safe, exactly as the independent review's counterexample
-shows:** two concurrent requests A and B, both carrying the identical
-business-namespaced token, both capture a `preCallAt` before either has
-written anything; if A's insert commits first, B's subsequent
-`reserve()` call (or a repeat pre-check) can return that same row with
-a `reserved_at` that is `>=` **both** A's and B's own `preCallAt`
-captures, since nothing in the design serializes "capture timestamp" and
-"another process's insert" against each other. **Additionally,
-`business_usage_reservations.reserved_at` is declared
-`$table->timestamp('reserved_at')` with no fractional-second precision**
-(confirmed by direct re-read of the migration) — even absent the
-ordering counterexample, sub-second concurrent requests could produce
-identical stored timestamps, making strict inequality comparison
-unreliable on its own terms.
+**Two corrections this pass, both defensive tightenings of an already-
+sound direction, not a redesign.**
 
-**Correct mechanism: an atomic database fact, not a timestamp
-comparison.** `business_usage_reservations.idempotency_key` already
-carries a `unique` constraint (confirmed, unchanged). The established
-precedent for turning a unique-constraint race into an exactly-once
-claim already exists in this codebase —
-`UsageBillingCheckoutManager::finalizeAddonPurchaseIfPending()` catches
-`Illuminate\Database\UniqueConstraintViolationException` around a
-racing `creditFromFunding()` ledger insert and treats the caught
-exception as proof a concurrent/earlier caller already won. **`reserve()`
-is widened to apply the identical idiom to its own reservation insert:**
-
-- Inside `reserve()`'s existing `DB::transaction()` closure, the
-  reservation `create()` call (line 284, unchanged position) is wrapped
-  so that a `UniqueConstraintViolationException` on that specific insert
-  propagates out of the closure. `DB::transaction()`'s own existing
-  rollback behavior (unchanged Laravel semantics) then undoes
-  *everything* this losing invocation did inside that transaction —
-  including its own wallet-balance debit — before the exception reaches
-  `reserve()`'s own code.
-- `reserve()` catches `UniqueConstraintViolationException` around the
-  `DB::transaction(...)` call itself (not inside the closure — the
-  closure must be allowed to fully roll back first). On catch, it
-  performs a **fresh** `findByIdempotencyKey()` lookup (guaranteed, by
-  MySQL's own unique-index locking behavior, to now find the winning
-  row — a losing insert can only ever fail with a duplicate-key error
-  once the winning row is already committed and visible, whether the
-  loser's insert blocked on the index lock first or failed immediately)
-  and returns that row's id.
-- **`ReservationResult` (`app/Library/Usage/ReservationResult.php`)
-  gains one new field, added as a fourth, defaulted constructor
-  parameter — confirmed backward compatible by direct search: every
-  existing `new ReservationResult(...)` call site (five total, all
-  inside `UsageWalletManager.php`, none elsewhere in the repository)
-  uses purely positional arguments and none supplies a fourth value
-  today, so appending one defaulted parameter changes no existing call
-  site's behavior:**
-  ```php
-  final readonly class ReservationResult
-  {
-      public function __construct(
-          public bool $granted,
-          public ?int $reservationId,
-          public ?string $denialReason,
-          public bool $createdByThisInvocation = true,
-      ) {
-      }
-  }
-  ```
-  `reserve()`'s five existing return sites are updated: the pre-
-  transaction existing-found short-circuit (line 238) and the new
-  post-catch existing-found path both pass `false`; the three denial
-  returns (lines 271/275/279) are unaffected in substance (the field is
-  meaningless when `granted` is `false`, so it is left at its default
-  for clarity, never inspected by any caller in that branch); the
-  successful-fresh-creation return (line 335) passes `true`.
-
-**This directly satisfies every requirement the independent review
-listed:** only the invocation that atomically wins the unique-key insert
-ever learns `createdByThisInvocation === true`, and every other
-concurrent or later invocation — whether it hit the fast pre-check or
-raced into and lost the insert — learns `false`; a genuinely fresh
-`Pending` row is only ever produced by exactly one invocation; no
-transaction remains open across the provider call (the transaction
-fully closes, one way or the other, before `reserve()` even returns —
-unchanged from every prior pass); and the mechanism is the database's
-own unique-index enforcement, not application-level timestamp
-inference.
-
-### 3.5 Twilio/TwilioCopilot outcome classification — corrected: the caught exception does not propagate
-
-**The prior pass's rule ("thrown exception = ambiguous, non-throwing =
-evaluate the status") is corrected. It rested on an inaccurate premise:
-re-reading `SendCampaignSMS::sendPlainSMS()`'s Twilio and TwilioCopilot
-branches (lines 468-486, 501-519) character-by-character confirms the
-`catch (ConfigurationException|TwilioException $e)` block does **not**
-rethrow — it assigns `$get_sms_status = $e->getMessage(); $customer_status = 'Rejected';`
-and falls through to `break;`. `quickSend()` therefore never receives a
-PHP exception from this path at all — it receives an ordinary return
-value (eventually the `Reports` row `quickSend()` reads via
-`$data->status`, per the existing `substr_count($data->status, 'Delivered')`
-check, unchanged) whose status happens to be exactly the literal string
-`'Rejected'`.**
-
-**Re-audit of what other value that same field can hold, for this
-gateway specifically:** the non-throwing, real-response branch (lines
-475-481) sets `$customer_status = ucfirst($get_response->status)` when
-`$get_response->status` is not `queued`/`accepted` — a value drawn
-directly from Twilio's own Messages resource status vocabulary
-(`queued`, `sending`, `sent`, `delivered`, `undelivered`, `failed`,
-`accepted`, `receiving`, `received` — Twilio's documented status set
-never includes a status literally named "rejected"). **This means, for
-this specific gateway, the exact string `'Rejected'` can only ever
-originate from the catch block — never from a genuine Twilio API
-response** — a mechanical, repository-evidenced distinction, not an
-assumption about exception internals (which the prior pass correctly
-declined to assume, and still does not need to).
-
-**Locked classification, exactly per the independent review's own
-strong default, now confirmed rather than merely proposed:**
-
-- `$data->status === 'Rejected'` (exact match) for a Twilio/TwilioCopilot-
-  resolved send → **ambiguous.** Keep the reservation `Pending`. Do not
-  call `release()`. Do not retry the provider with the same token
-  (unchanged — governed by §6's `createdByThisInvocation` check, not by
-  this classification). Eligible for §6.2's manual resolver or the
-  existing TTL backstop.
-- A non-`'Delivered'`-containing, non-`'Rejected'` status (a genuine
-  `ucfirst($get_response->status)` value, always carrying the durable
-  `sid`, per §3.5 of the prior pass) → **definitive non-delivery.**
-  `release()` immediately, exactly as the prior pass specified for this
-  sub-case.
-- `'Delivered|<sid>'` → durable success → `commit()`, unchanged.
-
-**No modification to `app/Models/SendCampaignSMS.php` is required or
-authorized.** The distinction is fully mechanical from data
-`quickSend()` already receives today, given this gateway's own confirmed
-status vocabulary — this is a correction to the *classification rule*
-`quickSend()`'s new M5 branch applies to existing data, not a change to
-`SendCampaignSMS.php` itself.
-
-### 3.6 Rate dimension — corrected: gateway *type* does not pin price; the exact `SendingServer` id does
-
-**Confirmed, re-reading `SendingServerBasedPricingPlans`' schema
-(migration `2023_05_21_113335_...`'s sibling, and its read site at
-`quickSend()` line 210): the table is keyed by `sending_server` (a
-specific row id) + `country_id` — not by gateway type.** Two different
-`SendingServer` rows can both be configured with `settings = TYPE_TWILIO`
-while carrying two different `SendingServerBasedPricingPlans` rows (and
-therefore two different `plain_sms` prices) for the identical country.
-`ChatBoxController::sent()` additionally permits the customer to select
-a specific `sending_server` explicitly (`$request->sending_server`,
-confirmed in the controller's existing code). **The prior pass's
-`authorized_gateway_types` config therefore bounded a safety/capability
-property (which code branch executes, relevant to §3.5's classification
-rule), not the pricing identity — these are two independent concerns
-that were incorrectly conflated into one config key.**
-
-**Corrected pilot design — one singular, scalar, fail-closed tuple, not
-three independent arrays, per the independent review's own explicit
-preference against an accidental Cartesian product:**
+**First — the constructor default was wrong.** The prior pass wrote
+`public bool $createdByThisInvocation = true` and left the three
+existing wallet-capacity-denial return sites (lines 271/275/279,
+`granted: false`) relying on that default, reasoning the field would
+"never be inspected" when `granted` is `false`. On reflection this is
+exactly the kind of ambiguity the independent review is right to close
+even when a bug can't yet reach it: a `true` default paired with
+`granted: false` is misleading on its own terms. **Corrected:**
 
 ```php
-// config/usage_billing.php
-'conversations_metering' => [
-    'pilot_business_id' => env('USAGE_BILLING_CONVERSATIONS_PILOT_BUSINESS_ID'),
-    'pilot_country_id' => env('USAGE_BILLING_CONVERSATIONS_PILOT_COUNTRY_ID'),
-    'pilot_sending_server_id' => env('USAGE_BILLING_CONVERSATIONS_PILOT_SENDING_SERVER_ID'),
-],
+final readonly class ReservationResult
+{
+    public function __construct(
+        public bool $granted,
+        public ?int $reservationId,
+        public ?string $denialReason,
+        public bool $createdByThisInvocation = false,
+    ) {
+    }
+}
 ```
 
-Each is a **single nullable scalar**, `null` by default (fail-closed —
-no default invented, matching the file's own existing convention). A
-qualifying send now requires the resolved Business id, destination
-`country_id`, and resolved `SendingServer` id to **exactly equal all
-three configured values simultaneously** — one tuple, not a membership
-test against any list. **The resolved `SendingServer` is additionally,
-separately, asserted to be `TYPE_TWILIO`/`TYPE_TWILIOCOPILOT`** — this
-is not a fourth pilot dimension, it is a code-level capability
-assertion tied to §3.5's classification rule (which is only proven
-correct for this one gateway family); if a human ever pointed
-`pilot_sending_server_id` at a non-Twilio row, this assertion fails
-closed rather than silently applying an unverified classification rule
-to a different gateway's response shape.
+Locked semantics, exactly as instructed:
 
-**M5 supports exactly one pilot tuple, deliberately, per the
-independent review's own steer ("the smaller M5 design is one tuple").**
-No mechanism for multiple tuples is built. A future milestone wanting a
-second pilot (or a general rollout) would need either to prove, out-of-
-band, that a second tuple's real economics are identical to the first
-(unlikely, since price is precisely the thing that varies per tuple) or
-to build the real per-dimension schema extension this contract has
-twice already named as out of scope.
+- **Authorized, newly-created reservation** (the sole winner of the
+  unique-key insert): `createdByThisInvocation = true`, passed
+  explicitly at `reserve()`'s successful-creation return site.
+- **Authorized, pre-existing/race-lost reservation** (the fast pre-check
+  hit, or the new catch-and-refetch branch below): `createdByThisInvocation = false`,
+  passed explicitly for clarity even though it now matches the
+  corrected default.
+- **Denied/no reservation** (`granted: false`, any of the three existing
+  wallet-capacity denial sites): `createdByThisInvocation = false` — now
+  correct by the corrected default, with no call-site change needed at
+  those three sites, since they never pass a fourth argument.
 
-**Stated exactly, per the independent review's explicit instruction:**
-once the pilot tuple is activated (`is_metered = true` **and** all three
-config values populated **and** a real rate set), the RFC-005
-`business_usage_rates` active rate is the sole, authoritative charge for
-a qualifying send matching that exact tuple. **Legacy `sms_unit` is not
-also deducted for that send** — unchanged from every prior pass's own
-"exactly one authoritative charging path" framing, now restated against
-the corrected, precise tuple definition.
+**Second — the catch must verify before declaring idempotent success,
+not swallow any unique-constraint failure unconditionally.** The prior
+pass's catch block re-fetched by idempotency key and returned it
+unconditionally on catching `UniqueConstraintViolationException`. This
+does not prove the *specific* violation was the reservation's own
+`idempotency_key` collision — a transaction can, in principle, touch
+more than one unique-constrained insert, and blindly treating *any*
+unique-constraint failure inside `reserve()`'s transaction as "someone
+else already reserved this" would mask a genuinely unrelated bug.
+**Corrected sequence:**
 
-`provider_cost_micro` remains entirely human-supplied, unchanged from
-the prior pass — the legacy `options` blob is retail-only and proves
-nothing about real provider cost for any tuple.
+```php
+try {
+    $result = DB::transaction(function () use (...) { /* unchanged body */ });
+} catch (UniqueConstraintViolationException $exception) {
+    $existing = $this->reservationRepository->findByIdempotencyKey($idempotencyKey);
+
+    if ($existing === null) {
+        throw $exception; // not this reservation's own key collision — do not mask it
+    }
+
+    return new ReservationResult(true, $existing->id, null, false);
+}
+```
+
+Only when the re-fetch **finds** a row matching the exact expected
+`idempotency_key` is the exception treated as a race the losing
+invocation should converge on. Any other unique-constraint violation
+propagates unchanged, exactly as it would today without this catch
+existing at all.
+
+Everything else about §3.4a (the unique-index-enforced atomic claim
+itself, the withdrawal of the timestamp heuristic, the
+`UsageWalletManager`/`ReservationResult` paths this requires) is
+unchanged from the prior pass.
+
+### 3.5 Twilio/TwilioCopilot outcome classification — corrected: no existing field distinguishes rejection from ambiguity
+
+**The prior pass's claim — that `$data->status === 'Rejected'`
+mechanically identifies the caught-exception path — is withdrawn as
+factually incorrect.** Direct end-to-end re-read of `sendPlainSMS()`
+confirms the independent review's finding exactly:
+
+- Inside the catch (lines 483-486, 516-519, unchanged from every prior
+  pass's own reading): `$get_sms_status = $e->getMessage(); $customer_status = 'Rejected';`.
+- **But this is not the end of the method.** After the entire gateway
+  `switch ($gateway_name)` block closes, shared post-processing runs
+  (lines 13379-13398, confirmed the *only* such block within
+  `sendPlainSMS()`'s boundary):
+  ```php
+  $cost = substr_count($get_sms_status, 'Delivered') == 1 ? $data['cost'] : '0';
+  if (! isset($customer_status)) {
+      $customer_status = $get_sms_status;
+  }
+  $customer_status = substr_count($customer_status, 'Delivered') == 1 ? 'Delivered' : 'Failed';
+  $reportsData = [
+      ...
+      'status' => $get_sms_status,
+      'customer_status' => $customer_status,
+      ...
+  ];
+  $status = Reports::create($reportsData);
+  ```
+  **This final line unconditionally collapses `$customer_status` to
+  exactly `'Delivered'` or `'Failed'` — the caught-exception path's
+  `'Rejected'` value is overwritten to `'Failed'` here, never reaching
+  the returned `Reports` row as `'Rejected'` at all.** `quickSend()`
+  itself reads `$data->status` (mapped from the *raw*, unmangled
+  `$get_sms_status`, per `'status' => $get_sms_status` above) — for the
+  caught-exception path, that is `$e->getMessage()`, an arbitrary,
+  provider/SDK-dependent string with no proven consistent shape across
+  every possible exception. **Neither `$data->status` nor
+  `$data->customer_status` can safely distinguish "Twilio's API
+  genuinely rejected this" from "the local code caught an exception of
+  uncertain origin" — the prior pass's string-heuristic instinct (a
+  `'|'`-delimiter check, floated but not adopted) is correctly rejected
+  by the independent review, and is not adopted here either, for
+  exactly the reason given: neither the provider-reference format nor
+  the full space of exception-message text has been proven to support
+  it.**
+
+**Conclusion: no currently-returned or currently-persisted field
+provides the required distinction. The smallest bounded production
+change is authorized, exactly as the independent review's strong
+default specifies.**
+
+**`app/Models/SendCampaignSMS.php` is authorized for modification, M5-
+only, opt-in, narrowly scoped to the two Twilio/TwilioCopilot case
+blocks plus one shared attachment point:**
+
+- **Input flag, locked name:** `$preparedData['m5_conversations_usage_tracking'] = true;`
+  — set only by `EloquentCampaignRepository::quickSend()`'s own new M5-
+  guarded branch (§5.1), for a qualifying send, and by no other caller.
+- **Inside the two Twilio/TwilioCopilot case blocks (lines 457-520)
+  only:** when
+  `($data['m5_conversations_usage_tracking'] ?? false) === true`, an
+  additional local variable, `$m5Outcome`, is set alongside the
+  existing, **completely unchanged** `$get_sms_status`/`$customer_status`
+  assignments:
+  - Accepted (`queued`/`accepted`, unchanged branch): `$m5Outcome = 'accepted';`.
+  - Non-throwing, non-accepted (unchanged branch): `$m5Outcome = 'definitive_rejection';`.
+  - Caught exception (unchanged catch body, otherwise untouched):
+    `$m5Outcome = 'ambiguous_exception';`.
+  When the flag is absent or `false`, **none of this new code executes at
+  all** — `$m5Outcome` is simply never set, exactly as today.
+- **At the method's existing return point** (immediately after
+  `$status = Reports::create($reportsData);`, before `return $status;`,
+  line ~13419-13422, unchanged otherwise): `if (isset($m5Outcome)) { $status->m5_outcome = $m5Outcome; }`.
+  **This is a non-persisted, dynamic Eloquent attribute** — it is not a
+  key of `$reportsData`, so `Reports::create()` neither receives nor
+  persists it; setting a property on an already-created model instance
+  after the fact has no database effect whatsoever. `quickSend()` reads
+  `$data->m5_outcome` only inside its own new M5-guarded branch; the
+  property is simply absent (`null`/undefined) for every other caller,
+  channel, or gateway, exactly as before this change.
+
+**Proof this satisfies every constraint the independent review named:**
+
+- **No schema change:** `m5_outcome` is never written to `$reportsData`
+  and never reaches the `reports` table — confirmed by the exact
+  attachment point being *after* `Reports::create()` returns.
+- **Legacy `Reports` persistence is completely unchanged:** every key in
+  `$reportsData` (`status`, `customer_status`, `cost`, etc.) is built by
+  code this contract does not touch; the new lines add a variable and a
+  post-creation property assignment, nothing more.
+- **Every non-M5 caller sees exactly its current behavior:** the new
+  code is gated entirely behind
+  `$data['m5_conversations_usage_tracking'] ?? false`, which is `false`
+  for bulk Quick Send, API sends, contact-triggered sends, DLR replies,
+  and every other existing caller of `sendPlainSMS()` — none of them is
+  modified to pass this key, so the added branches are dead code for
+  them, provably by the same guard-clause discipline already applied
+  throughout this contract (§7).
+- **Only the M5 qualifying path consumes the marker:** `quickSend()`'s
+  new branch is the only reader of `$data->m5_outcome` anywhere in the
+  repository.
+
+**Locked outcome semantics, exactly as instructed:**
+
+| `m5_outcome` | Action |
+|---|---|
+| `accepted` | `commit($reservation->reservationId, (string) $sms_count)` |
+| `definitive_rejection` | `release($reservation->reservationId)`; client regenerates token |
+| `ambiguous_exception` | leave `Pending`; do **not** call `release()`; do **not** retry the provider with the same token; client retains token; eligible for §6.2's manual resolver or the existing TTL backstop |
+
+**The durable provider reference (`$get_response->sid`) is preserved
+exactly as before** — the new code adds `$m5Outcome`, it does not alter
+`$get_sms_status`'s own existing `'Delivered|'.$sid` / `$status.'|'.$sid`
+construction, so the `sid` remains embedded in `$data->status` for
+`accepted`/`definitive_rejection` outcomes precisely as it is today.
+
+### 3.6 Rate dimension
+
+Unchanged from the prior pass (singular scalar pilot tuple: Business,
+country, `SendingServer` id, with the Twilio/TwilioCopilot capability
+assertion).
 
 ### 3.7 Testability
 
@@ -287,134 +280,58 @@ Unchanged.
 
 ## 5. Exact M5 scope
 
-### 5.1 What qualifies as an M5-metered plain SMS send
-
-1. `$input['sms_type']` resolves to the `plain` branch.
-2. The call originated from `ChatBoxController::sent()`/`::reply()`
-   (`conversation_context`, §7).
-3. `platform_feature_usage_classifications.conversations.is_metered`
-   is `true`.
-4. The sending Customer's Workspace owns exactly one Business, **and**
-   that Business's id equals `conversations_metering.pilot_business_id`
-   exactly (not list membership — §3.6).
-5. The resolved destination `country_id` equals
-   `conversations_metering.pilot_country_id` exactly.
-6. The resolved `SendingServer`'s id equals
-   `conversations_metering.pilot_sending_server_id` exactly, **and**
-   that server's `settings` is `TYPE_TWILIO`/`TYPE_TWILIOCOPILOT`
-   (§3.6's capability assertion).
-
-Any send failing any one condition takes the exact same legacy
-`sms_unit` code path unconditionally.
-
-### 5.2–5.4
-
-Unchanged in substance.
+Unchanged (§5.1's six conditions, prior pass).
 
 ---
 
-## 6. Reservation lifecycle — exact, locked order, atomic claim
+## 6. Reservation lifecycle
 
 For a qualifying send (§5.1), inside `quickSend()`:
 
-1. Business/ownership/pilot-tuple guards (§5.1 items 4-6). Any failure
-   → fall through to unmodified legacy code.
+1. Guards (§5.1 items 4-6). Any failure → legacy.
 2. `EntitlementManager::decide(...)`. Denial → existing error response.
-3. `$reservation = $walletManager->reserve($business, PlatformFeature::Conversations->value, $idempotencyKey, (string) $sms_count);`
-   using the business-namespaced key (§6.1, unchanged derivation).
-   Wallet-capacity denial → existing error response, no provider call.
-4. **Revised — the atomic claim check, replacing the withdrawn
-   `preCallAt`/`reserved_at` comparison entirely:**
-   ```php
-   if (! $reservation->createdByThisInvocation) {
-       $row = app(BusinessUsageReservationRepository::class)->findById($reservation->reservationId);
-       return match ($row->status) {
-           UsageReservationStatus::Committed => /* existing "already sent" success response */,
-           UsageReservationStatus::Released, UsageReservationStatus::Expired => /* existing "could not confirm" response; client must regenerate token */,
-           UsageReservationStatus::Pending => /* existing "still processing" response; client retains token; log the same structured warning as before */,
-       };
-   }
-   ```
-   **Only when `$reservation->createdByThisInvocation === true`** does
-   control proceed to step 5 — this is the exact, sole authority to call
-   the provider, decided by the database's own unique-constraint
-   enforcement (§3.4a), not by any timestamp.
-5. **Provider send:** `$campaign->sendPlainSMS($preparedData)`.
-6. **Outcome classification (§3.5, corrected this pass):**
-   - `$data->status` contains `'Delivered'` → `commit($reservation->reservationId, (string) $sms_count)`.
-   - `$data->status === 'Rejected'` (Twilio/TwilioCopilot's caught-
-     exception literal, §3.5) → **ambiguous.** Do not `release()`. Leave
-     `Pending`. Log the structured warning. Client retains token.
-   - Any other status (a genuine, evidenced non-accepted provider
-     response) → **definitive.** `release($reservation->reservationId)`.
-     Client regenerates token.
+3. `reserve()` with the business-namespaced key (§6.1) and, this pass,
+   the corrected `ReservationResult` semantics (§3.4a).
+4. Atomic claim check on `$reservation->createdByThisInvocation`
+   (unchanged from the prior pass — still the sole authority to proceed,
+   still not a timestamp).
+5. **`$preparedData['m5_conversations_usage_tracking'] = true;`** set
+   immediately before calling `$campaign->sendPlainSMS($preparedData)`
+   (new this pass — the one line that activates §3.5's marker logic for
+   this call only).
+6. Provider send: `$campaign->sendPlainSMS($preparedData)`.
+7. **Outcome classification — revised this pass, driven by
+   `$data->m5_outcome`, not by any status-string heuristic:**
+   - `$data->m5_outcome === 'accepted'` → `commit(...)`.
+   - `$data->m5_outcome === 'definitive_rejection'` → `release(...)`;
+     client regenerates token.
+   - `$data->m5_outcome === 'ambiguous_exception'` → leave `Pending`; no
+     `release()`; log the structured warning; client retains token.
+   - **Defensive fallback, stated explicitly:** if
+     `$data->m5_outcome` is unexpectedly absent (e.g. a future,
+     currently-impossible-by-design caller path reached this branch
+     without setting the flag) — treat identically to
+     `ambiguous_exception`. This can only ever be reached by a
+     programming defect elsewhere in this same guarded branch, since the
+     flag is always set at step 5 immediately before the call; it is a
+     fail-safe, not an expected outcome, and is asserted against directly
+     in tests (§13).
 
-**No DB transaction remains open across the provider call** — `reserve()`'s
-own transaction (including the new catch-and-refetch branch) fully
-closes before step 4 is even evaluated; unchanged property, now
-mechanically guaranteed rather than merely asserted, since the atomic
-claim itself depends on that transaction having already committed or
-rolled back.
-
-**Concurrency requirement, stated exactly:** two genuinely concurrent
-processes supplying the identical business-namespaced token produce
-exactly one reservation (the database's unique constraint admits only
-one), exactly one `createdByThisInvocation === true` result (by
-construction — only the winner of the unique-insert race gets `true`),
-and therefore exactly one provider invocation and exactly one
-accounting outcome — the loser always takes the step-4 non-provider-
-call branch, deterministically, regardless of timing.
+No DB transaction remains open across the provider call — unchanged.
 
 ### 6.1 Idempotency key
 
-Unchanged: business-namespaced derivation
-(`hash('sha256', 'conversations_plain_sms:'.$business->id.':'.$token)`),
-client-sourced token (session-persisted for `sent()`, JS-held for
-`reply()`), retain-on-ambiguous/regenerate-on-resolved rules — now
-triggered by §6's `createdByThisInvocation`-driven state machine and
-§3.5's corrected outcome classification, rather than by the withdrawn
-timestamp heuristic.
+Unchanged.
 
-### 6.2 Manual ambiguous-reservation resolution — narrowed, cannot become a generic mutation tool
+### 6.2 Manual ambiguous-reservation resolution
 
-`app/Console/Commands/ResolveAmbiguousUsageReservation.php`:
-`usage:resolve-reservation {reservation-id} {--outcome=} {--actor-user-id=} {--reason=}`.
-**Before calling `commit()` or `release()`, the command must verify, in
-order, and perform zero mutation if any check fails:**
-
-1. The reservation exists (`findById()` returns non-null).
-2. Its `status` is exactly `Pending` — never `Committed` (already
-   resolved, nothing to do) and never `Released`/`Expired` (already
-   terminal, nothing to do).
-3. Its `feature_key` is exactly `PlatformFeature::Conversations->value`
-   — this command is a `Conversations`-pilot-specific tool, not a
-   general reservation-mutation command; it must refuse any other
-   feature's reservation outright.
-4. The supplied `--actor-user-id` resolves to a genuine platform
-   administrator (the same `is_admin` check as §9.1, reproduced not
-   modified).
-5. `--reason` is supplied and non-empty.
-6. The reservation's own persisted `business_id` equals the
-   *currently-configured* `conversations_metering.pilot_business_id`
-   (§3.6) — provable directly from persisted data plus current config,
-   without needing country/sending-server columns on the reservation
-   row itself, since `quickSend()`'s own guard (§5.1) is the *only*
-   code path that ever creates a `conversations`-feature_key
-   reservation at all — a row satisfying checks 3 and 6 together is
-   mechanically proven to have originated from the M5 pilot path.
-
-Any failure at any of the six checks aborts with a clear message and
-writes nothing. Only when all six pass does the command call
-`commit($reservationId)` (for `--outcome=sent`) or
-`release($reservationId)` (for `--outcome=not-sent`) — zero new
-`UsageWalletManager` code, unchanged from the prior pass.
+Unchanged (six checks, prior pass).
 
 ---
 
 ## 7. `quickSend()` discriminator
 
-Unchanged from the second refinement pass (the `reply()`/`sent()`
-token-propagation correction stands).
+Unchanged, plus the one new line at §6 step 5.
 
 ---
 
@@ -426,22 +343,7 @@ Unchanged.
 
 ## 9. Pricing activation
 
-### 9.1 The command and actor-authority mechanism
-
-Unchanged.
-
-### 9.2 Unresolved human decisions
-
-1. Numeric rate for the one pilot tuple (§3.6) — unchanged framing,
-   `provider_cost_micro` still never inferred from legacy data.
-2. **Revised:** the three scalar pilot values —
-   `pilot_business_id`, `pilot_country_id`, `pilot_sending_server_id` —
-   each `null`/fail-closed by default.
-3. Lifecycle unchanged: implementation may begin and be fully tested
-   against fixture-only values; `Conversations.is_metered` and all
-   three pilot config values must remain unset in any real environment
-   until a human has supplied all of them and separately run §9.1's
-   command.
+Unchanged (§9.1, §9.2).
 
 ---
 
@@ -453,90 +355,66 @@ Unchanged.
 
 ## 11. Schema
 
-**Still no new migration, table, or column.** `ReservationResult`
-(§3.4a) is a plain PHP value object, not a schema element — its one new
-defaulted field requires no migration.
+**Still no new migration, table, or column.** §3.5's `m5_outcome` is a
+transient, non-persisted Eloquent property, not a schema element —
+confirmed by its attachment point being strictly after
+`Reports::create()` returns.
 
 ---
 
-## 12. Exact implementation allowlist — REVISED, expanded from 12 to 16
+## 12. Exact implementation allowlist — REVISED, 16 → 17
 
-### Modify (8)
+### Modify (9)
 
-1. `app/Http/Controllers/Customer/ChatBoxController.php` — unchanged
-   scope from the second refinement pass.
-2. `app/Repositories/Eloquent/EloquentCampaignRepository.php` —
-   `quickSend()`'s guard chain now checks the scalar pilot tuple (§5.1
-   items 4-6) instead of list membership; the state machine (§6) is
-   driven by `$reservation->createdByThisInvocation`, not a timestamp
-   comparison; the outcome classification (§6 step 6) uses the exact
-   `'Rejected'`-string rule (§3.5).
+1. `app/Http/Controllers/Customer/ChatBoxController.php` — unchanged.
+2. `app/Repositories/Eloquent/EloquentCampaignRepository.php` — gains,
+   in addition to the prior pass's scope, the
+   `m5_conversations_usage_tracking` flag set immediately before the
+   provider call, and the `$data->m5_outcome`-driven classification
+   (§6 step 7), replacing the withdrawn status-string heuristic.
 3. `app/Http/Requests/ChatBox/SentRequest.php` — unchanged.
 4. `resources/views/customer/ChatBox/new.blade.php` — unchanged.
 5. `resources/views/customer/ChatBox/index.blade.php` — unchanged.
-6. `config/usage_billing.php` — **corrected this pass:** three scalar
-   nullable keys (`pilot_business_id`/`pilot_country_id`/
-   `pilot_sending_server_id`), replacing the prior pass's three array
-   keys.
-7. **New this pass:** `app/Library/Usage/UsageWalletManager.php` —
-   `reserve()` gains the `UniqueConstraintViolationException`-catch-
-   and-refetch logic (§3.4a), reusing the exact existing idiom from
-   `UsageBillingCheckoutManager::finalizeAddonPurchaseIfPending()`. No
-   other method on this class changes; every other milestone's own use
-   of `reserve()`/`commit()`/`release()` is unaffected (the new fourth
-   `ReservationResult` field is additive/defaulted and ignored by every
-   caller that does not read it).
-8. **New this pass:** `app/Library/Usage/ReservationResult.php` — one
-   new defaulted constructor parameter, `createdByThisInvocation`
-   (§3.4a). Confirmed backward compatible against all five existing
-   call sites, all internal to `UsageWalletManager.php`.
+6. `config/usage_billing.php` — unchanged (scalar pilot tuple).
+7. `app/Library/Usage/UsageWalletManager.php` — `reserve()`'s catch
+   block is tightened this pass (§3.4a: re-fetch-then-rethrow-if-not-
+   found), in addition to the prior pass's unique-constraint-catch
+   addition.
+8. `app/Library/Usage/ReservationResult.php` — default value corrected
+   to `false` this pass (§3.4a); the field itself is unchanged from the
+   prior pass.
+9. **New this pass:** `app/Models/SendCampaignSMS.php` — the two
+   Twilio/TwilioCopilot case blocks (lines 457-520) gain the
+   flag-gated `$m5Outcome` assignment; the method's existing return
+   point gains the one-line non-persisted attachment
+   (`if (isset($m5Outcome)) { $status->m5_outcome = $m5Outcome; }`).
+   No other line in this ~13,440-line method changes; every other
+   gateway branch and every other caller is untouched.
 
 ### New (8)
 
-9. `app/Console/Commands/ActivateUsageFeatureRate.php` (§9.1,
-   unchanged).
-10. `app/Console/Commands/ResolveAmbiguousUsageReservation.php` (§6.2,
-    now with the six explicit safety checks).
-11. `tests/Feature/Usage/ConversationsPlainSmsMeteringTest.php`.
-12. `tests/Feature/Usage/QuickSendNonConversationCallersUnaffectedTest.php`.
-13. `tests/Feature/Usage/ActivateUsageFeatureRateCommandTest.php`.
-14. `tests/Feature/Usage/ResolveAmbiguousUsageReservationCommandTest.php`
-    (now covering all six safety checks, §13).
-15. **New this pass:** `tests/Feature/Usage/Support/concurrent_conversations_send_runner.php`
-    — a real cross-process test-support runner, modeled directly on the
-    already-merged RFC-005 M4 precedent
-    (`tests/Feature/Usage/Support/concurrent_slot_agreement_runner.php`'s
-    own bootstrap/database-guard/exit-code shape), needed because
-    proving a genuine concurrent-process race (§13) requires two real
-    OS processes, which single-process PHPUnit execution cannot produce
-    on its own.
-16. **New this pass:** `tests/Feature/Usage/ConversationsConcurrencyTest.php`
-    — the PHPUnit test file driving item 15's runner, kept as its own
-    dedicated file rather than folded into item 11, matching the
-    already-established "no hidden path" convention from the prior
-    refinement pass.
+10. `app/Console/Commands/ActivateUsageFeatureRate.php` — unchanged.
+11. `app/Console/Commands/ResolveAmbiguousUsageReservation.php` —
+    unchanged.
+12. `tests/Feature/Usage/ConversationsPlainSmsMeteringTest.php`.
+13. `tests/Feature/Usage/QuickSendNonConversationCallersUnaffectedTest.php`
+    — **scope widened this pass** to include the new
+    `SendCampaignSMS.php` regression (§13).
+14. `tests/Feature/Usage/ActivateUsageFeatureRateCommandTest.php`.
+15. `tests/Feature/Usage/ResolveAmbiguousUsageReservationCommandTest.php`.
+16. `tests/Feature/Usage/Support/concurrent_conversations_send_runner.php`.
+17. `tests/Feature/Usage/ConversationsConcurrencyTest.php`.
 
-### Read-only dependencies (expanded)
+### Read-only dependencies
 
-- `Illuminate\Database\UniqueConstraintViolationException` (framework
-  class, already used elsewhere in this codebase for the identical
-  purpose)
-- `app/Repositories/Contracts/BusinessUsageReservationRepository.php`
-  (`findById()`, unchanged)
-- `app/Library/Usage/UsageBillingCheckoutManager.php` (read only, to
-  confirm the exact precedent idiom this pass reuses — not modified)
-- `app/Models/SendingServer.php` (`TYPE_TWILIO`/`TYPE_TWILIOCOPILOT`
-  constants; `sending_server_based_pricing_plans` schema, read only)
-- Every other read-only dependency named in the prior two passes,
-  unchanged.
+Unchanged list from the prior pass, plus: `app/Models/Reports.php` (the
+model `sendPlainSMS()` already returns — read only, to confirm setting
+an unmapped dynamic property is safe and non-persisting; not modified).
 
-**Total mechanically-authorized paths: 16. Stop threshold: 17th path.**
-Reported explicitly — an increase from 12, driven by: the
-`UsageWalletManager`/`ReservationResult` widening the independent review
-itself authorized in advance (§3.4a), and the real cross-process
-concurrency test infrastructure (2 files) the required concurrency test
-(§13) mechanically needs, matching the already-established M4 precedent
-for proving the identical class of claim.
+**Total mechanically-authorized paths: 17. Stop threshold: 18th path.**
+Reported explicitly — up from 16, driven entirely by
+`app/Models/SendCampaignSMS.php`'s newly-authorized, narrowly-scoped
+addition (§3.5); no other path count changed.
 
 ---
 
@@ -544,56 +422,40 @@ for proving the identical class of claim.
 
 New/revised:
 
-1. **Real concurrent same-token race** (two genuine OS processes, via
-   item 15/16's runner) → exactly one reservation row, exactly one
-   `createdByThisInvocation === true` result, exactly one provider
-   invocation (asserted via a recording fake/double shared across the
-   two processes, modeled on the M4 barrier-gateway precedent's own
-   shared-file recording technique), exactly one accounting outcome.
-2. **Same-key second caller arriving after the first reservation's
-   creation but before its completion** → zero second provider
-   invocation (the losing process's `createdByThisInvocation` is
-   `false`; it takes the step-4 branch, never step 5).
-3. **No timestamp-based freshness heuristic remains** — a direct
-   assertion (e.g. a static/reflection check, or simply the absence of
-   any `reserved_at`/`preCallAt` comparison in the shipped code path)
-   that the claim decision is driven solely by `createdByThisInvocation`.
-4. Twilio caught-exception (`customer_status === 'Rejected'`, simulated
-   via the test double raising the exact caught exception) →
-   reservation remains `Pending`, `release()` is **not** called.
-5. Retry against an already-`Committed` reservation → provider not
-   called.
-6. Retry against a still-`Pending`, pre-existing reservation
-   (`createdByThisInvocation === false`, status `Pending`) → provider
-   not called.
-7. Retry against a terminal `Released`/`Expired` reservation → provider
-   not called; client must regenerate token.
-8. The exact pilot tuple (Business + country + `SendingServer` id, that
-   server confirmed Twilio-type) engages RFC-005 metering.
-9. The same Business and country, but a **different** `SendingServer`
-   id (even if also Twilio-type) → stays legacy (proves §3.6's
-   sending-server-id pinning, not merely gateway-type membership).
-10. An out-of-pilot Business or country (tuple mismatch on any single
-    dimension) → stays legacy.
-11. Legacy `sms_unit` and the RFC-005 wallet never both charge one send.
-12. Plain SMS segment quantity correctness (unchanged).
-13. Non-M5 channels and the five non-ChatBox `quickSend()` callers
-    unaffected (unchanged).
-14. Business isolation, including cross-Business token-namespacing
-    (unchanged).
-15. A Workspace owning more than one Business stays legacy (unchanged).
-16. `EntitlementManagerNineKeySurfaceUnchangedTest`/
-    `PlatformFeatureRegistryTest` re-run unmodified.
-17. `ActivateUsageFeatureRateCommandTest` (unchanged).
-18. `ResolveAmbiguousUsageReservationCommandTest` — **now explicitly
-    covering all six §6.2 checks:** rejects a nonexistent reservation
-    id; rejects a non-`Pending` reservation (`Committed` and
-    `Released` cases each tested); rejects a non-`Conversations`
-    `feature_key` reservation (proving the command cannot be used as a
-    generic wallet-mutation tool); rejects a missing/non-admin
-    `--actor-user-id`; rejects an empty `--reason`; rejects a
-    reservation whose `business_id` does not match the currently-
-    configured pilot Business id; only the fully-valid case mutates.
+1. Twilio accepted/queued, M5 flag set → `m5_outcome === 'accepted'` →
+   `commit()`.
+2. **Revised:** Twilio caught `ConfigurationException`/`TwilioException`,
+   M5 flag set → `m5_outcome === 'ambiguous_exception'` → reservation
+   remains `Pending`; `release()` is **not** called.
+3. Provider double is not invoked on a same-token retry against that
+   still-`Pending` reservation (unchanged mechanism, §6 step 4).
+4. Genuine non-throwing, non-accepted Twilio response, M5 flag set →
+   `m5_outcome === 'definitive_rejection'` → `release()` **is** called.
+5. **New this pass:** the identical Twilio caught-exception scenario
+   **without** the M5 flag set (any non-qualifying call) → `Reports`'
+   persisted `status`/`customer_status` are byte-for-byte identical to
+   today's existing behavior, and no `m5_outcome` property exists on the
+   returned object — proves §3.5's opt-in isolation directly, not by
+   inference.
+6. Real concurrent same-token race (two OS processes) → exactly one
+   `createdByThisInvocation === true`, exactly one provider invocation
+   (unchanged from the prior pass).
+7. **New this pass:** an `UniqueConstraintViolationException` thrown for
+   a reason *other than* this reservation's own `idempotency_key` (
+   simulated by seeding a distinct unique-constraint collision inside a
+   test double of the transaction) is **re-thrown**, not swallowed —
+   proves §3.4a's re-fetch-then-verify correction.
+8. `ReservationResult`'s corrected default: a denial path
+   (`granted: false`) is asserted to carry
+   `createdByThisInvocation === false`, not the withdrawn `true` default.
+9. Every prior pass's own tests, unchanged in substance: `Committed`/
+   `Released`/`Expired` retries never call the provider; the exact
+   pilot tuple engages metering; a different `SendingServer` id (even
+   Twilio-type) stays legacy; a Workspace with more than one Business
+   stays legacy; legacy `sms_unit` and the wallet never both charge one
+   send; Business isolation including token-namespacing; the five
+   non-ChatBox callers unaffected; segment quantity correctness; the
+   nine-key/registry regressions; both admin commands' full check sets.
 
 Regression, unchanged: full `Usage`, full `Entitlement`/`Workspace`,
 full suite.
@@ -604,12 +466,12 @@ full suite.
 
 Unchanged from the prior pass, plus:
 
-- A 17th path required beyond §12's sixteen.
-- Any evidence that `ReservationResult`'s new fourth field breaks an
-  existing caller not accounted for in §3.4a's five-call-site count.
-- Any evidence that a gateway other than Twilio/TwilioCopilot is ever
-  selected as `pilot_sending_server_id` without the §5.1 item 6
-  capability assertion catching it first.
+- An 18th path required beyond §12's seventeen.
+- Any evidence that `$m5Outcome`'s post-creation attachment to `$status`
+  has any persistence side effect whatsoever (would contradict §3.5's
+  own "no schema change" proof and require immediate re-audit).
+- Any evidence that a caller other than `quickSend()`'s own M5-guarded
+  branch ever sets `m5_conversations_usage_tracking`.
 
 ---
 
@@ -617,7 +479,7 @@ Unchanged from the prior pass, plus:
 
 - `git diff --check` clean.
 - `git diff origin/main --name-only` shows exactly one path.
-- Commit message: `docs: make RFC-005 M5 provider claim concurrency-safe`,
+- Commit message: `docs: make RFC-005 M5 Twilio ambiguity evidence explicit`,
   a new commit, not an amend.
 - Push `chore/rfc-005-m5-contract`. PR #107 remains Draft, unmerged. No
   implementation begins.
