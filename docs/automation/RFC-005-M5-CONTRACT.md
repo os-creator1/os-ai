@@ -816,6 +816,60 @@ contract assumes or requires.
   is a standard PHPUnit/Mockery technique requiring no production-code
   seam change beyond §3.9's own narrow, already-authorized addition.
 
+### 3.11 Conversation-origin discriminator — an `$input` array key is forgeable and cannot be trusted
+
+**An earlier draft of this contract used a new key inside the existing
+`array $input` parameter (`$input['conversation_context'] = true`) to
+mark a `quickSend()` call as originating from `ChatBoxController`. Direct
+repository evidence shows this is not a trustworthy signal, because the
+existing bulk Quick Send caller does not filter its outgoing payload to
+a validated whitelist:**
+
+- `app/Http/Controllers/Customer/CampaignController.php::postQuickSend()`
+  builds its call with
+  `$sendData = $request->except('_token', 'recipients', 'delimiter');`
+  and then `$this->campaigns->quickSend($campaign, $sendData);` —
+  **`$request->except(...)` forwards every other submitted field
+  verbatim, not a validated subset.**
+- `app/Http/Requests/Campaigns/QuickSendRequest.php::rules()` validates
+  only `recipients`, `message`, and `delimiter`. It does not reject
+  unrecognized fields, and `postQuickSend()` does not call
+  `$request->validated()` for the outgoing payload — it calls
+  `$request->except(...)` on the raw request instead.
+- **Therefore an authenticated user submitting the bulk Quick Send form
+  (or calling its endpoint directly) could include an arbitrary extra
+  field, e.g. `conversation_context=1`, and that value would flow
+  unfiltered into `$sendData['conversation_context']`, and from there
+  into `quickSend()`'s `$input` array.** A PHP array key populated from
+  request input is not a server-trusted fact about which controller
+  method made the call — it is attacker-/user-influenceable data, no
+  different in kind from any other request field.
+
+**This means the `conversation_context` array-key design does not
+actually prove ChatBox origin — it can be forged by any authenticated
+user hitting a completely unrelated, non-`Conversations` endpoint.**
+Combined with a syntactically-valid `idempotency_token` (itself just
+another forgeable field, only ever validated for UUID shape, §6.1) and a
+request that happens to resolve to the exact pilot Business/country/
+`SendingServer` tuple (§3.6), a forged bulk Quick Send call could
+otherwise have engaged M5 metering and the real provider call — a
+genuine authorization/correctness defect, not merely a naming concern.
+
+**Resolution: Conversation origin must be established by a value the
+calling PHP code sets directly, never by data that travels through an
+HTTP request body.** §7 replaces the array-key design with a dedicated,
+explicitly-typed method parameter that only `ChatBoxController` ever
+supplies as a literal `true`, and that every other existing caller
+receives as its own hardcoded default of `false` by simply not knowing
+the parameter exists. This requires widening
+`CampaignRepository::quickSend()`'s own contract signature (§12) — a
+direct repository search confirms `EloquentCampaignRepository` is the
+**only** class implementing `CampaignRepository` anywhere in this
+repository (`grep -rl "implements CampaignRepository" app/` returns
+exactly one file), so exactly one interface and one implementation
+require this change, and no other concrete implementation path exists
+to account for.
+
 ---
 
 ## 4. Contract status model
@@ -848,8 +902,11 @@ only if **all** of the following hold:
    is not a separate rate today, only a separate character encoding, so
    it is included in M5's scope, not deferred).
 2. The call originated from `ChatBoxController::sent()` or `::reply()` —
-   mechanically distinguished by the `conversation_context` input key
-   (§7), set only at those two call sites.
+   mechanically distinguished by a trusted, explicitly-typed
+   `bool $conversationContext` parameter on `quickSend()` itself (§7,
+   §3.11), passed as a literal `true` only at those two call sites in
+   PHP code, never derived from request/input data and therefore never
+   forgeable through any HTTP payload.
 3. `platform_feature_usage_classifications.conversations.is_metered` is
    `true` at the moment of the call (i.e. a human has already run the
    §9.1 activation command in that environment).
@@ -925,7 +982,7 @@ strictly in this order, replacing (not adding alongside) the existing
    Business does not exactly equal `pilot_business_id` (§5.1 item 4):
    **this send is not a qualifying send at all** — control falls through
    to the existing, unmodified legacy code path, exactly as if
-   `conversation_context` had never been set.
+   `$conversationContext` had been passed as `false` (its default, §7).
 2. **Destination and `SendingServer` pilot-tuple guards (§5.1 items
    5-6).** If the resolved `country_id` does not exactly equal
    `pilot_country_id`, or the resolved `SendingServer`'s id does not
@@ -1046,45 +1103,90 @@ the provider call.
 
 **Exact mechanism, per entry point:**
 
-- **`ChatBoxController::sent()` (traditional full-page form POST):** a
-  static per-page-load hidden field alone is insufficient — `sent()`'s
-  own error path is a redirect back to a freshly-rendered `new()` page,
-  and a fresh page load always renders a fresh hidden value if nothing
-  persists it, breaking the retry-linkage the state machine depends on.
-  **The in-flight token is held server-side in the session**
-  (`session('m5_conversation_pending_token')`), not only in the
-  rendered HTML:
+- **`ChatBoxController::sent()`/`::new()` (traditional full-page form
+  POST/GET) — compose-scoped via an explicit retry parameter, never a
+  session-global singleton.** A single session key shared across every
+  compose action in a browser session was considered and is explicitly
+  rejected: it would let two unrelated compose actions (two browser
+  tabs each open to "New Conversation," or one compose started after an
+  earlier one is left in an ambiguous state) collide on the identical
+  token, which contradicts this section's own two-distinct-sends-never-
+  collide guarantee. **The corrected design:**
   - `ChatBoxController::new()` (the GET action rendering
-    `resources/views/customer/ChatBox/new.blade.php`): if the session
-    key is set, pass its value to the view for the hidden field;
-    otherwise mint a fresh `(string) \Illuminate\Support\Str::uuid()`,
-    store it in the session, and pass that. The view renders
-    `<input type="hidden" name="idempotency_token" value="{{ $pendingIdempotencyToken }}">`.
-  - `ChatBoxController::sent()` (the POST action): on the success or
-    terminal (`Released`/`Expired`-hit) response paths, clear the
-    session key (`session()->forget('m5_conversation_pending_token')`)
-    so the next page load mints fresh; on the ambiguous response paths
-    (§6 step 4's stale-`Pending` branch, or step 6's
-    `ambiguous_exception` branch), leave the session key untouched, so
-    the next `new()` page load reuses the identical token and the retry
-    lands on the same reservation.
+    `resources/views/customer/ChatBox/new.blade.php`): reads an optional
+    query parameter, `m5_retry_token`. If it is present **and** passes
+    `Str::isUuid()` validation, that exact value is used as this
+    compose's token. **In every other case — no `m5_retry_token`
+    parameter at all, which is what an ordinary navigation to "New
+    Conversation" produces — a brand-new `(string) \Illuminate\Support\Str::uuid()`
+    is minted for this compose, unconditionally, regardless of whether
+    any other compose in the same session is currently `Pending`.**
+    There is no session read, no session write, and no fallback to any
+    prior value on this path. The view renders
+    `<input type="hidden" name="idempotency_token" value="{{ $composeIdempotencyToken }}">`.
+  - `ChatBoxController::sent()` (the POST action): on the success,
+    `definitive_rejection`, or terminal (`Released`/`Expired`-hit)
+    response paths, issue the existing, unmodified redirect (to
+    `customer.chatbox.index` or wherever the current success/failure
+    flow already goes) — carrying **no** `m5_retry_token` parameter, so
+    any later, separate visit to "New Conversation" mints a fresh token
+    per the rule above. On the **ambiguous** response paths only (§6
+    step 4's stale-`Pending` branch, or step 6's `ambiguous_exception`
+    branch): redirect specifically back to the compose flow, carrying
+    the *exact same* token forward for that *exact* retry, together with
+    the user's original form input so they do not need to retype their
+    message:
+    ```php
+    return redirect()
+        ->route('customer.chatbox.new', ['m5_retry_token' => $idempotencyToken])
+        ->withInput();
+    ```
+    Since `customer.chatbox.new` (`routes/customer.php:402`) is a bare
+    `GET /chat-box/new` route with no URI segments, this parameter is
+    carried as an ordinary query string value
+    (`?m5_retry_token=<uuid>`), which `new()` reads via
+    `$request->query('m5_retry_token')`. **This token is not treated as
+    a secret** — it is already client-sourced and business-namespaced
+    before it ever reaches `reserve()` (§6.1's own derivation), so its
+    appearance in a URL carries no confidentiality requirement — but it
+    **is** still validated as a syntactically well-formed UUID before
+    being trusted for anything, exactly like every other place this
+    contract reads a client-supplied token.
 - **`ChatBoxController::reply()` (AJAX, `resources/views/customer/ChatBox/index.blade.php`'s
-  `enter_chat()` handler):** the inline script gains a per-compose token
-  held in a JS variable scoped to the open conversation, generated
-  lazily the first time `enter_chat()` runs for a given not-yet-
-  successfully-sent message, included in the `FormData`
-  (`formData.append("idempotency_token", token)`), and **only cleared
-  (a fresh token minted for the next message) inside the existing
-  `success` branch** (where the composed textbox itself is also
-  cleared) — **never** inside the existing `error` branch, so a
-  user-initiated retry after a failure/timeout resends the identical
-  token together with the identical message text, exactly mirroring the
-  existing UI's own already-designed retry affordance. The existing
-  `enter_chat()` handler already disables the Send button before the
-  AJAX call and re-enables it on both `success` and `error`; on `error`
-  the composed message text is **not** cleared — this is the real,
-  designed, expected recovery path after a timeout/5xx/network failure,
-  and it is the retry this mechanism protects.
+  `enter_chat()` handler) — per-conversation keyed, never one flat
+  variable.** The inline script maintains a single JS object,
+  `pendingConversationTokens`, keyed by `chatBoxId` (the same identifier
+  `enter_chat()` already reads via `$(".chat_id").val()`) —
+  **not a single shared variable** — since the inbox UI allows more
+  than one conversation thread to be open/switchable within the same
+  page, and a flat variable would leak a token from one conversation
+  into an unrelated one exactly as the withdrawn session-singleton
+  design did for `sent()`. Exact lifecycle:
+  - The first time `enter_chat()` runs for a given `chatBoxId` with no
+    entry yet in `pendingConversationTokens[chatBoxId]`, a fresh token is
+    minted and stored there.
+  - Every subsequent call for that **same** `chatBoxId`, while an entry
+    still exists, reuses it — included in the `FormData`
+    (`formData.append("idempotency_token", pendingConversationTokens[chatBoxId])`).
+  - **Reset boundary, explicit:** the entry for a given `chatBoxId` is
+    deleted from `pendingConversationTokens` (freeing that key to mint
+    fresh next time) only inside the existing AJAX `success` branch
+    (where the composed textbox itself is already cleared) for that
+    exact `chatBoxId`. It is **never** touched — not read, not cleared,
+    not overwritten — by any activity on a **different** `chatBoxId`:
+    opening, switching to, or sending in another conversation thread
+    reads and writes only that other thread's own key in the same map
+    and has zero effect on this one's entry. It is **not** cleared on
+    the existing `error` branch, so a user-initiated retry after a
+    failure/timeout for that same conversation resends the identical
+    token together with the identical message text, exactly mirroring
+    the existing UI's own already-designed retry affordance. The
+    existing `enter_chat()` handler already disables the Send button
+    before the AJAX call and re-enables it on both `success` and
+    `error`; on `error` the composed message text is **not** cleared —
+    this is the real, designed, expected recovery path after a
+    timeout/5xx/network failure, and it is the retry this mechanism
+    protects.
 
 **Server-side, both entry points:** read `$request->input('idempotency_token')`
 (validated `required|uuid` — a rule added to `SentRequest` for `sent()`;
@@ -1092,41 +1194,54 @@ validated inline for `reply()`, which has no dedicated `FormRequest`
 class today and gains none). See §7 for the exact propagation code at
 each entry point.
 
-**Proof — two legitimate distinct sends can never collide:** each
-distinct compose action (a `success`-cleared JS token for `reply()`; a
-session-cleared, freshly-minted token for `sent()`) is collision-
-resistant by construction, and the business-namespace prefix guarantees
-no cross-Business or cross-feature collision even in the residual case.
-Two different real messages therefore always produce two different
-`reserve()` idempotency keys, hence two independent reservations, hence
-two independent charges — correct, since two real sends are two real
-costs.
+**Proof — two legitimate distinct sends can never collide:** an
+ordinary "New Conversation" navigation (no `m5_retry_token`) always
+mints a fresh token, regardless of how many other composes exist in the
+same session, in any state — two browser tabs both open to "New
+Conversation" therefore always receive two different tokens (§6.1's
+counterexample A, resolved). A reply-flow token is scoped to its own
+`chatBoxId` key and is cleared only by that same conversation's own
+success — opening or completing a different conversation cannot inherit
+or disturb it. Each is collision-resistant by construction (a fresh
+UUID per compose action), and the business-namespace prefix additionally
+guarantees no cross-Business or cross-feature collision even in the
+residual case. Two different real messages therefore always produce two
+different `reserve()` idempotency keys, hence two independent
+reservations, hence two independent charges — correct, since two real
+sends are two real costs.
 
 **Proof — a crash/retry of the same logical send reuses the same key:**
-for `reply()`, per the `error`-branch-does-not-clear-the-text-or-token
-behavior above — the second `enter_chat()` invocation submits the
-identical token. For `sent()`, per the session-persisted token surviving
-the full-page-reload redirect cycle. In both cases, `reserve()`'s own
-pre-existing `findByIdempotencyKey()` dedup and its new atomic-claim
+for `reply()`, per the `error`-branch-does-not-clear-the-token-for-that-
+`chatBoxId` behavior above — the second `enter_chat()` invocation for
+the identical conversation submits the identical token. For `sent()`,
+per the `m5_retry_token` round-trip: `sent()`'s own ambiguous-outcome
+redirect is the **only** way a `new()` page load ever receives a
+non-empty `m5_retry_token`, and it always carries the exact token that
+produced the ambiguous outcome — so that exact retry, and only that
+retry, reuses the exact original key (§6.1's counterexample B, resolved:
+an unrelated later compose reaches `new()` with no `m5_retry_token` at
+all, and therefore always mints fresh, never inheriting an earlier
+compose's outstanding token). In both cases, `reserve()`'s own
+pre-existing `findByIdempotencyKey()` dedup and its atomic-claim
 widening (§3.8), together with `commit()`/`release()`'s own existing
 idempotency on a reservation's terminal state, guarantee the retry can
 never double-charge.
 
-**Honest, bounded residual limitation:** a literal same-tab, same-session
-double-click landing two overlapping in-flight requests before
-`enter_chat()`'s existing button-disable takes visual effect, or a user
-opening two browser tabs and composing the same message independently,
-remains outside this mechanism's scope — each produces its own token
-(each tab holds independent JS state; for `sent()`, only if the user
-reloads `new.blade.php` between the two submissions). This is not a
-"retry of the same logical send" in the sense this contract addresses —
-it is two distinct user actions that happen to carry identical text —
-and is explicitly out of scope, exactly as the equivalent case is for
-M3/M4's own client-initiated payment retries. A same-tab, same-load
-double-click on `reply()`'s Send button specifically remains safe today,
-independent of this contract, via the existing button-disable mechanism
-(`$(".send").attr("disabled", true)`), which this contract does not
-need to touch to remain true.
+**Honest, bounded residual limitation:** a literal same-tab, same-
+conversation double-click landing two overlapping in-flight requests
+before `enter_chat()`'s existing button-disable takes visual effect, or
+a user opening two browser tabs and composing the same message text
+independently in two genuinely separate compose actions, remains outside
+this mechanism's scope — each is, by this section's own design, a
+distinct compose action and therefore always receives its own token.
+This is not a "retry of the same logical send" in the sense this
+contract addresses — it is two distinct user actions that happen to
+carry identical text — and is explicitly out of scope, exactly as the
+equivalent case is for M3/M4's own client-initiated payment retries. A
+same-tab, same-conversation double-click on `reply()`'s Send button
+specifically remains safe today, independent of this contract, via the
+existing button-disable mechanism (`$(".send").attr("disabled", true)`),
+which this contract does not need to touch to remain true.
 
 ### 6.2 Manual ambiguous-reservation resolution — bounded, cannot become a generic mutation tool
 
@@ -1172,39 +1287,89 @@ the durable reference captured in the logged warning where one exists,
 
 ---
 
-## 7. `quickSend()` discriminator — the exact, minimal, additive change
+## 7. `quickSend()` discriminator — a trusted PHP parameter, never a request-input key
 
-`ChatBoxController::sent()` (immediately before its existing call to
-`$this->campaigns->quickSend($campaign, $input)`) and
-`ChatBoxController::reply()` (immediately before its existing call) each
-gain exactly one new array key:
+**§3.11 established that a value read from `$input` (an array built from
+request data) cannot serve as proof of call origin, because at least one
+existing caller (`CampaignController::postQuickSend()`) forwards
+unfiltered request fields into that same array. The discriminator is
+therefore moved out of `$input` entirely and into the method's own
+signature, as a parameter only PHP code — never HTTP payload data — can
+supply.**
+
+`app/Repositories/Contracts/CampaignRepository.php`'s interface, and its
+one and only implementation,
+`app/Repositories/Eloquent/EloquentCampaignRepository.php` (confirmed by
+direct search — no other class implements this interface, §3.11), both
+change their `quickSend()` signature identically:
 
 ```php
-$input['conversation_context'] = true;
+// Contracts/CampaignRepository.php
+public function quickSend(Campaigns $campaign, array $input, bool $conversationContext = false);
+
+// Eloquent/EloquentCampaignRepository.php
+public function quickSend(Campaigns $campaign, array $input, bool $conversationContext = false): JsonResponse
 ```
+
+The parameter name is locked as `$conversationContext`. It defaults to
+`false`, which is why this is a **source-compatible** widening: every
+existing call site in the repository —
+`Customer\CampaignController::postQuickSend()`/`postVoiceQuickSend()`/
+`postMMSQuickSend()`/`postWhatsAppQuickSend()`,
+`EloquentContactsRepository`, `DLRController`,
+`API\CampaignController`, `API\CampaignHTTPController` (§3.4 items 2-5,
+five call sites in five files) — continues to call
+`quickSend($campaign, $input)` with exactly two arguments, completely
+unmodified, and therefore always receives PHP's own default of `false`
+for the third parameter. None of those five files requires any edit.
+
+`ChatBoxController::sent()` and `ChatBoxController::reply()` are the
+**only** two call sites in the entire repository modified to pass a
+literal, hardcoded `true` as the third argument:
+
+```php
+// ChatBoxController::sent()
+$this->campaigns->quickSend($campaign, $input, true);
+
+// ChatBoxController::reply()
+$this->campaigns->quickSend($campaign, $input, true);
+```
+
+**This value cannot be forged through any HTTP request.** It is not read
+from `$request`, not present in `$input`, and not influenced by any
+field name a client could submit — it is a literal boolean written
+directly into the two `ChatBoxController` methods' own source code.
+`$input['conversation_context']`, if a client submits such a field
+today or in the future, is simply an ordinary, inert array element that
+no code in this contract's design ever reads for any purpose — it is
+removed from the M5 design entirely, and its presence or absence in
+`$input` has zero effect on which branch executes.
 
 `EloquentCampaignRepository::quickSend()` gains, immediately after the
 existing `$sms_type`/`$db_sms_type` resolution and before the existing
-`switch ($sms_type)` dispatch, a guard evaluating all six §5.1
-conditions in sequence.
+`switch ($sms_type)` dispatch, a guard evaluating `$conversationContext`
+together with the remaining five §5.1 conditions in sequence. Any call
+with `$conversationContext === false` — every one of the five other
+call sites, unconditionally, regardless of what `$input` contains —
+takes the exact same code path it takes today, with zero new branches
+evaluated. This is the exact mechanism §5.3 refers to.
 
-Every one of the five other `quickSend()` call sites (§3.4 items 2-5)
-never sets `conversation_context` — the guard is `false` for all of
-them, unconditionally, and the existing code executes completely
-unmodified in that case. This is the exact mechanism §5.3 refers to.
+**Token propagation at each entry point, exact, mechanically complete —
+unaffected in shape by the discriminator change above, since the token
+travels through `$input` while the discriminator now travels as its own
+parameter:**
 
-**Token propagation at each entry point, exact, mechanically complete:**
-
-- `sent()`'s existing `$input = $request->except('_token');` **already,
-  automatically, includes `idempotency_token`** once the view submits it
-  as a form field — no additional line is needed in `sent()` itself for
-  token propagation (only `conversation_context`, plus the session
-  read/clear logic in `new()`/`sent()` per §6.1).
+- `sent()`'s existing `$input = $request->except('_token');` already,
+  automatically, includes `idempotency_token` once the view submits it
+  as a form field — no additional line is needed in `sent()` for token
+  propagation itself (only the third `quickSend()` argument above, plus
+  the compose-scoped token read/redirect logic in `new()`/`sent()` per
+  §6.1).
 - `reply()`'s `$input` array is **manually constructed key-by-key**
   (`['sender_id' => ..., 'originator' => ..., 'sms_type' => ..., 'message' => ..., 'exist_c_code' => ..., 'user' => ...]`)
   and does **not** automatically forward arbitrary request fields.
-  `reply()` therefore requires an explicit second line beyond
-  `conversation_context`:
+  `reply()` therefore requires an explicit line beyond the third
+  `quickSend()` argument:
   ```php
   $input['idempotency_token'] = $request->input('idempotency_token');
   ```
@@ -1216,8 +1381,8 @@ unmodified in that case. This is the exact mechanism §5.3 refers to.
   }
   ```
 
-Both entry points are mechanically complete for token propagation and
-validation.
+Both entry points are mechanically complete for trusted-origin
+signaling, token propagation, and validation.
 
 ---
 
@@ -1361,48 +1526,69 @@ schema element — confirmed by its attachment point being strictly after
 
 ## 12. Exact implementation allowlist
 
-**Total mechanically-authorized paths: 17. Stop threshold: 18th path.**
-Any path required during implementation but absent from this list is a
-stop-and-report condition, not a silent addition.
+**Total mechanically-authorized paths: 18. Stop threshold: 19th path.**
+This is an explicit, reported increase from the prior 17 — driven
+entirely by §3.11/§7's discovery that the `conversation_context` array
+key is forgeable and must be replaced by a trusted method parameter,
+which requires widening `CampaignRepository`'s own interface. A direct
+repository search (`grep -rl "implements CampaignRepository" app/`)
+confirms `EloquentCampaignRepository` is the only implementing class, so
+exactly one interface file and one implementation file require this
+change — no other concrete implementation path exists. Any path required
+during implementation but absent from this list is a stop-and-report
+condition, not a silent addition.
 
-### Modify (9)
+### Modify (10)
 
-1. **`app/Http/Controllers/Customer/ChatBoxController.php`** — add
-   `$input['conversation_context'] = true;` at the two existing call
-   sites (§7). `sent()` requires no additional line for token
-   propagation (§7); `reply()` requires the explicit
+1. **`app/Repositories/Contracts/CampaignRepository.php`** — **new to
+   the modify list this pass (§3.11, §7).** `quickSend()`'s signature
+   widens from `quickSend(Campaigns $campaign, array $input)` to
+   `quickSend(Campaigns $campaign, array $input, bool $conversationContext = false)`.
+   No other method on this interface changes.
+2. **`app/Repositories/Eloquent/EloquentCampaignRepository.php`** — the
+   same signature widening as item 1 (its one and only implementation);
+   `quickSend()` gains the full six-condition guard chain (§5.1) now
+   including the trusted `$conversationContext` parameter in place of
+   any `$input` array key, the business-namespaced idempotency key
+   derivation (§6.1), the `reserve()` call and
+   `createdByThisInvocation`-driven atomic-claim check (§6 step 4), the
+   `m5_conversations_usage_tracking` flag set immediately before the
+   provider call (§6 step 5), and the `$data->m5_outcome`-driven outcome
+   classification (§6 step 6). Every existing unconditional code path
+   for every other case is untouched.
+3. **`app/Http/Controllers/Customer/ChatBoxController.php`** — `sent()`
+   and `reply()` each change their existing `quickSend()` call to pass a
+   third, literal, hardcoded `true` argument (§7) in place of the
+   withdrawn `$input['conversation_context'] = true;` line. `sent()`
+   requires no additional line for idempotency-token propagation (§7);
+   `reply()` requires the explicit
    `$input['idempotency_token'] = $request->input('idempotency_token');`
-   line plus inline UUID validation (§7). `new()` (the GET action) and
-   `sent()` (the POST action) gain the session-based pending-token
-   read/mint and clear-on-resolution logic (§6.1). No other line in this
-   file changes.
-2. **`app/Repositories/Eloquent/EloquentCampaignRepository.php`** —
-   `quickSend()` gains the full six-condition guard chain (§5.1), the
-   business-namespaced idempotency key derivation (§6.1), the
-   `reserve()` call and `createdByThisInvocation`-driven atomic-claim
-   check (§6 step 4), the `m5_conversations_usage_tracking` flag set
-   immediately before the provider call (§6 step 5), and the
-   `$data->m5_outcome`-driven outcome classification (§6 step 6). Every
-   existing unconditional code path for every other case is untouched.
-3. **`app/Http/Requests/ChatBox/SentRequest.php`** — add
+   line plus inline UUID validation (§7). `new()` (the GET action) gains
+   the `m5_retry_token` query-parameter read-and-validate-or-mint-fresh
+   logic (§6.1); `sent()` (the POST action) gains the
+   ambiguous-outcome-only redirect back to `customer.chatbox.new` with
+   that exact `m5_retry_token` (§6.1). No other line in this file
+   changes.
+4. **`app/Http/Requests/ChatBox/SentRequest.php`** — add
    `'idempotency_token' => 'required|uuid'` to `rules()`.
-4. **`resources/views/customer/ChatBox/new.blade.php`** — the hidden
+5. **`resources/views/customer/ChatBox/new.blade.php`** — the hidden
    `idempotency_token` field renders a controller-passed token value
    (§6.1), not an inline `Str::uuid()` call.
-5. **`resources/views/customer/ChatBox/index.blade.php`** —
-   `enter_chat()`'s existing inline script gains the lazy-generate/
-   retain-on-ambiguous/clear-on-success token logic (§6.1), and a third
-   response-status branch (alongside the existing `success`/`error`)
-   for the `'still processing'` case that does not regenerate the token
-   and shows an informational (non-error) message. No other behavior in
-   this file changes.
-6. **`config/usage_billing.php`** — adds
+6. **`resources/views/customer/ChatBox/index.blade.php`** —
+   `enter_chat()`'s existing inline script gains the `chatBoxId`-keyed
+   `pendingConversationTokens` map (§6.1, replacing any single flat
+   token variable), and a third response-status branch (alongside the
+   existing `success`/`error`) for the `'still processing'` case that
+   does not clear that conversation's map entry and shows an
+   informational (non-error) message. No other behavior in this file
+   changes.
+7. **`config/usage_billing.php`** — adds
    `conversations_metering.pilot_business_id`,
    `conversations_metering.pilot_country_id`,
    `conversations_metering.pilot_sending_server_id`, three nullable
    scalars, all `null` by default, following the file's own existing
    "additive only, no default invented" convention.
-7. **`app/Library/Usage/UsageWalletManager.php`** — `reserve()` gains
+8. **`app/Library/Usage/UsageWalletManager.php`** — `reserve()` gains
    the `UniqueConstraintViolationException`-catch-and-verify-then-
    refetch-or-rethrow logic (§3.8), reusing the exact existing idiom
    from `UsageBillingCheckoutManager::finalizeAddonPurchaseIfPending()`.
@@ -1410,49 +1596,51 @@ stop-and-report condition, not a silent addition.
    use of `reserve()`/`commit()`/`release()` is unaffected (the new
    fourth `ReservationResult` field is additive/defaulted and ignored by
    every caller that does not read it).
-8. **`app/Library/Usage/ReservationResult.php`** — one new defaulted
+9. **`app/Library/Usage/ReservationResult.php`** — one new defaulted
    constructor parameter, `createdByThisInvocation`, defaulting to
    `false` (§3.8). Confirmed backward compatible against all five
    existing call sites, all internal to `UsageWalletManager.php`.
-9. **`app/Models/SendCampaignSMS.php`** — the two Twilio/TwilioCopilot
-   case blocks (lines 457-520) gain the flag-gated `$m5Outcome`
-   assignment; the method's existing return point gains the one-line
-   non-persisted attachment
-   (`if (isset($m5Outcome)) { $status->m5_outcome = $m5Outcome; }`,
-   §3.9). No other line in this ~13,440-line method changes; every
-   other gateway branch and every other caller is untouched.
+10. **`app/Models/SendCampaignSMS.php`** — the two Twilio/TwilioCopilot
+    case blocks (lines 457-520) gain the flag-gated `$m5Outcome`
+    assignment; the method's existing return point gains the one-line
+    non-persisted attachment
+    (`if (isset($m5Outcome)) { $status->m5_outcome = $m5Outcome; }`,
+    §3.9). No other line in this ~13,440-line method changes; every
+    other gateway branch and every other caller is untouched.
 
 ### New (8)
 
-10. **`app/Console/Commands/ActivateUsageFeatureRate.php`** — §9.1's
+11. **`app/Console/Commands/ActivateUsageFeatureRate.php`** — §9.1's
     operator command.
-11. **`app/Console/Commands/ResolveAmbiguousUsageReservation.php`** —
+12. **`app/Console/Commands/ResolveAmbiguousUsageReservation.php`** —
     §6.2's manual-resolution command, with all six safety checks.
-12. **`tests/Feature/Usage/ConversationsPlainSmsMeteringTest.php`** — the
-    core metering-lifecycle test cases (§13 items 1-6, 8-14, 17).
-13. **`tests/Feature/Usage/QuickSendNonConversationCallersUnaffectedTest.php`** —
-    the non-ChatBox-caller and non-M5-flag regression cases (§13 items
-    7, 15, 16).
-14. **`tests/Feature/Usage/ActivateUsageFeatureRateCommandTest.php`** —
-    §13 item 18.
-15. **`tests/Feature/Usage/ResolveAmbiguousUsageReservationCommandTest.php`** —
-    §13 item 19, covering all six §6.2 checks.
-16. **`tests/Feature/Usage/Support/concurrent_conversations_send_runner.php`** —
+13. **`tests/Feature/Usage/ConversationsPlainSmsMeteringTest.php`** — the
+    core metering-lifecycle test cases, the trusted-origin positive
+    proof, and the compose-scoped/two-tab/`reply()`-reset-boundary
+    token tests (§13 items 1-6, 8-14, 16-19, 23-25).
+14. **`tests/Feature/Usage/QuickSendNonConversationCallersUnaffectedTest.php`** —
+    the non-ChatBox-caller, forged-input, and non-M5-channel regression
+    cases (§13 items 7, 15, 20, 21).
+15. **`tests/Feature/Usage/ActivateUsageFeatureRateCommandTest.php`** —
+    §13 item 26.
+16. **`tests/Feature/Usage/ResolveAmbiguousUsageReservationCommandTest.php`** —
+    §13 item 27, covering all six §6.2 checks.
+17. **`tests/Feature/Usage/Support/concurrent_conversations_send_runner.php`** —
     a real cross-process test-support runner, modeled directly on the
     already-merged RFC-005 M4 precedent
     (`tests/Feature/Usage/Support/concurrent_slot_agreement_runner.php`'s
     own bootstrap/database-guard/exit-code shape), needed because
-    proving a genuine concurrent-process race (§13 item 20) requires two
+    proving a genuine concurrent-process race (§13 item 9) requires two
     real OS processes, which single-process PHPUnit execution cannot
     produce on its own.
-17. **`tests/Feature/Usage/ConversationsConcurrencyTest.php`** — the
-    PHPUnit test file driving item 16's runner, kept as its own
-    dedicated file rather than folded into item 12 (§13 items 20-21).
+18. **`tests/Feature/Usage/ConversationsConcurrencyTest.php`** — the
+    PHPUnit test file driving item 17's runner, kept as its own
+    dedicated file rather than folded into item 13 (§13 items 9-10).
 
 ### Read-only dependencies (relied upon, never modified)
 
 - `app/Library/Usage/UsageWalletManager.php` (every method other than
-  `reserve()`'s own widening, item 7)
+  `reserve()`'s own widening, item 8)
 - `app/Repositories/Contracts/BusinessUsageReservationRepository.php`
   (`findById()` — read directly by the new `quickSend()` state-machine
   check, §6 step 4; already-public, no new method)
@@ -1460,7 +1648,7 @@ stop-and-report condition, not a silent addition.
   class, already used elsewhere in this codebase for the identical
   purpose)
 - `app/Library/Usage/UsageBillingCheckoutManager.php` (read only, to
-  confirm the exact precedent idiom item 7 reuses — not modified)
+  confirm the exact precedent idiom item 8 reuses — not modified)
 - `app/Library/Entitlement/EntitlementManager.php` (including
   `assertPlatformAdministrator()`'s body, reproduced not called)
 - `app/Library/Entitlement/RealUsageAuthorizationGateway.php`
@@ -1473,10 +1661,13 @@ stop-and-report condition, not a silent addition.
 - `app/Models/User.php` (`is_admin` column, read by both new commands)
 - `app/Models/PlatformFeatureUsageClassification.php`,
   `app/Models/BusinessUsageRate.php`
-- `app/Repositories/Contracts/CampaignRepository.php` (interface,
-  unchanged — `quickSend()`'s signature does not change)
+- `app/Http/Requests/Campaigns/QuickSendRequest.php` (read only, to
+  confirm its `rules()` validate only `recipients`/`message`/`delimiter`
+  and that `postQuickSend()` does not call `$request->validated()` for
+  its outgoing payload — the exact evidence behind §3.11 — never
+  modified)
 - `app/Models/SendCampaignSMS.php` / `app/Models/Campaigns.php` beyond
-  item 9's own narrow addition (`sendPlainSMS()`'s remaining ~13,400
+  item 10's own narrow addition (`sendPlainSMS()`'s remaining ~13,400
   lines, mocked in tests per §3.10, never modified)
 - `app/Models/Reports.php` (the model `sendPlainSMS()` already returns —
   read only, to confirm setting an unmapped dynamic property is safe and
@@ -1494,7 +1685,7 @@ stop-and-report condition, not a silent addition.
   `app/Repositories/Eloquent/EloquentContactsRepository.php`,
   `app/Http/Controllers/Customer/DLRController.php` (the five non-
   `Conversations` `quickSend()` callers, §3.4 — read to confirm
-  unaffected, regression-tested in item 13, never modified)
+  unaffected, regression-tested in item 14, never modified)
 - `app/Http/Controllers/Customer/Workspace/WorkspaceController.php`
   (`storeBusiness()`, read only, to confirm multi-Business creation is
   live — not modified)
@@ -1506,7 +1697,7 @@ stop-and-report condition, not a silent addition.
 
 ## 13. Required tests
 
-New, across the seven new test files (§12 items 12-17), or split further
+New, across the seven new test files (§12 items 13-18), or split further
 at the implementation's own discretion provided every case below is
 covered exactly once:
 
@@ -1565,52 +1756,108 @@ covered exactly once:
     `createdByThisInvocation === false`.
 14. Two genuinely distinct compose actions (two different tokens) never
     collide — two reservations, two charges.
-15. Plain SMS segment quantity correctness — reservation's
+15. **Forged-input regression, proving §3.11's own finding is closed
+    (`QuickSendNonConversationCallersUnaffectedTest`):** a
+    `Customer\CampaignController::postQuickSend()` request whose raw
+    payload includes a forged `conversation_context=true` field, a
+    syntactically-valid `idempotency_token`, and recipient/message data
+    that otherwise resolves to the exact pilot Business/country/
+    `SendingServer` tuple, **still remains legacy** — asserted by
+    confirming zero reservation/ledger rows are created and legacy
+    `sms_unit` behavior is exactly preserved — because
+    `EloquentCampaignRepository::quickSend()`'s third,
+    trusted-boolean parameter (`$conversationContext`) is `false` for
+    this call site regardless of anything present in the request body
+    or `$input` array.
+16. **Trusted-origin proof, positive case:** both
+    `ChatBoxController::sent()` and `ChatBoxController::reply()` are
+    asserted, directly (e.g. via a Mockery expectation on the injected
+    `CampaignRepository`, or by inspecting the guard's own observed
+    behavior), to invoke `quickSend()` with the third argument equal to
+    literal `true` — proving the trusted parameter, not any `$input`
+    key, is what the two real entry points actually supply.
+17. **Two-tab / multi-compose token isolation, proving §6.1's
+    corrected `sent()`/`new()` design directly:**
+    - Two ordinary `GET customer.chatbox.new` requests in the same
+      authenticated session (simulating two browser tabs each freshly
+      opened to "New Conversation," neither carrying an
+      `m5_retry_token`) receive two different `idempotency_token`
+      hidden-field values.
+    - An ambiguous `sent()` outcome for compose A redirects to
+      `customer.chatbox.new` carrying exactly A's own token as
+      `m5_retry_token`, and the resulting page re-renders that exact
+      same token in its hidden field.
+    - While compose A's reservation remains `Pending` (an ambiguous
+      outcome not yet resolved), a **separately-initiated** `GET
+      customer.chatbox.new` request (no `m5_retry_token` — i.e. not the
+      redirect from A's own ambiguous outcome) receives a **different**
+      token than A's.
+    - A's own eventual completion (success or a terminal
+      `Released`/`Expired` resolution) does not clear, overwrite, or
+      otherwise affect a separately-initiated compose B's own token —
+      since neither token lives in any shared session singleton, there
+      is nothing for A's resolution to affect.
+    - An unrelated compose opened after A has already resolved does not
+      inherit A's token — it is an ordinary fresh `GET` with no
+      `m5_retry_token`, and therefore mints its own new token per the
+      §6.1 rule, independent of A's prior existence or outcome.
+18. **`reply()`'s per-conversation token reset boundary, proving §6.1's
+    `pendingConversationTokens` map directly:** an ambiguous outcome for
+    conversation X's token is retained under `pendingConversationTokens[X]`;
+    opening or sending in a **different** conversation Y does not read,
+    clear, or overwrite X's entry, and Y receives its own independent
+    token keyed separately; only a **successful** send for X itself
+    clears `pendingConversationTokens[X]`, at which point a subsequent
+    message in X mints a fresh token.
+19. Plain SMS segment quantity correctness — reservation's
     `estimated_quantity` and commit's `final_quantity` both equal the
     real `SMSCounter::count()` output for a representative multi-segment
     message.
-16. Non-M5 channels (voice/mms/whatsapp/viber/otp) sent through
+20. Non-M5 channels (voice/mms/whatsapp/viber/otp) sent through
     `ChatBoxController` preserve their existing `sms_unit` charging
     behavior unchanged, with `Conversations.is_metered = true` active.
-17. **The five non-ChatBox `quickSend()` callers are completely
+21. **The five non-ChatBox `quickSend()` callers are completely
     unaffected** — at least one representative call through
     `Customer\CampaignController::postQuickSend()` (or the closest
     practical fixture) with `Conversations.is_metered = true` active,
     proving no reservation/ledger row is created and legacy `sms_unit`
-    behavior is exactly preserved.
-18. Legacy `sms_unit` and the RFC-005 wallet never both charge the same
+    behavior is exactly preserved, and proving each of these five call
+    sites continues compiling and calling `quickSend()` with its
+    existing two-argument form (source-compatible with the widened
+    signature's defaulted third parameter).
+22. Legacy `sms_unit` and the RFC-005 wallet never both charge the same
     send — a single successful metered send is asserted to leave
     `sms_unit` completely unchanged, and a single successful
     non-qualifying send is asserted to leave the wallet completely
     unchanged.
-19. Business isolation — two Businesses' reservations/ledger entries
+23. Business isolation — two Businesses' reservations/ledger entries
     never cross-contaminate for concurrent/successive sends, **including**
     a direct assertion that a client-supplied raw token, once business-
     namespaced, cannot resolve another Business's reservation even when
     the raw token portion is identical across two different Businesses'
     requests.
-20. A Workspace owning more than one Business stays legacy, **even when**
+24. A Workspace owning more than one Business stays legacy, **even when**
     one of its Businesses matches `pilot_business_id` (proves the §5.1
     item 4 cardinality guard independently of the tuple-match guard).
-21. Each pilot dimension tested independently: the same Business and
+25. Each pilot dimension tested independently: the same Business and
     country but a **different** `SendingServer` id (even if also
     Twilio-type) stays legacy; an out-of-pilot Business stays legacy; an
     out-of-pilot country stays legacy; a `SendingServer` matching the
     pilot id but of a non-Twilio gateway type stays legacy; the fully
     in-scope tuple engages the wallet.
-22. `tests/Feature/Entitlement/EntitlementManagerNineKeySurfaceUnchangedTest.php`
+26. `tests/Feature/Entitlement/EntitlementManagerNineKeySurfaceUnchangedTest.php`
     re-run unmodified — still exactly nine keys, `usage_unauthorized`
     now reachable via a real `Conversations` call in addition to its
     existing synthetic coverage.
-23. `tests/Feature/Entitlement/PlatformFeatureRegistryTest.php` re-run
+27. `tests/Feature/Entitlement/PlatformFeatureRegistryTest.php` re-run
     unmodified — confirms no `Planned` feature became executable and
     `Conversations` availability is unchanged.
-24. **`ActivateUsageFeatureRateCommandTest`:** the command requires
+28. **`ActivateUsageFeatureRateCommandTest`:** the command requires
     every numeric/label argument explicitly; refuses to run without
     `--actor-user-id`; refuses to run when the supplied id's `is_admin`
     is not true; succeeds only for a genuine admin id, in the correct
     `setActiveRate()`-then-`activateMetering()` order.
-25. **`ResolveAmbiguousUsageReservationCommandTest`, covering all six
+29. **`ResolveAmbiguousUsageReservationCommandTest`, covering all six
     §6.2 checks:** rejects a nonexistent reservation id; rejects a
     non-`Pending` reservation (`Committed` and `Released` cases each
     tested); rejects a non-`Conversations` `feature_key` reservation
@@ -1631,7 +1878,14 @@ Regression, run in full, not modified except where named above:
 
 ## 14. Stop conditions
 
-- An 18th path required beyond §12's seventeen.
+- A 19th path required beyond §12's eighteen.
+- Any evidence, discovered during implementation, that a class other
+  than `EloquentCampaignRepository` implements
+  `CampaignRepository` (§3.11, §7) — the widened signature would then
+  need to be applied there too, and this contract does not authorize
+  that additional path in advance.
+- Any evidence that a caller other than `ChatBoxController::sent()`/
+  `::reply()` ever passes `true` as `quickSend()`'s third argument.
 - The §3.5 null-`primaryBusiness` precondition query returning a nonzero
   count in any environment the implementation can query.
 - Any evidence that `SendCampaignSMS::sendPlainSMS()`'s segment count or
