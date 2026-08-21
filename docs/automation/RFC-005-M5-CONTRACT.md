@@ -1,58 +1,57 @@
 # RFC-005 Milestone 5 — Metered Feature Classification
 
-**Status: PROPOSED — NOT AUTHORIZED UNTIL HUMAN MERGE.**
+**Status: STRUCTURAL BLOCKER — NOT SAFE TO MERGE OR IMPLEMENT AS WRITTEN.**
 
-**This contract authorizes drafting this one document only.** Merging it
-authorizes the bounded M5 implementation this document specifies — to be
-made as its own separate, later, explicitly bounded implementation PR.
-Merging this document does **not** itself write any `app/`, `database/`,
-`routes/`, `config/`, or `resources/` file, does not flip
-`Conversations`' classification to `is_metered = true`, does not activate
-any real retail/provider rate, does not begin M6 (conformance/tag) in any
-way, and does not authorize any live charge to any real Business.
+**A final independent review found that `Conversations` cannot be made
+the first RFC-005 metered feature without either widening general,
+already-merged entitlement infrastructure beyond M5's own bounded scope,
+or accepting a real, reachable, product-visible contradiction between
+what the entitlement/presentation layer reports and what the actual
+`ChatBox` send path does. §3.12 below states this finding in full, with
+concrete cases and exact repository citations. This document is not
+withdrawn — every other design decision recorded here remains the
+correct, carefully-audited answer to the question it addresses, and is
+preserved as the full audit trail and design record of this attempt —
+but §3.12's finding is the controlling one: as of this commit, this
+contract does **not** authorize an implementation PR, and a human must
+decide how to proceed (§3.12's own closing options) before any further
+work on M5 continues.**
 
-**Revision history (historical context only — every rule that survived is
-restated in full, normatively, in the numbered sections below; nothing
-past this point requires reading an earlier commit on this branch).**
-This document was drafted, then refined four times before merge, all as
-pre-merge contract refinement consuming zero correction rounds (no
-implementation PR has ever existed for one to apply against):
+**This contract, had §3.12's finding not existed, would have authorized
+drafting this one document only** — merging it would have authorized the
+bounded M5 implementation this document otherwise specifies, as its own
+separate, later, explicitly bounded implementation PR. Regardless of
+that finding, merging this document itself still does **not** write any
+`app/`, `database/`, `routes/`, `config/`, or `resources/` file, does not
+flip `Conversations`' classification to `is_metered = true`, does not
+activate any real retail/provider rate, does not begin M6
+(conformance/tag) in any way, and does not authorize any live charge to
+any real Business.
 
-1. Initial draft, selecting `Conversations`' plain-SMS send path as M5's
-   scope, reusing the already-built M1 wallet/rate/classification
-   machinery.
-2. Independent review found the original idempotency design (a fresh
-   per-HTTP-request key) did not survive a real retry; found that
-   `Customer::primaryBusiness()` proves coverage but not correct
-   ownership for a multi-Business Workspace; and found destination-
-   country price variance was real. Resolved with a client-sourced
-   token, a single-Business-Workspace guard, and a country allowlist.
-3. Independent review found the client token alone did not make the
-   *provider call* safe against a stuck/racing reservation; found
-   country-only scoping left customer-plan and sending-server price
-   variance open; and found an internal inconsistency in how
-   `ChatBoxController::reply()` was described propagating the token.
-   Resolved with an explicit reservation-status state machine, a wider
-   pilot allowlist, and a corrected `reply()` description.
-4. Independent review found the reservation-status check itself relied
-   on an unsound `reserved_at` timestamp comparison; found gateway-*type*
-   scoping did not pin the actual price-determining `SendingServer` row;
-   and narrowed the manual-resolution command. Resolved with a database-
-   enforced atomic claim (`ReservationResult::createdByThisInvocation`)
-   and a singular scalar pilot tuple.
-5. Independent review found the Twilio-outcome classification (a
-   `'Rejected'`-string check) was factually wrong, because
-   `sendPlainSMS()`'s own post-processing erases that string before
-   `quickSend()` ever sees it; and tightened the unique-constraint catch
-   so it cannot mask an unrelated database error. Resolved by authorizing
-   a narrow, opt-in addition to `app/Models/SendCampaignSMS.php` that
-   returns an explicit, machine-readable outcome marker.
-
-This final consolidation pass makes **zero** design changes of its own —
-it exists solely to make the document below self-contained, so that an
-implementer reading only this file, at this commit, on `main`, has the
-complete and authoritative M5 specification without consulting any
-earlier commit on `chore/rfc-005-m5-contract`.
+**Revision history (historical context only — every design decision
+that survived is restated in full, normatively, in the numbered sections
+below; nothing past this point requires reading an earlier commit on
+this branch).** This document underwent multiple pre-merge refinement
+passes, each triggered by an independent review finding a concrete
+defect in the pass before it, all consuming zero correction rounds (no
+implementation PR has ever existed for one to apply against). Early
+passes resolved: an idempotency-key design that did not survive a real
+retry; `Customer::primaryBusiness()` proving coverage but not correct
+ownership for a multi-Business Workspace; real destination-country/
+customer-plan/sending-server price variance; a reservation-status check
+that relied on an unsound timestamp comparison, replaced with a
+database-enforced atomic claim; a Twilio-outcome classification that was
+factually wrong once `sendPlainSMS()`'s own post-processing was traced
+end-to-end, replaced with an explicit machine-readable marker; a
+forgeable `$input` array key used as a trust boundary, replaced with a
+trusted PHP method parameter; a session-global token design that leaked
+across unrelated compose actions, replaced with a compose-scoped design;
+and a token-clearing rule that did not distinguish a definitive
+rejection from a merely-ambiguous outcome. The final pass — this one —
+found the structural classification/entitlement mismatch §3.12 states in
+full. The numbered normative sections below are the sole authoritative
+record of every one of those resolutions; none require consulting an
+earlier commit.
 
 ---
 
@@ -870,22 +869,284 @@ exactly one file), so exactly one interface and one implementation
 require this change, and no other concrete implementation path exists
 to account for.
 
+### 3.12 STRUCTURAL BLOCKER — a global `is_metered` classification cannot represent a tuple-scoped pilot without either widening general entitlement infrastructure or accepting a real product-visible contradiction
+
+**Direct re-read of RFC-005 §14, the M1 classification/gateway contract,
+and the exact current code of `EntitlementManager::decide()`,
+`RealUsageAuthorizationGateway::check()`, and
+`UsageWalletManager::evaluateCoarseCapacity()` confirms the following,
+precisely:**
+
+- `platform_feature_usage_classifications` (RFC-005 §14.1, confirmed
+  unchanged) is **one row per `feature_key`** — `is_metered` is a single
+  boolean per feature, with no Business, country, or `SendingServer`
+  dimension anywhere in the schema. RFC-005 §36 item 5 itself describes
+  M5 only as making "the first real feature(s) classified
+  `is_metered = true`" — nowhere does the merged RFC anticipate or
+  authorize a *partially*-metered feature, scoped to one execution
+  tuple while otherwise unmetered.
+- `EntitlementManager::decide(Workspace $workspace, Business $business, string $featureKey, int $actorUserId): EntitlementDecision`
+  (`app/Library/Entitlement/EntitlementManager.php:111`) takes **no
+  execution-context parameter of any kind** — no country, no
+  `SendingServer`, nothing beyond `Workspace`/`Business`/`featureKey`.
+  Its final step, unconditionally, for every caller and every feature:
+  `$usageResult = $this->usageAuthorizationGateway->check($currentBusiness, $feature); if (! $usageResult->authorized) { return new EntitlementDecision(false, $usageResult->reason ?? 'usage_unauthorized'); }`.
+- `RealUsageAuthorizationGateway::check(Business $business, PlatformFeature $feature)`
+  delegates entirely to
+  `UsageWalletManager::evaluateCoarseCapacity($business, $feature)`,
+  which — confirmed by direct read — returns `authorized: true`
+  unconditionally only while `is_metered = false`; the instant
+  `Conversations.is_metered` becomes `true`, this method evaluates
+  **that Business's own wallet** (`wallet_missing`/`wallet_suspended`/
+  `outstanding_debt`) with **zero awareness of destination country or
+  `SendingServer`** — those parameters do not exist anywhere in this
+  call chain.
+- `EntitlementManager::decideAvailableFeaturesForBusiness(Workspace $workspace, Business $business, int $actorUserId): array`
+  (`app/Library/Entitlement/EntitlementManager.php:328`) calls `decide()`
+  for **every** `Available` `PlatformFeature`, including `Conversations`,
+  independent of any specific send attempt — and is **confirmed wired
+  into a real, live presentation path**,
+  `app/Http/Controllers/Customer/Workspace/WorkspaceController.php`
+  (direct repository search), meaning this is not a theoretical unused
+  method — it renders an actual Business-facing entitlement summary
+  today.
+
+**Direct comparison of `decide()`'s result against what the actual
+`ChatBox` send path does, for the exact cases required:**
+
+- **Case A — a non-pilot Business whose wallet is suspended or carries
+  outstanding debt** (a real, reachable wallet state for any Business,
+  entirely unrelated to `Conversations` — e.g. from an unrelated add-on
+  purchase or a failed auto-recharge): once `Conversations.is_metered =
+  true` anywhere, `decide()` for this Business returns
+  `EntitlementDecision(false, 'usage_unauthorized')` for `Conversations`
+  — surfaced today via `decideAvailableFeaturesForBusiness()`'s live
+  presentation path. **But this Business is not the pilot tuple**, so
+  every one of its actual `ChatBox` sends (§5.1, every condition item 4
+  fails) falls through to the completely unmodified legacy `sms_unit`
+  path and **keeps working exactly as before** — the wallet state
+  `decide()` just denied on is never even consulted by the real send.
+  The product would tell this Business "you cannot use Conversations"
+  while their Conversations feature keeps working.
+- **Case B — the pilot Business itself, sending to a non-pilot
+  country:** if this Business's wallet happens to be in any
+  wallet-denying state, `decide()` denies `Conversations` entirely for
+  this Business (wallet state is evaluated per-Business, not per-
+  country) — yet the actual send, since the destination country does
+  not match `pilot_country_id` (§5.1 item 5), falls through to legacy
+  and is entirely unaffected by that same wallet state. Identical
+  contradiction, narrower trigger.
+- **Case C — the pilot Business, using a different `SendingServer`:**
+  identical reasoning to case B, substituting §5.1 item 6's
+  `pilot_sending_server_id` mismatch for the country mismatch.
+- **Case D — a multi-Business Workspace** (including the pilot
+  Business's own Workspace, if it were ever to gain a second Business
+  via the already-live `WorkspaceController::storeBusiness()`, §3.5):
+  §5.1 item 4's Workspace-cardinality guard would correctly take every
+  send for that Workspace out of the pilot and onto legacy — but
+  `decide()`, again, has no cardinality awareness and would still
+  evaluate that specific Business's own wallet state for
+  `Conversations`, independent of whether its Workspace still qualifies
+  as single-Business.
+- **Case E — the presentation path itself:** `decideAvailableFeaturesForBusiness()`
+  calls `decide()` for `Conversations` for **every** Business it is
+  asked about, with no country or `SendingServer` context to give it
+  even if the method wanted to — confirming the mismatch is not a
+  hypothetical edge case reachable only under contrived conditions, but
+  the **direct, unconditional behavior of an already-wired, already-live
+  presentation path** the moment a human runs §9.1's activation command
+  in any real environment.
+
+**Direct answer to the audit's own question:** a global, feature-level
+`is_metered = true` **cannot** truthfully and consistently represent a
+feature for which only one execution tuple is actually wallet-metered.
+Every case above produces a real state where the entitlement/
+presentation layer's own answer for `Conversations` disagrees with what
+a Business's actual `ChatBox` send would do — never in the dangerous
+direction (the send path never silently bypasses a `decide()` denial to
+charge or send when it shouldn't; §6 step 3's own qualifying-send guard
+still calls `decide()` and still honors its denial for the one tuple
+that does reach it), but in the equally real, product-breaking direction
+of **falsely telling a Business it cannot use a feature that, in actual
+practice, keeps working perfectly via legacy behavior.**
+
+**Why this is not a bounded M5 correction (Outcome B), considered and
+rejected:**
+
+- **Widening `RealUsageAuthorizationGateway`/`decide()` to accept
+  execution context (country, `SendingServer`) it does not receive
+  today** would require changing the *general* entitlement-decision
+  signature every other `Available` feature (`Crm`, `Automations`, and
+  every future metered feature) also calls through — this is core,
+  shared RFC-004/RFC-005 infrastructure, not an M5-owned file, and
+  widening it is exactly the kind of change that exceeds "bounded M5
+  scope" this contract has declined at every prior turn for smaller
+  asks.
+- **A Business-only special case inside `evaluateCoarseCapacity()`**
+  (e.g. "only evaluate wallet state for `Conversations` when
+  `$business->id === pilot_business_id`") was considered and is
+  explicitly rejected, exactly as the audit instructions warned: it
+  would still leave cases B and C — the pilot Business's own non-pilot-
+  country/`SendingServer` sends — contradictory, since `decide()` still
+  has no country/server context even for the one Business it would now
+  treat specially. It would also bake one M5-specific config key
+  (`conversations_metering.pilot_business_id`) into `UsageWalletManager`,
+  a general-purpose, feature-agnostic class, for a problem only this one
+  feature currently has.
+- **A new `PlatformFeature` scoped to the pilot tuple** (e.g. a
+  hypothetical `ConversationsPilot` case) would need its own
+  availability/plan-entitlement wiring, its own decision about whether
+  `Available` or `Planned`, and would not even solve the underlying
+  problem cleanly, since the *same* `ChatBox` UI and the *same*
+  `Conversations` feature identity would now need to present two
+  different entitlement answers depending on execution context the
+  identity system itself does not carry — this is a materially larger
+  design question than "activate one already-built switch," and is
+  exactly the kind of scope this contract has repeatedly declined to
+  invent unilaterally.
+- **A scoped classification/rate schema expansion** (a per-tuple row
+  under one `feature_key`, or a compound key) is the same real schema
+  expansion this contract already named and declined twice for the
+  separate rate-representation problem (§3.6) — it does not become
+  smaller because it would now also need to solve the entitlement-
+  presentation problem, and RFC-005 §36/§39 authorize no such expansion
+  for M5.
+
+**Conclusion, stated exactly as required:**
+
+> **`Conversations` is not structurally safe as the first M5 metered
+> feature under the current RFC-005 classification/rate/entitlement
+> model.** The rate-representation problem (§3.6) was solved correctly
+> within bounded scope by pinning a singular pilot tuple. But that same
+> pinning cannot be made consistent with `platform_feature_usage_classifications`'
+> and `EntitlementManager::decide()`'s own global,
+> execution-context-blind semantics without one of: widening the
+> general `UsageAuthorizationGateway` contract beyond M5's own scope,
+> inventing a new `PlatformFeature` identity (a materially larger design
+> question this contract has no authority to decide unilaterally), or a
+> real classification/rate schema expansion RFC-005 has not authorized
+> for M5. None of these is a "small, architecture-consistent change";
+> each is exactly the category of change §36/§39 reserve for a future
+> milestone or a separate RFC amendment, not for M5's own bounded
+> contract.
+
+**This does not mean RFC-005's own M1-built wallet/rate/reservation
+machinery is unsound** — §3.2, §3.4a (now §3.8), and §3.9's own findings
+about that machinery's correctness, concurrency-safety, and outcome-
+classification precision remain fully valid and would apply identically
+to any future feature metered at the granularity the schema actually
+supports (whole-feature, not tuple-scoped). **The blocker is specific to
+attempting a pilot narrower than one `feature_key` while the
+classification/entitlement layer only understands one `feature_key` at
+a time.**
+
+**What a human must decide before any further M5 work continues:**
+
+1. **Reopen the M5 feature-selection decision** (§0) and choose a
+   feature — or a scoping of `Conversations` — for which whole-feature
+   metering (no execution-tuple carve-out) is actually representable by
+   the existing schema. This would very likely require re-running the
+   rate-dimension audit (§3.6) for whatever is chosen, since the
+   underlying reason a pilot tuple was needed for `Conversations`
+   (destination-country/customer-plan/sending-server price variance)
+   may or may not recur.
+2. **Authorize a genuine architecture change** — widening
+   `UsageAuthorizationGateway`, adding a new `PlatformFeature` identity,
+   or expanding the classification/rate schema — as its own separate,
+   explicitly-scoped RFC-005 amendment or milestone, evaluated on its
+   own merits and against its own blast radius across every other
+   `Available`/future-metered feature, not smuggled in as an M5-only
+   fix.
+3. **Accept the contradiction as a known, documented, temporary product
+   limitation** for the duration of a narrow pilot — a genuine product
+   decision (not a repository-evidence question this contract can
+   resolve on its own), which would need explicit human sign-off given
+   it means a real Business could see an incorrect "Conversations
+   unavailable" message in their own dashboard.
+
+This contract takes no position on which of these three a human should
+choose — it states only that repository evidence rules out treating the
+current pilot-tuple design as already safe, and that inventing a
+resolution unilaterally here would itself be exactly the kind of
+unauthorized architecture change this contract's own discipline exists
+to prevent.
+
+### 3.13 Additional confirmed findings, orthogonal to §3.12, recorded for completeness
+
+Two further defects were confirmed during this same review pass. Both
+are real and would need resolution in any future attempt at this
+milestone (whether `Conversations` or a different feature), independent
+of §3.12's own verdict. Consistent with not designing further into an
+architecture whose own viability is now unresolved, neither is designed
+into a full fix here — each is stated precisely enough that a future
+pass, once §3.12 is resolved one way or another, does not need to
+re-discover it:
+
+- **Same-token retry with a changed payload could escape into legacy
+  behavior while an M5 reservation is still unresolved.** Direct
+  read of `resources/views/customer/ChatBox/new.blade.php` confirms
+  `recipient` and `message` restore via `old(...)`, but `sending_server`,
+  `country_code`, and `sender_id` do **not** — meaning
+  `sent()`'s ambiguous-outcome redirect (§6.1), which carries
+  `m5_retry_token` and `->withInput()`, does not by itself guarantee the
+  retried request's effective country/server/sender fields match the
+  original attempt. If they differ enough that §5.1's pilot-tuple guard
+  no longer matches, `quickSend()` would fall through to the legacy
+  `sms_unit` path and call the real provider again — while the earlier
+  attempt's reservation, tied to the identical business-namespaced
+  token, remains genuinely unresolved (`Pending`/ambiguous). **The
+  server-side guard §5.1/§6 currently has no check for "does a
+  Conversations reservation already exist for this exact idempotency
+  key, regardless of whether the current request's dimensions still
+  match the pilot tuple" before allowing a fall-through to legacy.** The
+  audit's own suggested shape — checking
+  `BusinessUsageReservationRepository::findByIdempotencyKey()` (an
+  already-read, already-existing method, §3.4a) before permitting any
+  legacy fall-through for a `conversationContext = true` request, and
+  resolving through the existing `Committed`/`Pending`/`Released`/
+  `Expired` state machine rather than ever calling the provider a second
+  time under that key — is the correct direction, and does not appear to
+  require a new production file beyond the already-authorized
+  `EloquentCampaignRepository::quickSend()` widening. This is not
+  designed in full here, since doing so productively depends on §3.12's
+  own resolution (a corrected pilot design might change exactly which
+  guard needs this check).
+- **The retry-form UI does not restore every field a full retry
+  actually depends on.** Beyond the safety property above (which must be
+  server-enforced regardless of UI state, since a client can always
+  submit modified form data), the user-facing retry experience would
+  benefit from `new.blade.php` restoring `old('sending_server')`,
+  `old('country_code')`, and `old('sender_id')` in addition to the
+  fields it already restores, so an ordinary retry naturally reproduces
+  the original attempt rather than relying on the user to reselect them
+  correctly.
+
 ---
 
 ## 4. Contract status model
 
-Identical to every prior RFC-005 milestone contract:
+**Superseded by §3.12's finding as of this commit: this document is not
+currently in the `PROPOSED` state its status model below describes.**
+The model itself — identical to every prior RFC-005 milestone contract —
+would apply exactly as follows *if and only if* a human resolves §3.12
+by one of its own three named options and this document (or a
+successor) is updated to reflect that resolution:
 
-- `PROPOSED` (this document, now) → human review → `MERGED` (human
-  merges this PR) → a **separate**, later, explicitly bounded
-  implementation PR is opened against this contract → `ai:testing` /
-  `ai:awaiting-codex` / `ai:ready-for-human` per the existing state-label
-  rules in the repository root `CLAUDE.md` → human merge of the
-  implementation PR (never automatic).
-- Merging *this* document authorizes drafting the implementation only.
-  It does not itself authorize skipping human review of the
-  implementation PR, and it does not authorize a human to skip either
-  unresolved decision recorded in §9.2.
+- `PROPOSED` → human review → `MERGED` (human merges this PR) → a
+  **separate**, later, explicitly bounded implementation PR is opened
+  against this contract → `ai:testing` / `ai:awaiting-codex` /
+  `ai:ready-for-human` per the existing state-label rules in the
+  repository root `CLAUDE.md` → human merge of the implementation PR
+  (never automatic).
+- Merging *this* document, once §3.12 is resolved, would authorize
+  drafting the implementation only. It would not itself authorize
+  skipping human review of the implementation PR, and it would not
+  authorize a human to skip either unresolved decision recorded in
+  §9.2, nor §3.12's own required resolution.
+
+**Until §3.12 is resolved, this PR should remain Draft and unmerged —
+merging it as currently written would authorize an implementation this
+same document has just demonstrated is not safe to build.**
 
 ---
 
@@ -1276,8 +1537,9 @@ same session, in any state — two browser tabs both open to "New
 Conversation" therefore always receive two different tokens (§6.1's
 counterexample A, resolved). A reply-flow token is scoped to its own
 `chatBoxId` key and is cleared only by that same conversation's own
-success — opening or completing a different conversation cannot inherit
-or disturb it. Each is collision-resistant by construction (a fresh
+`m5_token_action === 'clear'` outcome — opening or completing a
+different conversation cannot inherit or disturb it. Each is
+collision-resistant by construction (a fresh
 UUID per compose action), and the business-namespace prefix additionally
 guarantees no cross-Business or cross-feature collision even in the
 residual case. Two different real messages therefore always produce two
@@ -1903,13 +2165,21 @@ own discretion provided every case below is covered exactly once:
       `m5_retry_token`, and therefore mints its own new token per the
       §6.1 rule, independent of A's prior existence or outcome.
 18. **`reply()`'s per-conversation token reset boundary, proving §6.1's
-    `pendingConversationTokens` map directly:** an ambiguous outcome for
-    conversation X's token is retained under `pendingConversationTokens[X]`;
-    opening or sending in a **different** conversation Y does not read,
-    clear, or overwrite X's entry, and Y receives its own independent
-    token keyed separately; only a **successful** send for X itself
-    clears `pendingConversationTokens[X]`, at which point a subsequent
-    message in X mints a fresh token.
+    `pendingConversationTokens` map directly, driven by `m5_token_action`
+    and not by a `success`/`error` status alone:** an `m5_token_action === 'retain'`
+    outcome for conversation X (an ambiguous/`Pending` result, or a
+    pre-reservation denial) leaves `pendingConversationTokens[X]`
+    untouched; opening or sending in a **different** conversation Y does
+    not read, clear, or overwrite X's entry, and Y receives its own
+    independent token keyed separately; an `m5_token_action === 'clear'`
+    outcome for X — covering **all four** clearing cases, not only a
+    plain success — clears `pendingConversationTokens[X]`: (a) `accepted`,
+    (b) a same-token retry landing on an already-`Committed` reservation,
+    (c) `definitive_rejection`, and (d) a same-token retry landing on a
+    terminal `Released`/`Expired` reservation. At least the
+    `definitive_rejection` and `Released`/`Expired` clearing cases are
+    tested explicitly, since these are precisely the cases the withdrawn,
+    success-only clearing design got wrong.
 19. Plain SMS segment quantity correctness — reservation's
     `estimated_quantity` and commit's `final_quantity` both equal the
     real `SMSCounter::count()` output for a representative multi-segment
@@ -1988,6 +2258,15 @@ Regression, run in full, not modified except where named above:
 ---
 
 ## 14. Stop conditions
+
+**Already triggered, as of this commit, and controlling over every
+other condition below: §3.12's structural finding.** No implementation
+PR may be opened against this contract until a human resolves it by one
+of §3.12's own three named options. The remaining conditions below
+describe what would additionally stop an implementation already in
+progress, *if and when* §3.12 is resolved and a corrected or successor
+contract authorizes work to begin — they do not, on their own, authorize
+starting now.
 
 - A 19th path required beyond §12's eighteen.
 - Any evidence, discovered during implementation, that a class other
