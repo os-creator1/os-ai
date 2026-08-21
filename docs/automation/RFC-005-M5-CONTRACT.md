@@ -994,24 +994,27 @@ strictly in this order, replacing (not adding alongside) the existing
    `EntitlementManager::decide($workspace, $business, PlatformFeature::Conversations->value, $actorUserId)`
    unchanged. If `!$decision->allowed`: return the existing error-shaped
    JSON response carrying `$decision->reason` (which will read
-   `usage_unauthorized` for every wallet-capacity denial, per §3.3); no
-   rate lookup, no reservation, no provider call occurs after this
-   point.
+   `usage_unauthorized` for every wallet-capacity denial, per §3.3), with
+   `m5_token_action: 'retain'` (§6.1 table, case E — no reservation row
+   was ever created for this attempt, so the same token remains safe and
+   preferable to reuse once the underlying denial is fixed); no rate
+   lookup, no reservation, no provider call occurs after this point.
 4. **Wallet reserve and atomic claim check.**
    `$reservation = $walletManager->reserve($business, PlatformFeature::Conversations->value, $idempotencyKey, (string) $sms_count);`
    using the business-namespaced key (§6.1). A wallet-capacity denial
    (`wallet_suspended`/`outstanding_debt`/`insufficient_balance`) →
    return the existing error-shaped response carrying
-   `$reservation->denialReason`; **no provider send occurs; no
-   reservation row was created for this attempt.** Otherwise, inspect
+   `$reservation->denialReason`, with `m5_token_action: 'retain'` (same
+   case E — **no reservation row was created for this attempt**; no
+   provider send occurs). Otherwise, inspect
    `$reservation->createdByThisInvocation` (§3.8):
    ```php
    if (! $reservation->createdByThisInvocation) {
        $row = app(BusinessUsageReservationRepository::class)->findById($reservation->reservationId);
        return match ($row->status) {
-           UsageReservationStatus::Committed => /* existing "already sent" success response */,
-           UsageReservationStatus::Released, UsageReservationStatus::Expired => /* existing "could not confirm this message was sent; compose and send again if you still want to" response; client must regenerate its token */,
-           UsageReservationStatus::Pending => /* existing "still processing, please wait" response; client retains its token; log the structured warning named in step 7 below */,
+           UsageReservationStatus::Committed => /* existing "already sent" success response, m5_token_action: 'clear' (§6.1 table, case A) */,
+           UsageReservationStatus::Released, UsageReservationStatus::Expired => /* existing "could not confirm this message was sent; compose and send again if you still want to" response, m5_token_action: 'clear' (§6.1 table, case C) */,
+           UsageReservationStatus::Pending => /* existing "still processing, please wait" response, m5_token_action: 'retain' (§6.1 table, case D); log the structured warning named in step 6 below */,
        };
    }
    ```
@@ -1031,18 +1034,22 @@ strictly in this order, replacing (not adding alongside) the existing
      — `$finalQuantity` explicitly re-passed as the identical
      `$sms_count` value (§8), not defaulted to null, keeping the
      estimated-equals-final equality auditable in the call site itself.
+     Response carries `m5_token_action: 'clear'` (§6.1 table, case A).
    - `$data->m5_outcome === 'definitive_rejection'` →
-     `$walletManager->release($reservation->reservationId);` — client
-     regenerates its token.
+     `$walletManager->release($reservation->reservationId);`. Response
+     carries `m5_token_action: 'clear'` (§6.1 table, case B) — **the
+     reservation just became `Released`, so the token that produced it
+     must not be reused; a genuinely new user attempt after a definitive
+     rejection is a fresh logical send and must mint a fresh token.**
    - `$data->m5_outcome === 'ambiguous_exception'` → leave the
      reservation `Pending`; do **not** call `release()`; log
      `Log::warning('m5_conversations_ambiguous_outcome', ['reservation_id' => $reservation->reservationId, 'business_id' => $business->id]);`;
-     return the existing "still processing" response; client **retains**
-     its token.
+     return the existing "still processing" response, with
+     `m5_token_action: 'retain'` (§6.1 table, case D).
    - **Marker unexpectedly absent** (a defensive fallback that should be
      unreachable by construction, since step 5 always sets the flag
      immediately before the call): treat identically to
-     `ambiguous_exception`.
+     `ambiguous_exception`, including `m5_token_action: 'retain'`.
 
 **No provider send may occur after a denied usage decision:** steps 1-4
 all return, or fall through to legacy, before step 5 is ever reached
@@ -1101,7 +1108,55 @@ at `reserve()`'s own `business_usage_reservations.idempotency_key`
 column, written inside `reserve()`'s own transaction, strictly before
 the provider call.
 
-**Exact mechanism, per entry point:**
+**The `m5_token_action` mapping — the single, machine-readable authority
+both entry points obey, never inferred from human-readable message text
+or from a generic `success`/`error` status alone:**
+
+Every response `quickSend()` produces for a qualifying send (§5.1)
+carries an explicit `m5_token_action` value, `'clear'` or `'retain'`,
+alongside its existing `status`/message fields. This value is set
+exactly once, at the single point in §6 that produces each response
+(steps 3, 4, and 6), per this table:
+
+| Case | Outcome | `status` | `m5_token_action` |
+|---|---|---|---|
+| A | `accepted` (step 6), or a same-token retry landing on `Committed` (step 4) | success | `clear` |
+| B | `definitive_rejection` (step 6) | error | `clear` |
+| C | A same-token retry landing on terminal `Released`/`Expired` (step 4) | error | `clear` |
+| D | `ambiguous_exception` or absent marker (step 6), or a same-token retry landing on still-`Pending` (step 4) | processing | `retain` |
+| E | Entitlement denial (step 3) or wallet-capacity denial (step 4), before any reservation row exists | error | `retain` |
+
+**Why case B clears, not retains, even though it is reported as a
+failure:** a `definitive_rejection` durably `release()`s the
+reservation — the token that produced it has done its job and reached a
+terminal, known outcome; reusing it for a *new* user-initiated attempt
+would immediately hit case C's terminal-retry branch instead of ever
+reaching the provider again. A genuinely new attempt after a definitive
+rejection is a new logical send and must mint a fresh token, exactly
+like case A's success.
+
+**Why case E retains:** no reservation row was ever created, so there is
+nothing for a same-token retry to collide with or resolve — reusing the
+identical token once the underlying problem (e.g. an insufficient
+balance) is fixed is safe, and preferable to unnecessary token churn.
+
+**Case F — a browser/network failure where the client never receives
+any server response at all** (a connection drop or timeout, as opposed
+to a well-formed error response): there is no `m5_token_action` field to
+read, because there is no response body. Both entry points' own client
+logic (below) defaults to **retain** in this specific sub-case — the
+safe default, since retaining costs nothing and a subsequent same-token
+retry is resolved correctly by §6 step 4's own status inspection
+regardless of what actually happened server-side: if the original
+request had in fact reached `commit()` before the response was lost, the
+retry lands on case A (`Committed`, clear); if it is still in flight or
+crashed mid-flight, case D (`Pending`, retain); if it had in fact reached
+`release()`, case C (`Released`, clear). No new production path is
+required for this — it is a direct consequence of the state machine
+already specified in §6, exercised via a retry that supplies the same
+token.
+
+**Exact mechanism, per entry point, both driven by the table above:**
 
 - **`ChatBoxController::sent()`/`::new()` (traditional full-page form
   POST/GET) — compose-scoped via an explicit retry parameter, never a
@@ -1124,18 +1179,23 @@ the provider call.
     There is no session read, no session write, and no fallback to any
     prior value on this path. The view renders
     `<input type="hidden" name="idempotency_token" value="{{ $composeIdempotencyToken }}">`.
-  - `ChatBoxController::sent()` (the POST action): on the success,
-    `definitive_rejection`, or terminal (`Released`/`Expired`-hit)
-    response paths, issue the existing, unmodified redirect (to
-    `customer.chatbox.index` or wherever the current success/failure
-    flow already goes) — carrying **no** `m5_retry_token` parameter, so
-    any later, separate visit to "New Conversation" mints a fresh token
-    per the rule above. On the **ambiguous** response paths only (§6
-    step 4's stale-`Pending` branch, or step 6's `ambiguous_exception`
-    branch): redirect specifically back to the compose flow, carrying
-    the *exact same* token forward for that *exact* retry, together with
-    the user's original form input so they do not need to retype their
-    message:
+  - `ChatBoxController::sent()` (the POST action): the redirect decision
+    is driven **directly and only** by the `m5_token_action` value the
+    qualifying-send branch produced (the table above) — never by
+    separately re-deriving it from `status` or from human-readable
+    message text. **`m5_token_action === 'clear'`** (cases A, B, and C —
+    accepted, `definitive_rejection`, and a same-token retry landing on
+    `Committed`/`Released`/`Expired`): issue the existing, unmodified
+    redirect (to `customer.chatbox.index` or wherever the current
+    success/failure flow already goes) — carrying **no** `m5_retry_token`
+    parameter, so any later, separate visit to "New Conversation" mints a
+    fresh token per the rule above. **`m5_token_action === 'retain'`**
+    (cases D and E — `ambiguous_exception`, a same-token retry landing on
+    `Pending`, or an entitlement/wallet-capacity denial before any
+    reservation existed): redirect specifically back to the compose
+    flow, carrying the *exact same* token forward for that *exact*
+    retry, together with the user's original form input so they do not
+    need to retype their message:
     ```php
     return redirect()
         ->route('customer.chatbox.new', ['m5_retry_token' => $idempotencyToken])
@@ -1168,25 +1228,40 @@ the provider call.
   - Every subsequent call for that **same** `chatBoxId`, while an entry
     still exists, reuses it — included in the `FormData`
     (`formData.append("idempotency_token", pendingConversationTokens[chatBoxId])`).
-  - **Reset boundary, explicit:** the entry for a given `chatBoxId` is
-    deleted from `pendingConversationTokens` (freeing that key to mint
-    fresh next time) only inside the existing AJAX `success` branch
-    (where the composed textbox itself is already cleared) for that
-    exact `chatBoxId`. It is **never** touched — not read, not cleared,
-    not overwritten — by any activity on a **different** `chatBoxId`:
-    opening, switching to, or sending in another conversation thread
-    reads and writes only that other thread's own key in the same map
-    and has zero effect on this one's entry. It is **not** cleared on
-    the existing `error` branch, so a user-initiated retry after a
-    failure/timeout for that same conversation resends the identical
-    token together with the identical message text, exactly mirroring
-    the existing UI's own already-designed retry affordance. The
-    existing `enter_chat()` handler already disables the Send button
-    before the AJAX call and re-enables it on both `success` and
-    `error`; on `error` the composed message text is **not** cleared —
-    this is the real, designed, expected recovery path after a
-    timeout/5xx/network failure, and it is the retry this mechanism
-    protects.
+  - **Reset boundary, explicit and driven by `m5_token_action`, never by
+    the generic `success`/`error` status alone:** the JSON response body
+    is parsed for its `m5_token_action` field, regardless of whether
+    `status` reads `success`, `error`, or `processing`. If
+    `m5_token_action === 'clear'` (cases A, B, and C — this covers not
+    only a normal `accepted` success, but also a `definitive_rejection`
+    and a same-token retry landing on a terminal `Committed`/`Released`/
+    `Expired` reservation, every one of which is currently reported
+    through the *same* generic AJAX callback the un-corrected design
+    would have treated as one undifferentiated "error"): the entry for
+    that exact `chatBoxId` is deleted from `pendingConversationTokens`
+    (freeing that key to mint fresh next time). If
+    `m5_token_action === 'retain'` (cases D and E): the entry is left
+    untouched. **The true network-level `error` callback — fired when
+    the browser never received any response body at all (a timeout or
+    connection drop, case F) — has no `m5_token_action` to read; this
+    specific sub-case defaults to retain**, the safe choice, since a
+    same-token retry is resolved correctly by §6 step 4's own status
+    inspection regardless of what actually happened server-side. In
+    every case, the reset decision for a given `chatBoxId` is **never**
+    read, cleared, or overwritten by any activity on a **different**
+    `chatBoxId` — opening, switching to, or sending in another
+    conversation thread reads and writes only that other thread's own
+    key in the same map and has zero effect on this one's entry. A
+    `retain` outcome means a user-initiated retry after a failure/
+    timeout for that same conversation resends the identical token
+    together with the identical message text, exactly mirroring the
+    existing UI's own already-designed retry affordance — the existing
+    `enter_chat()` handler already disables the Send button before the
+    AJAX call and re-enables it on both `success` and `error`, and on
+    `error` the composed message text is **not** cleared; this is the
+    real, designed, expected recovery path after a failure, and it is
+    the retry this mechanism protects, now correctly gated on
+    `m5_token_action` rather than on the generic callback branch alone.
 
 **Server-side, both entry points:** read `$request->input('idempotency_token')`
 (validated `required|uuid` — a rule added to `SentRequest` for `sent()`;
@@ -1211,9 +1286,10 @@ reservations, hence two independent charges — correct, since two real
 sends are two real costs.
 
 **Proof — a crash/retry of the same logical send reuses the same key:**
-for `reply()`, per the `error`-branch-does-not-clear-the-token-for-that-
-`chatBoxId` behavior above — the second `enter_chat()` invocation for
-the identical conversation submits the identical token. For `sent()`,
+for `reply()`, per the `m5_token_action === 'retain'`-does-not-clear-the-
+token-for-that-`chatBoxId` behavior above — the second `enter_chat()`
+invocation for the identical conversation submits the identical token.
+For `sent()`,
 per the `m5_retry_token` round-trip: `sent()`'s own ambiguous-outcome
 redirect is the **only** way a `new()` page load ever receives a
 non-empty `m5_retry_token`, and it always carries the exact token that
@@ -1415,11 +1491,27 @@ method performs internally. M5 authorizes building exactly one new,
 narrow, human-run mechanism:
 
 - A new Artisan console command,
-  `app/Console/Commands/ActivateUsageFeatureRate.php`, signature:
-  `usage:activate-rate {feature} {retail-rate-micro} {provider-cost-micro} {unit-label} {currency-code} {--actor-user-id=} {--reason=}`,
-  requiring every value as an explicit argument (no defaults for any
-  monetary or unit value), validating `feature` against
-  `PlatformFeatureRegistry::isKnown()`.
+  `app/Console/Commands/ActivateConversationsUsageRate.php`, signature:
+  `usage:activate-conversations-rate {retail-rate-micro} {provider-cost-micro} {unit-label} {currency-code} {--actor-user-id=} {--reason=}`.
+  **There is no `{feature}` argument.** `PlatformFeature::Conversations->value`
+  is hard-coded directly inside the command's own body as the sole
+  `$featureKey` it ever passes to `setActiveRate()`/`activateMetering()`.
+  This is a deliberate narrowing, not an oversight: M5's own locked human
+  product decision (§0) is exactly `PlatformFeature::Conversations`, and
+  a generic `{feature}` argument accepting any value
+  `PlatformFeatureRegistry::isKnown()` recognizes would hand this
+  implementation an operator surface capable of activating metering for
+  `Crm`, `Automations`, any other `Available` feature, or — with no
+  additional check beyond `isKnown()` — a `Planned` feature, none of
+  which this contract authorizes or has any business scope to activate.
+  Removing the generic surface entirely, rather than keeping a
+  `{feature}` argument and rejecting every non-`Conversations` value at
+  runtime, is the smaller, more direct implementation: there is no
+  runtime branch to get wrong, because there is no other value the
+  command's own source code can ever act on. Every value the command
+  does still accept — `retail-rate-micro`, `provider-cost-micro`,
+  `unit-label`, `currency-code` — remains a required explicit argument,
+  with no default supplied for any monetary or unit value.
 - **`--actor-user-id=<id>` is required** (the command fails immediately,
   before touching `UsageWalletManager`, if it is omitted or non-numeric)
   — there is no "authenticated CLI context" fallback; a console command
@@ -1566,9 +1658,10 @@ condition, not a silent addition.
    line plus inline UUID validation (§7). `new()` (the GET action) gains
    the `m5_retry_token` query-parameter read-and-validate-or-mint-fresh
    logic (§6.1); `sent()` (the POST action) gains the
-   ambiguous-outcome-only redirect back to `customer.chatbox.new` with
-   that exact `m5_retry_token` (§6.1). No other line in this file
-   changes.
+   `m5_token_action`-driven redirect decision (§6.1's table: `retain` →
+   redirect back to `customer.chatbox.new` carrying that exact
+   `m5_retry_token`; `clear` → the existing, unmodified redirect with no
+   such parameter). No other line in this file changes.
 4. **`app/Http/Requests/ChatBox/SentRequest.php`** — add
    `'idempotency_token' => 'required|uuid'` to `rules()`.
 5. **`resources/views/customer/ChatBox/new.blade.php`** — the hidden
@@ -1577,11 +1670,17 @@ condition, not a silent addition.
 6. **`resources/views/customer/ChatBox/index.blade.php`** —
    `enter_chat()`'s existing inline script gains the `chatBoxId`-keyed
    `pendingConversationTokens` map (§6.1, replacing any single flat
-   token variable), and a third response-status branch (alongside the
-   existing `success`/`error`) for the `'still processing'` case that
-   does not clear that conversation's map entry and shows an
-   informational (non-error) message. No other behavior in this file
-   changes.
+   token variable); a third response-status branch (alongside the
+   existing `success`/`error`) for the `'processing'` case that shows an
+   informational (non-error) message; and, replacing any inference from
+   `status` alone, an explicit read of the response's `m5_token_action`
+   field (§6.1's table) to decide whether to delete that conversation's
+   map entry (`'clear'`) or leave it untouched (`'retain'`) — applied
+   uniformly across all three response-status branches, including the
+   `error` branch, which under the withdrawn design always retained
+   regardless of whether the server intended `clear` or `retain`. The
+   true network-level AJAX `error` callback (no response body at all)
+   defaults to `retain`. No other behavior in this file changes.
 7. **`config/usage_billing.php`** — adds
    `conversations_metering.pilot_business_id`,
    `conversations_metering.pilot_country_id`,
@@ -1610,21 +1709,22 @@ condition, not a silent addition.
 
 ### New (8)
 
-11. **`app/Console/Commands/ActivateUsageFeatureRate.php`** — §9.1's
-    operator command.
+11. **`app/Console/Commands/ActivateConversationsUsageRate.php`** —
+    §9.1's operator command, hard-coded to
+    `PlatformFeature::Conversations` with no `{feature}` argument.
 12. **`app/Console/Commands/ResolveAmbiguousUsageReservation.php`** —
     §6.2's manual-resolution command, with all six safety checks.
 13. **`tests/Feature/Usage/ConversationsPlainSmsMeteringTest.php`** — the
     core metering-lifecycle test cases, the trusted-origin positive
     proof, and the compose-scoped/two-tab/`reply()`-reset-boundary
-    token tests (§13 items 1-6, 8-14, 16-19, 23-25).
+    token tests (§13 items 1-4, 6-8, 11-14, 16-20, 22-25).
 14. **`tests/Feature/Usage/QuickSendNonConversationCallersUnaffectedTest.php`** —
-    the non-ChatBox-caller, forged-input, and non-M5-channel regression
-    cases (§13 items 7, 15, 20, 21).
-15. **`tests/Feature/Usage/ActivateUsageFeatureRateCommandTest.php`** —
-    §13 item 26.
+    the M5-flag opt-in isolation, forged-input, and five-non-ChatBox-
+    caller regression cases (§13 items 5, 15, 21).
+15. **`tests/Feature/Usage/ActivateConversationsUsageRateCommandTest.php`** —
+    §13 item 28.
 16. **`tests/Feature/Usage/ResolveAmbiguousUsageReservationCommandTest.php`** —
-    §13 item 27, covering all six §6.2 checks.
+    §13 item 29, covering all six §6.2 checks.
 17. **`tests/Feature/Usage/Support/concurrent_conversations_send_runner.php`** —
     a real cross-process test-support runner, modeled directly on the
     already-merged RFC-005 M4 precedent
@@ -1697,9 +1797,10 @@ condition, not a silent addition.
 
 ## 13. Required tests
 
-New, across the seven new test files (§12 items 13-18), or split further
-at the implementation's own discretion provided every case below is
-covered exactly once:
+New, across the five new test files (§12 items 13, 14, 15, 16, and 18)
+plus the one new cross-process test-support runner they share (§12 item
+17, itself not a test file), or split further at the implementation's
+own discretion provided every case below is covered exactly once:
 
 1. Metered `Conversations` plain-SMS send, all six §5.1 conditions
    satisfied → `reserve()`'s `createdByThisInvocation === true` →
@@ -1733,7 +1834,7 @@ covered exactly once:
    processing" shape; the structured warning is logged; client retains
    its token.
 9. **Real concurrent same-token race** (two genuine OS processes, via
-   the runner in §12 item 16) → exactly one reservation row, exactly one
+   the runner in §12 item 17) → exactly one reservation row, exactly one
    `createdByThisInvocation === true` result, exactly one provider
    invocation (asserted via a recording fake/double shared across the
    two processes), exactly one accounting outcome.
@@ -1852,11 +1953,21 @@ covered exactly once:
 27. `tests/Feature/Entitlement/PlatformFeatureRegistryTest.php` re-run
     unmodified — confirms no `Planned` feature became executable and
     `Conversations` availability is unchanged.
-28. **`ActivateUsageFeatureRateCommandTest`:** the command requires
+28. **`ActivateConversationsUsageRateCommandTest`:** the command requires
     every numeric/label argument explicitly; refuses to run without
     `--actor-user-id`; refuses to run when the supplied id's `is_admin`
     is not true; succeeds only for a genuine admin id, in the correct
-    `setActiveRate()`-then-`activateMetering()` order.
+    `setActiveRate()`-then-`activateMetering()` order; **the command has
+    no way to activate `Crm`, `Automations`, or any other `Available`
+    feature — a direct assertion that the command's own `$featureKey`
+    is always exactly `PlatformFeature::Conversations->value`, and that
+    no argument or option exists through which a caller could supply a
+    different feature key**; **the command has no way to activate any
+    `Planned` feature**, for the identical reason; a successful fixture
+    activation is asserted to affect the `conversations` classification
+    row only, leaving every other feature's
+    `platform_feature_usage_classifications` row and `active_rate_id`
+    completely untouched.
 29. **`ResolveAmbiguousUsageReservationCommandTest`, covering all six
     §6.2 checks:** rejects a nonexistent reservation id; rejects a
     non-`Pending` reservation (`Committed` and `Released` cases each
