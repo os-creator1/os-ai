@@ -37,6 +37,16 @@ class EloquentAdditionalBusinessSlotRenewalChargeRepository extends EloquentBase
         return $this->query()->where('change_operation_id', $changeOperationId)->first();
     }
 
+    public function findPreviousScheduledRenewalCharge(int $agreementId, int $excludingChargeId): ?AdditionalBusinessSlotRenewalCharge
+    {
+        return $this->query()
+            ->where('agreement_id', $agreementId)
+            ->where('charge_kind', 'scheduled_renewal')
+            ->where('id', '!=', $excludingChargeId)
+            ->orderByDesc('id')
+            ->first();
+    }
+
     public function create(array $attributes): AdditionalBusinessSlotRenewalCharge
     {
         /** @var AdditionalBusinessSlotRenewalCharge $charge */

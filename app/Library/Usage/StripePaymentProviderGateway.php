@@ -325,7 +325,17 @@ class StripePaymentProviderGateway implements PaymentProviderGateway
         } catch (RateLimitException) {
             throw new ProviderRateLimitException();
         } catch (CardException $e) {
-            throw new ProviderCardDeclinedException($e->getDeclineCode());
+            // M4 contract §21 (Correction Round 2 §B) — the SDK documents
+            // payment_intent as populated on the ErrorObject for a
+            // PaymentIntent-involving error (exactly what create-with-
+            // confirm and confirm both are), but does not guarantee it;
+            // extracted opportunistically here for every card decline
+            // regardless of which method triggered it — harmless for
+            // callers (e.g. confirmPaymentIntent()'s own retries) that
+            // never read the new field, and this is the only reference a
+            // hard decline on attempt 1 (createOffSessionPaymentIntent())
+            // will ever have.
+            throw new ProviderCardDeclinedException($e->getDeclineCode(), $e->getError()?->payment_intent?->id ?? null);
         } catch (InvalidRequestException $e) {
             throw new ProviderInvalidRequestException($e->getMessage());
         } catch (ApiConnectionException) {

@@ -68,6 +68,40 @@ class FakePaymentProviderGatewayTest extends TestCase
         $gateway->createOffSessionPaymentIntent('cus_x', 'pm_x', 1000, 'USD', 'idem-decline', []);
     }
 
+    /**
+     * M4 contract §21 (Correction Round 2 §B) — reproduces the real
+     * gateway's own behavior of carrying the declined PaymentIntent's real
+     * id on the exception, and the configurable escape hatch that lets a
+     * test force the fail-closed null-evidence case instead.
+     */
+    public function test_declined_off_session_payment_intent_carries_the_generated_id_by_default(): void
+    {
+        $gateway = new FakePaymentProviderGateway();
+        $gateway->paymentIntentOutcomes['idem-decline'] = 'declined';
+
+        try {
+            $gateway->createOffSessionPaymentIntent('cus_x', 'pm_x', 1000, 'USD', 'idem-decline', []);
+            $this->fail('Expected ProviderCardDeclinedException.');
+        } catch (ProviderCardDeclinedException $e) {
+            $this->assertNotNull($e->providerPaymentIntentId);
+            $this->assertStringStartsWith('pi_fake_', $e->providerPaymentIntentId);
+        }
+    }
+
+    public function test_declined_off_session_payment_intent_can_be_forced_to_omit_the_id(): void
+    {
+        $gateway = new FakePaymentProviderGateway();
+        $gateway->paymentIntentOutcomes['idem-decline'] = 'declined';
+        $gateway->declineOmitsPaymentIntentId['idem-decline'] = true;
+
+        try {
+            $gateway->createOffSessionPaymentIntent('cus_x', 'pm_x', 1000, 'USD', 'idem-decline', []);
+            $this->fail('Expected ProviderCardDeclinedException.');
+        } catch (ProviderCardDeclinedException $e) {
+            $this->assertNull($e->providerPaymentIntentId);
+        }
+    }
+
     public function test_webhook_signature_verification_is_deterministic(): void
     {
         $gateway = new FakePaymentProviderGateway();

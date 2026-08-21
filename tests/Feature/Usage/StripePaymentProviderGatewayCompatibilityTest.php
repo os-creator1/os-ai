@@ -87,6 +87,21 @@ class StripePaymentProviderGatewayCompatibilityTest extends TestCase
         $this->assertStringContainsString("'expand' => ['payment_intent.payment_method']", $source);
     }
 
+    /**
+     * M4 contract §21 (Correction Round 2 §B) — the shared call() catch
+     * for CardException extracts the declined PaymentIntent's own id from
+     * the SDK's own documented ErrorObject::$payment_intent property,
+     * carrying it forward on ProviderCardDeclinedException so attempt 1's
+     * hard declines remain retryable rather than permanently stuck.
+     */
+    public function test_card_declined_exception_extracts_the_payment_intent_id_from_the_error_object(): void
+    {
+        $source = file_get_contents(app_path('Library/Usage/StripePaymentProviderGateway.php'));
+
+        $this->assertStringContainsString('$e->getError()?->payment_intent?->id ?? null', $source);
+        $this->assertStringContainsString('new ProviderCardDeclinedException($e->getDeclineCode(), $e->getError()', $source);
+    }
+
     public function test_confirm_payment_intent_request_shape_includes_payment_method_and_idempotency_key(): void
     {
         $source = file_get_contents(app_path('Library/Usage/StripePaymentProviderGateway.php'));

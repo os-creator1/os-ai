@@ -265,6 +265,193 @@ class SlotAgreementAllocationSagaTest extends TestCase
         $this->assertSame(count($keys), count(array_unique($keys)));
     }
 
+    /**
+     * M4 contract §8 (Correction Round 2 §A) — an RFC-004 allocation
+     * exception (here, ComplimentaryWorkspaceCannotAllocatePaidSlotsException,
+     * a real RFC-004 rejection, never a manufactured one) must durably
+     * commit allocation_failed *before* the exception is rethrown — the
+     * caller still observes the exception, but the failure state survives
+     * it, queryable on a fresh read. Then proves allocation_failed is a
+     * genuinely recoverable entry state: once the underlying condition is
+     * resolved (the workspace's own complimentary flag is revoked), a
+     * plain reconciliation-style direct call to performVerifiedAllocation()
+     * — never a fresh charge, never a new idempotency key — completes it.
+     */
+    public function test_allocation_failed_is_durably_committed_before_rethrow_and_recoverable_via_reconciliation(): void
+    {
+        $owner = User::create([
+            'first_name' => 'Fixture', 'last_name' => 'Owner', 'email' => 'owner'.uniqid().'@example.test',
+            'status' => true, 'is_admin' => false, 'is_customer' => true, 'active_portal' => 'customer',
+        ]);
+        $admin = User::create([
+            'first_name' => 'Fixture', 'last_name' => 'Admin', 'email' => 'admin'.uniqid().'@example.test',
+            'status' => true, 'is_admin' => true, 'is_customer' => false, 'active_portal' => 'admin',
+        ]);
+        $workspace = Workspace::create(['name' => 'Test Workspace', 'owner_user_id' => $owner->id, 'is_active' => true]);
+        $catalog = app(WorkspacePlanCatalogRepository::class)->findByTier(WorkspacePlanTier::Core);
+        app(EntitlementManager::class)->updateCatalogPricing($catalog, '20.00', $this->currencyId, '0.5000', $admin->id, 'Fixture pricing.');
+        app(EntitlementManager::class)->assignFirstPlan($workspace, WorkspacePlanTier::Core, $admin->id, 'Fixture.', true, 0);
+
+        $manager = app(UsageBillingCheckoutManager::class);
+        $quote = $manager->quoteAdditionalSlotAgreement($workspace->fresh(), 1, $owner->id);
+        $agreement = app(AdditionalBusinessSlotAgreementRepository::class)->findById($quote->agreementId);
+        $manager->initiateSlotAgreementCheckout($agreement, $owner->id);
+        $agreement = app(AdditionalBusinessSlotAgreementRepository::class)->findById($agreement->id);
+
+        $providerCustomer = app(PaymentProviderCustomerRepository::class)->findActiveByWorkspaceId((int) $workspace->id);
+        $providerPaymentMethodId = 'pm_fake_comp_'.$workspace->id;
+        $this->gateway->registerPaymentMethod(new PaymentMethodResult($providerPaymentMethodId, $providerCustomer->provider_customer_id, 'card', 'visa', '4242', 12, 2030));
+        $this->gateway->checkoutSessionOutcomes[$agreement->local_idempotency_key] = ['providerPaymentMethodId' => $providerPaymentMethodId];
+
+        try {
+            $manager->confirmSlotAgreementFromReturn($agreement);
+            $this->fail('Expected the complimentary-workspace RFC-004 rejection to propagate.');
+        } catch (\App\Exceptions\Entitlement\ComplimentaryWorkspaceCannotAllocatePaidSlotsException $e) {
+            // Expected — the exception must still reach the caller.
+        }
+
+        $failed = app(AdditionalBusinessSlotAgreementRepository::class)->findById((int) $agreement->id);
+        $this->assertSame(SlotAgreementState::AllocationFailed, $failed->state);
+
+        app(EntitlementManager::class)->revokeComplimentaryStatus($workspace->fresh(), $admin->id);
+
+        $assignment = $manager->performVerifiedAllocation($failed);
+
+        $recovered = app(AdditionalBusinessSlotAgreementRepository::class)->findById((int) $agreement->id);
+        $this->assertSame(SlotAgreementState::Completed, $recovered->state);
+        $this->assertSame($assignment->additional_business_slots, $recovered->current_allocation_count);
+    }
+
+    /**
+     * M4 contract §8/§14 (Correction Round 2 §A) — the same recovery, via
+     * allocateSlotAgreementAsAdministrator() instead of the reconciliation-
+     * style direct call, proving both authorized recovery paths accept
+     * allocation_failed.
+     */
+    public function test_allocation_failed_is_recoverable_via_administrator_action(): void
+    {
+        $owner = User::create([
+            'first_name' => 'Fixture', 'last_name' => 'Owner', 'email' => 'owner'.uniqid().'@example.test',
+            'status' => true, 'is_admin' => false, 'is_customer' => true, 'active_portal' => 'customer',
+        ]);
+        $admin = User::create([
+            'first_name' => 'Fixture', 'last_name' => 'Admin', 'email' => 'admin'.uniqid().'@example.test',
+            'status' => true, 'is_admin' => true, 'is_customer' => false, 'active_portal' => 'admin',
+        ]);
+        $workspace = Workspace::create(['name' => 'Test Workspace', 'owner_user_id' => $owner->id, 'is_active' => true]);
+        $catalog = app(WorkspacePlanCatalogRepository::class)->findByTier(WorkspacePlanTier::Core);
+        app(EntitlementManager::class)->updateCatalogPricing($catalog, '20.00', $this->currencyId, '0.5000', $admin->id, 'Fixture pricing.');
+        app(EntitlementManager::class)->assignFirstPlan($workspace, WorkspacePlanTier::Core, $admin->id, 'Fixture.', true, 0);
+
+        $manager = app(UsageBillingCheckoutManager::class);
+        $quote = $manager->quoteAdditionalSlotAgreement($workspace->fresh(), 1, $owner->id);
+        $agreement = app(AdditionalBusinessSlotAgreementRepository::class)->findById($quote->agreementId);
+        $manager->initiateSlotAgreementCheckout($agreement, $owner->id);
+        $agreement = app(AdditionalBusinessSlotAgreementRepository::class)->findById($agreement->id);
+
+        $providerCustomer = app(PaymentProviderCustomerRepository::class)->findActiveByWorkspaceId((int) $workspace->id);
+        $providerPaymentMethodId = 'pm_fake_comp2_'.$workspace->id;
+        $this->gateway->registerPaymentMethod(new PaymentMethodResult($providerPaymentMethodId, $providerCustomer->provider_customer_id, 'card', 'visa', '4242', 12, 2030));
+        $this->gateway->checkoutSessionOutcomes[$agreement->local_idempotency_key] = ['providerPaymentMethodId' => $providerPaymentMethodId];
+
+        try {
+            $manager->confirmSlotAgreementFromReturn($agreement);
+            $this->fail('Expected the complimentary-workspace RFC-004 rejection to propagate.');
+        } catch (\App\Exceptions\Entitlement\ComplimentaryWorkspaceCannotAllocatePaidSlotsException $e) {
+        }
+
+        $failed = app(AdditionalBusinessSlotAgreementRepository::class)->findById((int) $agreement->id);
+        $this->assertSame(SlotAgreementState::AllocationFailed, $failed->state);
+
+        app(EntitlementManager::class)->revokeComplimentaryStatus($workspace->fresh(), $admin->id);
+
+        $manager->allocateSlotAgreementAsAdministrator($failed, $admin->id, 'Manual recovery after complimentary revoke.');
+
+        $recovered = app(AdditionalBusinessSlotAgreementRepository::class)->findById((int) $agreement->id);
+        $this->assertSame(SlotAgreementState::Completed, $recovered->state);
+    }
+
+    /**
+     * M4 contract §22 (Correction Round 2 §A) — findRequiringAllocationRecovery()
+     * discovers a payment_succeeded agreement stuck past the crash window
+     * (checkout verified, process died before performVerifiedAllocation()
+     * ever ran), not merely allocation_pending.
+     */
+    public function test_reconciliation_discovers_a_payment_succeeded_agreement_stuck_past_the_crash_window(): void
+    {
+        [$workspace, $owner] = $this->entitledWorkspace(0);
+        $agreement = $this->completeInitialCheckout($workspace, $owner, 1);
+
+        // Force it back to payment_succeeded, aged past the reconciliation
+        // job's own bounded threshold — simulating the exact crash window
+        // (checkout verified -> payment_succeeded persisted -> process
+        // dies before performVerifiedAllocation() runs).
+        \Illuminate\Support\Facades\DB::table('additional_business_slot_agreements')->where('id', $agreement->id)->update([
+            'state' => 'payment_succeeded',
+            'current_allocation_count' => 0,
+            'updated_at' => now()->subMinutes(31),
+        ]);
+
+        $due = app(AdditionalBusinessSlotAgreementRepository::class)->findRequiringAllocationRecovery(30);
+        $this->assertTrue($due->contains(fn ($a) => (int) $a->id === (int) $agreement->id));
+
+        app(\App\Jobs\Usage\ReconcileSlotAgreementAllocation::class)->handle(
+            app(AdditionalBusinessSlotAgreementRepository::class),
+            app(UsageBillingCheckoutManager::class),
+        );
+
+        $recovered = app(AdditionalBusinessSlotAgreementRepository::class)->findById((int) $agreement->id);
+        $this->assertSame(SlotAgreementState::Completed, $recovered->state);
+        $this->assertSame(1, $recovered->current_allocation_count);
+    }
+
+    /**
+     * M4 contract §11/§21 (Correction Round 2 §D) — a mid-period increase
+     * that exhausts its three attempts releases exactly its own reserved
+     * delta, atomically tied to the unique terminal failed-transition
+     * insert; a later, independent increase computes correctly against the
+     * corrected baseline, and the final RFC-004 count matches exactly the
+     * sum of the successfully-paid deltas.
+     */
+    public function test_terminal_mid_period_increase_failure_releases_its_reservation_for_a_later_increase(): void
+    {
+        [$workspace, $owner] = $this->entitledWorkspace(0);
+        $agreement = $this->completeInitialCheckout($workspace, $owner, 1);
+        $manager = app(UsageBillingCheckoutManager::class);
+
+        // Increase A: target 1 -> 2 (delta 1), every attempt declines.
+        $this->gateway->confirmPaymentIntentOutcomes['*'] = 'declined';
+        $this->gateway->paymentIntentOutcomes['*'] = 'declined';
+        $resultA = $manager->requestSlotAgreementIncrease($agreement, 2, (string) \Illuminate\Support\Str::uuid(), $owner->id);
+        $chargeA = app(\App\Repositories\Contracts\AdditionalBusinessSlotRenewalChargeRepository::class)->findById($resultA->renewalChargeId);
+        $this->assertSame(\App\Enums\Usage\FundingAttemptState::Failed, $resultA->state);
+
+        $afterFirstAttempt = app(AdditionalBusinessSlotAgreementRepository::class)->findById((int) $agreement->id);
+        $this->assertSame(2, $afterFirstAttempt->target_allocation_count, 'Reservation bumped on creation, before any retry.');
+
+        $manager->retrySlotRenewalAsOwner($chargeA, $owner->id);
+        $manager->retrySlotRenewalAsOwner(app(\App\Repositories\Contracts\AdditionalBusinessSlotRenewalChargeRepository::class)->findById($chargeA->id), $owner->id);
+
+        $afterTerminalFailure = app(AdditionalBusinessSlotAgreementRepository::class)->findById((int) $agreement->id);
+        $this->assertSame(1, $afterTerminalFailure->target_allocation_count, 'Terminal failure releases exactly the frozen delta back to the pre-reservation baseline.');
+        $this->assertSame(1, $afterTerminalFailure->current_allocation_count, 'Never allocated — current_allocation_count is untouched.');
+
+        // Increase B: a later, independent increase, computed against the
+        // corrected (released) baseline.
+        $this->gateway->paymentIntentOutcomes['*'] = 'succeeded';
+        $resultB = $manager->requestSlotAgreementIncrease($afterTerminalFailure, 2, (string) \Illuminate\Support\Str::uuid(), $owner->id);
+        $chargeB = app(\App\Repositories\Contracts\AdditionalBusinessSlotRenewalChargeRepository::class)->findById($resultB->renewalChargeId);
+        $this->assertSame(1, $chargeB->allocation_delta);
+        $this->assertSame(\App\Enums\Usage\FundingAttemptState::Succeeded, $resultB->state);
+
+        $final = app(AdditionalBusinessSlotAgreementRepository::class)->findById((int) $agreement->id);
+        $this->assertSame(2, $final->target_allocation_count);
+        $this->assertSame(2, $final->current_allocation_count);
+
+        $assignment = app(WorkspacePlanAssignmentRepository::class)->findByWorkspaceId((int) $workspace->id);
+        $this->assertSame(2, $assignment->additional_business_slots, 'Exactly the sum of the successfully-paid deltas (1 initial + 1 from B) — never including A\'s failed delta.');
+    }
+
     public function test_crash_replay_after_charge_succeeded_reruns_allocation_idempotently(): void
     {
         [$workspace, $owner] = $this->entitledWorkspace(0);

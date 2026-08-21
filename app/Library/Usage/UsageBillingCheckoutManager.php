@@ -53,6 +53,7 @@ use App\Repositories\Contracts\PaymentProviderCustomerRepository;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 
 /**
@@ -480,13 +481,17 @@ class UsageBillingCheckoutManager
      * wallet_credit, a pure state-machine completion (no wallet mutation,
      * no invented delivery mechanism) for direct_deliverable.
      *
-     * The crash this repairs (attempt already Succeeded, purchase left
-     * Pending) can occur either before or after the wallet credit itself
-     * was durably written on the first pass — since creditFromFunding()
-     * is deliberately not self-idempotent (its own documented contract),
-     * a replay here absorbs the ledger's own correlation_key unique
-     * constraint as proof the credit already happened, rather than
-     * re-deriving that fact through a separate query.
+     * M4 contract §21 (Correction Round 2 §C) — for wallet_credit, the
+     * idempotent ledger credit is established *before* the purchase is
+     * ever allowed to become completed: crash before credit → replay
+     * credits and then completes; crash after credit but before
+     * completion → replay's own credit attempt hits the ledger's own
+     * correlation_key unique constraint (creditFromFunding() is
+     * deliberately not self-idempotent, per its own documented contract),
+     * proving fulfillment already happened, and proceeds straight to
+     * completion; crash after completion → the top-of-method guard above
+     * no-ops immediately. direct_deliverable is unchanged — state-machine-
+     * only completion, no wallet mutation, no invented delivery mechanism.
      */
     private function finalizeAddonPurchaseIfPending(BusinessFundingAttempt $attempt, TransitionSource $source, ?int $providerEventId): void
     {
@@ -494,6 +499,23 @@ class UsageBillingCheckoutManager
 
         if ($purchase === null || $purchase->status === AddonPurchaseStatus::Completed) {
             return;
+        }
+
+        $catalogRow = $this->addonCatalogRepository->findByAddonKey($purchase->addon_key);
+
+        if ($catalogRow !== null && $catalogRow->fulfillment_mode->value === 'wallet_credit') {
+            try {
+                $this->walletManager->creditFromFunding(
+                    (int) $purchase->business_id,
+                    UsageLedgerEntryType::PaidTopUp,
+                    (int) $purchase->price_micro,
+                    (int) $attempt->id,
+                    $attempt->local_idempotency_key.':credit',
+                );
+            } catch (UniqueConstraintViolationException $exception) {
+                // Already credited on an earlier pass; only the purchase
+                // record's own completion was lost to the crash.
+            }
         }
 
         $fromStatus = $purchase->status;
@@ -512,23 +534,6 @@ class UsageBillingCheckoutManager
             'failure_reason' => null,
             'created_at' => now(),
         ]);
-
-        $catalogRow = $this->addonCatalogRepository->findByAddonKey($purchase->addon_key);
-
-        if ($catalogRow !== null && $catalogRow->fulfillment_mode->value === 'wallet_credit') {
-            try {
-                $this->walletManager->creditFromFunding(
-                    (int) $purchase->business_id,
-                    UsageLedgerEntryType::PaidTopUp,
-                    (int) $purchase->price_micro,
-                    (int) $attempt->id,
-                    $attempt->local_idempotency_key.':credit',
-                );
-            } catch (UniqueConstraintViolationException $exception) {
-                // Already credited on an earlier pass; only the purchase
-                // record's own completion was lost to the crash.
-            }
-        }
     }
 
     /**
@@ -892,6 +897,18 @@ class UsageBillingCheckoutManager
         $existing = $this->renewalChargeRepository->findByLocalIdempotencyKey($localIdempotencyKey);
 
         if ($existing !== null) {
+            // M4 contract §21 (Correction Round 2 §B item 5) — attempt 1
+            // never reached a definitive outcome (a hard decline with no
+            // preserved reference, or a non-definitive/transient error) —
+            // re-drive it against the identical idempotency key rather
+            // than returning a permanently stale result.
+            if ($existing->state === FundingAttemptState::Created) {
+                $providerCustomer = $this->providerCustomerRepository->findById((int) $agreement->provider_customer_id);
+                $instrument = $this->instrumentRepository->findDefaultForProviderCustomer((int) $agreement->provider_customer_id);
+
+                return $this->driveRenewalChargeAttempt1($existing, $providerCustomer, $instrument);
+            }
+
             return new SlotRenewalChargeResult($existing->id, $existing->state, null);
         }
 
@@ -903,9 +920,6 @@ class UsageBillingCheckoutManager
 
         $providerCustomer = $this->providerCustomerRepository->findById((int) $agreement->provider_customer_id);
         $instrument = $this->instrumentRepository->findDefaultForProviderCustomer((int) $agreement->provider_customer_id);
-
-        $lastCharge = $this->renewalChargeRepository->findByLocalIdempotencyKey($localIdempotencyKey);
-        $priorAmount = $lastCharge?->amount_micro_snapshot ?? (int) $agreement->total_amount_micro_snapshot;
 
         $charge = $this->renewalChargeRepository->create([
             'agreement_id' => $agreement->id,
@@ -931,6 +945,13 @@ class UsageBillingCheckoutManager
         ]);
 
         $this->recordRenewalChargeTransition($charge, null, FundingAttemptState::Created, TransitionSource::SyncResponse, null, null);
+
+        // M4 contract §22 (Correction Round 2 §E.4) — compares against the
+        // actual previous scheduled_renewal charge; falls back to the
+        // agreement's own original checkout amount only for the genuinely
+        // first-ever scheduled renewal, where no previous charge exists.
+        $previousCharge = $this->renewalChargeRepository->findPreviousScheduledRenewalCharge((int) $agreement->id, (int) $charge->id);
+        $priorAmount = $previousCharge?->amount_micro_snapshot ?? (int) $agreement->total_amount_micro_snapshot;
 
         if ($priorAmount !== $amountMicro) {
             SendSlotAgreementPriceChangeNotice::dispatch($agreement->id, $charge->id);
@@ -1015,7 +1036,11 @@ class UsageBillingCheckoutManager
             return $newCharge;
         });
 
-        if (! $isNew) {
+        // M4 contract §21 (Correction Round 2 §B item 5) — a found existing
+        // charge (fresh or a repeated change_operation_id) whose attempt 1
+        // never reached a definitive outcome is re-driven against the
+        // identical idempotency key rather than returned stale.
+        if (! $isNew && $charge->state !== FundingAttemptState::Created) {
             return new SlotRenewalChargeResult($charge->id, $charge->state, null);
         }
 
@@ -1033,11 +1058,11 @@ class UsageBillingCheckoutManager
     private function driveRenewalChargeAttempt1(AdditionalBusinessSlotRenewalCharge $charge, $providerCustomer, $instrument): SlotRenewalChargeResult
     {
         if ($providerCustomer === null) {
-            return $this->applyRenewalChargeFailure($charge, 'no_provider_customer', TransitionSource::SyncResponse, null);
+            return $this->applyRenewalChargeFailure((int) $charge->id, 'no_provider_customer', TransitionSource::SyncResponse, null, null, 1);
         }
 
         if ($instrument === null) {
-            return $this->applyRenewalChargeFailure($charge, 'no_payment_instrument', TransitionSource::SyncResponse, null);
+            return $this->applyRenewalChargeFailure((int) $charge->id, 'no_payment_instrument', TransitionSource::SyncResponse, null, null, 1);
         }
 
         $currencyCode = $this->currencyCodeById((int) $charge->currency_id_snapshot);
@@ -1060,11 +1085,32 @@ class UsageBillingCheckoutManager
                 ],
             );
         } catch (ProviderCardDeclinedException $e) {
-            return $this->applyRenewalChargeFailure($charge, $e->getMessage(), TransitionSource::SyncResponse, null);
-        } catch (ProviderApiUnavailableException $e) {
-            return $this->applyRenewalChargeFailure($charge, $e->getMessage(), TransitionSource::SyncResponse, null);
-        } catch (ProviderInvalidRequestException $e) {
-            return $this->applyRenewalChargeFailure($charge, $e->getMessage(), TransitionSource::SyncResponse, null);
+            // M4 contract §21 (Correction Round 2 §B) — a definitive card
+            // decline persists its real PaymentIntent reference before the
+            // failed transition is recorded, so ordinals 2-3 can confirm
+            // against it. Fail-closed when that evidence is unexpectedly
+            // absent: treated identically to a non-definitive outcome
+            // (no transition, no ordinal consumed, charge stays Created) —
+            // never a fabricated reference, never an unretryable charge.
+            if ($e->providerPaymentIntentId === null) {
+                Log::warning('Definitive card decline on renewal-charge attempt 1 carried no PaymentIntent reference.', [
+                    'renewal_charge_id' => $charge->id,
+                    'decline_code' => $e->declineCode,
+                ]);
+
+                return new SlotRenewalChargeResult($charge->id, $charge->state, $e->getMessage());
+            }
+
+            $charge = $this->renewalChargeRepository->update($charge, [
+                'provider_session_or_intent_reference' => $e->providerPaymentIntentId,
+            ]);
+
+            return $this->applyRenewalChargeFailure((int) $charge->id, $e->getMessage(), TransitionSource::SyncResponse, null, null, 1);
+        } catch (ProviderApiUnavailableException|ProviderInvalidRequestException $e) {
+            // Non-definitive (§B) — no transition, no ordinal consumed;
+            // charge stays Created and is safely re-driven on the next
+            // invocation under the identical idempotency key.
+            return new SlotRenewalChargeResult($charge->id, $charge->state, $e->getMessage());
         }
 
         $fromState = $charge->state;
@@ -1076,7 +1122,7 @@ class UsageBillingCheckoutManager
         $this->recordRenewalChargeTransition($charge, $fromState, $newState, TransitionSource::SyncResponse, null, null);
 
         if ($paymentIntent->status === 'succeeded') {
-            return $this->applyRenewalChargeSuccess($charge, TransitionSource::SyncResponse, null);
+            return $this->applyRenewalChargeSuccess((int) $charge->id, TransitionSource::SyncResponse, null);
         }
 
         return new SlotRenewalChargeResult($charge->id, $charge->state, null);
@@ -1126,73 +1172,88 @@ class UsageBillingCheckoutManager
     }
 
     /**
-     * M4 contract §13/§21/§23 — ordinals 2–3 pre-lapse; ordinal 4+ is
-     * this method's own sole post-lapse role once payment_lapsed is
-     * true. A mid_period_increase charge never sets payment_lapsed
-     * (§13/§21 scope it to the agreement's own recurring renewal
-     * cadence), so an increase charge exhausting 3 attempts stays
-     * permanently Failed — a fresh increase (new change_operation_id)
-     * is required to try again, never an unbounded retry loop.
+     * M4 contract §13/§21/§23 (Correction Round 2 §E.2) — ordinals 2–3
+     * pre-lapse; ordinal 4+ is this method's own sole post-lapse role once
+     * payment_lapsed is true. A mid_period_increase charge never sets
+     * payment_lapsed (§13/§21 scope it to the agreement's own recurring
+     * renewal cadence), so an increase charge exhausting 3 attempts stays
+     * permanently Failed — a fresh increase (new change_operation_id) is
+     * required to try again, never an unbounded retry loop.
+     *
+     * No persisted pre-provider-call state mutation of any kind — Phase A
+     * locks/validates/computes the attempted ordinal N and commits without
+     * changing the charge, so a process dying between here and the Stripe
+     * call leaves the charge exactly as resumable as it was. Concurrency is
+     * closed entirely by result-application dedup (applyRenewalChargeFailure()/
+     * applyRenewalChargeSuccess()/applyRenewalChargeRequiresAction()), never
+     * by an in-flight claim.
      */
     private function driveRenewalChargeRetry(AdditionalBusinessSlotRenewalCharge $charge, AdditionalBusinessSlotAgreement $agreement, TransitionSource $source, int $actorUserId): SlotRenewalChargeResult
     {
-        if (! in_array($charge->state, [FundingAttemptState::Failed, FundingAttemptState::RequiresAction], true)) {
-            throw new SlotRenewalChargeNotResumableException($charge->id, $charge->state->value);
-        }
+        $chargeId = (int) $charge->id;
+        $agreementId = (int) $agreement->id;
 
-        if ($charge->provider_session_or_intent_reference === null) {
-            throw new SlotRenewalChargeNotResumableException($charge->id, $charge->state->value);
-        }
+        [$providerReference, $ordinal, $providerPaymentMethodId, $localIdempotencyKey] = DB::transaction(function () use ($chargeId, $agreementId) {
+            $lockedCharge = $this->renewalChargeRepository->findForUpdateById($chargeId);
 
-        $ordinal = $this->currentAttemptOrdinal($charge);
+            if ($lockedCharge === null) {
+                throw new SlotRenewalChargeNotResumableException($chargeId, 'not_found');
+            }
 
-        if ($ordinal >= 4 && ! $agreement->payment_lapsed) {
-            throw new SlotRenewalChargeNotResumableException($charge->id, $charge->state->value);
-        }
+            if (! in_array($lockedCharge->state, [FundingAttemptState::Failed, FundingAttemptState::RequiresAction], true)) {
+                throw new SlotRenewalChargeNotResumableException($lockedCharge->id, $lockedCharge->state->value);
+            }
 
-        $providerCustomer = $this->providerCustomerRepository->findById((int) $agreement->provider_customer_id);
-        $instrument = $providerCustomer !== null ? $this->instrumentRepository->findDefaultForProviderCustomer((int) $providerCustomer->id) : null;
+            if ($lockedCharge->provider_session_or_intent_reference === null) {
+                throw new SlotRenewalChargeNotResumableException($lockedCharge->id, $lockedCharge->state->value);
+            }
 
-        if ($instrument === null) {
-            throw new SlotRenewalChargeNotResumableException($charge->id, $charge->state->value);
-        }
+            $lockedAgreement = $this->agreementRepository->findForUpdateById($agreementId);
 
-        $idempotencyKey = hash('sha256', $charge->local_idempotency_key.':attempt:'.$ordinal);
+            if ($lockedAgreement === null) {
+                throw new SlotRenewalChargeNotResumableException($lockedCharge->id, $lockedCharge->state->value);
+            }
+
+            $ordinal = 1 + $this->renewalChargeTransitionRepository->countFailedForCharge($lockedCharge->id);
+
+            if ($ordinal >= 4 && ! $lockedAgreement->payment_lapsed) {
+                throw new SlotRenewalChargeNotResumableException($lockedCharge->id, $lockedCharge->state->value);
+            }
+
+            $providerCustomer = $this->providerCustomerRepository->findById((int) $lockedAgreement->provider_customer_id);
+            $instrument = $providerCustomer !== null ? $this->instrumentRepository->findDefaultForProviderCustomer((int) $providerCustomer->id) : null;
+
+            if ($instrument === null) {
+                throw new SlotRenewalChargeNotResumableException($lockedCharge->id, $lockedCharge->state->value);
+            }
+
+            return [$lockedCharge->provider_session_or_intent_reference, $ordinal, $instrument->provider_payment_method_id, $lockedCharge->local_idempotency_key];
+        });
+
+        $idempotencyKey = hash('sha256', $localIdempotencyKey.':attempt:'.$ordinal);
 
         try {
-            $paymentIntent = $this->gateway->confirmPaymentIntent($charge->provider_session_or_intent_reference, $instrument->provider_payment_method_id, $idempotencyKey);
+            $paymentIntent = $this->gateway->confirmPaymentIntent($providerReference, $providerPaymentMethodId, $idempotencyKey);
         } catch (ProviderCardDeclinedException $e) {
-            return $this->applyRenewalChargeFailure($charge, $e->getMessage(), $source, null);
-        } catch (ProviderApiUnavailableException $e) {
-            return $this->applyRenewalChargeFailure($charge, $e->getMessage(), $source, null);
-        } catch (ProviderInvalidRequestException $e) {
-            return $this->applyRenewalChargeFailure($charge, $e->getMessage(), $source, null);
+            return $this->applyRenewalChargeFailure($chargeId, $e->getMessage(), $source, null, $actorUserId, $ordinal);
+        } catch (ProviderApiUnavailableException|ProviderInvalidRequestException $e) {
+            // Non-definitive (§B) — write nothing; the charge is left
+            // exactly in its pre-call state, and the next invocation
+            // recomputes the identical ordinal/idempotency key.
+            $current = $this->renewalChargeRepository->findById($chargeId);
+
+            return new SlotRenewalChargeResult($chargeId, $current?->state ?? FundingAttemptState::Failed, $e->getMessage());
         }
 
         if ($paymentIntent->status === 'succeeded') {
-            return $this->applyRenewalChargeSuccess($charge, $source, null, $actorUserId);
+            return $this->applyRenewalChargeSuccess($chargeId, $source, null, $actorUserId);
         }
 
         if ($paymentIntent->status === 'requires_action') {
-            $fromState = $charge->state;
-            $charge = $this->renewalChargeRepository->update($charge, ['state' => FundingAttemptState::RequiresAction->value]);
-            $this->recordRenewalChargeTransition($charge, $fromState, FundingAttemptState::RequiresAction, $source, null, $actorUserId);
-
-            return new SlotRenewalChargeResult($charge->id, $charge->state, null);
+            return $this->applyRenewalChargeRequiresAction($chargeId, $source, $actorUserId);
         }
 
-        return $this->applyRenewalChargeFailure($charge, 'provider_reported_failure', $source, null);
-    }
-
-    /**
-     * M4 contract §21/§23 (Correction Round 1 §A) — the exact, durable,
-     * crash-safe attempt-ordinal formula: 1 + count of already-recorded
-     * to_state = 'failed' rows for this exact renewal charge. No new
-     * schema column, never cached in process memory.
-     */
-    private function currentAttemptOrdinal(AdditionalBusinessSlotRenewalCharge $charge): int
-    {
-        return 1 + $this->renewalChargeTransitionRepository->countFailedForCharge((int) $charge->id);
+        return $this->applyRenewalChargeFailure($chargeId, 'provider_reported_failure', $source, null, $actorUserId, $ordinal);
     }
 
     /**
@@ -1203,33 +1264,49 @@ class UsageBillingCheckoutManager
      */
     public function confirmSlotRenewalChargeFromWebhook(AdditionalBusinessSlotRenewalCharge $charge, PaymentProviderEvent $event): void
     {
-        $this->applyRenewalChargeSuccess($charge, TransitionSource::WebhookEvent, $event->id);
+        $this->applyRenewalChargeSuccess((int) $charge->id, TransitionSource::WebhookEvent, $event->id);
     }
 
     public function markSlotRenewalChargeFailedFromWebhook(AdditionalBusinessSlotRenewalCharge $charge, string $failureReason, PaymentProviderEvent $event): void
     {
-        $this->applyRenewalChargeFailure($charge, $failureReason, TransitionSource::WebhookEvent, $event->id);
+        $this->applyRenewalChargeFailure((int) $charge->id, $failureReason, TransitionSource::WebhookEvent, $event->id);
     }
 
     /**
-     * M4 contract §21/§23 (Correction Round 1 §A/§E) — the single shared
-     * renewal-result-application routine for a verified provider success,
-     * reused by every synchronous caller and both webhook methods above.
-     * scheduled_renewal success performs the renewal/lapse/next-renewal
-     * updates and never allocates; mid_period_increase success invokes
-     * the verified allocation seam, idempotently, even on a replay where
-     * the charge is already Succeeded (the crash-recovery requirement).
+     * M4 contract §21/§23 (Correction Round 1 §A/§E; Correction Round 2
+     * §E.2/§E.3) — the single shared renewal-result-application routine
+     * for a verified provider success, reused by every synchronous caller
+     * and both webhook methods above. Re-locks the charge by id — never
+     * trusts a caller-supplied model's own state — so two racing callers
+     * applying the identical Stripe-idempotent success converge on exactly
+     * one Succeeded transition. scheduled_renewal success unconditionally
+     * (idempotently) repairs its downstream agreement bookkeeping;
+     * mid_period_increase success unconditionally (idempotently) invokes
+     * the verified allocation seam — both run every time, even on a replay
+     * where the charge is already Succeeded (the crash-recovery
+     * requirement), since each of those two downstream operations is
+     * independently idempotent.
      */
-    private function applyRenewalChargeSuccess(AdditionalBusinessSlotRenewalCharge $charge, TransitionSource $source, ?int $providerEventId, ?int $actorUserId = null): SlotRenewalChargeResult
+    private function applyRenewalChargeSuccess(int $chargeId, TransitionSource $source, ?int $providerEventId, ?int $actorUserId = null): SlotRenewalChargeResult
     {
-        if ($charge->state !== FundingAttemptState::Succeeded) {
-            $fromState = $charge->state;
-            $charge = $this->renewalChargeRepository->update($charge, ['state' => FundingAttemptState::Succeeded->value]);
-            $this->recordRenewalChargeTransition($charge, $fromState, FundingAttemptState::Succeeded, $source, $providerEventId, $actorUserId);
+        $charge = DB::transaction(function () use ($chargeId, $source, $providerEventId, $actorUserId) {
+            $locked = $this->renewalChargeRepository->findForUpdateById($chargeId);
 
-            if ($charge->charge_kind === SlotRenewalChargeKind::ScheduledRenewal) {
-                $this->applyScheduledRenewalSuccess($charge);
+            if ($locked === null) {
+                throw new SlotRenewalChargeNotResumableException($chargeId, 'not_found');
             }
+
+            if ($locked->state !== FundingAttemptState::Succeeded) {
+                $fromState = $locked->state;
+                $locked = $this->renewalChargeRepository->update($locked, ['state' => FundingAttemptState::Succeeded->value]);
+                $this->recordRenewalChargeTransition($locked, $fromState, FundingAttemptState::Succeeded, $source, $providerEventId, $actorUserId);
+            }
+
+            return $locked;
+        });
+
+        if ($charge->charge_kind === SlotRenewalChargeKind::ScheduledRenewal) {
+            $this->applyScheduledRenewalSuccess($charge);
         }
 
         if ($charge->charge_kind === SlotRenewalChargeKind::MidPeriodIncrease) {
@@ -1240,69 +1317,122 @@ class UsageBillingCheckoutManager
     }
 
     /**
-     * M4 contract §21/§23 — the single shared renewal-result-application
-     * routine for a verified provider failure. Participates in the
-     * already-locked attempt-ordinal/dunning rule: scheduled_renewal's
-     * 3rd failure sets payment_lapsed on the parent agreement.
+     * M4 contract §21/§23 (Correction Round 2 §E.2) — applies a `requires_action`
+     * provider outcome exactly once: re-locks by id, and a racing caller
+     * that finds the charge already RequiresAction no-ops rather than
+     * recording a duplicate transition.
      */
-    private function applyRenewalChargeFailure(AdditionalBusinessSlotRenewalCharge $charge, string $reason, TransitionSource $source, ?int $providerEventId): SlotRenewalChargeResult
+    private function applyRenewalChargeRequiresAction(int $chargeId, TransitionSource $source, ?int $actorUserId): SlotRenewalChargeResult
     {
-        // Deliberately excludes Failed: driveRenewalChargeRetry()'s own
-        // precondition guarantees a retry only ever starts from Failed/
-        // RequiresAction, so a charge arriving here already Failed is a
-        // genuinely new retry attempt that has also just failed — not a
-        // stale replay — and must record its own transition so the
-        // pre-lapse attempt count advances. Duplicate webhook deliveries
-        // for the identical underlying event are deduplicated upstream
-        // (ProcessPaymentProviderEvent's own event-claim layer), so no
-        // further guard is needed here for that case.
-        if (in_array($charge->state, [FundingAttemptState::Succeeded, FundingAttemptState::Canceled], true)) {
-            return new SlotRenewalChargeResult($charge->id, $charge->state, null);
-        }
+        return DB::transaction(function () use ($chargeId, $source, $actorUserId) {
+            $locked = $this->renewalChargeRepository->findForUpdateById($chargeId);
 
-        $fromState = $charge->state;
-        $charge = $this->renewalChargeRepository->update($charge, [
-            'state' => FundingAttemptState::Failed->value,
-            'failure_reason' => $reason,
-        ]);
-        $this->recordRenewalChargeTransition($charge, $fromState, FundingAttemptState::Failed, $source, $providerEventId, null);
+            if ($locked === null || $locked->state === FundingAttemptState::RequiresAction) {
+                return new SlotRenewalChargeResult($chargeId, $locked?->state ?? FundingAttemptState::RequiresAction, null);
+            }
 
-        $this->maybeSetPaymentLapsed($charge);
+            $fromState = $locked->state;
+            $updated = $this->renewalChargeRepository->update($locked, ['state' => FundingAttemptState::RequiresAction->value]);
+            $this->recordRenewalChargeTransition($updated, $fromState, FundingAttemptState::RequiresAction, $source, null, $actorUserId);
 
-        return new SlotRenewalChargeResult($charge->id, $charge->state, $reason);
+            return new SlotRenewalChargeResult($chargeId, $updated->state, null);
+        });
     }
 
     /**
-     * M4 contract §13/§21 — scheduled_renewal-only advance of
-     * next_renewal_at. Forward-only recomputation from the recovery
-     * moment when this success clears an existing lapse; the charge's
-     * own already-computed period_end otherwise.
+     * M4 contract §21/§23 (Correction Round 2 §E.2/§D) — the single shared
+     * renewal-result-application routine for a verified provider failure.
+     * Re-locks the charge by id and deduplicates against the durable
+     * failed-transition count: when $expectedOrdinal is given (a genuine
+     * retry attempt, §E.2), a durable count already `>= $expectedOrdinal`
+     * means this exact Stripe-idempotent result was already applied by a
+     * racing caller — a pure no-op, never a second transition. Only the
+     * branch that actually inserts a new failed transition runs
+     * maybeSetPaymentLapsed()/maybeReleaseTerminalIncreaseReservation()
+     * (§D) — inside this same transaction, so the terminal-increase
+     * release is atomically tied to the unique transition insert, never to
+     * an assumption about how many times this method is entered.
+     */
+    private function applyRenewalChargeFailure(int $chargeId, string $reason, TransitionSource $source, ?int $providerEventId, ?int $actorUserId = null, ?int $expectedOrdinal = null): SlotRenewalChargeResult
+    {
+        return DB::transaction(function () use ($chargeId, $reason, $source, $providerEventId, $actorUserId, $expectedOrdinal) {
+            $locked = $this->renewalChargeRepository->findForUpdateById($chargeId);
+
+            if ($locked === null) {
+                throw new SlotRenewalChargeNotResumableException($chargeId, 'not_found');
+            }
+
+            if (in_array($locked->state, [FundingAttemptState::Succeeded, FundingAttemptState::Canceled], true)) {
+                return new SlotRenewalChargeResult($chargeId, $locked->state, null);
+            }
+
+            $durableFailedCount = $this->renewalChargeTransitionRepository->countFailedForCharge($chargeId);
+
+            if ($expectedOrdinal !== null && $durableFailedCount >= $expectedOrdinal) {
+                // This exact attempt's result was already applied by a
+                // racing caller — no-op.
+                return new SlotRenewalChargeResult($chargeId, $locked->state, $reason);
+            }
+
+            $fromState = $locked->state;
+            $updated = $this->renewalChargeRepository->update($locked, [
+                'state' => FundingAttemptState::Failed->value,
+                'failure_reason' => $reason,
+            ]);
+            $this->recordRenewalChargeTransition($updated, $fromState, FundingAttemptState::Failed, $source, $providerEventId, $actorUserId);
+
+            $this->maybeSetPaymentLapsed($updated);
+            $this->maybeReleaseTerminalIncreaseReservation($updated);
+
+            return new SlotRenewalChargeResult($chargeId, $updated->state, $reason);
+        });
+    }
+
+    /**
+     * M4 contract §13/§21 (Correction Round 2 §E.1/§E.3) — scheduled_renewal-
+     * only advance of next_renewal_at. Runs inside its own transaction so
+     * the agreement lock is genuinely effective. Forward-only/idempotent:
+     * writes max(computed target, the currently-persisted next_renewal_at) —
+     * never regresses an already-advanced date backward on a replay where
+     * this same success is applied again (§E.3), which is why
+     * applyRenewalChargeSuccess() now calls this unconditionally rather
+     * than only on the charge's own first Succeeded transition.
      */
     private function applyScheduledRenewalSuccess(AdditionalBusinessSlotRenewalCharge $charge): void
     {
-        $agreement = $this->agreementRepository->findForUpdateById((int) $charge->agreement_id);
+        $agreementId = (int) $charge->agreement_id;
 
-        if ($agreement === null) {
-            return;
-        }
+        $wasLapsed = DB::transaction(function () use ($charge, $agreementId) {
+            $agreement = $this->agreementRepository->findForUpdateById($agreementId);
 
-        $wasLapsed = (bool) $agreement->payment_lapsed;
+            if ($agreement === null) {
+                return null;
+            }
 
-        $updates = [
-            'next_renewal_at' => $wasLapsed
+            $wasLapsed = (bool) $agreement->payment_lapsed;
+
+            $computedTarget = $wasLapsed
                 ? Carbon::now()->toImmutable()->addMonthNoOverflow()
-                : $charge->period_end,
-        ];
+                : $charge->period_end;
+
+            $targetNextRenewalAt = $agreement->next_renewal_at !== null && $agreement->next_renewal_at->greaterThan($computedTarget)
+                ? $agreement->next_renewal_at
+                : $computedTarget;
+
+            $updates = ['next_renewal_at' => $targetNextRenewalAt];
+
+            if ($wasLapsed) {
+                $updates['payment_lapsed'] = false;
+                $updates['payment_lapsed_cleared_at'] = now();
+            }
+
+            $this->agreementRepository->update($agreement, $updates);
+
+            return $wasLapsed;
+        });
 
         if ($wasLapsed) {
-            $updates['payment_lapsed'] = false;
-            $updates['payment_lapsed_cleared_at'] = now();
-        }
-
-        $this->agreementRepository->update($agreement, $updates);
-
-        if ($wasLapsed) {
-            AdditionalBusinessSlotAgreementPaymentRecovered::dispatch($agreement->id);
+            AdditionalBusinessSlotAgreementPaymentRecovered::dispatch($agreementId);
         }
     }
 
@@ -1311,7 +1441,10 @@ class UsageBillingCheckoutManager
      * only a scheduled_renewal charge's 3rd failed attempt lapses the
      * agreement; a mid_period_increase failure never does (§13/§21's own
      * lapse concept is scoped to the agreement's recurring renewal
-     * cadence, not a one-off increase request).
+     * cadence, not a one-off increase request). Called from inside
+     * applyRenewalChargeFailure()'s own transaction — findForUpdateById()
+     * here is therefore a genuinely effective lock (§E.1), not a nested,
+     * separately-committed one.
      */
     private function maybeSetPaymentLapsed(AdditionalBusinessSlotRenewalCharge $charge): void
     {
@@ -1340,15 +1473,57 @@ class UsageBillingCheckoutManager
         AdditionalBusinessSlotAgreementLapsed::dispatch($agreement->id);
     }
 
+    /**
+     * M4 contract §11/§21 (Correction Round 2 §D) — releases a terminally-
+     * failed mid_period_increase charge's own frozen reservation. Called
+     * only from inside applyRenewalChargeFailure()'s own transaction,
+     * immediately after that method's own dedup check has confirmed a
+     * genuinely new (not a racing duplicate) threshold-reaching failed
+     * transition was just inserted — this atomic pairing, not a separate
+     * assumption about call count, is what makes the release exactly-once.
+     * Never reduces target_allocation_count below current_allocation_count
+     * (the agreement's own authoritative allocated floor); other pending
+     * reservations remain untouched since this decrements only this
+     * charge's own frozen allocation_delta.
+     */
+    private function maybeReleaseTerminalIncreaseReservation(AdditionalBusinessSlotRenewalCharge $charge): void
+    {
+        if ($charge->charge_kind !== SlotRenewalChargeKind::MidPeriodIncrease) {
+            return;
+        }
+
+        $failedCount = $this->renewalChargeTransitionRepository->countFailedForCharge((int) $charge->id);
+
+        if ($failedCount < self::PRE_LAPSE_MAX_ATTEMPTS) {
+            return;
+        }
+
+        $agreement = $this->agreementRepository->findForUpdateById((int) $charge->agreement_id);
+
+        if ($agreement === null) {
+            return;
+        }
+
+        $releasedTarget = $agreement->target_allocation_count - (int) $charge->allocation_delta;
+
+        if ($releasedTarget < $agreement->current_allocation_count) {
+            throw new \RuntimeException("Terminal mid-period-increase release would reduce target_allocation_count below current_allocation_count for agreement [{$agreement->id}].");
+        }
+
+        $this->agreementRepository->update($agreement, ['target_allocation_count' => $releasedTarget]);
+    }
+
     // ------------------------------------------------------------------
     // M4 contract §21 — cancellation
     // ------------------------------------------------------------------
 
     /**
-     * M4 contract §12/§14/§21 — $reason mandatory when $actorUserId is an
-     * administrator, optional for the owner's own agreement. The
-     * administrator branch explicitly verifies real platform-admin
-     * identity before accepting the action.
+     * M4 contract §12/§14/§21 (Correction Round 2 §E.1) — $reason mandatory
+     * when $actorUserId is an administrator, optional for the owner's own
+     * agreement. The administrator branch explicitly verifies real
+     * platform-admin identity before accepting the action. The state
+     * read-then-write is locked/re-checked against the persisted row, not
+     * the caller-supplied model.
      */
     public function requestSlotAgreementCancellation(AdditionalBusinessSlotAgreement $agreement, int $actorUserId, ?string $reason = null): AdditionalBusinessSlotAgreement
     {
@@ -1363,37 +1538,59 @@ class UsageBillingCheckoutManager
             }
         }
 
-        if ($agreement->cancel_at_period_end) {
-            return $agreement;
-        }
+        $agreementId = (int) $agreement->id;
 
-        return $this->agreementRepository->update($agreement, [
-            'cancel_at_period_end' => true,
-            'cancellation_requested_at' => now(),
-            'cancellation_effective_at' => $agreement->next_renewal_at,
-        ]);
+        return DB::transaction(function () use ($agreementId) {
+            $locked = $this->agreementRepository->findForUpdateById($agreementId);
+
+            if ($locked === null) {
+                throw new UnauthorizedSlotAgreementActionException(0, $agreementId, 'cancel a nonexistent agreement');
+            }
+
+            if ($locked->cancel_at_period_end) {
+                return $locked;
+            }
+
+            return $this->agreementRepository->update($locked, [
+                'cancel_at_period_end' => true,
+                'cancellation_requested_at' => now(),
+                'cancellation_effective_at' => $locked->next_renewal_at,
+            ]);
+        });
     }
 
     /**
-     * M4 contract §12/§21 — the method FinalizeSlotAgreementCancellation
-     * calls once per due agreement; the job itself creates no row.
+     * M4 contract §12/§21 (Correction Round 2 §E.1) — the method
+     * FinalizeSlotAgreementCancellation calls once per due agreement; the
+     * job itself creates no row. Locked/re-checked against the persisted
+     * row so a stale caller-held model never duplicates the transition.
      */
     public function finalizeSlotAgreementCancellation(AdditionalBusinessSlotAgreement $agreement): AdditionalBusinessSlotAgreement
     {
-        if ($agreement->state === SlotAgreementState::Canceled) {
-            return $agreement;
+        $agreementId = (int) $agreement->id;
+
+        [$result, $didCancel] = DB::transaction(function () use ($agreementId) {
+            $locked = $this->agreementRepository->findForUpdateById($agreementId);
+
+            if ($locked === null || $locked->state === SlotAgreementState::Canceled) {
+                return [$locked, false];
+            }
+
+            $fromState = $locked->state;
+            $updated = $this->agreementRepository->update($locked, [
+                'state' => SlotAgreementState::Canceled->value,
+                'next_renewal_at' => null,
+            ]);
+            $this->recordAgreementTransition($updated, $fromState, SlotAgreementState::Canceled, TransitionSource::SyncResponse, null, null);
+
+            return [$updated, true];
+        });
+
+        if ($didCancel) {
+            AdditionalBusinessSlotAgreementCanceled::dispatch($agreementId);
         }
 
-        $fromState = $agreement->state;
-        $agreement = $this->agreementRepository->update($agreement, [
-            'state' => SlotAgreementState::Canceled->value,
-            'next_renewal_at' => null,
-        ]);
-        $this->recordAgreementTransition($agreement, $fromState, SlotAgreementState::Canceled, TransitionSource::SyncResponse, null, null);
-
-        AdditionalBusinessSlotAgreementCanceled::dispatch($agreement->id);
-
-        return $agreement;
+        return $result;
     }
 
     // ------------------------------------------------------------------
@@ -1401,66 +1598,117 @@ class UsageBillingCheckoutManager
     // ------------------------------------------------------------------
 
     /**
-     * M4 contract §8 items 1–5 — the single place the cross-RFC
-     * allocation boundary is implemented. Called by exactly three sites:
-     * confirmSlotAgreementChecked() (webhook/return convergence,
-     * administratorActorUserId: null), ReconcileSlotAgreementAllocation
-     * (directly, administratorActorUserId: null — no synthetic actor),
-     * and allocateSlotAgreementAsAdministrator() (the real administrator's
-     * own id and mandatory reason).
+     * M4 contract §8 items 1–5 (Correction Round 2 §A) — the single place
+     * the cross-RFC allocation boundary is implemented. Called by exactly
+     * three sites: confirmSlotAgreementChecked() (webhook/return
+     * convergence, administratorActorUserId: null),
+     * ReconcileSlotAgreementAllocation (directly, administratorActorUserId:
+     * null — no synthetic actor), and allocateSlotAgreementAsAdministrator()
+     * (the real administrator's own id and mandatory reason).
+     *
+     * Three explicit crash-safe phases — persisted state, never the
+     * caller-supplied model's own state, is authoritative:
+     *   Phase 1 (local): reload/lock the agreement; already-completed
+     *     writes nothing (Phase 2 still runs, as an RFC-004-idempotent
+     *     replay); payment_succeeded/allocation_pending/allocation_failed
+     *     otherwise required; transitions to allocation_pending only when
+     *     coming from payment_succeeded.
+     *   Phase 2 (no open transaction): the one authorized EntitlementManager
+     *     seam, with the agreement's own frozen evidence — identical for a
+     *     genuine allocation and a replay.
+     *   Phase 3 (local): on success, re-lock and complete exactly once,
+     *     synchronizing current_allocation_count from the *returned*
+     *     assignment; on an RFC-004 exception, re-lock and durably commit
+     *     allocation_failed *before* the exception is rethrown, so the
+     *     failure state survives even though the caller still observes the
+     *     exception.
+     *
+     * No direct RFC-004 repository/table access anywhere in this method —
+     * EntitlementCatalogSourceBoundaryTest enforces this.
      */
     public function performVerifiedAllocation(AdditionalBusinessSlotAgreement $agreement, ?int $administratorActorUserId = null, ?string $reason = null): WorkspacePlanAssignment
     {
-        if (! in_array($agreement->state, [SlotAgreementState::PaymentSucceeded, SlotAgreementState::AllocationPending], true)) {
-            throw new UnauthorizedSlotAgreementActionException($administratorActorUserId ?? (int) $agreement->requesting_customer_user_id, (int) $agreement->id, 'allocate from an unverified state');
-        }
+        $agreementId = (int) $agreement->id;
 
-        if (blank($agreement->provider_session_or_intent_reference)) {
-            throw new UnauthorizedSlotAgreementActionException($administratorActorUserId ?? (int) $agreement->requesting_customer_user_id, (int) $agreement->id, 'allocate without a verified payment reference');
-        }
+        $locked = DB::transaction(function () use ($agreementId, $administratorActorUserId) {
+            $locked = $this->agreementRepository->findForUpdateById($agreementId);
 
-        if ($agreement->state === SlotAgreementState::PaymentSucceeded) {
-            $fromState = $agreement->state;
-            $agreement = $this->agreementRepository->update($agreement, ['state' => SlotAgreementState::AllocationPending->value]);
-            $this->recordAgreementTransition($agreement, $fromState, SlotAgreementState::AllocationPending, TransitionSource::SyncResponse, null, $administratorActorUserId);
-        }
+            if ($locked === null) {
+                throw new UnauthorizedSlotAgreementActionException($administratorActorUserId ?? 0, $agreementId, 'allocate a nonexistent agreement');
+            }
 
-        $agreement->load('workspace');
-        $idempotencyKey = 'slot-agreement-allocation-'.$agreement->local_idempotency_key;
+            if ($locked->state === SlotAgreementState::Completed) {
+                return $locked;
+            }
+
+            if (! in_array($locked->state, [SlotAgreementState::PaymentSucceeded, SlotAgreementState::AllocationPending, SlotAgreementState::AllocationFailed], true)) {
+                throw new UnauthorizedSlotAgreementActionException($administratorActorUserId ?? (int) $locked->requesting_customer_user_id, $agreementId, 'allocate from an unverified state');
+            }
+
+            if (blank($locked->provider_session_or_intent_reference)) {
+                throw new UnauthorizedSlotAgreementActionException($administratorActorUserId ?? (int) $locked->requesting_customer_user_id, $agreementId, 'allocate without a verified payment reference');
+            }
+
+            if ($locked->state === SlotAgreementState::PaymentSucceeded) {
+                $fromState = $locked->state;
+                $locked = $this->agreementRepository->update($locked, ['state' => SlotAgreementState::AllocationPending->value]);
+                $this->recordAgreementTransition($locked, $fromState, SlotAgreementState::AllocationPending, TransitionSource::SyncResponse, null, $administratorActorUserId);
+            }
+
+            return $locked;
+        });
+
+        $locked->load('workspace');
+        $idempotencyKey = 'slot-agreement-allocation-'.$locked->local_idempotency_key;
 
         try {
             $assignment = $this->entitlementManager->allocateAdditionalBusinessSlotsFromVerifiedPayment(
-                $agreement->workspace,
-                (int) $agreement->paid_delta,
-                (int) $agreement->requesting_customer_user_id,
-                (int) $agreement->workspace_id,
+                $locked->workspace,
+                (int) $locked->paid_delta,
+                (int) $locked->requesting_customer_user_id,
+                (int) $locked->workspace_id,
                 $idempotencyKey,
-                (string) $agreement->provider_session_or_intent_reference,
+                (string) $locked->provider_session_or_intent_reference,
                 $reason,
             );
         } catch (\Throwable $e) {
-            $fromState = $agreement->state;
-            $this->agreementRepository->update($agreement, ['state' => SlotAgreementState::AllocationFailed->value]);
-            $this->recordAgreementTransition($agreement, $fromState, SlotAgreementState::AllocationFailed, TransitionSource::SyncResponse, null, $administratorActorUserId);
-            AdditionalBusinessSlotAllocationFailed::dispatch($agreement->id);
+            DB::transaction(function () use ($agreementId, $administratorActorUserId) {
+                $relocked = $this->agreementRepository->findForUpdateById($agreementId);
+
+                if ($relocked !== null && $relocked->state !== SlotAgreementState::Completed) {
+                    $fromState = $relocked->state;
+                    $relocked = $this->agreementRepository->update($relocked, ['state' => SlotAgreementState::AllocationFailed->value]);
+                    $this->recordAgreementTransition($relocked, $fromState, SlotAgreementState::AllocationFailed, TransitionSource::SyncResponse, null, $administratorActorUserId);
+                    AdditionalBusinessSlotAllocationFailed::dispatch($relocked->id);
+                }
+            });
 
             throw $e;
         }
 
-        $fromState = $agreement->state;
-        $agreement = $this->agreementRepository->update($agreement, [
-            'state' => SlotAgreementState::Completed->value,
-            'current_allocation_count' => $agreement->target_allocation_count,
-            // First-ever completion only (this method is unreachable once
-            // already Completed) — anchors the recurring monthly schedule
-            // applyScheduledRenewalSuccess()/initiateScheduledRenewalCharge()
-            // both depend on next_renewal_at already being non-null.
-            'next_renewal_at' => $agreement->next_renewal_at ?? Carbon::now()->toImmutable()->addMonthNoOverflow(),
-        ]);
-        $this->recordAgreementTransition($agreement, $fromState, SlotAgreementState::Completed, TransitionSource::SyncResponse, null, $administratorActorUserId);
-        AdditionalBusinessSlotAgreementCompleted::dispatch($agreement->id);
+        return DB::transaction(function () use ($agreementId, $assignment, $administratorActorUserId) {
+            $relocked = $this->agreementRepository->findForUpdateById($agreementId);
 
-        return $assignment;
+            if ($relocked === null || $relocked->state === SlotAgreementState::Completed) {
+                return $assignment;
+            }
+
+            $fromState = $relocked->state;
+            $updated = $this->agreementRepository->update($relocked, [
+                'state' => SlotAgreementState::Completed->value,
+                'current_allocation_count' => $assignment->additional_business_slots,
+                // First-ever completion only (this branch is unreachable
+                // once already Completed) — anchors the recurring monthly
+                // schedule applyScheduledRenewalSuccess()/
+                // createScheduledRenewalCharge() both depend on
+                // next_renewal_at already being non-null.
+                'next_renewal_at' => $relocked->next_renewal_at ?? Carbon::now()->toImmutable()->addMonthNoOverflow(),
+            ]);
+            $this->recordAgreementTransition($updated, $fromState, SlotAgreementState::Completed, TransitionSource::SyncResponse, null, $administratorActorUserId);
+            AdditionalBusinessSlotAgreementCompleted::dispatch($agreementId);
+
+            return $assignment;
+        });
     }
 
     /**
@@ -1481,49 +1729,62 @@ class UsageBillingCheckoutManager
     }
 
     /**
-     * M4 contract §21 (Correction Round 1 §D) — used only for
-     * charge_kind === mid_period_increase, only after that charge's own
-     * payment has been durably, provider-verified successful. Uses the
-     * parent agreement's own real workspace_id and original
+     * M4 contract §21 (Correction Round 1 §D; Correction Round 2 §E.1) —
+     * used only for charge_kind === mid_period_increase, only after that
+     * charge's own payment has been durably, provider-verified successful.
+     * Uses the parent agreement's own real workspace_id and original
      * requesting_customer_user_id — never the charge's own actor_user_id.
      * Synchronizes current_allocation_count from RFC-004's own returned
-     * assignment; never increments blindly.
+     * assignment; never increments blindly. Three explicit phases, mirroring
+     * performVerifiedAllocation() (§A): local prepare (locked), the RFC-004
+     * call outside any open transaction, local result apply (re-locked).
      */
     private function performVerifiedRenewalChargeAllocation(AdditionalBusinessSlotRenewalCharge $charge): WorkspacePlanAssignment
     {
-        $agreement = $this->agreementRepository->findForUpdateById((int) $charge->agreement_id);
+        $agreementId = (int) $charge->agreement_id;
 
-        if ($agreement === null) {
-            throw new UnauthorizedSlotAgreementActionException(0, (int) $charge->agreement_id, 'allocate a renewal charge with no parent agreement');
-        }
+        $prepared = DB::transaction(function () use ($charge, $agreementId) {
+            $agreement = $this->agreementRepository->findForUpdateById($agreementId);
 
-        if ((int) $charge->allocation_delta <= 0) {
-            throw new UnauthorizedSlotAgreementActionException((int) $agreement->requesting_customer_user_id, (int) $agreement->id, 'allocate a renewal charge with no positive allocation_delta');
-        }
+            if ($agreement === null) {
+                throw new UnauthorizedSlotAgreementActionException(0, $agreementId, 'allocate a renewal charge with no parent agreement');
+            }
 
-        if (blank($charge->provider_session_or_intent_reference)) {
-            throw new UnauthorizedSlotAgreementActionException((int) $agreement->requesting_customer_user_id, (int) $agreement->id, 'allocate a renewal charge with no verified payment reference');
-        }
+            if ((int) $charge->allocation_delta <= 0) {
+                throw new UnauthorizedSlotAgreementActionException((int) $agreement->requesting_customer_user_id, (int) $agreement->id, 'allocate a renewal charge with no positive allocation_delta');
+            }
 
-        $agreement->load('workspace');
+            if (blank($charge->provider_session_or_intent_reference)) {
+                throw new UnauthorizedSlotAgreementActionException((int) $agreement->requesting_customer_user_id, (int) $agreement->id, 'allocate a renewal charge with no verified payment reference');
+            }
 
+            return $agreement;
+        });
+
+        $prepared->load('workspace');
         $idempotencyKey = hash('sha256', 'slot-renewal-allocation:'.$charge->local_idempotency_key);
 
         $assignment = $this->entitlementManager->allocateAdditionalBusinessSlotsFromVerifiedPayment(
-            $agreement->workspace,
+            $prepared->workspace,
             (int) $charge->allocation_delta,
-            (int) $agreement->requesting_customer_user_id,
-            (int) $agreement->workspace_id,
+            (int) $prepared->requesting_customer_user_id,
+            (int) $prepared->workspace_id,
             $idempotencyKey,
             (string) $charge->provider_session_or_intent_reference,
             null,
         );
 
-        $this->agreementRepository->update($agreement, [
-            'current_allocation_count' => $assignment->additional_business_slots,
-        ]);
+        return DB::transaction(function () use ($agreementId, $assignment) {
+            $relocked = $this->agreementRepository->findForUpdateById($agreementId);
 
-        return $assignment;
+            if ($relocked !== null) {
+                $this->agreementRepository->update($relocked, [
+                    'current_allocation_count' => $assignment->additional_business_slots,
+                ]);
+            }
+
+            return $assignment;
+        });
     }
 
     /**

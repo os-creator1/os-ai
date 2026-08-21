@@ -52,11 +52,16 @@ class EloquentAdditionalBusinessSlotAgreementRepository extends EloquentBaseRepo
             ->get();
     }
 
-    public function findStuckInAllocationPending(int $thresholdMinutes): Collection
+    public function findRequiringAllocationRecovery(int $thresholdMinutes): Collection
     {
+        $threshold = now()->subMinutes($thresholdMinutes);
+
         return $this->query()
-            ->where('state', 'allocation_pending')
-            ->where('updated_at', '<=', now()->subMinutes($thresholdMinutes))
+            ->where(function ($query) use ($threshold) {
+                $query->whereIn('state', ['payment_succeeded', 'allocation_pending'])
+                    ->where('updated_at', '<=', $threshold);
+            })
+            ->orWhere('state', 'allocation_failed')
             ->get();
     }
 

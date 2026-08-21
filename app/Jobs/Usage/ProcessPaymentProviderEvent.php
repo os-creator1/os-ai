@@ -118,19 +118,40 @@ class ProcessPaymentProviderEvent extends Base
 
         $object = $decoded['data']['object'] ?? [];
 
-        if (array_key_exists('amount', $object) && (int) $object['amount'] !== $checkoutManager->expectedMinorUnitsFor($attempt)) {
+        // M4 contract §15 (Correction Round 2 §E.6) — a payment_intent
+        // event always carries amount/currency/customer; a genuinely
+        // absent field is missing required evidence, not "check skipped".
+        if (! array_key_exists('amount', $object)) {
+            $eventRepository->markFailed($event->id, 'missing_required_evidence');
+
+            return;
+        }
+
+        if ((int) $object['amount'] !== $checkoutManager->expectedMinorUnitsFor($attempt)) {
             $eventRepository->markFailed($event->id, 'amount_mismatch');
 
             return;
         }
 
-        if (array_key_exists('currency', $object) && strtoupper((string) $object['currency']) !== $checkoutManager->expectedCurrencyCodeFor($attempt)) {
+        if (! array_key_exists('currency', $object)) {
+            $eventRepository->markFailed($event->id, 'missing_required_evidence');
+
+            return;
+        }
+
+        if (strtoupper((string) $object['currency']) !== $checkoutManager->expectedCurrencyCodeFor($attempt)) {
             $eventRepository->markFailed($event->id, 'currency_mismatch');
 
             return;
         }
 
-        if (array_key_exists('customer', $object) && (string) $object['customer'] !== $attempt->provider_customer_external_id_snapshot) {
+        if (! array_key_exists('customer', $object)) {
+            $eventRepository->markFailed($event->id, 'missing_required_evidence');
+
+            return;
+        }
+
+        if ((string) $object['customer'] !== $attempt->provider_customer_external_id_snapshot) {
             $eventRepository->markFailed($event->id, 'customer_mismatch');
 
             return;
@@ -193,19 +214,40 @@ class ProcessPaymentProviderEvent extends Base
 
         $object = $decoded['data']['object'] ?? [];
 
-        if (array_key_exists('amount', $object) && (int) $object['amount'] !== $checkoutManager->expectedMinorUnitsForRenewalCharge($charge)) {
+        // M4 contract §15 (Correction Round 2 §E.6) — a payment_intent
+        // event always carries amount/currency/customer; a genuinely
+        // absent field is missing required evidence, not "check skipped".
+        if (! array_key_exists('amount', $object)) {
+            $eventRepository->markFailed($event->id, 'missing_required_evidence');
+
+            return;
+        }
+
+        if ((int) $object['amount'] !== $checkoutManager->expectedMinorUnitsForRenewalCharge($charge)) {
             $eventRepository->markFailed($event->id, 'amount_mismatch');
 
             return;
         }
 
-        if (array_key_exists('currency', $object) && strtoupper((string) $object['currency']) !== $checkoutManager->expectedCurrencyCodeForRenewalCharge($charge)) {
+        if (! array_key_exists('currency', $object)) {
+            $eventRepository->markFailed($event->id, 'missing_required_evidence');
+
+            return;
+        }
+
+        if (strtoupper((string) $object['currency']) !== $checkoutManager->expectedCurrencyCodeForRenewalCharge($charge)) {
             $eventRepository->markFailed($event->id, 'currency_mismatch');
 
             return;
         }
 
-        if (array_key_exists('customer', $object) && (string) $object['customer'] !== $charge->provider_customer_external_id_snapshot) {
+        if (! array_key_exists('customer', $object)) {
+            $eventRepository->markFailed($event->id, 'missing_required_evidence');
+
+            return;
+        }
+
+        if ((string) $object['customer'] !== $charge->provider_customer_external_id_snapshot) {
             $eventRepository->markFailed($event->id, 'customer_mismatch');
 
             return;
@@ -263,28 +305,50 @@ class ProcessPaymentProviderEvent extends Base
         }
 
         $object = $decoded['data']['object'] ?? [];
-        $amount = $object['amount'] ?? $object['amount_total'] ?? null;
 
-        if ($amount !== null && (int) $amount !== $checkoutManager->expectedMinorUnitsForAgreement($agreement)) {
+        // M4 contract §15/§15b (Correction Round 2 §E.6) — a Checkout
+        // Session event always carries at least one of amount/amount_total,
+        // and always carries currency/customer; genuinely absent required
+        // evidence fails closed rather than being treated as "check
+        // skipped, therefore valid".
+        if (! array_key_exists('amount', $object) && ! array_key_exists('amount_total', $object)) {
+            $eventRepository->markFailed($event->id, 'missing_required_evidence');
+
+            return;
+        }
+
+        $amount = $object['amount'] ?? $object['amount_total'];
+
+        if ((int) $amount !== $checkoutManager->expectedMinorUnitsForAgreement($agreement)) {
             $eventRepository->markFailed($event->id, 'amount_mismatch');
 
             return;
         }
 
-        if (array_key_exists('currency', $object) && strtoupper((string) $object['currency']) !== $checkoutManager->expectedCurrencyCodeForAgreement($agreement)) {
+        if (! array_key_exists('currency', $object)) {
+            $eventRepository->markFailed($event->id, 'missing_required_evidence');
+
+            return;
+        }
+
+        if (strtoupper((string) $object['currency']) !== $checkoutManager->expectedCurrencyCodeForAgreement($agreement)) {
             $eventRepository->markFailed($event->id, 'currency_mismatch');
 
             return;
         }
 
-        if (array_key_exists('customer', $object)) {
-            $agreement->loadMissing('providerCustomer');
+        if (! array_key_exists('customer', $object)) {
+            $eventRepository->markFailed($event->id, 'missing_required_evidence');
 
-            if ($agreement->providerCustomer === null || (string) $object['customer'] !== $agreement->providerCustomer->provider_customer_id) {
-                $eventRepository->markFailed($event->id, 'customer_mismatch');
+            return;
+        }
 
-                return;
-            }
+        $agreement->loadMissing('providerCustomer');
+
+        if ($agreement->providerCustomer === null || (string) $object['customer'] !== $agreement->providerCustomer->provider_customer_id) {
+            $eventRepository->markFailed($event->id, 'customer_mismatch');
+
+            return;
         }
 
         if (str_ends_with((string) $event->event_type, '.completed') || str_ends_with((string) $event->event_type, '.async_payment_succeeded')) {

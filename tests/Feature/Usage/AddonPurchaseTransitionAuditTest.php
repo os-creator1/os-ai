@@ -115,6 +115,58 @@ class AddonPurchaseTransitionAuditTest extends TestCase
         $this->assertSame(1, $creditEntryCount);
     }
 
+    /**
+     * M4 contract §21 (Correction Round 2 §C) — the other crash direction:
+     * the attempt reached Succeeded but finalizeAddonPurchaseIfPending()
+     * never ran its downstream effects at all yet (crash strictly before
+     * the ledger credit). Directly rolls back the ledger row/wallet
+     * balance/purchase status to that exact pre-credit state, then proves
+     * a later webhook both credits (exactly once) and completes.
+     */
+    public function test_a_crash_before_any_credit_or_completion_is_repaired_by_a_later_webhook(): void
+    {
+        [$customer, $business] = $this->businessWithInstrumentAndCatalogRow();
+        $manager = app(UsageBillingCheckoutManager::class);
+
+        $result = $manager->initiateAddonPurchase($business, 'fixture-addon', $customer->user_id);
+        $this->assertSame(FundingAttemptState::Succeeded, $result->state);
+
+        $attempt = app(BusinessFundingAttemptRepository::class)->findById($result->fundingAttemptId);
+        $correlationKey = $attempt->local_idempotency_key.':credit';
+
+        $ledgerEntry = DB::table('business_usage_ledger_entries')->where('correlation_key', $correlationKey)->first();
+        $this->assertNotNull($ledgerEntry, 'Fixture assumption: the synchronous first pass already credited.');
+
+        // Roll back to exactly the pre-credit, pre-completion state: no
+        // ledger row, no wallet effect, purchase still pending.
+        DB::table('business_usage_wallets')->where('business_id', $business->id)->update([
+            'available_balance_micro' => DB::raw('available_balance_micro - '.(int) $ledgerEntry->available_delta_micro),
+        ]);
+        DB::table('business_usage_ledger_entries')->where('id', $ledgerEntry->id)->delete();
+
+        $purchaseRepo = app(BusinessUsageAddonPurchaseRepository::class);
+        $purchase = $purchaseRepo->findById($result->addonPurchaseId);
+        $purchaseRepo->update($purchase, ['status' => AddonPurchaseStatus::Pending->value, 'completed_at' => null]);
+
+        $event = PaymentProviderEvent::create([
+            'provider' => 'stripe', 'provider_event_id' => 'evt_fake_'.uniqid(), 'event_type' => 'payment_intent.succeeded',
+            'provider_object_id' => $attempt->provider_session_or_intent_reference, 'payload_encrypted' => '{}',
+            'payload_hash' => hash('sha256', '{}'), 'state' => 'received', 'attempts' => 0, 'received_at' => now(),
+        ]);
+
+        $manager->confirmAttemptFromWebhook($attempt, $event);
+
+        $repaired = $purchaseRepo->findById($result->addonPurchaseId);
+        $this->assertSame(AddonPurchaseStatus::Completed, $repaired->status);
+        $this->assertNotNull($repaired->completed_at);
+
+        $creditEntryCount = DB::table('business_usage_ledger_entries')
+            ->where('funding_attempt_id', $result->fundingAttemptId)
+            ->where('correlation_key', $correlationKey)
+            ->count();
+        $this->assertSame(1, $creditEntryCount, 'Exactly one credit — the replay, since the original was rolled back — never zero, never two.');
+    }
+
     public function test_a_duplicate_webhook_against_an_already_completed_purchase_is_idempotent(): void
     {
         [$customer, $business] = $this->businessWithInstrumentAndCatalogRow();

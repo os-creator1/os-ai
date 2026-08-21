@@ -19,6 +19,16 @@ class FakePaymentProviderGateway implements PaymentProviderGateway
     /** @var array<string, string> providerPaymentIntentId => outcome ('succeeded'|'requires_action'|'declined') */
     public array $paymentIntentOutcomes = [];
 
+    /**
+     * M4 contract §21 (Correction Round 2 §B) — idempotencyKey (or '*') =>
+     * true forces a 'declined' createOffSessionPaymentIntent() outcome to
+     * omit the PaymentIntent id, reproducing an incomplete real Stripe
+     * error response for the fail-closed null-evidence test.
+     *
+     * @var array<string, bool>
+     */
+    public array $declineOmitsPaymentIntentId = [];
+
     /** @var array<string, array{type: string, object_id: string, metadata: array<string, mixed>, amount: ?int, currency: ?string, customer: ?string}> */
     public array $pendingWebhookEvents = [];
 
@@ -127,7 +137,14 @@ class FakePaymentProviderGateway implements PaymentProviderGateway
         $outcome = $this->paymentIntentOutcomes[$idempotencyKey] ?? $this->paymentIntentOutcomes['*'] ?? 'succeeded';
 
         if ($outcome === 'declined') {
-            throw new ProviderCardDeclinedException('generic_decline');
+            // M4 contract §21 (Correction Round 2 §B) — reproduces the real
+            // gateway's own behavior of carrying the declined PaymentIntent's
+            // real id on the exception. A test proving the §B fail-closed
+            // null-evidence case sets $declineOmitsPaymentIntentId to force
+            // this fake to omit it, exactly as an incomplete real Stripe
+            // error response would.
+            $omitReference = $this->declineOmitsPaymentIntentId[$idempotencyKey] ?? $this->declineOmitsPaymentIntentId['*'] ?? false;
+            throw new ProviderCardDeclinedException('generic_decline', $omitReference ? null : $id);
         }
 
         $status = $outcome === 'requires_action' ? 'requires_action' : 'succeeded';
