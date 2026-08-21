@@ -23,8 +23,11 @@
     use App\Console\Commands\uSupportDemo;
     use App\Console\Commands\VisionUpInboundMessage;
     use App\Console\Commands\WarmDashboardCache;
+    use App\Jobs\Usage\FinalizeSlotAgreementCancellation;
+    use App\Jobs\Usage\InitiateSlotAgreementRenewal;
     use App\Jobs\Usage\PurgeExpiredWebhookPayloads;
     use App\Jobs\Usage\ReconcileProviderPendingState;
+    use App\Jobs\Usage\ReconcileSlotAgreementAllocation;
     use Illuminate\Console\Scheduling\Schedule;
     use Illuminate\Foundation\Console\Kernel as ConsoleKernel;
 
@@ -106,6 +109,12 @@
                 // neither is dispatched by any event/controller/manager).
                 $schedule->job(new PurgeExpiredWebhookPayloads())->hourly();
                 $schedule->job(new ReconcileProviderPendingState())->everyFiveMinutes();
+
+                // M4 contract §22 — locked exact intervals, not an
+                // implementation-time choice.
+                $schedule->job(new InitiateSlotAgreementRenewal())->everyFiveMinutes();
+                $schedule->job(new FinalizeSlotAgreementCancellation())->everyFiveMinutes();
+                $schedule->job(new ReconcileSlotAgreementAllocation())->hourly();
             }
         }
 

@@ -8,6 +8,7 @@ use App\Library\Usage\Contracts\PaymentProviderGateway;
 use App\Models\Business;
 use App\Models\BusinessPaymentInstrument;
 use App\Models\PaymentProviderCustomer;
+use App\Models\Workspace;
 use App\Repositories\Contracts\BusinessPayerAssignmentRepository;
 use App\Repositories\Contracts\BusinessPaymentInstrumentRepository;
 use App\Repositories\Contracts\PaymentProviderCustomerRepository;
@@ -161,6 +162,60 @@ class PaymentInstrumentManager
 
             $this->instrumentRepository->clearDefaultForProviderCustomer((int) $instrument->provider_customer_id);
             $this->instrumentRepository->update($instrument, ['is_default' => true]);
+        });
+    }
+
+    /**
+     * M4 contract §15c — reconciles the actual Checkout Session
+     * PaymentMethod into business_payment_instruments as the Workspace's
+     * own current default usage-billing instrument. Workspace owner only,
+     * no platform-admin bypass — narrower than assertChargeCausingConsent()'s
+     * dual Business/Workspace-payer split, since M4's additional-slot flow
+     * is unconditionally Workspace-scoped. Reuses this class's own existing
+     * repository/gateway calls verbatim; no schema change.
+     */
+    public function syncWorkspaceCheckoutPaymentMethod(
+        Workspace $workspace,
+        int $actorUserId,
+        string $providerPaymentMethodId,
+    ): BusinessPaymentInstrument {
+        if ((int) $workspace->owner_user_id !== $actorUserId) {
+            throw new UnauthorizedPayerAssignmentException($actorUserId, 0, PayerType::Workspace->value);
+        }
+
+        $providerCustomer = $this->providerCustomerRepository->findActiveByWorkspaceId((int) $workspace->id);
+
+        if ($providerCustomer === null) {
+            throw new UnauthorizedPayerAssignmentException($actorUserId, 0, PayerType::Workspace->value);
+        }
+
+        $paymentMethod = $this->gateway->retrievePaymentMethod($providerPaymentMethodId);
+
+        if ($paymentMethod->providerCustomerId !== $providerCustomer->provider_customer_id) {
+            throw new UnauthorizedPayerAssignmentException($actorUserId, 0, PayerType::Workspace->value);
+        }
+
+        $existing = $this->instrumentRepository->findByProviderPaymentMethodId($paymentMethod->providerPaymentMethodId);
+
+        return DB::transaction(function () use ($providerCustomer, $paymentMethod, $existing) {
+            $instrument = $existing ?? $this->instrumentRepository->create([
+                'provider_customer_id' => $providerCustomer->id,
+                'provider' => 'stripe',
+                'provider_payment_method_id' => $paymentMethod->providerPaymentMethodId,
+                'type' => $paymentMethod->type,
+                'brand' => $paymentMethod->brand,
+                'last_four' => $paymentMethod->lastFour,
+                'expiry_month' => $paymentMethod->expiryMonth,
+                'expiry_year' => $paymentMethod->expiryYear,
+                'is_default' => false,
+                'status' => 'active',
+                'created_at' => now(),
+            ]);
+
+            $this->providerCustomerRepository->findForUpdateById((int) $providerCustomer->id);
+            $this->instrumentRepository->clearDefaultForProviderCustomer((int) $providerCustomer->id);
+
+            return $this->instrumentRepository->update($instrument, ['is_default' => true]);
         });
     }
 

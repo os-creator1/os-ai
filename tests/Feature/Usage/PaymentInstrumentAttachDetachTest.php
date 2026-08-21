@@ -190,4 +190,96 @@ class PaymentInstrumentAttachDetachTest extends TestCase
         $this->assertFalse((bool) $freshFirst->is_default);
         $this->assertTrue((bool) $freshSecond->is_default);
     }
+
+    /**
+     * M4 contract §15c — syncWorkspaceCheckoutPaymentMethod() reconciles
+     * the actual Checkout Session PaymentMethod as the Workspace's own
+     * current default usage-billing instrument. Workspace-owner-only,
+     * provider-customer-mismatch rejection, idempotent reuse of an
+     * already-attached instrument, creation of a genuinely new one, and
+     * it becoming the provider customer's default. No platform-admin
+     * bypass path exists to test, by construction.
+     */
+    public function test_sync_workspace_checkout_payment_method_creates_and_defaults_a_new_instrument(): void
+    {
+        $owner = User::create([
+            'first_name' => 'Fixture', 'last_name' => 'Owner', 'email' => 'owner'.uniqid().'@example.test',
+            'status' => true, 'is_admin' => false, 'is_customer' => true, 'active_portal' => 'customer',
+        ]);
+        $workspace = $this->entitledWorkspace($owner);
+
+        // A Workspace-owned provider customer must already exist (a
+        // Checkout Session cannot have completed without one).
+        app(PaymentProviderCustomerRepository::class)->create([
+            'provider' => 'stripe', 'workspace_id' => $workspace->id, 'provider_customer_id' => 'cus_workspace_fake',
+            'status' => 'active',
+        ]);
+
+        $this->gateway->registerPaymentMethod(new PaymentMethodResult('pm_fake_checkout', 'cus_workspace_fake', 'card', 'visa', '4242', 12, 2030));
+
+        $instrument = app(PaymentInstrumentManager::class)->syncWorkspaceCheckoutPaymentMethod($workspace, $owner->id, 'pm_fake_checkout');
+
+        $this->assertNotNull($instrument);
+        $this->assertTrue((bool) $instrument->is_default);
+        $this->assertSame('pm_fake_checkout', $instrument->provider_payment_method_id);
+    }
+
+    public function test_sync_workspace_checkout_payment_method_is_idempotent_for_an_already_attached_instrument(): void
+    {
+        $owner = User::create([
+            'first_name' => 'Fixture', 'last_name' => 'Owner', 'email' => 'owner'.uniqid().'@example.test',
+            'status' => true, 'is_admin' => false, 'is_customer' => true, 'active_portal' => 'customer',
+        ]);
+        $workspace = $this->entitledWorkspace($owner);
+        app(PaymentProviderCustomerRepository::class)->create([
+            'provider' => 'stripe', 'workspace_id' => $workspace->id, 'provider_customer_id' => 'cus_workspace_fake',
+            'status' => 'active',
+        ]);
+        $this->gateway->registerPaymentMethod(new PaymentMethodResult('pm_fake_checkout', 'cus_workspace_fake', 'card', 'visa', '4242', 12, 2030));
+
+        $manager = app(PaymentInstrumentManager::class);
+        $first = $manager->syncWorkspaceCheckoutPaymentMethod($workspace, $owner->id, 'pm_fake_checkout');
+        $second = $manager->syncWorkspaceCheckoutPaymentMethod($workspace, $owner->id, 'pm_fake_checkout');
+
+        $this->assertSame($first->id, $second->id);
+        $this->assertSame(1, app(BusinessPaymentInstrumentRepository::class)->activeForProviderCustomer((int) $first->provider_customer_id)->count());
+    }
+
+    public function test_sync_workspace_checkout_payment_method_rejects_a_provider_customer_mismatch(): void
+    {
+        $owner = User::create([
+            'first_name' => 'Fixture', 'last_name' => 'Owner', 'email' => 'owner'.uniqid().'@example.test',
+            'status' => true, 'is_admin' => false, 'is_customer' => true, 'active_portal' => 'customer',
+        ]);
+        $workspace = $this->entitledWorkspace($owner);
+        app(PaymentProviderCustomerRepository::class)->create([
+            'provider' => 'stripe', 'workspace_id' => $workspace->id, 'provider_customer_id' => 'cus_workspace_fake',
+            'status' => 'active',
+        ]);
+        $this->gateway->registerPaymentMethod(new PaymentMethodResult('pm_fake_mismatched', 'cus_unrelated', 'card', 'visa', '4242', 12, 2030));
+
+        $this->expectException(\App\Exceptions\Usage\UnauthorizedPayerAssignmentException::class);
+        app(PaymentInstrumentManager::class)->syncWorkspaceCheckoutPaymentMethod($workspace, $owner->id, 'pm_fake_mismatched');
+    }
+
+    public function test_sync_workspace_checkout_payment_method_requires_the_actual_workspace_owner(): void
+    {
+        $owner = User::create([
+            'first_name' => 'Fixture', 'last_name' => 'Owner', 'email' => 'owner'.uniqid().'@example.test',
+            'status' => true, 'is_admin' => false, 'is_customer' => true, 'active_portal' => 'customer',
+        ]);
+        $notOwner = User::create([
+            'first_name' => 'Fixture', 'last_name' => 'NotOwner', 'email' => 'notowner'.uniqid().'@example.test',
+            'status' => true, 'is_admin' => false, 'is_customer' => true, 'active_portal' => 'customer',
+        ]);
+        $workspace = $this->entitledWorkspace($owner);
+        app(PaymentProviderCustomerRepository::class)->create([
+            'provider' => 'stripe', 'workspace_id' => $workspace->id, 'provider_customer_id' => 'cus_workspace_fake',
+            'status' => 'active',
+        ]);
+        $this->gateway->registerPaymentMethod(new PaymentMethodResult('pm_fake_checkout', 'cus_workspace_fake', 'card', 'visa', '4242', 12, 2030));
+
+        $this->expectException(\App\Exceptions\Usage\UnauthorizedPayerAssignmentException::class);
+        app(PaymentInstrumentManager::class)->syncWorkspaceCheckoutPaymentMethod($workspace, $notOwner->id, 'pm_fake_checkout');
+    }
 }

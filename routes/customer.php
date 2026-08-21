@@ -607,6 +607,17 @@
         Route::post('{workspaceUid}/businesses/{businessUid}/usage-billing/top-up', 'Business\UsageBillingTopUpController@initiate')->name('businesses.usage-billing.top-up.initiate');
         Route::post('{workspaceUid}/businesses/{businessUid}/usage-billing/auto-recharge', 'Business\UsageBillingAutoRechargeController@configure')->name('businesses.usage-billing.auto-recharge.configure');
 
+        // RFC-005 Milestone 4: Workspace-scoped additional-slot agreement
+        // (Checkout/renewal/cancellation) surface.
+        Route::prefix('{workspaceUid}/additional-business-slots')->name('additional-business-slots.')->group(function () {
+            Route::get('/', 'Workspace\AdditionalBusinessSlotAgreementController@show')->name('show');
+            Route::post('checkout', 'Workspace\AdditionalBusinessSlotAgreementController@checkout')->name('checkout');
+            Route::get('{agreement}/confirm', 'Workspace\AdditionalBusinessSlotAgreementController@confirmFromReturn')->name('confirm')->whereNumber('agreement');
+            Route::post('{agreement}/increase', 'Workspace\AdditionalBusinessSlotAgreementController@requestIncrease')->name('increase')->whereNumber('agreement');
+            Route::post('{agreement}/renewals/{charge}/retry', 'Workspace\AdditionalBusinessSlotAgreementController@retryRenewal')->name('retry')->whereNumber('agreement')->whereNumber('charge');
+            Route::post('{agreement}/cancel', 'Workspace\AdditionalBusinessSlotAgreementController@requestCancellation')->name('cancel')->whereNumber('agreement');
+        });
+
         // RFC-003 Milestone 4 Slice 4F: Workspace ownership transfer.
         Route::post('{workspaceUid}/ownership/transfer', 'Workspace\WorkspaceController@transferOwnership')->name('ownership.transfer');
 
