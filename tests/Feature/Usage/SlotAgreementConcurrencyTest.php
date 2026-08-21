@@ -316,16 +316,19 @@ class SlotAgreementConcurrencyTest extends TestCase
      * M4 contract §23 (Correction Round 2 §E.2/§E.7) — two genuinely
      * independent OS processes both retry the identical Failed renewal
      * charge, both configured to receive the same Stripe-idempotent
-     * declined result, started simultaneously (never hold-then here —
-     * that primitive holds its lock through the delegate's *entire* call,
-     * forcing strict before/after sequencing where each process would
-     * legitimately compute a different ordinal; Phase A's own short
-     * lock-then-release, by contrast, gives two simultaneously-started
-     * real processes a genuine chance to both compute the identical
-     * ordinal before either commits its result — exactly the window
-     * §E.2's result-application dedup must close). Whichever ordinal each
-     * process actually lands on, neither may ever record the same ordinal
-     * twice, and both must complete without error.
+     * declined result, forced onto the *identical* attempted ordinal by a
+     * deterministic cross-process barrier inside the runner
+     * (BarrierGatedPaymentProviderGateway) rather than left to scheduler
+     * luck: each process independently completes Phase A (lock, read,
+     * validate, compute the attempted ordinal, commit, release the row
+     * lock) and then blocks at the barrier — recording its own computed
+     * idempotency key — until both have arrived, proving both genuinely
+     * reached the identical ordinal before either is released to receive
+     * its provider result and apply it. Never hold-then wrapping the
+     * entire retry call here — that primitive holds its lock through the
+     * delegate's *entire* call, forcing strict before/after sequencing
+     * where each process would legitimately compute a *different* ordinal
+     * instead of racing the same one.
      */
     public function test_real_concurrent_retry_produces_exactly_one_failed_transition(): void
     {
@@ -352,42 +355,34 @@ class SlotAgreementConcurrencyTest extends TestCase
         app(UsageBillingCheckoutManager::class)->markSlotRenewalChargeFailedFromWebhook($charge, 'generic_decline', $event);
         $charge = app(AdditionalBusinessSlotRenewalChargeRepository::class)->findById($charge->id);
 
-        // Deliberately not hold-then: Phase A (§E.2) locks, reads, and
-        // computes the attempted ordinal in a short transaction that
-        // commits and releases the row lock *before* the outbound provider
-        // call — hold-then's own hold-through-completion primitive would
-        // force strict before/after sequencing (each process would then
-        // legitimately compute a *different* ordinal), which proves
-        // serialization but not the same-ordinal race. Starting two plain,
-        // genuinely independent processes simultaneously instead gives a
-        // real chance both complete Phase A — and therefore compute the
-        // identical ordinal — before either commits its own result,
-        // exactly the race §E.2's result-application dedup must close.
-        $p1 = new Process([$this->phpBinary(), self::RUNNER, 'retry-slot-renewal-owner', (string) $charge->id, (string) $owner->id, 'declined']);
-        $p2 = new Process([$this->phpBinary(), self::RUNNER, 'retry-slot-renewal-owner', (string) $charge->id, (string) $owner->id, 'declined']);
-        $p1->start();
-        $p2->start();
-        $p1->wait();
-        $p2->wait();
+        $barrierFile = sys_get_temp_dir().DIRECTORY_SEPARATOR.'m4_retry_barrier_'.uniqid('', true).'.txt';
 
-        $this->assertTrue($p1->isSuccessful(), 'P1 must succeed: '.$p1->getErrorOutput());
-        $this->assertTrue($p2->isSuccessful(), 'P2 must succeed (deduplicated, not error, if it raced the same ordinal): '.$p2->getErrorOutput());
+        try {
+            $p1 = new Process([$this->phpBinary(), self::RUNNER, 'retry-slot-renewal-owner', (string) $charge->id, (string) $owner->id, 'declined', $barrierFile, '2', '10']);
+            $p2 = new Process([$this->phpBinary(), self::RUNNER, 'retry-slot-renewal-owner', (string) $charge->id, (string) $owner->id, 'declined', $barrierFile, '2', '10']);
+            $p1->start();
+            $p2->start();
+            $p1->wait();
+            $p2->wait();
 
-        $failedTransitionCount = DB::table('additional_business_slot_renewal_charge_transitions')
-            ->where('renewal_charge_id', $charge->id)
-            ->where('to_state', 'failed')
-            ->count();
+            $this->assertTrue($p1->isSuccessful(), 'P1 must succeed: '.$p1->getErrorOutput());
+            $this->assertTrue($p2->isSuccessful(), 'P2 must succeed (deduplicated, not error): '.$p2->getErrorOutput());
 
-        // Real process scheduling decides whether the two racers' Phase A
-        // windows actually overlap: if they do, both compute the identical
-        // ordinal and the dedup rule absorbs one as a no-op (total 2 — the
-        // webhook's ordinal 1 plus one genuine ordinal 2); if they don't
-        // overlap this run, each computes its own distinct ordinal and both
-        // genuinely fail (total 3 — ordinals 1, 2, 3). Never more than 3
-        // (which would mean an ordinal was double-inserted) and never
-        // fewer than 2 (both processes reported success above, so neither
-        // silently failed to record its own outcome).
-        $this->assertGreaterThanOrEqual(2, $failedTransitionCount);
-        $this->assertLessThanOrEqual(3, $failedTransitionCount, 'More than 3 would mean some ordinal was recorded twice by the race.');
+            $this->assertFileExists($barrierFile, 'Neither process reached the provider-call barrier.');
+            $recordedKeys = array_values(array_filter(explode("\n", trim(file_get_contents($barrierFile)))));
+            $this->assertCount(2, $recordedKeys, 'Both processes must have reached the provider-call barrier before either received its result.');
+            $this->assertSame($recordedKeys[0], $recordedKeys[1], 'Both processes must have computed the identical attempted-ordinal idempotency key.');
+
+            $expectedOrdinal2Key = hash('sha256', $charge->local_idempotency_key.':attempt:2');
+            $this->assertSame($expectedOrdinal2Key, $recordedKeys[0], 'Both processes must have computed ordinal 2 — the genuine next attempt after the webhook\'s own ordinal 1.');
+
+            $failedTransitionCount = DB::table('additional_business_slot_renewal_charge_transitions')
+                ->where('renewal_charge_id', $charge->id)
+                ->where('to_state', 'failed')
+                ->count();
+            $this->assertSame(2, $failedTransitionCount, 'Ordinal 1 (webhook) + exactly one genuine ordinal-2 failure from the forced same-ordinal race — never a duplicate, never an ordinal 3.');
+        } finally {
+            @unlink($barrierFile);
+        }
     }
 }

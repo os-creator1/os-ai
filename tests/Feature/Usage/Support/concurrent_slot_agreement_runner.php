@@ -1,13 +1,13 @@
 <?php
 
 /**
- * M4 contract §23 (Correction Round 2 §E.7) — standalone runner invoked as
- * a separate OS process by SlotAgreementConcurrencyTest, so its forced-race
- * scenarios exercise genuinely independent database connections racing for
- * the same row lock — something a single PHPUnit process cannot do on its
- * own. Boots the app in the testing environment so it shares the same
- * ultimatesms_testing database and .env.testing credentials as the parent
- * PHPUnit process, following
+ * M4 contract §23 (Correction Round 2 §E.2/§E.7) — standalone runner
+ * invoked as a separate OS process by SlotAgreementConcurrencyTest, so its
+ * forced-race scenarios exercise genuinely independent database
+ * connections racing for the same row lock — something a single PHPUnit
+ * process cannot do on its own. Boots the app in the testing environment
+ * so it shares the same ultimatesms_testing database and .env.testing
+ * credentials as the parent PHPUnit process, following
  * tests/Feature/Entitlement/Support/concurrent_business_slot_runner.php's
  * exact bootstrap/database-guard/exit-code/hold-then shape — that file is
  * scoped to Entitlement/Workspace manager methods and is not M4-owned, so
@@ -19,13 +19,23 @@
  * Modes:
  *   perform-verified-allocation <agreementId>
  *   allocate-slot-agreement-admin <agreementId> <actorUserId> <reason>
- *   retry-slot-renewal-owner <chargeId> <actorUserId> <outcome>
+ *   retry-slot-renewal-owner <chargeId> <actorUserId> <outcome> [<barrierFile> <expectedArrivals> <timeoutSeconds>]
  *     <outcome> configures the fake gateway's own confirmPaymentIntent()
  *     wildcard outcome ('succeeded'|'declined'|'requires_action') before
  *     calling retrySlotRenewalAsOwner() — this process's own fresh
  *     FakePaymentProviderGateway instance is unreachable from the parent
  *     PHPUnit process's memory, so the desired outcome is passed
  *     explicitly rather than pre-configured.
+ *
+ *     When the three trailing barrier arguments are given, the gateway is
+ *     wrapped in BarrierGatedPaymentProviderGateway (below): a deterministic
+ *     forced same-ordinal race, proving driveRenewalChargeRetry()'s own
+ *     Phase A (lock/read/validate/compute the attempted ordinal, commit,
+ *     release the row lock) genuinely lets two independent racing
+ *     processes both reach the identical ordinal before either applies a
+ *     result — never a hold-then wrapping the *entire* retry call, which
+ *     would force strict before/after sequencing and make each process
+ *     legitimately compute a *different* ordinal instead.
  *   retry-slot-renewal-admin <chargeId> <actorUserId> <reason> <outcome>
  *
  *   hold-then <lockSpecs> <holdSeconds> <delegateMode> <delegateArgs...>
@@ -69,6 +79,153 @@ $app->instance(
 );
 
 /**
+ * Decorates a FakePaymentProviderGateway, delaying confirmPaymentIntent()
+ * until a deterministic cross-process file barrier confirms every
+ * expected racer has already reached this exact call — i.e. each has
+ * already committed and released Phase A's own short lock/read/validate/
+ * compute-ordinal transaction, and is now holding the identical attempted
+ * ordinal's idempotency key, waiting to receive its provider result. The
+ * barrier file itself doubles as the audit trail: one line per arrival,
+ * each line the exact idempotency key that arrival supplied, so the
+ * parent test can assert every racer computed the identical key. A
+ * Windows-compatible, dependency-free flock()-based file lock guards each
+ * read/increment; a bounded timeout means a broken barrier degrades to
+ * "proceed anyway" rather than hanging the suite. Every other interface
+ * method delegates straight through, unchanged.
+ */
+class BarrierGatedPaymentProviderGateway implements App\Library\Usage\Contracts\PaymentProviderGateway
+{
+    public function __construct(
+        private readonly App\Library\Usage\FakePaymentProviderGateway $inner,
+        private readonly string $barrierFile,
+        private readonly int $expectedArrivals,
+        private readonly float $timeoutSeconds,
+    ) {
+    }
+
+    public function confirmPaymentIntent(string $providerPaymentIntentId, string $providerPaymentMethodId, string $idempotencyKey): App\Library\Usage\PaymentIntentResult
+    {
+        $this->recordArrival($idempotencyKey);
+        $this->waitForAllArrivals();
+
+        return $this->inner->confirmPaymentIntent($providerPaymentIntentId, $providerPaymentMethodId, $idempotencyKey);
+    }
+
+    private function recordArrival(string $idempotencyKey): void
+    {
+        $handle = fopen($this->barrierFile, 'c+');
+
+        if ($handle === false) {
+            return;
+        }
+
+        flock($handle, LOCK_EX);
+        fseek($handle, 0, SEEK_END);
+        fwrite($handle, $idempotencyKey."\n");
+        fflush($handle);
+        flock($handle, LOCK_UN);
+        fclose($handle);
+    }
+
+    private function waitForAllArrivals(): void
+    {
+        $deadline = microtime(true) + $this->timeoutSeconds;
+
+        while (microtime(true) < $deadline) {
+            if ($this->countArrivals() >= $this->expectedArrivals) {
+                return;
+            }
+
+            usleep(20_000);
+        }
+    }
+
+    private function countArrivals(): int
+    {
+        if (! file_exists($this->barrierFile)) {
+            return 0;
+        }
+
+        $handle = fopen($this->barrierFile, 'r');
+
+        if ($handle === false) {
+            return 0;
+        }
+
+        flock($handle, LOCK_SH);
+        $contents = stream_get_contents($handle);
+        flock($handle, LOCK_UN);
+        fclose($handle);
+
+        return count(array_filter(explode("\n", trim($contents))));
+    }
+
+    public function createOrRetrieveCustomer(?string $existingProviderCustomerId, string $idempotencyKey): App\Library\Usage\ProviderCustomerResult
+    {
+        return $this->inner->createOrRetrieveCustomer($existingProviderCustomerId, $idempotencyKey);
+    }
+
+    public function createSetupIntent(string $providerCustomerId, string $idempotencyKey): App\Library\Usage\SetupIntentResult
+    {
+        return $this->inner->createSetupIntent($providerCustomerId, $idempotencyKey);
+    }
+
+    public function retrieveSetupIntent(string $providerSetupIntentId): App\Library\Usage\SetupIntentResult
+    {
+        return $this->inner->retrieveSetupIntent($providerSetupIntentId);
+    }
+
+    public function retrievePaymentMethod(string $providerPaymentMethodId): App\Library\Usage\PaymentMethodResult
+    {
+        return $this->inner->retrievePaymentMethod($providerPaymentMethodId);
+    }
+
+    public function detachPaymentMethod(string $providerPaymentMethodId): void
+    {
+        $this->inner->detachPaymentMethod($providerPaymentMethodId);
+    }
+
+    public function createOffSessionPaymentIntent(
+        string $providerCustomerId,
+        string $providerPaymentMethodId,
+        int $amountMinorUnits,
+        string $currencyCode,
+        string $idempotencyKey,
+        array $metadata,
+    ): App\Library\Usage\PaymentIntentResult {
+        return $this->inner->createOffSessionPaymentIntent($providerCustomerId, $providerPaymentMethodId, $amountMinorUnits, $currencyCode, $idempotencyKey, $metadata);
+    }
+
+    public function retrievePaymentIntent(string $providerPaymentIntentId): App\Library\Usage\PaymentIntentResult
+    {
+        return $this->inner->retrievePaymentIntent($providerPaymentIntentId);
+    }
+
+    public function verifyWebhookSignature(string $rawBody, string $signatureHeader, string $webhookSecret): App\Library\Usage\WebhookVerificationResult
+    {
+        return $this->inner->verifyWebhookSignature($rawBody, $signatureHeader, $webhookSecret);
+    }
+
+    public function createCheckoutSession(
+        string $providerCustomerId,
+        int $amountMinorUnits,
+        string $currencyCode,
+        string $lineItemName,
+        string $successUrl,
+        string $cancelUrl,
+        string $idempotencyKey,
+        array $metadata,
+    ): App\Library\Usage\CheckoutSessionResult {
+        return $this->inner->createCheckoutSession($providerCustomerId, $amountMinorUnits, $currencyCode, $lineItemName, $successUrl, $cancelUrl, $idempotencyKey, $metadata);
+    }
+
+    public function retrieveCheckoutSession(string $providerCheckoutSessionId): App\Library\Usage\CheckoutSessionResult
+    {
+        return $this->inner->retrieveCheckoutSession($providerCheckoutSessionId);
+    }
+}
+
+/**
  * Runs a single mode's real production logic. Shared by the top-level
  * dispatch below and by the `hold-then` wrapper, so both a plain (unheld)
  * invocation and a deliberately lock-held invocation execute the exact
@@ -101,6 +258,12 @@ function runMode(string $mode, array $argv, $app): void
             [, , $chargeId, $actorUserId, $outcome] = $argv;
             $gateway = $app->make(App\Library\Usage\Contracts\PaymentProviderGateway::class);
             $gateway->confirmPaymentIntentOutcomes['*'] = $outcome;
+
+            if (isset($argv[5], $argv[6], $argv[7])) {
+                $gateway = new BarrierGatedPaymentProviderGateway($gateway, (string) $argv[5], (int) $argv[6], (float) $argv[7]);
+                $app->instance(App\Library\Usage\Contracts\PaymentProviderGateway::class, $gateway);
+            }
+
             $charge = App\Models\AdditionalBusinessSlotRenewalCharge::findOrFail((int) $chargeId);
             $result = $app->make(App\Library\Usage\UsageBillingCheckoutManager::class)->retrySlotRenewalAsOwner($charge, (int) $actorUserId);
             fwrite(STDOUT, sprintf("OK state=%s\n", $result->state->value));
