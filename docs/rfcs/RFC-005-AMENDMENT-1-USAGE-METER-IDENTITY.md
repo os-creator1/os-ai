@@ -1,38 +1,53 @@
 # RFC-005 Amendment 1 — Usage Meter Identity
 
-**Status: DESIGN — NOT AUTHORIZED FOR IMPLEMENTATION. SEE §3 GOVERNANCE VERDICT — ONE PROVISION OF THIS DESIGN IS NOT YET AUTHORIZED BY THE MERGED GOVERNANCE CONTRACT AS WRITTEN.**
+**Status: DESIGN — NOT AUTHORIZED FOR IMPLEMENTATION UNTIL HUMAN MERGE AND A SEPARATE IMPLEMENTATION CONTRACT.**
 
 Authorized for drafting by the merged
 `docs/automation/RFC-005-AMENDMENT-1-USAGE-METER-IDENTITY-CONTRACT.md`
-(PR #108, human-merged). This document is the one file that contract
-authorizes. Merging this document does **not** itself change any `app/`,
-`database/`, `routes/`, `config/`, or `resources/` file; does not create
-any migration, model, repository, manager, gateway, controller, route,
-view, or test; does not resume RFC-005 Milestone 5; and does not select
-a first metered feature. A separate, later, explicitly bounded
-implementation contract is required before any of the schema or code
-changes this document specifies may be written — and, per §H.3 below,
-one specific part of this design (the `UsageWalletManager` constructor
-change) additionally requires a small, separate, human-reviewed
-correction to the merged governance contract itself before it is
-authorized, regardless of any future implementation contract.
+(PR #108, human-merged; corrected by **RFC-005 Amendment 1 Governance
+Contract Correction Round 1**, PR #110, merge
+`2bf3bc5e1ab31a9c95495f113d5dde3748b4218f`, human-merged). This document
+is the one file that contract authorizes. Merging this document does
+**not** itself change any `app/`, `database/`, `routes/`, `config/`, or
+`resources/` file; does not create any migration, model, repository,
+manager, gateway, controller, route, view, or test; does not resume
+RFC-005 Milestone 5; and does not select a first metered feature. A
+separate, later, explicitly bounded implementation contract is required
+before any of the schema or code changes this document specifies may be
+written.
 
 This document is the authoritative superseding text for the specific
 RFC-005 provisions it names (§14 primarily, §11 by reference, §36's
 Milestone 5 entry, §39 item 11) once it is human-merged. It does not
 edit `docs/rfcs/RFC-005-BUSINESS-USAGE-BILLING-AND-WALLETS.md` directly.
 
-**Revision note (this pass):** a final architecture review found one
-long-deferred financial invariant this amendment is now the correct
-place to resolve (RFC-005 M1 contract §5.5's own explicit deferral of
+**Revision note (prior pass):** a final architecture review found one
+long-deferred financial invariant this amendment was the correct place
+to resolve (RFC-005 M1 contract §5.5's own explicit deferral of
 rate/wallet currency reconciliation "to M5" — this amendment is that
 architecture prerequisite), two remaining audit tables whose
 independently-valid columns could still contradict each other, and a
-governance-level question this design cannot resolve unilaterally: does
-the merged contract's "public method signatures remain unchanged" lock
-extend to `UsageWalletManager`'s constructor. All four are addressed
-below — the first three fully resolved in this document; the fourth
-resolved as a **stated blocker**, not a silent assumption either way.
+governance-level question that design pass could not resolve
+unilaterally: whether the merged contract's "public method signatures
+remain unchanged" lock extends to `UsageWalletManager`'s constructor.
+The first three were fully resolved in that pass; the fourth was
+resolved honestly as a **stated blocker** — the contradiction was real,
+and that pass declined to silently assume either reading.
+
+**Revision note (this pass):** the constructor-governance contradiction
+identified above has since been resolved by a separate, human-merged
+governance correction — **RFC-005 Amendment 1 Governance Contract
+Correction Round 1**, PR #110, merge
+`2bf3bc5e1ab31a9c95495f113d5dde3748b4218f`. That correction amended the
+merged contract's own §5 item 6 to explicitly exempt
+`UsageWalletManager::__construct()` from the "public method signatures
+unchanged" freeze, solely because it is Laravel dependency-injection
+wiring rather than part of the stable domain API, within the exact
+bounded delta this document already specified (§H.3). This pass
+reconciles every part of the design that referenced the former blocker,
+and additionally closes one independent schema-consistency gap: the
+`meter_key` column width was not uniformly normalized across every
+renamed legacy table (§D, §E).
 
 ---
 
@@ -52,14 +67,21 @@ direct re-read of `docs/automation/RFC-005-M1-CONTRACT.md`:
   `currency_code`; an immutable accounting snapshot once set — never
   rewritten by any code path."* Two Businesses can therefore have
   wallets in different currencies, permanently, by design.
-- The merged governance contract's exact locked text (re-quoted
-  verbatim, load-bearing for §H.3):
-  > *"6. `UsageWalletManager`'s public method signatures remain
-  > unchanged. `reserve()`, `commit()`, `release()`, `setActiveRate()`,
-  > `activateMetering()`, and every other existing public method keep
-  > their exact current signatures; only their internal resolution
-  > target (which repository answers "is this metered, what is the
-  > active rate") may change."*
+- The merged governance contract's **current, corrected** text (§5 item
+  6, as amended by Correction Round 1 / PR #110, re-quoted verbatim,
+  load-bearing for §H.3):
+  > *"6. `UsageWalletManager`'s public domain/API method signatures
+  > remain unchanged; its constructor is separately, narrowly exempted,
+  > per Correction Round 1 (§0.1)."* — followed by (a) the frozen
+  > enumerated domain/API method list and (b) the explicit
+  > `__construct()` exemption, bounded to adding `UsageMeterRepository`/
+  > `UsageMeterTransitionRepository` and removing the two old
+  > classification repositories only if genuinely unused, with no
+  > service-locator, setter-injection, or method-injection workaround
+  > authorized. The original, superseded wording — which locked "every
+  > other existing public method" without qualification, and which this
+  > document's prior pass correctly identified as literally including
+  > `__construct()` — no longer governs.
 
 ---
 
@@ -195,20 +217,60 @@ unchanged, restated in §H below).
 
 ---
 
-## D. `business_usage_rates` — exact correction, revised for currency integrity
+## D. `business_usage_rates` — exact correction, revised for currency integrity and column width
+
+**Width inconsistency, closed this pass:** the live migration
+(`database/migrations/2026_08_16_120002_create_business_usage_rates_table.php`)
+declares `$table->string('feature_key', 64);` and
+`$table->unique(['feature_key', 'version']);` — the latter with
+Laravel's default auto-generated index name
+`business_usage_rates_feature_key_version_unique`. A plain
+`renameColumn()` renames the column only; it does **not** widen a
+`varchar(64)` into a `varchar(128)`, and it does not rename the
+existing index. Since `usage_meters.meter_key` and every newly-created
+`meter_key` column in this design are `string(128)`, an un-widened
+`business_usage_rates.meter_key` would silently truncate or reject any
+meter key longer than 64 characters — a real semantic defect, not a
+cosmetic one, independent of whether MySQL's FK mechanics tolerate
+differing `varchar` lengths on either side of a foreign key (they do,
+but that is irrelevant to whether the *data itself* fits). **Locked
+rule: every `meter_key` column in this amendment is `VARCHAR(128)`,
+same charset/collation as the table's other string columns.** Four
+steps, in this exact order, none combinable with the next without
+breaking a downstream dependency:
 
 ```php
+// D-1: rename only — do not combine with a type change in the same
+// Blueprint call; renaming and altering type together is unsafe across
+// Laravel/doctrine-dbal versions.
 Schema::table('business_usage_rates', function (Blueprint $table) {
     $table->renameColumn('feature_key', 'meter_key');
 });
 
+// D-2: widen, now that the column is named meter_key. MySQL permits
+// MODIFY COLUMN to widen an indexed varchar without dropping the index
+// first; charset/collation are preserved implicitly since only the
+// length changes.
 Schema::table('business_usage_rates', function (Blueprint $table) {
-    $table->dropUnique(['feature_key', 'version']); // pre-rename index name
-    $table->unique(['meter_key', 'version']);
-    $table->unique(['meter_key', 'id']); // FK target for §C's and §E/F's same-meter constraints
+    $table->string('meter_key', 128)->change();
 });
 
-// Added once usage_meters exists with unique(meter_key, currency_id) — §O:
+// D-3: rebuild the old feature-key-named indexes under the meter-key
+// identity. The pre-rename auto-generated name is
+// business_usage_rates_feature_key_version_unique (audited directly
+// from the live migration, not invented) — Laravel computed that name
+// from the column list at creation time, and renaming the column does
+// not rename the index, so this exact string is still the index's real
+// name and must be referenced explicitly, not regenerated from the new
+// column name.
+Schema::table('business_usage_rates', function (Blueprint $table) {
+    $table->dropUnique('business_usage_rates_feature_key_version_unique');
+    $table->unique(['meter_key', 'version'], 'business_usage_rates_meter_key_version_unique');
+    $table->unique(['meter_key', 'id'], 'business_usage_rates_meter_key_id_unique'); // FK target for §C's and §E/F's same-meter constraints
+});
+
+// D-4: composite currency FK — added only once usage_meters exists with
+// its own unique(meter_key, currency_id) target index (§O):
 Schema::table('business_usage_rates', function (Blueprint $table) {
     $table->foreign(['meter_key', 'currency_id'], 'rates_meter_currency_foreign')
         ->references(['meter_key', 'currency_id'])->on('usage_meters')
@@ -243,19 +305,38 @@ design** (§J).
 
 ---
 
-## E. `business_usage_rate_activations` — corresponding change, revised for same-meter rate integrity
+## E. `business_usage_rate_activations` — corresponding change, revised for same-meter rate integrity and column width
+
+The live migration
+(`database/migrations/2026_08_16_120003_create_business_usage_rate_activations_table.php`)
+declares `$table->string('feature_key', 64);` and
+`$table->index('feature_key');` — the latter with Laravel's
+auto-generated name `business_usage_rate_activations_feature_key_index`.
+The identical width defect as §D applies here, and is closed the same
+way:
 
 ```php
+// E-1: rename only.
 Schema::table('business_usage_rate_activations', function (Blueprint $table) {
     $table->renameColumn('feature_key', 'meter_key');
 });
 
+// E-2: widen to varchar(128), matching every other meter_key column.
 Schema::table('business_usage_rate_activations', function (Blueprint $table) {
-    $table->dropIndex(['feature_key']); // pre-rename index name
-    $table->index('meter_key');
+    $table->string('meter_key', 128)->change();
 });
 
-// Added once both target tables carry their required indexes — §O:
+// E-3: rebuild the old feature-key-named index under the meter-key
+// identity — business_usage_rate_activations_feature_key_index is the
+// exact pre-rename auto-generated name, audited directly from the live
+// migration; renaming the column does not rename this index.
+Schema::table('business_usage_rate_activations', function (Blueprint $table) {
+    $table->dropIndex('business_usage_rate_activations_feature_key_index');
+    $table->index('meter_key', 'business_usage_rate_activations_meter_key_index');
+});
+
+// E-4: FKs, added once both target tables carry their required indexes
+// (§O):
 Schema::table('business_usage_rate_activations', function (Blueprint $table) {
     $table->foreign('meter_key')->references('meter_key')->on('usage_meters')->restrictOnDelete();
     $table->foreign(['meter_key', 'rate_id'], 'activations_meter_rate_foreign')
@@ -359,7 +440,9 @@ next; the rate's own existence and same-meter/same-currency integrity
 are checked last, as a final defensive verification of data the schema
 should already make impossible to violate.
 
-**Four exception classes total, one new this pass:**
+**Five exception classes total in this failure surface: one pre-existing,
+reused where truthful, plus four `UsageMeter`-specific classes this
+amendment introduces, the newest being `UsageMeterCurrencyMismatchException`:**
 
 - `NoActiveRateForFeatureException` (existing, reused where truthful —
   unchanged from the prior pass).
@@ -458,82 +541,58 @@ currency, which is itself a required future test, §7).
 `return new UsageCapacityDecision(true);` pass-through (§I).
 `RealUsageAuthorizationGateway::check()` remains completely unchanged.
 
-### H.3 Governance verdict on the constructor — resolved as a stated blocker, not a silent assumption
+### H.3 Constructor governance — resolved by merged Correction Round 1, no longer a blocker
 
-**The independent review is correct to reject the prior pass's own
-reasoning here, and this pass withdraws it.** The prior draft argued
-that removing `PlatformFeatureUsageClassificationRepository`/
-`PlatformFeatureUsageClassificationTransitionRepository` from
-`UsageWalletManager`'s constructor (and adding the two new meter
-repositories) was "permitted" because the constructor is resolved by
-Laravel's container rather than called by application code with
-positional arguments. **That reasoning is real and technically true,
-but it is not what the merged governance contract's own text says**,
-and applying it here would be inconsistent with this same design's own
-conservative reading of the identical constraint elsewhere — most
-visibly, `reserve()`'s `$featureKey` parameter was deliberately *not*
-renamed (§F) specifically because the locked text was read
-conservatively to include parameter names, not only arity/types. Using
-a more permissive reading for the constructor, purely because it is
-more convenient, would be exactly the "silently decide the merged
-contract meant an unstated exception" error the independent review
-warns against.
-
-**Direct governance-level interpretation audit:** the merged contract's
-text reads, verbatim: *"`UsageWalletManager`'s public method signatures
-remain unchanged. `reserve()`, `commit()`, `release()`, `setActiveRate()`,
-`activateMetering()`, and every other existing public method keep their
-exact current signatures."* A PHP constructor is, absent an explicit
-access modifier reducing it, a public method. The text names five
-methods explicitly and then extends the same rule to "every other
-existing public method" **without qualification** — no repository
-precedent was found (a direct search of this contract and of RFC-004's
-own two amendment contracts) that ever uses "public method" to mean
-"public domain/business method, excluding `__construct()`." **No
-textual or contextual basis exists to read the constructor out of this
-constraint's scope.**
-
-**At the same time, the contract's own second sentence — "only their
-internal resolution target ... may change" — explicitly anticipates and
-authorizes exactly the kind of change this amendment needs: re-pointing
+**Historical record:** the design's prior pass found a genuine
+contradiction in the then-current merged contract's §5 item 6 —
+its first sentence locked "every other existing public method" without
+qualification (and a PHP constructor is itself a public method), while
+its second sentence explicitly authorized re-pointing
 `reserve()`/`setActiveRate()`/`activateMetering()` at a *new* repository
-that does not exist in the current constructor.** In PHP, a method can
-only obtain a dependency it does not already have via one of three
-mechanisms: constructor injection (locked, per the above), method-
-parameter injection (equally locked — a method's own parameter list is
-explicitly named as unchangeable), or a service-locator call inside the
-method body (explicitly forbidden by the independent review's own
-instruction, precisely because it would be a workaround for this exact
-lock, not a genuine architectural choice). **All three of the only
-mechanically possible ways to give these methods access to a new
-repository are foreclosed by the contract's literal text or by explicit
-instruction — meaning the contract's own two locked sentences are in
-direct tension with each other**, satisfiable simultaneously only under
-a reading that exempts dependency-injection wiring from "public method
-signatures," which — however technically sound — is not a reading the
-contract's own text currently states.
+that could not reach those methods without either a constructor change,
+a method-signature change (also locked), or a service-locator call
+(explicitly forbidden). That pass declined to resolve the contradiction
+unilaterally and reported it as **Verdict B — a contract-level
+blocker**, requiring a separate, human-reviewed governance correction.
 
-**Verdict: B — CONTRACT-LEVEL BLOCKER.** As written today, the merged
-governance contract does not authorize a constructor signature change
-to `UsageWalletManager`, and this design document cannot supersede its
-own governing contract to grant that authorization itself. **A small,
-separate, human-reviewed correction to
-`docs/automation/RFC-005-AMENDMENT-1-USAGE-METER-IDENTITY-CONTRACT.md`
-is required before this specific part of the design (§H's constructor
-change, and therefore any `reserve()`/`setActiveRate()`/
-`activateMetering()` re-pointing that depends on it) may be
-implemented.** The natural, narrowly-scoped correction — stated here as
-a recommendation, not enacted by this document — would add one
-clarifying sentence to the governance contract's existing item 6,
-explicitly exempting `__construct()`'s own dependency-injection
-parameter list from the "public method signatures" lock, since that is
-the only reading under which the contract's own two sentences can both
-be satisfied at all. **This document does not assume that correction is
-already granted.** Every other part of this design (§B–§G, §I–§L, the
-schema and migration work) is independent of this specific question and
-is not blocked by it — only the `UsageWalletManager` code change itself
-is. PR #109 is marked not mergeable as a complete, implementation-ready
-design until this governance correction occurs, exactly as instructed.
+**Resolution:** that correction has since been drafted, reviewed, and
+human-merged — **RFC-005 Amendment 1 Governance Contract Correction
+Round 1**, PR #110, merge `2bf3bc5e1ab31a9c95495f113d5dde3748b4218f`.
+It rewrote §5 item 6 into the exact two-part rule quoted in §0: every
+existing public **domain/API** method keeps its exact signature, and
+`__construct()` is separately, narrowly exempted solely because it is
+dependency-injection wiring, not domain API. **This is now a normal,
+fully authorized implementation rule — not an open question, and not a
+blocker.**
+
+**Final, locked constructor design:**
+
+- Every frozen public domain/API method (§0's enumerated list —
+  `reserve()`, `commit()`, `release()`, `setActiveRate()`,
+  `activateMetering()`, `evaluateCoarseCapacity()`,
+  `initializeWalletForNewBusiness()`, `creditFromFunding()`,
+  `expireStaleReservations()`, `setSpendCap()`, `setFeatureLimit()`,
+  `setSafetyLimit()`, `setBillingStatus()`, `configureAutoRecharge()`,
+  `recordAutoRechargeFailure()`) keeps its exact current signature —
+  unaffected by this section.
+- `UsageWalletManager::__construct()` **adds** `UsageMeterRepository`
+  and `UsageMeterTransitionRepository`.
+- `__construct()` **removes** `PlatformFeatureUsageClassificationRepository`
+  and `PlatformFeatureUsageClassificationTransitionRepository` **only if**
+  the final method-body design (§H, §F) leaves them genuinely unused. If
+  any unchanged public method still genuinely depends on either, it is
+  **retained** — removal is never required merely for aesthetic
+  cleanup, exactly as Correction Round 1 states.
+- **No service locator, `app()`/`resolve()` lookup, setter injection, or
+  method injection into any existing public domain method is introduced
+  anywhere in this design** — the constructor is the sole, exclusive
+  mechanism by which `reserve()`, `setActiveRate()`, and
+  `activateMetering()` obtain `UsageMeterRepository`/
+  `UsageMeterTransitionRepository`, exactly as Laravel's container-only
+  resolution pattern already used for this class requires.
+
+Every other part of this design (§B–§G, §I–§L, the schema and migration
+work) was already independent of this question and remains unaffected.
 
 ---
 
@@ -617,68 +676,99 @@ nullable-safe for them, §G).
 
 ---
 
-## O. Migration/backfill strategy — exact staged order, final
+## O. Migration/backfill strategy — exact staged order, final, re-derived in full
 
 **No migration is created by this document.** The final constraint
-graph (§A) requires the following exact order — later steps depend on
-indexes created in earlier ones; no step may be reordered without
-breaking a downstream FK's own prerequisite:
+graph (§A) — now including the width-normalization steps §D/§E require
+and the no-longer-blocked constructor change — requires **13 steps**,
+not the prior pass's 9; the step count changed because §D and §E each
+split into a rename/widen/reindex sequence rather than a single rename.
+Later steps depend on indexes or column definitions created in earlier
+ones; no step may be reordered without breaking a downstream
+prerequisite:
 
 1. **Create `usage_meters`** (§B): `business_id` FK to `businesses`
    (not circular — `businesses` already exists) and `currency_id` FK to
    `currencies` (not circular — `currencies` already exists) are both
    added immediately; `active_rate_id` remains a plain, unconstrained
    column. `unique(meter_key)` and `unique(meter_key, currency_id)` are
-   both created now. Empty at creation.
-2. **Rename `business_usage_rates.feature_key` → `meter_key`** (§D);
-   drop the old `unique(feature_key, version)`; add
-   `unique(meter_key, version)` and `unique(meter_key, id)`. Empty
-   table, zero data risk.
-3. **Add `business_usage_rates(meter_key, currency_id) → usage_meters(meter_key, currency_id)`**
-   (§D) — valid now: step 1 created the target index, step 2 renamed
-   the source column.
-4. **Add `usage_meters(meter_key, active_rate_id) → business_usage_rates(meter_key, id)`**
-   — valid now: step 2 created the target index.
-5. **Rename `business_usage_rate_activations.feature_key` → `meter_key`**;
-   swap the index; add the plain `meter_key → usage_meters.meter_key`
-   FK and the composite `(meter_key, rate_id) → business_usage_rates(meter_key, id)`
-   FK (§E) — both valid now.
-6. **Create `usage_meter_transitions`** (§C), with its plain
-   `meter_key → usage_meters.meter_key` FK and both composite
-   `from`/`to`-`active_rate_id` FKs against
-   `business_usage_rates(meter_key, id)` — all valid now.
-7. **Add `business_usage_reservations.meter_key`** (`NOT NULL`, table
-   empty), with its plain `meter_key → usage_meters.meter_key` FK and
-   composite `(meter_key, rate_id) → business_usage_rates(meter_key, id)`
-   FK (§F) — valid now.
-8. **Add `business_usage_ledger_entries.meter_key`** (nullable), with
-   its plain and composite FKs (§G, both nullable-safe per `MATCH
-   SIMPLE`) — valid now.
-9. **Code changes**, strictly after every schema step: new
-   `UsageMeter`/`UsageMeterTransition` models; new
-   `UsageMeterRepository`/`UsageMeterTransitionRepository` contracts and
-   Eloquent implementations; the four new exception classes (§F); the
-   `UsageWalletManager` method-body changes (§H) — **the constructor
-   portion of this step remains blocked pending §H.3's governance
-   correction**; the three read-only classification repository classes
-   are left entirely as-is, per the prior pass.
+   both created now, at `string(128)`. Empty at creation.
+2. **Rename `business_usage_rates.feature_key` → `meter_key`** (§D-1).
+   Empty table, zero data risk.
+3. **Widen `business_usage_rates.meter_key` to `string(128)`** (§D-2) —
+   valid now: the column exists under its new name from step 2.
+4. **Rebuild `business_usage_rates`' indexes under the meter-key
+   identity** (§D-3): drop
+   `business_usage_rates_feature_key_version_unique` (the exact,
+   audited pre-rename name — unaffected by steps 2–3); add
+   `business_usage_rates_meter_key_version_unique` and
+   `business_usage_rates_meter_key_id_unique`.
+5. **Add `business_usage_rates(meter_key, currency_id) → usage_meters(meter_key, currency_id)`**
+   (§D-4) — valid now: step 1 created the target index, step 3 widened
+   the source column to match it, step 4 created `meter_key`'s own
+   post-rename indexes.
+6. **Add `usage_meters(meter_key, active_rate_id) → business_usage_rates(meter_key, id)`**
+   — valid now: step 4 created the target index.
+7. **Rename `business_usage_rate_activations.feature_key` → `meter_key`**
+   (§E-1). Empty table, zero data risk.
+8. **Widen `business_usage_rate_activations.meter_key` to `string(128)`**
+   (§E-2) — valid now.
+9. **Rebuild `business_usage_rate_activations`' index under the
+   meter-key identity** (§E-3): drop
+   `business_usage_rate_activations_feature_key_index` (the exact,
+   audited pre-rename name); add
+   `business_usage_rate_activations_meter_key_index`.
+10. **Add `business_usage_rate_activations`' FKs** (§E-4): the plain
+    `meter_key → usage_meters.meter_key` FK and the composite
+    `(meter_key, rate_id) → business_usage_rates(meter_key, id)` FK —
+    both valid now, since step 6's target index chain and step 4's
+    `business_usage_rates_meter_key_id_unique` already exist.
+11. **Create `usage_meter_transitions`** (§C), at `string(128)` from
+    creation (no rename needed — a brand-new table), with its plain
+    `meter_key → usage_meters.meter_key` FK and both composite
+    `from`/`to`-`active_rate_id` FKs against
+    `business_usage_rates(meter_key, id)` — all valid now.
+12. **Add `business_usage_reservations.meter_key`** (`string(128)`,
+    `NOT NULL`, table empty — no rename needed) with its plain
+    `meter_key → usage_meters.meter_key` FK and composite
+    `(meter_key, rate_id) → business_usage_rates(meter_key, id)` FK
+    (§F) — valid now.
+13. **Add `business_usage_ledger_entries.meter_key`** (`string(128)`,
+    nullable — no rename needed), with its plain and composite FKs
+    (§G, both nullable-safe per `MATCH SIMPLE`) — valid now.
+
+**Code changes follow strictly after all 13 schema steps**, and — per
+§H.3's now-merged governance correction — are no longer split into a
+blocked/unblocked portion: new `UsageMeter`/`UsageMeterTransition`
+models; new `UsageMeterRepository`/`UsageMeterTransitionRepository`
+contracts and Eloquent implementations; the five exception classes
+(§F); the `UsageWalletManager` method-body **and constructor** changes
+(§H) — fully authorized, no remaining governance gate; the three
+read-only classification repository classes are left entirely as-is,
+per the prior pass, removed from `UsageWalletManager`'s constructor
+only if genuinely unused (§H.3).
 
 **Verification the future implementation must perform before trusting
-this order, named explicitly per the independent review's own
-requirement:** every `meter_key` column across all six affected tables
-must be declared with identical type and collation (`string(128)`,
-matching Laravel's default table collation) — a mismatch would cause a
-composite FK to fail to attach even when the logical reference is
-correct; `currency_id`/`rate_id`/`active_rate_id`/`id` must all be
-consistently `unsignedBigInteger`/`bigint unsigned` across every
-referencing and referenced column.
+this order:** every `meter_key` column across all six affected tables
+(`usage_meters`, `usage_meter_transitions`, `business_usage_rates`,
+`business_usage_rate_activations`, `business_usage_reservations`,
+`business_usage_ledger_entries`) must resolve to identical
+`VARCHAR(128)` type and collation, matching the table's default
+collation — a mismatch would cause a composite FK to fail to attach
+even when the logical reference is correct; `currency_id`/`rate_id`/
+`active_rate_id`/`id` must all be consistently `unsignedBigInteger`/
+`bigint unsigned` across every referencing and referenced column. This
+is a required future schema test (§7, proof 29).
 
-**Rollback posture:** reverse of the above — drop ledger constraints,
-then reservation constraints, then the transitions table entirely, then
-rate-activation constraints and rename its column back, then the two
-`usage_meters`↔`business_usage_rates` composite FKs, then rename
-`business_usage_rates`'s column back, then drop `usage_meters` entirely.
-Every step is a standard reversible Laravel migration `down()`.
+**Rollback posture:** exact reverse of the 13 steps above — drop ledger
+constraints (13), reservation constraints (12), the transitions table
+entirely (11), rate-activation FKs (10) and its rebuilt index (9) and
+its widened column back to 64 and its rename back (8, 7), the two
+`usage_meters`↔`business_usage_rates` composite FKs (6, 5), the rates
+table's rebuilt indexes back to the original `feature_key` unique (4),
+its widened column back to 64 and its rename back (3, 2), then drop
+`usage_meters` entirely (1). Every step is a standard reversible
+Laravel migration `down()`.
 
 **Zero fabricated rows**, unchanged from the prior pass.
 
@@ -686,19 +776,23 @@ Every step is a standard reversible Laravel migration `down()`.
 
 ## P. Amendment implementation decomposition
 
-**Slice 1 — Schema and repository foundation.** §O steps 1–8, plus the
-new model/repository/contract/exception files (step 9's non-manager
-portion). Conceptual responsibility: prove every table, column, and —
-now including the currency and full audit-table constraints — every
-composite FK correctly rejects a manually-attempted violating insert at
-the database level, with zero change to any existing runtime behavior.
+**Slice 1 — Schema and repository foundation.** §O steps 1–13, plus the
+new model/repository/contract/exception files (the non-manager portion
+of the code-changes step). Conceptual responsibility: prove every
+table, column, and — now including the currency, width-normalization,
+and full audit-table constraints — every composite FK correctly rejects
+a manually-attempted violating insert at the database level, with zero
+change to any existing runtime behavior.
 
-**Slice 2 — `UsageWalletManager` re-pointing.** §H's method-body
-changes. **This slice is explicitly conditioned on §H.3's governance
-correction having occurred first** — it cannot proceed under the
-current merged contract as written. Once unblocked, its conceptual
-responsibility is unchanged from the prior pass, extended per §7's
-updated proof list.
+**Slice 2 — `UsageWalletManager` re-pointing, including its constructor.**
+§H's method-body and constructor changes. **Governance prerequisite
+satisfied by merged PR #110 (§H.3)** — the constructor-signature
+question is resolved and no longer conditions this slice. Slice 2 still
+requires its own, separately human-merged implementation contract
+before any code may be written, exactly like Slice 1 — that requirement
+is ordinary implementation-contract discipline, not a residual
+governance gate. Its conceptual responsibility is unchanged from the
+prior pass, extended per §7's updated proof list.
 
 ---
 
@@ -725,8 +819,8 @@ not resolve or need to).
 
 ## Required future implementation proofs
 
-Restated and expanded per this pass's own findings — every item is a
-future test, none written here:
+**29 total** (13 carried forward unchanged + 16 added across the two
+most recent passes) — every item is a future test, none written here:
 
 1–13. Unchanged from the prior pass (generic entitlement wallet-
 independence even with a manually-forced classification row; the five
@@ -773,13 +867,27 @@ identical; M3/M4 regression unaffected; a clean success path).
     mirroring the existing, unwritten discipline
     `PlatformFeatureUsageClassificationRepository::update()`'s own
     callers already follow for `feature_key`.
-26. **§H.3's governance verdict is itself proven, not merely stated:**
-    a test (or, more precisely, an implementation-phase check) that the
-    `UsageWalletManager` constructor change described in this document
-    is only merged after the governance contract's own correction has
-    been separately human-merged — this is a process proof, not a code
-    proof, and belongs in the future implementation contract's own
-    acceptance criteria, not in a PHPUnit test.
+26. **`UsageWalletManager` remains fully container-resolvable after the
+    authorized constructor dependency swap** (§H.3) — a test that
+    resolving it from Laravel's container succeeds with no manual
+    binding changes, exercising the exact DI-only resolution pattern
+    this design's governance reasoning relies on.
+27. **Every existing public domain/API method on `UsageWalletManager`
+    retains a byte-for-byte-equivalent signature declaration** (§0's
+    enumerated list) after the Slice 2 implementation — a reflection-
+    based test comparing each method's parameter types, order,
+    defaults, and return type against its pre-Amendment declaration.
+28. **No `app()`/`resolve()`/service-locator call, setter injection, or
+    method injection into a frozen domain method is introduced anywhere
+    in `UsageWalletManager`** (§H.3) — a static-analysis or direct
+    source-grep test asserting their absence from the final
+    implementation.
+29. **All six `meter_key` columns resolve to identical `VARCHAR(128)`
+    type and collation** (§D, §E, §O) — a direct
+    `INFORMATION_SCHEMA`/`Schema::getColumnType`-based test across
+    `usage_meters`, `usage_meter_transitions`, `business_usage_rates`,
+    `business_usage_rate_activations`, `business_usage_reservations`,
+    and `business_usage_ledger_entries`.
 
 ---
 
@@ -796,21 +904,16 @@ identical; M3/M4 regression unaffected; a clean success path).
 5. Whether a future `deactivateMetering()` method is ever needed
    remains open; the schema is forward-compatible without further
    change.
-6. **New this pass, and the most consequential open item:** whether the
-   merged governance contract's item 6 will be corrected to exempt
-   `UsageWalletManager`'s constructor from the "public method
-   signatures unchanged" lock (§H.3). This design cannot proceed to a
-   real implementation contract for Slice 2 until a human resolves this
-   — either by approving that correction, or by directing an
-   alternative this document has not identified (since method-parameter
-   injection and service-locator resolution are both independently
-   foreclosed, §H.3).
+
+**Removed this pass:** the item asking whether the governance contract
+would be corrected to exempt `UsageWalletManager`'s constructor — that
+decision has been made and merged (PR #110, §H.3) and is no longer
+open.
 
 ---
 
 *End of RFC-005 Amendment 1 design document. Implementation of any kind
-requires a separate, later, explicitly bounded implementation contract.
-Additionally, per §H.3, the `UsageWalletManager` constructor change
-this design specifies requires a separate, human-reviewed correction to
-the merged governance contract before it may be implemented, regardless
-of any future implementation contract's own approval.*
+— including the `UsageWalletManager` constructor change specified in
+§H.3, now fully authorized by merged governance Correction Round 1
+(PR #110) — requires a separate, later, explicitly bounded
+implementation contract before any code may be written.*
