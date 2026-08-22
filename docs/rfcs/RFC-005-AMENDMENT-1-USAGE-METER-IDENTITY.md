@@ -126,27 +126,65 @@ run for an arbitrary period before the next:
   final shape; `UsageWalletManager` untouched; the legacy
   `feature_key` columns on `business_usage_rates`/
   `business_usage_rate_activations` remain **`NOT NULL`**, unchanged.
-- **Slice 2 — CUTOVER:** first, a **backward-compatible schema
-  relaxation** — `business_usage_rates.feature_key` and
-  `business_usage_rate_activations.feature_key` go from `NOT NULL` to
-  nullable, with the columns and their legacy indexes left physically
-  in place. This alone is safe to deploy before any code change: the
-  unchanged Slice 1 manager keeps writing `feature_key` exactly as
-  before, into a column that merely became more permissive. Only after
-  that migration is live does the cutover code — `UsageWalletManager`'s
-  constructor and its `reserve()`/`setActiveRate()`/`activateMetering()`
-  bodies — become active, reading and writing meter identity and no
-  longer relying on `feature_key`'s presence. The legacy columns stay
-  physically present, nullable, and ignored — not dropped, not
-  tightened.
+- **Slice 2 — CUTOVER / DUAL-WRITE:** the manager cutover, with **zero
+  schema mutation of any kind for the legacy `feature_key` columns**
+  (see Design Correction 3 immediately below for why the relaxation
+  step this document originally specified here is removed).
 - **Slice 3 — CONTRACT:** a separate, later, separately human-reviewed
-  implementation contract and PR, starting only after Slice 2 is merged
-  and its cutover code has been running (so real `meter_key` values
-  exist on every row). Preflights for any remaining `NULL` `meter_key`
+  implementation contract and PR, starting only after Slice 2 is
+  merged. Every row created by the cutover code has a genuine
+  `meter_key`; rows created by Slice 1's own manager before Slice 2
+  activated do not, and Slice 3 does not assume time alone resolves
+  that ("Pre-Slice-2 legacy rows," below). Preflights for any remaining
+  `NULL` `meter_key`
   row, fails closed if found, then tightens `meter_key` to `NOT NULL`
   and drops the legacy `feature_key` columns/indexes on
-  `business_usage_rates`/`business_usage_rate_activations` — reaching
-  the exact final schema this document has always specified.
+  `business_usage_rates`/`business_usage_rate_activations`
+  — reaching the exact final schema this document has always specified.
+
+### Design Correction 3 — Slice 2 dual-writes instead of relaxing the legacy column
+
+**A third-pass review found that Slice 2's own "relax `feature_key` to
+nullable, then activate cutover code" sequence — while safer than
+Design Correction 1's version — was itself a two-step ordering
+dependency *inside one Git PR*, and a PR does not itself guarantee that
+its migration is live on every server before its code begins serving
+traffic.** That gap is closed here using the standard expand/contract
+compatibility pattern applied one level deeper: **Slice 2 dual-writes
+both identities instead of relaxing anything.** `business_usage_rates.feature_key`
+and `business_usage_rate_activations.feature_key` **remain `VARCHAR(64) NOT NULL`,
+completely untouched, through all of Slice 1 *and* Slice 2** — no
+migration of any kind touches them until Slice 3. The cutover code
+(§D, §E, §F, §H) writes **both** `feature_key` and `meter_key` on every
+insert it makes, sourcing `feature_key` from the resolved `UsageMeter`'s
+own immutable `feature_key` (`$meter->feature_key`) — never from the
+raw incoming `$featureKey` argument, which after cutover semantically
+identifies the meter, not the owning `PlatformFeature`. Because the
+legacy column is never relaxed, dropped, or left unpopulated, **Slice 2
+requires zero schema change of its own** and is deployable against
+Slice 1's exact, unmodified schema with no ordering dependency at all.
+
+### Pre-Slice-2 legacy rows
+
+**Stated explicitly, not left implicit:** any `business_usage_rates`/
+`business_usage_rate_activations`/`business_usage_reservations` row
+created by Slice 1's own unmodified manager — i.e. before Slice 2's
+cutover code activates — has `feature_key` populated and `meter_key`
+`NULL`. Slice 2 does not, and must not, retroactively fabricate a
+`meter_key` for those rows; they remain valid legacy rows, permanently.
+**This means Slice 3's `NULL`-`meter_key` preflight will correctly, and
+intentionally, fail closed if any such row still exists when Slice 3
+runs** — that is the preflight working as designed, not a bug to route
+around. Passage of time alone does not cause a pre-Slice-2 row to
+acquire a `meter_key`; nothing in this design claims otherwise. Every
+audit in this document states that `business_usage_rates`,
+`business_usage_rate_activations`, and `business_usage_reservations`
+are expected to contain **no real rows at all** in any production
+deployment before Amendment 1 (§0, §N) — so the ordinary rollout should
+never actually encounter this case. If an unexpected environment
+violates that expectation, **Slice 3 stops, human remediation is
+required, and no `feature_key`-to-`meter_key` copy or fabricated
+`UsageMeter` is ever performed** to make the preflight pass.
 
 No live `UsageMeter` or rate is activated by any of the three slices,
 and **M5 remains blocked until all three slices merge** — unchanged in
@@ -391,37 +429,46 @@ and `latestVersionForFeature()` are **not modified in Slice 1** — they
 keep querying `feature_key`, exactly as `UsageWalletManager::setActiveRate()`
 still calls them.
 
-**Slice 2 — CUTOVER, deployed as two ordered steps within the one
-Slice 2 PR:**
+**Slice 2 — CUTOVER / DUAL-WRITE: zero schema mutation for this table.**
+`business_usage_rates.feature_key` remains `VARCHAR(64) NOT NULL`,
+completely untouched, through all of Slice 2 (Design Correction 3). No
+migration runs against this table in Slice 2 at all. Instead,
+`setActiveRate()`'s cutover body (§H) **dual-writes both identities**
+on every rate insert:
 
 ```php
-// D-4 (Slice 2, deployed BEFORE the cutover code): backward-compatible
-// relaxation. Column and index stay physically present.
-Schema::table('business_usage_rates', function (Blueprint $table) {
-    $table->string('feature_key', 64)->nullable()->change();
-});
+$rate = $this->rateRepository->create([
+    'feature_key' => $meter->feature_key, // NOT $featureKey — see §H
+    'meter_key'   => $meter->meter_key,
+    'version' => $nextVersion,
+    // ...unchanged fields
+]);
 ```
 
-Only once this migration is live does `setActiveRate()`'s cutover body
-(§H) stop writing `feature_key` and start writing `meter_key` instead —
-safe precisely because `feature_key` now accepts `NULL`.
+`feature_key` is never `NULL` on any row Slice 2 creates — sourced from
+the resolved `UsageMeter`'s own immutable `feature_key`, itself
+validated as a real `PlatformFeature::tryFrom()` value at meter
+creation (§7) — so the column's existing `NOT NULL` constraint is
+satisfied exactly as it always has been, with no relaxation required.
 `BusinessUsageRateRepository::findByFeatureAndVersion()`/
 `latestVersionForFeature()` switch their internal `where('feature_key', ...)`
-clause to `where('meter_key', ...)` in this same Slice 2 PR — their
-method names and parameters are unchanged, since this repository is not
+clause to `where('meter_key', ...)` in this same Slice 2 PR — the
+authoritative economic lookup key becomes `meter_key`, while
+`feature_key` becomes compatibility/audit data only. Method names and
+parameters are unchanged, since this repository is not
 `UsageWalletManager` and carries no signature freeze.
 
 **Slice 3 — CONTRACT (separate implementation contract and PR, after
 Slice 2 has merged and run):**
 
 ```php
-// D-5 (Slice 3): preflight — fail closed, never fabricate.
+// D-4 (Slice 3): preflight — fail closed, never fabricate.
 $remaining = DB::table('business_usage_rates')->whereNull('meter_key')->count();
 if ($remaining > 0) {
     throw new UsageMeterBackfillIncompleteException('business_usage_rates', $remaining);
 }
 
-// D-6 (Slice 3): tighten and drop the legacy identity.
+// D-5 (Slice 3): tighten and drop the legacy identity.
 Schema::table('business_usage_rates', function (Blueprint $table) {
     $table->string('meter_key', 128)->nullable(false)->change();
     $table->dropUnique('business_usage_rates_feature_key_version_unique');
@@ -446,8 +493,7 @@ overlapping constraints enforcing the same underlying fact via
 different paths.
 
 **The exact currency invariant, locked (resolves independent review
-§1), reaching its final enforced state once Slice 2's contract phase
-completes:**
+§1), reaching its final enforced state once Slice 3 completes:**
 
 > Every `business_usage_rates` row's `currency_id` must equal its
 > owning meter's own `currency_id` — enforced by the database, not
@@ -481,7 +527,8 @@ nullable shadow column instead.
 
 ```php
 // E-1 (Slice 1): purely additive — feature_key and its index are
-// untouched (feature_key remains NOT NULL through all of Slice 1).
+// untouched (feature_key remains NOT NULL through Slice 1 and Slice 2
+// both, per Design Correction 3 — dropped only in Slice 3).
 Schema::table('business_usage_rate_activations', function (Blueprint $table) {
     $table->string('meter_key', 128)->nullable()->after('feature_key');
     $table->index('meter_key', 'business_usage_rate_activations_meter_key_index');
@@ -499,30 +546,30 @@ Schema::table('business_usage_rate_activations', function (Blueprint $table) {
 `BusinessUsageRateActivation::$fillable` gains `'meter_key'` alongside
 `'feature_key'` — harmless, unpopulated until Slice 2.
 
-**Slice 2 — CUTOVER, two ordered steps within the one Slice 2 PR:**
+**Slice 2 — CUTOVER / DUAL-WRITE: zero schema mutation for this table.**
+`business_usage_rate_activations.feature_key` remains `VARCHAR(64) NOT NULL`,
+untouched (Design Correction 3). `setActiveRate()`'s activation
+create-payload (§H) dual-writes both identities on every insert:
 
 ```php
-// E-3 (Slice 2, deployed BEFORE the cutover code): backward-compatible
-// relaxation, identical rationale to §D-4.
-Schema::table('business_usage_rate_activations', function (Blueprint $table) {
-    $table->string('feature_key', 64)->nullable()->change();
-});
+$this->rateActivationRepository->create([
+    'feature_key' => $meter->feature_key, // NOT $featureKey — see §H
+    'meter_key'   => $meter->meter_key,
+    'rate_id' => $rate->id,
+    // ...unchanged fields
+]);
 ```
-
-Only once this migration is live does `setActiveRate()`'s activation
-create-payload stop writing `feature_key` and start writing `meter_key`
-instead (§H).
 
 **Slice 3 — CONTRACT (separate implementation contract and PR):**
 
 ```php
-// E-4 (Slice 3): preflight — fail closed, never fabricate.
+// E-3 (Slice 3): preflight — fail closed, never fabricate.
 $remaining = DB::table('business_usage_rate_activations')->whereNull('meter_key')->count();
 if ($remaining > 0) {
     throw new UsageMeterBackfillIncompleteException('business_usage_rate_activations', $remaining);
 }
 
-// E-5 (Slice 3): tighten and drop the legacy identity.
+// E-4 (Slice 3): tighten and drop the legacy identity.
 Schema::table('business_usage_rate_activations', function (Blueprint $table) {
     $table->string('meter_key', 128)->nullable(false)->change();
     $table->dropIndex('business_usage_rate_activations_feature_key_index');
@@ -588,6 +635,34 @@ existing `'feature_key'` — harmless, unpopulated until Slice 2.
 simply never sets `meter_key`, which defaults to `NULL` on this
 nullable column — no error, no behavior change, identical rows to
 today plus one always-`NULL` column.
+
+**Slice 2 — CUTOVER / DUAL-WRITE: zero schema mutation for this table
+(it needs none — `meter_key` is already additive-nullable from Slice
+1, and `feature_key` was never scheduled to change at all).** `reserve()`'s
+cutover body, after resolving `$meter` and passing every check in §F's
+sequence below, creates the reservation with **both identities sourced
+from the resolved meter, not from the raw method parameter**:
+
+```php
+$reservation = $this->reservationRepository->create([
+    'feature_key' => $meter->feature_key, // NOT $featureKey — see §H
+    'meter_key'   => $meter->meter_key,
+    // ...unchanged fields
+]);
+```
+
+**This is deliberate, and easy to get wrong:** the incoming `$featureKey`
+parameter is, after cutover, semantically a meter key (the frozen
+`reserve(Business $business, string $featureKey, ...)` signature keeps
+its historical parameter name, §H), not a `PlatformFeature` value. Using
+the raw `$featureKey` argument for the `feature_key` column would make
+both columns hold the identical string merely because of a leftover
+parameter name — collapsing the two intentionally distinct identities
+this table stores (`feature_key` = product entitlement snapshot,
+`meter_key` = economic identity, §A) into one. The correct, authoritative
+source for `feature_key`'s value is always `$meter->feature_key` —
+immutable, and validated as a real `PlatformFeature::tryFrom()` value
+at meter creation (§7), never fabricated.
 
 **Slice 3 — CONTRACT (separate implementation contract and PR, once
 `reserve()` has been populating `meter_key` on every new reservation
@@ -707,9 +782,12 @@ amendment introduces, the newest being `UsageMeterCurrencyMismatchException`:**
 wallet mutation**, identical placement (before any write) and identical
 "no legacy fallback after a meter has been selected" rule as the prior
 pass (unchanged, restated in §L). Once every check passes, Slice 2's
-`reserve()` adds exactly one new key to its existing reservation
-create-payload — `'meter_key' => $meter->meter_key` — alongside the
-`feature_key` key it already writes; no other key changes.
+`reserve()` writes both `'feature_key' => $meter->feature_key` and
+`'meter_key' => $meter->meter_key` to its reservation create-payload —
+`feature_key`'s **key** is unchanged from today, but its **value**'s
+source changes, from the raw `$featureKey` parameter to
+`$meter->feature_key` (§F's dual-write note above); no other key
+changes.
 
 **A sixth exception exists in this design, owned entirely by Slice 3, in
 a completely separate vocabulary and separate moment:
@@ -732,16 +810,23 @@ fabricated backfill.
 
 ## G. Ledger — exact treatment, revised for meter/rate integrity with an honest nullable-case analysis
 
-**Unaffected by Design Correction 1.** Unlike §D/§E/§F, this table's
-`meter_key` was never scheduled for a `NOT NULL` tightening or a legacy
-column drop — it is nullable **permanently**, in the already-approved
-final architecture, exactly because non-metered entry types (top-up,
-auto-recharge, add-on credit, and the `ReservationRelease` case
-documented below) legitimately never carry one. It is created in Slice
-1 at its final shape, with no Phase C step, and `commit()`/`release()`
-begin populating it only once Slice 2's cutover lands — added to their
-existing ledger create-payloads the same way §F adds `meter_key` to
-`reserve()`'s reservation payload.
+**Unaffected by Design Correction 1, 2, or 3.** Unlike §D/§E/§F, this
+table's `meter_key` was never scheduled for a `NOT NULL` tightening or
+a legacy column drop — it is nullable **permanently**, in the
+already-approved final architecture, exactly because non-metered entry
+types (top-up, auto-recharge, add-on credit, and the `ReservationRelease`
+case documented below) legitimately never carry one. It is created in
+Slice 1 at its final shape, with no Slice 3 step of its own, and
+`commit()`/`release()` begin populating it only once Slice 2's cutover
+lands. **The dual-identity rule for metered, reservation-derived ledger
+entries is locked exactly as follows:** `feature_key = reservation->feature_key`
+and `meter_key = reservation->meter_key` — both copied directly from
+the already-correctly-populated reservation (§F's dual-write), never
+re-derived independently. This preserves the product-entitlement
+snapshot and the economic-meter snapshot as two distinct identities on
+the ledger row, exactly as it does on the reservation itself. Non-metered
+entry types continue to leave both `feature_key` and `meter_key` `NULL`,
+unaffected.
 
 ```php
 Schema::table('business_usage_ledger_entries', function (Blueprint $table) {
@@ -794,36 +879,49 @@ exactly as today — completely unaffected by either new FK.
 
 ## H. `UsageWalletManager` — per-method treatment, exact, revised
 
-**Everything in this section is Slice 2 CUTOVER.** `UsageWalletManager`
-is not modified at all in Slice 1; every method body and constructor
-change described below lands in Slice 2's own bounded implementation
-PR, preceded by Slice 2's own backward-compatible `feature_key`
-relaxation on `business_usage_rates`/`business_usage_rate_activations`
-(§D-4, §E-3). The final `NOT NULL` tightening and legacy-column drop
-this section's changes eventually make possible is Slice 3's own,
-later, separate schema work (§D, §E, §F, §O) — not part of this PR.
+**Everything in this section is Slice 2 CUTOVER / DUAL-WRITE.**
+`UsageWalletManager` is not modified at all in Slice 1; every method
+body and constructor change described below lands in Slice 2's own
+bounded implementation PR. **Slice 2 requires zero schema mutation of
+its own** (Design Correction 3) — `business_usage_rates.feature_key`
+and `business_usage_rate_activations.feature_key` remain `NOT NULL`
+and untouched, because the cutover code below always writes a real
+`PlatformFeature`-derived value into them (sourced from the resolved
+meter, never fabricated). The final `NOT NULL` tightening and
+legacy-column drop this section's changes eventually make possible is
+Slice 3's own, later, separate schema work (§D, §E, §F, §O) — not part
+of this PR.
 
 Unchanged in their core logic from the prior pass for `commit()` and
 `release()` — each gains exactly one additive key in its existing
 ledger create-payload (`'meter_key' => $reservation->meter_key`, §G),
-nothing else. `expireStaleReservations()`, `evaluateCoarseCapacity()`
-(§I, unchanged body), and every non-metering-related public method are
-untouched even in Slice 2. Revised for `reserve()` (§F's new check
-sequence, above) and `setActiveRate()`/`activateMetering()`.
-`setActiveRate()`'s two create-payloads (§D, §E) each swap their
-literal `'feature_key' => $featureKey` key for `'meter_key' => $featureKey`
-in this same Slice 2 PR — the parameter itself keeps its current name
-(`$featureKey`, unchanged, exactly like `reserve()`'s own parameter,
-§F) since it is part of the frozen signature; only the array key it is
-written under, and the column it lands in, change. Otherwise unchanged
-mechanics from the prior pass — no currency-specific change needed
-there, since `setActiveRate()` already receives the rate's `currency_id`
-as an explicit caller-supplied argument, and the new database-level
-composite FK in §D is what actually prevents a mismatched value from
-ever being persisted — no new
-application-level check is needed inside `setActiveRate()` itself
-beyond letting that insert fail if the caller supplied the wrong
-currency, which is itself a required future test (proof 18, Slice 2).
+nothing else; `feature_key` was already sourced from the reservation
+and needs no change (§G). `expireStaleReservations()`,
+`evaluateCoarseCapacity()` (§I, unchanged body), and every
+non-metering-related public method are untouched even in Slice 2.
+Revised for `reserve()` (§F's new check sequence, above) and
+`setActiveRate()`/`activateMetering()`. `setActiveRate()`'s two
+create-payloads (§D, §E) **dual-write** both identities on every
+insert — `'meter_key' => $meter->meter_key` alongside
+`'feature_key' => $meter->feature_key`, replacing the literal
+`'feature_key' => $featureKey` this method writes today. **The value
+source matters, not only the key**: the frozen parameter is still
+named `$featureKey` (unchanged, exactly like `reserve()`'s own
+parameter, §F), but after cutover it semantically identifies the
+meter, not the owning `PlatformFeature` — so `feature_key`'s value must
+come from `$meter->feature_key` (immutable, validated at meter
+creation, §7), never from the raw `$featureKey` argument, or both
+columns would collapse to the same string. `feature_key`'s column
+itself remains `NOT NULL` throughout, unmodified, exactly as it is
+today — only the two create-payloads' contents change. Otherwise
+unchanged mechanics from the prior pass — no currency-specific change
+needed there, since `setActiveRate()` already receives the rate's
+`currency_id` as an explicit caller-supplied argument, and the new
+database-level composite FK in §D is what actually prevents a
+mismatched value from ever being persisted — no new application-level
+check is needed inside `setActiveRate()` itself beyond letting that
+insert fail if the caller supplied the wrong currency, which is itself
+a required future test (proof 21, Slice 2).
 
 ### H.1–H.2 (unchanged from the prior pass)
 
@@ -975,8 +1073,13 @@ re-pointing, but bundled the manager cutover and the final `NOT NULL`
 tightening into "one bounded Slice 2 release," which silently assumed
 code and migrations for that release land atomically. They do not, in
 an ordinary rolling/staged deployment, so this is now three separately
-mergeable slices, each individually safe to run indefinitely before the
-next. The final constraint graph (§A) is unchanged.
+mergeable slices. **Design Correction 3 further simplifies Slice 2**:
+rather than a schema relaxation deployed before the cutover code (which
+was itself an in-PR ordering dependency), Slice 2 now dual-writes both
+`feature_key` and `meter_key` on every insert, requiring **zero
+migration of any kind**. Each slice is individually safe to run
+indefinitely before the next. The final constraint graph (§A) is
+unchanged.
 
 ### Slice 1 — EXPAND (11 steps)
 
@@ -1000,8 +1103,9 @@ Design Correction 2 tightens up:**
    table, so it needs no later tightening.
 2. **Add `business_usage_rates.meter_key`** (§D-1) — `string(128)`,
    **nullable**, additive; `feature_key` and its existing unique index
-   are untouched (**`feature_key` remains `NOT NULL` through all of
-   Slice 1** — this is not relaxed until Slice 2).
+   are untouched (**`feature_key` remains `NOT NULL` through Slice 1
+   and Slice 2 both** — Design Correction 3 dual-writes it rather than
+   relaxing it; it is dropped only in Slice 3).
 3. **Add `business_usage_rates`' new indexes** (§D-2):
    `business_usage_rates_meter_key_version_unique` and
    `business_usage_rates_meter_key_id_unique` — both valid immediately;
@@ -1017,7 +1121,8 @@ Design Correction 2 tightens up:**
    way (every fresh meter's `active_rate_id` starts `NULL`).
 6. **Add `business_usage_rate_activations.meter_key`** (§E-1) —
    `string(128)`, nullable, additive; `feature_key` and its existing
-   index are untouched (**remains `NOT NULL` through all of Slice 1**).
+   index are untouched (**remains `NOT NULL` through Slice 1 and
+   Slice 2 both — dropped only in Slice 3**).
 7. **Add `business_usage_rate_activations`' FKs** (§E-2): the plain
    `meter_key → usage_meters.meter_key` FK and the composite
    `(meter_key, rate_id) → business_usage_rates(meter_key, id)` FK —
@@ -1035,11 +1140,13 @@ Design Correction 2 tightens up:**
     composite FKs, both nullable-safe per `MATCH SIMPLE`.
 11. **Code**: new `UsageMeter`/`UsageMeterTransition` models; new
     `UsageMeterRepository`/`UsageMeterTransitionRepository` contracts
-    and Eloquent implementations; the five request-time exception
-    classes (§F) — `NoActiveRateForFeatureException` (reused),
-    `UsageMeterBusinessScopeMismatchException`,
+    and Eloquent implementations; the **four new** request-time
+    exception classes (§F) — `UsageMeterBusinessScopeMismatchException`,
     `UsageMeterCurrencyMismatchException`, `UsageMeterNotMeteredException`,
-    `UsageMeterRateIntegrityException`. **`UsageMeterBackfillIncompleteException`
+    `UsageMeterRateIntegrityException` — plus continued reuse of the
+    **pre-existing** `NoActiveRateForFeatureException` (not a new file;
+    unchanged). §F's request-time failure surface is therefore five
+    exceptions in total: one reused, four new. **`UsageMeterBackfillIncompleteException`
     is not created in Slice 1** — nothing in Slice 1 preflights a
     backfill; it belongs to Slice 3, where that preflight actually runs
     (§F above). Container bindings for the two new repository contracts
@@ -1060,122 +1167,126 @@ unchanged, because every legacy column those methods read and write is
 untouched, and every new column they never populate is nullable and
 therefore exempt from FK enforcement.
 
-### Slice 2 — CUTOVER (schema relaxation, then code; one bounded PR, safe to run indefinitely before Slice 3)
+### Slice 2 — CUTOVER / DUAL-WRITE (code only; zero schema mutation; one bounded PR, safe to run indefinitely before Slice 3)
 
-12. **Schema relaxation, deployed first, before any cutover code is
-    active:** `business_usage_rates.feature_key` and
-    `business_usage_rate_activations.feature_key` go from `NOT NULL` to
-    nullable. The columns and their legacy indexes
-    (`business_usage_rates_feature_key_version_unique`,
-    `business_usage_rate_activations_feature_key_index`) remain
-    physically present, untouched otherwise. **This step alone is
-    backward-compatible**: the unchanged Slice 1 manager keeps writing
-    `feature_key` exactly as before, into a column that merely accepts
-    `NULL` now — no existing row or existing code path is affected.
-13. `UsageWalletManager::__construct()` adds `UsageMeterRepository`/
+**No migration of any kind runs in Slice 2.** `business_usage_rates.feature_key`
+and `business_usage_rate_activations.feature_key` remain exactly as
+Slice 1 left them — `VARCHAR(64) NOT NULL`, with their original legacy
+indexes untouched (Design Correction 3). Every step below is a code
+change only:
+
+12. `UsageWalletManager::__construct()` adds `UsageMeterRepository`/
     `UsageMeterTransitionRepository`; removes the two old classification
     repositories only if genuinely unused (§H.3).
-14. `reserve()` re-pointed to the §F check sequence; its reservation
-    create-payload gains `'meter_key' => $meter->meter_key`, alongside
-    its existing `feature_key` key (unchanged — reservations' `feature_key`
-    is permanent, §F).
-15. `setActiveRate()`'s two create-payloads (rate, activation) **stop
-    writing `feature_key` entirely** and write `'meter_key' => $featureKey`
-    instead (§H); parameter names are unchanged. This is safe only
-    because step 12 already made `feature_key` nullable on both tables
-    — the column silently receives `NULL` for every new row from this
-    point on, exactly as designed, and no `NOT NULL` violation is
-    possible.
-16. `activateMetering()` re-pointed through `UsageMeterRepository`/
+13. `reserve()` re-pointed to the §F check sequence; its reservation
+    create-payload writes `'feature_key' => $meter->feature_key`
+    (replacing the raw `$featureKey` argument as the value source) and
+    `'meter_key' => $meter->meter_key` (§F).
+14. `setActiveRate()`'s two create-payloads (rate, activation)
+    **dual-write both identities** — `'feature_key' => $meter->feature_key`
+    and `'meter_key' => $meter->meter_key` — replacing the current
+    `'feature_key' => $featureKey`. `feature_key` is never `NULL` on any
+    row this creates, so the column's existing `NOT NULL` constraint is
+    satisfied without any schema change (§D, §E).
+15. `activateMetering()` re-pointed through `UsageMeterRepository`/
     `UsageMeterTransitionRepository`.
-17. `evaluateCoarseCapacity()` becomes the unconditional
+16. `evaluateCoarseCapacity()` becomes the unconditional
     `return new UsageCapacityDecision(true);` pass-through (§I).
-18. `commit()`/`release()` each gain `'meter_key' => $reservation->meter_key`
-    in their existing ledger create-payloads (§G).
-19. `BusinessUsageRateRepository::findByFeatureAndVersion()`/
+17. `commit()`/`release()` each gain `'meter_key' => $reservation->meter_key`
+    in their existing ledger create-payloads, alongside the
+    `'feature_key' => $reservation->feature_key` key they already write
+    (§G) — both now correctly sourced, transitively, from §F's
+    dual-write.
+18. `BusinessUsageRateRepository::findByFeatureAndVersion()`/
     `latestVersionForFeature()` switch their internal `where()` target
     from `feature_key` to `meter_key` — method names and parameters
     unchanged, since this repository is not `UsageWalletManager` and
-    carries no signature freeze.
+    carries no signature freeze; `feature_key` becomes compatibility/
+    audit data only, no longer the authoritative lookup key.
 
-**After Slice 2, the legacy `feature_key` columns on
-`business_usage_rates`/`business_usage_rate_activations` are physically
-present, nullable, no longer authoritative, and ignored by the cutover
-code — not dropped, not tightened.** This schema/code combination is
-safe to run for an arbitrary period before Slice 3.
+**Slice 2 is deployable against Slice 1's exact, unmodified schema —
+no migration-before-code ordering dependency exists, because no
+migration exists.** After Slice 2, every row the cutover code creates
+carries a genuine, non-`NULL` `feature_key` (sourced from the meter) and
+a genuine, non-`NULL` `meter_key`; the legacy columns remain `NOT NULL`
+throughout, exactly as before.
 
-**Slice 2 rollback, made real, not merely reversible-in-theory:**
-rolling back to Slice 1 code means `setActiveRate()` once again requires
-`feature_key`, so a rollback cannot simply drop the column-relaxation
-migration — it must **deterministically restore `feature_key`** for
-every row Slice 2's cutover code created without it:
-
-```php
-DB::table('business_usage_rates as r')
-    ->join('usage_meters as m', 'r.meter_key', '=', 'm.meter_key')
-    ->whereNull('r.feature_key')
-    ->update(['r.feature_key' => DB::raw('m.feature_key')]);
-// identical join/update for business_usage_rate_activations
-```
-
-This is **authoritative reverse derivation, not fabrication**:
-`usage_meters.feature_key` is immutable (§B, §H.4); the `meter_key` FK
-already proves the owning meter exists; `PlatformFeature` ownership is
-explicitly part of a `UsageMeter`'s own identity (§A). If any row's
-`meter_key` fails to resolve to exactly one `usage_meters.feature_key`
-(orphaned `meter_key`, or a `meter_key` that is itself still `NULL` on
-a row created before the cutover activated), **the rollback fails
-closed** — it does not guess, does not fabricate, and does not proceed
-to the final `feature_key → NOT NULL` step until every row resolves.
-Only once every row is restored does rollback re-tighten `feature_key`
-to `NOT NULL`, matching Slice 1's original schema exactly.
+**Slice 2 rollback requires no `feature_key` reconstruction of any
+kind.** Reverting to Slice 1 code means `setActiveRate()`/`reserve()`
+once again write `feature_key` directly rather than via `$meter->feature_key`
+— but every row Slice 2 created already has a populated `feature_key`
+(dual-write never leaves it `NULL`), the column was never relaxed, and
+the legacy indexes were never touched. Rollback is therefore: revert
+the manager/repository code (constructor, method bodies, query
+targets); no schema change of any kind is needed or performed. Every
+row created during Slice 2 remains fully readable by Slice 1's
+`feature_key`-based repository queries, since `feature_key` was
+dual-written, not abandoned. **Audited for a second-order gap:** the
+only way a Slice-2-created row could be unusable by reverted Slice-1
+code is if some Slice-1 code path reads a column Slice 2 never
+populates — direct inspection confirms none exists (`findByFeatureAndVersion()`/
+`latestVersionForFeature()` are the only `feature_key`-dependent reads,
+and Slice 1's own versions of them query `feature_key`, which Slice 2
+always populates); no other gap was found.
 
 ### Slice 3 — CONTRACT (separate implementation contract and PR, after Slice 2 is merged and has run)
 
 A completely separate, later, separately human-reviewed implementation
 contract — not authorized by this document, and not part of Slice 2's
-own PR. Starts only once Slice 2's cutover code has been live long
-enough that every current row genuinely carries a real `meter_key`.
+own PR. Starts only once Slice 2 is merged; its own preflight (step 19)
+is what actually verifies every current row carries a real `meter_key`
+— this is confirmed by that check, not assumed from elapsed time
+("Pre-Slice-2 legacy rows," above).
 
-20. **Preflight** (§D, §E, §F): count `NULL`-`meter_key` rows in
+19. **Preflight** (§D, §E, §F): count `NULL`-`meter_key` rows in
     `business_usage_rates`, `business_usage_rate_activations`, and
     `business_usage_reservations`; throw
     `UsageMeterBackfillIncompleteException($table, $remaining)` and stop
     — no schema change of any kind — if any count is non-zero. No
     fabricated backfill, no `feature_key`-to-`meter_key` copy, under any
     circumstance.
-21. **Tighten `business_usage_rates`**: `meter_key` → `NOT NULL`; drop
+20. **Tighten `business_usage_rates`**: `meter_key` → `NOT NULL`; drop
     `business_usage_rates_feature_key_version_unique`; drop `feature_key`.
-22. **Tighten `business_usage_rate_activations`**: `meter_key` →
+21. **Tighten `business_usage_rate_activations`**: `meter_key` →
     `NOT NULL`; drop `business_usage_rate_activations_feature_key_index`;
     drop `feature_key`.
-23. **Tighten `business_usage_reservations`**: `meter_key` → `NOT NULL`.
+22. **Tighten `business_usage_reservations`**: `meter_key` → `NOT NULL`.
     `feature_key` is **not** dropped — it is the permanent
     owning-feature snapshot.
-24. `business_usage_ledger_entries.meter_key` is **not** touched — it
+23. `business_usage_ledger_entries.meter_key` is **not** touched — it
     remains nullable permanently (§G), unaffected by this slice.
 
 After Slice 3, the schema is exactly the final Amendment 1 target this
 document has always specified.
 
-**Slice 3 rollback, restoring Slice 2's schema, not Slice 1's:**
-because Slice 2's own schema intentionally left `feature_key` nullable
-(step 12), Slice 3's rollback does **not** need to make `feature_key`
-`NOT NULL` again — it only needs to restore the column and its data:
+**Slice 3 rollback, restoring Slice 2's schema exactly — which,
+per Design Correction 3, keeps `feature_key` as `NOT NULL`, not
+nullable:**
 
 1. Re-add `feature_key` as `VARCHAR(64) NULL` on
-   `business_usage_rates`/`business_usage_rate_activations`.
-2. Populate it deterministically via the identical join used by Slice
-   2's own rollback: `row.meter_key → usage_meters.meter_key → usage_meters.feature_key`.
-3. Recreate `business_usage_rates_feature_key_version_unique`/
-   `business_usage_rate_activations_feature_key_index` exactly as
-   Slice 2's schema requires them.
-4. Loosen `meter_key` back to nullable.
+   `business_usage_rates`/`business_usage_rate_activations` —
+   temporarily nullable, so the column exists before every row is
+   repopulated.
+2. Populate it deterministically via an authoritative join:
+   `row.meter_key → usage_meters.meter_key → usage_meters.feature_key`.
+3. If any row's `meter_key` cannot resolve to exactly one
+   `usage_meters` row, **the rollback fails closed** here — no schema
+   change proceeds further, no value is guessed or fabricated.
+4. Recreate `business_usage_rates_feature_key_version_unique`/
+   `business_usage_rate_activations_feature_key_index` exactly as they
+   existed before Slice 3 dropped them.
+5. **Tighten `feature_key` back to `NOT NULL`** — required this time,
+   unlike a hypothetical relaxed intermediate schema, because Slice 2
+   never relaxed it; restoring Slice 2's actual schema means restoring
+   its actual `NOT NULL` constraint.
+6. Loosen `meter_key` back to nullable.
 
-If the meter-to-owning-feature mapping cannot be resolved for any row,
-**the rollback fails closed** — the same authoritative-reconstruction,
-never-fabricate discipline as Slice 2's own rollback, not a relaxed
-version of it.
+This is the same authoritative-reconstruction, never-fabricate
+discipline used throughout this design — the only asymmetry from a
+naive mirror of Slice 2's own (now much simpler) rollback is that
+Slice 3's rollback still needs the join-based restore, because Slice 3
+is the step that actually dropped the physical column Slice 2 always
+kept populated.
 
 **Verification the future implementation must perform before trusting
 this order:** every `meter_key` column across all six affected tables
@@ -1185,12 +1296,13 @@ would cause a composite FK to fail to attach even when the logical
 reference is correct; `currency_id`/`rate_id`/`active_rate_id`/`id`
 must all be consistently `unsignedBigInteger`/`bigint unsigned` across
 every referencing and referenced column. This is a required future
-schema test (proof 11 for Slice 1, proof 29 for Slice 3's final
+schema test (proof 11 for Slice 1, proof 32 for Slice 3's final
 tightened state, below).
 
-**Zero fabricated rows, in any slice — every restoration in both
-rollback paths is a join against `usage_meters`' own immutable
-`feature_key`, never a guess.**
+**Zero fabricated rows, in any slice — Slice 3's rollback restoration
+is a join against `usage_meters`' own immutable `feature_key`, never a
+guess; Slice 2 requires no restoration at all, since it never stops
+populating the legacy column.**
 
 ---
 
@@ -1200,7 +1312,10 @@ rollback paths is a join against `usage_meters`' own immutable
 2 corrects it from two slices (expand, then cutover-bundled-with-
 contract) to three independently deployable slices**, since bundling
 cutover and contract into one release silently assumed an atomic
-code+migration deployment this document never required.
+code+migration deployment this document never required. **Design
+Correction 3 further simplifies Slice 2 itself**, replacing an
+in-slice schema relaxation with dual-write, so Slice 2 now requires no
+migration at all.
 
 **Slice 1 — Additive `UsageMeter` Foundation / Expand.** §O Slice 1,
 steps 1–11: the new `usage_meters`/`usage_meter_transitions` tables at
@@ -1224,38 +1339,47 @@ manually-attempted violating insert at the database level, while every
 existing test and code path is unaffected. Safe to run indefinitely on
 its own.
 
-**Slice 2 — Meter Authority Cutover.** §O Slice 2, steps 12–19, one
-bounded implementation PR: first, the backward-compatible
-`feature_key → nullable` relaxation on `business_usage_rates`/
-`business_usage_rate_activations` (deployed before any code change);
-then the `UsageWalletManager` constructor swap;
-`reserve()`/`setActiveRate()`/`activateMetering()` re-pointing to meter
-identity; the `evaluateCoarseCapacity()` entitlement coarse-gate
+**Slice 2 — Meter Authority Cutover / Dual-Write.** §O Slice 2, steps
+12–18, one bounded implementation PR, **with zero schema mutation of
+any kind** (Design Correction 3): the `UsageWalletManager` constructor
+swap; `reserve()`/`setActiveRate()`/`activateMetering()` re-pointing to
+meter identity, each dual-writing `feature_key` (sourced from
+`$meter->feature_key`, never the raw method parameter) and `meter_key`
+on every insert; the `evaluateCoarseCapacity()` entitlement coarse-gate
 correction; `meter_key` writes added to reservation and ledger
-create-payloads; `BusinessUsageRateRepository`'s query-target switch.
-The legacy `feature_key` columns and indexes on
+create-payloads; `BusinessUsageRateRepository`'s query-target switch to
+`meter_key`. The legacy `feature_key` columns and indexes on
 `business_usage_rates`/`business_usage_rate_activations` remain
-physically present, nullable, and ignored — **not dropped, not
-tightened, in this slice.** Every existing public domain/API method
-signature on `UsageWalletManager` stays frozen exactly as §H.3
-approves — no service locator, no method injection, no setter
-injection. Rollback must deterministically restore `feature_key` via
-an authoritative join against `usage_meters`, failing closed if any row
-cannot resolve (§O). Slice 2 requires its own, separately human-merged
-implementation contract, drafted only after Slice 1 merges. Safe to run
+`NOT NULL` and completely untouched, never relaxed — every row Slice 2
+creates satisfies that constraint by construction. Every existing
+public domain/API method signature on `UsageWalletManager` stays frozen
+exactly as §H.3 approves — no service locator, no method injection, no
+setter injection. **Rollback requires no data restoration of any kind**
+— reverting the code alone suffices, since every Slice-2-created row
+already carries a valid, populated `feature_key` (§O). Slice 2 requires
+its own, separately human-merged implementation contract, drafted only
+after Slice 1 merges. Deployable directly against Slice 1's unmodified
+schema — no migration-before-code ordering dependency. Safe to run
 indefinitely on its own, before Slice 3.
 
-**Slice 3 — Schema Contract.** §O Slice 3, steps 20–24: a completely
+**Slice 3 — Schema Contract.** §O Slice 3, steps 19–23: a completely
 separate, later implementation contract and PR, starting only after
-Slice 2 has merged and run long enough that every row genuinely carries
-a real `meter_key`. The fail-closed `UsageMeterBackfillIncompleteException`
-preflight; final `NOT NULL` tightening on `business_usage_rates`/
-`business_usage_rate_activations`/`business_usage_reservations`; the
-final drop of the legacy `feature_key` columns and indexes on the first
-two tables only (`business_usage_reservations.feature_key` and
+Slice 2 has merged — its own preflight (step 19) is what confirms every
+row carries a real `meter_key`, not elapsed time ("Pre-Slice-2 legacy
+rows," above; a pre-Slice-2 row without one is expected to be
+impossible in any real deployment, and causes this preflight to
+correctly fail closed if it is not). The fail-closed
+`UsageMeterBackfillIncompleteException` preflight; final `NOT NULL`
+tightening on `business_usage_rates`/`business_usage_rate_activations`/
+`business_usage_reservations`; the final drop of the legacy
+`feature_key` columns and indexes on the first two tables only
+(`business_usage_reservations.feature_key` and
 `business_usage_ledger_entries.meter_key`'s nullability are both
-permanent and untouched). Rollback restores Slice 2's schema (not
-Slice 1's) via the identical authoritative-join, fail-closed discipline.
+permanent and untouched). **Rollback restores Slice 2's schema exactly**
+— `feature_key` re-added, populated via the same authoritative join,
+and tightened back to `NOT NULL` (not left nullable, since Slice 2
+never relaxed it) — failing closed if any row's `meter_key` cannot
+resolve.
 After Slice 3, the schema is exactly the final Amendment 1 target this
 document has always specified. **M5 remains blocked until all three
 slices merge** — unchanged in spirit from every prior pass, now naming
@@ -1286,14 +1410,14 @@ not resolve or need to).
 
 ## Required future implementation proofs
 
-**Recounted and re-split across three slices this pass — the prior
-pass's 26-item, two-slice list is superseded, not preserved for
-continuity, since Design Correction 2 moves most of the manager-cutover
-proofs to Slice 2 and reserves final-schema proofs for a genuinely
-separate Slice 3.** Every item below is a future test, none written
-here.
+**Recounted this pass — the prior 26-item list (which still assumed a
+schema-relaxation step in Slice 2) is superseded, not preserved for
+continuity, since Design Correction 3 replaces that relaxation with
+dual-write, adding proofs for the dual-write itself and removing the
+relaxation-specific ones it replaces.** Every item below is a future
+test, none written here.
 
-### Slice 1 proofs (11) — provable with `UsageWalletManager` untouched
+### Slice 1 proofs (11, plus 7a) — provable with `UsageWalletManager` untouched
 
 1. `UsageWalletManager.php`'s source is byte-identical to its
    pre-Design-Correction-1 state — a diff-based gate (§11), not a unit
@@ -1352,90 +1476,101 @@ here.
     four — a direct `INFORMATION_SCHEMA`/`Schema::getColumnType`-based
     test.
 
-### Slice 2 proofs (14) — cutover code and its own schema relaxation, before Slice 3's tightening
+### Slice 2 proofs (17) — cutover code, zero schema mutation, before Slice 3's tightening
 
-12. The `feature_key → nullable` relaxation migration (§D-4, §E-3) is,
-    by itself, a no-op for existing behavior — deployed alone, before
-    any code change, every currently-passing Slice 1 test still passes
-    unchanged.
-13. Once the cutover code is active, every new `business_usage_rates`/
-    `business_usage_rate_activations` row has `feature_key = NULL` and
-    a real `meter_key` — the legacy column remains physically present
-    and passes its own (now-nullable) constraint, but is no longer
-    populated or read by any code path.
-14. USD meter/rate + USD wallet → normal `reserve()`, exercised through
+12. No migration file of any kind exists in Slice 2 — a diff-based gate
+    confirming zero schema mutation, mirroring proof 1's discipline for
+    `UsageWalletManager.php` itself.
+13. `setActiveRate()`'s two create-payloads and `reserve()`'s reservation
+    create-payload write `feature_key = $meter->feature_key` (never the
+    raw `$featureKey`/method-parameter value) and `meter_key = $meter->meter_key`
+    on every insert — asserted by inspecting the actual persisted row's
+    two columns, not merely that both keys were present in the array.
+14. Every row Slice 2 creates on `business_usage_rates`/
+    `business_usage_rate_activations`/`business_usage_reservations` has
+    a non-`NULL` `feature_key`, satisfying each column's still-`NOT NULL`
+    constraint without any schema change — inserting a row through the
+    cutover code never raises a `NOT NULL` violation.
+15. Metered, reservation-derived `business_usage_ledger_entries` rows
+    carry `feature_key = reservation.feature_key` and
+    `meter_key = reservation.meter_key`, both copied from the
+    reservation, never independently re-derived (§G).
+16. `BusinessUsageRateRepository::findByFeatureAndVersion()`/
+    `latestVersionForFeature()` query `meter_key`, not `feature_key`,
+    after Slice 2 — `meter_key` is the authoritative economic lookup key;
+    `feature_key` is proven to be compatibility/audit data only (e.g. by
+    showing a row with a stale `feature_key` but correct `meter_key`
+    still resolves correctly).
+17. USD meter/rate + USD wallet → normal `reserve()`, exercised through
     the re-pointed manager.
-15. USD meter/rate + EUR wallet → `UsageMeterCurrencyMismatchException`,
+18. USD meter/rate + EUR wallet → `UsageMeterCurrencyMismatchException`,
     zero writes.
-16. A Business-scoped USD meter, invoked by that same Business but with
+19. A Business-scoped USD meter, invoked by that same Business but with
     a EUR wallet, still fails — Business-scope match does not
     substitute for currency match.
-17. A global USD meter, invoked by a different, otherwise-authorized
+20. A global USD meter, invoked by a different, otherwise-authorized
     USD-wallet Business, succeeds if every other check passes.
-18. `setActiveRate()` rejects a caller-supplied rate whose currency
-    does not match its meter's own — exercised via the manager method
-    itself, now that `feature_key`'s relaxation makes the underlying
-    write mechanically possible.
-19. Existing reservations remain unambiguously denominated by their
+21. `setActiveRate()` rejects a caller-supplied rate whose currency does
+    not match its meter's own — exercised via the manager method itself.
+22. Existing reservations remain unambiguously denominated by their
     original snapshotted `rate_id` after any later rotation.
-20. An audit row in `business_usage_rate_activations` or
+23. An audit row in `business_usage_rate_activations` or
     `usage_meter_transitions` claiming a rate belonging to a different
     meter is rejected, exercised through `setActiveRate()`/
     `activateMetering()`.
-21. A `business_usage_ledger_entries` row claiming `meter_key = A` while
+24. A `business_usage_ledger_entries` row claiming `meter_key = A` while
     `rate_id` belongs to meter B is rejected, exercised through
     `commit()`/`release()`.
-22. `UsageWalletManager` remains fully container-resolvable after the
+25. `UsageWalletManager` remains fully container-resolvable after the
     authorized constructor dependency swap.
-23. Every existing public domain/API method on `UsageWalletManager`
+26. Every existing public domain/API method on `UsageWalletManager`
     retains a byte-for-byte-equivalent signature declaration (§0's
     enumerated list) after Slice 2 — a reflection-based comparison
     against the pre-Amendment declaration.
-24. No `app()`/`resolve()`/service-locator call, setter injection, or
+27. No `app()`/`resolve()`/service-locator call, setter injection, or
     method injection into a frozen domain method is introduced anywhere
     in `UsageWalletManager` — a static-analysis or source-grep test.
-25. **Slice 2 rollback is exercised, not merely asserted:** deliberately
-    seed `business_usage_rates`/`business_usage_rate_activations` rows
-    created by the cutover code (`feature_key = NULL`, real
-    `meter_key`), run the rollback's authoritative join-restore, and
-    confirm every row's `feature_key` is correctly repopulated from
-    `usage_meters.feature_key` and the column is tightened back to
-    `NOT NULL`; separately, seed one row whose `meter_key` cannot
-    resolve to any `usage_meters` row and confirm the rollback fails
-    closed, performing zero schema change, rather than leaving a
-    partially-restored table.
+28. **Slice 2 rollback requires no data restoration:** revert the
+    manager/repository code alone (no migration `down()` runs, since
+    none exists), then confirm every row created during Slice 2 remains
+    fully readable and correctly queryable by the reverted, `feature_key`-based
+    `findByFeatureAndVersion()`/`latestVersionForFeature()` — proving the
+    dual-write, not a data-migration step, is what makes rollback safe.
 
 ### Slice 3 proofs (6) — final schema state, a separate later contract
 
-26. The preflight correctly throws
+29. The preflight correctly throws
     `UsageMeterBackfillIncompleteException($table, $remainingCount)`
     and performs zero schema change when a `meter_key = NULL` row is
     deliberately seeded on any of the three tightened tables inside a
     test transaction — the fail-closed guarantee, exercised, not just
-    asserted.
-27. After Slice 3, `business_usage_rates`/`business_usage_rate_activations`
+    asserted; a real pre-Slice-2 legacy row (`feature_key` populated,
+    `meter_key` still `NULL`) is exactly this case, and correctly stops
+    Slice 3 rather than being silently skipped or backfilled.
+30. After Slice 3, `business_usage_rates`/`business_usage_rate_activations`
     no longer have a `feature_key` column, and their legacy indexes
     (`business_usage_rates_feature_key_version_unique`,
     `business_usage_rate_activations_feature_key_index`) are gone.
-28. `business_usage_reservations.feature_key` remains present and
+31. `business_usage_reservations.feature_key` remains present and
     populated exactly as before, permanently — unaffected by Slice 3.
-29. All six `meter_key` columns reach their final designed state —
+32. All six `meter_key` columns reach their final designed state —
     `NOT NULL` on `usage_meters`, `usage_meter_transitions`,
     `business_usage_rates`, `business_usage_rate_activations`, and
     `business_usage_reservations`; nullable **permanently** on
     `business_usage_ledger_entries` — still `VARCHAR(128)` with
     compatible collation.
-30. M3 funding and M4 add-on/additional-slot regression suites remain
+33. M3 funding and M4 add-on/additional-slot regression suites remain
     unaffected after all three slices have landed.
-31. **Slice 3 rollback restores Slice 2's schema, not Slice 1's:**
-    `feature_key` is re-added nullable (never `NOT NULL` — Slice 2's
-    own schema never required that), repopulated via the identical
-    authoritative join against `usage_meters.feature_key`, and the
-    legacy index is recreated exactly as Slice 2 left it; a row whose
-    `meter_key` cannot resolve fails the rollback closed, identically
-    to proof 25.
+34. **Slice 3 rollback restores Slice 2's schema exactly, including its
+    `NOT NULL` constraint:** `feature_key` is re-added, repopulated via
+    the authoritative join against `usage_meters.feature_key`, and
+    **tightened back to `NOT NULL`** — required this time, since Slice
+    2 (per Design Correction 3) never relaxed it — and the legacy index
+    is recreated exactly as Slice 2 left it; a row whose `meter_key`
+    cannot resolve fails the rollback closed before any of that
+    completes.
 
-Total: **31** (11 Slice 1 + 14 Slice 2 + 6 Slice 3).
+Total: **34, plus 7a** (11 Slice 1 + 7a + 17 Slice 2 + 6 Slice 3).
 
 ---
 
