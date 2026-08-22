@@ -3,6 +3,7 @@
 namespace Tests\Feature\Usage;
 
 use App\Models\Currency;
+use App\Models\User;
 use App\Repositories\Contracts\UsageMeterRepository;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -27,6 +28,27 @@ class UsageMeterSchemaTest extends TestCase
     private function usdCurrencyId(): int
     {
         return Currency::create(['name' => 'US Dollar', 'code' => 'USD', 'format' => '$', 'status' => true])->id;
+    }
+
+    /**
+     * A genuine, disposable actor User — usage_meters.updated_by_user_id
+     * has no database FK (the merged contract explicitly forbids adding
+     * one), so UsageMeterRepository::create()/update() enforce actor
+     * existence at the application layer instead. Every successful
+     * repository call in this file uses a real User id, never an
+     * unexplained literal.
+     */
+    private function createActorUserId(): int
+    {
+        return User::create([
+            'first_name' => 'Test',
+            'last_name' => 'Actor',
+            'email' => 'actor' . uniqid() . '@example.test',
+            'status' => true,
+            'is_admin' => true,
+            'is_customer' => false,
+            'active_portal' => 'admin',
+        ])->id;
     }
 
     private function insertMeter(array $overrides = []): array
@@ -175,6 +197,27 @@ class UsageMeterSchemaTest extends TestCase
         ]);
     }
 
+    /**
+     * A positive integer alone is not a genuine actor — usage_meters has
+     * no FK on updated_by_user_id, so the repository itself must reject
+     * an ID with no corresponding User row.
+     */
+    public function test_repository_create_rejects_nonexistent_actor(): void
+    {
+        $repository = app(UsageMeterRepository::class);
+        $this->assertNull(User::query()->find(999999), 'Test assumption violated: user 999999 must not exist.');
+
+        $this->expectException(InvalidArgumentException::class);
+        $repository->create([
+            'meter_key' => 'nonexistent.actor.meter',
+            'feature_key' => 'crm',
+            'business_id' => null,
+            'currency_id' => $this->usdCurrencyId(),
+            'description' => 'Valid description.',
+            'updated_by_user_id' => 999999,
+        ]);
+    }
+
     public function test_repository_create_succeeds_with_valid_attributes(): void
     {
         $repository = app(UsageMeterRepository::class);
@@ -185,7 +228,7 @@ class UsageMeterSchemaTest extends TestCase
             'business_id' => null,
             'currency_id' => $this->usdCurrencyId(),
             'description' => 'Valid description.',
-            'updated_by_user_id' => 1,
+            'updated_by_user_id' => $this->createActorUserId(),
         ]);
 
         $this->assertDatabaseHas('usage_meters', ['id' => $meter->id]);
@@ -203,7 +246,7 @@ class UsageMeterSchemaTest extends TestCase
             'business_id' => null,
             'currency_id' => $currencyId,
             'description' => 'Valid description.',
-            'updated_by_user_id' => 1,
+            'updated_by_user_id' => $this->createActorUserId(),
         ]);
 
         $originalMeterKey = $meter->meter_key;
@@ -230,6 +273,8 @@ class UsageMeterSchemaTest extends TestCase
     {
         $repository = app(UsageMeterRepository::class);
         $currencyId = $this->usdCurrencyId();
+        $creatingActorId = $this->createActorUserId();
+        $rotatingActorId = $this->createActorUserId();
 
         $meter = $repository->create([
             'meter_key' => 'mutable.meter.' . uniqid(),
@@ -237,7 +282,7 @@ class UsageMeterSchemaTest extends TestCase
             'business_id' => null,
             'currency_id' => $currencyId,
             'description' => 'Original description.',
-            'updated_by_user_id' => 1,
+            'updated_by_user_id' => $creatingActorId,
         ]);
         $rateId = $this->insertRateForMeter($meter->meter_key, $currencyId);
 
@@ -245,13 +290,14 @@ class UsageMeterSchemaTest extends TestCase
             'active_rate_id' => $rateId,
             'is_metered' => true,
             'description' => 'Rotated rate.',
-            'updated_by_user_id' => 2,
+            'updated_by_user_id' => $rotatingActorId,
         ]);
 
         $this->assertSame($rateId, $updated->active_rate_id);
         $this->assertTrue($updated->is_metered);
         $this->assertSame('Rotated rate.', $updated->description);
-        $this->assertSame(2, $updated->updated_by_user_id);
+        $this->assertSame($rotatingActorId, $updated->updated_by_user_id);
+        $this->assertNotSame($creatingActorId, $rotatingActorId);
     }
 
     /**

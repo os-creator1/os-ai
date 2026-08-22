@@ -3,6 +3,7 @@
 namespace App\Repositories\Eloquent;
 
 use App\Enums\Entitlement\PlatformFeature;
+use App\Models\User;
 use App\Models\UsageMeter;
 use App\Repositories\Contracts\UsageMeterRepository;
 use Illuminate\Support\Arr;
@@ -32,8 +33,16 @@ class EloquentUsageMeterRepository extends EloquentBaseRepository implements Usa
             throw new InvalidArgumentException('UsageMeter requires a non-empty description.');
         }
 
-        if (empty($attributes['updated_by_user_id'])) {
+        $actorUserId = $attributes['updated_by_user_id'] ?? null;
+
+        if (! is_int($actorUserId) || $actorUserId < 1) {
             throw new InvalidArgumentException('UsageMeter requires a genuine actor (updated_by_user_id).');
+        }
+
+        if (User::query()->find($actorUserId) === null) {
+            throw new InvalidArgumentException(
+                "UsageMeter requires a genuine actor — no User exists with id {$actorUserId}."
+            );
         }
 
         /** @var UsageMeter $meter */
