@@ -17,6 +17,7 @@ class BusinessUsageReservation extends Model
         'business_id',
         'wallet_id',
         'feature_key',
+        'meter_key',
         'period_key',
         'status',
         'reserved_amount_micro',

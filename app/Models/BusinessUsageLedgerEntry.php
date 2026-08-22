@@ -28,6 +28,7 @@ class BusinessUsageLedgerEntry extends Model
         'gross_amount_micro',
         'currency_id',
         'feature_key',
+        'meter_key',
         'period_key',
         'quantity',
         'rate_id',
