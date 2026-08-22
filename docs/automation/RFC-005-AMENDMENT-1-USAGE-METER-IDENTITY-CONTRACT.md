@@ -34,7 +34,8 @@ and nothing else.
   decoupled from `PlatformFeature`'s own product-entitlement identity —
   as the architecture this amendment will formalize.
 - `maximum_correction_rounds: 2` applies to this contract, matching every
-  prior RFC-004/RFC-005 contract's own convention. Unconsumed.
+  prior RFC-004/RFC-005 contract's own convention. **Correction Round 1 of
+  2 consumed (see §0.1). 1 ordinary correction round remains.**
 - Any path required during this contract's own drafting but absent from
   §2's file scope is a stop-and-report condition. The future design-
   document PR carries its own, separately-defined scope (§3) — this
@@ -54,6 +55,39 @@ and nothing else.
   repository audit — it only locks the shape and boundaries of the
   future design-document work the human has already approved the
   direction of.
+
+---
+
+## 0.1 Correction Round 1
+
+**This consumes Correction Round 1 of the 2 maximum correction rounds
+this contract allows. 1 ordinary correction round remains.**
+
+**Scope of this correction:** the interpretation of `UsageWalletManager`'s
+constructor under §5 item 6, only. Nothing else in this contract changes.
+
+**Why this correction is necessary:** the original §5 item 6 wording
+accidentally treated `UsageWalletManager`'s Laravel dependency-injection
+constructor as part of the same "public method signatures remain
+unchanged" freeze that governs its stable domain API, while — in the
+same item — explicitly authorizing a change to the internal repository
+that answers "is this metered, what is the active rate." A PHP
+constructor is itself a public method, so the literal original text
+locked it, yet the authorized internal-resolution-target change cannot
+be implemented without altering which repositories the constructor
+receives, without resorting to a service locator, `app()`/`resolve()`
+lookup, or method injection into an existing domain method — all of
+which are, and remain, worse architecture than a constructor
+dependency swap and were never this contract's intent. §5 item 6 is
+corrected below to resolve this contradiction. This correction does
+not broaden Amendment 1's product scope, does not touch any other
+locked constraint in §5, and does not authorize any implementation.
+
+**Effect on Design PR #109:** PR #109 (the Amendment 1 design document)
+remains Draft and **must not merge until this Correction Round 1 PR is
+itself human-merged.** Once this correction merges, PR #109 may be
+reconciled against the corrected governance text and reviewed again.
+This correction itself does not authorize implementation of any kind.
 
 ---
 
@@ -165,12 +199,45 @@ their exact mechanics in full, but it may not revisit whether they hold:
 5. **The existing `platform_feature_usage_classifications` table remains
    untouched and inert** — no row is migrated, reinterpreted, or dropped;
    every feature's row there remains exactly as backfilled at M1.
-6. **`UsageWalletManager`'s public method signatures remain unchanged.**
-   `reserve()`, `commit()`, `release()`, `setActiveRate()`,
-   `activateMetering()`, and every other existing public method keep
-   their exact current signatures; only their internal resolution target
-   (which repository answers "is this metered, what is the active rate")
-   may change.
+6. **`UsageWalletManager`'s public domain/API method signatures remain
+   unchanged; its constructor is separately, narrowly exempted, per
+   Correction Round 1 (§0.1).** The rule, made mechanically unambiguous
+   by that correction, is now exactly two parts:
+
+   a. **Every existing public domain/API method keeps its exact current
+      signature** — no parameter, parameter order, type, default, or
+      return type may change under Amendment 1. This includes, without
+      limitation: `initializeWalletForNewBusiness()`, `reserve()`,
+      `commit()`, `release()`, `creditFromFunding()`,
+      `expireStaleReservations()`, `setActiveRate()`,
+      `activateMetering()`, `evaluateCoarseCapacity()`, `setSpendCap()`,
+      `setFeatureLimit()`, `setSafetyLimit()`, `setBillingStatus()`,
+      `configureAutoRecharge()`, and `recordAutoRechargeFailure()`. Only
+      each method's *internal* resolution target (which repository
+      answers "is this metered, what is the active rate") may change.
+
+   b. **`__construct()` is explicitly exempted from that signature
+      freeze, and only because it is Laravel dependency-injection wiring
+      rather than part of the stable `UsageWalletManager` domain API.**
+      The future Amendment 1 implementation may modify the constructor
+      only as required to implement the internal-resolution-target
+      change already authorized by (a). The bounded, authorized
+      constructor delta is: **remove**
+      `PlatformFeatureUsageClassificationRepository` and
+      `PlatformFeatureUsageClassificationTransitionRepository` **only if
+      they become genuinely unused**; **add** `UsageMeterRepository` and
+      `UsageMeterTransitionRepository`. The final constructor may retain
+      either old repository if another unchanged public method still
+      genuinely requires it — removal is not required merely for
+      aesthetic cleanup.
+
+      **This constructor exception does not authorize:** a service
+      locator call; an `app()`/`resolve()` lookup inside
+      `UsageWalletManager`; setter injection; method injection into any
+      existing public domain method; static or global repository state;
+      any new public domain/API method or signature; any controller,
+      model, or repository implementation; or any actual code change
+      under this contract or its correction.
 7. **`EntitlementManager::decide()` and `UsageAuthorizationGateway`'s
    signatures remain unchanged.** No new parameter, no execution-context
    object, and no change to the existing nine-key denial surface. No
@@ -246,3 +313,19 @@ the correct next step, rather than retrofitting PR #107.
   open a Draft PR against `main`, docs-only. Keep it Draft for human
   review. Do not merge. Do not begin drafting the future design document
   (§3) until this contract itself is merged.
+
+---
+
+## 10. Correction Round 1 — verification and publication
+
+- Branch: `chore/rfc-005-amendment-1-contract-correction-1`, based on
+  `origin/main` at `0d25be2ce070e6167a7320a044f22bfdd392ea32` (merge of
+  PR #108).
+- `git diff origin/main --name-only` from that branch must show exactly
+  one path: `docs/automation/RFC-005-AMENDMENT-1-USAGE-METER-IDENTITY-CONTRACT.md`.
+- `git diff --check` must be clean.
+- Commit message: `docs: clarify RFC-005 Amendment 1 constructor governance`.
+- Push branch `chore/rfc-005-amendment-1-contract-correction-1`; open a
+  Draft PR against `main`, docs-only. Keep it Draft for human review. Do
+  not merge. Do not modify PR #109. Do not modify PR #107. Do not begin
+  any implementation.
