@@ -437,6 +437,8 @@ migration runs against this table in Slice 2 at all. Instead,
 on every rate insert:
 
 ```php
+$nextVersion = $this->rateRepository->latestVersionForFeature($meter->feature_key) + 1;
+
 $rate = $this->rateRepository->create([
     'feature_key' => $meter->feature_key, // NOT $featureKey — see §H
     'meter_key'   => $meter->meter_key,
@@ -450,13 +452,59 @@ the resolved `UsageMeter`'s own immutable `feature_key`, itself
 validated as a real `PlatformFeature::tryFrom()` value at meter
 creation (§7) — so the column's existing `NOT NULL` constraint is
 satisfied exactly as it always has been, with no relaxation required.
-`BusinessUsageRateRepository::findByFeatureAndVersion()`/
-`latestVersionForFeature()` switch their internal `where('feature_key', ...)`
-clause to `where('meter_key', ...)` in this same Slice 2 PR — the
-authoritative economic lookup key becomes `meter_key`, while
-`feature_key` becomes compatibility/audit data only. Method names and
-parameters are unchanged, since this repository is not
-`UsageWalletManager` and carries no signature freeze.
+
+**Version-allocation collision, found and corrected before this
+document reached implementation:** because a `PlatformFeature` may own
+several `UsageMeter`s (§A), switching `latestVersionForFeature()`'s own
+query target to `meter_key` — as an earlier pass of this section
+specified — would make version numbering **meter-local**, while the
+retained legacy `UNIQUE(feature_key, version)` index (above) is
+**feature-wide**. Two different meters under the same feature (e.g.
+`conversations.sms.us.telnyx.usd` and `conversations.sms.lt.telnyx.eur`,
+both owned by `feature_key = conversations`) would each independently
+compute "my first version is 1," and the second `setActiveRate()` call
+would collide on the still-live legacy unique index. **Audited against
+every merged authority — RFC-005 M1 contract §6.2 (`"version | ...
+starts at 1 per feature_key ..."`), the master RFC-005 v1.4 document,
+and this Amendment's own merged text — and confirmed that nothing
+requires per-meter contiguous version numbering.** `version` is
+snapshotted onto reservations/ledger entries (`rate_version`) purely as
+an immutable audit identifier; it is never compared, ordered, or
+otherwise used in any business decision anywhere in
+`UsageWalletManager`. The pre-Amendment semantics were always
+feature-wide (there was no meter concept to be local to), and no part
+of this Amendment's own design ever proposed changing that.
+
+**Correction: `latestVersionForFeature()`'s query target does NOT
+change in Slice 2.** It remains exactly as it is today —
+`where('feature_key', $featureKey)->max('version')` — continuing to
+serve as an **owning-feature-wide compatibility version allocator**,
+now called with `$meter->feature_key` (the owning `PlatformFeature`)
+instead of the historical raw parameter. This is a transitional
+compatibility namespace only: it prevents the retained legacy unique
+index from ever colliding, and it must never become economic/charging
+authority again — that authority remains exactly `meter_key` and
+`active_rate_id`, unchanged.
+
+**The two responsibilities this repository must serve are mechanically
+separated onto two different methods, not overloaded onto one:**
+
+- `latestVersionForFeature(string $featureKey): int` — **unchanged**
+  name, signature, and `feature_key`-scoped query. Owning-feature-wide
+  compatibility version allocation only.
+- `findByMeterAndVersion(string $meterKey, int $version): ?BusinessUsageRate`
+  — **new**, replacing the pre-existing `findByFeatureAndVersion()`
+  (which has zero real callers anywhere in the current codebase, so
+  this rename breaks nothing). Meter-authoritative rate lookup, scoped
+  to `meter_key` — the correct identity for "does this specific meter
+  have this exact rate," now that meter identity is authoritative.
+
+Method names and parameters are unchanged for `latestVersionForFeature()`
+(only its caller's argument changes, from the historical `$featureKey`
+parameter to `$meter->feature_key`); `findByFeatureAndVersion()` is
+renamed to `findByMeterAndVersion()` with a new `meter_key`-scoped
+signature — safe because it is not `UsageWalletManager` and carries no
+signature freeze, and because it has no existing caller to break.
 
 **Slice 3 — CONTRACT (separate implementation contract and PR, after
 Slice 2 has merged and run):**
@@ -475,6 +523,35 @@ Schema::table('business_usage_rates', function (Blueprint $table) {
     $table->dropColumn('feature_key');
 });
 ```
+
+**`latestVersionForFeature()`'s implementation changes here — its name,
+signature, and owning-feature-wide semantics do not.** Once
+`business_usage_rates.feature_key` no longer exists, the allocator
+continues serving the identical role by joining through `usage_meters`:
+
+```php
+public function latestVersionForFeature(string $featureKey): int
+{
+    return (int) ($this->query()
+        ->join('usage_meters', 'business_usage_rates.meter_key', '=', 'usage_meters.meter_key')
+        ->where('usage_meters.feature_key', $featureKey)
+        ->max('business_usage_rates.version') ?? 0);
+}
+```
+
+This preserves the exact same monotonic, owning-feature-wide numbering
+scheme across the Slice 2 → Slice 3 transition — no version-numbering
+reset, no scheme change at the moment `feature_key` is dropped, and no
+new collision risk introduced: the final schema's own
+`UNIQUE(meter_key, version)` (already created in Slice 1, §D-2) makes
+per-meter uniqueness structurally guaranteed regardless of how the
+allocator computes its next number, so continuing the feature-wide join
+is a deliberate continuity choice, not a correctness requirement post-Slice-3
+— justified here by keeping one allocation scheme for the rate's entire
+lifetime rather than silently changing numbering behavior at a schema
+migration boundary. `findByMeterAndVersion(string $meterKey, int $version)`
+is unaffected by this migration — it already queries `meter_key`
+directly, with no join required.
 
 The final unique indexes (`business_usage_rates_meter_key_version_unique`,
 `business_usage_rates_meter_key_id_unique`) and the composite currency
@@ -921,7 +998,7 @@ database-level composite FK in §D is what actually prevents a
 mismatched value from ever being persisted — no new application-level
 check is needed inside `setActiveRate()` itself beyond letting that
 insert fail if the caller supplied the wrong currency, which is itself
-a required future test (proof 21, Slice 2).
+a required future test (proof 23, Slice 2).
 
 ### H.1–H.2 (unchanged from the prior pass)
 
@@ -1197,12 +1274,16 @@ change only:
     `'feature_key' => $reservation->feature_key` key they already write
     (§G) — both now correctly sourced, transitively, from §F's
     dual-write.
-18. `BusinessUsageRateRepository::findByFeatureAndVersion()`/
-    `latestVersionForFeature()` switch their internal `where()` target
-    from `feature_key` to `meter_key` — method names and parameters
-    unchanged, since this repository is not `UsageWalletManager` and
-    carries no signature freeze; `feature_key` becomes compatibility/
-    audit data only, no longer the authoritative lookup key.
+18. `BusinessUsageRateRepository::findByFeatureAndVersion()` is renamed
+    to `findByMeterAndVersion(string $meterKey, int $version)`, querying
+    `meter_key` — meter-authoritative rate lookup, safe to rename since
+    it has zero real callers today. `latestVersionForFeature()` is
+    **not** switched to `meter_key` — it keeps its name, signature, and
+    `feature_key`-scoped query unchanged, now called with
+    `$meter->feature_key` (§D) as the owning-feature-wide compatibility
+    version allocator, avoiding a collision on the still-live legacy
+    `UNIQUE(feature_key, version)` index when two `UsageMeter`s share
+    one `PlatformFeature` (§D).
 
 **Slice 2 is deployable against Slice 1's exact, unmodified schema —
 no migration-before-code ordering dependency exists, because no
@@ -1217,17 +1298,22 @@ once again write `feature_key` directly rather than via `$meter->feature_key`
 — but every row Slice 2 created already has a populated `feature_key`
 (dual-write never leaves it `NULL`), the column was never relaxed, and
 the legacy indexes were never touched. Rollback is therefore: revert
-the manager/repository code (constructor, method bodies, query
-targets); no schema change of any kind is needed or performed. Every
-row created during Slice 2 remains fully readable by Slice 1's
-`feature_key`-based repository queries, since `feature_key` was
-dual-written, not abandoned. **Audited for a second-order gap:** the
-only way a Slice-2-created row could be unusable by reverted Slice-1
-code is if some Slice-1 code path reads a column Slice 2 never
-populates — direct inspection confirms none exists (`findByFeatureAndVersion()`/
-`latestVersionForFeature()` are the only `feature_key`-dependent reads,
-and Slice 1's own versions of them query `feature_key`, which Slice 2
-always populates); no other gap was found.
+the manager/repository code (constructor, method bodies, the
+`findByFeatureAndVersion()`/`findByMeterAndVersion()` rename); no
+schema change of any kind is needed or performed.
+`latestVersionForFeature()` itself never changes at all across Slice 1
+and Slice 2 — it stays `feature_key`-scoped throughout (§D) — so there
+is nothing to revert for it specifically. Every row created during
+Slice 2 remains fully readable by Slice 1's `feature_key`-based
+repository queries, since `feature_key` was dual-written, not
+abandoned. **Audited for a second-order gap:** the only way a
+Slice-2-created row could be unusable by reverted Slice-1 code is if
+some Slice-1 code path reads a column Slice 2 never populates — direct
+inspection confirms none exists (`latestVersionForFeature()` is the
+only real `feature_key`-dependent read in either slice, and it is
+never abandoned; `findByFeatureAndVersion()` had zero callers before
+Slice 2 and its renamed replacement has zero callers after); no other
+gap was found.
 
 ### Slice 3 — CONTRACT (separate implementation contract and PR, after Slice 2 is merged and has run)
 
@@ -1296,7 +1382,7 @@ would cause a composite FK to fail to attach even when the logical
 reference is correct; `currency_id`/`rate_id`/`active_rate_id`/`id`
 must all be consistently `unsignedBigInteger`/`bigint unsigned` across
 every referencing and referenced column. This is a required future
-schema test (proof 11 for Slice 1, proof 32 for Slice 3's final
+schema test (proof 12 for Slice 1, proof 34 for Slice 3's final
 tightened state, below).
 
 **Zero fabricated rows, in any slice — Slice 3's rollback restoration
@@ -1347,8 +1433,14 @@ meter identity, each dual-writing `feature_key` (sourced from
 `$meter->feature_key`, never the raw method parameter) and `meter_key`
 on every insert; the `evaluateCoarseCapacity()` entitlement coarse-gate
 correction; `meter_key` writes added to reservation and ledger
-create-payloads; `BusinessUsageRateRepository`'s query-target switch to
-`meter_key`. The legacy `feature_key` columns and indexes on
+create-payloads; `BusinessUsageRateRepository::findByFeatureAndVersion()`
+renamed to the meter-scoped `findByMeterAndVersion()` (zero callers,
+safe to rename), while `latestVersionForFeature()` stays
+`feature_key`-scoped as an owning-feature-wide compatibility version
+allocator — not switched to `meter_key`, which would otherwise collide
+two sibling `UsageMeter`s' independent version-1 allocations against
+the still-live legacy `UNIQUE(feature_key, version)` index (§D). The
+legacy `feature_key` columns and indexes on
 `business_usage_rates`/`business_usage_rate_activations` remain
 `NOT NULL` and completely untouched, never relaxed — every row Slice 2
 creates satisfies that constraint by construction. Every existing
@@ -1410,14 +1502,13 @@ not resolve or need to).
 
 ## Required future implementation proofs
 
-**Recounted this pass — the prior 26-item list (which still assumed a
-schema-relaxation step in Slice 2) is superseded, not preserved for
-continuity, since Design Correction 3 replaces that relaxation with
-dual-write, adding proofs for the dual-write itself and removing the
-relaxation-specific ones it replaces.** Every item below is a future
-test, none written here.
+**Fully renumbered sequentially this pass — the prior list's 34 items
+plus a lettered 7a (35 actual entries) is superseded by a clean 1..37
+sequence, adding the multi-meter version-allocation proof this pass's
+own correction requires and folding the former 7a in at its natural
+position.** Every item below is a future test, none written here.
 
-### Slice 1 proofs (11, plus 7a) — provable with `UsageWalletManager` untouched
+### Slice 1 proofs (12) — provable with `UsageWalletManager` untouched
 
 1. `UsageWalletManager.php`'s source is byte-identical to its
    pre-Design-Correction-1 state — a diff-based gate (§11), not a unit
@@ -1450,19 +1541,19 @@ test, none written here.
 7. A manually-inserted row with `meter_key = NULL` on each of the four
    transitionally/permanently nullable legacy tables is correctly
    exempted from FK enforcement (`MATCH SIMPLE`) regardless of any
-   other column's value; **this is a distinct claim from proof 7a
-   below, and both must hold independently.**
-7a. A `business_usage_ledger_entries` row with `meter_key` **populated**
-    and `rate_id = NULL` — the legitimate `ReservationRelease` shape
-    (§G) — is correctly **accepted**, since `MATCH SIMPLE` exempts a
-    row when **any** FK column is `NULL`, not only when all are; this
-    must not be confused with proof 7's all-`NULL` case.
-8. Historical `business_usage_ledger_entries` rows (real M3/M4
+   other column's value; **this is a distinct claim from proof 8 below,
+   and both must hold independently.**
+8. A `business_usage_ledger_entries` row with `meter_key` **populated**
+   and `rate_id = NULL` — the legitimate `ReservationRelease` shape
+   (§G) — is correctly **accepted**, since `MATCH SIMPLE` exempts a row
+   when **any** FK column is `NULL`, not only when all are; this must
+   not be confused with proof 7's all-`NULL` case.
+9. Historical `business_usage_ledger_entries` rows (real M3/M4
    funding/add-on rows, `feature_key = NULL`, `rate_id = NULL`) remain
    untouched and valid after `meter_key` is added.
-9. M3 funding and M4 add-on/additional-slot regression suites are
-   unaffected.
-10. `usage_meters`/`usage_meter_transitions` complete schema tests:
+10. M3 funding and M4 add-on/additional-slot regression suites are
+    unaffected.
+11. `usage_meters`/`usage_meter_transitions` complete schema tests:
     Business/currency FKs and `restrictOnDelete()`; immutable-field
     enforcement (`meter_key`/`feature_key`/`business_id`/`currency_id`
     never mutable via any repository `update()` call); append-only
@@ -1470,76 +1561,91 @@ test, none written here.
     `UsageMeterRepository::create()` rejects an unknown `feature_key`
     (not a valid `PlatformFeature::tryFrom()` value) and rejects
     creation with no actor/`updated_by_user_id` or empty `description`.
-11. All six `meter_key` columns resolve to `VARCHAR(128)` with
+12. All six `meter_key` columns resolve to `VARCHAR(128)` with
     compatible collation at their Slice 1 state — `NOT NULL` on
     `usage_meters`/`usage_meter_transitions`, nullable on the other
     four — a direct `INFORMATION_SCHEMA`/`Schema::getColumnType`-based
     test.
 
-### Slice 2 proofs (17) — cutover code, zero schema mutation, before Slice 3's tightening
+### Slice 2 proofs (18) — cutover code, zero schema mutation, before Slice 3's tightening
 
-12. No migration file of any kind exists in Slice 2 — a diff-based gate
+13. No migration file of any kind exists in Slice 2 — a diff-based gate
     confirming zero schema mutation, mirroring proof 1's discipline for
     `UsageWalletManager.php` itself.
-13. `setActiveRate()`'s two create-payloads and `reserve()`'s reservation
+14. `setActiveRate()`'s two create-payloads and `reserve()`'s reservation
     create-payload write `feature_key = $meter->feature_key` (never the
     raw `$featureKey`/method-parameter value) and `meter_key = $meter->meter_key`
     on every insert — asserted by inspecting the actual persisted row's
     two columns, not merely that both keys were present in the array.
-14. Every row Slice 2 creates on `business_usage_rates`/
+15. Every row Slice 2 creates on `business_usage_rates`/
     `business_usage_rate_activations`/`business_usage_reservations` has
     a non-`NULL` `feature_key`, satisfying each column's still-`NOT NULL`
     constraint without any schema change — inserting a row through the
     cutover code never raises a `NOT NULL` violation.
-15. Metered, reservation-derived `business_usage_ledger_entries` rows
+16. Metered, reservation-derived `business_usage_ledger_entries` rows
     carry `feature_key = reservation.feature_key` and
     `meter_key = reservation.meter_key`, both copied from the
     reservation, never independently re-derived (§G).
-16. `BusinessUsageRateRepository::findByFeatureAndVersion()`/
-    `latestVersionForFeature()` query `meter_key`, not `feature_key`,
-    after Slice 2 — `meter_key` is the authoritative economic lookup key;
-    `feature_key` is proven to be compatibility/audit data only (e.g. by
-    showing a row with a stale `feature_key` but correct `meter_key`
-    still resolves correctly).
-17. USD meter/rate + USD wallet → normal `reserve()`, exercised through
+17. `BusinessUsageRateRepository::findByMeterAndVersion()` (the renamed
+    `findByFeatureAndVersion()`) queries `meter_key` — meter-authoritative
+    rate lookup; `latestVersionForFeature()` continues to query
+    `feature_key`, **not** `meter_key` — proving the two responsibilities
+    (meter-authoritative lookup vs. owning-feature-wide compatibility
+    version allocation) are mechanically separate, not overloaded onto
+    one method (§D).
+18. **Two `UsageMeter`s sharing one `feature_key` with different
+    `meter_key`s can each receive a rate via `setActiveRate()` without a
+    version collision.** Concretely: create `UsageMeter` A
+    (`meter_key = conversations.sms.us.telnyx.usd`,
+    `feature_key = conversations`) and `UsageMeter` B
+    (`meter_key = conversations.sms.lt.telnyx.eur`,
+    `feature_key = conversations`); call `setActiveRate()` for A, then
+    for B; assert **both** inserts succeed (no `QueryException` on
+    `business_usage_rates_feature_key_version_unique`), and that each
+    resulting `business_usage_rates` row's `version` is part of one
+    shared, monotonically increasing sequence keyed by `feature_key =
+    conversations` (i.e. B's version is A's version + 1, not
+    independently "1") — directly exercising the corrected
+    `latestVersionForFeature($meter->feature_key)` call site (§D, §H).
+19. USD meter/rate + USD wallet → normal `reserve()`, exercised through
     the re-pointed manager.
-18. USD meter/rate + EUR wallet → `UsageMeterCurrencyMismatchException`,
+20. USD meter/rate + EUR wallet → `UsageMeterCurrencyMismatchException`,
     zero writes.
-19. A Business-scoped USD meter, invoked by that same Business but with
+21. A Business-scoped USD meter, invoked by that same Business but with
     a EUR wallet, still fails — Business-scope match does not
     substitute for currency match.
-20. A global USD meter, invoked by a different, otherwise-authorized
+22. A global USD meter, invoked by a different, otherwise-authorized
     USD-wallet Business, succeeds if every other check passes.
-21. `setActiveRate()` rejects a caller-supplied rate whose currency does
+23. `setActiveRate()` rejects a caller-supplied rate whose currency does
     not match its meter's own — exercised via the manager method itself.
-22. Existing reservations remain unambiguously denominated by their
+24. Existing reservations remain unambiguously denominated by their
     original snapshotted `rate_id` after any later rotation.
-23. An audit row in `business_usage_rate_activations` or
+25. An audit row in `business_usage_rate_activations` or
     `usage_meter_transitions` claiming a rate belonging to a different
     meter is rejected, exercised through `setActiveRate()`/
     `activateMetering()`.
-24. A `business_usage_ledger_entries` row claiming `meter_key = A` while
+26. A `business_usage_ledger_entries` row claiming `meter_key = A` while
     `rate_id` belongs to meter B is rejected, exercised through
     `commit()`/`release()`.
-25. `UsageWalletManager` remains fully container-resolvable after the
+27. `UsageWalletManager` remains fully container-resolvable after the
     authorized constructor dependency swap.
-26. Every existing public domain/API method on `UsageWalletManager`
+28. Every existing public domain/API method on `UsageWalletManager`
     retains a byte-for-byte-equivalent signature declaration (§0's
     enumerated list) after Slice 2 — a reflection-based comparison
     against the pre-Amendment declaration.
-27. No `app()`/`resolve()`/service-locator call, setter injection, or
+29. No `app()`/`resolve()`/service-locator call, setter injection, or
     method injection into a frozen domain method is introduced anywhere
     in `UsageWalletManager` — a static-analysis or source-grep test.
-28. **Slice 2 rollback requires no data restoration:** revert the
+30. **Slice 2 rollback requires no data restoration:** revert the
     manager/repository code alone (no migration `down()` runs, since
     none exists), then confirm every row created during Slice 2 remains
     fully readable and correctly queryable by the reverted, `feature_key`-based
     `findByFeatureAndVersion()`/`latestVersionForFeature()` — proving the
     dual-write, not a data-migration step, is what makes rollback safe.
 
-### Slice 3 proofs (6) — final schema state, a separate later contract
+### Slice 3 proofs (7) — final schema state, a separate later contract
 
-29. The preflight correctly throws
+31. The preflight correctly throws
     `UsageMeterBackfillIncompleteException($table, $remainingCount)`
     and performs zero schema change when a `meter_key = NULL` row is
     deliberately seeded on any of the three tightened tables inside a
@@ -1547,21 +1653,21 @@ test, none written here.
     asserted; a real pre-Slice-2 legacy row (`feature_key` populated,
     `meter_key` still `NULL`) is exactly this case, and correctly stops
     Slice 3 rather than being silently skipped or backfilled.
-30. After Slice 3, `business_usage_rates`/`business_usage_rate_activations`
+32. After Slice 3, `business_usage_rates`/`business_usage_rate_activations`
     no longer have a `feature_key` column, and their legacy indexes
     (`business_usage_rates_feature_key_version_unique`,
     `business_usage_rate_activations_feature_key_index`) are gone.
-31. `business_usage_reservations.feature_key` remains present and
+33. `business_usage_reservations.feature_key` remains present and
     populated exactly as before, permanently — unaffected by Slice 3.
-32. All six `meter_key` columns reach their final designed state —
+34. All six `meter_key` columns reach their final designed state —
     `NOT NULL` on `usage_meters`, `usage_meter_transitions`,
     `business_usage_rates`, `business_usage_rate_activations`, and
     `business_usage_reservations`; nullable **permanently** on
     `business_usage_ledger_entries` — still `VARCHAR(128)` with
     compatible collation.
-33. M3 funding and M4 add-on/additional-slot regression suites remain
+35. M3 funding and M4 add-on/additional-slot regression suites remain
     unaffected after all three slices have landed.
-34. **Slice 3 rollback restores Slice 2's schema exactly, including its
+36. **Slice 3 rollback restores Slice 2's schema exactly, including its
     `NOT NULL` constraint:** `feature_key` is re-added, repopulated via
     the authoritative join against `usage_meters.feature_key`, and
     **tightened back to `NOT NULL`** — required this time, since Slice
@@ -1569,8 +1675,16 @@ test, none written here.
     is recreated exactly as Slice 2 left it; a row whose `meter_key`
     cannot resolve fails the rollback closed before any of that
     completes.
+37. **Proof 18's two-meter scenario, re-verified after Slice 3.** Using
+    the same `UsageMeter` A/B pair and their existing rate history from
+    proof 18, confirm: neither meter's prior rates were renumbered or
+    disturbed by Slice 3's column drop; and a **new** `setActiveRate()`
+    call for either meter still allocates the next version correctly
+    via `latestVersionForFeature()`'s post-Slice-3, join-based
+    implementation (§D), continuing the same shared `feature_key =
+    conversations` numbering sequence with no collision and no reset.
 
-Total: **34, plus 7a** (11 Slice 1 + 7a + 17 Slice 2 + 6 Slice 3).
+Total: **37** (12 Slice 1 + 18 Slice 2 + 7 Slice 3).
 
 ---
 
