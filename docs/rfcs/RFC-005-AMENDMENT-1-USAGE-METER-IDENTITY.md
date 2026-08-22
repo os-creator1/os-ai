@@ -1,6 +1,6 @@
 # RFC-005 Amendment 1 — Usage Meter Identity
 
-**Status: DESIGN — NOT AUTHORIZED FOR IMPLEMENTATION UNTIL HUMAN MERGE AND A SEPARATE IMPLEMENTATION CONTRACT.**
+**Status: DESIGN — NOT AUTHORIZED FOR IMPLEMENTATION. SEE §3 GOVERNANCE VERDICT — ONE PROVISION OF THIS DESIGN IS NOT YET AUTHORIZED BY THE MERGED GOVERNANCE CONTRACT AS WRITTEN.**
 
 Authorized for drafting by the merged
 `docs/automation/RFC-005-AMENDMENT-1-USAGE-METER-IDENTITY-CONTRACT.md`
@@ -11,169 +11,89 @@ any migration, model, repository, manager, gateway, controller, route,
 view, or test; does not resume RFC-005 Milestone 5; and does not select
 a first metered feature. A separate, later, explicitly bounded
 implementation contract is required before any of the schema or code
-changes this document specifies may be written.
+changes this document specifies may be written — and, per §H.3 below,
+one specific part of this design (the `UsageWalletManager` constructor
+change) additionally requires a small, separate, human-reviewed
+correction to the merged governance contract itself before it is
+authorized, regardless of any future implementation contract.
 
 This document is the authoritative superseding text for the specific
 RFC-005 provisions it names (§14 primarily, §11 by reference, §36's
 Milestone 5 entry, §39 item 11) once it is human-merged. It does not
-edit `docs/rfcs/RFC-005-BUSINESS-USAGE-BILLING-AND-WALLETS.md` directly
-— the merged contract authorizes exactly one new file, this one — and
-every provision it does not name remains governed by that original
-document unchanged.
+edit `docs/rfcs/RFC-005-BUSINESS-USAGE-BILLING-AND-WALLETS.md` directly.
 
-**Revision note (this refinement pass):** an independent review found
-three defects in the initial draft: `reserve()`'s proposed design
-re-pointed the existing rate/classification lookup to `UsageMeter` but
-never actually required `is_metered = true` before authorizing a
-charge, leaving a real gap between a meter's rate being set and its
-metering being activated; the claim that the old
-`platform_feature_usage_classifications` seam was "decoupled" rested on
-a data invariant (nobody writes `is_metered = true` there again) rather
-than on code that is structurally incapable of reintroducing Draft PR
-#107's contradiction; and meter/rate ownership was specified only in
-prose (a `meter_key` string plus a human-readable description), with no
-machine-enforced guarantee that a resolved Business, a resolved meter,
-and a resolved rate all actually belong together. All three are
-resolved below. A fourth, smaller defect (an unresolved future
-"rotation-aware activation step" with no name or design) is also
-removed, since `setActiveRate()` already is that mechanism. This is
-still pre-merge design refinement — no implementation contract exists
-for a correction round to apply against.
+**Revision note (this pass):** a final architecture review found one
+long-deferred financial invariant this amendment is now the correct
+place to resolve (RFC-005 M1 contract §5.5's own explicit deferral of
+rate/wallet currency reconciliation "to M5" — this amendment is that
+architecture prerequisite), two remaining audit tables whose
+independently-valid columns could still contradict each other, and a
+governance-level question this design cannot resolve unilaterally: does
+the merged contract's "public method signatures remain unchanged" lock
+extend to `UsageWalletManager`'s constructor. All four are addressed
+below — the first three fully resolved in this document; the fourth
+resolved as a **stated blocker**, not a silent assumption either way.
 
 ---
 
 ## 0. Repository facts this design is built on
 
-Verified by direct read of `origin/main` at
-`0d25be2ce070e6167a7320a044f22bfdd392ea32` before drafting (unchanged
-from the prior pass):
+Unchanged from the prior pass (§0), with one addition confirmed by
+direct re-read of `docs/automation/RFC-005-M1-CONTRACT.md`:
 
-- `platform_feature_usage_classifications` (migration
-  `2026_08_16_120004_...`): `id`, `feature_key` (`string(64)`, unique),
-  `is_metered` (`boolean`, default `false`), `active_rate_id`
-  (`unsignedBigInteger`, nullable, FK → `business_usage_rates.id`,
-  `restrictOnDelete()`), `updated_by_user_id` (nullable),
-  `created_at`/`updated_at`. Backfilled with one row per
-  `PlatformFeature` case, `is_metered = false`, at M1. **No row has ever
-  had `is_metered` flipped to `true` in any real deployment.**
-- `platform_feature_usage_classification_transitions` — confirmed empty
-  in every real deployment.
-- `business_usage_rates` (migration `2026_08_16_120002_...`): `id`,
-  `feature_key` (`string(64)`), `version` (`unsignedInteger`),
-  `retail_rate_micro`/`provider_cost_micro` (`bigInteger unsigned`),
-  `unit_label` (`string(64)`), `rounding_rule` (`string(32)`, default
-  `round_half_up`), `currency_id` (FK → `currencies.id`,
-  `restrictOnDelete()`), `created_by_user_id` (`unsignedBigInteger`),
-  `created_at` only (immutable, no `updated_at`). Unique on
-  `(feature_key, version)`. **Confirmed empty in every real
-  deployment.**
-- `business_usage_rate_activations` — `id`, `feature_key` (`string(64)`),
-  `rate_id` (FK, `restrictOnDelete()`), `activated_at`,
-  `activated_by_user_id`, `reason` (`text`), `created_at`, index on
-  `feature_key`. **Confirmed empty in every real deployment.**
-- `business_usage_reservations` — `id`, `business_id`, `wallet_id`
-  (`unsignedBigInteger`), `feature_key` (`string(64)`), `period_key`
-  (`string(7)`), `status` (`string(16)`, default `pending`),
-  `reserved_amount_micro` (`bigInteger`), `estimated_quantity`
-  (`decimal(14,6)`, nullable), `rate_id` (FK, `restrictOnDelete()`, not
-  nullable), `rate_version` (`unsignedInteger`), `retail_rate_micro`/
-  `provider_cost_micro` (`bigInteger unsigned`), `rounding_rule`
-  (`string(32)`), `idempotency_key` (`string(191)`, unique),
-  `correlation_key` (`string(191)`), `reserved_at`/`expires_at` (not
-  nullable), `committed_at`/`released_at` (nullable), `final_quantity`
-  (`decimal(14,6)`, nullable), `final_amount_micro` (`bigInteger`,
-  nullable); composite FK `(wallet_id, business_id)` →
-  `business_usage_wallets(id, business_id)`; indexes on
-  `(wallet_id, business_id)` and `status`. **Confirmed empty in every
-  real deployment.**
-- `business_usage_ledger_entries` — `id`, `business_id`/`wallet_id`
-  (`unsignedBigInteger`), `entry_type` (`string(32)`),
-  `available_delta_micro`/`reserved_delta_micro`/`debt_delta_micro`
-  (`bigInteger`, default `0`), `gross_amount_micro` (`bigInteger
-  unsigned`, nullable), `currency_id` (FK, `restrictOnDelete()`),
-  `feature_key` (`string(64)`, nullable), `period_key` (`string(7)`,
-  nullable), `quantity` (`decimal(14,6)`, nullable), `rate_id` (FK,
-  nullable, `restrictOnDelete()`), `rate_version` (`unsignedInteger`,
-  nullable), `retail_rate_micro`/`provider_cost_micro` (`bigInteger
-  unsigned`, nullable), `unit_label` (`string(64)`, nullable),
-  `rounding_rule` (`string(32)`, nullable), `reservation_id` (FK,
-  nullable, `restrictOnDelete()`), `funding_attempt_id` (plain
-  `unsignedBigInteger`, nullable, no FK at M1), `correlation_key`
-  (`string(191)`, unique), `provider_reference` (`string(191)`,
-  nullable), `actor_user_id` (nullable), `reason` (`text`, nullable),
-  `reversed_entry_id` (nullable, self-FK), `created_at`. **Real
-  production rows exist here** (top-ups, auto-recharge, add-on
-  credits), **every one with `feature_key = null`.**
-- `businesses` table exists and is a valid FK target (used throughout
-  RFC-004/005 already, e.g. `business_feature_usage_limits.business_id`).
-- `UsageWalletManager::reserve()` (read verbatim, unchanged from the
-  prior pass's own quotation): resolves the classification, then checks
-  only `$classification === null || $classification->active_rate_id === null`
-  before proceeding to wallet-health checks and writing a reservation —
-  **it does not check `is_metered` at all today.** This is the exact gap
-  §1 below closes.
-- `evaluateCoarseCapacity()` and `RealUsageAuthorizationGateway::check()`
-  (read verbatim, unchanged from the prior pass's own quotation) —
-  requoted and re-analyzed in §I below.
-- `EntitlementManager::decide()`'s final step (unchanged): delegates to
-  `UsageAuthorizationGateway::check()`, surfacing `usage_unauthorized` on
-  denial.
+- `business_usage_rates.currency_id`'s own schema table entry reads,
+  verbatim: *"one currency per `(feature_key, version)`; reconciling
+  this against a per-Business wallet currency (§5.5) is deferred to
+  M5 — no rate is ever activated at M1."* **This amendment is the
+  architecture prerequisite M5 depends on — this deferred reconciliation
+  must be resolved here, not left open again.**
+- `business_usage_wallets.currency_id`'s own schema table entry reads,
+  verbatim: *"resolved per §5.5, from that Business's own
+  `currency_code`; an immutable accounting snapshot once set — never
+  rewritten by any code path."* Two Businesses can therefore have
+  wallets in different currencies, permanently, by design.
+- The merged governance contract's exact locked text (re-quoted
+  verbatim, load-bearing for §H.3):
+  > *"6. `UsageWalletManager`'s public method signatures remain
+  > unchanged. `reserve()`, `commit()`, `release()`, `setActiveRate()`,
+  > `activateMetering()`, and every other existing public method keep
+  > their exact current signatures; only their internal resolution
+  > target (which repository answers "is this metered, what is the
+  > active rate") may change."*
 
 ---
 
 ## A. Domain model
 
-Four concepts, precisely distinguished — unchanged in kind from the
-prior pass, with one addition (Business scope, §3 below folded in as a
-first-class part of `UsageMeter`'s own identity, not a bolt-on):
+Unchanged in kind from the prior pass, extended to name currency as
+part of a meter's own immutable identity, not a separate concern:
 
-**`PlatformFeature`** — the **product entitlement taxonomy**. Unchanged
-enum, unchanged ownership by RFC-004's plan/override/toggle/suspension
-chain. Never represents an economic unit, a price, a quantity, or a
-Business scope.
+**`UsageMeter`** — a specific, real, variable-cost operation,
+optionally scoped to one specific Business, **denominated in exactly
+one currency**, that is either currently metered (with exactly one
+active, verifiably-its-own, verifiably-same-currency rate) or not
+metered at all.
 
-**`UsageMeter`** (new) — the **billable economic identity**, now
-precisely: *a specific, real, variable-cost operation, optionally
-scoped to one specific Business, that is either currently metered (with
-exactly one active, verifiably-its-own rate) or not metered at all —
-with no state in between that can authorize a charge.* A meter is
-labeled with the `PlatformFeature` it economically belongs to (for
-grouping/reporting only, never for entitlement) and, where its
-real-world economics require it, scoped to exactly one Business (§3.A)
-— both labels are immutable once the meter is created (§3.D).
-
-**A rate** — unchanged shape (`retail_rate_micro`, `provider_cost_micro`,
-`unit_label`, `rounding_rule`, `currency_id`, immutable, versioned).
-Belongs to exactly one `UsageMeter`, now **database-enforced**, not
-merely asserted (§3.B).
-
-**A reservation / ledger entry** — unchanged mechanics. Carries both
-`meter_key` and `feature_key` (§F, §G), with the pairing of `meter_key`
-and the specific `rate_id` it snapshots now also **database-enforced**
-to belong to the same meter (§3.C).
-
-**Ownership relationships, exact, revised to show enforcement, not just
-direction:**
+**Ownership relationships, revised to show every enforcement point this
+pass adds:**
 
 ```
-PlatformFeature (1) ──owns (0..N, label only, unenforced)──> UsageMeter
-Business        (0..1) ──scopes (0..N, FK-enforced)─────────> UsageMeter
-UsageMeter      (1) ──owns (1..N, versioned, FK-enforced)───> business_usage_rate
-UsageMeter      (1) ──points to (0..1, composite-FK-enforced, must be its own)─> its active business_usage_rate
-UsageMeter      (1) ──owns (0..N, FK-enforced)───────────────> business_usage_reservation
-business_usage_reservation ──snapshots (composite-FK-enforced, must be the same meter's own)─> business_usage_rate
-business_usage_reservation (1) ──produces (1..N)─────────────> business_usage_ledger_entry
+PlatformFeature (1) ──owns (0..N, label only, unenforced)───────> UsageMeter
+Business        (0..1) ──scopes (0..N, FK-enforced)─────────────> UsageMeter
+Currency        (1) ──denominates (0..N, FK-enforced, immutable)─> UsageMeter
+UsageMeter      (1) ──owns (1..N, FK-enforced, same-currency-enforced)─> business_usage_rate
+UsageMeter      (1) ──points to (0..1, composite-FK-enforced, same-meter)─> its active business_usage_rate
+UsageMeter      (1) ──owns (0..N, FK-enforced, same-meter-enforced)─> business_usage_rate_activation
+UsageMeter      (1) ──audits (0..N, FK-enforced, same-meter-enforced)─> usage_meter_transition
+UsageMeter      (1) ──owns (0..N, FK-enforced, same-meter-enforced)─> business_usage_reservation
+business_usage_reservation ──snapshots (composite-FK-enforced, same meter)─> business_usage_rate
+business_usage_reservation (1) ──produces (1..N, meter-FK-enforced where populated)─> business_usage_ledger_entry
 ```
 
-**Why `PlatformFeature`'s own ownership of a meter stays label-only,
-unenforced, while Business scope and rate ownership become database-
-enforced:** a `PlatformFeature` mislabeling on a meter is a reporting
-inconvenience (a meter appears under the wrong grouping), never a
-billing-correctness failure — nothing charges the wrong party because a
-report groups it oddly. A Business-scope mismatch or a cross-meter rate
-reference is a genuine billing-correctness failure — the exact class of
-error this amendment exists to make structurally impossible, not merely
-unlikely.
+**Currency is now a first-class, immutable dimension of `UsageMeter`'s
+own identity** (§H, §J) — not something checked only at the wallet
+boundary. A `meter_key`, a `business_id` scope, and a `currency_id` are
+all decided once, at meter creation, and never revisited.
 
 ---
 
@@ -185,6 +105,7 @@ Schema::create('usage_meters', function (Blueprint $table) {
     $table->string('meter_key', 128)->unique();
     $table->string('feature_key', 64);
     $table->unsignedBigInteger('business_id')->nullable();
+    $table->unsignedBigInteger('currency_id');
     $table->boolean('is_metered')->default(false);
     $table->unsignedBigInteger('active_rate_id')->nullable();
     $table->text('description');
@@ -192,37 +113,36 @@ Schema::create('usage_meters', function (Blueprint $table) {
     $table->timestamps();
 
     $table->foreign('business_id')->references('id')->on('businesses')->restrictOnDelete();
+    $table->foreign('currency_id')->references('id')->on('currencies')->restrictOnDelete();
+    $table->unique(['meter_key', 'currency_id']); // FK target for §D's composite constraint
     $table->index('feature_key');
     $table->index('business_id');
 });
 ```
 
-**`active_rate_id` is declared here as a plain nullable column, without
-its own FK yet** — its real constraint is the composite FK added in a
-later migration step (§3.C, §O), once `business_usage_rates` carries
-the composite unique index that FK must reference. This is a staging
-requirement (§O), not a design ambiguity: the *eventual* constraint is
-locked in §3.C; only its *migration ordering* is deferred to keep the
-schema always creatable.
+**`unique(meter_key, currency_id)` is declared even though `meter_key`
+alone is already unique** — logically redundant as a uniqueness
+guarantee, but mechanically required: MySQL/InnoDB requires an explicit
+index whose leading columns match a composite foreign key's referenced
+columns exactly; `unique(meter_key)` alone does not satisfy a
+`(meter_key, currency_id)`-shaped reference target, regardless of
+`meter_key` already being unique on its own. This index exists purely
+to serve as that FK target (§D).
 
-Column-by-column:
+**`active_rate_id` remains a plain, unconstrained nullable column at
+creation** — its real constraint (composite, same-meter) is added in a
+later migration step (§O), for the identical staging reason as the
+prior pass.
+
+Column-by-column (unchanged rows from the prior pass omitted for
+brevity; new/changed rows only):
 
 | Column | Type | Nullable | Default | Notes |
 |---|---|---|---|---|
-| `id` | `bigint unsigned` (PK, auto-increment) | No | — | |
-| `meter_key` | `string(128)`, unique | No | — | The durable, auditable economic identity — a plain, human-assigned, unique string, mirroring `feature_key`'s own existing durability discipline. **Immutable after creation (§3.D).** |
-| `feature_key` | `string(64)` | No | — | The owning `PlatformFeature`'s value, label only (§A). Not a foreign key — validated in application code against `PlatformFeature::tryFrom()`. **Immutable after creation (§3.D).** |
-| `business_id` | `unsignedBigInteger`, FK → `businesses.id`, `restrictOnDelete()` | Yes | `NULL` | **New this pass (§3.A).** `NULL` = a globally reusable meter, usable by any otherwise-authorized Business. A non-null value scopes the meter to exactly that Business — `reserve()` must enforce this (§1, §3.A) before any mutation. **Immutable after creation (§3.D)** — a meter that needs a different scope is retired and replaced, never re-scoped. |
-| `is_metered` | `boolean` | No | `false` | Mutable only via `activateMetering()` (re-pointed, §H). **`reserve()` now requires this to be `true` before authorizing any charge (§1)** — the exact gap the independent review found. |
-| `active_rate_id` | `unsignedBigInteger`, nullable | Yes | `NULL` | Sole pointer `setActiveRate()` maintains. Its real integrity constraint is the composite FK in §3.C/§O, not a plain single-column FK. |
-| `description` | `text` | No | — | Human-readable documentation of the real-world execution context this meter represents. **Mutable** — the only mutable identity-adjacent field on this table. |
-| `updated_by_user_id` | `unsigned bigint`, no FK | No | — | **Not nullable** — unlike `platform_feature_usage_classifications.updated_by_user_id`, no `usage_meters` row is ever system-backfilled (§O); every row is created by an explicit human action from its first write. |
-| `created_at` / `updated_at` | `timestamp` | No | `now()` | Standard Eloquent timestamps. |
+| `currency_id` | `unsignedBigInteger`, FK → `currencies.id`, `restrictOnDelete()` | **No** | — | **New this pass.** The meter's own immutable settlement currency. Every rate this meter ever activates must share this exact `currency_id` (§D, DB-enforced). **Immutable after creation (§H.4)** — a meter that must be re-denominated is retired and replaced by a new meter under a new key, identical discipline to `meter_key`/`feature_key`/`business_id`. |
 
-Indexes/constraints: `unique(meter_key)`; `index(feature_key)`;
-`index(business_id)`; `foreign(business_id) → businesses.id,
-restrictOnDelete()`; the composite FK on `(meter_key, active_rate_id)`
-added in a later migration step (§3.C, §O).
+Every other column, index, and constraint from the prior pass's §B is
+unchanged except as explicitly modified above.
 
 ---
 
@@ -234,45 +154,48 @@ Schema::create('usage_meter_transitions', function (Blueprint $table) {
     $table->string('meter_key', 128);
     $table->boolean('from_is_metered');
     $table->boolean('to_is_metered');
-    $table->foreignId('from_active_rate_id')->nullable();
-    $table->foreignId('to_active_rate_id')->nullable();
+    $table->unsignedBigInteger('from_active_rate_id')->nullable();
+    $table->unsignedBigInteger('to_active_rate_id')->nullable();
     $table->unsignedBigInteger('actor_user_id');
     $table->text('reason');
     $table->timestamp('created_at');
 
-    $table->foreign('from_active_rate_id', 'umt_from_active_rate_id_foreign')
-        ->references('id')->on('business_usage_rates')->restrictOnDelete();
-    $table->foreign('to_active_rate_id', 'umt_to_active_rate_id_foreign')
-        ->references('id')->on('business_usage_rates')->restrictOnDelete();
+    $table->foreign('meter_key', 'umt_meter_key_foreign')
+        ->references('meter_key')->on('usage_meters')->restrictOnDelete();
+    $table->foreign(['meter_key', 'from_active_rate_id'], 'umt_from_rate_same_meter_foreign')
+        ->references(['meter_key', 'id'])->on('business_usage_rates')->restrictOnDelete();
+    $table->foreign(['meter_key', 'to_active_rate_id'], 'umt_to_rate_same_meter_foreign')
+        ->references(['meter_key', 'id'])->on('business_usage_rates')->restrictOnDelete();
 
     $table->index('meter_key');
 });
 ```
 
-Unchanged in shape from the prior pass. **Scope narrowed this pass, per
-the independent review's §4 instruction:** this table audits
-**metering-state changes only** — `false → true` (via `activateMetering()`)
-and, if a future `deactivateMetering()` is ever added, `true → false`.
-**It does not, and must not, audit rate rotations** —
-`business_usage_rate_activations` already exists precisely for that
-purpose (§4). A rate rotation on an already-metered meter therefore
-writes **zero** rows to this table; it writes exactly one row to
-`business_usage_rate_activations` (unchanged mechanic, §D) and updates
-`usage_meters.active_rate_id` (§E, §H). This removes the prior pass's
-unresolved "rotation-aware activation step" entirely — there is no
-separate `true → true` transition case, because there is no separate
-method that would produce one.
+**Two integrity gaps closed this pass, per the independent review's
+§2.B finding:** the prior pass's `from_active_rate_id`/`to_active_rate_id`
+were plain nullable FKs to `business_usage_rates.id` alone — proving
+each references *some* real rate, but never that it is *this meter's
+own* rate. **Both are now composite FKs against
+`business_usage_rates(meter_key, id)`**, using the same target index
+§D's rename step already creates. **A plain `meter_key → usage_meters.meter_key`
+FK is added** (absent from the prior pass) — `meter_key` on this table
+now provably references a real meter, not merely an indexed string.
+Standard SQL multi-column FK semantics exempt a row from either
+composite constraint whenever the corresponding `*_active_rate_id`
+column is `NULL` (the case for a fresh meter's first `activateMetering()`
+call, where `from_active_rate_id`/`to_active_rate_id` are equal and
+non-null in practice today — but the schema must not assume that always
+holds).
 
-`actor_user_id` and `reason` remain mandatory; append-only; identical
-short-constraint-name workaround (`umt_*`) for MySQL's 64-character
-identifier limit, mirroring `pfuct_*` exactly.
+**Scope confirmed unchanged from the prior pass:** this table audits
+metering-state changes only (`false → true`, and `true → false` if a
+future `deactivateMetering()` is added) — never rate rotations, which
+`business_usage_rate_activations` alone audits (§4 of the prior pass,
+unchanged, restated in §H below).
 
 ---
 
-## D. `business_usage_rates` — exact correction, revised for referential integrity
-
-**Rename `feature_key` → `meter_key`, exactly as the prior pass
-specified, plus two new constraints this pass adds:**
+## D. `business_usage_rates` — exact correction, revised for currency integrity
 
 ```php
 Schema::table('business_usage_rates', function (Blueprint $table) {
@@ -282,31 +205,45 @@ Schema::table('business_usage_rates', function (Blueprint $table) {
 Schema::table('business_usage_rates', function (Blueprint $table) {
     $table->dropUnique(['feature_key', 'version']); // pre-rename index name
     $table->unique(['meter_key', 'version']);
-    $table->unique(['meter_key', 'id']); // new this pass — the composite-FK target for §3.C
+    $table->unique(['meter_key', 'id']); // FK target for §C's and §E/F's same-meter constraints
+});
+
+// Added once usage_meters exists with unique(meter_key, currency_id) — §O:
+Schema::table('business_usage_rates', function (Blueprint $table) {
+    $table->foreign(['meter_key', 'currency_id'], 'rates_meter_currency_foreign')
+        ->references(['meter_key', 'currency_id'])->on('usage_meters')
+        ->restrictOnDelete();
 });
 ```
 
-**Why `unique(meter_key, id)` in addition to `unique(meter_key, version)`:**
-`id` is already unique on its own (the primary key), so
-`(meter_key, id)` is trivially unique too — this is not a new
-constraint on real-world data, it is the exact composite index MySQL
-requires to exist before another table can declare a composite foreign
-key against `(meter_key, id)` (§3.C). No `meter_key → usage_meters.meter_key`
-FK is added on this table in this same migration step — that FK is
-added in a later step (§O), once `usage_meters` exists with its own
-unique index on `meter_key`, avoiding a circular-reference creation
-order problem.
+**No plain `meter_key → usage_meters.meter_key` FK is added on this
+table.** The new composite `(meter_key, currency_id) → usage_meters(meter_key, currency_id)`
+FK **subsumes** it entirely — any row satisfying the composite
+constraint necessarily has a `meter_key` that exists in `usage_meters`
+(the composite reference cannot resolve otherwise), so a separate plain
+FK on `meter_key` alone would be strictly redundant. This is a
+deliberate simplification, not an oversight: adding both would be two
+overlapping constraints enforcing the same underlying fact via
+different paths.
 
-Every other column is unchanged (§D of the prior pass, restated: no
-real rate value is invented anywhere in this section; the rename
-carries zero real-world risk since the table is confirmed empty, §0).
+**The exact currency invariant, locked (resolves independent review
+§1):**
+
+> Every `business_usage_rates` row's `currency_id` must equal its
+> owning meter's own `currency_id` — enforced by the database, not
+> merely asserted in a docblock. **A rate for a EUR meter can never be
+> inserted with a USD `currency_id`, or vice versa; the insert itself
+> fails at the database layer.**
+
+`retail_rate_micro` and `provider_cost_micro` remain plain integer
+columns, denominated implicitly in whatever `currency_id` that row (and
+therefore its owning meter) carries — **no FX arithmetic, no automatic
+conversion, and no platform fallback currency exist anywhere in this
+design** (§J).
 
 ---
 
-## E. `business_usage_rate_activations` — corresponding change
-
-**Identical rename, plus the new referential-integrity FK this pass
-adds:**
+## E. `business_usage_rate_activations` — corresponding change, revised for same-meter rate integrity
 
 ```php
 Schema::table('business_usage_rate_activations', function (Blueprint $table) {
@@ -318,22 +255,28 @@ Schema::table('business_usage_rate_activations', function (Blueprint $table) {
     $table->index('meter_key');
 });
 
-// Added in a later migration step (§O), once usage_meters exists:
+// Added once both target tables carry their required indexes — §O:
 Schema::table('business_usage_rate_activations', function (Blueprint $table) {
     $table->foreign('meter_key')->references('meter_key')->on('usage_meters')->restrictOnDelete();
+    $table->foreign(['meter_key', 'rate_id'], 'activations_meter_rate_foreign')
+        ->references(['meter_key', 'id'])->on('business_usage_rates')
+        ->restrictOnDelete();
 });
 ```
 
-`rate_id`, `activated_at`, `activated_by_user_id`, `reason`,
-`created_at` unchanged. Confirmed empty in every real deployment (§0) —
-zero data migration required for either the rename or the new FK.
+**Both FKs are retained, not redundant with each other** — they target
+**different tables** for **different guarantees**: the plain
+`meter_key → usage_meters.meter_key` FK proves the meter itself is
+real; the new composite `(meter_key, rate_id) → business_usage_rates(meter_key, id)`
+FK proves the specific rate this audit row records was actually issued
+under *this same* meter (closing the exact gap the independent review
+named: `meter_key = A, rate_id = B's rate` previously passed both
+individual FKs while being a genuinely invalid audit row). `rate_id`,
+`activated_at`, `activated_by_user_id`, `reason`, `created_at` unchanged.
 
 ---
 
-## F. Reservations — exact treatment, revised for the same-meter integrity guarantee, and the fail-closed rule restated precisely
-
-**`business_usage_reservations` gains `meter_key`, exactly as the prior
-pass specified, plus the composite integrity FK this pass adds:**
+## F. Reservations — exact treatment, revised for currency and full same-meter integrity
 
 ```php
 Schema::table('business_usage_reservations', function (Blueprint $table) {
@@ -341,85 +284,38 @@ Schema::table('business_usage_reservations', function (Blueprint $table) {
     $table->index('meter_key');
 });
 
-// Added in a later migration step (§O), once business_usage_rates carries unique(meter_key, id):
+// Added once target indexes exist — §O:
 Schema::table('business_usage_reservations', function (Blueprint $table) {
-    $table->foreign(['meter_key', 'rate_id'], 'busage_reservations_meter_rate_foreign')
+    $table->foreign('meter_key')->references('meter_key')->on('usage_meters')->restrictOnDelete();
+    $table->foreign(['meter_key', 'rate_id'], 'reservations_meter_rate_foreign')
         ->references(['meter_key', 'id'])->on('business_usage_rates')
         ->restrictOnDelete();
 });
 ```
 
-**Why this composite FK, exactly:** the existing plain
-`rate_id → business_usage_rates.id` FK (unchanged) already guarantees
-`rate_id` points to *some* real rate row. It does **not** guarantee
-that rate's own `meter_key` matches the reservation's own `meter_key` —
-nothing before this pass prevented a reservation from claiming
-`meter_key = A` while its `rate_id` actually pointed at meter B's rate.
-The new composite FK closes this precisely: MySQL will refuse to insert
-or update a `business_usage_reservations` row whose
-`(meter_key, rate_id)` pair does not exist as a `(meter_key, id)` pair
-on `business_usage_rates` — a reservation's own financial snapshot can
-never claim one meter while actually referencing another meter's rate.
-This FK coexists with, and does not replace, the existing plain
-`rate_id` FK.
+**A plain `meter_key → usage_meters.meter_key` FK is added this pass**
+(absent from the prior pass) — the same direct-verification discipline
+now applied uniformly to every table carrying a `meter_key` column,
+alongside the composite same-meter-rate FK the prior pass already
+specified.
 
-`feature_key` is **retained, not renamed**, exactly per the prior
-pass's own reasoning (unchanged): it becomes an immutable snapshot of
-the owning `PlatformFeature`, copied from the resolved meter's own
-`feature_key` label at `reserve()`-time, for feature-level reporting
-independent of any specific meter's continued existence.
+`feature_key` is retained unchanged (immutable owning-feature snapshot,
+prior pass, unchanged reasoning).
 
-**The `reserve()` parameter-naming decision is unchanged from the prior
-pass:** `reserve(Business $business, string $featureKey, string $idempotencyKey, ?string $estimatedQuantity = null): ReservationResult`
-keeps its exact declaration, including the literal parameter name
-`$featureKey`, which must be a `usage_meters.meter_key` value after this
-amendment — documented via a prominent doc-comment at the declaration,
-not a rename, for the identical reasons given in the prior pass (zero
-real callers to protect, and the locked-signature constraint is read
-conservatively to include parameter names).
+**No `currency_id` column is added to this table — a deliberate
+decision, not an omission.** A reservation's `rate_id` is immutable
+(`business_usage_rates` rows are never updated after creation, §0), and
+that rate's own `currency_id` is now, by the new composite FK in §D,
+permanently guaranteed to equal its owning meter's `currency_id`.
+Historical denomination of any reservation is therefore already
+permanently and unambiguously determinable by joining through the
+existing, immutable `rate_id` — a redundant `currency_id` snapshot on
+the reservation itself would duplicate a fact the schema already makes
+structurally unambiguous, which is exactly the "do not add one merely
+for symmetry" instruction this pass follows.
 
-**The fail-closed rule, corrected and made exact — this section's
-central correction:**
-
-The prior pass's own text, stating that an execution boundary
-encountering an "unknown/unpriced meter" during `reserve()` might
-"fall back to a legacy charging path," is **withdrawn as stated**. It
-conflated two genuinely different moments, and only one of them may
-ever fall back to legacy:
-
-> **Before calling `reserve()` at all**, a future feature-specific
-> execution boundary may — and, per Draft PR #107's own now-superseded
-> precedent, should — decide that a particular operation does not map
-> to any `UsageMeter` at all (e.g. the operation's own execution
-> context does not match any meter this feature currently owns), and
-> therefore remains on its existing legacy/non-metered charging path.
-> This decision happens entirely outside `reserve()`, using information
-> the execution boundary already has before it ever resolves a
-> `meter_key` string to pass in.
->
-> **Once an execution boundary has selected a specific `meter_key` and
-> invoked `reserve()` with it, every failure — unknown meter, an
-> inactive meter (rate set but `is_metered = false`), a metered meter
-> with no valid active rate, or a rate/meter integrity violation —
-> fails closed.** None of these outcomes may ever be reinterpreted by
-> the caller as permission to charge the identical operation through a
-> legacy path instead. An invalid or misconfigured meter identity is a
-> **stop condition for that billing attempt**, never an implicit
-> authorization to bill the same real-world event through a different
-> system. (This mirrors, and is required by, the same discipline the
-> original RFC-005 wallet design already applies everywhere else:
-> `reserve()`'s existing `wallet_suspended`/`outstanding_debt`/
-> `insufficient_balance` denials have never been treated as "so charge
-> them some other way instead," and meter-identity failures receive the
-> identical posture.)
-
-**Exact `reserve()` check sequence, locked (resolves independent review
-issue 1 completely):**
-
-Inside `reserve()`'s existing `DB::transaction()` closure, immediately
-after the wallet is locked and rolled over, **before any reservation,
-ledger, or wallet-balance write occurs** — mirroring exactly where the
-existing `NoActiveRateForFeatureException` check already sits today:
+**The `reserve()` check sequence, revised and finalized — resolves
+independent review §1 in full, superseding the prior pass's sequence:**
 
 ```php
 $meter = $this->meterRepository->findByMeterKey($featureKey);
@@ -430,6 +326,10 @@ if ($meter === null) {
 
 if ($meter->business_id !== null && (int) $meter->business_id !== (int) $business->id) {
     throw new UsageMeterBusinessScopeMismatchException($featureKey, (int) $business->id);
+}
+
+if ((int) $wallet->currency_id !== (int) $meter->currency_id) {
+    throw new UsageMeterCurrencyMismatchException($featureKey, (int) $wallet->currency_id, (int) $meter->currency_id);
 }
 
 if ($meter->active_rate_id === null) {
@@ -446,217 +346,227 @@ if ($rate === null) {
     throw new NoActiveRateForFeatureException($featureKey);
 }
 
-if ($rate->meter_key !== $meter->meter_key) {
+if ($rate->meter_key !== $meter->meter_key || (int) $rate->currency_id !== (int) $meter->currency_id) {
     throw new UsageMeterRateIntegrityException($featureKey, $rate->id);
 }
 ```
 
-Only after every one of these checks passes does the existing
-wallet-health sequence (`wallet_suspended`/`outstanding_debt`/
-`insufficient_balance`) and the existing reservation/ledger/wallet
-writes proceed, completely unchanged.
+**Ordering rationale:** identity/scope checks (meter exists, Business
+scope, currency) come first, since they answer "is this even a valid
+pairing for this caller" independent of the meter's current economic
+state; economic-state checks (`active_rate_id` set, `is_metered`) come
+next; the rate's own existence and same-meter/same-currency integrity
+are checked last, as a final defensive verification of data the schema
+should already make impossible to violate.
 
-**Three exception classes, exact, none reusing a name whose meaning
-would become false:**
+**Four exception classes total, one new this pass:**
 
-- **`NoActiveRateForFeatureException`** (existing, unchanged name and
-  constructor) — reused **only** where its meaning stays literally
-  true: the meter does not exist, the meter has no `active_rate_id` at
-  all, or the pointed rate row does not exist (a dangling-pointer
-  defensive check, expected unreachable given `restrictOnDelete()`). In
-  every one of these cases, there genuinely is no usable active rate —
-  reusing this exception here is not a semantic drift.
-- **`UsageMeterNotMeteredException`** (new) — the exact case the
-  independent review named: a meter with a real, valid `active_rate_id`
-  that has simply never had `activateMetering()` called for it (or has
-  had metering explicitly turned off). Reusing
-  `NoActiveRateForFeatureException` here would be false — a rate
-  unambiguously exists; metering does not.
-- **`UsageMeterBusinessScopeMismatchException`** (new) — a
-  Business-scoped meter (§3.A) invoked by a Business other than the one
-  it is scoped to. Never conflated with "no rate" or "not metered" —
-  the meter may be perfectly active and priced; it simply does not
-  belong to this caller.
-- **`UsageMeterRateIntegrityException`** (new) — the cross-meter
-  rate-reference case. Expected **structurally unreachable** once the
-  composite FK (§3.C) is in place; retained as an explicit,
-  precisely-named defensive check rather than silently trusting the
-  database constraint alone, consistent with this table's own general
-  "trust but verify" posture elsewhere (e.g. `reserve()`'s existing
-  dangling-rate check, which is likewise defensive given
-  `restrictOnDelete()` already prevents it structurally).
+- `NoActiveRateForFeatureException` (existing, reused where truthful —
+  unchanged from the prior pass).
+- `UsageMeterBusinessScopeMismatchException` (prior pass, unchanged).
+- **`UsageMeterCurrencyMismatchException` (new this pass)** — thrown
+  exclusively for the wallet/meter currency mismatch, which is
+  inherently per-execution and cannot be database-enforced (a
+  Business's wallet currency is fixed independently of any specific
+  meter it might attempt to use). This is never conflated with
+  `UsageMeterRateIntegrityException`, whose own currency check (the
+  rate/meter pairing) *is* database-enforced and this application-level
+  check only defends against defensively.
+- `UsageMeterNotMeteredException` (prior pass, unchanged).
+- `UsageMeterRateIntegrityException` (prior pass, extended this pass to
+  also cover the rate/meter currency mismatch — both conditions are the
+  identical class of defect: a rate that does not truly belong, in
+  every respect, to the meter pointing at it — expected structurally
+  unreachable given §D's composite FK).
 
-**Immutable snapshots stored on the reservation:** unchanged mechanically
-from the prior pass — `rate_id`, `rate_version`, `retail_rate_micro`,
-`provider_cost_micro`, `rounding_rule` copied from the resolved,
-now-verified-same-meter rate; `meter_key` copied from `$meter->meter_key`
-(equal to the input `$featureKey` by definition); `feature_key` copied
-from `$meter->feature_key`.
-
-**Idempotency scoping:** unchanged, unaffected by this pass — the
-pre-existing, separately-documented Draft PR #107 finding about
-`findByIdempotencyKey()` not being Business-scoped remains a distinct,
-unresolved concern for whichever future execution boundary derives an
-idempotency key, out of this amendment's own scope.
+**Every failure above fails closed: zero reservation, zero ledger, zero
+wallet mutation**, identical placement (before any write) and identical
+"no legacy fallback after a meter has been selected" rule as the prior
+pass (unchanged, restated in §L).
 
 ---
 
-## G. Ledger — exact treatment
+## G. Ledger — exact treatment, revised for meter/rate integrity with an honest nullable-case analysis
 
-Unchanged from the prior pass: `business_usage_ledger_entries` gains
-`meter_key` (nullable, mirroring `feature_key`'s own nullability),
-populated for every metered entry type directly from the owning
-reservation's already-verified, already-snapshotted values — no new
-lookup, no new integrity concern beyond what §F already guarantees at
-the reservation level (a ledger entry's `meter_key`/`rate_id` pair is
-copied from a reservation whose own pairing is already FK-verified, so
-no additional composite FK is needed on the ledger table itself).
+```php
+Schema::table('business_usage_ledger_entries', function (Blueprint $table) {
+    $table->string('meter_key', 128)->nullable()->after('feature_key');
+    $table->index('meter_key');
+});
+
+// Added once target indexes exist — §O:
+Schema::table('business_usage_ledger_entries', function (Blueprint $table) {
+    $table->foreign('meter_key')->references('meter_key')->on('usage_meters')->restrictOnDelete();
+    $table->foreign(['meter_key', 'rate_id'], 'ledger_meter_rate_foreign')
+        ->references(['meter_key', 'id'])->on('business_usage_rates')
+        ->restrictOnDelete();
+});
+```
+
+**Re-audited directly, per the independent review's explicit
+instruction not to assume copying from a valid reservation is
+sufficient.** Direct re-read of `UsageWalletManager::release()`'s own
+ledger `create()` call (and `commit()`'s own unused-portion
+`ReservationRelease` sub-case) confirms **neither populates `rate_id`
+at all** — both write `feature_key`/`period_key`/`reservation_id` but
+omit `rate_id`/`rate_version`/`retail_rate_micro`/etc entirely. This
+means a real, legitimate ledger-entry shape exists where `meter_key`
+(once added, mirroring `feature_key`) is populated while `rate_id`
+remains `NULL`.
+
+**This is confirmed safe for the composite FK above, not merely
+assumed:** MySQL/InnoDB foreign keys use `MATCH SIMPLE` semantics
+exclusively (InnoDB supports no other match type) — if **any** column
+in a multi-column foreign key is `NULL`, the constraint is not enforced
+for that row at all. A `ReservationRelease` row with
+`meter_key = 'X', rate_id = NULL` is therefore automatically exempted
+from `(meter_key, rate_id) → business_usage_rates(meter_key, id)`'s
+enforcement, while a `Reservation`/`UsageCharge`/`UsageOverageCharge`
+row (where both are always populated together, exactly as `commit()`
+already writes them today) remains fully enforced. **No weakening of
+the constraint is required** — MySQL's own standard null-exemption
+behavior already handles the one legitimate mixed case correctly. The
+plain `meter_key → usage_meters.meter_key` FK is likewise nullable-safe
+by the identical single-column NULL-exemption rule, and is added for
+the same direct-verification consistency as every other `meter_key`-
+carrying table.
+
+Every non-metered entry type (top-up, auto-recharge, add-on credit)
+continues to leave `meter_key`/`feature_key`/`rate_id` all `NULL`,
+exactly as today — completely unaffected by either new FK.
 
 ---
 
 ## H. `UsageWalletManager` — per-method treatment, exact, revised
 
-| Method | Internal change | Public signature | Notes |
-|---|---|---|---|
-| `initializeWalletForNewBusiness` | None | Unchanged | |
-| `reserve` | Resolves `$featureKey` against `UsageMeterRepository::findByMeterKey()`; performs the full six-check sequence in §F (business scope, active-rate presence, `is_metered`, dangling-rate defense, same-meter integrity defense) **before any wallet-health check or write**; writes `meter_key`/`feature_key` into the reservation and its ledger entry | **Unchanged, including the literal `$featureKey` parameter name** | The independent review's central fix lives entirely here |
-| `commit` | Copies the reservation's own already-verified `meter_key` into its ledger entries, alongside the existing `feature_key` copy | Unchanged | No new lookup — the reservation was already verified at `reserve()`-time |
-| `release` | Identical one-field addition | Unchanged | |
-| `expireStaleReservations` | None | Unchanged | |
-| `setActiveRate` | Resolves via `UsageMeterRepository::findForUpdateByMeterKey()`; if no `usage_meters` row exists, throws `NoActiveRateForFeatureException` (an explicit, named precondition — a meter must be created before a rate can be activated for it, §O); computes the next version via `latestVersionForMeter()`; inserts the new immutable rate with `meter_key`; inserts the activation row with `meter_key`; updates `usage_meters.active_rate_id`. **Works identically whether `is_metered` is currently `false` or `true` — the method never branches on it** (§4) | Unchanged | This is now the **sole, complete rate-lifecycle method** — see §4 |
-| `activateMetering` | Same resolution-target swap; writes to `usage_meter_transitions` (metering-state only, §C); updates `usage_meters.is_metered` | Unchanged | |
-| `evaluateCoarseCapacity` | **Becomes a pure, unconditional pass-through — see below.** | Unchanged (`(Business $business, PlatformFeature $feature): UsageCapacityDecision`) | Both parameters are now unused inside the body; kept because the signature is locked |
-| Every other public method | None | Unchanged | |
+Unchanged from the prior pass for `commit()`, `release()`,
+`expireStaleReservations()`, `evaluateCoarseCapacity()` (§I, unchanged
+body), and every non-metering-related public method. Revised for
+`reserve()` (§F's new check sequence, above) and `setActiveRate()`/
+`activateMetering()` (unchanged mechanics from the prior pass — no
+currency-specific change needed there, since `setActiveRate()` already
+receives the rate's `currency_id` as an explicit caller-supplied
+argument, and the new database-level composite FK in §D is what
+actually prevents a mismatched value from ever being persisted — no new
+application-level check is needed inside `setActiveRate()` itself
+beyond letting that insert fail if the caller supplied the wrong
+currency, which is itself a required future test, §7).
 
-**`evaluateCoarseCapacity()`'s new, complete body, locked exactly —
-resolves independent review issue 2:**
+### H.1–H.2 (unchanged from the prior pass)
 
-```php
-/**
- * RFC-005 Amendment 1 — generic PlatformFeature entitlement is
- * permanently decoupled from meter-specific wallet health. This method
- * never reads platform_feature_usage_classifications, never reads any
- * wallet, and never denies. The $business/$feature parameters are
- * retained only because UsageWalletManager's public signatures are
- * locked; neither is consulted. The real wallet-capacity question for
- * any specific billable operation is answered exclusively by
- * reserve(Business, meterKey, ...) at the actual execution boundary,
- * never by this coarse, feature-wide gate.
- */
-public function evaluateCoarseCapacity(Business $business, PlatformFeature $feature): UsageCapacityDecision
-{
-    return new UsageCapacityDecision(true);
-}
-```
+`evaluateCoarseCapacity()`'s body remains the unconditional
+`return new UsageCapacityDecision(true);` pass-through (§I).
+`RealUsageAuthorizationGateway::check()` remains completely unchanged.
 
-**No classification read. No wallet read. No wallet-health denial. No
-data invariant required to keep this correct** — this is now a
-structural, code-level guarantee, not a hoped-for consequence of nobody
-writing to a table. Even if a stale test fixture, manual DB state, or a
-future accidental write set some
-`platform_feature_usage_classifications` row's `is_metered = true`,
-this method would never read that row at all, and
-`EntitlementManager::decide()` would be completely unaffected — exactly
-the mechanical (not merely data-driven) guarantee the independent
-review required.
+### H.3 Governance verdict on the constructor — resolved as a stated blocker, not a silent assumption
 
-**`RealUsageAuthorizationGateway::check()` is unchanged** — it still
-calls `evaluateCoarseCapacity()` and still maps a `false` decision to
-`'usage_unauthorized'`; it simply never observes a `false` decision
-again, since the method above never produces one. Its own signature,
-its binding in `AppServiceProvider`, and `EntitlementManager::decide()`'s
-exact call site are all untouched.
+**The independent review is correct to reject the prior pass's own
+reasoning here, and this pass withdraws it.** The prior draft argued
+that removing `PlatformFeatureUsageClassificationRepository`/
+`PlatformFeatureUsageClassificationTransitionRepository` from
+`UsageWalletManager`'s constructor (and adding the two new meter
+repositories) was "permitted" because the constructor is resolved by
+Laravel's container rather than called by application code with
+positional arguments. **That reasoning is real and technically true,
+but it is not what the merged governance contract's own text says**,
+and applying it here would be inconsistent with this same design's own
+conservative reading of the identical constraint elsewhere — most
+visibly, `reserve()`'s `$featureKey` parameter was deliberately *not*
+renamed (§F) specifically because the locked text was read
+conservatively to include parameter names, not only arity/types. Using
+a more permissive reading for the constructor, purely because it is
+more convenient, would be exactly the "silently decide the merged
+contract meant an unstated exception" error the independent review
+warns against.
 
-**Constructor reconciliation, addressed exactly as asked:**
-`PlatformFeatureUsageClassificationRepository` and
-`PlatformFeatureUsageClassificationTransitionRepository` become
-genuinely unused inside `UsageWalletManager` after this change —
-`evaluateCoarseCapacity()` no longer reads the former, and
-`setActiveRate()`/`activateMetering()` no longer read or write either
-(§H, both re-pointed to the new meter repositories). **This design
-removes both from `UsageWalletManager`'s constructor.** This is
-judged permitted by the merged contract's own "public method signatures
-remain unchanged" constraint for a precise reason: `UsageWalletManager`
-is resolved exclusively through Laravel's dependency-injection
-container everywhere it is used (no manual `new UsageWalletManager(...)`
-call exists anywhere in the repository, confirmed) — the constructor's
-own shape is therefore an internal wiring detail no real caller depends
-on by position or count, unlike `reserve()`/`commit()`/`release()`/
-`setActiveRate()`/`activateMetering()`, which the contract names
-explicitly and which real (future) callers do depend on. Removing two
-now-dead parameters is judged more honest than retaining them
-unused and undocumented, which the independent review correctly
-identified as the worse alternative. **The `PlatformFeatureUsageClassificationRepository`/
-`PlatformFeatureUsageClassificationTransitionRepository` contracts,
-their Eloquent implementations, and the `PlatformFeatureUsageClassification`/
-`PlatformFeatureUsageClassificationTransition` models are not deleted**
-— they still validly represent real, untouched schema (§N) and may
-still be read elsewhere (e.g. a future admin diagnostic view listing
-every feature's historical classification row) even though
-`UsageWalletManager` no longer references them.
+**Direct governance-level interpretation audit:** the merged contract's
+text reads, verbatim: *"`UsageWalletManager`'s public method signatures
+remain unchanged. `reserve()`, `commit()`, `release()`, `setActiveRate()`,
+`activateMetering()`, and every other existing public method keep their
+exact current signatures."* A PHP constructor is, absent an explicit
+access modifier reducing it, a public method. The text names five
+methods explicitly and then extends the same rule to "every other
+existing public method" **without qualification** — no repository
+precedent was found (a direct search of this contract and of RFC-004's
+own two amendment contracts) that ever uses "public method" to mean
+"public domain/business method, excluding `__construct()`." **No
+textual or contextual basis exists to read the constructor out of this
+constraint's scope.**
 
-**New Usage-layer exception classes this amendment requires** (named
-precisely, none implemented here): `UsageMeterNotMeteredException`,
-`UsageMeterBusinessScopeMismatchException`, `UsageMeterRateIntegrityException`
-— each constructed with the meter key (and, where relevant, the
-conflicting Business id or rate id), following the exact existing
-constructor-argument convention `NoActiveRateForFeatureException`
-already uses.
+**At the same time, the contract's own second sentence — "only their
+internal resolution target ... may change" — explicitly anticipates and
+authorizes exactly the kind of change this amendment needs: re-pointing
+`reserve()`/`setActiveRate()`/`activateMetering()` at a *new* repository
+that does not exist in the current constructor.** In PHP, a method can
+only obtain a dependency it does not already have via one of three
+mechanisms: constructor injection (locked, per the above), method-
+parameter injection (equally locked — a method's own parameter list is
+explicitly named as unchangeable), or a service-locator call inside the
+method body (explicitly forbidden by the independent review's own
+instruction, precisely because it would be a workaround for this exact
+lock, not a genuine architectural choice). **All three of the only
+mechanically possible ways to give these methods access to a new
+repository are foreclosed by the contract's literal text or by explicit
+instruction — meaning the contract's own two locked sentences are in
+direct tension with each other**, satisfiable simultaneously only under
+a reading that exempts dependency-injection wiring from "public method
+signatures," which — however technically sound — is not a reading the
+contract's own text currently states.
+
+**Verdict: B — CONTRACT-LEVEL BLOCKER.** As written today, the merged
+governance contract does not authorize a constructor signature change
+to `UsageWalletManager`, and this design document cannot supersede its
+own governing contract to grant that authorization itself. **A small,
+separate, human-reviewed correction to
+`docs/automation/RFC-005-AMENDMENT-1-USAGE-METER-IDENTITY-CONTRACT.md`
+is required before this specific part of the design (§H's constructor
+change, and therefore any `reserve()`/`setActiveRate()`/
+`activateMetering()` re-pointing that depends on it) may be
+implemented.** The natural, narrowly-scoped correction — stated here as
+a recommendation, not enacted by this document — would add one
+clarifying sentence to the governance contract's existing item 6,
+explicitly exempting `__construct()`'s own dependency-injection
+parameter list from the "public method signatures" lock, since that is
+the only reading under which the contract's own two sentences can both
+be satisfied at all. **This document does not assume that correction is
+already granted.** Every other part of this design (§B–§G, §I–§L, the
+schema and migration work) is independent of this specific question and
+is not blocked by it — only the `UsageWalletManager` code change itself
+is. PR #109 is marked not mergeable as a complete, implementation-ready
+design until this governance correction occurs, exactly as instructed.
 
 ---
 
-## I. Entitlement / usage authorization — the exact mechanical rule, now structurally enforced
+## I. Entitlement / usage authorization
 
-**The distinction, unchanged in statement from the prior pass:**
-`EntitlementManager::decide()` answers product entitlement; a
-meter-scoped `reserve()` call at the execution boundary answers
-billable-operation wallet authority.
-
-**The mechanism, corrected this pass:** the prior pass's claim rested on
-a **data invariant** (`platform_feature_usage_classifications.is_metered`
-is expected to stay `false` forever, because nothing is expected to
-write to it again). The independent review correctly identified this as
-insufficient — a data invariant is not a decoupling; it is a hope.
-**This pass replaces it with a structural guarantee:** `evaluateCoarseCapacity()`
-(§H) no longer reads that table **at all**, under any circumstance. Its
-new body is a two-line, unconditional pass-through. There is no code
-path — not a stale fixture, not a manual `UPDATE`, not a future
-accidental write — that can make `EntitlementManager::decide()`
-sensitive to any meter's wallet health, because the method that used to
-bridge the two now contains no read of either. The old table's own
-schema and every existing row remain completely untouched (§N) — only
-the *code that used to consult it* is removed.
-
-**No tenth `EntitlementManager` denial key is introduced.**
-`usage_unauthorized` remains a defined string in `decide()`'s reason
-space, now permanently unreachable through this path (it could only
-ever become reachable again if a *future*, separate design decision
-chose to wire a whole-feature-level gate back through
-`evaluateCoarseCapacity()` — a door this amendment does not lock shut in
-the schema, only in this method's own current body).
+Unchanged from the prior pass in every respect — `evaluateCoarseCapacity()`'s
+unconditional pass-through, `RealUsageAuthorizationGateway::check()`
+unchanged, no tenth `EntitlementManager` denial key, the structural (not
+data-invariant) decoupling. None of this pass's currency or audit-
+integrity work touches this section.
 
 ---
 
 ## J. Meter identity rules
 
-Unchanged in substance from the prior pass — the telecom and AI/token
-stress tests, and the four locked naming rules — with one addition
-reflecting §3.A: **a meter naming decision must also state, explicitly,
-whether the meter is globally reusable or Business-scoped, and if
-scoped, to which real Business id** — this is now a structural field
-(`business_id`) a future contract must populate deliberately, not an
-implicit assumption buried in `description` prose. This amendment names
-no real meter and selects no real Business scope for any real meter.
+Unchanged rules from the prior pass, with currency now locked as a
+required fourth dimension of every meter naming decision, not an
+optional consideration:
+
+> **Currency is a real economic dimension, exactly like channel,
+> country, or provider.** If otherwise-identical usage must be sold in
+> both USD and EUR, those are two separate `UsageMeter` identities,
+> full stop — never one meter with an implicit "current" currency,
+> and never resolved by silent conversion. **This amendment introduces
+> no FX conversion mechanism of any kind, for any future meter.** A
+> meter's `currency_id`, like its `meter_key`/`feature_key`/`business_id`,
+> is decided once at creation and never revisited (§H.4).
 
 ---
 
 ## K. Quantity
 
-Unchanged from the prior pass in every respect — quantity belongs to
-the meter/rate pairing, `rate × quantity` accounting is untouched,
-`provider_cost_micro` may differ from `retail_rate_micro`, quantity must
-never encode money, estimated/final quantity rules are unchanged, and
-rate snapshotting is unchanged.
+Unchanged from the prior pass in every respect.
 
 ---
 
@@ -665,264 +575,242 @@ rate snapshotting is unchanged.
 | Condition | Where it surfaces | Behavior |
 |---|---|---|
 | Unknown `meter_key` | `reserve()` | `NoActiveRateForFeatureException` |
-| Meter resolved, but `business_id` set and does not match the caller's Business | `reserve()` | **New this pass:** `UsageMeterBusinessScopeMismatchException` |
+| Meter resolved, `business_id` set, mismatched caller | `reserve()` | `UsageMeterBusinessScopeMismatchException` |
+| Meter resolved, wallet currency ≠ meter currency | `reserve()` | **New this pass:** `UsageMeterCurrencyMismatchException` |
 | Meter exists, no `active_rate_id` | `reserve()` | `NoActiveRateForFeatureException` |
-| Meter exists, has an `active_rate_id`, but `is_metered = false` | `reserve()` | **New this pass, closing the exact gap the independent review found:** `UsageMeterNotMeteredException` |
-| Referenced rate row does not exist (dangling pointer — expected unreachable, `restrictOnDelete()`) | `reserve()` | `NoActiveRateForFeatureException` |
-| Referenced rate's own `meter_key` does not match the meter's `meter_key` (expected structurally unreachable given §3.C's composite FK) | `reserve()` | **New this pass, defensive:** `UsageMeterRateIntegrityException` |
-| Missing wallet / suspended wallet / outstanding debt / insufficient balance | `reserve()`, after every check above passes | Unchanged (`wallet_missing` via `evaluateCoarseCapacity()`'s now-unreachable-through-`decide()` path is no longer relevant here — `reserve()` itself still separately checks wallet existence/health directly, unchanged from today) |
+| Meter exists, has an `active_rate_id`, `is_metered = false` | `reserve()` | `UsageMeterNotMeteredException` |
+| Referenced rate row does not exist (defensive, expected unreachable) | `reserve()` | `NoActiveRateForFeatureException` |
+| Referenced rate's `meter_key` or `currency_id` does not match the meter's own (defensive, expected structurally unreachable given §D/§F's composite FKs) | `reserve()` | `UsageMeterRateIntegrityException` |
+| A rate insert with a `currency_id` not matching its meter's own | `setActiveRate()`, at the database layer | Insert rejected by §D's composite FK — no application-level exception needed; the write simply fails |
+| Missing wallet / suspended wallet / outstanding debt / insufficient balance | `reserve()`, after every check above passes | Unchanged |
 
-**Every one of these fails closed: zero reservation row, zero ledger
-row, zero wallet-balance mutation** — all seven checks occur inside the
-existing transaction, strictly before the first write, mirroring
-exactly where today's single existing check already sits. **No
-execution boundary may reinterpret any of these failures as permission
-to charge the same operation through a legacy path** (§F). Externally-
-visible entitlement denial keys remain completely unchanged — none of
-these six new/reused exceptions is an `EntitlementManager` denial key;
-all six are execution-boundary, Usage-layer exceptions, exactly the
-existing vocabulary's own shape.
+Every condition above fails closed: zero reservation, zero ledger, zero
+wallet mutation, all inside the existing transaction before the first
+write. No execution boundary may reinterpret any of these as
+permission to charge the same operation through a legacy path (§F,
+unchanged). No entitlement denial key is affected by any of these —
+all are Usage-layer, execution-boundary exceptions.
 
 ---
 
-## M. Business attribution — explicitly not solved by this amendment
+## M. Business attribution
 
-Unchanged from the prior pass in its core finding: the `UsageMeter`
-architecture does not, by itself, resolve which Business a legacy
-execution surface belongs to — that remains a separate, named
-prerequisite (§M of the prior pass, restated verbatim in substance).
-
-**Clarified this pass, given §3.A's new `business_id` column:** a
-meter's own `business_id` scope is a **safety rail against consuming
-the wrong meter once a Business has already been correctly resolved**
-— it is not, and cannot be, a substitute for that resolution. An
-execution boundary that has not correctly resolved its authoritative
-Business first could still, in principle, pass the *correct* Business
-object alongside an *incorrectly chosen* `meter_key` and be denied
-correctly by `UsageMeterBusinessScopeMismatchException` — but if the
-Business resolution itself is wrong (e.g. the wrong Business object was
-resolved in the first place), no meter-level check can detect that;
-§M's own interim compatibility rule (`primaryBusiness()` + "Workspace
-owns exactly one Business") remains the only defense against that
-distinct failure mode, and remains explicitly out of this amendment's
-own scope to solve generally.
+Unchanged from the prior pass in every respect — still explicitly not
+solved by this amendment; the interim `primaryBusiness()` +
+single-Business-Workspace compatibility rule remains the only mechanism
+available; a meter's own `business_id` scope remains a safety rail
+against consuming the wrong meter once a Business has already been
+correctly resolved, never a substitute for that resolution.
 
 ---
 
 ## N. M1–M4 compatibility
 
-Unchanged from the prior pass in every row, with two additions
-reflecting this pass's schema changes:
-
-| Table / API | Touched | Change | Historical data reinterpreted? |
-|---|---|---|---|
-| `usage_meters` | New | §B | N/A — new table |
-| `usage_meter_transitions` | New | §C | N/A — new table |
-| `business_usage_rates` | Yes | Rename + two new unique indexes (§D) | No real rows exist |
-| `business_usage_rate_activations` | Yes | Rename + index + new FK (§E) | No real rows exist |
-| `business_usage_reservations` | Yes | Additive `meter_key` + composite FK (§F) | No real rows exist |
-| `business_usage_ledger_entries` | Yes | Additive `meter_key` (§G) | No — every existing row (`feature_key = null`) is unaffected |
-| `platform_feature_usage_classifications` | No (schema) | **No code ever reads or writes it from `UsageWalletManager` again** (§H, §I) | Every backfilled row remains exactly as it is, permanently, by structural guarantee |
-| `platform_feature_usage_classification_transitions` | No | Remains permanently empty | No real rows exist |
-| `business_feature_usage_limits`, `platform_feature_usage_safety_limits`, `business_usage_limit_transitions` | No | None — remain feature-scoped (§N of prior pass, unchanged) | Unaffected |
-| `business_usage_wallet_billing_status_transitions`, `business_billing_contacts`, `business_payer_assignments`, `business_payer_transitions` | No | None | Unaffected |
-| M3 funding tables (`payment_provider_customers`, `business_payment_instruments`, `business_funding_attempts`, `payment_provider_events`, `business_funding_attempt_transitions`) | No | None | **M3 funding behavior is completely unchanged** |
-| M4 slot/add-on tables | No | None | **M4 slot/add-on behavior is completely unchanged** |
-| `UsageWalletManager` public API | Yes (internal + constructor) | §H | Fully backward compatible for every real (nonexistent) caller |
-| `EntitlementManager::decide()` | No | None | Fully unchanged |
-| `RealUsageAuthorizationGateway::check()` | No | None | Fully unchanged |
+Unchanged from the prior pass in every row, with the currency-related
+schema additions (§B, §D) noted as additional, equally risk-free
+changes for the identical reason as every other change in this table:
+every table this amendment touches is either brand new or confirmed
+empty in every real deployment (§0), except
+`business_usage_ledger_entries`, whose real existing rows are
+completely unaffected (every new/changed column and constraint is
+nullable-safe for them, §G).
 
 ---
 
-## O. Migration/backfill strategy — exact staged order, resolving the circular-reference problem
+## O. Migration/backfill strategy — exact staged order, final
 
 **No migration is created by this document.** The final constraint
-graph is genuinely circular — `usage_meters.active_rate_id` must
-eventually reference `business_usage_rates(meter_key, id)`, while
-`business_usage_rates.meter_key` must reference
-`usage_meters.meter_key` — so both tables must exist, with their own
-primary identity constraints in place, **before either cross-table FK
-can be added.** The future implementation contract must sequence
-exactly as follows:
+graph (§A) requires the following exact order — later steps depend on
+indexes created in earlier ones; no step may be reordered without
+breaking a downstream FK's own prerequisite:
 
-1. **Create `usage_meters`** (§B) with `active_rate_id` as a plain,
-   unconstrained nullable `unsignedBigInteger` — no FK yet. Include the
-   `business_id` FK (§3.A) immediately; `businesses` already exists, so
-   this one is not circular. Empty at creation.
+1. **Create `usage_meters`** (§B): `business_id` FK to `businesses`
+   (not circular — `businesses` already exists) and `currency_id` FK to
+   `currencies` (not circular — `currencies` already exists) are both
+   added immediately; `active_rate_id` remains a plain, unconstrained
+   column. `unique(meter_key)` and `unique(meter_key, currency_id)` are
+   both created now. Empty at creation.
 2. **Rename `business_usage_rates.feature_key` → `meter_key`** (§D);
    drop the old `unique(feature_key, version)`; add
-   `unique(meter_key, version)` **and** `unique(meter_key, id)` (the
-   composite-FK target for steps 4 and 7). Safe — table is empty.
-3. **Add `business_usage_rates.meter_key → usage_meters.meter_key`
-   FK, `restrictOnDelete()`** (§D) — now valid, since `usage_meters`
-   exists with a unique index on `meter_key` (step 1) and
-   `business_usage_rates` now has the renamed column (step 2).
-4. **Add the composite FK `usage_meters(meter_key, active_rate_id) → business_usage_rates(meter_key, id)`**
-   (§3.C, §B) — now valid, since step 2 created the required
-   `unique(meter_key, id)` target. `NULL` values in `active_rate_id`
-   are exempted from enforcement by standard SQL multi-column FK
-   semantics, so a freshly-created meter with no rate yet remains
-   valid.
-5. **Rename `business_usage_rate_activations.feature_key` → `meter_key`**
-   (§E); swap the index; add its own
-   `meter_key → usage_meters.meter_key` FK (now valid, same reasoning
-   as step 3). Safe — table is empty.
-6. **Create `usage_meter_transitions`** (§C) — no circularity concern;
-   its FKs point only to `business_usage_rates.id` (the plain PK, not
-   the composite), exactly as `platform_feature_usage_classification_transitions`
-   already does today.
-7. **Add `business_usage_reservations.meter_key`** (§F), `NOT NULL`
-   (table is empty, no default needed), plus the composite FK
-   `(meter_key, rate_id) → business_usage_rates(meter_key, id)` — valid
-   immediately, since step 2 already created the target index.
-8. **Add `business_usage_ledger_entries.meter_key`, nullable** (§G) —
-   safe regardless of existing rows.
-9. **Code changes**, strictly after every schema step above: new
+   `unique(meter_key, version)` and `unique(meter_key, id)`. Empty
+   table, zero data risk.
+3. **Add `business_usage_rates(meter_key, currency_id) → usage_meters(meter_key, currency_id)`**
+   (§D) — valid now: step 1 created the target index, step 2 renamed
+   the source column.
+4. **Add `usage_meters(meter_key, active_rate_id) → business_usage_rates(meter_key, id)`**
+   — valid now: step 2 created the target index.
+5. **Rename `business_usage_rate_activations.feature_key` → `meter_key`**;
+   swap the index; add the plain `meter_key → usage_meters.meter_key`
+   FK and the composite `(meter_key, rate_id) → business_usage_rates(meter_key, id)`
+   FK (§E) — both valid now.
+6. **Create `usage_meter_transitions`** (§C), with its plain
+   `meter_key → usage_meters.meter_key` FK and both composite
+   `from`/`to`-`active_rate_id` FKs against
+   `business_usage_rates(meter_key, id)` — all valid now.
+7. **Add `business_usage_reservations.meter_key`** (`NOT NULL`, table
+   empty), with its plain `meter_key → usage_meters.meter_key` FK and
+   composite `(meter_key, rate_id) → business_usage_rates(meter_key, id)`
+   FK (§F) — valid now.
+8. **Add `business_usage_ledger_entries.meter_key`** (nullable), with
+   its plain and composite FKs (§G, both nullable-safe per `MATCH
+   SIMPLE`) — valid now.
+9. **Code changes**, strictly after every schema step: new
    `UsageMeter`/`UsageMeterTransition` models; new
    `UsageMeterRepository`/`UsageMeterTransitionRepository` contracts and
-   Eloquent implementations, bound in `AppServiceProvider` alongside
-   (steps 1–8 having made `PlatformFeatureUsageClassificationRepository`
-   itself still bound but no longer consumed by `UsageWalletManager`,
-   §H); the three new exception classes (§H, §L); `UsageWalletManager`'s
-   constructor and the seven methods named in §H updated per that
-   section's exact specification.
+   Eloquent implementations; the four new exception classes (§F); the
+   `UsageWalletManager` method-body changes (§H) — **the constructor
+   portion of this step remains blocked pending §H.3's governance
+   correction**; the three read-only classification repository classes
+   are left entirely as-is, per the prior pass.
 
-**Zero fabricated rows, unchanged from the prior pass:** no
-`usage_meters` row is ever auto-created from `PlatformFeature::cases()`
-— every real row is created only by an explicit, later, human-
-authorized action. **Rollback posture:** every schema step above is
-reversible in the standard Laravel sense; step 9's code changes carry
-no independent rollback concern, since no real behavior changes until a
-future milestone creates and activates a real meter.
+**Verification the future implementation must perform before trusting
+this order, named explicitly per the independent review's own
+requirement:** every `meter_key` column across all six affected tables
+must be declared with identical type and collation (`string(128)`,
+matching Laravel's default table collation) — a mismatch would cause a
+composite FK to fail to attach even when the logical reference is
+correct; `currency_id`/`rate_id`/`active_rate_id`/`id` must all be
+consistently `unsignedBigInteger`/`bigint unsigned` across every
+referencing and referenced column.
+
+**Rollback posture:** reverse of the above — drop ledger constraints,
+then reservation constraints, then the transitions table entirely, then
+rate-activation constraints and rename its column back, then the two
+`usage_meters`↔`business_usage_rates` composite FKs, then rename
+`business_usage_rates`'s column back, then drop `usage_meters` entirely.
+Every step is a standard reversible Laravel migration `down()`.
+
+**Zero fabricated rows**, unchanged from the prior pass.
 
 ---
 
 ## P. Amendment implementation decomposition
 
-**Two bounded slices, revised this pass to reflect the corrected
-design:**
-
 **Slice 1 — Schema and repository foundation.** §O steps 1–8, plus the
-new model/repository/contract files from step 9 (created, but
-`UsageWalletManager` not yet touched, and the three new exception
-classes created but not yet thrown anywhere). Conceptual
-responsibility: prove the new tables, columns, and — critically, new
-this pass — **every composite FK** are correctly created and correctly
-reject a manually-attempted cross-meter insert at the database level,
-with zero change to any existing runtime behavior.
+new model/repository/contract/exception files (step 9's non-manager
+portion). Conceptual responsibility: prove every table, column, and —
+now including the currency and full audit-table constraints — every
+composite FK correctly rejects a manually-attempted violating insert at
+the database level, with zero change to any existing runtime behavior.
 
-**Slice 2 — `UsageWalletManager` re-pointing.** The seven method bodies
-in §H, the constructor change, and `evaluateCoarseCapacity()`'s new
-two-line body. Conceptual responsibility, revised per the independent
-review's own required proofs (§13, restated below): prove the full
-`reserve()` check sequence (§F) denies every one of the five failure
-modes with zero writes; prove `setActiveRate()` correctly rotates an
-already-metered meter's rate without disturbing existing reservations'
-own snapshots; and — replacing the withdrawn "byte-identical source"
-requirement — prove **behaviorally** that `EntitlementManager::decide()`
-is unaffected by meter-specific wallet health even when a
-`platform_feature_usage_classifications` row is deliberately, manually
-set to `is_metered = true` against a Business whose wallet is
-suspended, in debt, or missing.
-
-Neither slice creates a real meter, activates a real rate, or selects a
-feature. M5 (§Q) is not part of either slice.
+**Slice 2 — `UsageWalletManager` re-pointing.** §H's method-body
+changes. **This slice is explicitly conditioned on §H.3's governance
+correction having occurred first** — it cannot proceed under the
+current merged contract as written. Once unblocked, its conceptual
+responsibility is unchanged from the prior pass, extended per §7's
+updated proof list.
 
 ---
 
 ## Q. M5 resumption
 
-Unchanged from the prior pass in every respect: a fresh candidate/meter
-audit, not a retrofit of Draft PR #107 (disposition unchanged: open,
-Draft, unmerged, as blocker evidence); the future M5 contract must name
-the exact `PlatformFeature`, the exact `UsageMeter` identity (now
-additionally: its exact Business scope, per §3.A — global or one named
-Business), the exact execution boundary, the exact authoritative
-Business-resolution mechanism, the exact human-approved rate, the exact
-quantity unit, and every provider/idempotency rule its own transport
-layer requires. RFC-005 §39 item 11 remains open.
+Unchanged from the prior pass. The future M5 contract must additionally
+name the chosen meter's exact `currency_id`, consistent with its
+Business's own wallet currency, as part of naming "the exact
+`UsageMeter` identity" already required.
 
 ---
 
 ## Governance — exact relationship to the master RFC-005 document
 
-Unchanged from the prior pass: this amendment supersedes §14
-(corrected exactly per §A–§L), references §11 (rate shape confirmed to
-survive, §D), amends §36's Milestone 5 entry conceptually (§Q), and
-confirms §39 item 11 remains open. No other RFC-005 section is amended,
-and this document does not edit the master RFC-005 file directly.
+Unchanged from the prior pass, with one addition: this amendment is now
+stated explicitly, per §0, to be the architecture prerequisite RFC-005
+M1 §5.5 named and deferred — resolving RFC-005 §39 item 10's own
+wallet/rate currency-reconciliation question for the metering
+architecture specifically (not the whole-RFC multi-currency-scope
+question §39 item 10 otherwise leaves open, which this amendment does
+not resolve or need to).
 
 ---
 
 ## Required future implementation proofs
 
-Restated and expanded per the independent review's own required list —
-every one of these is a test the future implementation contract must
-specify, none written here:
+Restated and expanded per this pass's own findings — every item is a
+future test, none written here:
 
-1. Generic `PlatformFeature` entitlement is wallet-independent even if
-   an old `platform_feature_usage_classifications` row is manually set
-   to `is_metered = true` against a Business whose wallet is suspended,
-   in debt, or missing — `decide()`'s answer is unaffected in every
-   case.
-2. A meter with an active rate but `is_metered = false` cannot reserve
-   — `UsageMeterNotMeteredException`, zero writes.
-3. A metered meter with no valid active rate cannot reserve —
-   `NoActiveRateForFeatureException`, zero writes.
-4. An unknown meter key cannot reserve — `NoActiveRateForFeatureException`,
-   zero writes.
-5. Business A cannot reserve against a meter scoped to Business B —
-   `UsageMeterBusinessScopeMismatchException`, zero writes.
-6. A globally-scoped meter (`business_id = null`) may be used by any
-   otherwise-authorized Business.
-7. `usage_meters.active_rate_id` can never be made to reference another
-   meter's rate — attempted directly at the database layer, the
-   composite FK rejects the write.
-8. A reservation's `meter_key`/`rate_id` pair can never contradict one
-   another — attempted directly at the database layer, the composite FK
-   rejects the write.
-9. `setActiveRate()` rotates an already-metered meter's rate safely —
-   the meter's `active_rate_id` updates, a new
-   `business_usage_rate_activations` row is written, and **no**
-   `usage_meter_transitions` row is written (§C).
-10. An existing `Pending` reservation continues using its own
-    originally-snapshotted `rate_id`/`rate_version` after a rotation —
-    unaffected by any later `setActiveRate()` call against the same
-    meter.
-11. Every existing `platform_feature_usage_classifications` row remains
-    byte-identical before and after the full implementation lands.
-12. M3 funding and M4 add-on/slot flows remain unchanged (full
-    regression, unaffected by every schema/code change above).
-13. Metered success (all checks passing) still produces exactly one
-    reservation and, on `commit()`, exactly one charge — the corrected
-    fail-closed checks add no new success-path behavior.
+1–13. Unchanged from the prior pass (generic entitlement wallet-
+independence even with a manually-forced classification row; the five
+`reserve()` fail-closed cases; active-rate same-meter integrity;
+reservation meter/rate integrity; safe rate rotation; unaffected
+`Pending` reservations after rotation; classification rows byte-
+identical; M3/M4 regression unaffected; a clean success path).
+
+14. **USD meter/rate + USD wallet → normal reserve.**
+15. **USD meter/rate + EUR wallet → `UsageMeterCurrencyMismatchException`,
+    zero writes.**
+16. **A Business-scoped USD meter, invoked by that same Business but
+    with a EUR wallet, still fails** — Business-scope match does not
+    substitute for currency match; both are independently required.
+17. **A global USD meter, invoked by a different, otherwise-authorized
+    USD-wallet Business → succeeds** if every other check passes.
+18. **A rate cannot be inserted for a meter using a different currency**
+    — attempted directly at the database layer, §D's composite FK
+    rejects the write.
+19. **`setActiveRate()` cannot rotate a meter into a different currency**
+    — the same database-level rejection as 18, exercised via the
+    manager method rather than a raw insert.
+20. **Existing reservations remain unambiguously denominated by their
+    original snapshotted `rate_id`** after any later rotation — no
+    `currency_id` column exists on the reservation to become stale
+    (§F).
+21. **An audit row in `business_usage_rate_activations` claiming
+    `meter_key = A, rate_id = <B's rate>` is rejected at the database
+    layer** (§E).
+22. **An audit row in `usage_meter_transitions` claiming a
+    `from_active_rate_id`/`to_active_rate_id` belonging to a different
+    meter is rejected at the database layer** (§C).
+23. **A `business_usage_ledger_entries` row claiming `meter_key = A`
+    while `rate_id` belongs to meter B is rejected at the database
+    layer; a `ReservationRelease`-shaped row with `meter_key` populated
+    and `rate_id = NULL` is correctly accepted** (§G).
+24. **`UsageMeterRepository::create()` rejects an unknown `feature_key`**
+    (not a valid `PlatformFeature::tryFrom()` value), and rejects
+    creation with no actor/`updated_by_user_id` or empty `description`.
+25. **No repository or manager code path can mutate `meter_key`,
+    `feature_key`, `business_id`, or `currency_id` after a meter's
+    creation** — a direct test asserting the manager's own `update()`
+    call sites never include these four keys in their attribute arrays,
+    mirroring the existing, unwritten discipline
+    `PlatformFeatureUsageClassificationRepository::update()`'s own
+    callers already follow for `feature_key`.
+26. **§H.3's governance verdict is itself proven, not merely stated:**
+    a test (or, more precisely, an implementation-phase check) that the
+    `UsageWalletManager` constructor change described in this document
+    is only merged after the governance contract's own correction has
+    been separately human-merged — this is a process proof, not a code
+    proof, and belongs in the future implementation contract's own
+    acceptance criteria, not in a PHPUnit test.
 
 ---
 
 ## Unresolved human decisions (explicitly listed, separated from structural design)
 
-1. No real `meter_key` value, real Business scope, or real rate value is
+1. No real `meter_key`, Business scope, currency, or rate value is
    chosen anywhere in this document.
 2. No `PlatformFeature` is selected for M5.
 3. The general, non-interim Business-attribution solution (§M) remains
    undesigned.
 4. Whether `business_feature_usage_limits`/`platform_feature_usage_safety_limits`
-   should ever gain meter-level (or Business-scope-aware) granularity
-   remains undecided — left feature-scoped, unchanged from the prior
-   pass.
-5. Whether a future `deactivateMetering()` method is ever needed is
-   left open — the schema (§C) is forward-compatible with it without
-   further change, but this amendment does not design or require it.
-
-**Removed this pass:** the prior pass's unresolved decision about a
-"rotation-aware activation step"'s method name — no longer applicable,
-since §4/§H/§C establish `setActiveRate()` as the complete, sole
-rate-lifecycle mechanism, with no second method required.
+   should ever gain meter-level or currency-aware granularity remains
+   undecided.
+5. Whether a future `deactivateMetering()` method is ever needed
+   remains open; the schema is forward-compatible without further
+   change.
+6. **New this pass, and the most consequential open item:** whether the
+   merged governance contract's item 6 will be corrected to exempt
+   `UsageWalletManager`'s constructor from the "public method
+   signatures unchanged" lock (§H.3). This design cannot proceed to a
+   real implementation contract for Slice 2 until a human resolves this
+   — either by approving that correction, or by directing an
+   alternative this document has not identified (since method-parameter
+   injection and service-locator resolution are both independently
+   foreclosed, §H.3).
 
 ---
 
 *End of RFC-005 Amendment 1 design document. Implementation of any kind
-— migration, model, repository, manager, gateway, controller, route,
-view, test, or configuration — requires a separate, later, explicitly
-bounded implementation contract, itself requiring separate human
-approval before any code is written.*
+requires a separate, later, explicitly bounded implementation contract.
+Additionally, per §H.3, the `UsageWalletManager` constructor change
+this design specifies requires a separate, human-reviewed correction to
+the merged governance contract before it may be implemented, regardless
+of any future implementation contract's own approval.*
