@@ -522,105 +522,168 @@ currently opens with
 — a `SELECT ... FOR UPDATE` against `platform_feature_usage_classifications`'
 single row for that feature. Since every `setActiveRate()` call for a
 given feature acquires this same row lock before computing
-`$nextVersion`, concurrent calls are strictly serialized: the second
-transaction blocks until the first commits, then re-reads a correct,
-already-incremented `MAX(version)`. **This lock is what makes the race
-structurally impossible today, not luck.**
+`$nextVersion`, concurrent calls are strictly serialized today.
 
-**Question 1: can this classification row legally remain, in Slice 2,
-purely as a concurrency mutex, with zero billing/entitlement
-authority?** Yes, with one necessary change to today's body: the
-merged governance contract and this Amendment's own §5 item 5 require
-that `platform_feature_usage_classifications` "remains untouched and
-inert" and that "every feature's row there remains exactly as
-backfilled at M1" — which forbids continuing to **write** to it
-(today's code writes `active_rate_id`/`updated_by_user_id` to this row
-at the end of `setActiveRate()`; that write must be removed in the
-cutover version, since the row must remain byte-identical to its M1
-backfill forever). It does **not** forbid **locking** the row: a
-`SELECT ... FOR UPDATE` that never inspects the row's `is_metered`/
-`active_rate_id` values for any decision, and never writes to it, uses
-only MySQL's row-lock mechanism — a purely structural, content-blind
-use, unrelated to billing or entitlement interpretation. This is the
-preferred design: it reuses an existing, already-proven serialization
-primitive with zero new failure modes, rather than inventing a
-retry-and-rollback mechanism to work around a race that a lock
-eliminates outright. **Question 2 (a bounded full-transaction retry on
-`business_usage_rates_feature_key_version_unique` collision) is
-therefore not needed and is not adopted** — it would be strictly worse
-than a lock that prevents the collision from ever occurring, adding
-retry-bound tuning, partial-rollback bookkeeping, and a second failure
-mode (exhausted retries) for no benefit.
+**Question 1, re-audited: can this classification row legally remain,
+in Slice 2, purely as a concurrency mutex, with zero billing/entitlement
+authority? No — this design's own earlier pass answered this
+incorrectly, and the answer is corrected here.** The merged governance
+contract's §5 item 5 locks two things, not one: `platform_feature_usage_classifications`
+"remains untouched and **inert**," and "every feature's row there
+remains exactly as backfilled at M1." The prior pass addressed only the
+literal *write* prohibition (removing the `active_rate_id`/
+`updated_by_user_id` write) and concluded that *locking* the row was a
+"content-blind" use outside the contract's scope. That conclusion does
+not survive scrutiny: **"inert" describes the row's role in the
+system, not merely its column values** — a row that Amendment 1 runtime
+code must locate, `SELECT ... FOR UPDATE`, and structurally depend on
+for every rate activation is not inert with respect to that runtime,
+regardless of whether its `is_metered`/`active_rate_id` fields are
+read. It is a reinterpretation of what the row *is for*: from "M1's own
+historical classification record" to "Amendment 1's concurrency
+primitive." It also directly contradicts this design's own already-locked
+architectural separation (§A): `PlatformFeature` classification state
+is inert historical state, `UsageMeter` is economic authority — a
+design that makes `UsageMeter`'s own write path structurally depend on
+the continued existence of an obsolete classification row violates that
+separation, whatever the row's fields are used for. **Verdict reversed:
+the classification-row lock is removed from this design entirely.**
 
-**Slice 2's exact `setActiveRate()` cutover body, concurrency-safe:**
+**This also resolves the constructor-retention question definitively.**
+Merged Correction Round 1 permits retaining
+`PlatformFeatureUsageClassificationRepository`/
+`PlatformFeatureUsageClassificationTransitionRepository` in
+`UsageWalletManager`'s constructor *only if* another unchanged public
+method still genuinely requires them (§H.3) — using one as a
+concurrency mutex for a *changed* method is not that case. With the
+lock removed, direct audit of every remaining call site in the current
+source (`reserve()`'s classification read at what will become its
+re-pointed check sequence, §F; `evaluateCoarseCapacity()`'s
+classification read, replaced by its unconditional pass-through, §I;
+`activateMetering()`'s classification read/write, replaced by
+`UsageMeter`/`UsageMeterTransition` authority, below) confirms **no
+method retains any genuine dependency on either classification
+repository after Slice 2's cutover.** Both are removed from the
+constructor entirely (§H.3, below) — not merely permitted to be
+removed, but required to be, since nothing legitimately needs them
+anymore.
+
+**Question 2: whole-transaction retry, reinstated as the adopted
+mechanism.** With the mutex gone, sibling meters under one feature can
+genuinely race on `latestVersionForFeature()` during Slice 2. The
+correct, contract-compliant fix is to detect the *specific* resulting
+collision and retry the whole operation — reusing an exact, already-audited
+convention this codebase already implements three times over, verified
+by direct inspection: `UsageWalletManager::initializeWalletForNewBusiness()`,
+`BillingProfileManager::initializePayerAssignmentForBusiness()`, and
+`UsageWalletBackfillV1`'s own row-creation step all catch
+`QueryException`, check driver error code `1062` plus an exact
+constraint-name substring match via an identical private
+`isDuplicateRace(QueryException $e, string $constraintName): bool`
+helper, and branch on it. Those three existing call sites treat a
+duplicate as an idempotent no-op; `setActiveRate()` cannot do that (it
+must still create a rate), so it retries instead — the same detection
+convention, a different, equally narrow response.
+
+**Slice 2's exact `setActiveRate()` cutover body, concurrency-safe via
+retry, no classification dependency:**
 
 ```php
-return DB::transaction(function () use (...) {
-    // Resolve and lock the target meter first — its own row-lock,
-    // needed anyway for this method's final update() below.
-    $meter = $this->meterRepository->findForUpdateByMeterKey($featureKey);
+public function setActiveRate(
+    string $featureKey,
+    string $retailRateMicro,
+    string $providerCostMicro,
+    string $unitLabel,
+    int $currencyId,
+    int $actorUserId,
+    string $reason,
+): BusinessUsageRate {
+    $maxAttempts = 3;
 
-    if ($meter === null) {
-        throw new NoActiveRateForFeatureException($featureKey);
+    for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
+        try {
+            return DB::transaction(function () use (
+                $featureKey, $retailRateMicro, $providerCostMicro,
+                $unitLabel, $currencyId, $actorUserId, $reason,
+            ) {
+                $meter = $this->meterRepository->findForUpdateByMeterKey($featureKey);
+
+                if ($meter === null) {
+                    throw new NoActiveRateForFeatureException($featureKey);
+                }
+
+                // ...this method's own meter/currency validation for the
+                // caller-supplied rate fields (unchanged from the prior
+                // pass)...
+
+                $nextVersion = $this->rateRepository->latestVersionForFeature($meter->feature_key) + 1;
+
+                $rate = $this->rateRepository->create([
+                    'feature_key' => $meter->feature_key,
+                    'meter_key'   => $meter->meter_key,
+                    'version'     => $nextVersion,
+                    // ...unchanged fields
+                ]);
+
+                $this->rateActivationRepository->create([
+                    'feature_key' => $meter->feature_key,
+                    'meter_key'   => $meter->meter_key,
+                    'rate_id'     => $rate->id,
+                    // ...unchanged fields
+                ]);
+
+                $this->meterRepository->update($meter, [
+                    'active_rate_id'     => $rate->id,
+                    'updated_by_user_id' => $actorUserId,
+                ]); // the real economic-authority write; no classification
+                    // row is read, locked, or written anywhere in this
+                    // method.
+
+                return $rate;
+            });
+        } catch (QueryException $e) {
+            if ($this->isDuplicateRace($e, 'business_usage_rates_feature_key_version_unique') && $attempt < $maxAttempts) {
+                continue;
+            }
+
+            throw $e;
+        }
     }
-
-    // ...this method's own meter/currency validation for the caller-
-    // supplied rate fields (unchanged from the prior pass)...
-
-    // Lock side-effect only — never read is_metered/active_rate_id from
-    // $classification, never write to it. Serializes every
-    // setActiveRate() call sharing this feature_key, across every
-    // sibling meter, so the version computation below is race-free.
-    $classification = $this->classificationRepository->findForUpdateByFeatureKey($meter->feature_key);
-
-    if ($classification === null) {
-        throw new NoActiveRateForFeatureException($featureKey);
-    }
-
-    $nextVersion = $this->rateRepository->latestVersionForFeature($meter->feature_key) + 1;
-
-    $rate = $this->rateRepository->create([
-        'feature_key' => $meter->feature_key,
-        'meter_key'   => $meter->meter_key,
-        'version'     => $nextVersion,
-        // ...unchanged fields
-    ]);
-
-    $this->rateActivationRepository->create([
-        'feature_key' => $meter->feature_key,
-        'meter_key'   => $meter->meter_key,
-        'rate_id'     => $rate->id,
-        // ...unchanged fields
-    ]);
-
-    $this->meterRepository->update($meter, [
-        'active_rate_id'      => $rate->id,
-        'updated_by_user_id'  => $actorUserId,
-    ]); // replaces today's classification-row write — this is the real
-        // economic-authority write now; the classification row is never
-        // written to, only locked.
-
-    return $rate;
-});
+}
 ```
+
+**Rollback is automatic, not hand-rolled:** `DB::transaction()`'s own
+closure-based form already rolls back the entire transaction on any
+thrown exception before rethrowing — this is Laravel's standard
+behavior, unchanged and unmodified here. No manual `rollBack()` call is
+added; the retry loop simply lets the failed transaction's automatic
+rollback complete, then opens a **fresh** `DB::transaction()` call on
+the next loop iteration, which re-acquires the meter lock and
+recomputes `latestVersionForFeature()` from scratch. No rate,
+activation, or meter update from a failed attempt can survive: InnoDB's
+transactional guarantees make partial persistence structurally
+impossible, not merely policy.
+
+**Retry bound: 3 total attempts (1 initial + 2 retries), chosen and
+justified here since no retry-loop convention exists anywhere in this
+repository to inherit (the three existing `isDuplicateRace()` call
+sites all resolve on the very first duplicate, no-op and return — none
+of them loop).** `setActiveRate()` is a low-frequency, administratively-
+triggered rate-rotation operation, never a high-throughput hot path
+like `reserve()` — realistic contention requires two or more sibling
+meters under the same feature being activated at literally the same
+instant, an operationally rare event bounded by how many meters
+realistically share one feature and how often any of them rotate rates.
+Three attempts resolves any realistic number of colliding siblings
+without risking a long-blocking retry storm on a rare, low-volume
+operation; a higher bound would only mask a persistent, non-transient
+problem behind more retries rather than surfacing it.
 
 `findForUpdateByMeterKey(string $meterKey): ?UsageMeter` is added to
 `UsageMeterRepository` alongside the plain `findByMeterKey()` §F
 already uses for `reserve()` — the same locking/plain-read pairing
 convention `PlatformFeatureUsageClassificationRepository` already
-established. No partial rows can survive: the meter lock, the
-classification lock, both inserts, and the meter update are all inside
-one `DB::transaction()`, exactly as today.
-
-**Lock ordering, fixed to avoid deadlock:** the meter row is always
-locked **before** the classification row, never the reverse. Any other
-Slice 2 method that acquires both locks in the same transaction —
-`activateMetering()` is the only other candidate, since it is the only
-other method that both mutates a meter and has historically locked the
-classification row — must follow this identical order. Two concurrent
-transactions each locking a different pair of rows in a consistent
-order can only serialize, never deadlock; reversing the order in even
-one caller would reintroduce classic lock-ordering deadlock risk.
+established, now applied entirely within `UsageMeter`'s own authority.
 
 **Slice 3 — CONTRACT (separate implementation contract and PR, after
 Slice 2 has merged and run):**
@@ -676,16 +739,24 @@ public function latestVersionForMeter(string $meterKey): int
 `$this->rateRepository->latestVersionForMeter($meter->meter_key) + 1`
 in place of the Slice 2 call — a Slice 3 **code** change accompanying
 this migration, scoped to the future Slice 3 implementation contract,
-not authorized here. **Concurrency post-Slice-3 no longer requires the
-classification-row mutex at all**: since each meter's version sequence
-is now independent, the only remaining race is two concurrent
-`setActiveRate()` calls for the exact *same* meter, which the meter's
-own row lock (`findForUpdateByMeterKey()`, already acquired for this
-method's final `update()`) already serializes — the classification-row
-lock becomes unnecessary and is dropped from `setActiveRate()`'s body
-in this same Slice 3 change. `findByMeterAndVersion(string $meterKey, int $version)`
-is unaffected by this migration — it already queries `meter_key`
-directly, with no join required.
+not authorized here. **The Slice 2 outer retry loop is removed in this
+same Slice 3 change — no feature-wide retry or coordination exists
+after Slice 3.** Since each meter's version sequence is now
+independent under `UNIQUE(meter_key, version)`, sibling meters cannot
+collide at all, at any concurrency level; the only remaining
+possibility is two concurrent `setActiveRate()` calls for the exact
+*same* meter, which `findForUpdateByMeterKey()`'s existing row lock
+(already acquired for this method's final `update()`) already
+serializes outright — a lock, not a retry, is the correct tool here
+precisely because the contention is genuinely single-resource (one
+meter row), unlike Slice 2's cross-resource (meter row vs. a
+feature-wide aggregate) race that no single row lock could have
+solved without reintroducing the classification-row dependency this
+correction removes. `setActiveRate()` reverts to a single
+`DB::transaction()` call, no loop, in Slice 3.
+`findByMeterAndVersion(string $meterKey, int $version)` is unaffected
+by this migration — it already queries `meter_key` directly, with no
+join required.
 
 The final unique indexes (`business_usage_rates_meter_key_version_unique`,
 `business_usage_rates_meter_key_id_unique`) and the composite currency
@@ -1132,7 +1203,22 @@ database-level composite FK in §D is what actually prevents a
 mismatched value from ever being persisted — no new application-level
 check is needed inside `setActiveRate()` itself beyond letting that
 insert fail if the caller supplied the wrong currency, which is itself
-a required future test (proof 24, Slice 2).
+a required future test (proof 25, Slice 2). `setActiveRate()` gains the
+outer bounded-retry loop specified in §D (3 attempts, narrowly matching
+`business_usage_rates_feature_key_version_unique` via the existing
+`isDuplicateRace()` convention) and reads/locks/writes no classification
+row anywhere in its body — see §D's "Question 1, re-audited" for why
+the classification-row mutex this design previously proposed is
+withdrawn.
+
+`activateMetering()` locks only its own target `UsageMeter` row
+(`findForUpdateByMeterKey()`) for its `is_metered`/transition update —
+it does not acquire, read, or write the classification row either. The
+prior pass's "lock ordering" requirement (meter-then-classification, to
+avoid deadlocking against `setActiveRate()`) is now moot and withdrawn:
+with `setActiveRate()` no longer touching the classification row at
+all, there is only one lock in play for either method, and no
+lock-ordering coordination between them is needed.
 
 ### H.1–H.2 (unchanged from the prior pass)
 
@@ -1177,11 +1263,24 @@ blocker.**
 - `UsageWalletManager::__construct()` **adds** `UsageMeterRepository`
   and `UsageMeterTransitionRepository`.
 - `__construct()` **removes** `PlatformFeatureUsageClassificationRepository`
-  and `PlatformFeatureUsageClassificationTransitionRepository` **only if**
-  the final method-body design (§H, §F) leaves them genuinely unused. If
-  any unchanged public method still genuinely depends on either, it is
-  **retained** — removal is never required merely for aesthetic
-  cleanup, exactly as Correction Round 1 states.
+  and `PlatformFeatureUsageClassificationTransitionRepository` —
+  **confirmed removable, not merely conditionally so.** Correction
+  Round 1 permits removal only if the final method-body design leaves
+  both genuinely unused; direct audit of every call site in the current
+  source settles this exactly: `reserve()`'s classification read is
+  replaced by its §F meter-scoped check sequence;
+  `evaluateCoarseCapacity()`'s classification read is replaced by its
+  unconditional pass-through (§I); `setActiveRate()`'s classification
+  lock/read/write is removed entirely, replaced by the outer retry loop
+  plus `UsageMeter`-only authority (§D); `activateMetering()`'s
+  classification read/write is replaced by `UsageMeter`/
+  `UsageMeterTransition` authority. No other method in the class
+  references either repository at all (confirmed by direct grep of the
+  current source — every occurrence of `classificationRepository`/
+  `classificationTransitionRepository` falls inside one of these four
+  methods, all now re-pointed). **No unchanged method retains a genuine
+  dependency on either repository — removal is required, not optional,
+  under Correction Round 1's own stated condition.**
 - **No service locator, `app()`/`resolve()` lookup, setter injection, or
   method injection into any existing public domain method is introduced
   anywhere in this design** — the constructor is the sole, exclusive
@@ -1516,7 +1615,7 @@ would cause a composite FK to fail to attach even when the logical
 reference is correct; `currency_id`/`rate_id`/`active_rate_id`/`id`
 must all be consistently `unsignedBigInteger`/`bigint unsigned` across
 every referencing and referenced column. This is a required future
-schema test (proof 12 for Slice 1, proof 35 for Slice 3's final
+schema test (proof 12 for Slice 1, proof 38 for Slice 3's final
 tightened state, below).
 
 **Zero fabricated rows, in any slice — Slice 3's rollback restoration
@@ -1636,11 +1735,12 @@ not resolve or need to).
 
 ## Required future implementation proofs
 
-**Recounted again this pass — the prior 37-item list is superseded by
-1..38, adding the true-concurrency proof (proof 19) this pass's
-sibling-meter race fix requires, and correcting proof 38 (was 37) to
-verify the meter-local final allocator rather than a join-based
-feature-wide one.** Every item below is a future test, none written
+**Recounted again this pass — the prior 38-item list is superseded by
+1..41, rewriting proof 19 to verify the retry mechanism (not the
+withdrawn classification lock), adding proof 20 (exhausted-retry) and
+proofs 32–33 (zero classification runtime reference; the classification
+table's own byte-identical, never-selected/locked/written guarantee).**
+Every item below is a future test, none written
 here.
 
 ### Slice 1 proofs (12) — provable with `UsageWalletManager` untouched
@@ -1702,7 +1802,7 @@ here.
     four — a direct `INFORMATION_SCHEMA`/`Schema::getColumnType`-based
     test.
 
-### Slice 2 proofs (19) — cutover code, zero schema mutation, before Slice 3's tightening
+### Slice 2 proofs (22) — cutover code, zero schema mutation, no classification dependency
 
 13. No migration file of any kind exists in Slice 2 — a diff-based gate
     confirming zero schema mutation, mirroring proof 1's discipline for
@@ -1745,51 +1845,97 @@ here.
     This proof alone does not establish concurrency safety — see
     proof 19.
 19. **Genuinely overlapping `setActiveRate()` calls for sibling meters A
-    and B (same scenario as proof 18) do not race.** Using two real,
-    concurrently-executing database connections (e.g. one held open
-    mid-transaction on a second connection/process while the first is
-    still uncommitted — not two sequential calls in one test process):
-    start transaction 1 for meter A, let it proceed past its
-    `findForUpdateByFeatureKey($meter->feature_key)` lock acquisition
-    but pause before commit; start transaction 2 for meter B on a
-    second connection and assert it **blocks** at its own
-    `findForUpdateByFeatureKey()` call (same `feature_key`, same
-    classification row) rather than proceeding to compute
-    `$nextVersion` concurrently; commit transaction 1; assert
-    transaction 2 then unblocks, correctly reads the post-commit
-    `MAX(version)`, and completes with the next version, not a
-    duplicate — proving the lock, not mere timing luck, is what
-    prevents the collision (§D).
-20. USD meter/rate + USD wallet → normal `reserve()`, exercised through
+    and B (same scenario as proof 18) resolve correctly via retry, with
+    no classification-row involvement anywhere.** Using two real,
+    concurrently-executing database connections (one paused
+    mid-transaction while the other proceeds — not two sequential calls
+    in one test process): force both transactions to read
+    `latestVersionForFeature('conversations')` and compute the same
+    `$nextVersion` before either commits (e.g. by pausing each
+    transaction immediately after that read); let transaction 1 (meter
+    A) commit first; assert transaction 2 (meter B)'s insert then fails
+    specifically on `business_usage_rates_feature_key_version_unique`
+    (`isDuplicateRace($e, 'business_usage_rates_feature_key_version_unique')`
+    returns `true`); assert transaction 2's entire attempt — its rate
+    insert, its activation insert, and its meter update — is fully
+    rolled back (none of the three rows/changes exist after the
+    failure); assert the retry loop then opens a **fresh**
+    `DB::transaction()`, re-locks meter B via `findForUpdateByMeterKey()`,
+    and recomputes `latestVersionForFeature('conversations')` against
+    the now-committed `MAX(version)` from meter A's rate; assert
+    transaction 2's second attempt succeeds. Final assertions: exactly
+    two durable `business_usage_rates` rows exist (one per meter);
+    their `version`s are distinct and correctly sequential; exactly two
+    `business_usage_rate_activations` rows exist; `meter A.active_rate_id`
+    and `meter B.active_rate_id` each reference their own rate, never
+    the other's; no row or column value from meter B's failed first
+    attempt survives anywhere; the observed attempt count for meter B
+    is exactly 2, within the locked bound of 3 (§D). At no point does
+    either transaction read, lock, or write
+    `platform_feature_usage_classifications`.
+20. **Exhausted-retry behavior.** Force the exact
+    `business_usage_rates_feature_key_version_unique` collision on
+    every one of `setActiveRate()`'s 3 allowed attempts (e.g. by
+    seeding a colliding row immediately before each attempt's insert);
+    assert the original `QueryException` propagates out of
+    `setActiveRate()` after the 3rd failed attempt, unretried further;
+    assert zero rows or column changes from any of the 3 failed
+    attempts survive in `business_usage_rates`,
+    `business_usage_rate_activations`, or the target meter's
+    `active_rate_id`.
+21. USD meter/rate + USD wallet → normal `reserve()`, exercised through
     the re-pointed manager.
-21. USD meter/rate + EUR wallet → `UsageMeterCurrencyMismatchException`,
+22. USD meter/rate + EUR wallet → `UsageMeterCurrencyMismatchException`,
     zero writes.
-22. A Business-scoped USD meter, invoked by that same Business but with
+23. A Business-scoped USD meter, invoked by that same Business but with
     a EUR wallet, still fails — Business-scope match does not
     substitute for currency match.
-23. A global USD meter, invoked by a different, otherwise-authorized
+24. A global USD meter, invoked by a different, otherwise-authorized
     USD-wallet Business, succeeds if every other check passes.
-24. `setActiveRate()` rejects a caller-supplied rate whose currency does
+25. `setActiveRate()` rejects a caller-supplied rate whose currency does
     not match its meter's own — exercised via the manager method itself.
-25. Existing reservations remain unambiguously denominated by their
+26. Existing reservations remain unambiguously denominated by their
     original snapshotted `rate_id` after any later rotation.
-26. An audit row in `business_usage_rate_activations` or
+27. An audit row in `business_usage_rate_activations` or
     `usage_meter_transitions` claiming a rate belonging to a different
     meter is rejected, exercised through `setActiveRate()`/
     `activateMetering()`.
-27. A `business_usage_ledger_entries` row claiming `meter_key = A` while
+28. A `business_usage_ledger_entries` row claiming `meter_key = A` while
     `rate_id` belongs to meter B is rejected, exercised through
     `commit()`/`release()`.
-28. `UsageWalletManager` remains fully container-resolvable after the
+29. `UsageWalletManager` remains fully container-resolvable after the
     authorized constructor dependency swap.
-29. Every existing public domain/API method on `UsageWalletManager`
+30. Every existing public domain/API method on `UsageWalletManager`
     retains a byte-for-byte-equivalent signature declaration (§0's
     enumerated list) after Slice 2 — a reflection-based comparison
     against the pre-Amendment declaration.
-30. No `app()`/`resolve()`/service-locator call, setter injection, or
+31. No `app()`/`resolve()`/service-locator call, setter injection, or
     method injection into a frozen domain method is introduced anywhere
     in `UsageWalletManager` — a static-analysis or source-grep test.
-31. **Slice 2 rollback requires no data restoration:** revert the
+32. **After Slice 2, `UsageWalletManager` contains no runtime reference
+    to either old classification repository.** A direct source-level
+    assertion (reflection over the constructor's parameter types, or an
+    AST/grep-based check over the class body) that neither
+    `PlatformFeatureUsageClassificationRepository` nor
+    `PlatformFeatureUsageClassificationTransitionRepository` appears
+    anywhere in `UsageWalletManager.php` — not in the constructor
+    signature, not in any method body — confirming removal, not merely
+    disuse (§H.3).
+33. **`platform_feature_usage_classifications` remains byte-identical
+    to its M1 backfill and is never selected, locked, or written by any
+    Amendment runtime code path — stronger than proving "no writes"
+    alone.** Enable query logging (or an equivalent query-capturing
+    test harness) for the full duration of a `setActiveRate()` call
+    (success and duplicate-race-retry paths both), an
+    `activateMetering()` call, a `reserve()` call, and an
+    `evaluateCoarseCapacity()` call; assert the captured query log
+    contains **zero** `SELECT`, `SELECT ... FOR UPDATE`, `UPDATE`, or
+    `INSERT` statements against `platform_feature_usage_classifications`
+    or `platform_feature_usage_classification_transitions` in any of
+    the four; separately assert every row's column values in both
+    tables are unchanged from their M1 backfill snapshot after all four
+    calls complete.
+34. **Slice 2 rollback requires no data restoration:** revert the
     manager/repository code alone (no migration `down()` runs, since
     none exists), then confirm every row created during Slice 2 remains
     fully readable and correctly queryable by the reverted, `feature_key`-based
@@ -1798,7 +1944,7 @@ here.
 
 ### Slice 3 proofs (7) — final schema state, a separate later contract
 
-32. The preflight correctly throws
+35. The preflight correctly throws
     `UsageMeterBackfillIncompleteException($table, $remainingCount)`
     and performs zero schema change when a `meter_key = NULL` row is
     deliberately seeded on any of the three tightened tables inside a
@@ -1806,21 +1952,21 @@ here.
     asserted; a real pre-Slice-2 legacy row (`feature_key` populated,
     `meter_key` still `NULL`) is exactly this case, and correctly stops
     Slice 3 rather than being silently skipped or backfilled.
-33. After Slice 3, `business_usage_rates`/`business_usage_rate_activations`
+36. After Slice 3, `business_usage_rates`/`business_usage_rate_activations`
     no longer have a `feature_key` column, and their legacy indexes
     (`business_usage_rates_feature_key_version_unique`,
     `business_usage_rate_activations_feature_key_index`) are gone.
-34. `business_usage_reservations.feature_key` remains present and
+37. `business_usage_reservations.feature_key` remains present and
     populated exactly as before, permanently — unaffected by Slice 3.
-35. All six `meter_key` columns reach their final designed state —
+38. All six `meter_key` columns reach their final designed state —
     `NOT NULL` on `usage_meters`, `usage_meter_transitions`,
     `business_usage_rates`, `business_usage_rate_activations`, and
     `business_usage_reservations`; nullable **permanently** on
     `business_usage_ledger_entries` — still `VARCHAR(128)` with
     compatible collation.
-36. M3 funding and M4 add-on/additional-slot regression suites remain
+39. M3 funding and M4 add-on/additional-slot regression suites remain
     unaffected after all three slices have landed.
-37. **Slice 3 rollback restores Slice 2's schema exactly, including its
+40. **Slice 3 rollback restores Slice 2's schema exactly, including its
     `NOT NULL` constraint:** `feature_key` is re-added, repopulated via
     the authoritative join against `usage_meters.feature_key`, and
     **tightened back to `NOT NULL`** — required this time, since Slice
@@ -1828,7 +1974,7 @@ here.
     is recreated exactly as Slice 2 left it; a row whose `meter_key`
     cannot resolve fails the rollback closed before any of that
     completes.
-38. **Proof 18's two-meter scenario, re-verified after Slice 3, now
+41. **Proof 18's two-meter scenario, re-verified after Slice 3, now
     against the meter-local final allocator.** Using the same
     `UsageMeter` A/B pair and their existing rate history from proof
     18, confirm: neither meter's prior rates were renumbered or
@@ -1840,12 +1986,14 @@ here.
     correctly becomes B's own version 2, not version 3 — demonstrating
     the numbering scheme itself changed from shared to independent at
     the Slice 3 boundary, with no collision in either scheme. Also
-    re-confirms proof 19's concurrency guarantee still holds post-Slice-3,
-    now via meter-row locking alone (the classification-row mutex is
-    retired in Slice 3, §D) — two genuinely overlapping `setActiveRate()`
-    calls for the *same* meter still serialize correctly.
+    re-confirms proof 19's concurrency guarantee still holds post-Slice-3
+    — with the outer retry loop removed (§D, no sibling-meter race
+    remains possible once versioning is meter-local), two genuinely
+    overlapping `setActiveRate()` calls for the *same* meter still
+    serialize correctly via `findForUpdateByMeterKey()`'s row lock
+    alone.
 
-Total: **38** (12 Slice 1 + 19 Slice 2 + 7 Slice 3).
+Total: **41** (12 Slice 1 + 22 Slice 2 + 7 Slice 3).
 
 ---
 
