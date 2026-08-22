@@ -161,6 +161,8 @@
                 \App\Repositories\Contracts\BusinessUsageRateActivationRepository::class => \App\Repositories\Eloquent\EloquentBusinessUsageRateActivationRepository::class,
                 \App\Repositories\Contracts\PlatformFeatureUsageClassificationRepository::class => \App\Repositories\Eloquent\EloquentPlatformFeatureUsageClassificationRepository::class,
                 \App\Repositories\Contracts\PlatformFeatureUsageClassificationTransitionRepository::class => \App\Repositories\Eloquent\EloquentPlatformFeatureUsageClassificationTransitionRepository::class,
+                \App\Repositories\Contracts\UsageMeterRepository::class => \App\Repositories\Eloquent\EloquentUsageMeterRepository::class,
+                \App\Repositories\Contracts\UsageMeterTransitionRepository::class => \App\Repositories\Eloquent\EloquentUsageMeterTransitionRepository::class,
                 \App\Repositories\Contracts\BusinessUsageReservationRepository::class => \App\Repositories\Eloquent\EloquentBusinessUsageReservationRepository::class,
                 \App\Repositories\Contracts\BusinessUsageLedgerEntryRepository::class => \App\Repositories\Eloquent\EloquentBusinessUsageLedgerEntryRepository::class,
                 \App\Library\Entitlement\Contracts\UsageAuthorizationGateway::class => \App\Library\Entitlement\RealUsageAuthorizationGateway::class,

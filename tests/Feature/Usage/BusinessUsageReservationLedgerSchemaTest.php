@@ -60,6 +60,46 @@ class BusinessUsageReservationLedgerSchemaTest extends TestCase
         return ['business_id' => $business->id, 'wallet_id' => $walletId, 'currency_id' => $currencyId, 'rate_id' => $rateId];
     }
 
+    /**
+     * RFC-005 Amendment 1 §B/§D, Slice 1 EXPAND — a disposable UsageMeter
+     * plus a business_usage_rates row carrying a matching meter_key, for
+     * exercising the new composite meter/rate FKs. Never a real/seeded
+     * meter — created and torn down inside this test's own transaction.
+     */
+    private function meterFixture(int $currencyId): array
+    {
+        $meterKey = 'crm.meter.' . uniqid();
+        $now = now();
+
+        DB::table('usage_meters')->insert([
+            'meter_key' => $meterKey,
+            'feature_key' => 'crm',
+            'business_id' => null,
+            'currency_id' => $currencyId,
+            'is_metered' => false,
+            'active_rate_id' => null,
+            'description' => 'Slice 1 schema test fixture meter.',
+            'updated_by_user_id' => 1,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+
+        $rateId = DB::table('business_usage_rates')->insertGetId([
+            'feature_key' => 'crm',
+            'meter_key' => $meterKey,
+            'version' => 1,
+            'retail_rate_micro' => 1000,
+            'provider_cost_micro' => 500,
+            'unit_label' => 'per message',
+            'rounding_rule' => 'round_half_up',
+            'currency_id' => $currencyId,
+            'created_by_user_id' => 1,
+            'created_at' => $now,
+        ]);
+
+        return ['meter_key' => $meterKey, 'rate_id' => $rateId];
+    }
+
     private function insertReservation(array $fixture, array $overrides = []): int
     {
         $now = now();
@@ -191,5 +231,161 @@ class BusinessUsageReservationLedgerSchemaTest extends TestCase
             'created_at' => now(),
         ]);
         $this->assertDatabaseHas('business_usage_ledger_entries', ['id' => $idWithArbitraryValue, 'funding_attempt_id' => 999999]);
+    }
+
+    /**
+     * RFC-005 Amendment 1 §F, Slice 1 EXPAND — the current, unmodified
+     * reserve() never populates meter_key; the new column must accept
+     * that transitional NULL without error.
+     */
+    public function test_reservation_meter_key_null_is_accepted(): void
+    {
+        $fixture = $this->walletFixture();
+
+        $id = $this->insertReservation($fixture, [
+            'idempotency_key' => 'idem-null-meter-' . uniqid(),
+            'correlation_key' => 'corr-null-meter-' . uniqid(),
+        ]);
+
+        $this->assertDatabaseHas('business_usage_reservations', ['id' => $id, 'meter_key' => null]);
+    }
+
+    public function test_reservation_meter_rate_composite_fk_rejects_mismatched_pair(): void
+    {
+        $fixture = $this->walletFixture();
+        $meter = $this->meterFixture($fixture['currency_id']);
+
+        $this->expectException(QueryException::class);
+        $this->insertReservation($fixture, [
+            'meter_key' => $meter['meter_key'],
+            'rate_id' => $fixture['rate_id'],
+            'idempotency_key' => 'idem-mismatch-meter-' . uniqid(),
+            'correlation_key' => 'corr-mismatch-meter-' . uniqid(),
+        ]);
+    }
+
+    public function test_reservation_meter_rate_composite_fk_accepts_matching_pair(): void
+    {
+        $fixture = $this->walletFixture();
+        $meter = $this->meterFixture($fixture['currency_id']);
+
+        $id = $this->insertReservation($fixture, [
+            'meter_key' => $meter['meter_key'],
+            'rate_id' => $meter['rate_id'],
+            'idempotency_key' => 'idem-match-meter-' . uniqid(),
+            'correlation_key' => 'corr-match-meter-' . uniqid(),
+        ]);
+
+        $this->assertDatabaseHas('business_usage_reservations', [
+            'id' => $id,
+            'meter_key' => $meter['meter_key'],
+            'rate_id' => $meter['rate_id'],
+        ]);
+    }
+
+    /**
+     * RFC-005 Amendment 1 §G, Slice 1 EXPAND — the current, unmodified
+     * commit()/release() never populate meter_key; the new column must
+     * accept that transitional NULL without error.
+     */
+    public function test_ledger_meter_key_null_is_accepted(): void
+    {
+        $fixture = $this->walletFixture();
+
+        $id = DB::table('business_usage_ledger_entries')->insertGetId([
+            'business_id' => $fixture['business_id'],
+            'wallet_id' => $fixture['wallet_id'],
+            'entry_type' => 'reservation',
+            'available_delta_micro' => -1000,
+            'reserved_delta_micro' => 1000,
+            'debt_delta_micro' => 0,
+            'currency_id' => $fixture['currency_id'],
+            'correlation_key' => 'corr-null-ledger-meter-' . uniqid(),
+            'created_at' => now(),
+        ]);
+
+        $this->assertDatabaseHas('business_usage_ledger_entries', ['id' => $id, 'meter_key' => null]);
+    }
+
+    public function test_ledger_meter_rate_composite_fk_rejects_mismatched_pair(): void
+    {
+        $fixture = $this->walletFixture();
+        $meter = $this->meterFixture($fixture['currency_id']);
+
+        $this->expectException(QueryException::class);
+        DB::table('business_usage_ledger_entries')->insert([
+            'business_id' => $fixture['business_id'],
+            'wallet_id' => $fixture['wallet_id'],
+            'entry_type' => 'usage_charge',
+            'available_delta_micro' => 0,
+            'reserved_delta_micro' => -1000,
+            'debt_delta_micro' => 0,
+            'currency_id' => $fixture['currency_id'],
+            'meter_key' => $meter['meter_key'],
+            'rate_id' => $fixture['rate_id'],
+            'correlation_key' => 'corr-mismatch-ledger-meter-' . uniqid(),
+            'created_at' => now(),
+        ]);
+    }
+
+    /**
+     * RFC-005 Amendment 1 §G — the legitimate ReservationRelease shape:
+     * meter_key populated, rate_id NULL. MySQL/InnoDB's MATCH SIMPLE
+     * semantics exempt this row from the composite FK (any-NULL exempts),
+     * so it must be accepted, not rejected.
+     */
+    public function test_ledger_reservation_release_shape_with_meter_key_and_null_rate_id_is_accepted(): void
+    {
+        $fixture = $this->walletFixture();
+        $meter = $this->meterFixture($fixture['currency_id']);
+
+        $id = DB::table('business_usage_ledger_entries')->insertGetId([
+            'business_id' => $fixture['business_id'],
+            'wallet_id' => $fixture['wallet_id'],
+            'entry_type' => 'reservation_release',
+            'available_delta_micro' => 1000,
+            'reserved_delta_micro' => -1000,
+            'debt_delta_micro' => 0,
+            'currency_id' => $fixture['currency_id'],
+            'meter_key' => $meter['meter_key'],
+            'rate_id' => null,
+            'correlation_key' => 'corr-release-shape-' . uniqid(),
+            'created_at' => now(),
+        ]);
+
+        $this->assertDatabaseHas('business_usage_ledger_entries', [
+            'id' => $id,
+            'meter_key' => $meter['meter_key'],
+            'rate_id' => null,
+        ]);
+    }
+
+    /**
+     * RFC-005 Amendment 1 §N — a historical, real M3/M4-shaped
+     * non-metered entry (feature_key/rate_id both NULL already) remains
+     * valid and untouched once meter_key is added.
+     */
+    public function test_historical_non_metered_ledger_row_remains_valid_with_null_meter_key(): void
+    {
+        $fixture = $this->walletFixture();
+
+        $id = DB::table('business_usage_ledger_entries')->insertGetId([
+            'business_id' => $fixture['business_id'],
+            'wallet_id' => $fixture['wallet_id'],
+            'entry_type' => 'paid_top_up',
+            'available_delta_micro' => 5000,
+            'reserved_delta_micro' => 0,
+            'debt_delta_micro' => 0,
+            'currency_id' => $fixture['currency_id'],
+            'correlation_key' => 'corr-historical-' . uniqid(),
+            'created_at' => now(),
+        ]);
+
+        $this->assertDatabaseHas('business_usage_ledger_entries', [
+            'id' => $id,
+            'feature_key' => null,
+            'meter_key' => null,
+            'rate_id' => null,
+        ]);
     }
 }
