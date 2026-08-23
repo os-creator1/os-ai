@@ -18,6 +18,7 @@ class BusinessUsageRate extends Model
 
     protected $fillable = [
         'feature_key',
+        'meter_key',
         'version',
         'retail_rate_micro',
         'provider_cost_micro',
