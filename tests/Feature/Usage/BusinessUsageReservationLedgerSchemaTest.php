@@ -65,10 +65,18 @@ class BusinessUsageReservationLedgerSchemaTest extends TestCase
      * plus a business_usage_rates row carrying a matching meter_key, for
      * exercising the new composite meter/rate FKs. Never a real/seeded
      * meter — created and torn down inside this test's own transaction.
+     *
+     * Uses version 2, not 1: walletFixture() (called first by every test
+     * that also calls this fixture) already creates a 'crm'/version 1
+     * rate, and business_usage_rates_feature_key_version_unique — Slice
+     * 1's intentionally retained legacy constraint (RFC-005 Amendment 1
+     * §D) — is feature-wide, not meter-local, so a second 'crm' rate must
+     * use a distinct version regardless of which meter it belongs to.
      */
     private function meterFixture(int $currencyId): array
     {
         $meterKey = 'crm.meter.' . uniqid();
+        $version = 2;
         $now = now();
 
         DB::table('usage_meters')->insert([
@@ -87,7 +95,7 @@ class BusinessUsageReservationLedgerSchemaTest extends TestCase
         $rateId = DB::table('business_usage_rates')->insertGetId([
             'feature_key' => 'crm',
             'meter_key' => $meterKey,
-            'version' => 1,
+            'version' => $version,
             'retail_rate_micro' => 1000,
             'provider_cost_micro' => 500,
             'unit_label' => 'per message',
@@ -97,7 +105,7 @@ class BusinessUsageReservationLedgerSchemaTest extends TestCase
             'created_at' => $now,
         ]);
 
-        return ['meter_key' => $meterKey, 'rate_id' => $rateId];
+        return ['meter_key' => $meterKey, 'rate_id' => $rateId, 'rate_version' => $version];
     }
 
     private function insertReservation(array $fixture, array $overrides = []): int
@@ -272,6 +280,7 @@ class BusinessUsageReservationLedgerSchemaTest extends TestCase
         $id = $this->insertReservation($fixture, [
             'meter_key' => $meter['meter_key'],
             'rate_id' => $meter['rate_id'],
+            'rate_version' => $meter['rate_version'],
             'idempotency_key' => 'idem-match-meter-' . uniqid(),
             'correlation_key' => 'corr-match-meter-' . uniqid(),
         ]);
@@ -280,6 +289,7 @@ class BusinessUsageReservationLedgerSchemaTest extends TestCase
             'id' => $id,
             'meter_key' => $meter['meter_key'],
             'rate_id' => $meter['rate_id'],
+            'rate_version' => $meter['rate_version'],
         ]);
     }
 

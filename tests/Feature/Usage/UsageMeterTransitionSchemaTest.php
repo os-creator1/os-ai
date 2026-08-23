@@ -46,12 +46,21 @@ class UsageMeterTransitionSchemaTest extends TestCase
         return $meterKey;
     }
 
-    private function insertRateForMeter(string $meterKey, int $currencyId): int
+    /**
+     * $version defaults to 1 but must be given a distinct value by any
+     * caller that creates more than one 'crm' rate within the same test —
+     * business_usage_rates_feature_key_version_unique (Slice 1's
+     * intentionally retained legacy constraint, RFC-005 Amendment 1 §D)
+     * is feature-wide, not meter-local, so two rates for different
+     * sibling meters under the same feature_key still collide unless
+     * given distinct versions.
+     */
+    private function insertRateForMeter(string $meterKey, int $currencyId, int $version = 1): int
     {
         return DB::table('business_usage_rates')->insertGetId([
             'feature_key' => 'crm',
             'meter_key' => $meterKey,
-            'version' => 1,
+            'version' => $version,
             'retail_rate_micro' => 1000,
             'provider_cost_micro' => 500,
             'unit_label' => 'per message',
@@ -107,8 +116,8 @@ class UsageMeterTransitionSchemaTest extends TestCase
         $currencyId = $this->usdCurrencyId();
         $meterA = $this->insertMeter(['meter_key' => 'crm.meter.a2', 'currency_id' => $currencyId]);
         $meterB = $this->insertMeter(['meter_key' => 'crm.meter.b2', 'currency_id' => $currencyId]);
-        $rateOfA = $this->insertRateForMeter($meterA, $currencyId);
-        $rateOfB = $this->insertRateForMeter($meterB, $currencyId);
+        $rateOfA = $this->insertRateForMeter($meterA, $currencyId, 1);
+        $rateOfB = $this->insertRateForMeter($meterB, $currencyId, 2);
 
         $this->expectException(QueryException::class);
         DB::table('usage_meter_transitions')->insert([

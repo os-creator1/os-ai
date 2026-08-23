@@ -316,29 +316,37 @@ class UsageMeterSchemaTest extends TestCase
             'business_usage_ledger_entries',
         ];
 
-        $rows = DB::table('information_schema.columns')
+        $rawRows = DB::table('information_schema.columns')
             ->select('table_name', 'character_maximum_length', 'collation_name', 'is_nullable')
             ->where('table_schema', DB::getDatabaseName())
             ->where('column_name', 'meter_key')
             ->whereIn('table_name', $tables)
-            ->get()
-            ->keyBy('table_name');
+            ->get();
+
+        // information_schema metadata property casing is not portable
+        // across MySQL/PDO configurations — some environments return
+        // TABLE_NAME/COLLATION_NAME/etc. in uppercase regardless of how
+        // the query itself is written. Normalize every row to lowercase
+        // keys, and the table_name value to lowercase, before asserting.
+        $rows = $rawRows
+            ->map(fn ($row) => array_change_key_case((array) $row, CASE_LOWER))
+            ->keyBy(fn (array $row) => strtolower((string) $row['table_name']));
 
         $this->assertCount(6, $rows, 'Expected all six tables to have a meter_key column.');
 
-        $expectedCollation = $rows[$tables[0]]->collation_name;
+        $expectedCollation = $rows[$tables[0]]['collation_name'];
 
         foreach ($tables as $table) {
             $this->assertTrue($rows->has($table), "Missing meter_key column on {$table}.");
-            $this->assertEquals(128, (int) $rows[$table]->character_maximum_length, "meter_key on {$table} is not VARCHAR(128).");
-            $this->assertEquals($expectedCollation, $rows[$table]->collation_name, "meter_key collation mismatch on {$table}.");
+            $this->assertEquals(128, (int) $rows[$table]['character_maximum_length'], "meter_key on {$table} is not VARCHAR(128).");
+            $this->assertEquals($expectedCollation, $rows[$table]['collation_name'], "meter_key collation mismatch on {$table}.");
         }
 
-        $this->assertSame('NO', $rows['usage_meters']->is_nullable);
-        $this->assertSame('NO', $rows['usage_meter_transitions']->is_nullable);
-        $this->assertSame('YES', $rows['business_usage_rates']->is_nullable);
-        $this->assertSame('YES', $rows['business_usage_rate_activations']->is_nullable);
-        $this->assertSame('YES', $rows['business_usage_reservations']->is_nullable);
-        $this->assertSame('YES', $rows['business_usage_ledger_entries']->is_nullable);
+        $this->assertSame('NO', $rows['usage_meters']['is_nullable']);
+        $this->assertSame('NO', $rows['usage_meter_transitions']['is_nullable']);
+        $this->assertSame('YES', $rows['business_usage_rates']['is_nullable']);
+        $this->assertSame('YES', $rows['business_usage_rate_activations']['is_nullable']);
+        $this->assertSame('YES', $rows['business_usage_reservations']['is_nullable']);
+        $this->assertSame('YES', $rows['business_usage_ledger_entries']['is_nullable']);
     }
 }
