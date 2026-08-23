@@ -1,110 +1,63 @@
 {
   "schema_version": 1,
   "repository": "os-creator1/os-ai",
-  "active_pull_request": null,
+  "active_pull_request": 114,
   "base_branch": "main",
-  "head_branch": "none",
-  "active_rfc": "RFC-003",
-  "active_milestone": "Milestone 4",
-  "current_slice": "Idle — RFC-003 Milestone 4 closed; Milestone 5 not yet selected or authorized",
-  "status": "automation_ready_pending_next_locked_contract",
+  "head_branch": "agent/rfc-005-amendment-1-slice-2-cutover",
+  "active_rfc": "RFC-005",
+  "active_milestone": "Amendment 1",
+  "current_slice": "RFC-005 Amendment 1 Slice 2 CUTOVER",
+  "status": "ready_to_implement_after_human_contract_merge",
   "merge_policy": "human_only",
-  "implementation_authorized": false,
-  "expected_head_sha": "db7829d2c33ff3eb77a5bd42820eb39e349f6d94",
+  "implementation_authorized": true,
+  "expected_head_sha": "35813782a936d7bf09b93aa4f1b2a4034011c1ca",
   "require_exact_scope": true,
   "maximum_correction_rounds": 2,
   "advance_automatically": false,
-  "start_automatically_after_contract_merge": false,
+  "start_automatically_after_contract_merge": true,
   "completion_verification_mode": "manual_or_automated",
   "codex_review_required_for_completion": false,
   "automatic_model_handoff_required": false,
-  "next_candidate": "RFC-003 Milestone 5 — Platform-administrator inspection and controls; not selected or authorized",
-  "contract_source": null,
+  "next_candidate": "RFC-005 Amendment 1 Slice 3 CONTRACT — not selected or authorized",
+  "contract_source": "docs/automation/RFC-005-AMENDMENT-1-SLICE-2-CUTOVER-CONTRACT.md#locked-slice-2-cutover-contract",
   "allowed_paths": [
-    "docs/automation/AI-AUTONOMY-STATE.json",
-    "docs/automation/RFC-003-M4-SLICE-4F-CONTRACT.md",
-    "docs/automation/RFC-003-M4-CLOSURE.md"
+    "docs/automation/RFC-005-AMENDMENT-1-SLICE-2-CUTOVER-TARGET.md",
+    "app/Library/Usage/UsageWalletManager.php",
+    "app/Repositories/Contracts/UsageMeterRepository.php",
+    "app/Repositories/Eloquent/EloquentUsageMeterRepository.php",
+    "app/Repositories/Contracts/BusinessUsageRateRepository.php",
+    "app/Repositories/Eloquent/EloquentBusinessUsageRateRepository.php",
+    "tests/Feature/Usage/NoAutoRechargeDispatchAtM1Test.php",
+    "tests/Feature/Usage/UsageCalendarMonthRolloverTest.php",
+    "tests/Feature/Usage/UsageWalletManagerCommittedSpendFormulaTest.php",
+    "tests/Feature/Usage/UsageWalletManagerConcurrencyTest.php",
+    "tests/Feature/Usage/UsageWalletManagerReservationLifecycleTest.php",
+    "tests/Feature/Usage/UsageMeterSchemaTest.php",
+    "tests/Feature/Usage/BusinessUsageRateSchemaTest.php",
+    "tests/Feature/Usage/BusinessUsageReservationLedgerSchemaTest.php",
+    "tests/Feature/Usage/UsageWalletManagerSetActiveRateConcurrencyTest.php",
+    "tests/Feature/Usage/UsageWalletManagerMeterAuthorityTest.php"
   ],
   "required_new_paths": [
-    "docs/automation/RFC-003-M4-CLOSURE.md"
+    "tests/Feature/Usage/UsageWalletManagerSetActiveRateConcurrencyTest.php",
+    "tests/Feature/Usage/UsageWalletManagerMeterAuthorityTest.php"
   ],
   "required_test_commands": [
-    "node .github/scripts/ai_subscription_gate.js --selftest",
-    "node .github/scripts/ai_subscription_autostart.js --selftest",
-    "node .github/scripts/ai_subscription_labels.js --selftest"
+    "php artisan test tests/Feature/Usage"
   ],
   "gate_label": "ai:testing",
   "forbidden_scope": [
-    "No implementation of any kind: no active product slice or milestone is authorized",
-    "No RFC-003 Milestone 5 (Platform-administrator inspection and controls) implementation, or any other Platform Admin HTTP/UI surface, until a separate bounded Milestone 5 contract is independently drafted, human-reviewed, and merged",
-    "No WorkspaceManager, repository, model, enum, event, exception, migration, DTO, dependency, environment, or database-configuration change",
-    "No billing, plan, entitlement, feature-toggle, wallet, Stripe, or usage implementation",
-    "No alternate authorization algorithm, direct model mutation write, repository bypass, or automatic later-contract generation or approval",
-    "Selecting or authorizing Milestone 5 from this closure alone, or any automatic Milestone 5 start — a new contract must be independently drafted, human-reviewed, and merged first",
-    "Setting advance_automatically true, setting start_automatically_after_contract_merge true, changing merge_policy from human_only, or weakening exact-scope or positive-test gates",
-    "Using a metered model API, enabling usage credits, requiring Codex review for completion, an automatic model handoff, or merging automatically",
-    "Force-pushing, pushing directly to main, or tagging — Milestone 6 owns the eventual RFC-003 annotated tag (§25), not this Milestone 4 closure"
+    "No migration file of any kind — zero schema mutation in Slice 2",
+    "No change to EntitlementManager, UsageAuthorizationGateway, or any of the nine existing entitlement decision keys",
+    "No new public method on UsageWalletManager; constructor changes only for the authorized UsageMeterRepository/UsageMeterTransitionRepository DI wiring",
+    "No service locator, app(), resolve(), method injection, setter injection, or static/global repository state",
+    "No reintroduction of platform_feature_usage_classifications as a concurrency mutex for setActiveRate()",
+    "No fabricated UsageMeter, rate, or pilot data outside disposable test fixtures; no synthetic/fake privileged actor",
+    "No backfill or mutation of Slice1-era rows with meter_key IS NULL",
+    "No RFC-005 Amendment 1 Slice 3 CONTRACT or any RFC-003 Milestone 5 work",
+    "No touching pull request #107",
+    "No merge of any pull request by automation, and no ai:* label applied to pull request #114 outside the existing automation's own labeling policy"
   ],
   "success_label": "ai:ready-for-human",
-  "failure_label": "ai:needs-human",
-  "completed_pull_request": 52,
-  "completed_product_head_sha": "99f3e218094f40a283bab3ded6a097734b68787b",
-  "completed_merge_commit_sha": "db7829d2c33ff3eb77a5bd42820eb39e349f6d94",
-  "aggregate_regression_run": 31159820708,
-  "manual_verification": {
-    "subject": "Design System M2 Slice 2 — independent of this file's currently tracked idle RFC-003 Milestone 4 state; active_rfc, active_milestone, current_slice, and active_pull_request above are unrelated and unchanged by this record",
-    "repository": "os-creator1/os-ai",
-    "implementation_pull_request": 90,
-    "implementation_branch": "agent/design-system-m2-slice2",
-    "verified_head_sha": "a5b53466321a706bf35d395ca9d97c51973dcf9e",
-    "environment": "human developer's local Windows/Laragon environment",
-    "php_version": "8.3.30",
-    "laravel_test_environment": ".env.testing",
-    "test_database": "MySQL ultimatesms_testing",
-    "build_command_run": "npx mix --production",
-    "build_result": "passed",
-    "auth_suite": {
-      "scope": "tests/Feature/Auth",
-      "tests_passed": 22,
-      "tests_failed": 0,
-      "assertions": 137
-    },
-    "installer_suite": {
-      "scope": "tests/Feature/Installer",
-      "tests_passed": 3,
-      "tests_failed": 0,
-      "assertions": 6
-    },
-    "theme_suite": {
-      "scope": "tests/Feature/Theme",
-      "tests_passed": 61,
-      "tests_failed": 0,
-      "assertions": 213
-    },
-    "complete_regression_suite": {
-      "result": "passed",
-      "tests_passed": 2810,
-      "assertions": 9028,
-      "exit_code": 0
-    },
-    "manual_login_round_trip": {
-      "result": "succeeded",
-      "authenticated_account_page_status": 200
-    },
-    "visual_verification": {
-      "desktop": "completed",
-      "mobile": "completed at approximately 400x644",
-      "pages_covered": "login, password recovery, email verification, two-factor, profile tabs/forms, and installer/purchase-code presentation rendered responsively",
-      "layout_findings": "no horizontal overflow or unusable controls were observed"
-    },
-    "accepted_deferred_findings_outside_slice_2": [
-      "Ultimate SMS/Codeglen names, footer and illustrations remain",
-      "Platform logo/favicon and authentication artwork must become configurable in the next launch-critical branding slice",
-      "Broken logo/avatar fallback must be corrected in that branding slice",
-      "Terms/Privacy were blank because the disposable test database contained no policy content",
-      "Registration remained blocked by the pre-existing geo-IP/seeded-country gate"
-    ],
-    "verification_type": "local manual verification only — no GitHub Actions, CI, staging, deployment, or production verification is claimed",
-    "verified_by": "human developer, manual Claude Code session"
-  }
+  "failure_label": "ai:needs-human"
 }
