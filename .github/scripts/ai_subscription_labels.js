@@ -41,11 +41,28 @@ function implementationTargetIsAuthorized(command, state, pullRequest, prNumber,
     return true;
   }
 
-  return state?.active_pull_request === prNumber
+  const identityIsLocked = state?.active_pull_request === prNumber
     && pullRequest.base?.ref === state.base_branch
     && pullRequest.head?.ref === state.head_branch
-    && pullRequest.head?.repo?.full_name === `${owner}/${repo}`
-    && /^[0-9a-f]{40}$/i.test(String(state.expected_head_sha || ''))
+    && pullRequest.head?.repo?.full_name === `${owner}/${repo}`;
+
+  if (!identityIsLocked) {
+    return false;
+  }
+
+  if (command === 'resume') {
+    // A valid resume necessarily occurs after Claude has already pushed
+    // real implementation progress, so the current head has legitimately
+    // advanced past the original locked target. expected_head_sha stays
+    // pinned to that original target for `start` and for progress/lease
+    // proofs elsewhere — it is never re-pinned to the resumed head, and a
+    // resume never bypasses this check by silently rewriting the state.
+    return true;
+  }
+
+  // command === 'start': the current PR head must still be the exact,
+  // untouched locked target — no implementation progress may exist yet.
+  return /^[0-9a-f]{40}$/i.test(String(state.expected_head_sha || ''))
     && pullRequest.head?.sha?.toLowerCase() === state.expected_head_sha.toLowerCase();
 }
 
@@ -318,6 +335,69 @@ function selftest() {
     true,
   );
 
+  // resume must accept a head that has legitimately advanced past
+  // expected_head_sha, since expected_head_sha stays pinned to the
+  // original start target rather than following implementation progress.
+  const advancedPr = {
+    ...lockedPr,
+    head: { ...lockedPr.head, sha: '723d21388707a05662b3e07a6cc85c2d07f7f1e1' },
+  };
+  assert.equal(
+    implementationTargetIsAuthorized('resume', lockedState, advancedPr, 7, 'owner', 'repo'),
+    true,
+  );
+  assert.equal(
+    implementationTargetIsAuthorized('resume', lockedState, advancedPr, 8, 'owner', 'repo'),
+    false,
+    'resume must reject a PR number that does not match the locked target',
+  );
+  assert.equal(
+    implementationTargetIsAuthorized(
+      'resume',
+      lockedState,
+      { ...advancedPr, base: { ref: 'develop' } },
+      7,
+      'owner',
+      'repo',
+    ),
+    false,
+    'resume must reject a base branch that does not match the locked target',
+  );
+  assert.equal(
+    implementationTargetIsAuthorized(
+      'resume',
+      lockedState,
+      { ...advancedPr, head: { ...advancedPr.head, ref: 'feature/drifted' } },
+      7,
+      'owner',
+      'repo',
+    ),
+    false,
+    'resume must reject a head branch that does not match the locked target',
+  );
+  assert.equal(
+    implementationTargetIsAuthorized(
+      'resume',
+      lockedState,
+      { ...advancedPr, head: { ...advancedPr.head, repo: { full_name: 'fork/repo' } } },
+      7,
+      'owner',
+      'repo',
+    ),
+    false,
+    'resume must reject a head repository that does not match the locked target',
+  );
+  assert.equal(
+    implementationCommandIsAuthorized('start', { implementation_authorized: false }),
+    false,
+    'start must remain disabled when implementation_authorized is false',
+  );
+  assert.equal(
+    implementationCommandIsAuthorized('resume', { implementation_authorized: false }),
+    false,
+    'resume must remain disabled when implementation_authorized is false',
+  );
+
   assert.deepEqual(
     transitionFor('start', [LABELS.paused, 'unrelated']),
     {
@@ -359,7 +439,7 @@ function selftest() {
   );
 
   assert.equal(new Set(MANAGED_LABELS).size, MANAGED_LABELS.length);
-  console.log(`PASS: ${24} subscription-loop checks`);
+  console.log(`PASS: ${30} subscription-loop checks`);
 }
 
 if (require.main === module) {

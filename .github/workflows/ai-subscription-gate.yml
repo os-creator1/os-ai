@@ -78,6 +78,7 @@ jobs:
             core.setOutput('pr_number', String(prNumber));
             core.setOutput('head_ref', pr.head.ref);
             core.setOutput('head_sha', pr.head.sha);
+            core.setOutput('base_sha', pr.base.sha);
 
       - name: Check out the exact PR head
         uses: actions/checkout@v6
@@ -146,11 +147,12 @@ jobs:
               issue_number: prNumber,
               per_page: 100,
             });
-            const priorTested = comments.some((comment) =>
-              comment.user?.login === 'github-actions[bot]'
-              && comment.body?.includes('[AI-SUBSCRIPTION-LOOP TESTED]')
-            );
-            core.setOutput('allow_partial_scope', priorTested ? 'true' : 'false');
+            // Scope evidence is cumulative PR base->head (see "Build
+            // changed-file evidence" below), so require_exact_scope must
+            // stay exact on every run, initial or correction — there is no
+            // partial-scope allowance here. The progress lease below is
+            // authoritative only for proving Claude pushed new commits,
+            // never for widening or narrowing the scope check.
             const lease = [...comments].reverse().find((comment) =>
               comment.user?.login === 'github-actions[bot]'
               && comment.body?.includes('[AI-SUBSCRIPTION-LOOP LEASE]')
@@ -194,16 +196,23 @@ jobs:
 
       - name: Build changed-file evidence
         if: steps.validate.outputs.stale == 'false'
-        run: git diff --name-only "${{ steps.validate.outputs.before_sha }}...HEAD" > "$RUNNER_TEMP/changed-files.txt"
+        # Scope authority is the PR's cumulative diff against its actual,
+        # current base (GitHub-equivalent base...head semantics) — never
+        # the progress-lease before_sha, which only proves new commits were
+        # pushed and can predate a later-merged, unrelated main advance
+        # (e.g. a governance contract PR merging to main mid-implementation).
+        run: git diff --name-only "${{ steps.target.outputs.base_sha }}...HEAD" > "$RUNNER_TEMP/changed-files.txt"
 
       - name: Enforce the locked file scope
         if: steps.validate.outputs.stale == 'false'
+        # No --allow-partial-expected: scope evidence is cumulative
+        # PR base->head, so require_exact_scope must hold exactly on every
+        # run, including corrections.
         run: |
           node .trusted-automation/.github/scripts/ai_subscription_gate.js check-scope \
             --state .trusted-automation/docs/automation/AI-AUTONOMY-STATE.json \
             --changed-files "$RUNNER_TEMP/changed-files.txt" \
             --repo-root "$GITHUB_WORKSPACE" \
-            --allow-partial-expected "${{ steps.validate.outputs.allow_partial_scope }}" \
             --output "$RUNNER_TEMP/scope.json"
 
       - name: Set up PHP
