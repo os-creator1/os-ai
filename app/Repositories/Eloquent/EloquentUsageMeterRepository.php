@@ -21,6 +21,11 @@ class EloquentUsageMeterRepository extends EloquentBaseRepository implements Usa
         return $this->query()->where('meter_key', $meterKey)->first();
     }
 
+    public function findForUpdateByMeterKey(string $meterKey): ?UsageMeter
+    {
+        return $this->query()->where('meter_key', $meterKey)->lockForUpdate()->first();
+    }
+
     public function create(array $attributes): UsageMeter
     {
         if (PlatformFeature::tryFrom((string) ($attributes['feature_key'] ?? '')) === null) {

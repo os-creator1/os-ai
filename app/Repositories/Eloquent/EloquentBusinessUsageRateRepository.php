@@ -17,9 +17,9 @@ class EloquentBusinessUsageRateRepository extends EloquentBaseRepository impleme
         return $this->query()->find($id);
     }
 
-    public function findByFeatureAndVersion(string $featureKey, int $version): ?BusinessUsageRate
+    public function findByMeterAndVersion(string $meterKey, int $version): ?BusinessUsageRate
     {
-        return $this->query()->where('feature_key', $featureKey)->where('version', $version)->first();
+        return $this->query()->where('meter_key', $meterKey)->where('version', $version)->first();
     }
 
     public function latestVersionForFeature(string $featureKey): int

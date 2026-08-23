@@ -4,6 +4,7 @@ namespace Tests\Feature\Usage;
 
 use App\Library\Usage\UsageWalletManager;
 use App\Models\Currency;
+use App\Repositories\Contracts\UsageMeterRepository;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -89,13 +90,20 @@ class UsageWalletManagerConcurrencyTest extends TestCase
         // above all restrictOnDelete() against this currency row.
         if ($this->createdCurrencyId !== null) {
             $rateIds = DB::table('business_usage_rates')->where('currency_id', $this->createdCurrencyId)->pluck('id');
-            // platform_feature_usage_classifications.active_rate_id also
-            // restrictOnDelete()s against these rate rows (setActiveRate()
-            // sets it) — must be cleared before the rates themselves can
-            // be deleted.
-            DB::table('platform_feature_usage_classifications')->whereIn('active_rate_id', $rateIds)->update(['active_rate_id' => null]);
+            $meterKeys = DB::table('usage_meters')->where('currency_id', $this->createdCurrencyId)->pluck('meter_key');
+            // usage_meters.active_rate_id (meters_active_rate_foreign)
+            // also restrictOnDelete()s against these rate rows
+            // (setActiveRate() sets it) — must be cleared before the
+            // rates themselves can be deleted.
+            DB::table('usage_meters')->where('currency_id', $this->createdCurrencyId)->update(['active_rate_id' => null]);
+            // usage_meter_transitions (activateMetering()'s audit row)
+            // restrictOnDelete()s against both usage_meters (by
+            // meter_key) and business_usage_rates (by its own
+            // from/to_active_rate_id) — deleted before either.
+            DB::table('usage_meter_transitions')->whereIn('meter_key', $meterKeys)->delete();
             DB::table('business_usage_rate_activations')->whereIn('rate_id', $rateIds)->delete();
             DB::table('business_usage_rates')->where('currency_id', $this->createdCurrencyId)->delete();
+            DB::table('usage_meters')->where('currency_id', $this->createdCurrencyId)->delete();
             DB::table('currencies')->where('id', $this->createdCurrencyId)->delete();
         }
 
@@ -221,9 +229,30 @@ PHP;
         app(UsageWalletManager::class)->initializeWalletForNewBusiness($businessId);
 
         $adminId = $this->createAdminUserId();
+        $currencyId = Currency::query()->where('code', 'USD')->value('id');
+
+        // RFC-005 Amendment 1 Slice 2 CUTOVER §2's locked fixture
+        // sequence: a genuine, disposable UsageMeter must exist before
+        // setActiveRate() creates/activates a rate for it, and
+        // activateMetering() must flip is_metered before reserve() will
+        // accept it. Global (business_id null), since every business
+        // fixture created by this helper races the same 'crm' meter.
+        if (DB::table('usage_meters')->where('meter_key', 'crm')->doesntExist()) {
+            app(UsageMeterRepository::class)->create([
+                'meter_key' => 'crm',
+                'feature_key' => 'crm',
+                'business_id' => null,
+                'currency_id' => $currencyId,
+                'description' => 'Concurrency fixture meter.',
+                'updated_by_user_id' => $adminId,
+            ]);
+        }
+
         app(UsageWalletManager::class)->setActiveRate(
-            'crm', '1000000', '500000', 'per message', Currency::query()->where('code', 'USD')->value('id'), $adminId, 'Fixture.',
+            'crm', '1000000', '500000', 'per message', $currencyId, $adminId, 'Fixture.',
         );
+
+        app(UsageWalletManager::class)->activateMetering('crm', $adminId, 'Fixture.');
 
         DB::table('business_usage_wallets')->where('business_id', $businessId)
             ->update(['available_balance_micro' => $availableBalanceMicro]);

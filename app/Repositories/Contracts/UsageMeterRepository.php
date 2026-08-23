@@ -8,6 +8,11 @@ interface UsageMeterRepository extends BaseRepository
 {
     public function findByMeterKey(string $meterKey): ?UsageMeter;
 
+    /**
+     * Row-locking finder — must be called inside an open DB::transaction().
+     */
+    public function findForUpdateByMeterKey(string $meterKey): ?UsageMeter;
+
     public function create(array $attributes): UsageMeter;
 
     /**

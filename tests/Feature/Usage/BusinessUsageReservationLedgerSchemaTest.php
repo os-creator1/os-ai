@@ -2,10 +2,14 @@
 
 namespace Tests\Feature\Usage;
 
+use App\Library\Usage\UsageWalletManager;
 use App\Models\Currency;
+use App\Models\User;
+use App\Repositories\Contracts\UsageMeterRepository;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Tests\Feature\Business\Concerns\CreatesBusinessTestData;
 use Tests\TestCase;
 
@@ -367,6 +371,59 @@ class BusinessUsageReservationLedgerSchemaTest extends TestCase
             'id' => $id,
             'meter_key' => $meter['meter_key'],
             'rate_id' => null,
+        ]);
+    }
+
+    /**
+     * RFC-005 Amendment 1 Slice 2 CUTOVER §5.4 — after cutover, a genuine
+     * reserve() call (through the real repositories, not a raw insert)
+     * dual-writes both feature_key and meter_key on the reservation and
+     * its own reservation-type ledger entry, resolved from the UsageMeter
+     * — never the raw featureKey parameter re-derived independently.
+     */
+    public function test_reserve_dual_writes_feature_key_and_meter_key_from_the_resolved_meter(): void
+    {
+        $customer = $this->createCustomer();
+        $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
+        $currencyId = Currency::create(['name' => 'US Dollar', 'code' => 'USD', 'format' => '$', 'status' => true])->id;
+        $actorId = User::create([
+            'first_name' => 'Test',
+            'last_name' => 'Actor',
+            'email' => 'actor' . uniqid() . '@example.test',
+            'status' => true,
+            'is_admin' => true,
+            'is_customer' => false,
+            'active_portal' => 'admin',
+        ])->id;
+        $meterKey = 'crm.meter.' . uniqid();
+
+        $manager = app(UsageWalletManager::class);
+        $manager->initializeWalletForNewBusiness($business->id);
+        app(UsageMeterRepository::class)->create([
+            'meter_key' => $meterKey,
+            'feature_key' => 'crm',
+            'business_id' => null,
+            'currency_id' => $currencyId,
+            'description' => 'Dual-write fixture meter.',
+            'updated_by_user_id' => $actorId,
+        ]);
+        $manager->setActiveRate($meterKey, '1000000', '500000', 'per message', $currencyId, $actorId, 'Fixture.');
+        $manager->activateMetering($meterKey, $actorId, 'Fixture.');
+        DB::table('business_usage_wallets')->where('business_id', $business->id)->update(['available_balance_micro' => 5_000_000]);
+
+        $result = $manager->reserve($business, $meterKey, (string) Str::uuid(), '1');
+
+        $this->assertTrue($result->granted);
+        $this->assertDatabaseHas('business_usage_reservations', [
+            'id' => $result->reservationId,
+            'feature_key' => 'crm',
+            'meter_key' => $meterKey,
+        ]);
+        $this->assertDatabaseHas('business_usage_ledger_entries', [
+            'reservation_id' => $result->reservationId,
+            'entry_type' => 'reservation',
+            'feature_key' => 'crm',
+            'meter_key' => $meterKey,
         ]);
     }
 

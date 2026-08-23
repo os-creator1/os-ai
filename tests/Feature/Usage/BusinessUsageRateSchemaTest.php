@@ -3,6 +3,7 @@
 namespace Tests\Feature\Usage;
 
 use App\Models\Currency;
+use App\Repositories\Contracts\BusinessUsageRateRepository;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
@@ -200,6 +201,31 @@ class BusinessUsageRateSchemaTest extends TestCase
             'reason' => 'Test activation.',
             'created_at' => now(),
         ]);
+    }
+
+    /**
+     * RFC-005 Amendment 1 Slice 2 CUTOVER §5.3 — findByFeatureAndVersion()
+     * renamed to findByMeterAndVersion(), now resolving by meter_key
+     * instead of feature_key (safe only because §2's audit confirmed zero
+     * real callers of the old method existed).
+     */
+    public function test_repository_find_by_meter_and_version_resolves_by_meter_key(): void
+    {
+        $usdId = $this->usdCurrencyId();
+        $meterKey = $this->insertMeter($usdId);
+        $rateId = $this->insertRate(['meter_key' => $meterKey, 'currency_id' => $usdId, 'version' => 7]);
+
+        $found = app(BusinessUsageRateRepository::class)->findByMeterAndVersion($meterKey, 7);
+
+        $this->assertNotNull($found);
+        $this->assertSame($rateId, $found->id);
+    }
+
+    public function test_repository_find_by_meter_and_version_returns_null_for_unknown_meter(): void
+    {
+        $found = app(BusinessUsageRateRepository::class)->findByMeterAndVersion('unknown.meter.' . uniqid(), 1);
+
+        $this->assertNull($found);
     }
 
     public function test_activation_meter_rate_composite_fk_accepts_matching_pair(): void

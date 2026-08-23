@@ -7,6 +7,8 @@ use App\Exceptions\Usage\NoActiveRateForFeatureException;
 use App\Library\Usage\UsageWalletManager;
 use App\Models\Business;
 use App\Models\Currency;
+use App\Models\User;
+use App\Repositories\Contracts\UsageMeterRepository;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -39,17 +41,56 @@ class UsageWalletManagerReservationLifecycleTest extends TestCase
         return $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
     }
 
+    /**
+     * A genuine, disposable actor User — usage_meters.updated_by_user_id
+     * has no database FK, so UsageMeterRepository::create() enforces
+     * actor existence at the application layer instead (RFC-005 Amendment
+     * 1 §B).
+     */
+    private function createActorUserId(): int
+    {
+        return User::create([
+            'first_name' => 'Test',
+            'last_name' => 'Actor',
+            'email' => 'actor' . uniqid() . '@example.test',
+            'status' => true,
+            'is_admin' => true,
+            'is_customer' => false,
+            'active_portal' => 'admin',
+        ])->id;
+    }
+
+    /**
+     * RFC-005 Amendment 1 Slice 2 CUTOVER §2's locked fixture sequence: a
+     * genuine, disposable UsageMeter must exist before setActiveRate()
+     * creates/activates a rate for it, and activateMetering() must flip
+     * is_metered before reserve() will accept it.
+     */
     private function activateRate(string $featureKey = 'crm', string $retailRateMicro = '1000000'): void
     {
+        $actorId = $this->createActorUserId();
+        $currencyId = Currency::query()->first()->id;
+
+        app(UsageMeterRepository::class)->create([
+            'meter_key' => $featureKey,
+            'feature_key' => $featureKey,
+            'business_id' => null,
+            'currency_id' => $currencyId,
+            'description' => 'Slice 2 cutover fixture meter.',
+            'updated_by_user_id' => $actorId,
+        ]);
+
         app(UsageWalletManager::class)->setActiveRate(
             $featureKey,
             $retailRateMicro,
             '500000',
             'per message',
-            Currency::query()->first()->id,
-            1,
+            $currencyId,
+            $actorId,
             'Test rate activation.',
         );
+
+        app(UsageWalletManager::class)->activateMetering($featureKey, $actorId, 'Test metering activation.');
     }
 
     private function seedBalance(int $businessId, int $availableMicro): void
