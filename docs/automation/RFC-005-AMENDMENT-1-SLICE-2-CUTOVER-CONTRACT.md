@@ -106,22 +106,36 @@ Confirmed directly against the current merged worktree at `main`
   five existing test files call `UsageWalletManager::setActiveRate('crm',
   ...)` and/or `->reserve($business, 'crm', ...)` against the current
   classification-based implementation, with no corresponding `UsageMeter`
-  fixture row and no `activateMetering()` call anywhere in their setup:
-  `NoAutoRechargeDispatchAtM1Test.php`, `UsageCalendarMonthRolloverTest.php`,
+  fixture row anywhere in their setup: `NoAutoRechargeDispatchAtM1Test.php`,
+  `UsageCalendarMonthRolloverTest.php`,
   `UsageWalletManagerCommittedSpendFormulaTest.php`,
-  `UsageWalletManagerConcurrencyTest.php`,
+  `UsageWalletManagerConcurrencyTest.php` (via its generated subprocess
+  runner script — see §2's concurrency-technique note below), and
   `UsageWalletManagerReservationLifecycleTest.php`. After cutover,
   `setActiveRate('crm', ...)` requires a genuine, pre-existing `UsageMeter`
-  row with `meter_key = 'crm'`, and `reserve()` newly requires that meter's
+  row with `meter_key = 'crm'` — it is what creates the rate and sets that
+  meter's `active_rate_id`; it does **not** require `is_metered` to already
+  be `true`. `reserve()` separately, newly requires that same meter's
   `is_metered` to be `true` (via the already-scaffolded
-  `UsageMeterNotMeteredException` path). Every one of these five files'
-  fixture setup must therefore be extended, in place, to create a real
-  `UsageMeter` row (via `UsageMeterRepository::create()`) and call
-  `activateMetering('crm', ...)` before calling `setActiveRate()`/`reserve()`,
-  or all five files regress to failure on the very next real test run. This
-  is not new design — it is the mechanical consequence of wiring the
-  already-scaffolded exceptions and is required for the implementation to be
-  real rather than merely additive.
+  `UsageMeterNotMeteredException` path), and `is_metered` can only become
+  `true` through `activateMetering()`, which itself requires
+  `active_rate_id` to already be non-null (§5.7) — so `activateMetering()`
+  can never precede `setActiveRate()`. The locked sequence for a fixture
+  that goes on to call `reserve()` is therefore: (1) create the genuine
+  disposable `UsageMeter` (via `UsageMeterRepository::create()`); (2) call
+  `setActiveRate('crm', ...)`, which creates/activates the rate and sets
+  `UsageMeter.active_rate_id`; (3) call `activateMetering('crm', ...)`,
+  which flips `is_metered` to `true`; (4) call `reserve()`. A fixture that
+  calls `setActiveRate()` only, without going on to call `reserve()`, needs
+  only steps (1)–(2) — `activateMetering()` is not required merely to
+  rotate or create a rate. All five audited files call `reserve()` (four
+  directly; `UsageWalletManagerConcurrencyTest.php` via its generated
+  subprocess runner script), so all five need the full four-step sequence.
+  Every one of these five files' fixture setup must be extended, in place,
+  with this exact sequence, or all five regress to failure on the very next
+  real test run. This is not new design — it is the mechanical consequence
+  of wiring the already-scaffolded exceptions and is required for the
+  implementation to be real rather than merely additive.
 - No existing test currently exercises `UsageWalletManager::activateMetering()`
   or `setActiveRate()`'s concurrency behavior; the only textual match for
   "activateMetering" outside `UsageWalletManager.php` itself is a docblock
@@ -333,15 +347,22 @@ four concurrency proofs:
    the first's transaction commits, then proceeds; both succeed with
    strictly increasing versions and no lost update.
 2. **Sibling meters sharing one feature can collide, and the loser retries
-   and still succeeds** — two `UsageMeter` rows sharing one `feature_key`
-   but different `meter_key`s (and different currencies, since
-   `usage_meters` is unique on `[meter_key, currency_id]` and rates are
-   feature-key-version-unique only) race `setActiveRate()`; construct the
-   scenario so both attempt to insert the same `(feature_key, version)`
-   pair, forcing exactly one `QueryException` against
+   and still succeeds** — two `UsageMeter` rows with distinct `meter_key`
+   values sharing one `feature_key` race `setActiveRate()`. `UNIQUE
+   (meter_key, currency_id)` on `usage_meters` requires only that each
+   `meter_key` be its own unique row; it does **not** require the two
+   sibling meters to differ in `currency_id` — the fixture may give both
+   meters the same `currency_id` (the simplest proof) or two different
+   valid currencies if justified independently, provided each rate's own
+   `currency_id` still matches its own meter's `currency_id` (enforced by
+   `rates_meter_currency_foreign`). The scenario must force both
+   transactions to attempt inserting the same retained legacy
+   `(feature_key, version)` pair — i.e. both read
+   `latestVersionForFeature()` and compute the same `$nextVersion` before
+   either commits — so that exactly one insert collides on
    `business_usage_rates_feature_key_version_unique`; the losing process's
-   retry recomputes `latestVersionForFeature()` and succeeds on its next
-   attempt.
+   retry then re-locks its meter, recomputes `latestVersionForFeature()`
+   against the now-committed state, and succeeds on its next attempt.
 3. **Successful overlap yields two durable rates/activations and correct
    active IDs** — after proof 2, both meters' `active_rate_id` point at
    their own genuinely persisted rate, and both rates/activations carry the
@@ -370,8 +391,9 @@ Additionally, real (non-concurrency) coverage must demonstrate:
    and `findForUpdateByMeterKey()` genuinely locks its row (provable via the
    same OS-process technique as proof 1, or by reuse of proof 1's fixture).
 10. All five pre-existing test files identified in §2 pass unmodified in
-    their assertions after their fixture setup is extended with a real
-    `UsageMeter` row plus `activateMetering()` call — i.e., cutover causes
+    their assertions after their fixture setup is extended with the locked
+    sequence from §2 — create the `UsageMeter`, call `setActiveRate()`,
+    call `activateMetering()`, then call `reserve()` — i.e., cutover causes
     no regression in existing reservation/rollover/spend-formula/
     auto-recharge-gating/concurrency coverage.
 
