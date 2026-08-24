@@ -4,6 +4,8 @@ namespace Tests\Feature\Usage;
 
 use App\Library\Usage\UsageWalletManager;
 use App\Models\Currency;
+use App\Models\User;
+use App\Repositories\Contracts\UsageMeterRepository;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -50,9 +52,37 @@ class NoAutoRechargeDispatchAtM1Test extends TestCase
         $customer = $this->createCustomer();
         $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
 
+        // RFC-005 Amendment 1 Slice 2 CUTOVER §2's locked fixture sequence:
+        // a genuine, disposable UsageMeter must exist before
+        // setActiveRate() creates/activates a rate for it, and
+        // activateMetering() must flip is_metered before reserve() will
+        // accept it. usage_meters.updated_by_user_id has no database FK,
+        // so UsageMeterRepository::create() enforces actor existence at
+        // the application layer instead — a genuine actor User is
+        // required.
+        $actorId = User::create([
+            'first_name' => 'Test',
+            'last_name' => 'Actor',
+            'email' => 'actor' . uniqid() . '@example.test',
+            'status' => true,
+            'is_admin' => true,
+            'is_customer' => false,
+            'active_portal' => 'admin',
+        ])->id;
+        $currencyId = Currency::query()->first()->id;
+
         $manager = app(UsageWalletManager::class);
         $manager->initializeWalletForNewBusiness($business->id);
-        $manager->setActiveRate('crm', '1000000', '500000', 'per message', Currency::query()->first()->id, 1, 'Fixture.');
+        app(UsageMeterRepository::class)->create([
+            'meter_key' => 'crm',
+            'feature_key' => 'crm',
+            'business_id' => null,
+            'currency_id' => $currencyId,
+            'description' => 'Slice 2 cutover fixture meter.',
+            'updated_by_user_id' => $actorId,
+        ]);
+        $manager->setActiveRate('crm', '1000000', '500000', 'per message', $currencyId, $actorId, 'Fixture.');
+        $manager->activateMetering('crm', $actorId, 'Fixture.');
         DB::table('business_usage_wallets')->where('business_id', $business->id)->update(['available_balance_micro' => 5_000_000]);
 
         // auto_recharge_enabled is left at its M1 default (false) — never

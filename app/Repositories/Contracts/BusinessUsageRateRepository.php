@@ -8,7 +8,7 @@ interface BusinessUsageRateRepository extends BaseRepository
 {
     public function findById(int $id): ?BusinessUsageRate;
 
-    public function findByFeatureAndVersion(string $featureKey, int $version): ?BusinessUsageRate;
+    public function findByMeterAndVersion(string $meterKey, int $version): ?BusinessUsageRate;
 
     public function latestVersionForFeature(string $featureKey): int;
 

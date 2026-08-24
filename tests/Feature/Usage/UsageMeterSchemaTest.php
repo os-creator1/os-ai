@@ -301,6 +301,41 @@ class UsageMeterSchemaTest extends TestCase
     }
 
     /**
+     * RFC-005 Amendment 1 Slice 2 CUTOVER §5.2 — the new row-locking
+     * finder added to this repository for setActiveRate()/
+     * activateMetering(). Genuine row-lock contention is separately
+     * proven by UsageWalletManagerSetActiveRateConcurrencyTest.php's
+     * OS-process technique; this is the plain functional-resolution
+     * check.
+     */
+    public function test_find_for_update_by_meter_key_returns_the_matching_meter(): void
+    {
+        $repository = app(UsageMeterRepository::class);
+        $meter = $repository->create([
+            'meter_key' => 'find.for.update.' . uniqid(),
+            'feature_key' => 'crm',
+            'business_id' => null,
+            'currency_id' => $this->usdCurrencyId(),
+            'description' => 'Valid description.',
+            'updated_by_user_id' => $this->createActorUserId(),
+        ]);
+
+        $found = DB::transaction(fn () => $repository->findForUpdateByMeterKey($meter->meter_key));
+
+        $this->assertNotNull($found);
+        $this->assertSame($meter->id, $found->id);
+    }
+
+    public function test_find_for_update_by_meter_key_returns_null_for_unknown_key(): void
+    {
+        $repository = app(UsageMeterRepository::class);
+
+        $found = DB::transaction(fn () => $repository->findForUpdateByMeterKey('does.not.exist.' . uniqid()));
+
+        $this->assertNull($found);
+    }
+
+    /**
      * RFC-005 Amendment 1 §O — every meter_key column across all six
      * affected tables must resolve to identical VARCHAR(128) with
      * compatible collation, at Slice 1's own nullability state.
