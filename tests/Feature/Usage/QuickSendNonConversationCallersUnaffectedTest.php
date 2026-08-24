@@ -2,10 +2,27 @@
 
 namespace Tests\Feature\Usage;
 
+use App\Enums\Entitlement\PlatformFeature;
+use App\Enums\Entitlement\WorkspaceEntitlementOverrideState;
+use App\Library\Entitlement\EntitlementManager;
+use App\Library\Usage\UsageWalletManager;
+use App\Models\Campaigns;
+use App\Models\Country;
+use App\Models\Currency;
+use App\Models\CustomerBasedPricingPlan;
+use App\Models\Plan;
+use App\Models\SendingServer;
+use App\Models\Subscription;
+use App\Models\User;
 use App\Repositories\Contracts\CampaignRepository;
+use App\Repositories\Contracts\UsageMeterRepository;
+use App\Repositories\Contracts\WorkspaceEntitlementOverrideRepository;
 use App\Repositories\Eloquent\EloquentCampaignRepository;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use ReflectionClass;
 use ReflectionMethod;
+use Tests\Feature\Business\Concerns\CreatesBusinessTestData;
 use Tests\TestCase;
 
 /**
@@ -24,6 +41,9 @@ use Tests\TestCase;
  */
 class QuickSendNonConversationCallersUnaffectedTest extends TestCase
 {
+    use RefreshDatabase;
+    use CreatesBusinessTestData;
+
     public function test_conversation_context_parameter_is_additive_and_defaults_to_false(): void
     {
         $interfaceMethod = new ReflectionMethod(CampaignRepository::class, 'quickSend');
@@ -88,5 +108,176 @@ class QuickSendNonConversationCallersUnaffectedTest extends TestCase
         $contents = file_get_contents(base_path('app/Http/Controllers/Customer/ChatBoxController.php'));
 
         $this->assertSame(2, preg_match_all('/->quickSend\([^)]*,\s*true\s*\)/', $contents));
+    }
+
+    private function createActorUserId(): int
+    {
+        return User::create([
+            'first_name' => 'Admin', 'last_name' => 'Actor',
+            'email' => 'admin' . uniqid() . '@example.test', 'status' => true,
+            'is_admin' => true, 'is_customer' => false, 'active_portal' => 'admin',
+        ])->id;
+    }
+
+    /**
+     * @return array{business: \App\Models\Business, user: User, country: Country, sendingServer: SendingServer}
+     */
+    private function buildFullyQualifyingFixture(): array
+    {
+        $currency = Currency::query()->where('code', 'M5T')->first()
+            ?? Currency::create(['name' => 'M5 Test Dollar', 'code' => 'M5T', 'format' => '$', 'status' => true]);
+
+        $customer = $this->createCustomer();
+        $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes(['currency_code' => 'M5T']));
+        $user = User::find($business->customer_id);
+        $user->update(['sms_unit' => 1000]);
+
+        $now = now();
+        DB::table('business_usage_wallets')->insert([
+            'business_id' => $business->id, 'currency_id' => $currency->id,
+            'available_balance_micro' => 10_000_000, 'reserved_balance_micro' => 0, 'debt_balance_micro' => 0,
+            'spend_period_key' => $now->format('Y-m'), 'spend_period_start_utc' => $now, 'spend_period_end_utc' => $now->clone()->addMonth(),
+            'recharge_period_key' => $now->format('Y-m'), 'recharge_period_start_utc' => $now, 'recharge_period_end_utc' => $now->clone()->addMonth(),
+            'billing_status' => 'active', 'created_at' => $now, 'updated_at' => $now,
+        ]);
+
+        $meterKey = 'conversations.pilot.' . $business->id;
+        app(UsageMeterRepository::class)->create([
+            'meter_key' => $meterKey, 'feature_key' => 'conversations', 'business_id' => $business->id,
+            'currency_id' => $currency->id, 'description' => 'Forged-origin fixture meter.', 'updated_by_user_id' => $user->id,
+        ]);
+        app(UsageWalletManager::class)->setActiveRate($meterKey, '1000000', '500000', 'per message', $currency->id, $user->id, 'Fixture.');
+        app(UsageWalletManager::class)->activateMetering($meterKey, $user->id, 'Fixture.');
+
+        $actorId = $this->createActorUserId();
+        app(EntitlementManager::class)->assignFirstPlan($business->workspace, \App\Enums\Entitlement\WorkspacePlanTier::Core, $actorId, 'Fixture assignment.', true, 0);
+        app(WorkspaceEntitlementOverrideRepository::class)->create([
+            'workspace_id' => $business->workspace_id, 'feature_key' => PlatformFeature::Conversations->value,
+            'state' => WorkspaceEntitlementOverrideState::Allow->value, 'reason' => 'Fixture grant.', 'created_by_user_id' => $actorId,
+        ]);
+
+        $country = Country::firstOrCreate(['country_code' => '1', 'iso_code' => 'US'], ['name' => 'United States', 'status' => 1]);
+        $sendingServer = SendingServer::create([
+            'name' => 'Forged-origin Twilio Server', 'settings' => SendingServer::TYPE_TWILIO, 'status' => true,
+            'plain' => true, 'whatsapp' => true, 'account_sid' => 'ACtest', 'auth_token' => 'authtest',
+        ]);
+
+        config([
+            'usage_billing.conversations_metering.pilot_business_id' => $business->id,
+            'usage_billing.conversations_metering.pilot_country_id' => $country->id,
+            'usage_billing.conversations_metering.pilot_sending_server_id' => $sendingServer->id,
+        ]);
+
+        $plan = Plan::create([
+            'currency_id' => $currency->id, 'name' => 'Fixture Plan', 'price' => 10, 'billing_cycle' => 'monthly',
+            'frequency_amount' => 1, 'frequency_unit' => 'month', 'options' => json_encode([]), 'status' => true,
+        ]);
+        Subscription::create(['user_id' => $user->id, 'plan_id' => $plan->id, 'status' => Subscription::STATUS_ACTIVE, 'paid' => true, 'start_at' => now(), 'end_at' => null]);
+        CustomerBasedPricingPlan::create([
+            'user_id' => $user->id, 'country_id' => $country->id, 'plan_id' => $plan->id,
+            'options' => json_encode(['plain_sms' => 0.05, 'whatsapp_sms' => 0.10]), 'status' => true,
+        ]);
+
+        return ['business' => $business, 'user' => $user, 'country' => $country, 'sendingServer' => $sendingServer];
+    }
+
+    /**
+     * RFC-005 Milestone 5 §7/§3.11 — the discriminator is a trusted PHP
+     * parameter, never derived from $input. Calling quickSend() through its
+     * ordinary two-argument, non-trusted-origin surface — even with a
+     * forged conversation_context=true and a valid idempotency_token
+     * planted directly in $input, and every other tuple condition
+     * satisfied so the send WOULD qualify if the forged input were
+     * trusted — must still take the exact legacy path: zero RFC-005
+     * reservation, zero ledger charge, wallet untouched, legacy sms_unit
+     * decremented exactly as before.
+     */
+    public function test_forged_non_chatbox_opt_in_is_ignored_and_legacy_path_is_used(): void
+    {
+        $fixture = $this->buildFullyQualifyingFixture();
+
+        $campaign = \Mockery::mock(Campaigns::class);
+        $campaign->shouldReceive('sendPlainSMS')->once()->andReturn((object) [
+            'status' => 'Delivered', 'customer_status' => 'Delivered', 'cost' => 0.05, 'sms_count' => 1,
+        ]);
+
+        $input = [
+            'user' => $fixture['user'],
+            'sms_type' => 'plain',
+            'sender_id' => 'TestSender',
+            'region_code' => $fixture['country']->iso_code,
+            'country_code' => $fixture['country']->country_code,
+            'recipient' => '5551234567',
+            'message' => 'Forged origin attempt.',
+            'sending_server' => $fixture['sendingServer']->id,
+            // Forged: a real caller could stuff these into $input, but the
+            // discriminator only ever comes from the trusted PHP parameter.
+            'conversation_context' => true,
+            'idempotency_token' => (string) \Illuminate\Support\Str::uuid(),
+        ];
+
+        $sms_unit_before = $fixture['user']->sms_unit;
+
+        // Ordinary, non-trusted two-argument call — conversationContext
+        // defaults to false regardless of what $input contains.
+        $response = app(EloquentCampaignRepository::class)->quickSend($campaign, $input);
+
+        $payload = $response->getData();
+        $this->assertObjectNotHasProperty('m5_token_action', $payload, 'A forged/untrusted call must never receive an m5_token_action.');
+
+        $this->assertSame(0, DB::table('business_usage_reservations')->where('business_id', $fixture['business']->id)->count());
+        $this->assertSame(0, DB::table('business_usage_ledger_entries')->count());
+
+        $wallet = DB::table('business_usage_wallets')->where('business_id', $fixture['business']->id)->first();
+        $this->assertSame(10_000_000, (int) $wallet->available_balance_micro, 'RFC-005 wallet must be completely untouched by a forged non-trusted call.');
+
+        $fixture['user']->refresh();
+        $this->assertLessThan($sms_unit_before, $fixture['user']->sms_unit, 'Legacy sms_unit must decrement exactly as before.');
+    }
+
+    /**
+     * RFC-005 Milestone 5 §5.2 — MMS/WhatsApp/Viber/OTP/Voice remain
+     * unconditionally unchanged during M5, regardless of
+     * Conversations.is_metered, even for a trusted ChatBox-origin call:
+     * only sms_type plain/unicode is ever evaluated for M5 qualification.
+     */
+    public function test_non_plain_channel_from_chatbox_origin_remains_on_legacy_billing(): void
+    {
+        $fixture = $this->buildFullyQualifyingFixture();
+
+        $campaign = \Mockery::mock(Campaigns::class);
+        $campaign->shouldReceive('sendWhatsApp')->once()->andReturn((object) [
+            'status' => 'Delivered', 'customer_status' => 'Delivered', 'cost' => 0.10, 'sms_count' => 1,
+        ]);
+
+        $input = [
+            'user' => $fixture['user'],
+            'sms_type' => 'whatsapp',
+            'sender_id' => 'TestSender',
+            'region_code' => $fixture['country']->iso_code,
+            'country_code' => $fixture['country']->country_code,
+            'recipient' => '5551234567',
+            'message' => 'A WhatsApp message.',
+            'sending_server' => $fixture['sendingServer']->id,
+            'idempotency_token' => (string) \Illuminate\Support\Str::uuid(),
+        ];
+
+        $sms_unit_before = $fixture['user']->sms_unit;
+
+        // Trusted ChatBox origin (conversationContext = true), but a
+        // non-plain/unicode channel — M5's own sms_type gate (§5.1 item 1)
+        // must still exclude it.
+        $response = app(EloquentCampaignRepository::class)->quickSend($campaign, $input, true);
+
+        $payload = $response->getData();
+        $this->assertObjectNotHasProperty('m5_token_action', $payload);
+
+        $this->assertSame(0, DB::table('business_usage_reservations')->where('business_id', $fixture['business']->id)->count());
+
+        $wallet = DB::table('business_usage_wallets')->where('business_id', $fixture['business']->id)->first();
+        $this->assertSame(10_000_000, (int) $wallet->available_balance_micro);
+
+        $fixture['user']->refresh();
+        $this->assertLessThan($sms_unit_before, $fixture['user']->sms_unit, 'Legacy sms_unit must decrement exactly as before for a non-plain/unicode channel.');
     }
 }

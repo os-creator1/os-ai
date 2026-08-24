@@ -20,6 +20,19 @@
  * invoked" decision, proven without a live Twilio call.
  *
  * Usage: php concurrent_conversations_send_runner.php reserve <businessId> <meterKey> <idempotencyKey> <quantity> [<barrierFile> <expectedArrivals> <timeoutSeconds> <providerCallLogFile>]
+ *
+ * A second mode, `quicksend`, invokes the actual production
+ * EloquentCampaignRepository::quickSend() method — not a hand-rolled
+ * restatement of its post-reserve decision — against a fixture already
+ * fully seeded (Business/wallet/meter/rate/entitlement/country/
+ * SendingServer/Plan/Subscription/CustomerBasedPricingPlan) by the parent
+ * process before either child starts. Only the external provider boundary
+ * (Campaigns::sendPlainSMS()) is stood in for, via a minimal anonymous
+ * subclass whose override writes the shared provider-call marker exactly
+ * when the real, unmodified quickSend() control flow actually calls it —
+ * never a duplicated if/then of reserve()'s own decision.
+ *
+ * Usage: php concurrent_conversations_send_runner.php quicksend <businessId> <countryId> <sendingServerId> <userId> <idempotencyToken> <barrierFile> <expectedArrivals> <timeoutSeconds> <providerCallLogFile>
  */
 
 require __DIR__ . '/../../../../vendor/autoload.php';
@@ -111,6 +124,84 @@ try {
             $result->granted ? '1' : '0',
             $result->reservationId ?? 'null',
             $result->createdByThisInvocation ? '1' : '0',
+        ));
+
+        exit(0);
+    }
+
+    if ($mode === 'quicksend') {
+        [, , $businessId, $countryId, $sendingServerId, $userId, $idempotencyToken] = $argv;
+
+        $barrierFile = $argv[7] ?? null;
+        $expectedArrivals = isset($argv[8]) ? (int) $argv[8] : null;
+        $timeoutSeconds = isset($argv[9]) ? (float) $argv[9] : null;
+        $providerCallLogFile = $argv[10] ?? null;
+
+        waitForBarrier($barrierFile, $expectedArrivals, $timeoutSeconds);
+
+        $user = App\Models\User::findOrFail((int) $userId);
+        $country = App\Models\Country::findOrFail((int) $countryId);
+        $sendingServer = App\Models\SendingServer::findOrFail((int) $sendingServerId);
+
+        // This is a fresh Laravel app instance in its own OS process — the
+        // pilot config values the parent test process set via config()
+        // never cross process boundaries and must be set again here.
+        config([
+            'usage_billing.conversations_metering.pilot_business_id' => (int) $businessId,
+            'usage_billing.conversations_metering.pilot_country_id' => (int) $countryId,
+            'usage_billing.conversations_metering.pilot_sending_server_id' => (int) $sendingServerId,
+        ]);
+
+        $input = [
+            'user' => $user,
+            'sms_type' => 'plain',
+            'sender_id' => 'ConcurrencyTestSender',
+            'region_code' => $country->iso_code,
+            'country_code' => $country->country_code,
+            'recipient' => '5551234567',
+            'message' => 'Concurrency race fixture message.',
+            'sending_server' => $sendingServer->id,
+            'idempotency_token' => $idempotencyToken,
+        ];
+
+        // Minimal anonymous provider-boundary double: the real,
+        // unmodified quickSend() runs in full — only sendPlainSMS() (the
+        // provider boundary) is stood in for. The marker is written
+        // exactly when quickSend()'s own real control flow decides to
+        // call it — this is the actual production decision, not a
+        // restatement of it.
+        $campaign = new class($providerCallLogFile) extends App\Models\Campaigns {
+            public function __construct(private ?string $providerCallLogFile = null)
+            {
+                parent::__construct();
+            }
+
+            public function sendPlainSMS($data)
+            {
+                if ($this->providerCallLogFile !== null) {
+                    $handle = fopen($this->providerCallLogFile, 'c+');
+                    flock($handle, LOCK_EX);
+                    fseek($handle, 0, SEEK_END);
+                    fwrite($handle, getmypid() . "\n");
+                    fflush($handle);
+                    flock($handle, LOCK_UN);
+                    fclose($handle);
+                }
+
+                return (object) [
+                    'status' => 'Delivered', 'customer_status' => 'Delivered',
+                    'cost' => 0, 'sms_count' => 1, 'm5_outcome' => 'accepted',
+                ];
+            }
+        };
+
+        $response = $app->make(App\Repositories\Eloquent\EloquentCampaignRepository::class)->quickSend($campaign, $input, true);
+        $payload = $response->getData();
+
+        fwrite(STDOUT, sprintf(
+            "OK status=%s action=%s\n",
+            $payload->status ?? 'null',
+            $payload->m5_token_action ?? 'null',
         ));
 
         exit(0);
