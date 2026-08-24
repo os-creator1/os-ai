@@ -41,8 +41,24 @@
             // — the composite (meter_key, currency_id) FK to usage_meters
             // — is dropped and recreated, with its exact original name,
             // columns, and restrictOnDelete() semantics, around the bare
-            // nullability change. usage_meters itself is never touched;
-            // only this table's own outgoing FK is affected.
+            // nullability change.
+            //
+            // Exceptional Correction 2 (PR #122): PR #121 alone was
+            // proven incomplete at runtime — MySQL 1833: meter_key is
+            // also the target of an INCOMING composite FK,
+            // usage_meters.meters_active_rate_foreign (defined by the
+            // already-merged Slice 1 migration
+            // 2026_08_22_120003_add_active_rate_foreign_to_usage_meters_table.php,
+            // not modified here), which must also be dropped and
+            // recreated around the change() call. usage_meters' schema
+            // is touched transiently, at runtime, for exactly this one
+            // named foreign key — no column, row, or other constraint on
+            // usage_meters is altered. business_usage_rates_meter_key_id_unique
+            // (this FK's own target index) is not touched at all.
+            Schema::table('usage_meters', function (Blueprint $table) {
+                $table->dropForeign('meters_active_rate_foreign');
+            });
+
             Schema::table('business_usage_rates', function (Blueprint $table) {
                 $table->dropForeign('rates_meter_currency_foreign');
             });
@@ -54,6 +70,12 @@
             Schema::table('business_usage_rates', function (Blueprint $table) {
                 $table->foreign(['meter_key', 'currency_id'], 'rates_meter_currency_foreign')
                     ->references(['meter_key', 'currency_id'])->on('usage_meters')
+                    ->restrictOnDelete();
+            });
+
+            Schema::table('usage_meters', function (Blueprint $table) {
+                $table->foreign(['meter_key', 'active_rate_id'], 'meters_active_rate_foreign')
+                    ->references(['meter_key', 'id'])->on('business_usage_rates')
                     ->restrictOnDelete();
             });
 
@@ -95,6 +117,15 @@
             // rollback preflights (business_usage_reservations' own
             // down(), which runs first in a batch rollback) have already
             // passed.
+            //
+            // Exceptional Correction 2 (PR #122): the incoming
+            // usage_meters.meters_active_rate_foreign is also dropped
+            // and recreated here, for the same MySQL-1833 reason as
+            // up() above.
+            Schema::table('usage_meters', function (Blueprint $table) {
+                $table->dropForeign('meters_active_rate_foreign');
+            });
+
             Schema::table('business_usage_rates', function (Blueprint $table) {
                 $table->dropForeign('rates_meter_currency_foreign');
             });
@@ -106,6 +137,12 @@
             Schema::table('business_usage_rates', function (Blueprint $table) {
                 $table->foreign(['meter_key', 'currency_id'], 'rates_meter_currency_foreign')
                     ->references(['meter_key', 'currency_id'])->on('usage_meters')
+                    ->restrictOnDelete();
+            });
+
+            Schema::table('usage_meters', function (Blueprint $table) {
+                $table->foreign(['meter_key', 'active_rate_id'], 'meters_active_rate_foreign')
+                    ->references(['meter_key', 'id'])->on('business_usage_rates')
                     ->restrictOnDelete();
             });
         }
