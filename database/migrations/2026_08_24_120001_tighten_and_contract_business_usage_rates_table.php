@@ -36,8 +36,25 @@
             // an invalid ALTER TABLE on a completely fresh, empty
             // database, breaking migrate:fresh for the entire suite
             // before any test body ever ran.
+            //
+            // Exceptional Correction (PR #121): rates_meter_currency_foreign
+            // — the composite (meter_key, currency_id) FK to usage_meters
+            // — is dropped and recreated, with its exact original name,
+            // columns, and restrictOnDelete() semantics, around the bare
+            // nullability change. usage_meters itself is never touched;
+            // only this table's own outgoing FK is affected.
+            Schema::table('business_usage_rates', function (Blueprint $table) {
+                $table->dropForeign('rates_meter_currency_foreign');
+            });
+
             Schema::table('business_usage_rates', function (Blueprint $table) {
                 $table->string('meter_key', 128)->nullable(false)->change();
+            });
+
+            Schema::table('business_usage_rates', function (Blueprint $table) {
+                $table->foreign(['meter_key', 'currency_id'], 'rates_meter_currency_foreign')
+                    ->references(['meter_key', 'currency_id'])->on('usage_meters')
+                    ->restrictOnDelete();
             });
 
             Schema::table('business_usage_rates', function (Blueprint $table) {
@@ -72,8 +89,24 @@
                 $table->string('feature_key', 64)->nullable(false)->change();
             });
 
+            // Exceptional Correction (PR #121): rates_meter_currency_foreign
+            // dropped and recreated, exact name/columns/semantics, around
+            // the bare nullability loosen — reached only after both
+            // rollback preflights (business_usage_reservations' own
+            // down(), which runs first in a batch rollback) have already
+            // passed.
+            Schema::table('business_usage_rates', function (Blueprint $table) {
+                $table->dropForeign('rates_meter_currency_foreign');
+            });
+
             Schema::table('business_usage_rates', function (Blueprint $table) {
                 $table->string('meter_key', 128)->nullable()->change();
+            });
+
+            Schema::table('business_usage_rates', function (Blueprint $table) {
+                $table->foreign(['meter_key', 'currency_id'], 'rates_meter_currency_foreign')
+                    ->references(['meter_key', 'currency_id'])->on('usage_meters')
+                    ->restrictOnDelete();
             });
         }
     };

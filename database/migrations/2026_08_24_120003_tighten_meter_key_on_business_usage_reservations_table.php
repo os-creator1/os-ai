@@ -19,12 +19,38 @@
      * — the only correct place for a rollback check that must complete,
      * for both business_usage_rates and business_usage_rate_activations,
      * before either table's restoration DDL runs.
+     *
+     * Exceptional Correction (PR #121): both FKs on meter_key — the
+     * plain FK to usage_meters.meter_key and reservations_meter_rate_foreign
+     * — are dropped and recreated, with their exact original names,
+     * columns, and restrictOnDelete() semantics, around the bare
+     * nullability change in up(), and around the bare nullability loosen
+     * in down() (only after both rollback preflights below have already
+     * passed). usage_meters itself is never touched.
      */
     return new class extends Migration {
         public function up(): void
         {
             Schema::table('business_usage_reservations', function (Blueprint $table) {
+                $table->dropForeign(['meter_key']);
+            });
+
+            Schema::table('business_usage_reservations', function (Blueprint $table) {
+                $table->dropForeign('reservations_meter_rate_foreign');
+            });
+
+            Schema::table('business_usage_reservations', function (Blueprint $table) {
                 $table->string('meter_key', 128)->nullable(false)->change();
+            });
+
+            Schema::table('business_usage_reservations', function (Blueprint $table) {
+                $table->foreign('meter_key')->references('meter_key')->on('usage_meters')->restrictOnDelete();
+            });
+
+            Schema::table('business_usage_reservations', function (Blueprint $table) {
+                $table->foreign(['meter_key', 'rate_id'], 'reservations_meter_rate_foreign')
+                    ->references(['meter_key', 'id'])->on('business_usage_rates')
+                    ->restrictOnDelete();
             });
         }
 
@@ -65,10 +91,29 @@
                 );
             }
 
-            // This table's own (trivial) restoration DDL — reached only
-            // once both preflights above pass.
+            // Reached only once both preflights above pass. This table's
+            // own restoration DDL, now including dropping/recreating its
+            // two meter_key FKs around the nullability loosen.
+            Schema::table('business_usage_reservations', function (Blueprint $table) {
+                $table->dropForeign(['meter_key']);
+            });
+
+            Schema::table('business_usage_reservations', function (Blueprint $table) {
+                $table->dropForeign('reservations_meter_rate_foreign');
+            });
+
             Schema::table('business_usage_reservations', function (Blueprint $table) {
                 $table->string('meter_key', 128)->nullable()->change();
+            });
+
+            Schema::table('business_usage_reservations', function (Blueprint $table) {
+                $table->foreign('meter_key')->references('meter_key')->on('usage_meters')->restrictOnDelete();
+            });
+
+            Schema::table('business_usage_reservations', function (Blueprint $table) {
+                $table->foreign(['meter_key', 'rate_id'], 'reservations_meter_rate_foreign')
+                    ->references(['meter_key', 'id'])->on('business_usage_rates')
+                    ->restrictOnDelete();
             });
         }
     };
