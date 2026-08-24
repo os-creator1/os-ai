@@ -45,41 +45,45 @@ class UsageMeterBackfillPreflightTest extends TestCase
 
     protected function tearDown(): void
     {
-        // Fixture rows (including any offending NULL-meter_key /
-        // colliding-version row a test deliberately created) are removed
-        // BEFORE the schema is restored — restoreFinalSliceThreeSchema()
-        // re-runs the real preflighted migrations, which would otherwise
-        // hit the same offending row again and throw from inside
-        // tearDown() itself, aborting cleanup for every later test.
-        if ($this->createdBusinessIds !== []) {
-            DB::table('business_usage_ledger_entries')->whereIn('business_id', $this->createdBusinessIds)->delete();
-            DB::table('business_usage_reservations')->whereIn('business_id', $this->createdBusinessIds)->delete();
-            DB::table('business_usage_wallets')->whereIn('business_id', $this->createdBusinessIds)->delete();
-            DB::table('businesses')->whereIn('id', $this->createdBusinessIds)->delete();
-        }
+        // Fixture-row cleanup is best-effort and must never be allowed to
+        // prevent schema restoration below (Correction Round 1): if any
+        // individual delete here throws for a reason a given test didn't
+        // anticipate, restoreFinalSliceThreeSchema() still runs via
+        // finally. Leaving even one of the three tables outside its
+        // final Slice 3 shape would silently corrupt every other test
+        // file in the suite — none of them re-run migrations; they all
+        // simply trust whatever schema this process already migrated.
+        try {
+            if ($this->createdBusinessIds !== []) {
+                DB::table('business_usage_ledger_entries')->whereIn('business_id', $this->createdBusinessIds)->delete();
+                DB::table('business_usage_reservations')->whereIn('business_id', $this->createdBusinessIds)->delete();
+                DB::table('business_usage_wallets')->whereIn('business_id', $this->createdBusinessIds)->delete();
+                DB::table('businesses')->whereIn('id', $this->createdBusinessIds)->delete();
+            }
 
-        if ($this->createdWorkspaceIds !== []) {
-            DB::table('workspace_entitlement_transitions')->whereIn('workspace_id', $this->createdWorkspaceIds)->delete();
-            DB::table('workspace_plan_assignments')->whereIn('workspace_id', $this->createdWorkspaceIds)->delete();
-            DB::table('workspaces')->whereIn('id', $this->createdWorkspaceIds)->delete();
-        }
+            if ($this->createdWorkspaceIds !== []) {
+                DB::table('workspace_entitlement_transitions')->whereIn('workspace_id', $this->createdWorkspaceIds)->delete();
+                DB::table('workspace_plan_assignments')->whereIn('workspace_id', $this->createdWorkspaceIds)->delete();
+                DB::table('workspaces')->whereIn('id', $this->createdWorkspaceIds)->delete();
+            }
 
-        if ($this->createdCurrencyId !== null) {
-            $rateIds = DB::table('business_usage_rates')->where('currency_id', $this->createdCurrencyId)->pluck('id');
-            $meterKeys = DB::table('usage_meters')->where('currency_id', $this->createdCurrencyId)->pluck('meter_key');
-            DB::table('usage_meters')->where('currency_id', $this->createdCurrencyId)->update(['active_rate_id' => null]);
-            DB::table('usage_meter_transitions')->whereIn('meter_key', $meterKeys)->delete();
-            DB::table('business_usage_rate_activations')->whereIn('rate_id', $rateIds)->delete();
-            DB::table('business_usage_rates')->where('currency_id', $this->createdCurrencyId)->delete();
-            DB::table('usage_meters')->where('currency_id', $this->createdCurrencyId)->delete();
-            DB::table('currencies')->where('id', $this->createdCurrencyId)->delete();
-        }
+            if ($this->createdCurrencyId !== null) {
+                $rateIds = DB::table('business_usage_rates')->where('currency_id', $this->createdCurrencyId)->pluck('id');
+                $meterKeys = DB::table('usage_meters')->where('currency_id', $this->createdCurrencyId)->pluck('meter_key');
+                DB::table('usage_meters')->where('currency_id', $this->createdCurrencyId)->update(['active_rate_id' => null]);
+                DB::table('usage_meter_transitions')->whereIn('meter_key', $meterKeys)->delete();
+                DB::table('business_usage_rate_activations')->whereIn('rate_id', $rateIds)->delete();
+                DB::table('business_usage_rates')->where('currency_id', $this->createdCurrencyId)->delete();
+                DB::table('usage_meters')->where('currency_id', $this->createdCurrencyId)->delete();
+                DB::table('currencies')->where('id', $this->createdCurrencyId)->delete();
+            }
 
-        if ($this->createdUserIds !== []) {
-            DB::table('users')->whereIn('id', $this->createdUserIds)->delete();
+            if ($this->createdUserIds !== []) {
+                DB::table('users')->whereIn('id', $this->createdUserIds)->delete();
+            }
+        } finally {
+            $this->restoreFinalSliceThreeSchema();
         }
-
-        $this->restoreFinalSliceThreeSchema();
 
         parent::tearDown();
     }
@@ -101,19 +105,76 @@ class UsageMeterBackfillPreflightTest extends TestCase
 
     /**
      * Slice 3's own final shape is the schema every other test file in
-     * this suite assumes. If a test left the schema in the Slice 2 shape
-     * (feature_key still present), bring it back; otherwise this is a
-     * cheap no-op.
+     * this suite assumes. Correction Round 1: this used to be a single
+     * hasColumn() check gating all three migrations together — if any
+     * earlier test left the schema in a genuinely MIXED state (e.g.
+     * business_usage_rates already tightened but
+     * business_usage_rate_activations or business_usage_reservations
+     * still in Slice 2 shape, which is exactly what happens if a test
+     * assertion fails between two migration calls and aborts the test
+     * body before its own remaining restoration steps run), that single
+     * check could see business_usage_rates already final and skip
+     * everything else, permanently stranding the other two tables in a
+     * broken intermediate shape for the rest of the suite. Each table is
+     * now checked and restored independently, and any leftover
+     * NULL-meter_key test debris (never real identity — this test
+     * class's entire purpose is seeding exactly that debris, never
+     * production data) is swept up first so a prior test's own cleanup
+     * bug can never cascade into every later test's preflight failing
+     * too.
      */
     private function restoreFinalSliceThreeSchema(): void
     {
-        if (! DB::getSchemaBuilder()->hasColumn('business_usage_rates', 'feature_key')) {
+        $ratesNeedsMigration = DB::getSchemaBuilder()->hasColumn('business_usage_rates', 'feature_key');
+        $activationsNeedsMigration = DB::getSchemaBuilder()->hasColumn('business_usage_rate_activations', 'feature_key');
+        $reservationsNeedsMigration = ($this->reservationsMeterKeyColumn()?->Null ?? 'NO') === 'YES';
+
+        if (! $ratesNeedsMigration && ! $activationsNeedsMigration && ! $reservationsNeedsMigration) {
             return;
         }
 
-        $this->migration1()->up();
-        $this->migration2()->up();
-        $this->migration3()->up();
+        // Debris-only sweep (never real identity): a NULL-meter_key row
+        // left behind by an earlier test's own incomplete cleanup would
+        // otherwise make either the global forward preflight (migration
+        // 1) or a plain nullable(false)->change() call (migrations 2/3,
+        // which have no preflight of their own) fail with the same raw
+        // SQL error, on whichever of the three tables still needs its
+        // own migration. Dependents of any about-to-be-deleted rate are
+        // removed first (rate_id is RESTRICT on both
+        // business_usage_rate_activations and business_usage_reservations),
+        // regardless of the dependent row's own meter_key value.
+        if ($ratesNeedsMigration) {
+            $orphanRateIds = DB::table('business_usage_rates')->whereNull('meter_key')->pluck('id');
+            if ($orphanRateIds->isNotEmpty()) {
+                DB::table('usage_meters')->whereIn('active_rate_id', $orphanRateIds)->update(['active_rate_id' => null]);
+                DB::table('business_usage_rate_activations')->whereIn('rate_id', $orphanRateIds)->delete();
+                DB::table('business_usage_reservations')->whereIn('rate_id', $orphanRateIds)->delete();
+                DB::table('business_usage_rates')->whereNull('meter_key')->delete();
+            }
+        }
+        if ($activationsNeedsMigration) {
+            DB::table('business_usage_rate_activations')->whereNull('meter_key')->delete();
+        }
+        if ($reservationsNeedsMigration) {
+            DB::table('business_usage_reservations')->whereNull('meter_key')->delete();
+        }
+
+        if ($ratesNeedsMigration) {
+            $this->migration1()->up();
+        }
+        if ($activationsNeedsMigration) {
+            $this->migration2()->up();
+        }
+        if ($reservationsNeedsMigration) {
+            $this->migration3()->up();
+        }
+    }
+
+    private function reservationsMeterKeyColumn(): ?object
+    {
+        return collect(DB::select(
+            "SHOW COLUMNS FROM business_usage_reservations WHERE Field = 'meter_key'"
+        ))->first();
     }
 
     /**
