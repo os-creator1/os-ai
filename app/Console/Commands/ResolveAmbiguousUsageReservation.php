@@ -2,6 +2,7 @@
 
 namespace App\Console\Commands;
 
+use App\Enums\Entitlement\PlatformFeature;
 use App\Enums\Usage\UsageReservationStatus;
 use App\Library\Usage\UsageWalletManager;
 use App\Models\User;
@@ -12,39 +13,59 @@ use Illuminate\Console\Command;
  * RFC-005 Milestone 5 §6.2 — bounded, human-operated resolution for a
  * reservation stuck Pending past a provider-outcome ambiguity window
  * (SendCampaignSMS.php's Twilio/TwilioCopilot classification returned
- * something other than a definitive accepted/rejected outcome). This
- * command is deliberately narrow: it can only commit or release one
- * already-identified, still-Pending, sufficiently-old reservation — it
- * is never a generic reservation-mutation tool, accepts no arbitrary
- * field override, and performs no write beyond what
- * UsageWalletManager::commit()/release() already do.
+ * 'ambiguous_exception', or no marker at all). This command is
+ * deliberately narrow: it can only commit or release one already-
+ * identified, still-Pending Conversations-pilot reservation belonging to
+ * the currently-configured pilot Business — it is never a generic
+ * reservation-mutation tool, accepts no arbitrary field override, and
+ * performs no write beyond what UsageWalletManager::commit()/release()
+ * already do.
  *
- * Six safety checks, all required before any write:
- *  1. Actor is a platform administrator.
- *  2. The reservation id exists.
- *  3. The reservation is currently Pending (not already terminal).
- *  4. The reservation is at least this many minutes old (never resolves
- *     a reservation the provider might still legitimately settle).
- *  5. --outcome is exactly 'commit' or 'release' — no default, no third
- *     value, no silent guess.
- *  6. --reason is a non-empty, explicit justification.
+ * Six safety checks, in this exact locked order, zero mutation on any
+ * failure:
+ *  1. The reservation exists (findById() returns non-null).
+ *  2. Its status is exactly Pending (never Committed/Released/Expired).
+ *  3. Its feature_key is exactly PlatformFeature::Conversations->value.
+ *  4. The supplied --actor-user-id resolves to a platform administrator.
+ *  5. --reason is supplied and non-empty.
+ *  6. The reservation's own persisted business_id equals the currently-
+ *     configured conversations_metering.pilot_business_id.
  */
 class ResolveAmbiguousUsageReservation extends Command
 {
-    private const int MINIMUM_AGE_MINUTES = 10;
-
-    protected $signature = 'usage:resolve-ambiguous-reservation
+    protected $signature = 'usage:resolve-reservation
         {reservation-id}
         {--outcome=}
         {--actor-user-id=}
         {--reason=}';
 
-    protected $description = 'Manually resolve one still-Pending, provider-outcome-ambiguous usage reservation (RFC-005 Milestone 5 §6.2).';
+    protected $description = 'Manually resolve one still-Pending, provider-outcome-ambiguous Conversations-pilot usage reservation (RFC-005 Milestone 5 §6.2).';
 
     public function handle(
         BusinessUsageReservationRepository $reservationRepository,
         UsageWalletManager $walletManager,
     ): int {
+        $reservationId = (int) $this->argument('reservation-id');
+        $reservation = $reservationRepository->findById($reservationId);
+
+        if ($reservation === null) {
+            $this->error("Reservation {$reservationId} does not exist.");
+
+            return self::FAILURE;
+        }
+
+        if ($reservation->status !== UsageReservationStatus::Pending) {
+            $this->error("Reservation {$reservationId} is not Pending (current status: {$reservation->status->value}). Nothing to resolve.");
+
+            return self::FAILURE;
+        }
+
+        if ($reservation->feature_key !== PlatformFeature::Conversations->value) {
+            $this->error("Reservation {$reservationId} is not a Conversations-pilot reservation (feature_key: {$reservation->feature_key}). Refusing to act as a generic reservation-mutation tool.");
+
+            return self::FAILURE;
+        }
+
         $actorUserId = $this->option('actor-user-id');
 
         if ($actorUserId === null || ! ctype_digit((string) $actorUserId)) {
@@ -69,34 +90,18 @@ class ResolveAmbiguousUsageReservation extends Command
             return self::FAILURE;
         }
 
+        $pilotBusinessId = config('usage_billing.conversations_metering.pilot_business_id');
+
+        if ($pilotBusinessId === null || (int) $reservation->business_id !== (int) $pilotBusinessId) {
+            $this->error("Reservation {$reservationId} does not belong to the currently-configured pilot Business. Refusing to resolve.");
+
+            return self::FAILURE;
+        }
+
         $outcome = $this->option('outcome');
 
-        if ($outcome !== 'commit' && $outcome !== 'release') {
-            $this->error("--outcome must be exactly 'commit' or 'release'.");
-
-            return self::FAILURE;
-        }
-
-        $reservationId = (int) $this->argument('reservation-id');
-        $reservation = $reservationRepository->findById($reservationId);
-
-        if ($reservation === null) {
-            $this->error("Reservation {$reservationId} does not exist.");
-
-            return self::FAILURE;
-        }
-
-        if ($reservation->status !== UsageReservationStatus::Pending) {
-            $this->error("Reservation {$reservationId} is not Pending (current status: {$reservation->status->value}). Nothing to resolve.");
-
-            return self::FAILURE;
-        }
-
-        if ($reservation->reserved_at->diffInMinutes(now()) < self::MINIMUM_AGE_MINUTES) {
-            $this->error(
-                "Reservation {$reservationId} is younger than " . self::MINIMUM_AGE_MINUTES
-                . " minutes — the provider may still settle it. Refusing to resolve prematurely."
-            );
+        if ($outcome !== 'sent' && $outcome !== 'not-sent') {
+            $this->error("--outcome must be exactly 'sent' or 'not-sent'.");
 
             return self::FAILURE;
         }
@@ -113,7 +118,7 @@ class ResolveAmbiguousUsageReservation extends Command
             return self::SUCCESS;
         }
 
-        if ($outcome === 'commit') {
+        if ($outcome === 'sent') {
             $walletManager->commit($reservationId);
         } else {
             $walletManager->release($reservationId);

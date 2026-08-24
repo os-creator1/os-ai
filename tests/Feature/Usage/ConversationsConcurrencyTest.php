@@ -128,11 +128,12 @@ class ConversationsConcurrencyTest extends TestCase
 
         $idempotencyKey = 'race-' . uniqid();
         $barrierFile = tempnam(sys_get_temp_dir(), 'm5_barrier_');
+        $providerCallLogFile = tempnam(sys_get_temp_dir(), 'm5_provider_calls_');
         $runnerPath = __DIR__ . '/Support/concurrent_conversations_send_runner.php';
         $phpBinary = (new PhpExecutableFinder())->find() ?: 'php';
 
-        $processA = new Process([$phpBinary, $runnerPath, 'reserve', (string) $business->id, $meterKey, $idempotencyKey, '1', $barrierFile, '2', '10']);
-        $processB = new Process([$phpBinary, $runnerPath, 'reserve', (string) $business->id, $meterKey, $idempotencyKey, '1', $barrierFile, '2', '10']);
+        $processA = new Process([$phpBinary, $runnerPath, 'reserve', (string) $business->id, $meterKey, $idempotencyKey, '1', $barrierFile, '2', '10', $providerCallLogFile]);
+        $processB = new Process([$phpBinary, $runnerPath, 'reserve', (string) $business->id, $meterKey, $idempotencyKey, '1', $barrierFile, '2', '10', $providerCallLogFile]);
 
         $processA->start();
         $processB->start();
@@ -157,16 +158,28 @@ class ConversationsConcurrencyTest extends TestCase
         $this->assertSame(['0', '1'], $createdFlags);
 
         $this->assertSame(1, DB::table('business_usage_reservations')->where('idempotency_key', 'like', "%{$idempotencyKey}%")->count());
+
+        // §6 step 4 — exactly one of the two processes ever reached the
+        // point that would call the provider (the atomic-claim winner);
+        // the race loser's own control flow never reaches it at all.
+        $providerCallLines = array_values(array_filter(explode("\n", trim((string) file_get_contents($providerCallLogFile)))));
+        @unlink($providerCallLogFile);
+
+        $this->assertCount(1, $providerCallLines, 'Exactly one process must have recorded a provider-call marker.');
     }
 
+    /**
+     * RFC-005 Milestone 5 §3.8/§H — reserve()'s race-catch narrowly
+     * matches only business_usage_reservations_idempotency_key_unique.
+     * A genuine UniqueConstraintViolationException for a DIFFERENT
+     * constraint must be rethrown, never swallowed as if it were the
+     * same-key race. Proven with a controlled repository double bound
+     * into the container for this test only, whose create() throws a
+     * real UniqueConstraintViolationException (driver code 1062) whose
+     * message names an unrelated constraint.
+     */
     public function test_unrelated_unique_constraint_violation_is_not_swallowed_as_a_race(): void
     {
-        // A distinct idempotency key that never collides proves reserve()'s
-        // own narrow constraint-name match doesn't accidentally treat an
-        // unrelated race as "the same reservation already exists" — the
-        // isDuplicateRace() helper's string match on the exact constraint
-        // name is what reserve() itself already relies on; here we simply
-        // confirm two distinct keys never collide into one reservation.
         $currencyId = $this->usdCurrencyId();
         $actorId = User::create([
             'first_name' => 'Test', 'last_name' => 'Actor',
@@ -195,16 +208,35 @@ class ConversationsConcurrencyTest extends TestCase
             'meter_key' => $meterKey, 'feature_key' => 'conversations', 'business_id' => $business->id,
             'currency_id' => $currencyId, 'description' => 'Fixture meter.', 'updated_by_user_id' => $actorId,
         ]);
+        app(UsageWalletManager::class)->setActiveRate($meterKey, '1000000', '500000', 'per message', $currencyId, $actorId, 'Fixture.');
+        app(UsageWalletManager::class)->activateMetering($meterKey, $actorId, 'Fixture.');
+
+        $pdoException = new \PDOException("SQLSTATE[23000]: Duplicate entry 'x' for key 'some_unrelated_unique_constraint'");
+        $pdoException->errorInfo = ['23000', 1062, "Duplicate entry 'x' for key 'some_unrelated_unique_constraint'"];
+        $queryException = new \Illuminate\Database\UniqueConstraintViolationException('mysql', 'insert into `business_usage_reservations` ...', [], $pdoException);
+
+        $throwingRepository = new class($queryException) extends \App\Repositories\Eloquent\EloquentBusinessUsageReservationRepository {
+            public function __construct(private \Illuminate\Database\UniqueConstraintViolationException $toThrow)
+            {
+                parent::__construct(new \App\Models\BusinessUsageReservation());
+            }
+
+            public function create(array $attributes): \App\Models\BusinessUsageReservation
+            {
+                throw $this->toThrow;
+            }
+        };
+
+        $this->app->instance(\App\Repositories\Contracts\BusinessUsageReservationRepository::class, $throwingRepository);
         $manager = app(UsageWalletManager::class);
-        $manager->setActiveRate($meterKey, '1000000', '500000', 'per message', $currencyId, $actorId, 'Fixture.');
-        $manager->activateMetering($meterKey, $actorId, 'Fixture.');
 
-        $resultOne = $manager->reserve($business, $meterKey, 'distinct-' . uniqid(), '1');
-        $resultTwo = $manager->reserve($business, $meterKey, 'distinct-' . uniqid(), '1');
+        $this->expectException(\Illuminate\Database\UniqueConstraintViolationException::class);
+        $this->expectExceptionMessage('some_unrelated_unique_constraint');
 
-        $this->assertTrue($resultOne->createdByThisInvocation);
-        $this->assertTrue($resultTwo->createdByThisInvocation);
-        $this->assertNotSame($resultOne->reservationId, $resultTwo->reservationId);
-        $this->assertSame(2, DB::table('business_usage_reservations')->where('business_id', $business->id)->count());
+        try {
+            $manager->reserve($business, $meterKey, 'distinct-' . uniqid(), '1');
+        } finally {
+            $this->assertSame(0, DB::table('business_usage_reservations')->where('business_id', $business->id)->count());
+        }
     }
 }

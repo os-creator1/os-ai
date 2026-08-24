@@ -5,6 +5,7 @@ namespace App\Console\Commands;
 use App\Enums\Entitlement\PlatformFeature;
 use App\Library\Usage\UsageWalletManager;
 use App\Models\Business;
+use App\Models\Currency;
 use App\Models\User;
 use App\Repositories\Contracts\BusinessUsageWalletRepository;
 use App\Repositories\Contracts\UsageMeterRepository;
@@ -79,6 +80,30 @@ class ActivateConversationsUsageRate extends Command
 
         if ($wallet === null) {
             $this->error("Pilot Business {$pilotBusinessId} has no usage wallet. Aborting.");
+
+            return self::FAILURE;
+        }
+
+        // RFC-005 Milestone 5 §9.1 — the wallet's own currency_id remains
+        // the sole settlement-currency authority (never a second currency
+        // authority derived from operator input). The explicit
+        // currency-code argument is not silently ignored, though: it is
+        // validated against that same authoritative currency before any
+        // write, so an operator's mistyped/mismatched currency-code fails
+        // closed here rather than silently activating a rate for a
+        // different currency than the one the operator believed they
+        // supplied.
+        $suppliedCurrencyCode = (string) $this->argument('currency-code');
+        $suppliedCurrency = Currency::query()
+            ->whereRaw('UPPER(code) = ?', [strtoupper($suppliedCurrencyCode)])
+            ->where('status', true)
+            ->first();
+
+        if ($suppliedCurrency === null || (int) $suppliedCurrency->id !== (int) $wallet->currency_id) {
+            $this->error(
+                "Supplied currency-code '{$suppliedCurrencyCode}' does not resolve to the pilot Business's "
+                . "wallet currency (currency_id {$wallet->currency_id}). Refusing to proceed."
+            );
 
             return self::FAILURE;
         }

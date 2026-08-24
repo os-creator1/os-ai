@@ -308,7 +308,14 @@
                 // at all, e.g. a fully legacy send) uses the existing,
                 // unmodified index redirect with no such parameter.
                 if (($data->getData()->m5_token_action ?? 'clear') === 'retain') {
-                    return redirect()->route('customer.chatbox.new', ['m5_retry_token' => $input['idempotency_token'] ?? null])->with([
+                    // §6.1 UI addition — restores the original send-defining
+                    // form values (sending_server, country_code, sender_id,
+                    // recipient, message) via withInput() so a legitimate
+                    // human retry does not need to re-enter them. This is a
+                    // UI convenience only: §6 step 0's server-side rule
+                    // remains authoritative regardless of what the client
+                    // submits on retry.
+                    return redirect()->route('customer.chatbox.new', ['m5_retry_token' => $input['idempotency_token'] ?? null])->withInput()->with([
                         'status'  => $data->getData()->status,
                         'message' => $data->getData()->message,
                     ]);
@@ -428,15 +435,18 @@ if (!$box) {
 
             // RFC-005 Milestone 5 §7 — reply() has no dedicated Form
             // Request (unlike sent()/SentRequest), so the idempotency
-            // token is read and validated inline. A missing/invalid
-            // token simply means this reply is not eligible for M5
-            // metering — quickSend()'s own step-0/qualifying-chain
-            // treats an absent token as "not qualifying", never an error.
-            $replyIdempotencyToken = $request->input('idempotency_token');
-
-            if (is_string($replyIdempotencyToken) && preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i', $replyIdempotencyToken) === 1) {
-                $input['idempotency_token'] = $replyIdempotencyToken;
+            // token is read and validated inline, fail-closed: a missing
+            // or invalid token must never silently downgrade this reply
+            // to legacy sms_unit billing — it must never reach
+            // quickSend()/the provider at all.
+            if (! $request->filled('idempotency_token') || ! \Illuminate\Support\Str::isUuid($request->input('idempotency_token'))) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => __('locale.exceptions.something_went_wrong'),
+                ], 422);
             }
+
+            $input['idempotency_token'] = $request->input('idempotency_token');
 
             if ($request->hasFile('media_image')) {
 

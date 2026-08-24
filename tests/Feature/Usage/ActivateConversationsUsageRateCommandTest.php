@@ -78,7 +78,7 @@ class ActivateConversationsUsageRateCommandTest extends TestCase
 
         $this->artisan('usage:activate-conversations-rate', [
             'retail-rate-micro' => '1000000', 'provider-cost-micro' => '500000',
-            'unit-label' => 'per message', 'currency-code' => 'USD',
+            'unit-label' => 'per message', 'currency-code' => 'M5T',
             '--actor-user-id' => $actorId, '--reason' => 'Test.',
         ])->assertFailed();
 
@@ -94,7 +94,7 @@ class ActivateConversationsUsageRateCommandTest extends TestCase
 
         $this->artisan('usage:activate-conversations-rate', [
             'retail-rate-micro' => '1000000', 'provider-cost-micro' => '500000',
-            'unit-label' => 'per message', 'currency-code' => 'USD',
+            'unit-label' => 'per message', 'currency-code' => 'M5T',
             '--actor-user-id' => $actorId, '--reason' => 'Pilot activation.',
         ])->expectsConfirmation('Activate this rate for the pilot meter?', 'yes')
           ->assertSuccessful();
@@ -125,7 +125,7 @@ class ActivateConversationsUsageRateCommandTest extends TestCase
 
         $this->artisan('usage:activate-conversations-rate', [
             'retail-rate-micro' => '1000000', 'provider-cost-micro' => '500000',
-            'unit-label' => 'per message', 'currency-code' => 'USD',
+            'unit-label' => 'per message', 'currency-code' => 'M5T',
             '--actor-user-id' => $actorId, '--reason' => 'Test.',
         ])->expectsConfirmation('Activate this rate for the pilot meter?', 'yes')
           ->assertSuccessful();
@@ -148,7 +148,7 @@ class ActivateConversationsUsageRateCommandTest extends TestCase
 
         $this->artisan('usage:activate-conversations-rate', [
             'retail-rate-micro' => '1000000', 'provider-cost-micro' => '500000',
-            'unit-label' => 'per message', 'currency-code' => 'USD',
+            'unit-label' => 'per message', 'currency-code' => 'M5T',
             '--actor-user-id' => $actorId, '--reason' => 'First.',
         ])->expectsConfirmation('Activate this rate for the pilot meter?', 'yes')->assertSuccessful();
 
@@ -156,7 +156,7 @@ class ActivateConversationsUsageRateCommandTest extends TestCase
 
         $this->artisan('usage:activate-conversations-rate', [
             'retail-rate-micro' => '2000000', 'provider-cost-micro' => '600000',
-            'unit-label' => 'per message', 'currency-code' => 'USD',
+            'unit-label' => 'per message', 'currency-code' => 'M5T',
             '--actor-user-id' => $actorId, '--reason' => 'Rotation.',
         ])->expectsConfirmation('Activate this rate for the pilot meter?', 'yes')->assertSuccessful();
 
@@ -184,10 +184,34 @@ class ActivateConversationsUsageRateCommandTest extends TestCase
 
         $this->artisan('usage:activate-conversations-rate', [
             'retail-rate-micro' => '1000000', 'provider-cost-micro' => '500000',
-            'unit-label' => 'per message', 'currency-code' => 'USD',
+            'unit-label' => 'per message', 'currency-code' => 'M5T',
             '--actor-user-id' => $actorId, '--reason' => 'Test.',
         ])->assertFailed();
 
+        $this->assertSame(0, DB::table('business_usage_rates')->count());
+    }
+
+    public function test_currency_code_mismatched_against_wallet_currency_hard_fails(): void
+    {
+        // The wallet's own currency_id remains the sole settlement-currency
+        // authority (never a second currency authority derived from
+        // operator input) — but an operator-supplied currency-code that
+        // does not resolve to that same currency must fail closed before
+        // any write, rather than being silently ignored.
+        $currencyId = $this->usdCurrencyId();
+        $businessId = $this->createPilotBusinessWithWallet($currencyId);
+        $this->setPilotBusinessConfig($businessId);
+        $actorId = $this->createAdminUserId();
+
+        Currency::create(['name' => 'Euro', 'code' => 'EUR', 'format' => '€', 'status' => true]);
+
+        $this->artisan('usage:activate-conversations-rate', [
+            'retail-rate-micro' => '1000000', 'provider-cost-micro' => '500000',
+            'unit-label' => 'per message', 'currency-code' => 'EUR',
+            '--actor-user-id' => $actorId, '--reason' => 'Test.',
+        ])->assertFailed();
+
+        $this->assertSame(0, DB::table('usage_meters')->count());
         $this->assertSame(0, DB::table('business_usage_rates')->count());
     }
 }

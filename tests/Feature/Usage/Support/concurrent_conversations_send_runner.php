@@ -9,9 +9,17 @@
  * two genuinely independent processes racing the identical business-
  * namespaced idempotency key must resolve to exactly one created
  * reservation, with exactly one of the two getting
- * createdByThisInvocation = true.
+ * createdByThisInvocation = true — and, per §6 step 4's own locked
+ * control flow (only createdByThisInvocation === true may ever proceed
+ * past the atomic claim check toward the provider call), exactly that
+ * one process records a "provider call" marker into a shared,
+ * cross-process log file. reserve() has already fully returned (no open
+ * transaction) before this marker is written, mirroring exactly where
+ * quickSend() itself would set m5_conversations_usage_tracking and call
+ * sendPlainSMS() — this is the money-critical "would the provider be
+ * invoked" decision, proven without a live Twilio call.
  *
- * Usage: php concurrent_conversations_send_runner.php reserve <businessId> <meterKey> <idempotencyKey> <quantity> [<barrierFile> <expectedArrivals> <timeoutSeconds>]
+ * Usage: php concurrent_conversations_send_runner.php reserve <businessId> <meterKey> <idempotencyKey> <quantity> [<barrierFile> <expectedArrivals> <timeoutSeconds> <providerCallLogFile>]
  */
 
 require __DIR__ . '/../../../../vendor/autoload.php';
@@ -77,11 +85,26 @@ try {
         $barrierFile = $argv[6] ?? null;
         $expectedArrivals = isset($argv[7]) ? (int) $argv[7] : null;
         $timeoutSeconds = isset($argv[8]) ? (float) $argv[8] : null;
+        $providerCallLogFile = $argv[9] ?? null;
 
         waitForBarrier($barrierFile, $expectedArrivals, $timeoutSeconds);
 
         $business = App\Models\Business::findOrFail((int) $businessId);
         $result = $app->make(App\Library\Usage\UsageWalletManager::class)->reserve($business, $meterKey, $idempotencyKey, $quantity);
+
+        // §6 step 4 — reserve() has fully returned (no transaction open);
+        // only the atomic-claim winner may ever reach the point that
+        // would set m5_conversations_usage_tracking and call the
+        // provider. This mirrors that exact gate.
+        if ($result->createdByThisInvocation && $providerCallLogFile !== null) {
+            $handle = fopen($providerCallLogFile, 'c+');
+            flock($handle, LOCK_EX);
+            fseek($handle, 0, SEEK_END);
+            fwrite($handle, getmypid() . "\n");
+            fflush($handle);
+            flock($handle, LOCK_UN);
+            fclose($handle);
+        }
 
         fwrite(STDOUT, sprintf(
             "OK granted=%s reservation_id=%s created=%s\n",

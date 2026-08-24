@@ -13,10 +13,13 @@ use Tests\Feature\Business\Concerns\CreatesBusinessTestData;
 use Tests\TestCase;
 
 /**
- * RFC-005 Milestone 5 §6.2/§13 item 29 — the manual ambiguous-reservation
- * resolution command: all six safety checks (admin-only, reservation
- * exists, currently Pending, minimum age, explicit commit/release
- * outcome, explicit reason).
+ * RFC-005 Milestone 5 §6.2 — the manual-resolution command
+ * (usage:resolve-reservation), all six locked safety checks, in order:
+ * (1) reservation exists, (2) status exactly Pending, (3) feature_key
+ * exactly conversations, (4) actor is a platform administrator, (5)
+ * reason is non-empty, (6) reservation's business_id equals the
+ * currently-configured pilot_business_id. --outcome is restricted to
+ * exactly 'sent' (commit) or 'not-sent' (release).
  */
 class ResolveAmbiguousUsageReservationCommandTest extends TestCase
 {
@@ -51,7 +54,7 @@ class ResolveAmbiguousUsageReservationCommandTest extends TestCase
     /**
      * @return array{business: \App\Models\Business, reservation_id: int}
      */
-    private function createPendingReservation(int $currencyId, int $actorId, ?\Illuminate\Support\Carbon $reservedAt = null): array
+    private function createPendingReservation(int $currencyId, int $actorId, bool $setPilotConfig = true): array
     {
         $customer = $this->createCustomer();
         $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes(['currency_code' => 'M5T']));
@@ -75,97 +78,144 @@ class ResolveAmbiguousUsageReservationCommandTest extends TestCase
         $manager->setActiveRate($meterKey, '1000000', '500000', 'per message', $currencyId, $actorId, 'Fixture.');
         $manager->activateMetering($meterKey, $actorId, 'Fixture.');
 
-        $result = $manager->reserve($business, $meterKey, 'idem-' . uniqid(), '1');
-
-        if ($reservedAt !== null) {
-            DB::table('business_usage_reservations')->where('id', $result->reservationId)->update(['reserved_at' => $reservedAt]);
+        if ($setPilotConfig) {
+            config(['usage_billing.conversations_metering.pilot_business_id' => $business->id]);
         }
+
+        $result = $manager->reserve($business, $meterKey, 'idem-' . uniqid(), '1');
 
         return ['business' => $business, 'reservation_id' => $result->reservationId];
     }
 
-    public function test_admin_only_resolution_rejects_non_admin_actor(): void
+    public function test_check_1_nonexistent_reservation_is_rejected(): void
     {
-        $currencyId = $this->usdCurrencyId();
-        $actorId = $this->createAdminUserId();
-        $fixture = $this->createPendingReservation($currencyId, $actorId, now()->subMinutes(20));
-        $nonAdminId = $this->createNonAdminUserId();
-
-        $this->artisan('usage:resolve-ambiguous-reservation', [
-            'reservation-id' => $fixture['reservation_id'],
-            '--outcome' => 'commit', '--actor-user-id' => $nonAdminId, '--reason' => 'Test.',
-        ])->assertFailed();
-
-        $this->assertSame(
-            UsageReservationStatus::Pending->value,
-            DB::table('business_usage_reservations')->where('id', $fixture['reservation_id'])->value('status'),
-        );
-    }
-
-    public function test_resolution_requires_explicit_commit_or_release_outcome(): void
-    {
-        $currencyId = $this->usdCurrencyId();
-        $actorId = $this->createAdminUserId();
-        $fixture = $this->createPendingReservation($currencyId, $actorId, now()->subMinutes(20));
-
-        $this->artisan('usage:resolve-ambiguous-reservation', [
-            'reservation-id' => $fixture['reservation_id'],
-            '--outcome' => 'maybe', '--actor-user-id' => $actorId, '--reason' => 'Test.',
+        $this->artisan('usage:resolve-reservation', [
+            'reservation-id' => 999999,
+            '--outcome' => 'sent', '--actor-user-id' => $this->createAdminUserId(), '--reason' => 'Test.',
         ])->assertFailed();
     }
 
-    public function test_resolution_requires_a_non_empty_reason(): void
+    public function test_check_2_non_pending_reservation_is_rejected(): void
     {
         $currencyId = $this->usdCurrencyId();
         $actorId = $this->createAdminUserId();
-        $fixture = $this->createPendingReservation($currencyId, $actorId, now()->subMinutes(20));
-
-        $this->artisan('usage:resolve-ambiguous-reservation', [
-            'reservation-id' => $fixture['reservation_id'],
-            '--outcome' => 'commit', '--actor-user-id' => $actorId,
-        ])->assertFailed();
-    }
-
-    public function test_resolution_refuses_a_reservation_younger_than_the_minimum_age(): void
-    {
-        $currencyId = $this->usdCurrencyId();
-        $actorId = $this->createAdminUserId();
-        $fixture = $this->createPendingReservation($currencyId, $actorId, now());
-
-        $this->artisan('usage:resolve-ambiguous-reservation', [
-            'reservation-id' => $fixture['reservation_id'],
-            '--outcome' => 'commit', '--actor-user-id' => $actorId, '--reason' => 'Too soon.',
-        ])->assertFailed();
-
-        $this->assertSame(
-            UsageReservationStatus::Pending->value,
-            DB::table('business_usage_reservations')->where('id', $fixture['reservation_id'])->value('status'),
-        );
-    }
-
-    public function test_resolution_refuses_an_already_terminal_reservation(): void
-    {
-        $currencyId = $this->usdCurrencyId();
-        $actorId = $this->createAdminUserId();
-        $fixture = $this->createPendingReservation($currencyId, $actorId, now()->subMinutes(20));
+        $fixture = $this->createPendingReservation($currencyId, $actorId);
 
         app(UsageWalletManager::class)->commit($fixture['reservation_id']);
 
-        $this->artisan('usage:resolve-ambiguous-reservation', [
+        $this->artisan('usage:resolve-reservation', [
             'reservation-id' => $fixture['reservation_id'],
-            '--outcome' => 'release', '--actor-user-id' => $actorId, '--reason' => 'Test.',
+            '--outcome' => 'not-sent', '--actor-user-id' => $actorId, '--reason' => 'Test.',
         ])->assertFailed();
+
+        $this->assertSame(
+            UsageReservationStatus::Committed->value,
+            DB::table('business_usage_reservations')->where('id', $fixture['reservation_id'])->value('status'),
+        );
     }
 
-    public function test_commit_outcome_commits_the_reservation(): void
+    public function test_check_3_non_conversations_reservation_is_rejected(): void
     {
         $currencyId = $this->usdCurrencyId();
         $actorId = $this->createAdminUserId();
-        $fixture = $this->createPendingReservation($currencyId, $actorId, now()->subMinutes(20));
+        $fixture = $this->createPendingReservation($currencyId, $actorId);
 
-        $this->artisan('usage:resolve-ambiguous-reservation', [
+        DB::table('business_usage_reservations')->where('id', $fixture['reservation_id'])->update(['feature_key' => 'crm']);
+
+        $this->artisan('usage:resolve-reservation', [
             'reservation-id' => $fixture['reservation_id'],
-            '--outcome' => 'commit', '--actor-user-id' => $actorId, '--reason' => 'Confirmed delivered upstream.',
+            '--outcome' => 'sent', '--actor-user-id' => $actorId, '--reason' => 'Test.',
+        ])->assertFailed();
+
+        $this->assertSame(
+            UsageReservationStatus::Pending->value,
+            DB::table('business_usage_reservations')->where('id', $fixture['reservation_id'])->value('status'),
+        );
+    }
+
+    public function test_check_4_non_admin_actor_is_rejected(): void
+    {
+        $currencyId = $this->usdCurrencyId();
+        $actorId = $this->createAdminUserId();
+        $fixture = $this->createPendingReservation($currencyId, $actorId);
+        $nonAdminId = $this->createNonAdminUserId();
+
+        $this->artisan('usage:resolve-reservation', [
+            'reservation-id' => $fixture['reservation_id'],
+            '--outcome' => 'sent', '--actor-user-id' => $nonAdminId, '--reason' => 'Test.',
+        ])->assertFailed();
+
+        $this->assertSame(
+            UsageReservationStatus::Pending->value,
+            DB::table('business_usage_reservations')->where('id', $fixture['reservation_id'])->value('status'),
+        );
+    }
+
+    public function test_check_5_empty_reason_is_rejected(): void
+    {
+        $currencyId = $this->usdCurrencyId();
+        $actorId = $this->createAdminUserId();
+        $fixture = $this->createPendingReservation($currencyId, $actorId);
+
+        $this->artisan('usage:resolve-reservation', [
+            'reservation-id' => $fixture['reservation_id'],
+            '--outcome' => 'sent', '--actor-user-id' => $actorId,
+        ])->assertFailed();
+
+        $this->assertSame(
+            UsageReservationStatus::Pending->value,
+            DB::table('business_usage_reservations')->where('id', $fixture['reservation_id'])->value('status'),
+        );
+    }
+
+    public function test_check_6_different_business_than_currently_configured_pilot_is_rejected(): void
+    {
+        $currencyId = $this->usdCurrencyId();
+        $actorId = $this->createAdminUserId();
+        $fixture = $this->createPendingReservation($currencyId, $actorId);
+
+        // Re-point the pilot config at a different Business after the
+        // reservation was created — the reservation's own persisted
+        // business_id no longer matches the currently-configured pilot.
+        config(['usage_billing.conversations_metering.pilot_business_id' => 999999]);
+
+        $this->artisan('usage:resolve-reservation', [
+            'reservation-id' => $fixture['reservation_id'],
+            '--outcome' => 'sent', '--actor-user-id' => $actorId, '--reason' => 'Test.',
+        ])->assertFailed();
+
+        $this->assertSame(
+            UsageReservationStatus::Pending->value,
+            DB::table('business_usage_reservations')->where('id', $fixture['reservation_id'])->value('status'),
+        );
+    }
+
+    public function test_invalid_outcome_value_is_rejected(): void
+    {
+        $currencyId = $this->usdCurrencyId();
+        $actorId = $this->createAdminUserId();
+        $fixture = $this->createPendingReservation($currencyId, $actorId);
+
+        $this->artisan('usage:resolve-reservation', [
+            'reservation-id' => $fixture['reservation_id'],
+            '--outcome' => 'maybe', '--actor-user-id' => $actorId, '--reason' => 'Test.',
+        ])->assertFailed();
+
+        $this->assertSame(
+            UsageReservationStatus::Pending->value,
+            DB::table('business_usage_reservations')->where('id', $fixture['reservation_id'])->value('status'),
+        );
+    }
+
+    public function test_sent_outcome_commits_the_reservation(): void
+    {
+        $currencyId = $this->usdCurrencyId();
+        $actorId = $this->createAdminUserId();
+        $fixture = $this->createPendingReservation($currencyId, $actorId);
+
+        $this->artisan('usage:resolve-reservation', [
+            'reservation-id' => $fixture['reservation_id'],
+            '--outcome' => 'sent', '--actor-user-id' => $actorId, '--reason' => 'Confirmed delivered upstream.',
         ])->expectsConfirmation('Apply this resolution?', 'yes')->assertSuccessful();
 
         $this->assertSame(
@@ -174,15 +224,15 @@ class ResolveAmbiguousUsageReservationCommandTest extends TestCase
         );
     }
 
-    public function test_release_outcome_releases_the_reservation(): void
+    public function test_not_sent_outcome_releases_the_reservation(): void
     {
         $currencyId = $this->usdCurrencyId();
         $actorId = $this->createAdminUserId();
-        $fixture = $this->createPendingReservation($currencyId, $actorId, now()->subMinutes(20));
+        $fixture = $this->createPendingReservation($currencyId, $actorId);
 
-        $this->artisan('usage:resolve-ambiguous-reservation', [
+        $this->artisan('usage:resolve-reservation', [
             'reservation-id' => $fixture['reservation_id'],
-            '--outcome' => 'release', '--actor-user-id' => $actorId, '--reason' => 'Confirmed never sent.',
+            '--outcome' => 'not-sent', '--actor-user-id' => $actorId, '--reason' => 'Confirmed never sent.',
         ])->expectsConfirmation('Apply this resolution?', 'yes')->assertSuccessful();
 
         $this->assertSame(

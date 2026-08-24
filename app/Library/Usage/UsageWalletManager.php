@@ -245,7 +245,15 @@ class UsageWalletManager
 
         $shouldDispatchAutoRecharge = false;
 
-        $result = DB::transaction(function () use ($business, $featureKey, $idempotencyKey, $estimatedQuantity, &$shouldDispatchAutoRecharge) {
+        // RFC-005 Milestone 5 §3.8 correction — the race-loser catch must
+        // surround DB::transaction() itself, not sit inside the closure.
+        // DB::transaction() rolls the losing transaction back completely
+        // (and rethrows) before this catch ever runs, so the narrow
+        // constraint-name match and refetch below only ever happen against
+        // a fully-closed transaction — never while the loser's own
+        // transaction is still open.
+        try {
+            $result = DB::transaction(function () use ($business, $featureKey, $idempotencyKey, $estimatedQuantity, &$shouldDispatchAutoRecharge) {
             $wallet = $this->walletRepository->findForUpdateByBusinessId($business->id);
 
             if ($wallet === null) {
@@ -311,45 +319,30 @@ class UsageWalletManager
             // (business_usage_reservations_idempotency_key_unique). Two
             // concurrent invocations racing the same key can both pass the
             // pre-transaction findByIdempotencyKey() read above; only one
-            // of them can win this insert. The loser's own transaction
-            // rolls back automatically on the exception, then refetches
-            // the winner's already-committed row rather than retrying the
-            // write — never a second reservation, never a second provider
-            // call (the caller only proceeds to the provider when
-            // createdByThisInvocation is true).
-            try {
-                $reservation = $this->reservationRepository->create([
-                    'business_id' => $business->id,
-                    'wallet_id' => $wallet->id,
-                    'feature_key' => $meter->feature_key,
-                    'meter_key' => $meter->meter_key,
-                    'period_key' => $wallet->spend_period_key,
-                    'status' => UsageReservationStatus::Pending->value,
-                    'reserved_amount_micro' => $reservedAmountMicro,
-                    'estimated_quantity' => $quantity,
-                    'rate_id' => $rate->id,
-                    'rate_version' => $rate->version,
-                    'retail_rate_micro' => $rate->retail_rate_micro,
-                    'provider_cost_micro' => $rate->provider_cost_micro,
-                    'rounding_rule' => $rate->rounding_rule->value,
-                    'idempotency_key' => $idempotencyKey,
-                    'correlation_key' => $idempotencyKey,
-                    'reserved_at' => $reservedAt,
-                    'expires_at' => $reservedAt->clone()->addMinutes(self::RESERVATION_TTL_MINUTES),
-                ]);
-            } catch (UniqueConstraintViolationException $e) {
-                if (! $this->isDuplicateRace($e, 'business_usage_reservations_idempotency_key_unique')) {
-                    throw $e;
-                }
-
-                $winner = $this->reservationRepository->findByIdempotencyKey($idempotencyKey);
-
-                if ($winner === null) {
-                    throw $e;
-                }
-
-                return new ReservationResult(true, $winner->id, null, false);
-            }
+            // of them can win this insert. The loser lets this exception
+            // propagate out of the transaction closure — no provider call
+            // may ever be reachable from inside this still-open
+            // transaction — and is handled only after DB::transaction()
+            // below has fully rolled it back (outer try/catch).
+            $reservation = $this->reservationRepository->create([
+                'business_id' => $business->id,
+                'wallet_id' => $wallet->id,
+                'feature_key' => $meter->feature_key,
+                'meter_key' => $meter->meter_key,
+                'period_key' => $wallet->spend_period_key,
+                'status' => UsageReservationStatus::Pending->value,
+                'reserved_amount_micro' => $reservedAmountMicro,
+                'estimated_quantity' => $quantity,
+                'rate_id' => $rate->id,
+                'rate_version' => $rate->version,
+                'retail_rate_micro' => $rate->retail_rate_micro,
+                'provider_cost_micro' => $rate->provider_cost_micro,
+                'rounding_rule' => $rate->rounding_rule->value,
+                'idempotency_key' => $idempotencyKey,
+                'correlation_key' => $idempotencyKey,
+                'reserved_at' => $reservedAt,
+                'expires_at' => $reservedAt->clone()->addMinutes(self::RESERVATION_TTL_MINUTES),
+            ]);
 
             $this->ledgerRepository->create([
                 'business_id' => $business->id,
@@ -385,7 +378,20 @@ class UsageWalletManager
             ]);
 
             return new ReservationResult(true, $reservation->id, null, true);
-        });
+            });
+        } catch (UniqueConstraintViolationException $e) {
+            if (! $this->isDuplicateRace($e, 'business_usage_reservations_idempotency_key_unique')) {
+                throw $e;
+            }
+
+            $winner = $this->reservationRepository->findByIdempotencyKey($idempotencyKey);
+
+            if ($winner === null) {
+                throw $e;
+            }
+
+            return new ReservationResult(true, $winner->id, null, false);
+        }
 
         if ($shouldDispatchAutoRecharge) {
             EvaluateBusinessAutoRecharge::dispatch((int) $business->id);

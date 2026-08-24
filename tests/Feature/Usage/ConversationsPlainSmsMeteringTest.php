@@ -196,22 +196,252 @@ class ConversationsPlainSmsMeteringTest extends TestCase
     }
 
     /**
-     * M5 contract §3.5 — the null-primaryBusiness precondition: a sending
-     * Customer with zero Businesses at all (never onboarded past the
-     * account step) must resolve to "not eligible for M5 metering" cleanly
-     * — never an exception, never a fallback guess — exactly like the
-     * multi-Business-Workspace case, so quickSend() always falls through to
-     * 100% legacy sms_unit billing for that Customer.
+     * M5 contract §3.5 — the null-primaryBusiness precondition query
+     * (§3.5's own "count of Customers with a chat_boxes row whose
+     * customer->primaryBusiness is null") run against the raw resolution
+     * primitive: a Customer with zero Businesses at all resolves to null,
+     * as required by both the fail-closed §6 step 1 handling and the
+     * step-0 key-namespacing resolution — never an exception.
      */
-    public function test_resolve_pilot_eligible_business_returns_null_when_customer_has_no_primary_business(): void
+    public function test_resolve_primary_business_returns_null_when_customer_has_no_primary_business(): void
     {
         $customer = $this->createCustomer();
 
-        $method = new \ReflectionMethod(\App\Repositories\Eloquent\EloquentCampaignRepository::class, 'resolvePilotEligibleBusiness');
+        $method = new \ReflectionMethod(\App\Repositories\Eloquent\EloquentCampaignRepository::class, 'resolvePrimaryBusiness');
         $method->setAccessible(true);
 
         $result = $method->invoke(app(\App\Repositories\Eloquent\EloquentCampaignRepository::class), $customer->user_id);
 
         $this->assertNull($result);
+    }
+
+    /**
+     * M5 contract §3.5/§6 step 1 — a null primaryBusiness is a
+     * fail-closed case, distinct from the multi-Business-Workspace case:
+     * it must deny the send outright (m5_token_action: retain, no
+     * reservation created, no legacy fallback), never silently downgrade
+     * to legacy sms_unit billing the way a genuinely non-qualifying
+     * (e.g. multi-Business) send does.
+     */
+    public function test_qualify_reservation_fails_closed_when_primary_business_is_null(): void
+    {
+        $customer = $this->createCustomer();
+        $user = \App\Models\User::find($customer->user_id);
+
+        $method = new \ReflectionMethod(\App\Repositories\Eloquent\EloquentCampaignRepository::class, 'qualifyConversationsMeterReservation');
+        $method->setAccessible(true);
+
+        $result = $method->invoke(
+            app(\App\Repositories\Eloquent\EloquentCampaignRepository::class),
+            $user,
+            null,
+            null,
+            '1',
+            (string) \Illuminate\Support\Str::uuid(),
+        );
+
+        $this->assertFalse($result['qualifies']);
+        $this->assertNotNull($result['response']);
+        $this->assertSame('retain', $result['response']->getData()->m5_token_action);
+        $this->assertSame(0, DB::table('business_usage_reservations')->count());
+    }
+
+    /**
+     * M5 contract §3.3/§10/§12 — EntitlementManager::decide() remains the
+     * feature-availability/plan-entitlement authority (Amendment 1 only
+     * decoupled wallet health from this decision, it did not remove the
+     * decision itself). A Workspace with no plan assignment at all (the
+     * natural default of the fixture helper below, with no override
+     * granted) is denied, creating zero reservation and never qualifying
+     * — proving entitlement denial is independent of, and evaluated
+     * before, wallet/meter state.
+     */
+    public function test_entitlement_denial_prevents_reservation_creation(): void
+    {
+        $pilot = $this->provisionPilot();
+        $pilotBusinessId = $pilot['business']->id;
+
+        $country = \App\Models\Country::firstOrCreate(
+            ['country_code' => '1', 'iso_code' => 'US'],
+            ['name' => 'United States', 'status' => 1],
+        );
+
+        $sendingServer = \App\Models\SendingServer::create([
+            'name' => 'M5 Test Twilio Server',
+            'settings' => \App\Models\SendingServer::TYPE_TWILIO,
+            'status' => true,
+            'plain' => true,
+            'account_sid' => 'ACtest',
+            'auth_token' => 'authtest',
+        ]);
+
+        config([
+            'usage_billing.conversations_metering.pilot_business_id' => $pilotBusinessId,
+            'usage_billing.conversations_metering.pilot_country_id' => $country->id,
+            'usage_billing.conversations_metering.pilot_sending_server_id' => $sendingServer->id,
+        ]);
+
+        $user = \App\Models\User::find($pilot['business']->customer_id);
+
+        $method = new \ReflectionMethod(\App\Repositories\Eloquent\EloquentCampaignRepository::class, 'qualifyConversationsMeterReservation');
+        $method->setAccessible(true);
+
+        $result = $method->invoke(
+            app(\App\Repositories\Eloquent\EloquentCampaignRepository::class),
+            $user,
+            $country,
+            $sendingServer,
+            '1',
+            (string) \Illuminate\Support\Str::uuid(),
+        );
+
+        $this->assertFalse($result['qualifies']);
+        $this->assertNotNull($result['response']);
+        $this->assertSame('retain', $result['response']->getData()->m5_token_action);
+        $this->assertSame('workspace_plan_unassigned', $result['response']->getData()->message);
+        $this->assertSame(0, DB::table('business_usage_reservations')->count());
+    }
+
+    /**
+     * M5 contract §6.1 — business-namespaced (never user-namespaced) key
+     * derivation: the identical raw client token produces two distinct
+     * derived keys under two different Businesses, and (mechanically, by
+     * construction) Business B's step-0 lookup can never resolve Business
+     * A's reservation for that shared raw token.
+     */
+    public function test_idempotency_key_is_business_namespaced_and_isolated_across_businesses(): void
+    {
+        $pilotA = $this->provisionPilot();
+        $customerB = $this->createCustomer();
+        $businessB = $this->createBusinessWithWorkspace($customerB, $this->businessAttributes(['currency_code' => 'M5T']));
+
+        $method = new \ReflectionMethod(\App\Repositories\Eloquent\EloquentCampaignRepository::class, 'conversationsIdempotencyKey');
+        $method->setAccessible(true);
+        $repository = app(\App\Repositories\Eloquent\EloquentCampaignRepository::class);
+
+        $rawToken = (string) \Illuminate\Support\Str::uuid();
+        $keyA = $method->invoke($repository, $pilotA['business']->id, $rawToken);
+        $keyB = $method->invoke($repository, $businessB->id, $rawToken);
+
+        $this->assertNotSame($keyA, $keyB);
+
+        // A reservation created under Business A's derived key must not be
+        // resolvable via Business B's own derived key for the identical
+        // raw token.
+        $manager = app(UsageWalletManager::class);
+        $result = $manager->reserve($pilotA['business'], $pilotA['meter_key'], $keyA, '1');
+        $this->assertTrue($result->createdByThisInvocation);
+
+        $this->assertNull(app(\App\Repositories\Contracts\BusinessUsageReservationRepository::class)->findByIdempotencyKey($keyB));
+    }
+
+    /**
+     * M5 contract §6 step 4 case E — a wallet-capacity denial from
+     * reserve() creates no reservation row, so the client token must be
+     * retained (never cleared) for a legitimate later retry once the
+     * underlying denial is resolved. Driven through a fully-qualifying
+     * pilot tuple fixture so qualifyConversationsMeterReservation()'s own
+     * wallet-denial branch (reached only once every earlier tuple/meter/
+     * entitlement check has passed) is exercised end-to-end.
+     */
+    public function test_qualify_reservation_wallet_denial_retains_the_token_end_to_end(): void
+    {
+        $pilot = $this->provisionPilot(availableBalanceMicro: 0);
+        $pilotBusinessId = $pilot['business']->id;
+
+        // Grant Conversations entitlement directly via an explicit
+        // workspace override, sidestepping any plan-catalog fixture
+        // depth — this test's own concern is the wallet-denial branch
+        // reached only after entitlement already passed, not entitlement
+        // itself (covered separately).
+        app(\App\Repositories\Contracts\WorkspaceEntitlementOverrideRepository::class)->create([
+            'workspace_id' => $pilot['business']->workspace_id,
+            'feature_key' => \App\Enums\Entitlement\PlatformFeature::Conversations->value,
+            'state' => \App\Enums\Entitlement\WorkspaceEntitlementOverrideState::Allow->value,
+            'reason' => 'Fixture grant.',
+            'created_by_user_id' => $this->createActorUserId(),
+        ]);
+
+        $country = \App\Models\Country::firstOrCreate(
+            ['country_code' => '1', 'iso_code' => 'US'],
+            ['name' => 'United States', 'status' => 1],
+        );
+
+        $sendingServer = \App\Models\SendingServer::create([
+            'name' => 'M5 Test Twilio Server',
+            'settings' => \App\Models\SendingServer::TYPE_TWILIO,
+            'status' => true,
+            'plain' => true,
+            'account_sid' => 'ACtest',
+            'auth_token' => 'authtest',
+        ]);
+
+        config([
+            'usage_billing.conversations_metering.pilot_business_id' => $pilotBusinessId,
+            'usage_billing.conversations_metering.pilot_country_id' => $country->id,
+            'usage_billing.conversations_metering.pilot_sending_server_id' => $sendingServer->id,
+        ]);
+
+        $user = \App\Models\User::find($pilot['business']->customer_id);
+
+        $method = new \ReflectionMethod(\App\Repositories\Eloquent\EloquentCampaignRepository::class, 'qualifyConversationsMeterReservation');
+        $method->setAccessible(true);
+
+        $result = $method->invoke(
+            app(\App\Repositories\Eloquent\EloquentCampaignRepository::class),
+            $user,
+            $country,
+            $sendingServer,
+            '1',
+            (string) \Illuminate\Support\Str::uuid(),
+        );
+
+        $this->assertFalse($result['qualifies']);
+        $this->assertNotNull($result['response']);
+        $this->assertSame('retain', $result['response']->getData()->m5_token_action);
+        $this->assertSame(0, DB::table('business_usage_reservations')->count());
+    }
+
+    /**
+     * M5 contract §3.9/§6 step 6 — settleConversationsMeterReservation()'s
+     * exact outcome->action mapping: accepted commits and clears,
+     * definitive_rejection releases and clears, ambiguous_exception and an
+     * absent/unrecognized marker both leave the reservation Pending and
+     * retain the token.
+     */
+    public function test_settle_reservation_maps_every_outcome_to_the_locked_action(): void
+    {
+        $method = new \ReflectionMethod(\App\Repositories\Eloquent\EloquentCampaignRepository::class, 'settleConversationsMeterReservation');
+        $method->setAccessible(true);
+        $repository = app(\App\Repositories\Eloquent\EloquentCampaignRepository::class);
+
+        // accepted -> commit, clear
+        $pilot = $this->provisionPilot();
+        $manager = app(UsageWalletManager::class);
+        $reservation = $manager->reserve($pilot['business'], $pilot['meter_key'], 'idem-' . uniqid(), '1');
+        $action = $method->invoke($repository, $reservation->reservationId, $pilot['business']->id, (object) ['m5_outcome' => 'accepted'], '1');
+        $this->assertSame('clear', $action);
+        $this->assertSame('committed', DB::table('business_usage_reservations')->where('id', $reservation->reservationId)->value('status'));
+
+        // definitive_rejection -> release, clear
+        $pilot2 = $this->provisionPilot();
+        $reservation2 = $manager->reserve($pilot2['business'], $pilot2['meter_key'], 'idem-' . uniqid(), '1');
+        $action2 = $method->invoke($repository, $reservation2->reservationId, $pilot2['business']->id, (object) ['m5_outcome' => 'definitive_rejection'], '1');
+        $this->assertSame('clear', $action2);
+        $this->assertSame('released', DB::table('business_usage_reservations')->where('id', $reservation2->reservationId)->value('status'));
+
+        // ambiguous_exception -> leave Pending, retain
+        $pilot3 = $this->provisionPilot();
+        $reservation3 = $manager->reserve($pilot3['business'], $pilot3['meter_key'], 'idem-' . uniqid(), '1');
+        $action3 = $method->invoke($repository, $reservation3->reservationId, $pilot3['business']->id, (object) ['m5_outcome' => 'ambiguous_exception'], '1');
+        $this->assertSame('retain', $action3);
+        $this->assertSame('pending', DB::table('business_usage_reservations')->where('id', $reservation3->reservationId)->value('status'));
+
+        // absent marker -> leave Pending, retain (defensive fallback)
+        $pilot4 = $this->provisionPilot();
+        $reservation4 = $manager->reserve($pilot4['business'], $pilot4['meter_key'], 'idem-' . uniqid(), '1');
+        $action4 = $method->invoke($repository, $reservation4->reservationId, $pilot4['business']->id, (object) [], '1');
+        $this->assertSame('retain', $action4);
+        $this->assertSame('pending', DB::table('business_usage_reservations')->where('id', $reservation4->reservationId)->value('status'));
     }
 }

@@ -484,7 +484,12 @@
                                 $customer_status = ucfirst($get_response->status);
 
                                 if ($data['m5_conversations_usage_tracking'] ?? false) {
-                                    $m5Outcome = 'ambiguous';
+                                    // A genuine, non-throwing provider response
+                                    // explicitly saying "not accepted" is a
+                                    // definitive rejection (M5 contract §3.9) —
+                                    // release the reservation, never leave it
+                                    // ambiguous.
+                                    $m5Outcome = 'definitive_rejection';
                                 }
                             }
 
@@ -493,7 +498,12 @@
                             $customer_status = 'Rejected';
 
                             if ($data['m5_conversations_usage_tracking'] ?? false) {
-                                $m5Outcome = 'rejected';
+                                // A caught provider/config exception leaves
+                                // real acceptance genuinely uncertain (M5
+                                // contract §3.9) — must stay Pending, never
+                                // release, never retry the provider under
+                                // the same token.
+                                $m5Outcome = 'ambiguous_exception';
                             }
                         }
 
@@ -529,7 +539,12 @@
                                 $customer_status = ucfirst($get_response->status);
 
                                 if ($data['m5_conversations_usage_tracking'] ?? false) {
-                                    $m5Outcome = 'ambiguous';
+                                    // A genuine, non-throwing provider response
+                                    // explicitly saying "not accepted" is a
+                                    // definitive rejection (M5 contract §3.9) —
+                                    // release the reservation, never leave it
+                                    // ambiguous.
+                                    $m5Outcome = 'definitive_rejection';
                                 }
                             }
 
@@ -538,7 +553,12 @@
                             $customer_status = 'Rejected';
 
                             if ($data['m5_conversations_usage_tracking'] ?? false) {
-                                $m5Outcome = 'rejected';
+                                // A caught provider/config exception leaves
+                                // real acceptance genuinely uncertain (M5
+                                // contract §3.9) — must stay Pending, never
+                                // release, never retry the provider under
+                                // the same token.
+                                $m5Outcome = 'ambiguous_exception';
                             }
                         }
                         break;
