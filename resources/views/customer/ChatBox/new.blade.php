@@ -145,6 +145,9 @@
                                 <div class="row">
                                     <div class="col-12">
                                         <input type="hidden" name="sms_type" value="plain">
+                                        {{-- RFC-005 Milestone 5 §6.1 — controller-passed token (fresh, or the
+                                             same one on a 'retain' retry), never minted inline here. --}}
+                                        <input type="hidden" name="idempotency_token" value="{{ $idempotencyToken }}">
                                         <button type="submit" class="btn btn-primary mr-1 mb-1 float-end">
                                             <i data-feather="send"></i> {{__('locale.buttons.send')}}
                                         </button>

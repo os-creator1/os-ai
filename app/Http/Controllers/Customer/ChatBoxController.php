@@ -131,7 +131,18 @@
             $sendingServers = CustomerBasedSendingServer::where('user_id', auth()->user()->id)->where('status', 1)->get();
             $templates      = Templates::where('status', true)->where('user_id', auth()->user()->id)->get();
 
-            return view('customer.ChatBox.new', compact('breadcrumbs', 'phone_numbers', 'coverage', 'sendingServers', 'templates'));
+            // RFC-005 Milestone 5 §6.1 — a genuinely new compose gets a
+            // fresh, independent idempotency token; a retry redirect
+            // carrying ?m5_retry_token=<uuid> (set only by sent()'s own
+            // 'retain' decision below) reuses that exact same token
+            // instead, so the retried POST resolves against the same
+            // still-open reservation rather than starting a new one.
+            $retryToken = request()->query('m5_retry_token');
+            $idempotencyToken = (is_string($retryToken) && preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i', $retryToken) === 1)
+                ? $retryToken
+                : (string) \Illuminate\Support\Str::uuid();
+
+            return view('customer.ChatBox.new', compact('breadcrumbs', 'phone_numbers', 'coverage', 'sendingServers', 'templates', 'idempotencyToken'));
         }
 
         /**
@@ -287,9 +298,22 @@
 
             $input['reply_by_customer'] = true;
 
-            $data = $this->campaigns->quickSend($campaign, $input);
+            $data = $this->campaigns->quickSend($campaign, $input, true);
 
             if (isset($data->getData()->status)) {
+                // RFC-005 Milestone 5 §6.1 — 'retain' redirects back to
+                // the compose screen carrying the exact same token, so a
+                // legitimate follow-up retry resolves against the same
+                // still-open reservation; 'clear' (or no m5_token_action
+                // at all, e.g. a fully legacy send) uses the existing,
+                // unmodified index redirect with no such parameter.
+                if (($data->getData()->m5_token_action ?? 'clear') === 'retain') {
+                    return redirect()->route('customer.chatbox.new', ['m5_retry_token' => $input['idempotency_token'] ?? null])->with([
+                        'status'  => $data->getData()->status,
+                        'message' => $data->getData()->message,
+                    ]);
+                }
+
                 return redirect()->route('customer.chatbox.index')->with([
                     'status'  => $data->getData()->status,
                     'message' => $data->getData()->message,
@@ -402,6 +426,18 @@ if (!$box) {
                 'user'         => $user,
             ];
 
+            // RFC-005 Milestone 5 §7 — reply() has no dedicated Form
+            // Request (unlike sent()/SentRequest), so the idempotency
+            // token is read and validated inline. A missing/invalid
+            // token simply means this reply is not eligible for M5
+            // metering — quickSend()'s own step-0/qualifying-chain
+            // treats an absent token as "not qualifying", never an error.
+            $replyIdempotencyToken = $request->input('idempotency_token');
+
+            if (is_string($replyIdempotencyToken) && preg_match('/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i', $replyIdempotencyToken) === 1) {
+                $input['idempotency_token'] = $replyIdempotencyToken;
+            }
+
             if ($request->hasFile('media_image')) {
 
                 $v = Validator::make($request->all(), [
@@ -486,9 +522,9 @@ if (!$box) {
         $input['recipient']    = $phoneNumberObject->getNationalNumber();
         $input['region_code']  = $regionCode;
 
-        $data = $this->campaigns->quickSend($campaign, $input);
-        
-        
+        $data = $this->campaigns->quickSend($campaign, $input, true);
+
+
         \Log::info('CHATBOX QUICKSEND RESPONSE', [
     'response' => $data->getData()
 ]);

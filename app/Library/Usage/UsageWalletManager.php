@@ -43,6 +43,7 @@ use App\Repositories\Contracts\WorkspaceMembershipBusinessRepository;
 use App\Repositories\Contracts\WorkspaceMembershipRepository;
 use App\Jobs\Usage\EvaluateBusinessAutoRecharge;
 use Illuminate\Database\QueryException;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -239,7 +240,7 @@ class UsageWalletManager
         $existing = $this->reservationRepository->findByIdempotencyKey($idempotencyKey);
 
         if ($existing !== null) {
-            return new ReservationResult(true, $existing->id, null);
+            return new ReservationResult(true, $existing->id, null, false);
         }
 
         $shouldDispatchAutoRecharge = false;
@@ -292,38 +293,63 @@ class UsageWalletManager
             );
 
             if ($wallet->billing_status === WalletBillingStatus::Suspended) {
-                return new ReservationResult(false, null, 'wallet_suspended');
+                return new ReservationResult(false, null, 'wallet_suspended', false);
             }
 
             if ($wallet->debt_balance_micro > 0) {
-                return new ReservationResult(false, null, 'outstanding_debt');
+                return new ReservationResult(false, null, 'outstanding_debt', false);
             }
 
             if ($wallet->available_balance_micro < $reservedAmountMicro) {
-                return new ReservationResult(false, null, 'insufficient_balance');
+                return new ReservationResult(false, null, 'insufficient_balance', false);
             }
 
             $reservedAt = Carbon::now();
 
-            $reservation = $this->reservationRepository->create([
-                'business_id' => $business->id,
-                'wallet_id' => $wallet->id,
-                'feature_key' => $meter->feature_key,
-                'meter_key' => $meter->meter_key,
-                'period_key' => $wallet->spend_period_key,
-                'status' => UsageReservationStatus::Pending->value,
-                'reserved_amount_micro' => $reservedAmountMicro,
-                'estimated_quantity' => $quantity,
-                'rate_id' => $rate->id,
-                'rate_version' => $rate->version,
-                'retail_rate_micro' => $rate->retail_rate_micro,
-                'provider_cost_micro' => $rate->provider_cost_micro,
-                'rounding_rule' => $rate->rounding_rule->value,
-                'idempotency_key' => $idempotencyKey,
-                'correlation_key' => $idempotencyKey,
-                'reserved_at' => $reservedAt,
-                'expires_at' => $reservedAt->clone()->addMinutes(self::RESERVATION_TTL_MINUTES),
-            ]);
+            // RFC-005 Milestone 5 §3.8/§6 widening: idempotencyKey carries
+            // a real database UNIQUE constraint
+            // (business_usage_reservations_idempotency_key_unique). Two
+            // concurrent invocations racing the same key can both pass the
+            // pre-transaction findByIdempotencyKey() read above; only one
+            // of them can win this insert. The loser's own transaction
+            // rolls back automatically on the exception, then refetches
+            // the winner's already-committed row rather than retrying the
+            // write — never a second reservation, never a second provider
+            // call (the caller only proceeds to the provider when
+            // createdByThisInvocation is true).
+            try {
+                $reservation = $this->reservationRepository->create([
+                    'business_id' => $business->id,
+                    'wallet_id' => $wallet->id,
+                    'feature_key' => $meter->feature_key,
+                    'meter_key' => $meter->meter_key,
+                    'period_key' => $wallet->spend_period_key,
+                    'status' => UsageReservationStatus::Pending->value,
+                    'reserved_amount_micro' => $reservedAmountMicro,
+                    'estimated_quantity' => $quantity,
+                    'rate_id' => $rate->id,
+                    'rate_version' => $rate->version,
+                    'retail_rate_micro' => $rate->retail_rate_micro,
+                    'provider_cost_micro' => $rate->provider_cost_micro,
+                    'rounding_rule' => $rate->rounding_rule->value,
+                    'idempotency_key' => $idempotencyKey,
+                    'correlation_key' => $idempotencyKey,
+                    'reserved_at' => $reservedAt,
+                    'expires_at' => $reservedAt->clone()->addMinutes(self::RESERVATION_TTL_MINUTES),
+                ]);
+            } catch (UniqueConstraintViolationException $e) {
+                if (! $this->isDuplicateRace($e, 'business_usage_reservations_idempotency_key_unique')) {
+                    throw $e;
+                }
+
+                $winner = $this->reservationRepository->findByIdempotencyKey($idempotencyKey);
+
+                if ($winner === null) {
+                    throw $e;
+                }
+
+                return new ReservationResult(true, $winner->id, null, false);
+            }
 
             $this->ledgerRepository->create([
                 'business_id' => $business->id,
@@ -358,7 +384,7 @@ class UsageWalletManager
                 'reserved_spend_this_period_micro' => $wallet->reserved_spend_this_period_micro + $reservedAmountMicro,
             ]);
 
-            return new ReservationResult(true, $reservation->id, null);
+            return new ReservationResult(true, $reservation->id, null, true);
         });
 
         if ($shouldDispatchAutoRecharge) {

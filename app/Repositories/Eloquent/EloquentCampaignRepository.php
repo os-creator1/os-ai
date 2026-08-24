@@ -6,6 +6,7 @@
     use App\Library\SMSCounter;
     use App\Library\SpinText;
     use App\Library\Tool;
+    use App\Library\Usage\UsageWalletManager;
     use App\Models\Blacklists;
     use App\Models\BlockSenderId;
     use App\Models\Campaigns;
@@ -30,7 +31,11 @@
     use App\Models\TrackingLog;
     use App\Models\User;
     use App\Notifications\SendCampaignCopy;
+    use App\Repositories\Contracts\BusinessUsageReservationRepository;
+    use App\Repositories\Contracts\BusinessUsageWalletRepository;
     use App\Repositories\Contracts\CampaignRepository;
+    use App\Repositories\Contracts\UsageMeterRepository;
+    use App\Enums\Usage\UsageReservationStatus;
     use Carbon\Carbon;
     use Exception;
     use Illuminate\Http\JsonResponse;
@@ -42,6 +47,34 @@
 
     class EloquentCampaignRepository extends EloquentBaseRepository implements CampaignRepository
     {
+        /**
+         * RFC-005 Milestone 5 — resolved lazily via app() inside the one
+         * new guard-chain region only (§7/§9 of
+         * docs/automation/RFC-005-M5-CONTRACT.md), never eagerly in the
+         * constructor: every other quickSend() caller (bulk Quick Send,
+         * contact-group welcome SMS, DLR auto-reply, third-party API)
+         * never exercises this path, and this repository's own
+         * constructor otherwise takes no dependency beyond Campaigns.
+         */
+        private function usageWalletManager(): UsageWalletManager
+        {
+            return app(UsageWalletManager::class);
+        }
+
+        private function usageMeterRepository(): UsageMeterRepository
+        {
+            return app(UsageMeterRepository::class);
+        }
+
+        private function usageReservationRepository(): BusinessUsageReservationRepository
+        {
+            return app(BusinessUsageReservationRepository::class);
+        }
+
+        private function usageWalletRepository(): BusinessUsageWalletRepository
+        {
+            return app(BusinessUsageWalletRepository::class);
+        }
 
         /**
          * EloquentCampaignRepository constructor.
@@ -57,7 +90,7 @@
          *
          * @throws Throwable
          */
-        public function quickSend(Campaigns $campaign, array $input): JsonResponse
+        public function quickSend(Campaigns $campaign, array $input, bool $conversationContext = false): JsonResponse
         {
 
             $user        = $input['user'];
@@ -68,6 +101,19 @@
             $message = null;
             if (isset($input['message'])) {
                 $message = $input['message'];
+            }
+
+            // RFC-005 Milestone 5 §6 step 0 — same-token pre-check, strictly
+            // before any qualifying-tuple evaluation or legacy fallback.
+            // Only ever reached for a trusted Conversation-context call
+            // carrying a client idempotency token; every other caller
+            // (conversationContext defaults false) skips this unchanged.
+            if ($conversationContext && ($sms_type === 'plain' || $sms_type === 'unicode') && ! empty($input['idempotency_token'])) {
+                $existingResponse = $this->resolveExistingConversationsReservation((int) $user->id, (string) $input['idempotency_token']);
+
+                if ($existingResponse !== null) {
+                    return $existingResponse;
+                }
             }
 
             $country = Country::where('country_code', $input['country_code'])
@@ -298,14 +344,47 @@
 
             $data = null;
 
+            // RFC-005 Milestone 5 §5.1/§9 — full qualifying-send guard
+            // chain, evaluated only for a trusted Conversation-context
+            // plain/unicode send that did not already resolve via step 0
+            // above. Any failed condition (or $conversationContext being
+            // false, the default for every non-ChatBox caller) leaves
+            // $m5 null and the switch below falls through to the
+            // completely unmodified legacy dispatch — zero new branches,
+            // zero new queries, zero new columns written for a
+            // non-qualifying send.
+            $m5 = null;
+
+            if ($conversationContext && ($sms_type === 'plain' || $sms_type === 'unicode')) {
+                $m5 = $this->qualifyConversationsMeterReservation(
+                    $user,
+                    $country,
+                    $sending_server,
+                    (string) $sms_count,
+                    $input['idempotency_token'] ?? null,
+                );
+
+                if ($m5 !== null && $m5['response'] !== null) {
+                    return $m5['response'];
+                }
+            }
+
             switch ($sms_type) {
                 case 'plain':
                 case 'unicode':
+                    if ($m5 !== null && $m5['qualifies']) {
+                        $preparedData['m5_conversations_usage_tracking'] = true;
+                    }
+
                     $data = $campaign->sendPlainSMS($preparedData);
-                    
+
                     \Log::info('QUICKSEND PROVIDER RESPONSE', [
     'response' => json_encode($data)
 ]);
+
+                    if ($m5 !== null && $m5['qualifies']) {
+                        $this->settleConversationsMeterReservation($m5['reservation_id'], $data, (string) $sms_count);
+                    }
                     break;
 
                 case 'voice':
@@ -351,7 +430,14 @@
 
             if (is_object($data) && ! empty($data->status)) {
                 if (substr_count($data->status, 'Delivered') == 1) {
-                    if ($user->sms_unit != '-1') {
+                    // RFC-005 Milestone 5 §H — charging exclusivity: a
+                    // qualifying M5 send already charged the RFC-005
+                    // wallet via settleConversationsMeterReservation()
+                    // above; legacy sms_unit must not also be decremented
+                    // for that same send. Every non-qualifying send
+                    // ($m5 === null or $m5['qualifies'] === false) keeps
+                    // this exact, unmodified legacy deduction.
+                    if ($user->sms_unit != '-1' && ! ($m5 !== null && $m5['qualifies'])) {
                         DB::transaction(function () use ($user, $price) {
                             $remaining_balance = $user->sms_unit - $price;
                             $user->update(['sms_unit' => $remaining_balance]);
@@ -417,6 +503,210 @@
                 'status'  => 'info',
                 'message' => __('locale.exceptions.something_went_wrong'),
             ]);
+        }
+
+        /**
+         * RFC-005 Milestone 5 §5.4.1's business-namespaced idempotency
+         * key derivation, shared by both the step-0 pre-check and the
+         * qualifying-tuple reservation attempt below.
+         */
+        private function conversationsIdempotencyKey(int $userId, string $idempotencyToken): string
+        {
+            return 'conversations:' . $userId . ':' . $idempotencyToken;
+        }
+
+        /**
+         * RFC-005 Milestone 5 §6 step 0. Returns a terminal JsonResponse
+         * if an existing reservation already governs this exact token —
+         * Committed/Pending/Released/Expired each get their own locked
+         * response, with zero provider call, regardless of what the
+         * current request's payload now says. Returns null only when no
+         * reservation exists yet for this key, letting the qualifying-
+         * send chain run for a genuinely new attempt.
+         */
+        private function resolveExistingConversationsReservation(int $userId, string $idempotencyToken): ?JsonResponse
+        {
+            $business = $this->resolvePilotEligibleBusiness($userId);
+
+            if ($business === null) {
+                return null;
+            }
+
+            $key = $this->conversationsIdempotencyKey($userId, $idempotencyToken);
+            $reservation = $this->usageReservationRepository()->findByIdempotencyKey($key);
+
+            if ($reservation === null) {
+                return null;
+            }
+
+            return match ($reservation->status) {
+                UsageReservationStatus::Committed => response()->json([
+                    'status' => 'success',
+                    'message' => __('locale.campaigns.message_successfully_delivered'),
+                    'm5_token_action' => 'clear',
+                ]),
+                UsageReservationStatus::Pending => response()->json([
+                    'status' => 'processing',
+                    'message' => 'Your previous message is still being sent.',
+                    'm5_token_action' => 'retain',
+                ]),
+                default => response()->json([
+                    'status' => 'error',
+                    'message' => 'That send did not complete. Please try again.',
+                    'm5_token_action' => 'clear',
+                ]),
+            };
+        }
+
+        /**
+         * RFC-005 Milestone 5 §3.5 — Business attribution, narrowed:
+         * primaryBusiness() only, requiring the sending Customer's
+         * Workspace to own exactly one Business. Never guesses across a
+         * multi-Business Workspace, and never falls back to any other
+         * resolution. Returns null on any unresolvable/ambiguous case —
+         * every caller treats null as "not eligible for M5 metering",
+         * never as an error.
+         */
+        private function resolvePilotEligibleBusiness(int $userId): ?\App\Models\Business
+        {
+            $user = User::with('customer.primaryBusiness.workspace')->find($userId);
+            $business = $user?->customer?->primaryBusiness;
+
+            if ($business === null) {
+                return null;
+            }
+
+            if ($business->workspace === null || $business->workspace->businesses()->count() !== 1) {
+                return null;
+            }
+
+            return $business;
+        }
+
+        /**
+         * RFC-005 Milestone 5 §5.1/§3.14 — the full 13-condition qualifying
+         * chain, plus (if every condition holds) the actual reserve()
+         * call. Returns null when $conversationContext's own plain/
+         * unicode gate already failed before this is called (never
+         * reached in that case). Returns an array with:
+         *  - 'response': non-null JsonResponse to return immediately
+         *    (a wallet-state denial from reserve() itself), or null to
+         *    continue to the provider call;
+         *  - 'qualifies': bool — true only when reserve() itself created
+         *    (or, on a genuine same-key race, resolved to) a usable
+         *    Pending reservation this invocation may act on;
+         *  - 'reservation_id': int|null.
+         */
+        private function qualifyConversationsMeterReservation($user, ?Country $country, ?SendingServer $sendingServer, string $smsCount, ?string $idempotencyToken): ?array
+        {
+            if (empty($idempotencyToken)) {
+                return ['response' => null, 'qualifies' => false, 'reservation_id' => null];
+            }
+
+            $pilotBusinessId = config('usage_billing.conversations_metering.pilot_business_id');
+            $pilotCountryId = config('usage_billing.conversations_metering.pilot_country_id');
+            $pilotSendingServerId = config('usage_billing.conversations_metering.pilot_sending_server_id');
+
+            if ($pilotBusinessId === null || $pilotCountryId === null || $pilotSendingServerId === null) {
+                return ['response' => null, 'qualifies' => false, 'reservation_id' => null];
+            }
+
+            $business = $this->resolvePilotEligibleBusiness((int) $user->id);
+
+            if ($business === null || (int) $business->id !== (int) $pilotBusinessId) {
+                return ['response' => null, 'qualifies' => false, 'reservation_id' => null];
+            }
+
+            if ($country === null || (int) $country->id !== (int) $pilotCountryId) {
+                return ['response' => null, 'qualifies' => false, 'reservation_id' => null];
+            }
+
+            if ($sendingServer === null || (int) $sendingServer->id !== (int) $pilotSendingServerId) {
+                return ['response' => null, 'qualifies' => false, 'reservation_id' => null];
+            }
+
+            if ($sendingServer->settings !== SendingServer::TYPE_TWILIO && $sendingServer->settings !== SendingServer::TYPE_TWILIOCOPILOT) {
+                return ['response' => null, 'qualifies' => false, 'reservation_id' => null];
+            }
+
+            $meterKey = 'conversations.pilot.' . $pilotBusinessId;
+            $meter = $this->usageMeterRepository()->findByMeterKey($meterKey);
+
+            if ($meter === null || ! $meter->is_metered || $meter->active_rate_id === null) {
+                return ['response' => null, 'qualifies' => false, 'reservation_id' => null];
+            }
+
+            if ($meter->business_id !== null && (int) $meter->business_id !== (int) $business->id) {
+                return ['response' => null, 'qualifies' => false, 'reservation_id' => null];
+            }
+
+            $wallet = $this->usageWalletRepository()->findByBusinessId((int) $business->id);
+
+            if ($wallet === null || (int) $meter->currency_id !== (int) $wallet->currency_id) {
+                return ['response' => null, 'qualifies' => false, 'reservation_id' => null];
+            }
+
+            $key = $this->conversationsIdempotencyKey((int) $user->id, $idempotencyToken);
+
+            $result = $this->usageWalletManager()->reserve($business, $meterKey, $key, $smsCount);
+
+            if (! $result->granted) {
+                return [
+                    'response' => response()->json([
+                        'status' => 'error',
+                        'message' => 'Your usage wallet cannot fund this message.',
+                        'm5_token_action' => 'clear',
+                    ]),
+                    'qualifies' => false,
+                    'reservation_id' => null,
+                ];
+            }
+
+            if (! $result->createdByThisInvocation) {
+                // Genuine same-key race: another invocation already won
+                // the insert. This invocation never calls the provider —
+                // resolve exactly as step 0 would for the now-existing row.
+                return [
+                    'response' => $this->resolveExistingConversationsReservation((int) $user->id, $idempotencyToken)
+                        ?? response()->json(['status' => 'processing', 'message' => 'Your message is being sent.', 'm5_token_action' => 'retain']),
+                    'qualifies' => false,
+                    'reservation_id' => null,
+                ];
+            }
+
+            return ['response' => null, 'qualifies' => true, 'reservation_id' => $result->reservationId];
+        }
+
+        /**
+         * RFC-005 Milestone 5 §F — Twilio/TwilioCopilot outcome
+         * classification, read back off the non-persisted marker
+         * SendCampaignSMS::sendPlainSMS() attaches to its returned
+         * Reports row. Accepted commits; definitive rejection releases;
+         * an ambiguous/ unrecognized outcome leaves the reservation
+         * Pending for later manual resolution (§6.2) rather than guessing.
+         */
+        private function settleConversationsMeterReservation(?int $reservationId, $data, string $smsCount): void
+        {
+            if ($reservationId === null) {
+                return;
+            }
+
+            $outcome = is_object($data) ? ($data->m5_outcome ?? null) : null;
+
+            if ($outcome === 'accepted') {
+                $this->usageWalletManager()->commit($reservationId, $smsCount);
+
+                return;
+            }
+
+            if ($outcome === 'rejected') {
+                $this->usageWalletManager()->release($reservationId);
+            }
+
+            // 'ambiguous', or no recognized marker at all: leave Pending.
+            // ExpireStaleUsageReservations (§3.7) and the operator's
+            // ResolveAmbiguousUsageReservation command (§6.2) are the
+            // only mechanisms that ever move it out of that state.
         }
 
         public function campaignBuilder(Campaigns $campaign, array $input): JsonResponse
