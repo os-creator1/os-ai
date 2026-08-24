@@ -1088,6 +1088,24 @@ thrown when Slice 3's own tightening migration finds any row with
 or tightening `NOT NULL` — the fail-closed guarantee, never a
 fabricated backfill.
 
+**A seventh exception exists in this design (Design Correction 2), owned
+entirely by Slice 3's own rollback, in the same separate vocabulary as
+the sixth: `UsageMeterRollbackVersionCollisionException`** (§D, §O
+"Slice 3 rollback" Preflight B). `__construct(string $featureKey, int
+$version, int $collidingRowCount)`, thrown only when Slice 3's rollback's
+own pre-DDL Preflight B finds two or more rows sharing one would-be
+`(feature_key, version)` pair, computed via a read-only join against
+`usage_meters` before `feature_key` is ever re-added — a state the
+meter-local final allocator (§D) can legitimately produce once any two
+sibling meters under one feature have independently reused the same
+version number, and which the sixth exception's Preflight A
+`meter_key`-resolution check does not detect (every `meter_key` there
+resolves correctly; the reconstructed legacy pairing is simply no
+longer unique). Never thrown
+by `reserve()`, `setActiveRate()`, `activateMetering()`, or any other
+request-time path, and never thrown by the forward Slice 3 migration —
+only by its rollback.
+
 ---
 
 ## G. Ledger — exact treatment, revised for meter/rate integrity with an honest nullable-case analysis
@@ -1580,32 +1598,92 @@ document has always specified.
 
 **Slice 3 rollback, restoring Slice 2's schema exactly — which,
 per Design Correction 3, keeps `feature_key` as `NOT NULL`, not
-nullable:**
+nullable. Both rollback preflights (Design Correction 2) run as pure
+queries against the columns Slice 3 already left in place —
+`business_usage_rates.meter_key` / `business_usage_rate_activations.meter_key`
+joined against `usage_meters` — and complete in full, for both tables,
+before any DDL of any kind runs for either table. `feature_key` is not
+re-added, and no existing column or index is altered, until both
+preflights have already passed:**
+
+**Preflight A — meter resolution (both tables, no DDL yet):** for each
+of `business_usage_rates` and `business_usage_rate_activations`
+independently, left-join every row's `meter_key` against
+`usage_meters.meter_key`. If any row's `meter_key` fails to resolve to
+exactly one `usage_meters` row, on **either** table, **the rollback
+fails closed here** — `UsageMeterBackfillIncompleteException($table,
+$unresolvedCount)` naming the actual failing table, zero schema change
+performed anywhere, no value guessed or fabricated. Checking both
+tables here, before any DDL for either, is what prevents the failure
+Design Correction 2 found and removes: `business_usage_rates` can no
+longer be partially restored while `business_usage_rate_activations`'
+own preflight has not yet even run.
+
+**Preflight B — legacy-uniqueness collision (`business_usage_rates`
+only; still no DDL):** `business_usage_rate_activations_feature_key_index`
+is a plain (non-unique) index, so it can always be recreated regardless
+of duplicate values — only `business_usage_rates_feature_key_version_unique`
+can conflict. Using the same join as Preflight A (still no column
+re-added), compute the would-be legacy identity —
+`business_usage_rates.meter_key → usage_meters.meter_key →
+usage_meters.feature_key` — for every row, grouped by that resolved
+`feature_key` plus the row's own `version`. If any group's `COUNT(*) >
+1`, **the rollback fails closed here**, via
+`UsageMeterRollbackVersionCollisionException($featureKey, $version,
+$collidingRowCount)` naming one concrete colliding pair — zero schema
+change performed anywhere (Preflight A already passed with no DDL
+issued; this preflight issues none either), no row renumbered, no
+value fabricated. This is a genuinely possible outcome, not a
+defensive-only edge case — it is the direct, intended consequence of
+Slice 3's own meter-local allocator (§D): once any two sibling meters
+under one `feature_key` have each independently received a rate at the
+same `version` number (legal and expected under `UNIQUE(meter_key,
+version)` alone, impossible to prevent without reintroducing the
+feature-wide allocator Slice 3 deliberately retires), the legacy
+`UNIQUE(feature_key, version)` index can never be recreated over that
+data without violating it. **This makes automatic Slice 3 rollback
+permanently impossible once meter-local version reuse has genuinely
+occurred in production** — the same irreversibility every other
+never-fabricate boundary in this design accepts in exchange for zero
+invented identity; remediation at that point requires a human decision
+entirely outside this migration's scope (e.g. accepting the Slice 3
+schema permanently, or manually renumbering under explicit human
+authority this design does not grant automatically), and is not solved
+here.
+
+**Restoration DDL — reachable only once both preflights above have
+passed for both tables:**
 
 1. Re-add `feature_key` as `VARCHAR(64) NULL` on
    `business_usage_rates`/`business_usage_rate_activations` —
    temporarily nullable, so the column exists before every row is
    repopulated.
-2. Populate it deterministically via an authoritative join:
+2. Populate it deterministically via the same authoritative join
+   already proven resolvable by Preflight A:
    `row.meter_key → usage_meters.meter_key → usage_meters.feature_key`.
-3. If any row's `meter_key` cannot resolve to exactly one
-   `usage_meters` row, **the rollback fails closed** here — no schema
-   change proceeds further, no value is guessed or fabricated.
-4. Recreate `business_usage_rates_feature_key_version_unique`/
+3. Recreate `business_usage_rates_feature_key_version_unique`/
    `business_usage_rate_activations_feature_key_index` exactly as they
-   existed before Slice 3 dropped them.
-5. **Tighten `feature_key` back to `NOT NULL`** — required this time,
+   existed before Slice 3 dropped them — already proven collision-free
+   by Preflight B for the unique index.
+4. **Tighten `feature_key` back to `NOT NULL`** — required this time,
    unlike a hypothetical relaxed intermediate schema, because Slice 2
    never relaxed it; restoring Slice 2's actual schema means restoring
    its actual `NOT NULL` constraint.
-6. Loosen `meter_key` back to nullable.
+5. Loosen `meter_key` back to nullable.
 
 This is the same authoritative-reconstruction, never-fabricate
 discipline used throughout this design — the only asymmetry from a
 naive mirror of Slice 2's own (now much simpler) rollback is that
 Slice 3's rollback still needs the join-based restore, because Slice 3
 is the step that actually dropped the physical column Slice 2 always
-kept populated.
+kept populated. Preflight B is a distinct failure mode from Preflight
+A: Preflight A fails when a `meter_key` cannot be resolved to a real
+meter at all; Preflight B fails when every `meter_key` resolves
+correctly but the resulting `feature_key`/`version` data is no longer
+shaped like anything the legacy feature-wide constraint could ever
+have produced. Both are pure read-only queries against columns Slice 3
+already left in place, so both complete — for both tables — before the
+Restoration DDL's first statement ever runs.
 
 **Verification the future implementation must perform before trusting
 this order:** every `meter_key` column across all six affected tables
@@ -1966,32 +2044,57 @@ here.
     compatible collation.
 39. M3 funding and M4 add-on/additional-slot regression suites remain
     unaffected after all three slices have landed.
-40. **Slice 3 rollback restores Slice 2's schema exactly, including its
-    `NOT NULL` constraint:** `feature_key` is re-added, repopulated via
-    the authoritative join against `usage_meters.feature_key`, and
-    **tightened back to `NOT NULL`** — required this time, since Slice
-    2 (per Design Correction 3) never relaxed it — and the legacy index
-    is recreated exactly as Slice 2 left it; a row whose `meter_key`
-    cannot resolve fails the rollback closed before any of that
-    completes.
+40. **Slice 3 rollback runs both preflights — A (meter resolution, both
+    tables) then B (legacy-uniqueness collision, `business_usage_rates`
+    only) — as pure queries with zero DDL, before any Restoration DDL
+    statement runs; only once both pass does it restore Slice 2's schema
+    exactly, including its `NOT NULL` constraint (Design Correction 2):**
+    in the ordinary case, `feature_key` is re-added, repopulated via the
+    authoritative join against `usage_meters.feature_key`, the legacy
+    index/unique constraint recreated exactly as Slice 2 left them, and
+    `feature_key` tightened back to `NOT NULL` — required this time,
+    since Slice 2 (per Design Correction 3) never relaxed it. **Failure
+    mode one (Preflight A):** seed a row whose `meter_key` cannot
+    resolve to exactly one `usage_meters` row on either table; assert
+    `UsageMeterBackfillIncompleteException` is thrown naming the actual
+    failing table and that zero DDL ran on either table — `feature_key`
+    was never re-added anywhere, not even on the other, unaffected
+    table. **Failure mode two (Preflight B), exercised separately with
+    Preflight A passing cleanly:** seed two sibling meters under one
+    `feature_key`, each holding a rate at the same `version` (only
+    possible post-Slice-3, under the meter-local allocator); assert
+    `UsageMeterRollbackVersionCollisionException` is thrown naming that
+    exact `(feature_key, version, collidingRowCount)`, and that zero DDL
+    ran on either table — `feature_key` was never re-added, the legacy
+    unique index was never recreated, nothing was tightened or loosened.
+    Both failure modes are proven to stop before the Restoration DDL's
+    first statement, not merely before its later steps.
 41. **Proof 18's two-meter scenario, re-verified after Slice 3, now
-    against the meter-local final allocator.** Using the same
-    `UsageMeter` A/B pair and their existing rate history from proof
-    18, confirm: neither meter's prior rates were renumbered or
-    disturbed by Slice 3's column drop; a **new** `setActiveRate()` call
-    for meter A allocates via `latestVersionForMeter($meter->meter_key)`
-    (§D) and does **not** consider meter B's version history at all —
-    e.g. if A already has versions 1–2 and B has version 1 only (from
-    the shared pre-Slice-3 numbering in proof 18), a new rate for B
-    correctly becomes B's own version 2, not version 3 — demonstrating
-    the numbering scheme itself changed from shared to independent at
-    the Slice 3 boundary, with no collision in either scheme. Also
-    re-confirms proof 19's concurrency guarantee still holds post-Slice-3
-    — with the outer retry loop removed (§D, no sibling-meter race
-    remains possible once versioning is meter-local), two genuinely
-    overlapping `setActiveRate()` calls for the *same* meter still
-    serialize correctly via `findForUpdateByMeterKey()`'s row lock
-    alone.
+    against the meter-local final allocator (fixture corrected, Design
+    Correction 2 — the prior pass's numbers could not have arisen under
+    Slice 2's own `UNIQUE(feature_key, version)` constraint, since two
+    rows can never legitimately share one `(feature_key, version)` pair
+    before Slice 3).** Extend proof 18/19's own A/B history with one
+    further pre-Slice-3 `setActiveRate()` call for meter A, so the
+    shared feature-wide sequence now reads: A → version 1, B → version
+    2, A → version 3 (three rows total, one legacy monotonic sequence,
+    no repeats — a state genuinely reachable under Slice 2's real
+    constraint). After Slice 3, confirm neither meter's prior rates were
+    renumbered or disturbed by the column drop; a **new**
+    `setActiveRate()` call for meter B allocates via
+    `latestVersionForMeter($meter->meter_key)` (§D), sees only B's own
+    prior row (version 2), and correctly becomes B's own version 3 —
+    identical in number to A's existing version 3, legal only because
+    `UNIQUE(meter_key, version)` scopes uniqueness per meter, not per
+    feature — demonstrating both that the numbering scheme changed from
+    shared to independent at the Slice 3 boundary, and that distinct
+    meters may now legitimately reuse one version number with no
+    collision. Also re-confirms proof 19's concurrency guarantee still
+    holds post-Slice-3 — with the outer retry loop removed (§D, no
+    sibling-meter race remains possible once versioning is meter-local),
+    two genuinely overlapping `setActiveRate()` calls for the *same*
+    meter still serialize correctly via `findForUpdateByMeterKey()`'s
+    row lock alone.
 
 Total: **41** (12 Slice 1 + 22 Slice 2 + 7 Slice 3).
 
