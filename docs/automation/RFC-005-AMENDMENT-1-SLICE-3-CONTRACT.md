@@ -2,13 +2,23 @@
 
 <a id="locked-slice-3-contract"></a>
 
-**Status:** Human-reviewed governance contract, prepared after Slice 2 CUTOVER
-(PR #114) has already been human-merged, and reconciled after RFC-005
-Amendment 1 Design Correction 2 (PR #118) has also already been
-human-merged. This document locks the exact scope, schema, code, and proof
-requirements for the future Slice 3 implementation. **It does not itself
-authorize automatic implementation start.** No implementation pull request
-exists yet for Slice 3 (see §0.1).
+**Status: completed and closed.** Implementation was PR #119 (branch
+`agent/rfc-005-amendment-1-slice-3-contract`), human-merged as
+`3d512d5c981792f32dbb1fad941e9cb158455c7a`, final head
+`11d4c485399feb3b1097c9e08df3ecf44a19cdac`. Three exceptional corrections
+(PR #121–#123) and two post-verification test-alignment corrections
+(PR #124–#125) were authorized and applied against the locked scope below
+before merge. See
+[`docs/automation/RFC-005-AMENDMENT-1-CLOSURE.md`](RFC-005-AMENDMENT-1-CLOSURE.md)
+for full closure evidence — Slice 3 does not have a separate slice-level
+closure document; its completion is recorded in the combined RFC-005
+Amendment 1 closure alongside Slices 1 and 2.
+
+Historical context below, prepared after Slice 2 CUTOVER
+(PR #114) had already been human-merged, and reconciled after RFC-005
+Amendment 1 Design Correction 2 (PR #118) had also already been
+human-merged. This document locked the exact scope, schema, code, and proof
+requirements for the Slice 3 implementation.
 
 This contract does not redesign RFC-005 Amendment 1. It encodes the Slice 3
 CONTRACT behavior already fixed by the merged design document
