@@ -15,9 +15,22 @@
     return new class extends Migration {
         public function up(): void
         {
+            // Correction Round 2: change(), dropIndex(), and dropColumn()
+            // are kept in separate Schema::table() calls, matching every
+            // other migration in this codebase — combining them let
+            // Doctrine DBAL's schema-diffing generate an invalid ALTER
+            // TABLE on a completely fresh, empty database, breaking
+            // migrate:fresh for the entire suite before any test body
+            // ever ran.
             Schema::table('business_usage_rate_activations', function (Blueprint $table) {
                 $table->string('meter_key', 128)->nullable(false)->change();
+            });
+
+            Schema::table('business_usage_rate_activations', function (Blueprint $table) {
                 $table->dropIndex('business_usage_rate_activations_feature_key_index');
+            });
+
+            Schema::table('business_usage_rate_activations', function (Blueprint $table) {
                 $table->dropColumn('feature_key');
             });
         }
@@ -42,6 +55,9 @@
 
             Schema::table('business_usage_rate_activations', function (Blueprint $table) {
                 $table->string('feature_key', 64)->nullable(false)->change();
+            });
+
+            Schema::table('business_usage_rate_activations', function (Blueprint $table) {
                 $table->string('meter_key', 128)->nullable()->change();
             });
         }

@@ -28,9 +28,23 @@
                 }
             }
 
+            // Correction Round 2: change(), dropUnique(), and dropColumn()
+            // are kept in separate Schema::table() calls, matching every
+            // other migration in this codebase (none of which mixes a
+            // column change with a structural drop in one blueprint) —
+            // combining them let Doctrine DBAL's schema-diffing generate
+            // an invalid ALTER TABLE on a completely fresh, empty
+            // database, breaking migrate:fresh for the entire suite
+            // before any test body ever ran.
             Schema::table('business_usage_rates', function (Blueprint $table) {
                 $table->string('meter_key', 128)->nullable(false)->change();
+            });
+
+            Schema::table('business_usage_rates', function (Blueprint $table) {
                 $table->dropUnique('business_usage_rates_feature_key_version_unique');
+            });
+
+            Schema::table('business_usage_rates', function (Blueprint $table) {
                 $table->dropColumn('feature_key');
             });
         }
@@ -56,6 +70,9 @@
 
             Schema::table('business_usage_rates', function (Blueprint $table) {
                 $table->string('feature_key', 64)->nullable(false)->change();
+            });
+
+            Schema::table('business_usage_rates', function (Blueprint $table) {
                 $table->string('meter_key', 128)->nullable()->change();
             });
         }
