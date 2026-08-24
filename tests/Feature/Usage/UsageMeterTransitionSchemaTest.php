@@ -58,7 +58,6 @@ class UsageMeterTransitionSchemaTest extends TestCase
     private function insertRateForMeter(string $meterKey, int $currencyId, int $version = 1): int
     {
         return DB::table('business_usage_rates')->insertGetId([
-            'feature_key' => 'crm',
             'meter_key' => $meterKey,
             'version' => $version,
             'retail_rate_micro' => 1000,

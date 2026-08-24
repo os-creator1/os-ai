@@ -723,14 +723,13 @@ class UsageWalletManager
     }
 
     /**
-     * RFC-005 Amendment 1 §5.6's setActiveRate() algorithm, re-pointed from
-     * the legacy classification row to UsageMeter/UsageMeterTransition
-     * (Slice 2 CUTOVER). $featureKey is semantically the meter key
-     * (signature frozen). Bounded 3-attempt retry: a losing concurrent
-     * rotation of a sibling meter that shares the same legacy feature_key
-     * can collide on business_usage_rates_feature_key_version_unique, and
-     * retries against the now-committed state rather than propagating the
-     * race.
+     * RFC-005 Amendment 1 Slice 3 CONTRACT §5.3's setActiveRate() final
+     * shape — the meter-local allocator, no feature-wide retry loop.
+     * $featureKey is semantically the meter key (signature frozen).
+     * Same-meter concurrency is serialized by findForUpdateByMeterKey()'s
+     * own row lock alone; sibling meters sharing one legacy feature can no
+     * longer collide at all, at any concurrency level, once
+     * business_usage_rates_feature_key_version_unique no longer exists.
      */
     public function setActiveRate(
         string $featureKey,
@@ -741,59 +740,43 @@ class UsageWalletManager
         int $actorUserId,
         string $reason,
     ): \App\Models\BusinessUsageRate {
-        $attempt = 0;
+        return DB::transaction(function () use ($featureKey, $retailRateMicro, $providerCostMicro, $unitLabel, $currencyId, $actorUserId, $reason) {
+            $meter = $this->meterRepository->findForUpdateByMeterKey($featureKey);
 
-        while (true) {
-            $attempt++;
-
-            try {
-                return DB::transaction(function () use ($featureKey, $retailRateMicro, $providerCostMicro, $unitLabel, $currencyId, $actorUserId, $reason) {
-                    $meter = $this->meterRepository->findForUpdateByMeterKey($featureKey);
-
-                    if ($meter === null) {
-                        throw new NoActiveRateForFeatureException($featureKey);
-                    }
-
-                    $nextVersion = $this->rateRepository->latestVersionForFeature($meter->feature_key) + 1;
-
-                    $rate = $this->rateRepository->create([
-                        'feature_key' => $meter->feature_key,
-                        'meter_key' => $meter->meter_key,
-                        'version' => $nextVersion,
-                        'retail_rate_micro' => $retailRateMicro,
-                        'provider_cost_micro' => $providerCostMicro,
-                        'unit_label' => $unitLabel,
-                        'rounding_rule' => RoundingRule::RoundHalfUp->value,
-                        'currency_id' => $currencyId,
-                        'created_by_user_id' => $actorUserId,
-                        'created_at' => Carbon::now(),
-                    ]);
-
-                    $this->rateActivationRepository->create([
-                        'feature_key' => $meter->feature_key,
-                        'meter_key' => $meter->meter_key,
-                        'rate_id' => $rate->id,
-                        'activated_at' => Carbon::now(),
-                        'activated_by_user_id' => $actorUserId,
-                        'reason' => $reason,
-                        'created_at' => Carbon::now(),
-                    ]);
-
-                    $this->meterRepository->update($meter, [
-                        'active_rate_id' => $rate->id,
-                        'updated_by_user_id' => $actorUserId,
-                    ]);
-
-                    return $rate;
-                });
-            } catch (QueryException $e) {
-                if ($this->isDuplicateRace($e, 'business_usage_rates_feature_key_version_unique') && $attempt < 3) {
-                    continue;
-                }
-
-                throw $e;
+            if ($meter === null) {
+                throw new NoActiveRateForFeatureException($featureKey);
             }
-        }
+
+            $nextVersion = $this->rateRepository->latestVersionForMeter($meter->meter_key) + 1;
+
+            $rate = $this->rateRepository->create([
+                'meter_key' => $meter->meter_key,
+                'version' => $nextVersion,
+                'retail_rate_micro' => $retailRateMicro,
+                'provider_cost_micro' => $providerCostMicro,
+                'unit_label' => $unitLabel,
+                'rounding_rule' => RoundingRule::RoundHalfUp->value,
+                'currency_id' => $currencyId,
+                'created_by_user_id' => $actorUserId,
+                'created_at' => Carbon::now(),
+            ]);
+
+            $this->rateActivationRepository->create([
+                'meter_key' => $meter->meter_key,
+                'rate_id' => $rate->id,
+                'activated_at' => Carbon::now(),
+                'activated_by_user_id' => $actorUserId,
+                'reason' => $reason,
+                'created_at' => Carbon::now(),
+            ]);
+
+            $this->meterRepository->update($meter, [
+                'active_rate_id' => $rate->id,
+                'updated_by_user_id' => $actorUserId,
+            ]);
+
+            return $rate;
+        });
     }
 
     /**

@@ -77,7 +77,6 @@ class UsageMeterSchemaTest extends TestCase
     private function insertRateForMeter(string $meterKey, int $currencyId): int
     {
         return DB::table('business_usage_rates')->insertGetId([
-            'feature_key' => 'crm',
             'meter_key' => $meterKey,
             'version' => 1,
             'retail_rate_micro' => 1000,
@@ -379,9 +378,9 @@ class UsageMeterSchemaTest extends TestCase
 
         $this->assertSame('NO', $rows['usage_meters']['is_nullable']);
         $this->assertSame('NO', $rows['usage_meter_transitions']['is_nullable']);
-        $this->assertSame('YES', $rows['business_usage_rates']['is_nullable']);
-        $this->assertSame('YES', $rows['business_usage_rate_activations']['is_nullable']);
-        $this->assertSame('YES', $rows['business_usage_reservations']['is_nullable']);
+        $this->assertSame('NO', $rows['business_usage_rates']['is_nullable']);
+        $this->assertSame('NO', $rows['business_usage_rate_activations']['is_nullable']);
+        $this->assertSame('NO', $rows['business_usage_reservations']['is_nullable']);
         $this->assertSame('YES', $rows['business_usage_ledger_entries']['is_nullable']);
     }
 }

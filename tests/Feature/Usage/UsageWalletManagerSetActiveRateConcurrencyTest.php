@@ -4,8 +4,8 @@ namespace Tests\Feature\Usage;
 
 use App\Library\Usage\UsageWalletManager;
 use App\Models\Currency;
+use App\Repositories\Contracts\BusinessUsageRateRepository;
 use App\Repositories\Contracts\UsageMeterRepository;
-use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Symfony\Component\Process\PhpExecutableFinder;
@@ -13,30 +13,27 @@ use Symfony\Component\Process\Process;
 use Tests\TestCase;
 
 /**
- * RFC-005 Amendment 1 Slice 2 CUTOVER §8, proofs 1-4 and 9 —
- * setActiveRate()'s bounded 3-attempt retry under genuine cross-process
- * contention, using the codebase's own established genuine-OS-process
- * concurrency technique (real, separate PHP processes booting the full
- * Laravel application, each holding a real, uncommitted transaction —
- * never simulated/mocked concurrency), mirroring
- * UsageWalletManagerConcurrencyTest.php's own pattern.
+ * RFC-005 Amendment 1 Slice 3 CONTRACT §9, proof 41 — same-meter
+ * concurrent setActiveRate() calls still serialize correctly via
+ * findForUpdateByMeterKey()'s row lock alone, now that the Slice 2
+ * outer retry loop is gone (the only remaining contention is
+ * genuinely single-resource: one meter row), using the codebase's own
+ * established genuine-OS-process concurrency technique (real, separate
+ * PHP processes booting the full Laravel application, each holding a
+ * real, uncommitted transaction — never simulated/mocked concurrency),
+ * mirroring UsageWalletManagerConcurrencyTest.php's own pattern.
+ *
+ * The Slice 2 sibling-meter collision/exhausted-retry tests that
+ * previously lived in this file are removed: dropping
+ * business_usage_rates_feature_key_version_unique means sibling meters
+ * sharing one legacy feature can no longer collide at all, at any
+ * concurrency level, so that code path no longer exists to test.
  *
  * Deliberately does NOT use RefreshDatabase — a genuinely separate OS
  * process needs committed rows, which an open RefreshDatabase transaction
  * would hide entirely. The runner script is generated at run time into
  * the real OS temp directory (never a repository file) and removed in
  * tearDown.
- *
- * Every "holder" process in this file plays the role of a concurrent
- * writer whose transaction is deliberately kept open (uncommitted) for a
- * controlled duration, to force a genuine InnoDB row/insert-intention
- * lock wait in the real production code under test (called directly, in
- * this same PHPUnit process, as the "waiter"). A plain, non-locking
- * `SELECT MAX(version)` never blocks on another transaction's uncommitted
- * insert (MVCC), so holding a competing insert open is the only way to
- * genuinely force setActiveRate()'s retry path — not a substitute for
- * real contention, but the real InnoDB mechanism ("duplicate-key errors
- * due to concurrent inserts") that a true production race would also hit.
  */
 class UsageWalletManagerSetActiveRateConcurrencyTest extends TestCase
 {
@@ -121,23 +118,12 @@ class UsageWalletManagerSetActiveRateConcurrencyTest extends TestCase
     }
 
     /**
-     * Three runner modes, all real, genuine OS-process behavior:
-     *
-     * - hold-meter-then-set-rate (proof 1): manually locks the target
-     *   meter row (mirroring findForUpdateByMeterKey()), holds it, then
-     *   calls the REAL setActiveRate() from inside that same held
-     *   transaction (a harmless reentrant re-lock of a row this same
-     *   connection already holds) before committing.
-     * - hold-full-rate-then-commit (proofs 2/3): manually replicates
-     *   setActiveRate()'s own writes (rate + activation + meter update)
-     *   for one sibling meter, held open and uncommitted, so a
-     *   concurrently-racing REAL setActiveRate() call for a *different*
-     *   sibling meter genuinely collides on the shared legacy
-     *   (feature_key, version) unique index.
-     * - hold-bare-rate-then-commit (proof 4): holds open a single bare
-     *   rate insert for one exact (feature_key, version) pair, nothing
-     *   else — used three times, staggered, to force three consecutive
-     *   collisions.
+     * hold-meter-then-set-rate (proof 41's same-meter re-verification):
+     * manually locks the target meter row (mirroring
+     * findForUpdateByMeterKey()), holds it, then calls the REAL
+     * setActiveRate() from inside that same held transaction (a
+     * harmless reentrant re-lock of a row this same connection already
+     * holds) before committing.
      */
     private function runnerScript(): string
     {
@@ -174,72 +160,19 @@ if (\$mode === 'hold-meter-then-set-rate') {
         );
         fwrite(STDOUT, "RATE_ID:{\$rate->id} VERSION:{\$rate->version}\\n");
     });
-} elseif (\$mode === 'hold-full-rate-then-commit') {
-    \$meterKey = \$argv[2];
-    \$featureKey = \$argv[3];
-    \$currencyId = (int) \$argv[4];
-    \$actorId = (int) \$argv[5];
-    \$holdSeconds = (float) \$argv[6];
-
-    \Illuminate\Support\Facades\DB::transaction(function () use (\$meterKey, \$featureKey, \$currencyId, \$actorId, \$holdSeconds) {
-        \Illuminate\Support\Facades\DB::table('usage_meters')->where('meter_key', \$meterKey)->lockForUpdate()->first();
-        \$nextVersion = (int) (\Illuminate\Support\Facades\DB::table('business_usage_rates')->where('feature_key', \$featureKey)->max('version') ?? 0) + 1;
-        \$now = now();
-
-        \$rateId = \Illuminate\Support\Facades\DB::table('business_usage_rates')->insertGetId([
-            'feature_key' => \$featureKey, 'meter_key' => \$meterKey, 'version' => \$nextVersion,
-            'retail_rate_micro' => 1000000, 'provider_cost_micro' => 500000, 'unit_label' => 'per message',
-            'rounding_rule' => 'round_half_up', 'currency_id' => \$currencyId,
-            'created_by_user_id' => \$actorId, 'created_at' => \$now,
-        ]);
-
-        \Illuminate\Support\Facades\DB::table('business_usage_rate_activations')->insert([
-            'feature_key' => \$featureKey, 'meter_key' => \$meterKey, 'rate_id' => \$rateId,
-            'activated_at' => \$now, 'activated_by_user_id' => \$actorId,
-            'reason' => 'Holder rotation.', 'created_at' => \$now,
-        ]);
-
-        \Illuminate\Support\Facades\DB::table('usage_meters')->where('meter_key', \$meterKey)->update([
-            'active_rate_id' => \$rateId, 'updated_by_user_id' => \$actorId, 'updated_at' => \$now,
-        ]);
-
-        fwrite(STDOUT, "LOCKED:RATE_ID:{\$rateId}:VERSION:{\$nextVersion}\\n");
-        fflush(STDOUT);
-        usleep((int) (\$holdSeconds * 1000000));
-    });
-    fwrite(STDOUT, "COMMITTED\\n");
-} elseif (\$mode === 'hold-bare-rate-then-commit') {
-    \$meterKey = \$argv[2];
-    \$featureKey = \$argv[3];
-    \$version = (int) \$argv[4];
-    \$currencyId = (int) \$argv[5];
-    \$actorId = (int) \$argv[6];
-    \$holdSeconds = (float) \$argv[7];
-
-    \Illuminate\Support\Facades\DB::transaction(function () use (\$meterKey, \$featureKey, \$version, \$currencyId, \$actorId, \$holdSeconds) {
-        \Illuminate\Support\Facades\DB::table('business_usage_rates')->insert([
-            'feature_key' => \$featureKey, 'meter_key' => \$meterKey, 'version' => \$version,
-            'retail_rate_micro' => 1000000, 'provider_cost_micro' => 500000, 'unit_label' => 'per message',
-            'rounding_rule' => 'round_half_up', 'currency_id' => \$currencyId,
-            'created_by_user_id' => \$actorId, 'created_at' => now(),
-        ]);
-        fwrite(STDOUT, "LOCKED\\n");
-        fflush(STDOUT);
-        usleep((int) (\$holdSeconds * 1000000));
-    });
-    fwrite(STDOUT, "COMMITTED\\n");
 }
 PHP;
     }
 
     /**
-     * Proof 1 + proof 9 — same-meter concurrent rotations serialize
-     * correctly, strictly increasing versions, no lost update; and
-     * findForUpdateByMeterKey() genuinely locks its row (the holder's
-     * manual pre-lock IS that same row-locking finder's own lock — the
-     * waiter's real setActiveRate() call cannot proceed past its own
-     * findForUpdateByMeterKey() call until the holder's transaction
-     * commits).
+     * Proof 41 (re-verification) — same-meter concurrent rotations still
+     * serialize correctly, strictly increasing versions, no lost update,
+     * now via the final single-transaction setActiveRate() with no
+     * retry loop; findForUpdateByMeterKey() genuinely locks its row (the
+     * holder's manual pre-lock IS that same row-locking finder's own
+     * lock — the waiter's real setActiveRate() call cannot proceed past
+     * its own findForUpdateByMeterKey() call until the holder's
+     * transaction commits).
      */
     public function test_same_meter_concurrent_rotations_serialize_with_strictly_increasing_versions_and_no_lost_update(): void
     {
@@ -296,158 +229,81 @@ PHP;
     }
 
     /**
-     * Proof 2 + proof 3 — two sibling UsageMeter rows sharing one legacy
-     * feature_key race setActiveRate(); the loser genuinely collides on
-     * business_usage_rates_feature_key_version_unique, retries, and
-     * succeeds; both meters end up with their own durable, correctly
-     * dual-written rate/activation and correct active_rate_id.
+     * Proof 41 — meter-local versioning, re-verified after Slice 3.
+     * Before Slice 3, under the (now-retired) shared feature-wide
+     * allocator, meter A and meter B — sharing one legacy feature_key —
+     * built a real, constraint-consistent history: A -> v1, B -> v2,
+     * A -> v3 (three sequential setActiveRate() calls, no repeated
+     * version number, exactly the state Slice 2's own
+     * UNIQUE(feature_key, version) constraint required). After Slice 3,
+     * a new setActiveRate() call for meter B allocates via
+     * latestVersionForMeter('B') — sees only B's own prior row (version
+     * 2), ignores meter A's history entirely, and correctly becomes B's
+     * own version 3 — identical in number to A's existing version 3,
+     * legal only because UNIQUE(meter_key, version) scopes uniqueness
+     * per meter. Neither meter's prior rows are renumbered or disturbed.
      */
-    public function test_sibling_meters_sharing_one_feature_collide_and_the_loser_retries_and_succeeds(): void
+    public function test_meter_local_allocator_lets_sibling_meters_reuse_a_version_number_after_slice_3(): void
     {
         $currencyId = Currency::query()->where('code', 'USD')->value('id');
         $actorId = $this->createActorUserId();
         $featureKey = 'crm';
-        $meterKeyA = 'crm.sibling.a.'.uniqid();
-        $meterKeyB = 'crm.sibling.b.'.uniqid();
+        $meterKeyA = 'crm.local.a.'.uniqid();
+        $meterKeyB = 'crm.local.b.'.uniqid();
         $this->createMeter($meterKeyA, $featureKey, $currencyId, $actorId);
         $this->createMeter($meterKeyB, $featureKey, $currencyId, $actorId);
 
-        $holder = new Process([
-            $this->phpBinary(), $this->runnerPath, 'hold-full-rate-then-commit',
-            $meterKeyA, $featureKey, (string) $currencyId, (string) $actorId, '2',
+        // A -> v1, B -> v2, A -> v3: the real, constraint-consistent
+        // history the (now-retired) Slice 2 shared feature-wide
+        // allocator would have produced from three sequential calls, no
+        // repeated version number — reconstructed here via raw inserts
+        // (final Slice 3 schema shape, meter_key only) since the current
+        // code under test no longer implements that retired algorithm at
+        // all and cannot itself reproduce this history.
+        $now = now();
+        $rateA1Id = DB::table('business_usage_rates')->insertGetId([
+            'meter_key' => $meterKeyA, 'version' => 1, 'retail_rate_micro' => 1000000, 'provider_cost_micro' => 500000,
+            'unit_label' => 'per message', 'rounding_rule' => 'round_half_up', 'currency_id' => $currencyId,
+            'created_by_user_id' => $actorId, 'created_at' => $now,
         ]);
-        $holder->start();
+        $rateB1Id = DB::table('business_usage_rates')->insertGetId([
+            'meter_key' => $meterKeyB, 'version' => 2, 'retail_rate_micro' => 2000000, 'provider_cost_micro' => 500000,
+            'unit_label' => 'per message', 'rounding_rule' => 'round_half_up', 'currency_id' => $currencyId,
+            'created_by_user_id' => $actorId, 'created_at' => $now,
+        ]);
+        $rateA2Id = DB::table('business_usage_rates')->insertGetId([
+            'meter_key' => $meterKeyA, 'version' => 3, 'retail_rate_micro' => 3000000, 'provider_cost_micro' => 500000,
+            'unit_label' => 'per message', 'rounding_rule' => 'round_half_up', 'currency_id' => $currencyId,
+            'created_by_user_id' => $actorId, 'created_at' => $now,
+        ]);
+        DB::table('usage_meters')->where('meter_key', $meterKeyA)->update(['active_rate_id' => $rateA2Id]);
+        DB::table('usage_meters')->where('meter_key', $meterKeyB)->update(['active_rate_id' => $rateB1Id]);
 
-        $locked = false;
-        $holder->waitUntil(function ($type, $output) use (&$locked) {
-            if (str_contains($output, 'LOCKED')) {
-                $locked = true;
+        $repository = app(BusinessUsageRateRepository::class);
+        $this->assertSame(3, $repository->latestVersionForMeter($meterKeyA));
+        $this->assertSame(2, $repository->latestVersionForMeter($meterKeyB));
 
-                return true;
-            }
-
-            return false;
-        });
-        $this->assertTrue($locked, 'Holder process never confirmed its lock.');
-
-        preg_match('/LOCKED:RATE_ID:(\d+):VERSION:(\d+)/', $holder->getOutput(), $holderMatch);
-        $holderRateId = (int) $holderMatch[1];
-        $holderVersion = (int) $holderMatch[2];
-        $this->assertSame(1, $holderVersion);
-
-        $start = microtime(true);
-        $loserRate = app(UsageWalletManager::class)->setActiveRate(
-            $meterKeyB, '3000000', '500000', 'per message', $currencyId, $actorId, 'Waiter rotation.',
+        // After Slice 3: B's next rate allocates via latestVersionForMeter,
+        // sees only B's own version 2, and becomes version 3 — identical
+        // in number to A's existing version 3.
+        $rateB2 = app(UsageWalletManager::class)->setActiveRate(
+            $meterKeyB, '4000000', '500000', 'per message', $currencyId, $actorId, 'B rotation 2.',
         );
-        $elapsed = microtime(true) - $start;
+        $this->assertSame(3, $rateB2->version);
 
-        $holder->wait();
+        // No historical row was renumbered or disturbed.
+        $this->assertDatabaseHas('business_usage_rates', ['id' => $rateA1Id, 'meter_key' => $meterKeyA, 'version' => 1]);
+        $this->assertDatabaseHas('business_usage_rates', ['id' => $rateB1Id, 'meter_key' => $meterKeyB, 'version' => 2]);
+        $this->assertDatabaseHas('business_usage_rates', ['id' => $rateA2Id, 'meter_key' => $meterKeyA, 'version' => 3]);
+        $this->assertDatabaseHas('business_usage_rates', ['id' => $rateB2->id, 'meter_key' => $meterKeyB, 'version' => 3]);
+        $this->assertSame(
+            4,
+            DB::table('business_usage_rates')->whereIn('meter_key', [$meterKeyA, $meterKeyB])->count(),
+        );
 
-        // The loser genuinely blocked on the holder's uncommitted insert
-        // (a real InnoDB duplicate-key insert-intention lock wait), then
-        // collided, retried, and succeeded — not an immediate, contention-
-        // free version(2) grant.
-        $this->assertGreaterThan(1.0, $elapsed);
-        $this->assertSame(2, $loserRate->version);
-
-        // Proof 3 — both meters durably reflect their own genuinely
-        // persisted rate/activation, correctly dual-written.
         $meterA = DB::table('usage_meters')->where('meter_key', $meterKeyA)->first();
         $meterB = DB::table('usage_meters')->where('meter_key', $meterKeyB)->first();
-        $this->assertSame($holderRateId, (int) $meterA->active_rate_id);
-        $this->assertSame($loserRate->id, (int) $meterB->active_rate_id);
-
-        $this->assertDatabaseHas('business_usage_rates', [
-            'id' => $holderRateId, 'feature_key' => $featureKey, 'meter_key' => $meterKeyA, 'version' => 1,
-        ]);
-        $this->assertDatabaseHas('business_usage_rates', [
-            'id' => $loserRate->id, 'feature_key' => $featureKey, 'meter_key' => $meterKeyB, 'version' => 2,
-        ]);
-        $this->assertDatabaseHas('business_usage_rate_activations', [
-            'rate_id' => $holderRateId, 'feature_key' => $featureKey, 'meter_key' => $meterKeyA,
-        ]);
-        $this->assertDatabaseHas('business_usage_rate_activations', [
-            'rate_id' => $loserRate->id, 'feature_key' => $featureKey, 'meter_key' => $meterKeyB,
-        ]);
-    }
-
-    /**
-     * Proof 4 — a fixture that forces the unique-constraint collision on
-     * all 3 attempts: three independent holders, each pre-holding one of
-     * the three versions setActiveRate()'s successive attempts will
-     * compute (1, then 2, then 3), staggered so each is still open when
-     * the corresponding attempt's insert arrives. The original
-     * QueryException propagates uncaught after the third attempt, and no
-     * rate, activation, or meter update from any attempt is left
-     * committed.
-     */
-    public function test_exact_collision_on_all_three_attempts_propagates_the_original_query_exception_with_no_partial_state(): void
-    {
-        $currencyId = Currency::query()->where('code', 'USD')->value('id');
-        $actorId = $this->createActorUserId();
-        $featureKey = 'crm';
-        $meterKeyWaiter = 'crm.exhaust.waiter.'.uniqid();
-        $meterKeyH1 = 'crm.exhaust.h1.'.uniqid();
-        $meterKeyH2 = 'crm.exhaust.h2.'.uniqid();
-        $meterKeyH3 = 'crm.exhaust.h3.'.uniqid();
-        $this->createMeter($meterKeyWaiter, $featureKey, $currencyId, $actorId);
-        $this->createMeter($meterKeyH1, $featureKey, $currencyId, $actorId);
-        $this->createMeter($meterKeyH2, $featureKey, $currencyId, $actorId);
-        $this->createMeter($meterKeyH3, $featureKey, $currencyId, $actorId);
-
-        // Staggered, generous hold durations (each measured from its own
-        // process's own lock confirmation) — large enough margins that
-        // ordinary CI process-startup jitter cannot let a later holder
-        // release before setActiveRate()'s corresponding attempt reaches
-        // it.
-        $holders = [];
-        $holderSpecs = [
-            [$meterKeyH1, 1, '6'],
-            [$meterKeyH2, 2, '10'],
-            [$meterKeyH3, 3, '14'],
-        ];
-
-        foreach ($holderSpecs as [$meterKey, $version, $holdSeconds]) {
-            $holder = new Process([
-                $this->phpBinary(), $this->runnerPath, 'hold-bare-rate-then-commit',
-                $meterKey, $featureKey, (string) $version, (string) $currencyId, (string) $actorId, $holdSeconds,
-            ]);
-            $holder->start();
-
-            $locked = false;
-            $holder->waitUntil(function ($type, $output) use (&$locked) {
-                if (str_contains($output, 'LOCKED')) {
-                    $locked = true;
-
-                    return true;
-                }
-
-                return false;
-            });
-            $this->assertTrue($locked, "Holder for version {$version} never confirmed its lock.");
-
-            $holders[] = $holder;
-        }
-
-        $this->expectException(QueryException::class);
-        $this->expectExceptionMessageMatches('/business_usage_rates_feature_key_version_unique/');
-
-        try {
-            app(UsageWalletManager::class)->setActiveRate(
-                $meterKeyWaiter, '9000000', '500000', 'per message', $currencyId, $actorId, 'Waiter rotation.',
-            );
-        } finally {
-            foreach ($holders as $holder) {
-                $holder->wait();
-            }
-
-            // No partial state from any of the three failed attempts —
-            // every attempt's own transaction rolled back on its own
-            // duplicate-key exception.
-            $this->assertSame(0, DB::table('business_usage_rates')->where('meter_key', $meterKeyWaiter)->count());
-            $this->assertSame(0, DB::table('business_usage_rate_activations')->where('meter_key', $meterKeyWaiter)->count());
-            $waiterMeter = DB::table('usage_meters')->where('meter_key', $meterKeyWaiter)->first();
-            $this->assertNull($waiterMeter->active_rate_id);
-        }
+        $this->assertSame($rateA2Id, (int) $meterA->active_rate_id);
+        $this->assertSame($rateB2->id, (int) $meterB->active_rate_id);
     }
 }

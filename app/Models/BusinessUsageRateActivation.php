@@ -12,7 +12,6 @@ class BusinessUsageRateActivation extends Model
     protected $table = 'business_usage_rate_activations';
 
     protected $fillable = [
-        'feature_key',
         'meter_key',
         'rate_id',
         'activated_at',
