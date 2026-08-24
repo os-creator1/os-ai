@@ -4,13 +4,13 @@
   "active_pull_request": null,
   "base_branch": "main",
   "head_branch": "none",
-  "active_rfc": "RFC-003",
-  "active_milestone": "Milestone 4",
-  "current_slice": "Idle — RFC-003 Milestone 4 closed; Milestone 5 not yet selected or authorized",
-  "status": "automation_ready_pending_next_locked_contract",
+  "active_rfc": "RFC-005",
+  "active_milestone": "Amendment 1",
+  "current_slice": "Idle — RFC-005 Amendment 1 closed (Slices 1 Expand, 2 Cutover, 3 Contract all merged); Milestone 5 not yet selected or authorized",
+  "status": "amendment_1_closed_pending_next_locked_contract",
   "merge_policy": "human_only",
   "implementation_authorized": false,
-  "expected_head_sha": "db7829d2c33ff3eb77a5bd42820eb39e349f6d94",
+  "expected_head_sha": "3d512d5c981792f32dbb1fad941e9cb158455c7a",
   "require_exact_scope": true,
   "maximum_correction_rounds": 2,
   "advance_automatically": false,
@@ -18,93 +18,33 @@
   "completion_verification_mode": "manual_or_automated",
   "codex_review_required_for_completion": false,
   "automatic_model_handoff_required": false,
-  "next_candidate": "RFC-003 Milestone 5 — Platform-administrator inspection and controls; not selected or authorized",
+  "next_candidate": "RFC-005 Milestone 5 resumption (PR #107, \"docs: define RFC-005 M5 metered feature classification\") — eligible now that all three RFC-005 Amendment 1 slices have merged, but not selected or authorized by this closure",
   "contract_source": null,
   "allowed_paths": [
     "docs/automation/AI-AUTONOMY-STATE.json",
-    "docs/automation/RFC-003-M4-SLICE-4F-CONTRACT.md",
-    "docs/automation/RFC-003-M4-CLOSURE.md"
+    "docs/automation/RFC-005-AMENDMENT-1-SLICE-3-CONTRACT.md",
+    "docs/automation/RFC-005-AMENDMENT-1-CLOSURE.md"
   ],
   "required_new_paths": [
-    "docs/automation/RFC-003-M4-CLOSURE.md"
+    "docs/automation/RFC-005-AMENDMENT-1-CLOSURE.md"
   ],
-  "required_test_commands": [
-    "node .github/scripts/ai_subscription_gate.js --selftest",
-    "node .github/scripts/ai_subscription_autostart.js --selftest",
-    "node .github/scripts/ai_subscription_labels.js --selftest"
-  ],
+  "required_test_commands": [],
   "gate_label": "ai:testing",
   "forbidden_scope": [
     "No implementation of any kind: no active product slice or milestone is authorized",
-    "No RFC-003 Milestone 5 (Platform-administrator inspection and controls) implementation, or any other Platform Admin HTTP/UI surface, until a separate bounded Milestone 5 contract is independently drafted, human-reviewed, and merged",
-    "No WorkspaceManager, repository, model, enum, event, exception, migration, DTO, dependency, environment, or database-configuration change",
+    "No RFC-005 Milestone 5 implementation, or any other Milestone 5 surface, until PR #107 (or a revised version of it) is independently reviewed and merged as its own explicit governance decision",
+    "No WorkspaceManager, UsageWalletManager, repository, model, enum, event, exception, migration, DTO, dependency, environment, or database-configuration change",
     "No billing, plan, entitlement, feature-toggle, wallet, Stripe, or usage implementation",
-    "No alternate authorization algorithm, direct model mutation write, repository bypass, or automatic later-contract generation or approval",
-    "Selecting or authorizing Milestone 5 from this closure alone, or any automatic Milestone 5 start — a new contract must be independently drafted, human-reviewed, and merged first",
+    "No fabricated, copied, inferred, or backfilled meter identity, forward or in rollback, under any circumstance",
+    "Selecting, resuming, modifying, or merging PR #107 from this closure alone, or any automatic Milestone 5 start",
     "Setting advance_automatically true, setting start_automatically_after_contract_merge true, changing merge_policy from human_only, or weakening exact-scope or positive-test gates",
     "Using a metered model API, enabling usage credits, requiring Codex review for completion, an automatic model handoff, or merging automatically",
-    "Force-pushing, pushing directly to main, or tagging — Milestone 6 owns the eventual RFC-003 annotated tag (§25), not this Milestone 4 closure"
+    "Force-pushing, pushing directly to main, or tagging",
+    "No touching pull request #107"
   ],
   "success_label": "ai:ready-for-human",
   "failure_label": "ai:needs-human",
-  "completed_pull_request": 52,
-  "completed_product_head_sha": "99f3e218094f40a283bab3ded6a097734b68787b",
-  "completed_merge_commit_sha": "db7829d2c33ff3eb77a5bd42820eb39e349f6d94",
-  "aggregate_regression_run": 31159820708,
-  "manual_verification": {
-    "subject": "Design System M2 Slice 2 — independent of this file's currently tracked idle RFC-003 Milestone 4 state; active_rfc, active_milestone, current_slice, and active_pull_request above are unrelated and unchanged by this record",
-    "repository": "os-creator1/os-ai",
-    "implementation_pull_request": 90,
-    "implementation_branch": "agent/design-system-m2-slice2",
-    "verified_head_sha": "a5b53466321a706bf35d395ca9d97c51973dcf9e",
-    "environment": "human developer's local Windows/Laragon environment",
-    "php_version": "8.3.30",
-    "laravel_test_environment": ".env.testing",
-    "test_database": "MySQL ultimatesms_testing",
-    "build_command_run": "npx mix --production",
-    "build_result": "passed",
-    "auth_suite": {
-      "scope": "tests/Feature/Auth",
-      "tests_passed": 22,
-      "tests_failed": 0,
-      "assertions": 137
-    },
-    "installer_suite": {
-      "scope": "tests/Feature/Installer",
-      "tests_passed": 3,
-      "tests_failed": 0,
-      "assertions": 6
-    },
-    "theme_suite": {
-      "scope": "tests/Feature/Theme",
-      "tests_passed": 61,
-      "tests_failed": 0,
-      "assertions": 213
-    },
-    "complete_regression_suite": {
-      "result": "passed",
-      "tests_passed": 2810,
-      "assertions": 9028,
-      "exit_code": 0
-    },
-    "manual_login_round_trip": {
-      "result": "succeeded",
-      "authenticated_account_page_status": 200
-    },
-    "visual_verification": {
-      "desktop": "completed",
-      "mobile": "completed at approximately 400x644",
-      "pages_covered": "login, password recovery, email verification, two-factor, profile tabs/forms, and installer/purchase-code presentation rendered responsively",
-      "layout_findings": "no horizontal overflow or unusable controls were observed"
-    },
-    "accepted_deferred_findings_outside_slice_2": [
-      "Ultimate SMS/Codeglen names, footer and illustrations remain",
-      "Platform logo/favicon and authentication artwork must become configurable in the next launch-critical branding slice",
-      "Broken logo/avatar fallback must be corrected in that branding slice",
-      "Terms/Privacy were blank because the disposable test database contained no policy content",
-      "Registration remained blocked by the pre-existing geo-IP/seeded-country gate"
-    ],
-    "verification_type": "local manual verification only — no GitHub Actions, CI, staging, deployment, or production verification is claimed",
-    "verified_by": "human developer, manual Claude Code session"
-  }
+  "completed_pull_request": 119,
+  "completed_product_head_sha": "11d4c485399feb3b1097c9e08df3ecf44a19cdac",
+  "completed_merge_commit_sha": "3d512d5c981792f32dbb1fad941e9cb158455c7a"
 }

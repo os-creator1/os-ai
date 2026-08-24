@@ -18,6 +18,10 @@ use App\Exceptions\Usage\FeatureLimitExceedsPlatformSafetyLimitException;
 use App\Exceptions\Usage\InvalidReservationStateTransitionException;
 use App\Exceptions\Usage\NoActiveRateForFeatureException;
 use App\Exceptions\Usage\UnauthorizedUsageBillingManagementException;
+use App\Exceptions\Usage\UsageMeterBusinessScopeMismatchException;
+use App\Exceptions\Usage\UsageMeterCurrencyMismatchException;
+use App\Exceptions\Usage\UsageMeterNotMeteredException;
+use App\Exceptions\Usage\UsageMeterRateIntegrityException;
 use App\Exceptions\Usage\UsageReservationNotFoundException;
 use App\Exceptions\Usage\UsageWalletNotFoundException;
 use App\Models\Business;
@@ -32,9 +36,9 @@ use App\Repositories\Contracts\BusinessUsageRateRepository;
 use App\Repositories\Contracts\BusinessUsageReservationRepository;
 use App\Repositories\Contracts\BusinessUsageWalletBillingStatusTransitionRepository;
 use App\Repositories\Contracts\BusinessUsageWalletRepository;
-use App\Repositories\Contracts\PlatformFeatureUsageClassificationRepository;
-use App\Repositories\Contracts\PlatformFeatureUsageClassificationTransitionRepository;
 use App\Repositories\Contracts\PlatformFeatureUsageSafetyLimitRepository;
+use App\Repositories\Contracts\UsageMeterRepository;
+use App\Repositories\Contracts\UsageMeterTransitionRepository;
 use App\Repositories\Contracts\WorkspaceMembershipBusinessRepository;
 use App\Repositories\Contracts\WorkspaceMembershipRepository;
 use App\Jobs\Usage\EvaluateBusinessAutoRecharge;
@@ -63,8 +67,8 @@ class UsageWalletManager
         private readonly BusinessUsageWalletRepository $walletRepository,
         private readonly BusinessUsageRateRepository $rateRepository,
         private readonly BusinessUsageRateActivationRepository $rateActivationRepository,
-        private readonly PlatformFeatureUsageClassificationRepository $classificationRepository,
-        private readonly PlatformFeatureUsageClassificationTransitionRepository $classificationTransitionRepository,
+        private readonly UsageMeterRepository $meterRepository,
+        private readonly UsageMeterTransitionRepository $meterTransitionRepository,
         private readonly BusinessUsageReservationRepository $reservationRepository,
         private readonly BusinessUsageLedgerEntryRepository $ledgerRepository,
         private readonly BusinessFeatureUsageLimitRepository $featureLimitRepository,
@@ -249,16 +253,36 @@ class UsageWalletManager
 
             $wallet = $this->rollOverPeriodsIfNeeded($wallet, $business);
 
-            $classification = $this->classificationRepository->findByFeatureKey($featureKey);
+            $meter = $this->meterRepository->findByMeterKey($featureKey);
 
-            if ($classification === null || $classification->active_rate_id === null) {
+            if ($meter === null) {
                 throw new NoActiveRateForFeatureException($featureKey);
             }
 
-            $rate = $this->rateRepository->findById((int) $classification->active_rate_id);
+            if ($meter->business_id !== null && (int) $meter->business_id !== (int) $business->id) {
+                throw new UsageMeterBusinessScopeMismatchException($featureKey, (int) $business->id);
+            }
+
+            if ((int) $wallet->currency_id !== (int) $meter->currency_id) {
+                throw new UsageMeterCurrencyMismatchException($featureKey, (int) $wallet->currency_id, (int) $meter->currency_id);
+            }
+
+            if ($meter->active_rate_id === null) {
+                throw new NoActiveRateForFeatureException($featureKey);
+            }
+
+            if (! $meter->is_metered) {
+                throw new UsageMeterNotMeteredException($featureKey);
+            }
+
+            $rate = $this->rateRepository->findById((int) $meter->active_rate_id);
 
             if ($rate === null) {
                 throw new NoActiveRateForFeatureException($featureKey);
+            }
+
+            if ($rate->meter_key !== $meter->meter_key || (int) $rate->currency_id !== (int) $meter->currency_id) {
+                throw new UsageMeterRateIntegrityException($featureKey, (int) $rate->id);
             }
 
             $quantity = $estimatedQuantity ?? '1';
@@ -284,7 +308,8 @@ class UsageWalletManager
             $reservation = $this->reservationRepository->create([
                 'business_id' => $business->id,
                 'wallet_id' => $wallet->id,
-                'feature_key' => $featureKey,
+                'feature_key' => $meter->feature_key,
+                'meter_key' => $meter->meter_key,
                 'period_key' => $wallet->spend_period_key,
                 'status' => UsageReservationStatus::Pending->value,
                 'reserved_amount_micro' => $reservedAmountMicro,
@@ -308,7 +333,8 @@ class UsageWalletManager
                 'reserved_delta_micro' => $reservedAmountMicro,
                 'debt_delta_micro' => 0,
                 'currency_id' => $wallet->currency_id,
-                'feature_key' => $featureKey,
+                'feature_key' => $reservation->feature_key,
+                'meter_key' => $reservation->meter_key,
                 'period_key' => $wallet->spend_period_key,
                 'quantity' => $quantity,
                 'rate_id' => $rate->id,
@@ -420,6 +446,7 @@ class UsageWalletManager
                 'debt_delta_micro' => 0,
                 'currency_id' => $wallet->currency_id,
                 'feature_key' => $reservation->feature_key,
+                'meter_key' => $reservation->meter_key,
                 'period_key' => $reservation->period_key,
                 'quantity' => $quantity,
                 'rate_id' => $reservation->rate_id,
@@ -449,6 +476,7 @@ class UsageWalletManager
                     'debt_delta_micro' => $overageToDebt,
                     'currency_id' => $wallet->currency_id,
                     'feature_key' => $reservation->feature_key,
+                    'meter_key' => $reservation->meter_key,
                     'period_key' => $reservation->period_key,
                     'quantity' => $quantity,
                     'rate_id' => $reservation->rate_id,
@@ -482,6 +510,7 @@ class UsageWalletManager
                     'debt_delta_micro' => 0,
                     'currency_id' => $wallet->currency_id,
                     'feature_key' => $reservation->feature_key,
+                    'meter_key' => $reservation->meter_key,
                     'period_key' => $reservation->period_key,
                     'reservation_id' => $reservation->id,
                     'correlation_key' => $reservation->correlation_key.':release',
@@ -586,6 +615,7 @@ class UsageWalletManager
                 'debt_delta_micro' => 0,
                 'currency_id' => $wallet->currency_id,
                 'feature_key' => $reservation->feature_key,
+                'meter_key' => $reservation->meter_key,
                 'period_key' => $reservation->period_key,
                 'reservation_id' => $reservation->id,
                 'correlation_key' => $reservation->correlation_key.':release',
@@ -693,11 +723,13 @@ class UsageWalletManager
     }
 
     /**
-     * RFC-005 §11's setActiveRate() algorithm. Present at M1 so M5 has a
-     * ready target; never called by any M1 production code path (no HTTP
-     * surface exists). The classification row must already exist
-     * (guaranteed by M1's own backfill for every known PlatformFeature
-     * case).
+     * RFC-005 Amendment 1 Slice 3 CONTRACT §5.3's setActiveRate() final
+     * shape — the meter-local allocator, no feature-wide retry loop.
+     * $featureKey is semantically the meter key (signature frozen).
+     * Same-meter concurrency is serialized by findForUpdateByMeterKey()'s
+     * own row lock alone; sibling meters sharing one legacy feature can no
+     * longer collide at all, at any concurrency level, once
+     * business_usage_rates_feature_key_version_unique no longer exists.
      */
     public function setActiveRate(
         string $featureKey,
@@ -709,16 +741,16 @@ class UsageWalletManager
         string $reason,
     ): \App\Models\BusinessUsageRate {
         return DB::transaction(function () use ($featureKey, $retailRateMicro, $providerCostMicro, $unitLabel, $currencyId, $actorUserId, $reason) {
-            $classification = $this->classificationRepository->findForUpdateByFeatureKey($featureKey);
+            $meter = $this->meterRepository->findForUpdateByMeterKey($featureKey);
 
-            if ($classification === null) {
+            if ($meter === null) {
                 throw new NoActiveRateForFeatureException($featureKey);
             }
 
-            $nextVersion = $this->rateRepository->latestVersionForFeature($featureKey) + 1;
+            $nextVersion = $this->rateRepository->latestVersionForMeter($meter->meter_key) + 1;
 
             $rate = $this->rateRepository->create([
-                'feature_key' => $featureKey,
+                'meter_key' => $meter->meter_key,
                 'version' => $nextVersion,
                 'retail_rate_micro' => $retailRateMicro,
                 'provider_cost_micro' => $providerCostMicro,
@@ -730,7 +762,7 @@ class UsageWalletManager
             ]);
 
             $this->rateActivationRepository->create([
-                'feature_key' => $featureKey,
+                'meter_key' => $meter->meter_key,
                 'rate_id' => $rate->id,
                 'activated_at' => Carbon::now(),
                 'activated_by_user_id' => $actorUserId,
@@ -738,7 +770,7 @@ class UsageWalletManager
                 'created_at' => Carbon::now(),
             ]);
 
-            $this->classificationRepository->update($classification, [
+            $this->meterRepository->update($meter, [
                 'active_rate_id' => $rate->id,
                 'updated_by_user_id' => $actorUserId,
             ]);
@@ -748,31 +780,31 @@ class UsageWalletManager
     }
 
     /**
-     * RFC-005 §11's activateMetering(). Present at M1; never called by any
-     * M1 production code path (no metered feature is authorized until
-     * M5). Requires an already-activated rate for the feature.
+     * RFC-005 Amendment 1 §5.7's activateMetering(), re-pointed from the
+     * legacy classification row to UsageMeter/UsageMeterTransition (Slice
+     * 2 CUTOVER). Requires an already-activated rate for the meter.
      */
     public function activateMetering(string $featureKey, int $actorUserId, string $reason): void
     {
         DB::transaction(function () use ($featureKey, $actorUserId, $reason) {
-            $classification = $this->classificationRepository->findForUpdateByFeatureKey($featureKey);
+            $meter = $this->meterRepository->findForUpdateByMeterKey($featureKey);
 
-            if ($classification === null || $classification->active_rate_id === null) {
+            if ($meter === null || $meter->active_rate_id === null) {
                 throw new NoActiveRateForFeatureException($featureKey);
             }
 
-            $this->classificationTransitionRepository->create([
-                'feature_key' => $featureKey,
-                'from_is_metered' => $classification->is_metered,
+            $this->meterTransitionRepository->create([
+                'meter_key' => $meter->meter_key,
+                'from_is_metered' => $meter->is_metered,
                 'to_is_metered' => true,
-                'from_active_rate_id' => $classification->active_rate_id,
-                'to_active_rate_id' => $classification->active_rate_id,
+                'from_active_rate_id' => $meter->active_rate_id,
+                'to_active_rate_id' => $meter->active_rate_id,
                 'actor_user_id' => $actorUserId,
                 'reason' => $reason,
                 'created_at' => Carbon::now(),
             ]);
 
-            $this->classificationRepository->update($classification, [
+            $this->meterRepository->update($meter, [
                 'is_metered' => true,
                 'updated_by_user_id' => $actorUserId,
             ]);
@@ -782,33 +814,13 @@ class UsageWalletManager
     /**
      * Internal-only coarse capacity gate consumed exclusively by
      * RealUsageAuthorizationGateway. Never surfaced past that boundary
-     * (RFC-005 §14). At M1, every PlatformFeature classification has
-     * is_metered=false (M1's own backfill, §9.1), so this always
-     * short-circuits to authorized:true before touching any wallet state
-     * — the safe default for a non-metered/unknown classification.
+     * (RFC-005 §14). RFC-005 Amendment 1 §5.8, Slice 2 CUTOVER — feature
+     * entitlement must not depend on wallet health; parameters remain
+     * present (frozen signature) even though the body no longer reads
+     * them.
      */
     public function evaluateCoarseCapacity(Business $business, PlatformFeature $feature): UsageCapacityDecision
     {
-        $classification = $this->classificationRepository->findByFeatureKey($feature->value);
-
-        if ($classification === null || ! $classification->is_metered) {
-            return new UsageCapacityDecision(true);
-        }
-
-        $wallet = $this->walletRepository->findByBusinessId($business->id);
-
-        if ($wallet === null) {
-            return new UsageCapacityDecision(false, 'wallet_missing');
-        }
-
-        if ($wallet->billing_status === WalletBillingStatus::Suspended) {
-            return new UsageCapacityDecision(false, 'wallet_suspended');
-        }
-
-        if ($wallet->debt_balance_micro > 0) {
-            return new UsageCapacityDecision(false, 'outstanding_debt');
-        }
-
         return new UsageCapacityDecision(true);
     }
 

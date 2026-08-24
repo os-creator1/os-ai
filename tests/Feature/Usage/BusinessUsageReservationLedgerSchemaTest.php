@@ -2,10 +2,14 @@
 
 namespace Tests\Feature\Usage;
 
+use App\Library\Usage\UsageWalletManager;
 use App\Models\Currency;
+use App\Models\User;
+use App\Repositories\Contracts\UsageMeterRepository;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Tests\Feature\Business\Concerns\CreatesBusinessTestData;
 use Tests\TestCase;
 
@@ -21,6 +25,12 @@ class BusinessUsageReservationLedgerSchemaTest extends TestCase
     use RefreshDatabase;
     use CreatesBusinessTestData;
 
+    /**
+     * RFC-005 Amendment 1 Slice 3 CONTRACT §5 — business_usage_rates.meter_key
+     * is NOT NULL after Slice 3, so even this base wallet/rate fixture
+     * (used by tests that don't care about meter integration specifically)
+     * must create a genuine, disposable UsageMeter for its own rate.
+     */
     private function walletFixture(): array
     {
         $customer = $this->createCustomer();
@@ -45,8 +55,22 @@ class BusinessUsageReservationLedgerSchemaTest extends TestCase
             'updated_at' => $now,
         ]);
 
-        $rateId = DB::table('business_usage_rates')->insertGetId([
+        $meterKey = 'crm.meter.' . uniqid();
+        DB::table('usage_meters')->insert([
+            'meter_key' => $meterKey,
             'feature_key' => 'crm',
+            'business_id' => null,
+            'currency_id' => $currencyId,
+            'is_metered' => false,
+            'active_rate_id' => null,
+            'description' => 'Slice 3 schema test fixture meter.',
+            'updated_by_user_id' => 1,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+
+        $rateId = DB::table('business_usage_rates')->insertGetId([
+            'meter_key' => $meterKey,
             'version' => 1,
             'retail_rate_micro' => 1000,
             'provider_cost_micro' => 500,
@@ -57,7 +81,57 @@ class BusinessUsageReservationLedgerSchemaTest extends TestCase
             'created_at' => $now,
         ]);
 
-        return ['business_id' => $business->id, 'wallet_id' => $walletId, 'currency_id' => $currencyId, 'rate_id' => $rateId];
+        return [
+            'business_id' => $business->id,
+            'wallet_id' => $walletId,
+            'currency_id' => $currencyId,
+            'rate_id' => $rateId,
+            'meter_key' => $meterKey,
+        ];
+    }
+
+    /**
+     * RFC-005 Amendment 1 §B/§D — a second, disposable UsageMeter plus a
+     * business_usage_rates row carrying a matching meter_key, for
+     * exercising the composite meter/rate FKs on reservations/ledger.
+     * Never a real/seeded meter — created and torn down inside this
+     * test's own transaction. Version 1 is safe here (unlike pre-Slice-3):
+     * the legacy feature-wide business_usage_rates_feature_key_version_unique
+     * is gone, so this sibling meter's own version 1 cannot collide with
+     * walletFixture()'s unrelated meter's own version 1.
+     */
+    private function meterFixture(int $currencyId): array
+    {
+        $meterKey = 'crm.meter.' . uniqid();
+        $version = 1;
+        $now = now();
+
+        DB::table('usage_meters')->insert([
+            'meter_key' => $meterKey,
+            'feature_key' => 'crm',
+            'business_id' => null,
+            'currency_id' => $currencyId,
+            'is_metered' => false,
+            'active_rate_id' => null,
+            'description' => 'Slice 3 schema test fixture meter.',
+            'updated_by_user_id' => 1,
+            'created_at' => $now,
+            'updated_at' => $now,
+        ]);
+
+        $rateId = DB::table('business_usage_rates')->insertGetId([
+            'meter_key' => $meterKey,
+            'version' => $version,
+            'retail_rate_micro' => 1000,
+            'provider_cost_micro' => 500,
+            'unit_label' => 'per message',
+            'rounding_rule' => 'round_half_up',
+            'currency_id' => $currencyId,
+            'created_by_user_id' => 1,
+            'created_at' => $now,
+        ]);
+
+        return ['meter_key' => $meterKey, 'rate_id' => $rateId, 'rate_version' => $version];
     }
 
     private function insertReservation(array $fixture, array $overrides = []): int
@@ -68,6 +142,7 @@ class BusinessUsageReservationLedgerSchemaTest extends TestCase
             'business_id' => $fixture['business_id'],
             'wallet_id' => $fixture['wallet_id'],
             'feature_key' => 'crm',
+            'meter_key' => $fixture['meter_key'],
             'period_key' => '2026-08',
             'status' => 'pending',
             'reserved_amount_micro' => 1000,
@@ -191,5 +266,268 @@ class BusinessUsageReservationLedgerSchemaTest extends TestCase
             'created_at' => now(),
         ]);
         $this->assertDatabaseHas('business_usage_ledger_entries', ['id' => $idWithArbitraryValue, 'funding_attempt_id' => 999999]);
+    }
+
+    /**
+     * Proof 38 (reservations portion) — RFC-005 Amendment 1 Slice 3
+     * CONTRACT §D "step 22": business_usage_reservations.meter_key is
+     * NOT NULL after Slice 3 (it was transitionally nullable through
+     * Slice 1/2, populated by reserve() since Slice 2).
+     */
+    public function test_reservation_meter_key_not_null_is_enforced(): void
+    {
+        $fixture = $this->walletFixture();
+
+        $this->expectException(QueryException::class);
+        DB::table('business_usage_reservations')->insertGetId([
+            'business_id' => $fixture['business_id'],
+            'wallet_id' => $fixture['wallet_id'],
+            'feature_key' => 'crm',
+            'period_key' => '2026-08',
+            'status' => 'pending',
+            'reserved_amount_micro' => 1000,
+            'rate_id' => $fixture['rate_id'],
+            'rate_version' => 1,
+            'retail_rate_micro' => 1000,
+            'provider_cost_micro' => 500,
+            'rounding_rule' => 'round_half_up',
+            'idempotency_key' => 'idem-null-meter-' . uniqid(),
+            'correlation_key' => 'corr-null-meter-' . uniqid(),
+            'reserved_at' => now(),
+            'expires_at' => now()->clone()->addMinutes(30),
+        ]);
+    }
+
+    /**
+     * Proof 37 — business_usage_reservations.feature_key remains present
+     * and populated exactly as before, permanently, unaffected by Slice 3
+     * — it is the permanent owning-feature snapshot, never dropped.
+     */
+    public function test_reservation_feature_key_column_survives_slice_3_unchanged(): void
+    {
+        $columns = DB::getSchemaBuilder()->getColumnListing('business_usage_reservations');
+        $this->assertContains('feature_key', $columns);
+
+        $fixture = $this->walletFixture();
+        $id = $this->insertReservation($fixture, [
+            'idempotency_key' => 'idem-survives-' . uniqid(),
+            'correlation_key' => 'corr-survives-' . uniqid(),
+        ]);
+
+        $this->assertDatabaseHas('business_usage_reservations', ['id' => $id, 'feature_key' => 'crm']);
+    }
+
+    /**
+     * Proof 38 (reservations/ledger portion) — final meter_key
+     * nullability and type across both tables: NOT NULL on reservations,
+     * nullable permanently on ledger entries, both VARCHAR(128).
+     */
+    public function test_reservation_and_ledger_meter_key_final_nullability_and_type(): void
+    {
+        $reservationColumn = collect(DB::select(
+            "SHOW COLUMNS FROM business_usage_reservations WHERE Field = 'meter_key'"
+        ))->first();
+        $this->assertSame('NO', $reservationColumn->Null);
+        $this->assertStringContainsString('varchar(128)', strtolower($reservationColumn->Type));
+
+        $ledgerColumn = collect(DB::select(
+            "SHOW COLUMNS FROM business_usage_ledger_entries WHERE Field = 'meter_key'"
+        ))->first();
+        $this->assertSame('YES', $ledgerColumn->Null);
+        $this->assertStringContainsString('varchar(128)', strtolower($ledgerColumn->Type));
+    }
+
+    public function test_reservation_meter_rate_composite_fk_rejects_mismatched_pair(): void
+    {
+        $fixture = $this->walletFixture();
+        $meter = $this->meterFixture($fixture['currency_id']);
+
+        $this->expectException(QueryException::class);
+        $this->insertReservation($fixture, [
+            'meter_key' => $meter['meter_key'],
+            'rate_id' => $fixture['rate_id'],
+            'idempotency_key' => 'idem-mismatch-meter-' . uniqid(),
+            'correlation_key' => 'corr-mismatch-meter-' . uniqid(),
+        ]);
+    }
+
+    public function test_reservation_meter_rate_composite_fk_accepts_matching_pair(): void
+    {
+        $fixture = $this->walletFixture();
+        $meter = $this->meterFixture($fixture['currency_id']);
+
+        $id = $this->insertReservation($fixture, [
+            'meter_key' => $meter['meter_key'],
+            'rate_id' => $meter['rate_id'],
+            'rate_version' => $meter['rate_version'],
+            'idempotency_key' => 'idem-match-meter-' . uniqid(),
+            'correlation_key' => 'corr-match-meter-' . uniqid(),
+        ]);
+
+        $this->assertDatabaseHas('business_usage_reservations', [
+            'id' => $id,
+            'meter_key' => $meter['meter_key'],
+            'rate_id' => $meter['rate_id'],
+            'rate_version' => $meter['rate_version'],
+        ]);
+    }
+
+    /**
+     * RFC-005 Amendment 1 §G, Slice 1 EXPAND — the current, unmodified
+     * commit()/release() never populate meter_key; the new column must
+     * accept that transitional NULL without error.
+     */
+    public function test_ledger_meter_key_null_is_accepted(): void
+    {
+        $fixture = $this->walletFixture();
+
+        $id = DB::table('business_usage_ledger_entries')->insertGetId([
+            'business_id' => $fixture['business_id'],
+            'wallet_id' => $fixture['wallet_id'],
+            'entry_type' => 'reservation',
+            'available_delta_micro' => -1000,
+            'reserved_delta_micro' => 1000,
+            'debt_delta_micro' => 0,
+            'currency_id' => $fixture['currency_id'],
+            'correlation_key' => 'corr-null-ledger-meter-' . uniqid(),
+            'created_at' => now(),
+        ]);
+
+        $this->assertDatabaseHas('business_usage_ledger_entries', ['id' => $id, 'meter_key' => null]);
+    }
+
+    public function test_ledger_meter_rate_composite_fk_rejects_mismatched_pair(): void
+    {
+        $fixture = $this->walletFixture();
+        $meter = $this->meterFixture($fixture['currency_id']);
+
+        $this->expectException(QueryException::class);
+        DB::table('business_usage_ledger_entries')->insert([
+            'business_id' => $fixture['business_id'],
+            'wallet_id' => $fixture['wallet_id'],
+            'entry_type' => 'usage_charge',
+            'available_delta_micro' => 0,
+            'reserved_delta_micro' => -1000,
+            'debt_delta_micro' => 0,
+            'currency_id' => $fixture['currency_id'],
+            'meter_key' => $meter['meter_key'],
+            'rate_id' => $fixture['rate_id'],
+            'correlation_key' => 'corr-mismatch-ledger-meter-' . uniqid(),
+            'created_at' => now(),
+        ]);
+    }
+
+    /**
+     * RFC-005 Amendment 1 §G — the legitimate ReservationRelease shape:
+     * meter_key populated, rate_id NULL. MySQL/InnoDB's MATCH SIMPLE
+     * semantics exempt this row from the composite FK (any-NULL exempts),
+     * so it must be accepted, not rejected.
+     */
+    public function test_ledger_reservation_release_shape_with_meter_key_and_null_rate_id_is_accepted(): void
+    {
+        $fixture = $this->walletFixture();
+        $meter = $this->meterFixture($fixture['currency_id']);
+
+        $id = DB::table('business_usage_ledger_entries')->insertGetId([
+            'business_id' => $fixture['business_id'],
+            'wallet_id' => $fixture['wallet_id'],
+            'entry_type' => 'reservation_release',
+            'available_delta_micro' => 1000,
+            'reserved_delta_micro' => -1000,
+            'debt_delta_micro' => 0,
+            'currency_id' => $fixture['currency_id'],
+            'meter_key' => $meter['meter_key'],
+            'rate_id' => null,
+            'correlation_key' => 'corr-release-shape-' . uniqid(),
+            'created_at' => now(),
+        ]);
+
+        $this->assertDatabaseHas('business_usage_ledger_entries', [
+            'id' => $id,
+            'meter_key' => $meter['meter_key'],
+            'rate_id' => null,
+        ]);
+    }
+
+    /**
+     * RFC-005 Amendment 1 Slice 2 CUTOVER §5.4 — after cutover, a genuine
+     * reserve() call (through the real repositories, not a raw insert)
+     * dual-writes both feature_key and meter_key on the reservation and
+     * its own reservation-type ledger entry, resolved from the UsageMeter
+     * — never the raw featureKey parameter re-derived independently.
+     */
+    public function test_reserve_dual_writes_feature_key_and_meter_key_from_the_resolved_meter(): void
+    {
+        $customer = $this->createCustomer();
+        $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
+        $currencyId = Currency::create(['name' => 'US Dollar', 'code' => 'USD', 'format' => '$', 'status' => true])->id;
+        $actorId = User::create([
+            'first_name' => 'Test',
+            'last_name' => 'Actor',
+            'email' => 'actor' . uniqid() . '@example.test',
+            'status' => true,
+            'is_admin' => true,
+            'is_customer' => false,
+            'active_portal' => 'admin',
+        ])->id;
+        $meterKey = 'crm.meter.' . uniqid();
+
+        $manager = app(UsageWalletManager::class);
+        $manager->initializeWalletForNewBusiness($business->id);
+        app(UsageMeterRepository::class)->create([
+            'meter_key' => $meterKey,
+            'feature_key' => 'crm',
+            'business_id' => null,
+            'currency_id' => $currencyId,
+            'description' => 'Dual-write fixture meter.',
+            'updated_by_user_id' => $actorId,
+        ]);
+        $manager->setActiveRate($meterKey, '1000000', '500000', 'per message', $currencyId, $actorId, 'Fixture.');
+        $manager->activateMetering($meterKey, $actorId, 'Fixture.');
+        DB::table('business_usage_wallets')->where('business_id', $business->id)->update(['available_balance_micro' => 5_000_000]);
+
+        $result = $manager->reserve($business, $meterKey, (string) Str::uuid(), '1');
+
+        $this->assertTrue($result->granted);
+        $this->assertDatabaseHas('business_usage_reservations', [
+            'id' => $result->reservationId,
+            'feature_key' => 'crm',
+            'meter_key' => $meterKey,
+        ]);
+        $this->assertDatabaseHas('business_usage_ledger_entries', [
+            'reservation_id' => $result->reservationId,
+            'entry_type' => 'reservation',
+            'feature_key' => 'crm',
+            'meter_key' => $meterKey,
+        ]);
+    }
+
+    /**
+     * RFC-005 Amendment 1 §N — a historical, real M3/M4-shaped
+     * non-metered entry (feature_key/rate_id both NULL already) remains
+     * valid and untouched once meter_key is added.
+     */
+    public function test_historical_non_metered_ledger_row_remains_valid_with_null_meter_key(): void
+    {
+        $fixture = $this->walletFixture();
+
+        $id = DB::table('business_usage_ledger_entries')->insertGetId([
+            'business_id' => $fixture['business_id'],
+            'wallet_id' => $fixture['wallet_id'],
+            'entry_type' => 'paid_top_up',
+            'available_delta_micro' => 5000,
+            'reserved_delta_micro' => 0,
+            'debt_delta_micro' => 0,
+            'currency_id' => $fixture['currency_id'],
+            'correlation_key' => 'corr-historical-' . uniqid(),
+            'created_at' => now(),
+        ]);
+
+        $this->assertDatabaseHas('business_usage_ledger_entries', [
+            'id' => $id,
+            'feature_key' => null,
+            'meter_key' => null,
+            'rate_id' => null,
+        ]);
     }
 }
