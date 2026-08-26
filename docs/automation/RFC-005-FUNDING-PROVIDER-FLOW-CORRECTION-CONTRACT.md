@@ -26,7 +26,7 @@ Prior head: `d3d3a6225ceea29e9e5f542b96da679bbf4275a0`. Independent review found
 
 Exact issues resolved this round:
 
-1. **Test allowlist completeness (Blocker B).** A mechanical grep for `initiateTopUp(`/`initiateAddonPurchase(` across `tests/Unit/Usage` and `tests/Feature/Usage` found exactly 14 calling files (§17 below lists all 14, plus 2 files not calling either method but assigned new proofs this round, plus the 5 already carried forward from Round 1 that don't call these methods directly — 21 files total, exhaustively verdicted, zero remaining as "verify at implementation time").
+1. **Test allowlist completeness (Blocker B).** A mechanical grep for `initiateTopUp(`/`initiateAddonPurchase(` across `tests/Unit/Usage` and `tests/Feature/Usage` found exactly 14 calling files. §17 below verdicts those 14, plus 4 further files that do not call either method directly (3 assigned new proofs this round, 1 confirmed `NOT REQUIRED`) — **18 files total this round, exhaustively verdicted, zero remaining as "verify at implementation time."**
 2. **AddonPurchase's Checkout Session required-argument values (Blocker E), locked** — reuses the already-known `business_usage_addon_catalog.display_name` for `lineItemName`, and the existing Usage Billing dashboard route (already `resolveViewableBusiness()`-scoped) for both `successUrl`/`cancelUrl`, since no add-on-specific HTTP surface is authorized (§7).
 3. **Webhook re-fetch failure semantics, split into the two mechanically distinct cases** the current `ProcessPaymentProviderEvent::handle()` try/catch actually produces (§12): a logical verification failure (no exception) vs. a thrown provider exception (`ProcessPaymentProviderEvent::handle()`'s own catch already marks the event `failed`).
 4. **`payment_method_display_snapshot`'s exact write shape locked** — `confirmSucceeded()` gains one optional `?string $verifiedPaymentMethodDisplay = null` parameter, folded into its own existing single `attemptRepository->update()` call; no second success routine (§5).
@@ -35,6 +35,18 @@ Exact issues resolved this round:
 7. **Production allowlist re-recounted mechanically, confirmed unchanged from Round 1** — 9 REQUIRED, 4 explicitly NOT REQUIRED (adding `ReconcileProviderPendingState.php`, confirmed purpose-agnostic and needing zero changes since it already delegates entirely to the corrected `confirmAttemptFromReturn()`).
 
 **Correction rounds: 2 of 2 consumed by this round. Zero ordinary correction rounds remain.** No genuinely unresolved contradiction was found this round that could not be mechanically resolved from authoritative repository/RFC evidence — every blocker raised had a direct, evidence-backed answer, so this report does not invoke the "stop and report" escape hatch.
+
+---
+
+## Exceptional post-review factual/test-harness correction
+
+Prior head: `aaedd710227e29618c035adedb60043b612b6a53`. **This is not Correction Round 3.** Ordinary correction rounds remain **2 of 2 consumed; zero ordinary rounds remain** — `maximum_correction_rounds: 2` is unchanged, and this exception does not create, imply, or reserve a new ordinary round. It was made under a separate, explicit human authorization covering exactly one further docs-only pass, after the ordinary-round budget was already exhausted, because final independent review found three mechanically blocking omissions that a fresh implementation would otherwise have hit on day one:
+
+1. **A third, previously-omitted concrete implementation of `PaymentProviderGateway`** — `BarrierGatedPaymentProviderGateway`, declared inside `tests/Feature/Usage/Support/concurrent_slot_agreement_runner.php`, delegating every call to a real gateway instance for the existing slot-agreement concurrency proof. Its `createCheckoutSession()` still declares the pre-correction eight-argument signature and would no longer conform once `PaymentProviderGateway::createCheckoutSession()` widens (§8.B). Resolved in §16/§17 below.
+2. **A mechanically impossible parent-process-memory assumption inside `ConcurrentTopUpConcurrencyTest`'s child-process fixture.** Each racing child boots its own fresh `FakePaymentProviderGateway` in an independent OS process — the parent PHPUnit process's own in-memory Fake state (including any `checkoutSessionOutcomes` the Round-2 record implied a child could rely on) is never shared with it. Under the corrected Checkout-backed lifecycle, a child confirming a Session it did not itself create would fall through to the Fake's own unknown-Session fallback (`amountMinorUnits: 0`, `currencyCode: 'USD'`, `providerCustomerId: 'cus_fake_unknown'`) and fail the manager's own authoritative eight-condition verification. Resolved in §17 below with one new, narrowly-scoped `FakePaymentProviderGateway` test-fixture method and an exact corrected child-runner script.
+3. **A false inventory-arithmetic statement in the Round 2 record** (§17's own file count did not actually sum the way the accompanying prose claimed). Corrected throughout below.
+
+No product or test code changes and no implementation authorization are granted by this exception. `AI-AUTONOMY-STATE.json` is untouched. M6 remains frozen. This governance branch still changes exactly one file.
 
 ---
 
@@ -402,7 +414,7 @@ Out of scope: `business_billing_receipts`, any receipt model/repository, any `re
 | `app/Library/Usage/UsageBillingCheckoutManager.php` | **REQUIRED** | `initiateCharge()` purpose-aware dispatch, `initiateAddonPurchase()`'s locked argument values (§7), `formatPaymentMethodDisplay()` addition, `confirmSucceeded()`'s new optional parameter (§5.B), `confirmAttemptFromReturn()`/`confirmAttemptFromWebhook()`/`retryFundingAttemptAsAdministrator()` purpose-aware re-fetch+verify (§12) |
 | `app/Library/Usage/Contracts/PaymentProviderGateway.php` | **REQUIRED** | `createCheckoutSession()` gains `bool $setupFutureUsageOffSession = false` (§8.B) |
 | `app/Library/Usage/StripePaymentProviderGateway.php` | **REQUIRED** | Implements the widened interface |
-| `app/Library/Usage/FakePaymentProviderGateway.php` | **REQUIRED** | Accepts the widened signature; adds `createCheckoutSessionCalls` recording |
+| `app/Library/Usage/FakePaymentProviderGateway.php` | **REQUIRED — three correction-owned responsibilities, locked exactly** | (1) accepts the widened `createCheckoutSession()` signature (§8.B); (2) adds `createCheckoutSessionCalls` recording, including the received `setupFutureUsageOffSession` value; (3) adds the narrow test-only `registerCheckoutSessionResult()` fixture (§16.A) needed by `ConcurrentTopUpConcurrencyTest`'s independently-booted child processes (§17) |
 | `app/Library/Usage/FundingAttemptResult.php` | **REQUIRED** | Adds nullable `redirectUrl` |
 | `app/Library/Usage/AddonPurchaseResult.php` | **REQUIRED** | Adds the identical nullable `redirectUrl` |
 | `app/Library/Usage/PaymentInstrumentManager.php` | **NOT REQUIRED** | Option 1 (§9) means `UsageBillingCheckoutManager` never calls `resolveProviderCustomer()` or `syncWorkspaceCheckoutPaymentMethod()`; the only interaction is a direct, already-unmodified `PaymentProviderGateway::retrievePaymentMethod()` call from inside `UsageBillingCheckoutManager` itself |
@@ -413,13 +425,91 @@ Out of scope: `business_billing_receipts`, any receipt model/repository, any `re
 | `app/Library/Usage/CheckoutSessionResult.php` | **NOT REQUIRED** | Already carries every field needed |
 | `app/Library/Usage/PaymentMethodResult.php` | **NOT REQUIRED** | Already carries every field `formatPaymentMethodDisplay()` needs |
 
-**9 REQUIRED, 4 NOT REQUIRED — mechanically recounted, identical to Round 1's own count (the reviewer's own independent count of 9 REQUIRED matches exactly).** No tenth production path is needed. No schema, model, or repository change of any kind is needed anywhere in this correction.
+**9 REQUIRED, 4 NOT REQUIRED — mechanically recounted, identical to Round 1's own count (the reviewer's own independent count of 9 REQUIRED matches exactly).** No tenth production path is needed. No schema, model, or repository change of any kind is needed anywhere in this correction. **Adding the exceptional-correction items below (§16.A, and the support-runner conformance fix tracked in §17) does not add a tenth production path** — `FakePaymentProviderGateway.php` was already one of the 9, and the support runner is a test-support file, tracked in §17's test/support allowlist, not here.
+
+### 16.A `FakePaymentProviderGateway::registerCheckoutSessionResult()` — exact locked design
+
+**Third-implementer audit, performed directly against the repository (Blocker A):** exactly three concrete implementations of `PaymentProviderGateway` exist —
+
+1. `StripePaymentProviderGateway` (production).
+2. `FakePaymentProviderGateway` (the automated-test double).
+3. `BarrierGatedPaymentProviderGateway`, declared inside `tests/Feature/Usage/Support/concurrent_slot_agreement_runner.php` — a real-gateway-delegating wrapper used only by the existing slot-agreement concurrency proof to inject a deliberate hold at a specific call site.
+
+All three are now accounted for (§17 resolves #3's own required interface-conformance fix).
+
+**The child-process problem (Blocker B):** `ConcurrentTopUpConcurrencyTest`'s racing children each boot their own fresh `FakePaymentProviderGateway` inside an independently spawned OS process — the parent PHPUnit process's own in-memory Fake state is never shared with them (the identical non-shared-memory fact the repository's own slot-agreement concurrency support runner already documents for its own, unrelated reasons). Under the corrected Checkout-backed lifecycle, a child calling `confirmAttemptFromReturn()` must retrieve a Checkout Session it did not itself create — the existing unknown-Session fallback (`amountMinorUnits: 0`, `currencyCode: 'USD'`, `providerCustomerId: 'cus_fake_unknown'`) would fail the manager's own authoritative eight-condition verification (§12) every time.
+
+**Locked resolution — one new, narrowly-scoped test-fixture method, parallel in spirit to the existing `registerPaymentMethod()`:**
+
+```php
+// FakePaymentProviderGateway.php — new field alongside the existing ones:
+private array $registeredCheckoutSessionResults = [];
+
+public function registerCheckoutSessionResult(CheckoutSessionResult $result): void
+{
+    $this->registeredCheckoutSessionResults[$result->providerCheckoutSessionId] = $result;
+}
+
+public function retrieveCheckoutSession(string $providerCheckoutSessionId): CheckoutSessionResult
+{
+    if (isset($this->registeredCheckoutSessionResults[$providerCheckoutSessionId])) {
+        return $this->registeredCheckoutSessionResults[$providerCheckoutSessionId];
+    }
+
+    // ... every existing line of this method, completely unchanged below this point.
+}
+```
+
+`retrieveCheckoutSession()` checks the new registry **first**; when no explicit registration exists for that Session id, every current line of the method (the `createdCheckoutSessions`-keyed lookup, its own `checkoutSessionOutcomes` configuration, and the unknown-Session fallback) runs exactly as it does today, byte-for-byte unchanged. **No database coupling is introduced. The unknown-Session fallback is not weakened for any other caller** — every existing test that never registers an explicit result continues to observe the identical existing behavior. **The production manager's eight-condition verification is not weakened in any way** — this fixture only controls what a test-only Fake *returns*; the manager still independently checks every one of the eight conditions against whatever it receives.
+
+**Exact corrected child-runner script (`ConcurrentTopUpConcurrencyTest::confirmRunnerScript()`):**
+
+```php
+$attemptId = (int) $argv[1];
+$signalPath = $argv[2];
+
+fwrite(STDOUT, "WAITING\n");
+fflush(STDOUT);
+waitForSignal($signalPath);
+
+$attempt = App\Models\BusinessFundingAttempt::find($attemptId);
+$manager = app(App\Library\Usage\UsageBillingCheckoutManager::class);
+$fake = app(App\Library\Usage\Contracts\PaymentProviderGateway::class);
+
+// Deterministic, self-contained fixture — this child process never relies
+// on the parent PHPUnit process's own in-memory Fake state, which does not
+// exist here at all.
+$paymentMethodId = 'pm_fake_child_confirm';
+$fake->registerPaymentMethod(new App\Library\Usage\PaymentMethodResult(
+    $paymentMethodId,
+    '', // deliberately empty — exercises the authorized one-time-unattached PaymentMethod rule (§5.C)
+    'card', 'visa', '4242', 12, 2030,
+));
+$fake->registerCheckoutSessionResult(new App\Library\Usage\CheckoutSessionResult(
+    $attempt->provider_session_or_intent_reference,
+    'complete',
+    'paid',
+    null,
+    $manager->expectedMinorUnitsFor($attempt),
+    $manager->expectedCurrencyCodeFor($attempt),
+    $attempt->provider_customer_external_id_snapshot,
+    'pi_fake_child_confirm',
+    $paymentMethodId,
+));
+
+$manager->confirmAttemptFromReturn($attempt);
+fwrite(STDOUT, "DONE\n");
+```
+
+Steps, exactly as authorized: (1) the child boots its own fresh Fake, unchanged from today; (2) loads the attempt by the `argv` id, unchanged; (3) resolves that same bound Fake from the container; (4) registers one deterministic, complete/paid `CheckoutSessionResult` for exactly `attempt->provider_session_or_intent_reference`; (5) that Session's amount/currency come from the manager's own already-public `expectedMinorUnitsFor()`/`expectedCurrencyCodeFor()`, and its customer from `attempt->provider_customer_external_id_snapshot` — never a guessed value; (6) a matching `PaymentMethodResult` is registered for the same deterministic PaymentMethod id; (7) that PaymentMethod's own `providerCustomerId` is left empty, deliberately exercising §5.C's authorized unattached-PaymentMethod rule inside a real concurrency proof, not only a single-process unit test; (8) only then does the child call `confirmAttemptFromReturn($attempt)`. `createPendingAttempt()` (the parent-side fixture) is corrected only to produce a genuine Checkout-backed, `provider_pending` attempt — it no longer needs to pretend that configuring the parent's own `checkoutSessionOutcomes` has any effect on a child process, since it never did.
+
+**Confirmed:** the concurrency proof itself — real independent OS processes, the real shared testing database, the real wallet-row locking inside `UsageWalletManager::creditFromFunding()`, no elapsed-time-based fake race — is entirely preserved. The exact wallet/ledger assertions are unchanged except for the mechanically necessary Checkout-fixture setup above. The parent process's own in-memory Fake state is no longer relied upon by any child process, anywhere in this test.
 
 ---
 
 ## 17. Test authority — every affected file exhaustively enumerated, every verdict exact
 
-**Mechanical audit performed this round:** every file under `tests/Unit/Usage` and `tests/Feature/Usage` was searched for `initiateTopUp(`/`initiateAddonPurchase(` — the two calls whose current fixture behavior (off-session PaymentIntent, `paymentIntentOutcomes`, synchronous `Succeeded`) becomes false once this correction lands. **Exactly 14 files call one of these two methods; all 14 are verdicted below, individually, with no "verify at implementation time" hedge remaining.** Two further files not calling either method are assigned new proofs this round because they are the repository's own existing, correct home for an HTTP-level or real-call-site proof this correction specifically needs (§6/§8.B).
+**Mechanical audit performed this round:** every file under `tests/Unit/Usage` and `tests/Feature/Usage` was searched for `initiateTopUp(`/`initiateAddonPurchase(` — the two calls whose current fixture behavior (off-session PaymentIntent, `paymentIntentOutcomes`, synchronous `Succeeded`) becomes false once this correction lands. **Exactly 14 files call one of these two methods; all 14 are verdicted below.** Of those 14, **13 require modification and 1 (`CrossBusinessPaymentIsolationTest.php`) is verified `NOT REQUIRED`.** A further **4 files do not call either method directly** — `FakePaymentProviderGatewayTest.php`, `UsageBillingDashboardAuthorizationTest.php`, and `WebhookSlotAgreementSubjectRoutingTest.php` are each assigned exactly one new proof this round because they are the repository's own existing, correct home for an HTTP-level or real-call-site proof this correction specifically needs (§6/§8.B); `WebhookDuplicateEventReplayTest.php` is confirmed `NOT REQUIRED`. **14 + 4 = 18 test files, exhaustively verdicted, zero remaining as "verify at implementation time."** The exceptional post-review correction above adds exactly one further, non-test **support** path (§16.A), bringing the combined test/support total to **19** — see that file's own row at the end of the table below.
 
 | File | Verdict | Exact resolution |
 |---|---|---|
@@ -428,7 +518,7 @@ Out of scope: `business_billing_receipts`, any receipt model/repository, any `re
 | `tests/Feature/Usage/FundingAttemptPayerConsentTest.php` | **PARTIALLY REQUIRED** | `test_workspace_owner_can_initiate_a_top_up_when_workspace_pays`, `test_direct_business_owner_cannot_initiate_a_top_up_when_workspace_pays`, `test_direct_business_owner_can_initiate_a_top_up_when_business_pays` remain **unmodified**. `test_platform_administrator_can_resume_a_stuck_attempt` is **corrected**: replaces its `paymentIntentOutcomes = ['*' => 'requires_action']` fixture with a `provider_pending`, not-yet-`complete` `checkoutSessionOutcomes` entry, exercising `retryFundingAttemptAsAdministrator()`'s new Checkout-Session branch (§12). |
 | `tests/Feature/Usage/FakePaymentProviderGatewayTest.php` | **REQUIRED** | One new test, `test_create_checkout_session_records_the_setup_future_usage_flag_per_call`, asserts `createCheckoutSessionCalls` records the received boolean. Every existing test remains valid unmodified. |
 | `tests/Feature/Usage/WebhookDuplicateEventReplayTest.php` | **NOT REQUIRED** | Generic `provider_event_id` deduplication, orthogonal to purpose or provider-object family. |
-| `tests/Feature/Usage/ConcurrentTopUpConcurrencyTest.php` | **REQUIRED — fixture-level correction only** | `createPendingAttempt()`'s mechanism is corrected to configure a `provider_pending`, not-yet-`complete` `checkoutSessionOutcomes` entry instead of `paymentIntentOutcomes`. The race/lock proof itself requires no redesign. |
+| `tests/Feature/Usage/ConcurrentTopUpConcurrencyTest.php` | **REQUIRED — fixture-level correction only (exceptional post-review correction: child-process fixture, §16.A)** | `createPendingAttempt()` (parent process) is corrected to produce a genuine Checkout-backed, `provider_pending` attempt — never a parent-side `checkoutSessionOutcomes` configuration, since a racing child process shares no memory with the parent's own Fake. `confirmRunnerScript()` (each child process) is corrected to call the new `registerCheckoutSessionResult()`/`registerPaymentMethod()` fixtures on its own freshly-booted Fake, using the manager's own `expectedMinorUnitsFor()`/`expectedCurrencyCodeFor()`, before calling `confirmAttemptFromReturn()` — the exact code is locked in §16.A. The race/lock proof itself requires no redesign. |
 | `tests/Feature/Usage/UsageBillingDashboardStripeIntegrationTest.php` | **REQUIRED** | `test_dashboard_renders_payment_method_and_funding_history_when_provider_is_configured` is **corrected** to call `confirmAttemptFromReturn()` after `initiateTopUp()` (with the fake's default complete/paid Session outcome) before asserting `assertSee('succeeded')`, preserving its own real intent (a succeeded row genuinely renders). `test_no_live_stripe_network_call_occurs_anywhere_in_this_flow` is **corrected** to assert `FundingAttemptState::ProviderPending` immediately after `initiateTopUp()` alone, then to also call `confirmAttemptFromReturn()` and assert `Succeeded` — proving the *entire* flow, not only its first half, completes without a live call. `test_dashboard_still_renders_the_honest_placeholder_when_provider_is_not_configured` and `test_every_new_route_is_isolated_by_the_existing_resolveviewablebusiness_pattern` remain **unmodified** (neither asserts on funding-attempt state). One new test, `test_initiating_a_top_up_redirects_to_the_hosted_checkout_url` (§6). |
 | `tests/Feature/Usage/UsageBillingDashboardAuthorizationTest.php` | **REQUIRED** | One new test, `test_top_up_confirm_route_rejects_a_cross_business_attempt` (§6). Every existing test remains unmodified — none calls `initiateTopUp()`/`initiateAddonPurchase()`. |
 | `tests/Feature/Usage/PayerChangeDuringPendingAttemptTest.php` | **REQUIRED — fixture correction, invariant preserved** | Both tests' `paymentIntentOutcomes = ['*' => 'requires_action']` fixture is replaced with a `provider_pending`, not-yet-`complete` `checkoutSessionOutcomes` entry; the actual invariant under test (the attempt's frozen `payer_type_snapshot` is unaffected by a later payer change; a new attempt under the old payer's authority is blocked once the change commits) is **fully preserved**, reframed against the Checkout-Session lifecycle. |
@@ -441,8 +531,9 @@ Out of scope: `business_billing_receipts`, any receipt model/repository, any `re
 | `tests/Feature/Usage/StripeAmountMinMaxValidationTest.php` | **REQUIRED — assertion-only correction** | `test_an_amount_below_the_minimum_is_rejected_before_any_provider_call` and `test_an_amount_above_the_eight_digit_maximum_is_rejected` remain **unmodified** (validated before the branch splits). `test_an_amount_at_exactly_the_minimum_succeeds` and `test_an_amount_at_exactly_the_eight_digit_maximum_succeeds` have their assertion **corrected** from `Succeeded` to `ProviderPending` — the boundary-value invariant itself is **fully preserved**. |
 | `tests/Feature/Usage/CrossBusinessPaymentIsolationTest.php` | **NOT REQUIRED — verified, not modified** | `test_a_business_owned_instrument_is_never_visible_from_a_different_businesss_dashboard` never calls `initiateTopUp()`. `test_funding_history_repository_lookup_is_business_scoped` calls it but asserts only row **counts** and dashboard-visibility isolation, never the attempt's `state` value — confirmed by direct re-read to be entirely unaffected by which provider object is used. |
 | `tests/Feature/Usage/WebhookSlotAgreementSubjectRoutingTest.php` | **REQUIRED** | One new test, `test_initiate_slot_agreement_checkout_passes_setup_future_usage_true` (§8.B). Every existing test remains unmodified — none is affected by the `ManualTopUp`/`AddonPurchase` provider-object correction. |
+| `tests/Feature/Usage/Support/concurrent_slot_agreement_runner.php` | **REQUIRED — interface-conformance only (exceptional post-review correction)** | `BarrierGatedPaymentProviderGateway implements PaymentProviderGateway`, discovered by direct third-implementer audit (§16.A), declares the pre-correction eight-argument `createCheckoutSession()` signature. Corrected to the exact widened signature and forwards the ninth argument to `$this->inner->createCheckoutSession(...)` verbatim: `public function createCheckoutSession(string $providerCustomerId, int $amountMinorUnits, string $currencyCode, string $lineItemName, string $successUrl, string $cancelUrl, string $idempotencyKey, array $metadata, bool $setupFutureUsageOffSession = false): CheckoutSessionResult { return $this->inner->createCheckoutSession($providerCustomerId, $amountMinorUnits, $currencyCode, $lineItemName, $successUrl, $cancelUrl, $idempotencyKey, $metadata, $setupFutureUsageOffSession); }`. No other line in this file changes; no slot-agreement concurrency behavior changes; no new PHPUnit test name is required — the file's own interface conformance is exercised by whichever existing slot-agreement concurrency test already shells out to it. |
 
-**No new test file is authorized anywhere in this contract.** Every new proof is assigned to one of the 18 files above.
+**19 total test/support paths this round (18 test files + 1 support file), 17 REQUIRED/PARTIALLY REQUIRED, 2 NOT REQUIRED (`WebhookDuplicateEventReplayTest.php`, `CrossBusinessPaymentIsolationTest.php`). No new test file is authorized anywhere in this contract — every new proof is assigned to one of the 18 test files above, and the support file's own correction requires no new test name of any kind.**
 
 **Full new-test list, each with its exact assigned file:**
 
@@ -532,7 +623,7 @@ Push normally to `chore/rfc-005-funding-provider-flow-correction-contract`. No f
 
 ## 22. Future implementation gates — restated for the implementation PR
 
-1. Confirm the cumulative diff is a subset of exactly the 9 REQUIRED production paths (§16) and the exactly-named REQUIRED/PARTIALLY-REQUIRED test files and test names (§17) — no eleventh production path, no test file and no test name beyond §17's two tables.
+1. Confirm the cumulative diff is a subset of exactly the 9 REQUIRED production paths (§16) and the exactly-named 17 REQUIRED/PARTIALLY-REQUIRED test/support files and test names (§17, including the one support file `tests/Feature/Usage/Support/concurrent_slot_agreement_runner.php`) — no tenth production path, no test/support file and no test name beyond §17's tables.
 2. Run `migrate:fresh --env=testing`, then `artisan test tests/Unit/Usage tests/Feature/Usage`, then `git diff --check` (§18), recording exact test/assertion/runtime counts, zero failures, exit 0.
 3. Confirm every `AutoRecharge`-scoped existing test still passes (§13).
 4. Confirm the existing slot-agreement Checkout Session flow's own tests still pass unmodified.
