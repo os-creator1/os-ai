@@ -159,7 +159,8 @@ class QuickSendNonConversationCallersUnaffectedTest extends TestCase
         $country = Country::firstOrCreate(['country_code' => '1', 'iso_code' => 'US'], ['name' => 'United States', 'status' => 1]);
         $sendingServer = SendingServer::create([
             'name' => 'Forged-origin Twilio Server', 'settings' => SendingServer::TYPE_TWILIO, 'status' => true,
-            'plain' => true, 'whatsapp' => true, 'account_sid' => 'ACtest', 'auth_token' => 'authtest',
+            'plain' => true, 'whatsapp' => true, 'voice' => true, 'mms' => true, 'viber' => true, 'otp' => true,
+            'account_sid' => 'ACtest', 'auth_token' => 'authtest',
         ]);
 
         config([
@@ -175,7 +176,10 @@ class QuickSendNonConversationCallersUnaffectedTest extends TestCase
         Subscription::create(['user_id' => $user->id, 'plan_id' => $plan->id, 'status' => Subscription::STATUS_ACTIVE, 'paid' => true, 'start_at' => now(), 'end_at' => null]);
         CustomerBasedPricingPlan::create([
             'user_id' => $user->id, 'country_id' => $country->id, 'plan_id' => $plan->id,
-            'options' => json_encode(['plain_sms' => 0.05, 'whatsapp_sms' => 0.10]), 'status' => true,
+            'options' => json_encode([
+                'plain_sms' => 0.05, 'whatsapp_sms' => 0.10, 'voice_sms' => 0.10,
+                'mms_sms' => 0.10, 'viber_sms' => 0.10, 'otp_sms' => 0.10,
+            ]), 'status' => true,
         ]);
 
         return ['business' => $business, 'user' => $user, 'country' => $country, 'sendingServer' => $sendingServer];
@@ -241,43 +245,62 @@ class QuickSendNonConversationCallersUnaffectedTest extends TestCase
      * Conversations.is_metered, even for a trusted ChatBox-origin call:
      * only sms_type plain/unicode is ever evaluated for M5 qualification.
      */
-    public function test_non_plain_channel_from_chatbox_origin_remains_on_legacy_billing(): void
+    /**
+     * M5 contract §5.2 — MMS, WhatsApp, Viber, OTP, and Voice remain
+     * unconditionally unchanged during M5, regardless of
+     * Conversations.is_metered, even for a trusted ChatBox-origin call:
+     * only sms_type plain/unicode is ever evaluated for M5 qualification.
+     * Exceptional correction, Defect 3 — behaviorally proven for every
+     * channel the contract names, not one representative example.
+     */
+    public function test_every_excluded_channel_from_chatbox_origin_remains_on_legacy_billing(): void
     {
-        $fixture = $this->buildFullyQualifyingFixture();
-
-        $campaign = \Mockery::mock(Campaigns::class);
-        $campaign->shouldReceive('sendWhatsApp')->once()->andReturn((object) [
-            'status' => 'Delivered', 'customer_status' => 'Delivered', 'cost' => 0.10, 'sms_count' => 1,
-        ]);
-
-        $input = [
-            'user' => $fixture['user'],
-            'sms_type' => 'whatsapp',
-            'sender_id' => 'TestSender',
-            'region_code' => $fixture['country']->iso_code,
-            'country_code' => $fixture['country']->country_code,
-            'recipient' => '5551234567',
-            'message' => 'A WhatsApp message.',
-            'sending_server' => $fixture['sendingServer']->id,
-            'idempotency_token' => (string) \Illuminate\Support\Str::uuid(),
+        $channels = [
+            'whatsapp' => ['method' => 'sendWhatsApp', 'extraInput' => [], 'message' => 'A WhatsApp message.'],
+            'mms' => ['method' => 'sendMMS', 'extraInput' => ['media_url' => 'https://example.test/image.png'], 'message' => 'An MMS message.'],
+            'viber' => ['method' => 'sendViber', 'extraInput' => [], 'message' => 'A Viber message.'],
+            'otp' => ['method' => 'sendOTP', 'extraInput' => [], 'message' => 'An OTP message.'],
+            'voice' => ['method' => 'sendVoiceSMS', 'extraInput' => ['language' => 'en', 'gender' => 'female'], 'message' => 'A Voice message.'],
         ];
 
-        $sms_unit_before = $fixture['user']->sms_unit;
+        foreach ($channels as $smsType => $spec) {
+            $fixture = $this->buildFullyQualifyingFixture();
 
-        // Trusted ChatBox origin (conversationContext = true), but a
-        // non-plain/unicode channel — M5's own sms_type gate (§5.1 item 1)
-        // must still exclude it.
-        $response = app(EloquentCampaignRepository::class)->quickSend($campaign, $input, true);
+            $campaign = \Mockery::mock(Campaigns::class);
+            $campaign->shouldReceive($spec['method'])->once()->andReturn((object) [
+                'status' => 'Delivered', 'customer_status' => 'Delivered', 'cost' => 0.10, 'sms_count' => 1,
+            ]);
 
-        $payload = $response->getData();
-        $this->assertObjectNotHasProperty('m5_token_action', $payload);
+            $input = array_merge([
+                'user' => $fixture['user'],
+                'sms_type' => $smsType,
+                'sender_id' => 'TestSender',
+                'region_code' => $fixture['country']->iso_code,
+                'country_code' => $fixture['country']->country_code,
+                'recipient' => '5551234567',
+                'message' => $spec['message'],
+                'sending_server' => $fixture['sendingServer']->id,
+                'idempotency_token' => (string) \Illuminate\Support\Str::uuid(),
+            ], $spec['extraInput']);
 
-        $this->assertSame(0, DB::table('business_usage_reservations')->where('business_id', $fixture['business']->id)->count());
+            $sms_unit_before = $fixture['user']->sms_unit;
 
-        $wallet = DB::table('business_usage_wallets')->where('business_id', $fixture['business']->id)->first();
-        $this->assertSame(10_000_000, (int) $wallet->available_balance_micro);
+            // Trusted ChatBox origin (conversationContext = true), but a
+            // non-plain/unicode channel — M5's own sms_type gate (§5.1
+            // item 1) must still exclude it.
+            $response = app(EloquentCampaignRepository::class)->quickSend($campaign, $input, true);
 
-        $fixture['user']->refresh();
-        $this->assertLessThan($sms_unit_before, $fixture['user']->sms_unit, 'Legacy sms_unit must decrement exactly as before for a non-plain/unicode channel.');
+            $payload = $response->getData();
+            $this->assertObjectNotHasProperty('m5_token_action', $payload, "Channel [{$smsType}] must never carry an m5_token_action.");
+
+            $this->assertSame(0, DB::table('business_usage_reservations')->where('business_id', $fixture['business']->id)->count(), "Channel [{$smsType}] must create zero RFC-005 reservations.");
+            $this->assertSame(0, DB::table('business_usage_ledger_entries')->count(), "Channel [{$smsType}] must create zero RFC-005 ledger entries.");
+
+            $wallet = DB::table('business_usage_wallets')->where('business_id', $fixture['business']->id)->first();
+            $this->assertSame(10_000_000, (int) $wallet->available_balance_micro, "Channel [{$smsType}] must leave the RFC-005 wallet untouched.");
+
+            $fixture['user']->refresh();
+            $this->assertLessThan($sms_unit_before, $fixture['user']->sms_unit, "Channel [{$smsType}] must decrement legacy sms_unit exactly as before.");
+        }
     }
 }

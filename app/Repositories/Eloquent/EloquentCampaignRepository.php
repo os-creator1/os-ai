@@ -385,6 +385,18 @@
             // every response branch this call can still reach below.
             $m5TokenAction = null;
 
+            // Exceptional correction — the response `status` a qualifying
+            // M5 send returns must reflect the actual settled outcome, not
+            // the legacy Delivered-substring heuristic alone:
+            // accepted -> success, definitive_rejection -> error,
+            // ambiguous_exception/absent marker -> processing. null means
+            // "not an M5-qualifying send, preserve existing legacy status
+            // exactly." m5_token_action's own 'clear' covers both accepted
+            // and definitive_rejection, so it cannot alone distinguish
+            // which response status applies — this reads the actual
+            // transient $data->m5_outcome instead.
+            $m5ResponseStatus = null;
+
             switch ($sms_type) {
                 case 'plain':
                 case 'unicode':
@@ -400,6 +412,11 @@
 
                     if ($m5 !== null && $m5['qualifies']) {
                         $m5TokenAction = $this->settleConversationsMeterReservation($m5['reservation_id'], $m5['business_id'], $data, (string) $sms_count);
+                        $m5ResponseStatus = match (is_object($data) ? ($data->m5_outcome ?? null) : null) {
+                            'accepted' => 'success',
+                            'definitive_rejection' => 'error',
+                            default => 'processing',
+                        };
                     }
                     break;
 
@@ -503,7 +520,7 @@
                     ];
 
                     $successPayload = [
-                        'status'  => 'success',
+                        'status'  => $m5ResponseStatus ?? 'success',
                         'data'    => (object) $responseData,
                         'message' => __('locale.campaigns.message_successfully_delivered'),
                     ];
@@ -515,7 +532,7 @@
                     return response()->json($successPayload);
                 } else {
                     $infoPayload = [
-                        'status'  => 'info',
+                        'status'  => $m5ResponseStatus ?? 'info',
                         'message' => $data->customer_status,
                     ];
 

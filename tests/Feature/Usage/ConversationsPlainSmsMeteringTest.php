@@ -602,7 +602,7 @@ class ConversationsPlainSmsMeteringTest extends TestCase
     {
         $campaign = \Mockery::mock(Campaigns::class);
         $campaign->shouldReceive('sendPlainSMS')->once()->andReturn((object) [
-            'id' => 1, 'uid' => (string) Str::uuid(), 'to' => '15551234567', 'from' => 'TestSender',
+            'id' => 1, 'uid' => (string) Str::uuid(), 'to' => '14155552671', 'from' => 'TestSender',
             'message' => 'Hello', 'customer_status' => $providerStatus, 'status' => $providerStatus,
             'cost' => 0, 'sms_count' => 1, 'media_url' => null, 'm5_outcome' => $m5Outcome,
         ]);
@@ -659,6 +659,7 @@ class ConversationsPlainSmsMeteringTest extends TestCase
         );
 
         $payload = $response->getData();
+        $this->assertSame('error', $payload->status, 'A definitive_rejection must return status=error, not the legacy info string.');
         $this->assertSame('clear', $payload->m5_token_action);
 
         $reservation = DB::table('business_usage_reservations')->where('business_id', $fixture['business']->id)->first();
@@ -693,6 +694,7 @@ class ConversationsPlainSmsMeteringTest extends TestCase
         );
 
         $payload = $response->getData();
+        $this->assertSame('processing', $payload->status, 'An ambiguous_exception must return status=processing, not the legacy info string.');
         $this->assertSame('retain', $payload->m5_token_action);
 
         $reservation = DB::table('business_usage_reservations')->where('business_id', $fixture['business']->id)->first();
@@ -704,6 +706,68 @@ class ConversationsPlainSmsMeteringTest extends TestCase
         $wallet = DB::table('business_usage_wallets')->where('business_id', $fixture['business']->id)->first();
         $this->assertSame(10_000_000 - (int) $reservation->reserved_amount_micro, (int) $wallet->available_balance_micro);
         $this->assertSame((int) $reservation->reserved_amount_micro, (int) $wallet->reserved_balance_micro, 'Funds must remain reserved, not released, while ambiguous.');
+    }
+
+    /**
+     * Exceptional correction, Defect 1 — a provider response with no
+     * m5_outcome property at all (a defensive fallback that should be
+     * unreachable by construction, since SendCampaignSMS.php always sets
+     * the flag immediately before the provider call) must be treated
+     * identically to ambiguous_exception: processing + retain + Pending.
+     */
+    public function test_real_quicksend_absent_m5_outcome_marker_leaves_pending_and_processing(): void
+    {
+        $fixture = $this->buildQualifyingQuickSendFixture();
+
+        $campaign = \Mockery::mock(Campaigns::class);
+        $campaign->shouldReceive('sendPlainSMS')->once()->andReturn((object) [
+            'id' => 1, 'uid' => (string) Str::uuid(), 'to' => '14155552671', 'from' => 'TestSender',
+            'message' => 'Hello', 'customer_status' => 'Failed', 'status' => 'Failed',
+            'cost' => 0, 'sms_count' => 1, 'media_url' => null,
+            // Deliberately no 'm5_outcome' key at all.
+        ]);
+
+        $response = app(EloquentCampaignRepository::class)->quickSend(
+            $campaign,
+            $this->baseQuickSendInput($fixture),
+            true,
+        );
+
+        $payload = $response->getData();
+        $this->assertSame('processing', $payload->status, 'An absent/unrecognized M5 marker must return status=processing, not the legacy info string.');
+        $this->assertSame('retain', $payload->m5_token_action);
+
+        $reservation = DB::table('business_usage_reservations')->where('business_id', $fixture['business']->id)->first();
+        $this->assertSame('pending', $reservation->status);
+        $this->assertSame(0, DB::table('business_usage_ledger_entries')->where('reservation_id', $reservation->id)->where('entry_type', 'usage_charge')->count());
+    }
+
+    /**
+     * Exceptional correction, Defect 1 — a non-M5-qualifying send (here,
+     * a multi-Business Workspace, so $m5TokenAction stays null) must keep
+     * its existing legacy response status exactly as before this
+     * correction: 'success' for a Delivered provider result, and no
+     * m5_token_action attached at all.
+     */
+    public function test_non_m5_provider_response_keeps_existing_legacy_status_unchanged(): void
+    {
+        $fixture = $this->buildQualifyingQuickSendFixture();
+        $fixture['user']->update(['sms_unit' => 1000]);
+
+        app(\App\Repositories\Contracts\BusinessRepository::class)->createForCustomerInWorkspace(
+            \App\Models\Customer::where('user_id', $fixture['business']->customer_id)->first(),
+            $fixture['business']->workspace,
+            $this->businessAttributes(['name' => 'Second Business Legacy', 'currency_code' => 'M5T']),
+        );
+
+        $campaign = $this->mockCampaignReturning('accepted', 'Delivered');
+
+        $response = app(EloquentCampaignRepository::class)->quickSend($campaign, $this->baseQuickSendInput($fixture), true);
+        $payload = $response->getData();
+
+        $this->assertSame('success', $payload->status, 'A non-qualifying send must keep the existing legacy success status.');
+        $this->assertObjectNotHasProperty('m5_token_action', $payload);
+        $this->assertSame(0, DB::table('business_usage_reservations')->where('business_id', $fixture['business']->id)->count());
     }
 
     /**
@@ -1059,11 +1123,213 @@ class ConversationsPlainSmsMeteringTest extends TestCase
         DB::table('usage_meters')->where('meter_key', $meterKey)->update(['is_metered' => true, 'active_rate_id' => null]);
         $this->assertTrue($decideNow()->allowed, 'Pilot meter with no active rate must not affect the entitlement decision.');
 
-        // decide()'s own source (App\Library\Entitlement\EntitlementManager)
-        // never queries usage_meters at all — confirmed by direct reading —
-        // so a fully-absent meter is mechanically guaranteed to be
-        // identical to every state already exercised above; not repeated
-        // here as a further DB mutation to avoid an unrelated cascading-FK
-        // cleanup risk across business_usage_rates/usage_meter_transitions.
+        // Exceptional correction, Defect 2 — the pilot meter entirely
+        // absent must actually be executed, not merely asserted safe from
+        // source. Dependents are dropped in FK-safe order (transitions,
+        // then activations, then rates, then the meter row itself); this
+        // test uses RefreshDatabase, so no manual restoration is needed.
+        DB::table('usage_meter_transitions')->where('meter_key', $meterKey)->delete();
+        DB::table('business_usage_rate_activations')->where('meter_key', $meterKey)->delete();
+        DB::table('business_usage_rates')->where('meter_key', $meterKey)->delete();
+        DB::table('usage_meters')->where('meter_key', $meterKey)->delete();
+        $this->assertSame(0, DB::table('usage_meters')->where('meter_key', $meterKey)->count());
+        $this->assertTrue($decideNow()->allowed, 'A pilot meter entirely absent must not affect the entitlement decision — decide() never queries usage_meters at all.');
+
+        // Exceptional correction, Defect 2 — the legacy
+        // platform_feature_usage_classifications row for 'conversations'
+        // is a pre-existing, globally-seeded row (not scoped to this
+        // Business); decide() must remain identical regardless of its
+        // is_metered value, since that legacy table is not the M5
+        // activation authority.
+        DB::table('platform_feature_usage_classifications')->where('feature_key', 'conversations')->update(['is_metered' => false]);
+        $this->assertTrue($decideNow()->allowed, 'Legacy classification row is_metered=false must not affect the entitlement decision.');
+
+        DB::table('platform_feature_usage_classifications')->where('feature_key', 'conversations')->update(['is_metered' => true]);
+        $this->assertTrue($decideNow()->allowed, 'Legacy classification row is_metered=true must not affect the entitlement decision.');
+    }
+
+    // ========================================================================
+    // Exceptional correction — §6.1 token-lifecycle verification, via real
+    // HTTP requests against the actual, unmodified ChatBoxController routes
+    // (never by touching ChatBoxController.php itself). Reuses this
+    // repository's own established customer-route-authorization fixture
+    // pattern (AppConfig seeding + Customer::customerPermissions()) from
+    // UsageBillingDashboardAuthorizationTest.php.
+    // ========================================================================
+
+    private function ensureRequiredAppConfigRowsExist(): void
+    {
+        $existing = \App\Models\AppConfig::whereIn('setting', ['license', 'customer_permissions', 'custom_script'])
+            ->pluck('setting')
+            ->all();
+
+        if (! in_array('license', $existing, true)) {
+            \App\Models\AppConfig::create(['setting' => 'license', 'value' => 'test-license-key']);
+        }
+
+        if (! in_array('custom_script', $existing, true)) {
+            \App\Models\AppConfig::create(['setting' => 'custom_script', 'value' => '']);
+        }
+
+        if (! in_array('customer_permissions', $existing, true)) {
+            $default = collect((new \App\Models\AppConfig())->defaultSettings())
+                ->firstWhere('setting', 'customer_permissions');
+
+            \App\Models\AppConfig::create($default);
+        }
+    }
+
+    private function actingAsHttpCustomer(User $user): void
+    {
+        $this->ensureRequiredAppConfigRowsExist();
+
+        $customer = \App\Models\Customer::where('user_id', $user->id)->first();
+        $customer->permissions = \App\Models\Customer::customerPermissions();
+        $customer->save();
+
+        $user->email_verified_at = now();
+        $user->save();
+
+        $this->actingAs($user);
+    }
+
+    public function test_new_compose_mints_a_fresh_uuid_and_a_retry_reuses_the_supplied_one(): void
+    {
+        $fixture = $this->buildQualifyingQuickSendFixture();
+        $this->actingAsHttpCustomer($fixture['user']);
+
+        $firstResponse = $this->get(route('customer.chatbox.new'));
+        $firstResponse->assertOk();
+        $firstToken = $firstResponse->viewData('idempotencyToken');
+        $this->assertIsString($firstToken);
+        $this->assertTrue(\Illuminate\Support\Str::isUuid($firstToken));
+
+        $secondResponse = $this->get(route('customer.chatbox.new'));
+        $secondResponse->assertOk();
+        $secondToken = $secondResponse->viewData('idempotencyToken');
+
+        $this->assertNotSame($firstToken, $secondToken, 'Two independent compose loads must mint two different tokens.');
+
+        // A retry carrying ?m5_retry_token=<uuid> reuses that exact token
+        // instead of minting a new one.
+        $retryToken = (string) \Illuminate\Support\Str::uuid();
+        $retryResponse = $this->get(route('customer.chatbox.new', ['m5_retry_token' => $retryToken]));
+        $retryResponse->assertOk();
+        $this->assertSame($retryToken, $retryResponse->viewData('idempotencyToken'), 'A valid retry token in the query string must be reused verbatim.');
+    }
+
+    public function test_reply_missing_token_returns_422_and_never_reaches_quicksend(): void
+    {
+        $customer = $this->createCustomer();
+        $this->actingAsHttpCustomer(User::find($customer->user_id));
+
+        $box = \App\Models\ChatBox::create([
+            'user_id' => $customer->user_id, 'from' => 'TestSender', 'to' => '14155552671',
+            'reply_by_customer' => true,
+        ]);
+
+        $response = $this->postJson(route('customer.chatbox.reply', $box->id), [
+            'message' => 'Hello, no token supplied.',
+        ]);
+
+        $response->assertStatus(422);
+        $this->assertSame(0, DB::table('business_usage_reservations')->count());
+        $this->assertSame(0, DB::table('reports')->count(), 'A 422 must never reach quickSend()/the provider at all.');
+    }
+
+    public function test_reply_invalid_token_returns_422_and_never_reaches_quicksend(): void
+    {
+        $customer = $this->createCustomer();
+        $this->actingAsHttpCustomer(User::find($customer->user_id));
+
+        $box = \App\Models\ChatBox::create([
+            'user_id' => $customer->user_id, 'from' => 'TestSender', 'to' => '14155552671',
+            'reply_by_customer' => true,
+        ]);
+
+        $response = $this->postJson(route('customer.chatbox.reply', $box->id), [
+            'message' => 'Hello, invalid token supplied.',
+            'idempotency_token' => 'not-a-real-uuid',
+        ]);
+
+        $response->assertStatus(422);
+        $this->assertSame(0, DB::table('business_usage_reservations')->count());
+        $this->assertSame(0, DB::table('reports')->count(), 'A 422 must never reach quickSend()/the provider at all.');
+    }
+
+    public function test_reply_valid_token_passes_trusted_conversation_context_through_to_quicksend(): void
+    {
+        // Empty Twilio credentials (this repository's own established
+        // no-network-call pattern) make the real, unmocked Twilio SDK
+        // Client throw its own synchronous ConfigurationException — no
+        // live network request is made or required. The point of this
+        // test is only to prove conversationContext=true reached
+        // quickSend()'s qualifying chain at all: a reservation is created
+        // here, which never happens for conversationContext=false.
+        $fixture = $this->buildQualifyingQuickSendFixture(twilioAccountSid: '', twilioAuthToken: '');
+        $this->actingAsHttpCustomer($fixture['user']);
+
+        \App\Models\PhoneNumbers::create([
+            'user_id' => $fixture['user']->id, 'number' => 'TestSender', 'status' => 'assigned',
+            'capabilities' => 'sms',
+        ]);
+
+        $box = \App\Models\ChatBox::create([
+            'user_id' => $fixture['user']->id, 'from' => 'TestSender', 'to' => '14155552671',
+            'sending_server_id' => $fixture['sendingServer']->id, 'reply_by_customer' => true,
+        ]);
+
+        $response = $this->postJson(route('customer.chatbox.reply', $box->id), [
+            'message' => 'A valid, real reply.',
+            'idempotency_token' => (string) \Illuminate\Support\Str::uuid(),
+        ]);
+
+        $response->assertOk();
+
+        $this->assertSame(1, DB::table('business_usage_reservations')->where('business_id', $fixture['business']->id)->count(), 'A valid reply token must reach the M5 qualifying chain (conversationContext=true).');
+    }
+
+    /**
+     * M5 contract §6.1 — a retain-outcome sent() redirect must carry the
+     * identical idempotency token via ?m5_retry_token=, and must restore
+     * the original send-defining form values via withInput() for the
+     * next new() load's old() calls to read.
+     */
+    public function test_sent_retain_redirect_preserves_token_and_restores_form_input(): void
+    {
+        $fixture = $this->buildQualifyingQuickSendFixture(twilioAccountSid: '', twilioAuthToken: '');
+        $this->actingAsHttpCustomer($fixture['user']);
+
+        \App\Models\PhoneNumbers::create([
+            'user_id' => $fixture['user']->id, 'number' => '14155552671', 'status' => 'assigned',
+            'capabilities' => 'sms',
+        ]);
+
+        $token = (string) \Illuminate\Support\Str::uuid();
+
+        $payload = [
+            'sending_server' => $fixture['sendingServer']->id,
+            'country_code' => $fixture['country']->id,
+            'recipient' => '4155552671',
+            'sender_id' => '14155552671',
+            'message' => 'A real sent() retry fixture message.',
+            'sms_type' => 'plain',
+            'idempotency_token' => $token,
+        ];
+
+        $response = $this->post(route('customer.chatbox.sent'), $payload);
+
+        $response->assertRedirect(route('customer.chatbox.new', ['m5_retry_token' => $token]));
+        $response->assertSessionHasInput('sending_server', (string) $fixture['sendingServer']->id);
+        $response->assertSessionHasInput('country_code', (string) $fixture['country']->id);
+        $response->assertSessionHasInput('sender_id', '14155552671');
+        $response->assertSessionHasInput('recipient', '4155552671');
+        $response->assertSessionHasInput('message', 'A real sent() retry fixture message.');
+
+        // Following the redirect, new()'s own m5_retry_token handling must
+        // reuse the identical token verbatim.
+        $followUp = $this->get(route('customer.chatbox.new', ['m5_retry_token' => $token]));
+        $followUp->assertOk();
+        $this->assertSame($token, $followUp->viewData('idempotencyToken'));
     }
 }
