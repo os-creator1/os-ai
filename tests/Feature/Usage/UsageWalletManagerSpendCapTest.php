@@ -166,6 +166,30 @@ class UsageWalletManagerSpendCapTest extends TestCase
     }
 
     /**
+     * RFC-005 Reservation Admission Correction Contract §11 — a candidate
+     * exactly one micro-unit above headroom must be denied (the exact
+     * boundary complement of the equality-accepted proof above).
+     */
+    public function test_business_spend_cap_denies_candidate_one_micro_above_headroom(): void
+    {
+        Currency::create(['name' => 'US Dollar', 'code' => 'USD', 'format' => '$', 'status' => true]);
+        $customer = $this->createCustomer();
+        $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
+        $business->loadMissing('workspace');
+        app(UsageWalletManager::class)->initializeWalletForNewBusiness($business->id);
+        $this->activateRate(retailRateMicro: '1000001');
+        DB::table('business_usage_wallets')->where('business_id', $business->id)->update(['available_balance_micro' => 10_000_000]);
+        $actorId = (int) $business->workspace->owner_user_id;
+
+        app(UsageWalletManager::class)->setSpendCap($business, '1000000', $actorId, 'Headroom one micro below the candidate cost.');
+
+        $result = app(UsageWalletManager::class)->reserve($business, 'crm', (string) Str::uuid(), '1');
+
+        $this->assertFalse($result->granted, 'A candidate exactly one micro-unit above headroom must be denied.');
+        $this->assertSame('business_spend_cap', $result->denialReason);
+    }
+
+    /**
      * RFC-005 Reservation Admission Correction Contract §5 — the exact
      * contradiction the merged contract itself was corrected to resolve:
      * a cap tightened below already-consumed spend clamps headroom to

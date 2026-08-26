@@ -163,6 +163,24 @@ class UsageWalletManagerFeatureLimitTest extends TestCase
     }
 
     /**
+     * RFC-005 Reservation Admission Correction Contract §11 — a candidate
+     * exactly one micro-unit above headroom must be denied (the exact
+     * boundary complement of the equality-accepted proof above).
+     */
+    public function test_feature_limit_denies_candidate_one_micro_above_headroom(): void
+    {
+        [$business, $actorId] = $this->businessWithWallet();
+        $this->activateRate('crm', null, '1000001');
+
+        app(UsageWalletManager::class)->setFeatureLimit($business, 'crm', '1000000', $actorId, 'Headroom one micro below the candidate cost.');
+
+        $result = app(UsageWalletManager::class)->reserve($business, 'crm', (string) Str::uuid(), '1');
+
+        $this->assertFalse($result->granted, 'A candidate exactly one micro-unit above headroom must be denied.');
+        $this->assertSame('feature_limit', $result->denialReason);
+    }
+
+    /**
      * RFC-005 Amendment 1 critical proof — business_feature_usage_limits
      * is keyed by business_id + feature_key, never meter_key. Two
      * distinct meter_keys sharing one feature_key must consume the SAME

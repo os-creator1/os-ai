@@ -261,9 +261,10 @@ class UsageWalletManager
      * Correction Contract §6 — full wallet-admission order, all six
      * steps: billing_status -> outstanding_debt -> per-feature limit ->
      * Business spend cap -> platform safety limit -> available-balance
-     * sufficiency. The first three of these six were M1's own original
-     * scope; the per-feature limit, Business spend cap, and platform
-     * safety limit were M2-designed but never connected here until this
+     * sufficiency. Three of these six were M1's original scope:
+     * billing_status, outstanding_debt, and available-balance sufficiency;
+     * the per-feature limit, Business spend cap, and platform safety
+     * limit were M2-designed but never connected here until this
      * correction — M1 contract §8 item 1 deferred them only because their
      * tables did not exist yet, not because they are out of reserve()'s
      * own scope. M3 contract §15 — dispatches EvaluateBusinessAutoRecharge

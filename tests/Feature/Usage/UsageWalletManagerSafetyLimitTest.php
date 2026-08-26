@@ -147,6 +147,25 @@ class UsageWalletManagerSafetyLimitTest extends TestCase
     }
 
     /**
+     * RFC-005 Reservation Admission Correction Contract §11 — a candidate
+     * exactly one micro-unit above headroom must be denied (the exact
+     * boundary complement of the equality-accepted proof above).
+     */
+    public function test_safety_limit_denies_candidate_one_micro_above_headroom(): void
+    {
+        [$business, ] = $this->businessWithWallet();
+        $this->activateRate('crm', '1000001');
+        $admin = $this->createAdmin();
+
+        app(UsageWalletManager::class)->setSafetyLimit('crm', '1000000', (int) $admin->id, 'Headroom one micro below the candidate cost.');
+
+        $result = app(UsageWalletManager::class)->reserve($business, 'crm', (string) Str::uuid(), '1');
+
+        $this->assertFalse($result->granted, 'A candidate exactly one micro-unit above headroom must be denied.');
+        $this->assertSame('platform_safety_limit', $result->denialReason);
+    }
+
+    /**
      * RFC-005 Reservation Admission Correction Contract §6 — the exact
      * denial precedence order: feature_limit before business_spend_cap
      * before platform_safety_limit before insufficient_balance. Each

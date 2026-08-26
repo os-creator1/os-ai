@@ -176,34 +176,6 @@ class ConversationsPlainSmsMeteringTest extends TestCase
         $this->assertSame(0, DB::table('business_usage_reservations')->where('business_id', $pilot['business']->id)->count());
     }
 
-    /**
-     * RFC-005 Reservation Admission Correction Contract §11 — a denied
-     * qualifying M5 Conversations send must never reach the provider and
-     * must create no new reservation/ledger mutation, exercised through
-     * one of the three new admission controls rather than the
-     * pre-existing insufficient_balance denial covered above. Mirrors
-     * test_reserve_wallet_denial_blocks_before_any_reservation_is_written's
-     * own pattern exactly: reserve() is called directly, so
-     * Campaigns::sendPlainSMS() is never reached by construction — the
-     * provider is simply never given a chance to run.
-     */
-    public function test_reserve_feature_limit_denial_blocks_before_any_reservation_or_ledger_mutation(): void
-    {
-        $pilot = $this->provisionPilot();
-        $manager = app(UsageWalletManager::class);
-        $actorId = (int) $pilot['business']->workspace->owner_user_id;
-
-        $manager->setFeatureLimit($pilot['business'], 'conversations', '0', $actorId, 'No Conversations headroom at all.');
-
-        $result = $manager->reserve($pilot['business'], $pilot['meter_key'], 'idem-' . uniqid(), '1');
-
-        $this->assertFalse($result->granted);
-        $this->assertSame('feature_limit', $result->denialReason);
-        $this->assertFalse($result->createdByThisInvocation);
-        $this->assertSame(0, DB::table('business_usage_reservations')->where('business_id', $pilot['business']->id)->count());
-        $this->assertSame(0, DB::table('business_usage_ledger_entries')->where('business_id', $pilot['business']->id)->count());
-    }
-
     public function test_meter_business_scope_mismatch_is_a_configuration_integrity_failure(): void
     {
         $pilot = $this->provisionPilot();
@@ -698,6 +670,47 @@ class ConversationsPlainSmsMeteringTest extends TestCase
         $wallet = DB::table('business_usage_wallets')->where('business_id', $fixture['business']->id)->first();
         $this->assertSame(10_000_000, (int) $wallet->available_balance_micro, 'A released reservation must fully restore the wallet.');
         $this->assertSame(0, (int) $wallet->reserved_balance_micro);
+    }
+
+    /**
+     * RFC-005 Reservation Admission Correction Contract §11 — a denied
+     * qualifying M5 Conversations send must never reach the provider and
+     * must create no new reservation/ledger mutation, proven through the
+     * REAL production guard chain (quickSend() ->
+     * qualifyConversationsMeterReservation() -> UsageWalletManager::reserve()
+     * -> early response), not merely through a direct reserve() call.
+     * setFeatureLimit() (one of the three admission controls this
+     * correction adds) is tightened to zero headroom on the fully
+     * qualifying pilot Business, and the Campaigns mock asserts its
+     * provider method is never invoked at all.
+     */
+    public function test_real_quicksend_feature_limit_denial_never_reaches_provider_or_mutates_state(): void
+    {
+        $fixture = $this->buildQualifyingQuickSendFixture();
+
+        app(UsageWalletManager::class)->setFeatureLimit(
+            $fixture['business'],
+            'conversations',
+            '0',
+            (int) $fixture['business']->workspace->owner_user_id,
+            'No Conversations headroom at all.',
+        );
+
+        $campaign = \Mockery::mock(Campaigns::class);
+        $campaign->shouldNotReceive('sendPlainSMS');
+
+        $response = app(EloquentCampaignRepository::class)->quickSend(
+            $campaign,
+            $this->baseQuickSendInput($fixture),
+            true,
+        );
+
+        $payload = $response->getData();
+        $this->assertSame('error', $payload->status, 'A wallet-admission denial must return status=error, not reach the provider.');
+        $this->assertSame('retain', $payload->m5_token_action);
+
+        $this->assertSame(0, DB::table('business_usage_reservations')->where('business_id', $fixture['business']->id)->count());
+        $this->assertSame(0, DB::table('business_usage_ledger_entries')->where('business_id', $fixture['business']->id)->count());
     }
 
     /**
