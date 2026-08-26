@@ -2,18 +2,36 @@
 
 **Status: PROPOSED — NOT AUTHORIZED UNTIL HUMAN MERGE.**
 
-This document authorizes drafting one thing: a bounded, independently governed correction to `UsageBillingCheckoutManager`'s manual-top-up and add-on-purchase flows, replacing an incorrect off-session-PaymentIntent charge with the RFC-005-mandated one-time Checkout Session, and correcting the webhook-processing gap that would otherwise make a correctly-routed Checkout Session funding event unrecognizable. Human merge of this contract does **not** itself start implementation — a human must separately, explicitly instruct that implementation begin on the branch locked in §15.B below, exactly as every RFC-005 milestone and correction contract before it (most recently the Reservation Admission correction, [`RFC-005-RESERVATION-ADMISSION-CORRECTION-CONTRACT.md`](./RFC-005-RESERVATION-ADMISSION-CORRECTION-CONTRACT.md), merged PR #134) has required.
+This document authorizes drafting one thing: a bounded, independently governed correction to `UsageBillingCheckoutManager`'s manual-top-up and add-on-purchase flows, replacing an incorrect off-session-PaymentIntent charge with the RFC-005-mandated one-time Checkout Session, and correcting the webhook-processing gap that would otherwise make a correctly-routed Checkout Session funding event unrecognizable. Human merge of this contract does **not** itself start implementation — a human must separately, explicitly instruct that implementation begin on the branch named in §0 below, exactly as every RFC-005 milestone and correction contract before it (most recently the Reservation Admission correction, [`RFC-005-RESERVATION-ADMISSION-CORRECTION-CONTRACT.md`](./RFC-005-RESERVATION-ADMISSION-CORRECTION-CONTRACT.md), merged PR #134) has required.
 
 This correction exists because a narrow, read-only provider/funding-flow correction-design audit — performed after Milestones 1–5 had already closed and after Reservation Admission (remediation #1 of 7) had already merged — discovered that `UsageBillingCheckoutManager::initiateTopUp()` and `initiateAddonPurchase()` both route through the same private `initiateCharge()` helper, which unconditionally requires a pre-saved default payment instrument and unconditionally calls `PaymentProviderGateway::createOffSessionPaymentIntent()`. RFC-005 §20 explicitly locks a different design: *"top-up/add-on purchase as one-time Checkout Sessions; auto-recharge as an off-session PaymentIntent."* M6 itself remains **BLOCKED** under its own merged Gap Rule (`docs/automation/RFC-005-M6-CONTRACT.md` §3) pending this and five other independently governed corrections (Reservation Admission has already merged). This contract is remediation #2 of 7; it does not by itself unblock M6.
 
 ---
 
+## Correction Round 1 record
+
+Independent review of the initial draft (head `97ce2722489c9c52b41b0c0583cd8569437d25d8`) found three genuine contradictions and several precision gaps, all resolved below by direct re-audit of the cited source files — no schema change was found necessary. Summary of every substantive change this round made:
+
+1. **`payment_method_display_snapshot` (NOT NULL, `string(64)`) had no valid value for a Checkout-backed attempt at creation time.** Resolved by reusing the exact, already-shipped `additional_business_slot_agreements` precedent: write the literal sentinel `'Pending Checkout'` at attempt creation, replace it exactly once with the actual verified PaymentMethod's safe display string after Checkout confirmation succeeds — §5.
+2. **§9 (no saved instrument required) and §17 (the existing `no_provider_customer` denial test "remains valid as-is") directly contradicted each other** — the original draft simultaneously claimed a lazy-created provider customer and an unmodified denial-if-absent test. Resolved in favor of **Option 1**: the existing `no_provider_customer` denial is preserved unmodified for `ManualTopUp`/`AddonPurchase`; no lazy provider-customer creation is introduced. This is also the only choice consistent with M3 contract §11's literal "before *any* Stripe call is made" ordering rule, which a lazy `createOrRetrieveCustomer()` call inside `initiateCharge()` would otherwise violate — §9.
+3. **§12's claim that `confirmAttemptFromWebhook()` merely "changes which gateway retrieval method it uses" was factually false** — direct re-reading of `UsageBillingCheckoutManager.php` confirms `confirmAttemptFromWebhook()` currently performs **no gateway retrieval of any kind**; it applies `ProcessPaymentProviderEvent`'s already-verified webhook evidence directly. Corrected, and one exact design locked (mirroring the additional-slot-agreement's own already-shipped `confirmSlotAgreementFromWebhook()` pattern): for a Checkout-backed purpose only, `confirmAttemptFromWebhook()` gains its own authoritative `retrieveCheckoutSession()` re-fetch and re-verification before mutation (needed regardless, to obtain the real PaymentMethod for item 1's display-snapshot finalization); `AutoRecharge`'s webhook confirmation gains no new provider call and is otherwise byte-for-byte unchanged — §12.
+4. `createCheckoutSession()`'s exact new-parameter placement is now locked explicitly (appended last, defaulted, after the existing `array $metadata` parameter — the only placement that is valid PHP without disturbing any existing positional call site) — §8.
+5. The top-up return route's Business-isolation check is now locked mechanically, using only the existing `BusinessFundingAttemptRepository::findById()` read method — §6.
+6. Every test-file verdict in §17 is now exactly one of `REQUIRED` / `PARTIALLY REQUIRED` / `NOT REQUIRED` — the prior draft's one "likely REQUIRED" hedge is resolved to a determination, and every new test is assigned an exact existing file (no new test file is authorized).
+7. The dangling `§15.B` cross-reference in the opening paragraph is corrected to reference §0, where the future implementation branch name is now stated as its own explicit, locked fact.
+8. §16's production-path allowlist is fully re-derived against the corrected design (not preserved by inertia) — `PaymentInstrumentManager.php` and `CheckoutSessionResult.php` remain confirmed **not required**, for reasons restated with the corrected design's own logic.
+
+**Correction rounds: 1 of 2 consumed by this round.** One ordinary round remains.
+
+---
+
 ## 0. Governance
 
-- Drafted on branch `chore/rfc-005-funding-provider-flow-correction-contract`, in an isolated linked worktree (`../rfc-005-funding-provider-flow-correction-contract-worktree`), based on `origin/main` at `311bf0bf08cd4bf6c0939aec0cdf45962c4bb9de` — the Reservation Admission correction's own merge commit (PR [#135](https://github.com/os-creator1/os-ai/pull/135)), confirmed the current tip of `main` via direct `git rev-parse` before drafting, and confirmed to already contain the merged Reservation Admission contract (PR [#134](https://github.com/os-creator1/os-ai/pull/134), merge `208c3da9faceafd0ae330dd6821a481e72f90192`) and its implementation.
-- Confirmed before drafting: no `docs/automation/RFC-005-FUNDING-PROVIDER-FLOW-CORRECTION-CONTRACT.md` exists anywhere in `origin/main`'s history, and no `chore/rfc-005-funding-provider-flow-correction-contract` or `agent/rfc-005-funding-provider-flow-correction` branch exists on `origin` — this is a genuinely new governance object, not a duplicate or reopening of prior work.
-- `agent/rfc-005-m6` is confirmed, at drafting time, to remain a **local-only branch — never pushed to `origin`**, carrying **zero authored commits**, and confirmed a direct ancestor of current `origin/main` (`git merge-base --is-ancestor agent/rfc-005-m6 origin/main` succeeds) — it is simply stale relative to a `main` that has since fast-forwarded through the Reservation Admission contract and implementation merges, exactly as its own frozen status requires. This contract does not touch, reset, or recreate that branch in any way.
-- **This is a new, independently bounded pre-M6 correction contract — not a correction round against M1–M6's own contracts, and not a correction round against the already-merged Reservation Admission contract.** Its `maximum_correction_rounds: 2` budget is its own, freshly opened, **0 of 2 consumed** at initial drafting. No counter is borrowed or altered on any other contract.
+- Drafted on branch `chore/rfc-005-funding-provider-flow-correction-contract`, in an isolated linked worktree (`../rfc-005-funding-provider-flow-correction-contract-worktree`), based on `origin/main` at `311bf0bf08cd4bf6c0939aec0cdf45962c4bb9de` — the Reservation Admission correction's own merge commit (PR [#135](https://github.com/os-creator1/os-ai/pull/135)), reconfirmed the current tip of `main` via `git fetch`/`git rev-parse` before this correction round, unchanged since initial drafting.
+- **Future implementation branch (authorized only after this contract's human merge, and only after a further, separate, explicit human instruction to begin implementation): `agent/rfc-005-funding-provider-flow-correction`.** This is the one and only branch name this contract authorizes for the eventual bounded implementation; nothing in this document authorizes creating it now.
+- Confirmed before drafting and reconfirmed this round: no `docs/automation/RFC-005-FUNDING-PROVIDER-FLOW-CORRECTION-CONTRACT.md` exists anywhere in `origin/main`'s history other than this same branch's own prior commit, and no `agent/rfc-005-funding-provider-flow-correction` branch exists on `origin`.
+- `agent/rfc-005-m6` is confirmed, at this correction round, to remain unmodified: a **local-only branch — never pushed to `origin`**, carrying **zero authored commits**, and a direct ancestor of current `origin/main`. This contract does not touch, reset, or recreate that branch in any way.
+- **This is a new, independently bounded pre-M6 correction contract — not a correction round against M1–M6's own contracts, and not a correction round against the already-merged Reservation Admission contract.** Its `maximum_correction_rounds: 2` budget is its own. **1 of 2 consumed by this correction round; 1 ordinary round remains.** No counter is borrowed or altered on any other contract.
 - Locked:
   - `human_only_merge: true`
   - `maximum_correction_rounds: 2`
@@ -39,7 +57,7 @@ This correction exists because a narrow, read-only provider/funding-flow correct
 
 A second, independent defect compounds the first: even if `initiateCharge()` were corrected to create a Checkout Session for `ManualTopUp`/`AddonPurchase`, the webhook consumer would still silently fail to recognize its success. `ProcessPaymentProviderEvent::processFundingAttempt()` (the branch that handles every `funding_attempt`-subject-kind event, i.e. every `ManualTopUp`/`AutoRecharge`/`AddonPurchase` webhook) unconditionally requires `array_key_exists('amount', $object)` — the PaymentIntent-only field name — and classifies success/failure only by `.succeeded`/`.payment_failed`/`canceled` `event_type` suffixes. A Checkout Session's own success event, `checkout.session.completed`, carries `amount_total` (never a top-level `amount`) and ends in `.completed`, not `.succeeded`. **A correctly-routed Checkout Session funding webhook, as written today, falls through every recognized branch and silently reaches `markIgnored()` — the funding attempt would never converge to `succeeded`, and the wallet would never be credited, regardless of the first defect being fixed.** This second defect is confirmed **not** hypothetical: `ProcessPaymentProviderEvent::processSlotAgreementInitialCheckout()` (the already-correct sibling branch for the initial slot-agreement Checkout Session) already implements the exact `amount`/`amount_total` fallback and the exact `.completed`/`.async_payment_succeeded` event-type classification that `processFundingAttempt()` is missing — proving the correct pattern already exists in this codebase, unreused by the one branch that needs it.
 
-**Why this was never caught:** `initiateCharge()`'s docblock (M3 contract §11) describes it as "the manual top-up state machine," written before M4 introduced the additional-slot Checkout Session pattern; M4 correctly built a *separate* Checkout Session code path (`initiateSlotAgreementCheckout()`/`confirmSlotAgreementChecked()`/`processSlotAgreementInitialCheckout()`) for the slot agreement, but never revisited `initiateCharge()` to bring `ManualTopUp`/`AddonPurchase` in line with the same corrected design — RFC-005 §20's own top-up/add-on requirement predates M4 and was simply never revisited once M4 shipped the first real Checkout Session implementation to model it on. Every M3/M4 regression gate passed because every existing test for `initiateTopUp()`/`initiateAddonPurchase()` was itself written against the (incorrect) off-session-PaymentIntent behavior, so the tests and the code agreed with each other while both disagreed with RFC-005 §20.
+**Why this was never caught:** `initiateCharge()`'s docblock (M3 contract §11) describes it as "the manual top-up state machine," written before M4 introduced the additional-slot Checkout Session pattern; M4 correctly built a *separate* Checkout Session code path (`initiateSlotAgreementCheckout()`/`confirmSlotAgreementChecked()`/`processSlotAgreementInitialCheckout()`) for the slot agreement, but never revisited `initiateCharge()` to bring `ManualTopUp`/`AddonPurchase` in line with the same corrected design. Every M3/M4 regression gate passed because every existing test for `initiateTopUp()`/`initiateAddonPurchase()` was itself written against the (incorrect) off-session-PaymentIntent behavior, so the tests and the code agreed with each other while both disagreed with RFC-005 §20.
 
 Do not describe this as an accounting, ledger, entitlement, or reservation-admission defect. It is exclusively a provider-object selection and webhook-classification defect, fully external to `UsageWalletManager`.
 
@@ -47,18 +65,13 @@ Do not describe this as an accounting, ledger, entitlement, or reservation-admis
 
 ## 2. Entitlement / wallet-admission boundary — untouched, unaffected
 
-This correction touches only `UsageBillingCheckoutManager` (funding-attempt creation and confirmation), `PaymentProviderGateway` (the Stripe boundary), and `ProcessPaymentProviderEvent` (webhook classification). It has no interaction whatsoever with:
-
-- `App\Library\Usage\UsageWalletManager` — reservation admission, spend caps, feature limits, safety limits (already corrected by the Reservation Admission remediation, remediation #1).
-- `App\Library\Entitlement\EntitlementManager::decide()` / `RealUsageAuthorizationGateway::check()` — feature availability.
-
-A funded wallet's *availability to spend* is entirely orthogonal to *how the wallet gets funded* — this correction only changes the second. No entitlement, reservation, or spend-admission code path is read, called, or modified by this correction.
+This correction touches only `UsageBillingCheckoutManager` (funding-attempt creation and confirmation), `PaymentProviderGateway` (the Stripe boundary), and `ProcessPaymentProviderEvent` (webhook classification). It has no interaction whatsoever with `App\Library\Usage\UsageWalletManager` (reservation admission, spend caps, feature limits, safety limits — already corrected by remediation #1) or `App\Library\Entitlement\EntitlementManager::decide()`/`RealUsageAuthorizationGateway::check()` (feature availability). A funded wallet's *availability to spend* is entirely orthogonal to *how the wallet gets funded* — this correction only changes the second. No entitlement, reservation, or spend-admission code path is read, called, or modified by this correction.
 
 ---
 
 ## 3. Funding-attempt model — authoritative, unchanged, no schema
 
-`business_funding_attempts` remains the sole durable model for every funding-causing charge (`ManualTopUp` | `AutoRecharge` | `AddonPurchase`, RFC-005 §17.C). Its `provider_session_or_intent_reference` column already exists as a plain nullable-unique string with no type constraint of its own — it is documented (RFC-005 §17.C) to hold "either the initial Checkout Session id" or a PaymentIntent id, according to purpose. **No migration or schema change is required or authorized by this correction.** The correction only changes *which kind* of provider-object reference this column receives for two of the three existing purposes — a pure behavioral change inside `UsageBillingCheckoutManager`, never a new model, never a new table, never a new column.
+`business_funding_attempts` remains the sole durable model for every funding-causing charge (`ManualTopUp` | `AutoRecharge` | `AddonPurchase`, RFC-005 §17.C). Its `provider_session_or_intent_reference` column (`string(191)`, nullable, unique — confirmed directly against `database/migrations/2026_08_16_140003_create_business_funding_attempts_table.php`) already carries no type constraint of its own — it is documented (RFC-005 §17.C) to hold "either the initial Checkout Session id" or a PaymentIntent id, according to purpose. **No migration or schema change is required or authorized by this correction**, confirmed by direct re-audit of that migration and of §5 below's resolution for `payment_method_display_snapshot` — the one column initially flagged as a possible obstacle is resolved entirely within its existing `NOT NULL string(64)` definition, reusing the exact sentinel-then-finalize pattern `additional_business_slot_agreements.payment_method_display_snapshot` already uses in production code today (`quoteAdditionalSlotAgreement()`'s `'Pending Checkout'` literal, confirmed at `UsageBillingCheckoutManager.php:718`, replaced by `confirmSlotAgreementChecked()`'s `formatInstrumentDisplay($instrument)` call, confirmed at line 834). The correction only changes *which kind* of provider-object reference this column receives for two of the three existing purposes — a pure behavioral change inside `UsageBillingCheckoutManager`, never a new model, never a new table, never a new column.
 
 ---
 
@@ -83,18 +96,19 @@ A funded wallet's *availability to spend* is entirely orthogonal to *how the wal
 
 ---
 
-## 5. Redirect-result DTO — the exact, smallest coherent change
+## 5. `payment_method_display_snapshot` — exact resolution (Blocker A, resolved)
 
-**Current facts, confirmed by direct inspection:**
+**The obstacle, confirmed by direct schema re-audit:** `business_funding_attempts.payment_method_display_snapshot` is `string(64)` **`NOT NULL`**, with no default (`database/migrations/2026_08_16_140003_create_business_funding_attempts_table.php:27`). `initiateCharge()` currently populates it unconditionally from `formatInstrumentDisplay($instrument)` — a value that does not exist for a `ManualTopUp`/`AddonPurchase` attempt once the pre-saved-instrument requirement is removed (§9).
 
-- `FundingAttemptResult` (`app/Library/Usage/FundingAttemptResult.php`): `fundingAttemptId`, `state`, `denialReason`. No redirect field.
-- `AddonPurchaseResult` (`app/Library/Usage/AddonPurchaseResult.php`): `addonPurchaseId`, `fundingAttemptId`, `state`, `denialReason`. No redirect field.
-- `CheckoutSessionResult` (the gateway's own return shape for `createCheckoutSession()`/`retrieveCheckoutSession()`) already carries `redirectUrl` (nullable — populated only while a Session is `'open'`, per its own existing docblock).
-- `SlotAgreementCheckoutResult` already carries `redirectUrl`, populated by `initiateSlotAgreementCheckout()` directly from `$session->redirectUrl` and returned to the controller — this is the exact, already-precedented shape to mirror.
+**Resolution — reusing the already-shipped `additional_business_slot_agreements` precedent exactly, no schema change:**
 
-**Locked design:** add `public ?string $redirectUrl` to `FundingAttemptResult`, populated only by the code path that creates a Checkout Session (`ManualTopUp`/`AddonPurchase`'s own `initiateCharge()` branch), `null` for every other path (`AutoRecharge`, and any already-succeeded/failed/no-provider-customer/no-instrument early return) — mirroring `SlotAgreementCheckoutResult`'s own precedent exactly: populated once, at Session-creation time, never repopulated by a later confirmation call. `AddonPurchaseResult` gains the identical nullable `redirectUrl` field, propagated from the underlying `FundingAttemptResult` `initiateAddonPurchase()` already receives internally — one additional constructor argument on each DTO, no new type, no gateway/controller boundary violation, and no other DTO (`CheckoutSessionResult`, `SlotAgreementCheckoutResult`, `PaymentIntentResult`) requires any change.
+1. **At attempt creation**, for `ManualTopUp`/`AddonPurchase` only: write the literal sentinel string `'Pending Checkout'` — the identical literal `quoteAdditionalSlotAgreement()` already writes into `additional_business_slot_agreements.payment_method_display_snapshot` before its own Checkout Session exists. `AutoRecharge` is unaffected — it continues to snapshot its already-saved instrument's real display string via `formatInstrumentDisplay($instrument)` at creation time, exactly as today, since an `AutoRecharge` attempt still requires a pre-saved instrument (§9).
+2. **After authoritative Checkout confirmation succeeds** (via `confirmAttemptFromReturn()`/`confirmAttemptFromWebhook()`, §12): retrieve the actual PaymentMethod used, via the already-existing, unmodified `PaymentProviderGateway::retrievePaymentMethod(string $providerPaymentMethodId): PaymentMethodResult` (the identical gateway method `PaymentInstrumentManager::confirmSetupIntentAndAttach()` already calls) — never `PaymentInstrumentManager`, and never `business_payment_instruments` (§8's "no reusable instrument side effect" rule). `PaymentMethodResult` already carries exactly `brand`/`lastFour`/`expiryMonth`/`expiryYear` — the same fields `formatInstrumentDisplay()` already formats from a `BusinessPaymentInstrument` model. A second private formatter, `formatPaymentMethodDisplay(PaymentMethodResult $method): string`, is added alongside the existing `formatInstrumentDisplay()` in `UsageBillingCheckoutManager.php`, producing the byte-identical display shape (`"{brand} •••• {lastFour}, exp {MM}/{YYYY}"`) from `PaymentMethodResult`'s scalar `$method->type` in place of `formatInstrumentDisplay()`'s `$instrument->type->value` enum access (the only structural difference between the two input shapes) — no new file, no new public surface.
+3. `$this->attemptRepository->update($attempt, ['payment_method_display_snapshot' => $realDisplay, ...])` replaces the sentinel **exactly once**, in the same update call that already transitions the attempt's `state` to `succeeded`-bound (mirroring `confirmSlotAgreementChecked()`'s own single combined `update()` call).
+4. **After that successful replacement, the display snapshot is historical and never re-derived again** — the already-Succeeded early-return guard in both `confirmAttemptFromReturn()`/`confirmAttemptFromWebhook()` means this replacement can only ever execute once per attempt, matching every other snapshot column's own "frozen at the moment it is first meaningfully known" semantics.
+5. **A failed or expired Checkout Session never reaches step 2 or 3** — `markFailed()`/`markAttemptFailedFromWebhook()` are entirely unaffected by this change and never touch `payment_method_display_snapshot`; a failed/expired attempt's display snapshot remains the `'Pending Checkout'` sentinel permanently, which is itself an accurate historical record (no payment method was ever successfully used).
 
-This directly answers §8's own question: a **future** authorized add-on-purchase HTTP caller reaches the hosted Checkout URL through this same `AddonPurchaseResult->redirectUrl` field — no new type, no gateway/controller boundary violation, and no premature HTTP surface is built now (§8 below).
+**M3 contract §11's "frozen at attempt creation" wording, reconciled:** that wording describes the snapshot columns' general *purpose* (an immutable historical record, never a live re-lookup) as they applied to the M3-era, instrument-known-at-creation design. It does not, and cannot, override RFC-005 §20's own later-introduced Checkout Session requirement, under which the actual payment method is genuinely not yet known at creation time — exactly the same gap M4's slot-agreement design already resolved, for the identical reason, with the identical two-step sentinel/finalize pattern this correction reuses. This correction's contribution is applying that already-established resolution to `business_funding_attempts`, not inventing a new one.
 
 ---
 
@@ -103,14 +117,18 @@ This directly answers §8's own question: a **future** authorized add-on-purchas
 ```
 payer-authorized actor submits amount
   → assertChargeCausingConsent() (unchanged, §16 payer-consent gate)
-  → local funding attempt created (state: created), inside a short transaction, no provider call yet
+  → provider-customer lookup (READ-ONLY, unchanged — see §9: still denies
+    no_provider_customer if absent; no lazy creation)
+  → local funding attempt created (state: created, payment_method_display_snapshot:
+    'Pending Checkout'), inside a short transaction, no provider call yet
   → OUTSIDE that transaction: gateway->createCheckoutSession(
         providerCustomerId, minorUnits, currencyCode,
         lineItemName: 'Wallet top-up' (or equally truthful, non-invented label),
-        successUrl: a new dedicated confirmation route (below),
+        successUrl: the new dedicated confirmation route (below),
         cancelUrl: the existing Usage Billing dashboard route,
         idempotencyKey: the attempt's own local_idempotency_key,
         metadata: { app_subject_kind: 'funding_attempt', app_subject_id: <attempt id>, app_operation_id: <local_idempotency_key> },
+        setupFutureUsageOffSession: false (§8),
     )
   → Session id persisted on provider_session_or_intent_reference; state → provider_pending
   → FundingAttemptResult.redirectUrl returned to the controller
@@ -120,11 +138,12 @@ payer-authorized actor submits amount
   → verifies the same eight conditions confirmSlotAgreementChecked()/slotAgreementCheckoutVerified() already
     verify for the slot-agreement Checkout Session (status: complete, payment_status: paid, matching
     Session id/amount/currency/provider-customer, non-null PaymentIntent + PaymentMethod references)
-  → on success: confirmSucceeded() — the existing, single accounting-success path (creditFromFunding())
+  → on success: retrieves the real PaymentMethod display (§5), finalizes the snapshot, then
+    confirmSucceeded() — the existing, single accounting-success path (creditFromFunding())
   → duplicate return/webhook remains idempotent via the existing already-Succeeded early return
 ```
 
-**Locked: the Checkout-selected PaymentMethod is never synced into `business_payment_instruments` and never becomes the Business's/Workspace's new default instrument for a one-time top-up** (§9 explains why). `confirmAttemptFromReturn()`'s corrected verification step therefore checks `providerPaymentIntentId !== null` (proof a real charge occurred) but does **not** call `PaymentInstrumentManager::syncWorkspaceCheckoutPaymentMethod()` or any equivalent — that method is deliberately Workspace-scoped and exists specifically to support *future off-session reuse* (slot-agreement renewals), which a one-time top-up must never silently establish.
+**Locked: the Checkout-selected PaymentMethod is never synced into `business_payment_instruments` and never becomes the Business's/Workspace's new default instrument for a one-time top-up** (§8 explains why). The corrected verification step retrieves the PaymentMethod only to read its safe display metadata (§5) — it never calls `PaymentInstrumentManager::syncWorkspaceCheckoutPaymentMethod()` or any equivalent, and `PaymentInstrumentManager.php` itself is not modified by this correction (§16).
 
 **New route, reusing the existing controller and the existing Business-scoped Usage Billing routing convention** — mirroring `additional-business-slots/{agreement}/confirm`'s own exact shape:
 
@@ -135,9 +154,30 @@ Route::get('{workspaceUid}/businesses/{businessUid}/usage-billing/top-up/{attemp
     ->whereNumber('attempt');
 ```
 
-`UsageBillingTopUpController` gains one new action, `confirmFromReturn(int $attempt)`, resolving the attempt scoped to the already-viewable Business (reusing `resolveViewableBusiness()`), calling `confirmAttemptFromReturn()`, and redirecting to the existing Usage Billing dashboard with a flash message — no new controller class, matching the task's own explicit preference. `initiate()` itself is corrected to redirect to `$result->redirectUrl` (via `redirect()->away(...)`) instead of the current synchronous "Top-up initiated" success flash, since a Checkout Session flow cannot complete synchronously within the initiating request.
+**Business isolation for this route — locked mechanically (Blocker G, resolved):**
 
-**No pre-saved default instrument required.** `initiateSlotAgreementCheckout()` — the RFC's own existing, correctly-conforming Checkout Session flow — never calls `instrumentRepository->findDefaultForProviderCustomer()` at all; it only requires a resolved `payment_provider_customers` row (created lazily if absent). The corrected `initiateTopUp()`/`initiateAddonPurchase()` path must drop the `no_payment_instrument` pre-check entirely — a Checkout Session collects payment information customer-present, at Stripe's own hosted page, exactly as the slot-agreement flow already proves works without any pre-saved card (§10 locks this exactly).
+```
+public function confirmFromReturn(int $attempt, string $workspaceUid, string $businessUid): RedirectResponse
+{
+    $actorUserId = (int) Auth::id();
+    $business = $this->resolveViewableBusiness($workspaceUid, $businessUid, $actorUserId); // existing method, unchanged
+
+    $fundingAttempt = $this->attemptRepository->findById($attempt); // existing read method, no new repository path
+
+    if ($fundingAttempt === null || (int) $fundingAttempt->business_id !== (int) $business->id) {
+        abort(404);
+    }
+
+    $result = $this->checkoutManager->confirmAttemptFromReturn($fundingAttempt);
+    // ... existing flash-message/redirect handling, mirroring initiate()'s own shape
+}
+```
+
+Step order is exact and non-negotiable: (1) resolve Workspace + Business under the existing access rules (`resolveViewableBusiness()`, unchanged — already 404s on an inaccessible Workspace/Business); (2) load the funding attempt by id, via the existing `BusinessFundingAttemptRepository::findById()` — no new repository method; (3) require `attempt.business_id === resolved Business.id`, otherwise `abort(404)` — never a 403, matching RFC-005 §24's existing "unrelated resources fail closed with a 404-shaped response" rule verbatim; (4) only then call `confirmAttemptFromReturn()`. No raw `DB::table()` access is introduced in the controller.
+
+`UsageBillingTopUpController` gains exactly this one new action — no new controller class. `initiate()` itself is corrected to redirect to `$result->redirectUrl` (via `redirect()->away(...)`) instead of the current synchronous "Top-up initiated" success flash, since a Checkout Session flow cannot complete synchronously within the initiating request.
+
+**No pre-saved default instrument required.** `initiateSlotAgreementCheckout()` — the RFC's own existing, correctly-conforming Checkout Session flow — never calls `instrumentRepository->findDefaultForProviderCustomer()` at all. The corrected `initiateTopUp()`/`initiateAddonPurchase()` path drops the `no_payment_instrument` pre-check entirely — a Checkout Session collects payment information customer-present, at Stripe's own hosted page, exactly as the slot-agreement flow already proves works without any pre-saved card (§9 locks this exactly, and §9 separately locks that the *provider-customer* requirement, unlike the instrument requirement, is **not** removed).
 
 ---
 
@@ -145,30 +185,90 @@ Route::get('{workspaceUid}/businesses/{businessUid}/usage-billing/top-up/{attemp
 
 **Preserved conclusion, unchanged by this correction:** M4 shipped `business_usage_addon_catalog` with zero seeded rows and no HTTP surface by deliberate design (M4 contract §10) — a real commercial add-on catalog is a human product decision, not a technical gap. **This correction creates no new add-on route, controller, view, `addon_key`, price, or seeded catalog row.**
 
-**What this correction does change:** `initiateAddonPurchase()` → `initiateCharge()` with `purpose: AddonPurchase` now creates a Checkout Session (§4/§5), and the resulting `redirectUrl` is threaded through `AddonPurchaseResult` (§5) so that a **future**, separately authorized add-on HTTP caller can redirect to it without ever needing to reach into the gateway or into `UsageBillingCheckoutManager`'s own internals — the manager/controller boundary is preserved for that future caller by construction, not merely by convention.
+**What this correction does change:** `initiateAddonPurchase()` → `initiateCharge()` with `purpose: AddonPurchase` now creates a Checkout Session (§4/§6), with the identical `'Pending Checkout'`-then-finalize snapshot lifecycle (§5), and the resulting `redirectUrl` is threaded through `AddonPurchaseResult` (§8's DTO note) so that a **future**, separately authorized add-on HTTP caller can redirect to it without ever needing to reach into the gateway or into `UsageBillingCheckoutManager`'s own internals.
 
 Because `initiateAddonPurchase()`'s own `postAttemptCreationHook` already creates the linked `business_usage_addon_purchases` row inside the same short transaction, *before* the outbound Checkout Session call (M4 Correction Round 1's own closed replay-hole fix, §D) — this ordering is unaffected by the provider-object change and requires no modification.
 
 ---
 
-## 8. `setup_future_usage` — locked resolution
+## 8. `setup_future_usage`, redirect-result DTOs, and the exact gateway signature
 
-**RFC-005 §20, quoted exactly:** *"...the additional-slot agreement's initial charge as a Checkout Session with `setup_future_usage: 'off_session'`, every renewal as an off-session PaymentIntent."* **`setup_future_usage: 'off_session'` is scoped, by the RFC's own words, to the additional-slot agreement's initial charge alone — it is never mentioned for top-up or add-on purchase**, which §20's own preceding clause independently and separately describes as "one-time Checkout Sessions," with no future-use qualifier of any kind.
+### A. `setup_future_usage` — locked resolution
+
+**RFC-005 §20, quoted exactly:** *"...the additional-slot agreement's initial charge as a Checkout Session with `setup_future_usage: 'off_session'`, every renewal as an off-session PaymentIntent."* `setup_future_usage: 'off_session'` is scoped, by the RFC's own words, to the additional-slot agreement's initial charge alone — it is never mentioned for top-up or add-on purchase, which §20's own preceding clause independently and separately describes as "one-time Checkout Sessions," with no future-use qualifier of any kind.
 
 **Resolution: Option B — a one-time payment, never automatically establishing a new future-use instrument.**
 
-- **Why:** the slot agreement's `setup_future_usage: 'off_session'` exists for exactly one documented reason — it has a *known, designed future off-session renewal* (§22's own recurring renewal-charge machinery). A manual top-up or add-on purchase has no such designed recurrence; RFC-005 §19 draws its own hard line here — auto-recharge is a distinct, separately-consented, ongoing authorization (§16's "consent extended to every charge-causing action" rule; §19's own narrowed platform-administrator posture: *"an administrator may never unilaterally enable auto-recharge for a Business on the customer's behalf"*). Silently attaching `setup_future_usage` to a one-time top-up's PaymentIntent would establish exactly the kind of standing off-session authority §19 requires a **separate, explicit** payer action to grant.
-- **Payer-consent implication:** a payer completing a one-time top-up Checkout Session consents only to that one charge. Establishing reusable off-session authority is a materially different consent, already gated by its own distinct action (`configureAutoRecharge()`/`PaymentInstrumentManager::createSetupIntent()`+attach). Conflating the two would let a top-up silently grant authority the payer never explicitly asked for.
-- **No existing instrument is required or consumed** (§10 confirms — the Checkout Session collects payment information customer-present).
-- **The Checkout-selected PaymentMethod is not synced locally** (§6) — since it was never authorized for future use, persisting it as a reusable `business_payment_instruments` row would be actively misleading (a card the payer may not have intended to leave on file).
-- **The default instrument does not change** as a side effect of a top-up/add-on purchase.
-- **Auto-recharge is never silently enabled.** `configureAutoRecharge()` remains the sole, separately-consented path to enabling it, entirely untouched by this correction (§14).
+- **Why:** the slot agreement's `setup_future_usage: 'off_session'` exists for exactly one documented reason — it has a *known, designed future off-session renewal* (§22's own recurring renewal-charge machinery). A manual top-up or add-on purchase has no such designed recurrence; RFC-005 §19 draws its own hard line here — auto-recharge is a distinct, separately-consented, ongoing authorization (§16's "consent extended to every charge-causing action" rule; §19's own narrowed platform-administrator posture: *"an administrator may never unilaterally enable auto-recharge for a Business on the customer's behalf"*).
+- **Payer-consent implication:** a payer completing a one-time top-up Checkout Session consents only to that one charge. Establishing reusable off-session authority is a materially different consent, already gated by its own distinct action (`configureAutoRecharge()`/`PaymentInstrumentManager::createSetupIntent()`+attach).
+- **No existing instrument is required or consumed** (§9).
+- **The Checkout-selected PaymentMethod is retrieved only for its safe display metadata (§5) and is never synced locally, never inserted into `business_payment_instruments`, and never becomes any default instrument** — retrieving `PaymentMethodResult` via `retrievePaymentMethod()` is a pure read against Stripe, with no local write of any kind beyond `payment_method_display_snapshot` itself.
+- **Auto-recharge is never silently enabled** — `configureAutoRecharge()` remains the sole, separately-consented path to enabling it, entirely untouched by this correction (§13).
 
-**Exact minimal interface widening:** `PaymentProviderGateway::createCheckoutSession()` gains one new parameter, `bool $setupFutureUsageOffSession = false`, defaulting to the narrower, no-side-effect behavior. `StripePaymentProviderGateway::createCheckoutSession()`'s `payment_intent_data.setup_future_usage` key is included only when this parameter is `true`. `initiateSlotAgreementCheckout()` (the only existing caller) is updated to pass `true` explicitly, preserving its own byte-identical outbound Stripe request; `initiateCharge()`'s new Checkout-Session branch (`ManualTopUp`/`AddonPurchase`) passes `false` (or omits the argument, taking the default). `FakePaymentProviderGateway::createCheckoutSession()` accepts and — since it never actually calls Stripe — safely ignores the same parameter, remaining fully conforming to the widened interface without behavioral change (its existing `checkoutSessionOutcomes` fixture-configuration mechanism already governs every observable test outcome).
+### B. Exact gateway signature (Blocker E, resolved)
+
+`createCheckoutSession()`'s **current, exact** signature (all eight parameters required, confirmed against `app/Library/Usage/Contracts/PaymentProviderGateway.php`):
+
+```php
+public function createCheckoutSession(
+    string $providerCustomerId,
+    int $amountMinorUnits,
+    string $currencyCode,
+    string $lineItemName,
+    string $successUrl,
+    string $cancelUrl,
+    string $idempotencyKey,
+    array $metadata,
+): CheckoutSessionResult;
+```
+
+**Locked corrected signature — the new parameter appended last, defaulted, after `$metadata`, the only placement that is valid PHP (an optional parameter can never precede a required one) and the only placement that leaves every existing eight-argument call site — including `initiateSlotAgreementCheckout()`'s own — syntactically unchanged unless explicitly updated:**
+
+```php
+public function createCheckoutSession(
+    string $providerCustomerId,
+    int $amountMinorUnits,
+    string $currencyCode,
+    string $lineItemName,
+    string $successUrl,
+    string $cancelUrl,
+    string $idempotencyKey,
+    array $metadata,
+    bool $setupFutureUsageOffSession = false,
+): CheckoutSessionResult;
+```
+
+- `StripePaymentProviderGateway::createCheckoutSession()` includes `payment_intent_data.setup_future_usage` in the outbound Stripe request **only when** `$setupFutureUsageOffSession === true`.
+- `initiateSlotAgreementCheckout()` (the only existing caller) is updated to pass `setupFutureUsageOffSession: true` **explicitly** — its own outbound Stripe request remains byte-for-byte identical to today's.
+- `initiateCharge()`'s new Checkout-Session branch (`ManualTopUp`/`AddonPurchase`) passes `setupFutureUsageOffSession: false`, or omits the argument, taking the default.
+- `FakePaymentProviderGateway::createCheckoutSession()` accepts the widened signature and **records** the received value in a new `public array $createCheckoutSessionCalls` field — the identical existing pattern `confirmPaymentIntentCalls` already establishes for the identical "prove a specific call happened with specific parameters" purpose (M4 contract §3 item 7k) — so a test can assert which value each caller actually passed, rather than merely that no error occurred. No other observable behavior of the fake changes; its `checkoutSessionOutcomes` fixture-configuration mechanism is untouched.
+
+### C. Redirect-result DTOs — smallest coherent change
+
+- `FundingAttemptResult` gains one new field, `public ?string $redirectUrl`, populated only by the Checkout-Session-creating branch (`ManualTopUp`/`AddonPurchase`), `null` for every other path (`AutoRecharge`, and any already-succeeded/failed/no-provider-customer/no-instrument early return) — mirroring `SlotAgreementCheckoutResult`'s own precedent exactly.
+- `AddonPurchaseResult` gains the identical nullable `redirectUrl`, propagated from the underlying `FundingAttemptResult` `initiateAddonPurchase()` already receives internally.
+- No other DTO (`CheckoutSessionResult`, `SlotAgreementCheckoutResult`, `PaymentIntentResult`, `PaymentMethodResult`) requires any change — each already carries every field this correction's logic needs.
 
 ---
 
-## 9. Saved-instrument requirement — locked, independently, per purpose
+## 9. Provider-customer and saved-instrument requirements — resolved independently (Blocker B, resolved)
+
+**The contradiction, confirmed:** the initial draft simultaneously claimed (§9) that `ManualTopUp`/`AddonPurchase` would lazily create an absent provider customer, and (§17) that `TopUpStateMachineTest::test_no_provider_customer_denies_the_attempt` "remains valid as-is" — an unmodified denial test cannot coexist with a new lazy-create path that would make that same scenario succeed instead of deny. Both cannot be true; the initial draft never should have asserted both.
+
+**Resolved in favor of Option 1 — no behavior change to provider-customer resolution, for any purpose:**
+
+| Requirement | `ManualTopUp` / `AddonPurchase` | `AutoRecharge` (unchanged) |
+|---|---|---|
+| Pre-existing `payment_provider_customers` row | **Required — denies `no_provider_customer` if absent, exactly as today** | Required — denies `no_provider_customer` if absent, unchanged |
+| Pre-saved default `business_payment_instruments` row | **No longer required — this is the actual defect this correction fixes** | Required — denies `no_payment_instrument` if absent, unchanged (§9 table below) |
+
+`initiateCharge()`'s existing `$providerCustomer = $this->providerCustomerRepository->findActiveByWorkspaceId(...)`/`findActiveByBusinessId(...)` read-only lookup, and its existing `return new FundingAttemptResult(0, FundingAttemptState::Failed, 'no_provider_customer')` denial, are **not modified** by this correction for any purpose. Only the **instrument** lookup immediately following it moves to apply exclusively on the `AutoRecharge` branch (§9's saved-instrument table below).
+
+**Why Option 1, not Option 2 (lazy `PaymentInstrumentManager::resolveProviderCustomer()` call):** M3 contract §11 states, verbatim, that the local funding-attempt row is created "**before any Stripe call is made**" — not merely before the charge-creating call. `PaymentInstrumentManager::resolveProviderCustomer()` itself calls `gateway->createOrRetrieveCustomer()` when no provider customer exists yet — a genuine outbound Stripe call. Invoking it from inside `initiateCharge()` before the `business_funding_attempts` row exists would place a real Stripe call ahead of local attempt creation, directly violating M3 §11's own literal ordering rule for this specific method and this specific table. (The existing `additional_business_slot_agreements` precedent, which does perform provider-customer lazy-creation before its own row exists, is a different table introduced by a later milestone with no equivalent "before any Stripe call" constraint of its own — it is not a license to relax M3 §11's rule for `business_funding_attempts`.) Option 1 avoids this conflict entirely: since no Stripe call of any kind is introduced into the pre-attempt-creation path, M3 §11's ordering rule is trivially satisfied, unchanged from today.
+
+**Product consequence, stated explicitly:** a Business/Workspace with a configured payer but genuinely no `payment_provider_customers` row yet (true first-ever payment setup) cannot complete a top-up via Checkout until a provider customer has been established through the existing, separate payment-method-setup action (`PaymentInstrumentManager::createSetupIntent()`, which itself calls `resolveProviderCustomer()`). This is a **pre-existing** characteristic of the system this correction does not change or worsen — today, the *only* way a `payment_provider_customers` row is ever created is through that same setup-intent flow. Redesigning customer onboarding is outside this correction's bounded scope (§13's "no hidden accounting redesign" rule, extended here to no hidden onboarding redesign).
+
+**Exact saved-instrument requirement table, locked independently per purpose:**
 
 | Purpose | Requires a pre-saved default instrument? |
 |---|---|
@@ -176,20 +276,22 @@ Because `initiateAddonPurchase()`'s own `postAttemptCreationHook` already create
 | `AddonPurchase` | **No** — identical reasoning |
 | `AutoRecharge` | **Yes, unchanged** — an off-session charge is structurally impossible without an already-attached, reusable payment instrument; this requirement is intrinsic to off-session PaymentIntent charging, not an artifact of the defect this correction fixes |
 
-The corrected `initiateCharge()` moves the `instrumentRepository->findDefaultForProviderCustomer()` lookup (and its `no_payment_instrument` denial) to apply **only** on the `AutoRecharge` branch. The `ManualTopUp`/`AddonPurchase` branch requires only a resolved `payment_provider_customers` row (creating one lazily if absent, mirroring `quoteAdditionalSlotAgreement()`'s own existing lazy-creation pattern) — never an instrument.
+The corrected `initiateCharge()` moves the `instrumentRepository->findDefaultForProviderCustomer()` lookup (and its `no_payment_instrument` denial) to apply **only** on the `AutoRecharge` branch.
 
 ---
 
 ## 10. Webhook raw-evidence validation — exact per-object-family rules
 
-`ProcessPaymentProviderEvent::processFundingAttempt()` is corrected to branch on the **already-loaded** `$attempt->purpose` (never `event_type`) to select the expected provider-object family, mirroring `processSlotAgreementInitialCheckout()`'s own already-correct pattern exactly:
+`ProcessPaymentProviderEvent::processFundingAttempt()` is corrected to branch on the **already-loaded** `$attempt->purpose` (never `event_type`) to select the expected provider-object family, mirroring `processSlotAgreementInitialCheckout()`'s own already-correct pattern:
 
 | `$attempt->purpose` | Amount field | Success event-type suffix(es) | Failure/cancellation event-type suffix(es) |
 |---|---|---|---|
 | `AutoRecharge` | `amount` (unchanged) | `.succeeded` (unchanged) | `.payment_failed`, `canceled` (unchanged) |
 | `ManualTopUp` / `AddonPurchase` | `amount_total` | `.completed`, `.async_payment_succeeded` | `.expired` |
 
-**Never trust metadata alone** — every existing validation step is preserved unconditionally, regardless of provider-object family: provider object id (`provider_session_or_intent_reference` match), operation id (`local_idempotency_key` match against `app_operation_id`), amount, currency, customer, local scope (Business ownership via the attempt row itself), and local expected state (a valid forward transition). **Missing required evidence still fails closed** — a `ManualTopUp`/`AddonPurchase` event missing both `amount` and `amount_total` marks the event `failed` with `missing_required_evidence`, exactly as `processSlotAgreementInitialCheckout()`'s own existing `! array_key_exists('amount', ...) && ! array_key_exists('amount_total', ...)` guard already does — this correction reuses that exact guard shape, not a weaker one.
+**Never trust metadata alone, and never treat "some payload has `amount_total`" as sufficient on its own** — every existing validation step is preserved unconditionally, regardless of provider-object family, and must **all** pass before any mutation: the already-persisted provider object reference (`provider_session_or_intent_reference` match against `event->provider_object_id`), the operation id (`app_operation_id` match against `local_idempotency_key`), amount, currency, customer, local scope (Business ownership via the attempt row itself), and local expected state (a valid forward transition). **Missing required evidence still fails closed** — a `ManualTopUp`/`AddonPurchase` event missing both `amount` and `amount_total` marks the event `failed` with `missing_required_evidence`, exactly as `processSlotAgreementInitialCheckout()`'s own existing `! array_key_exists('amount', ...) && ! array_key_exists('amount_total', ...)` guard already does — this correction reuses that exact guard shape, not a weaker one.
+
+This field/suffix-level validation is the **first** line of defense (unchanged from the existing architecture in every respect except the purpose-based branch). §12 below locks a **second**, independent line of defense specific to Checkout-backed purposes.
 
 ---
 
@@ -206,88 +308,109 @@ Audited against Stripe's documented Checkout Session and PaymentIntent event fam
 | `payment_intent.payment_failed` | — | **Yes**, for `AutoRecharge` only (unchanged) | — |
 | `payment_intent.requires_action` | — | — | **Yes** — provider-object lifecycle information only, unchanged for every purpose |
 
-`checkout.session.async_payment_succeeded` is included in the "confirms success" suffix set (`.async_payment_succeeded`) as the direct sibling of `processSlotAgreementInitialCheckout()`'s own existing handling of the identical event for the slot-agreement flow — reused, not invented. `checkout.session.expired`'s failure path reuses the existing `markAttemptFailedFromWebhook()` method verbatim (already purpose-agnostic — it only inspects `$attempt->state`), so no new manager method is required.
-
-**Never route by `event_type` alone.** Every classification above is reached only after `$attempt->purpose` has already selected the expected object family (§10) and every other field-level validation has already passed — `event_type` determines only which lifecycle transition a *already-confirmed-relevant* event represents, exactly as RFC-005 §17.C/§21 already require.
+**A PaymentIntent event can never confirm a Checkout-backed (`ManualTopUp`/`AddonPurchase`) attempt, and a Checkout Session event can never confirm an `AutoRecharge` attempt** — enforced structurally, not just by event-type-suffix matching: `processFundingAttempt()`'s purpose-based branch (§10) selects the amount field and suffix set from `$attempt->purpose` *before* any event-type comparison runs, so an event of the wrong provider-object family for the loaded attempt's own purpose fails the amount-field-presence check (a PaymentIntent event has no `amount_total`; a Checkout Session event has no top-level `amount`) and is marked `missing_required_evidence`/`amount_mismatch` before it could ever reach a suffix comparison. `checkout.session.async_payment_succeeded` is included in the "confirms success" suffix set as the direct sibling of `processSlotAgreementInitialCheckout()`'s own existing handling of the identical event for the slot-agreement flow — reused, not invented. `checkout.session.expired`'s failure path reuses the existing, purpose-agnostic `markAttemptFailedFromWebhook()` method verbatim — no new manager method required. Signed-webhook verification (`PaymentProviderGateway::verifyWebhookSignature()`) is entirely unaffected by this correction.
 
 ---
 
-## 12. Return + webhook convergence — idempotency, unchanged shape
+## 12. Return + webhook convergence — corrected design (Blocker C, resolved)
 
-Both `confirmAttemptFromReturn()` (browser return) and `confirmAttemptFromWebhook()` (webhook) already converge on the identical `confirmSucceeded()` accounting path, and both already share the identical already-Succeeded early-return guard (including its M4-Correction-Round-1 `finalizeAddonPurchaseIfPending()` idempotent repair for the add-on replay hole). **This correction changes nothing about that convergence** — it only changes which gateway method each path calls to retrieve the provider object's current state (`retrieveCheckoutSession()` vs. `retrievePaymentIntent()`, selected by `$attempt->purpose`, mirroring `confirmSlotAgreementFromReturn()`/`confirmSlotAgreementFromWebhook()`'s own existing purpose-free dual-caller convergence onto `confirmSlotAgreementChecked()`). No double wallet credit, no double ledger entry, no double funding transition, no double add-on completion — all already proven by the existing `UniqueConstraintViolationException`-guarded `creditFromFunding()` correlation-key mechanism and the already-Succeeded/already-Completed early returns, none of which this correction touches.
+**The factual correction, first:** the initial draft's claim that `confirmAttemptFromReturn()` and `confirmAttemptFromWebhook()` "merely change which gateway retrieval method they use according to purpose" was wrong for the webhook path. Direct re-reading of `UsageBillingCheckoutManager.php` confirms:
 
-**One additional method requires the identical purpose-aware branching, discovered during this audit and not named by the task's own initial candidate list: `retryFundingAttemptAsAdministrator()`.** It currently calls `$this->gateway->retrievePaymentIntent($attempt->provider_session_or_intent_reference)` unconditionally — correct today only because every attempt is PaymentIntent-backed. Once `ManualTopUp`/`AddonPurchase` attempts become Checkout-Session-backed, an administrator resuming a stuck `ManualTopUp`/`AddonPurchase` attempt (state: `provider_pending`, never confirmed) must retrieve a **Checkout Session**, not a PaymentIntent — calling `retrievePaymentIntent()` against a Checkout Session id would either error or silently misresolve. **This correction extends `retryFundingAttemptAsAdministrator()` with the identical purpose-based branch** (`retrieveCheckoutSession()` + the same eight-condition verification for `ManualTopUp`/`AddonPurchase`, `retrievePaymentIntent()` unchanged for `AutoRecharge`) — a mechanically necessary, narrowly-scoped extension of an already-authorized method, not a new capability or a new authorization posture (§16/§24's platform-administrator resume-only rule is completely unchanged).
+- `confirmAttemptFromReturn()` **does** call `gateway->retrievePaymentIntent()` today, unconditionally, for every purpose.
+- `confirmAttemptFromWebhook()` performs **no gateway retrieval of any kind** today — it applies `ProcessPaymentProviderEvent::processFundingAttempt()`'s already-verified webhook evidence directly, calling `confirmSucceeded()` immediately.
+
+**Locked design — Option B for Checkout-backed purposes, mirroring the additional-slot agreement's own already-shipped precedent exactly:**
+
+- **`confirmAttemptFromReturn()`** is corrected to branch on `$attempt->purpose`: `AutoRecharge` keeps calling `retrievePaymentIntent()`, unchanged; `ManualTopUp`/`AddonPurchase` now calls `retrieveCheckoutSession()` and verifies the same eight conditions `slotAgreementCheckoutVerified()` already checks (adapted to a `BusinessFundingAttempt`, via a new private helper mirroring its exact shape), then finalizes the display snapshot (§5) before `confirmSucceeded()`.
+- **`confirmAttemptFromWebhook()`** gains a purpose-based branch, matching `confirmSlotAgreementFromWebhook()`'s own already-shipped design exactly: for `ManualTopUp`/`AddonPurchase`, it now independently calls `gateway->retrieveCheckoutSession()` and re-verifies the identical eight conditions, **before** finalizing the display snapshot (§5) and calling `confirmSucceeded()` — never trusting `ProcessPaymentProviderEvent`'s own field-level webhook validation (§10) as sufficient on its own for a Checkout-backed mutation, exactly as the slot-agreement flow already does not trust it alone. `AutoRecharge`'s branch of `confirmAttemptFromWebhook()` is **completely unchanged** — no new provider call is added to PaymentIntent-backed webhook confirmation of any kind.
+- **Why the asymmetry is correct, not an inconsistency:** a PaymentIntent event's own signed webhook payload, once `processFundingAttempt()`'s field-level validation passes, already **is** sufficient authoritative evidence of success for `AutoRecharge` — there is no further data to fetch (the instrument was already known and snapshotted at creation time). A Checkout Session, by contrast, requires fetching data the webhook payload's own top-level fields do not carry in the shape this correction needs — the actual PaymentMethod used (§5) — so an authoritative re-fetch is required regardless, and reusing it to also re-verify the eight conditions is the same defense-in-depth the slot-agreement flow already applies, not an invented new requirement.
+- **Exact failure/reconciliation behavior when the re-fetch or re-verification fails** — mirroring `processSlotAgreementInitialCheckout()`'s own already-shipped behavior exactly, not inventing new semantics: if `confirmAttemptFromWebhook()`'s internal re-verification does not pass (an anomaly, since `processFundingAttempt()`'s own upstream field-level checks already passed), no mutation of any kind occurs — no state transition, no display-snapshot finalization, no credit — and the calling job (`ProcessPaymentProviderEvent::processFundingAttempt()`) still marks the event `processed` (its own upstream validation genuinely did succeed; the event itself was correctly matched and evidenced). The attempt remains in its prior state, to be recovered by the existing, already-authorized `ReconcileProviderPendingState` job (RFC-005 §29) — the identical recovery path the slot-agreement flow already relies on for the identical class of anomaly. This correction introduces no new "mark failed on internal re-verification mismatch" branch that does not already exist in the codebase for this exact situation.
+
+No double wallet credit, no double ledger entry, no double funding transition, no double add-on completion — all already proven by the existing `UniqueConstraintViolationException`-guarded `creditFromFunding()` correlation-key mechanism and the already-Succeeded/already-Completed early returns, none of which this correction touches.
+
+**One additional method requires the identical purpose-aware branching: `retryFundingAttemptAsAdministrator()`.** It currently calls `$this->gateway->retrievePaymentIntent(...)` unconditionally — correct today only because every attempt is PaymentIntent-backed. Once `ManualTopUp`/`AddonPurchase` attempts become Checkout-Session-backed, an administrator resuming a stuck one (state: `provider_pending`, never confirmed) must retrieve a **Checkout Session**, not a PaymentIntent. This correction extends `retryFundingAttemptAsAdministrator()` with the identical purpose-based branch (`retrieveCheckoutSession()` + the same eight-condition verification + display-snapshot finalization for `ManualTopUp`/`AddonPurchase`; `retrievePaymentIntent()` unchanged for `AutoRecharge`) — a mechanically necessary, narrowly-scoped extension of an already-authorized method, not a new capability or a new authorization posture (§9/§16's platform-administrator resume-only rule is completely unchanged).
 
 ---
 
 ## 13. Auto-recharge — must not regress
 
-`initiateAutoRecharge()`'s own dispatch to `initiateCharge()` with `purpose: AutoRecharge` is **unchanged** — it continues to require a pre-saved default instrument and continues to call `createOffSessionPaymentIntent()`/`retrievePaymentIntent()`. The only code `AutoRecharge` shares with the corrected `ManualTopUp`/`AddonPurchase` branches is the already-existing outer scaffolding (`initiateCharge()`'s wallet lookup, provider-customer resolution, outstanding-attempt idempotency check, attempt-row creation, transition recording) — none of which changes shape, only which inner branch (instrument-required-PaymentIntent vs. instrument-free-CheckoutSession) executes for a given `purpose`. Every existing threshold, monthly-recharge-cap, outstanding-attempt-protection, `requires_action`, and payer/instrument behavior for `AutoRecharge` remains byte-for-byte unchanged, and the required regression proof (§18) is every existing `AutoRecharge`-scoped test passing unmodified.
+`initiateAutoRecharge()`'s own dispatch to `initiateCharge()` with `purpose: AutoRecharge` is **unchanged** — it continues to require a pre-saved default instrument and continues to call `createOffSessionPaymentIntent()`/`retrievePaymentIntent()`. `confirmAttemptFromWebhook()`'s `AutoRecharge` branch gains no new provider call (§12). The only code `AutoRecharge` shares with the corrected `ManualTopUp`/`AddonPurchase` branches is the already-existing outer scaffolding (`initiateCharge()`'s wallet lookup, provider-customer resolution, outstanding-attempt idempotency check, attempt-row creation, transition recording) — none of which changes shape, only which inner branch executes for a given `purpose`. Every existing threshold, monthly-recharge-cap, outstanding-attempt-protection, `requires_action`, and payer/instrument behavior for `AutoRecharge` remains byte-for-byte unchanged, and the required regression proof (§18) is every existing `AutoRecharge`-scoped test passing unmodified.
 
 ---
 
 ## 14. Explicitly excluded — Receipts
 
-`business_billing_receipts`, any receipt model/repository, any `receiptUrl` DTO property, any `latest_charge` expansion, and `SendReceiptNotification` are **out of scope**. This correction's `confirmAttemptFromReturn()`/`confirmAttemptFromWebhook()` corrections touch only provider-object retrieval/verification and the existing `confirmSucceeded()` credit path — no new field is added to any DTO or model for receipt purposes, and no receipt-specific branch of any kind is introduced. Receipt Boundary (remediation #3) extends this corrected foundation afterward, entirely independently.
+`business_billing_receipts`, any receipt model/repository, any `receiptUrl` DTO property, any `latest_charge` expansion, and `SendReceiptNotification` are **out of scope**. This correction's provider-object and webhook corrections touch only provider-object retrieval/verification, the display-snapshot finalization (§5, an already-existing column, not a new receipt-adjacent field), and the existing `confirmSucceeded()` credit path — no receipt-specific branch of any kind is introduced. Receipt Boundary (remediation #3) extends this corrected foundation afterward, entirely independently.
 
 ---
 
 ## 15. Explicitly excluded — Funding events
 
-`BusinessFundingAttemptSucceeded`/`BusinessFundingAttemptFailed` (RFC-005 §29) are **not** dispatched by this correction. They remain owned by Job/Event Dispatch Completion (remediation #4). This correction's `confirmSucceeded()`/`markFailed()` methods gain no new `Event::dispatch()` call of any kind — provider-flow correctness is independently testable, and independently tested (§18), without them.
+`BusinessFundingAttemptSucceeded`/`BusinessFundingAttemptFailed` (RFC-005 §29) are **not** dispatched by this correction. They remain owned by Job/Event Dispatch Completion (remediation #4). This correction's `confirmSucceeded()`/`markFailed()` methods gain no new `Event::dispatch()` call of any kind.
 
 ---
 
-## 16. Candidate production path audit — REQUIRED / NOT REQUIRED, individually
+## 16. Production path allowlist — re-derived against the corrected design
 
 | Path | Verdict | Reason |
 |---|---|---|
-| `app/Library/Usage/UsageBillingCheckoutManager.php` | **REQUIRED** | `initiateCharge()` purpose-aware dispatch (§4/§9), `confirmAttemptFromReturn()`/`confirmAttemptFromWebhook()` purpose-aware verification (§6/§12), `retryFundingAttemptAsAdministrator()` purpose-aware resume (§12) |
-| `app/Library/Usage/Contracts/PaymentProviderGateway.php` | **REQUIRED** | `createCheckoutSession()` gains the one new `bool $setupFutureUsageOffSession = false` parameter (§8) |
-| `app/Library/Usage/StripePaymentProviderGateway.php` | **REQUIRED** | Implements the widened interface; conditionally includes `payment_intent_data.setup_future_usage` (§8) |
-| `app/Library/Usage/FakePaymentProviderGateway.php` | **REQUIRED** | Must accept the widened interface signature to remain conforming (§8) — no behavioral change to its existing fixture mechanism |
-| `app/Library/Usage/FundingAttemptResult.php` | **REQUIRED** | Adds nullable `redirectUrl` (§5) |
-| `app/Library/Usage/AddonPurchaseResult.php` | **REQUIRED** | Adds the identical nullable `redirectUrl` (§5/§7) |
-| `app/Library/Usage/PaymentInstrumentManager.php` | **NOT REQUIRED** | No change needed — the correction's own design (§6/§8) deliberately never calls `syncWorkspaceCheckoutPaymentMethod()` (or any equivalent) for a one-time top-up/add-on; this file is read, not modified |
+| `app/Library/Usage/UsageBillingCheckoutManager.php` | **REQUIRED** | `initiateCharge()` purpose-aware dispatch (§4/§9), `formatPaymentMethodDisplay()` addition (§5), `confirmAttemptFromReturn()`/`confirmAttemptFromWebhook()` purpose-aware re-fetch+verify (§12), `retryFundingAttemptAsAdministrator()` purpose-aware resume (§12), `UsageBillingTopUpController` constructor/route wiring is a controller-side change tracked separately below |
+| `app/Library/Usage/Contracts/PaymentProviderGateway.php` | **REQUIRED** | `createCheckoutSession()` gains the one new `bool $setupFutureUsageOffSession = false` parameter (§8.B) |
+| `app/Library/Usage/StripePaymentProviderGateway.php` | **REQUIRED** | Implements the widened interface; conditionally includes `payment_intent_data.setup_future_usage` (§8.B); `initiateSlotAgreementCheckout()`'s own call site is inside `UsageBillingCheckoutManager.php`, tracked there |
+| `app/Library/Usage/FakePaymentProviderGateway.php` | **REQUIRED** | Accepts the widened interface signature and adds the `createCheckoutSessionCalls` recording array (§8.B) |
+| `app/Library/Usage/FundingAttemptResult.php` | **REQUIRED** | Adds nullable `redirectUrl` (§8.C) |
+| `app/Library/Usage/AddonPurchaseResult.php` | **REQUIRED** | Adds the identical nullable `redirectUrl` (§8.C/§7) |
+| `app/Library/Usage/PaymentInstrumentManager.php` | **NOT REQUIRED** | Confirmed unmodified — Option 1 (§9) means `UsageBillingCheckoutManager` never calls `resolveProviderCustomer()` or `syncWorkspaceCheckoutPaymentMethod()`; the corrected flow's only interaction with a `PaymentInstrumentManager`-adjacent concept is a direct `PaymentProviderGateway::retrievePaymentMethod()` call (already on the gateway interface, already unmodified) from inside `UsageBillingCheckoutManager` itself |
 | `app/Jobs/Usage/ProcessPaymentProviderEvent.php` | **REQUIRED** | `processFundingAttempt()` purpose-aware amount-field/event-type-suffix branching (§10/§11) |
-| `app/Http/Controllers/Customer/Business/UsageBillingTopUpController.php` | **REQUIRED** | New `confirmFromReturn()` action; `initiate()` redirects to `$result->redirectUrl` instead of a synchronous success flash (§6) |
+| `app/Http/Controllers/Customer/Business/UsageBillingTopUpController.php` | **REQUIRED** | New `confirmFromReturn()` action with the exact Business-isolation check (§6); `initiate()` redirects to `$result->redirectUrl` instead of a synchronous success flash (§6) |
 | `routes/customer.php` | **REQUIRED** | One new `GET .../top-up/{attempt}/confirm` route (§6) |
-| `app/Library/Usage/CheckoutSessionResult.php` | **NOT REQUIRED** | Already carries every field the corrected verification logic needs (`redirectUrl`, `status`, `paymentStatus`, `amountMinorUnits`, `currencyCode`, `providerCustomerId`, `providerPaymentIntentId`, `providerPaymentMethodId`) — confirmed independently of any future Receipt Boundary need |
+| `app/Library/Usage/CheckoutSessionResult.php` | **NOT REQUIRED** | Already carries every field the corrected verification logic needs (`redirectUrl`, `status`, `paymentStatus`, `amountMinorUnits`, `currencyCode`, `providerCustomerId`, `providerPaymentIntentId`, `providerPaymentMethodId`) |
+| `app/Library/Usage/PaymentMethodResult.php` | **NOT REQUIRED** | Already carries every field `formatPaymentMethodDisplay()` (§5) needs (`brand`, `lastFour`, `expiryMonth`, `expiryYear`) |
 
-**Explicitly out of scope, none required:** database migrations (§3), new add-on HTTP/admin HTTP of any kind (§7), receipt code (§14), wallet admission code (§2), job/event completion code (§15), refund/dispute code (a separate remediation, #6), `docs/automation/AI-AUTONOMY-STATE.json`, package files.
+**Explicitly out of scope, none required:** database migrations (§3/§5 — confirmed no schema change resolves this correction), new add-on HTTP/admin HTTP of any kind (§7), receipt code (§14), wallet admission code (§2), job/event completion code (§15), refund/dispute code (a separate remediation, #6), `docs/automation/AI-AUTONOMY-STATE.json`, package files.
+
+**If, during implementation, any of the above turns out to genuinely require a schema migration or a path not named REQUIRED here, the implementer must STOP and report rather than silently broadening this correction** (§0's correction-round discipline governs any such contradiction).
 
 ---
 
-## 17. Test authority — REQUIRED / NOT REQUIRED, individually, with exact reasoning
+## 17. Test authority — every file exactly one verdict, no discretionary new file
 
 | File | Verdict | Reasoning |
 |---|---|---|
-| `tests/Feature/Usage/TopUpStateMachineTest.php` | **REQUIRED — modification, not only addition** | Every existing test in this file asserts the *current, incorrect* off-session-PaymentIntent lifecycle: `test_successful_top_up_transitions_created_to_provider_pending_to_succeeded` asserts a synchronous `created → provider_pending → succeeded` sequence a Checkout Session cannot produce (a Session is never synchronously `complete` at creation); `test_declined_card_transitions_to_failed_with_a_reason` and `test_requires_action_leaves_the_attempt_pending_authentication` assert mid-*creation* PaymentIntent outcomes that do not apply to Session *creation* (a Session almost always creates successfully; decline/3DS outcomes surface only at confirmation time); `test_no_payment_instrument_denies_the_attempt_without_creating_a_provider_call` asserts a denial rule §9 explicitly removes for `ManualTopUp`. These assertions must be corrected to match the corrected lifecycle (Session creation → `provider_pending` → a separate `confirmAttemptFromReturn()` call → `succeeded`/failure), not left describing behavior this correction deliberately changes. `test_no_provider_customer_denies_the_attempt` and `test_repeat_commit_on_an_already_succeeded_attempt_is_idempotent` remain valid as-is (purpose-agnostic). |
-| `tests/Feature/Usage/AddonPurchaseTransitionAuditTest.php` | **REQUIRED — modification, not only addition** | Every crash/replay test in this file assumes `initiateAddonPurchase()` reaches `Succeeded` **synchronously**, inside the initiating call itself ("the first delivery already completed the purchase synchronously via `confirmSucceeded()` inside `initiateAddonPurchase()` itself") — true only for the current off-session-PaymentIntent design. Once `AddonPurchase` is Checkout-Session-backed, the attempt reaches `provider_pending` at creation and only reaches `Succeeded` via a later, explicit `confirmAttemptFromWebhook()`/`confirmAttemptFromReturn()` call. Each test's own setup must be corrected to drive that explicit confirmation step before asserting the crash/replay behavior it actually tests — the replay-hole proof itself (§12, unchanged) remains valid once the setup reflects the corrected two-step lifecycle. `test_manual_top_up_already_succeeded_no_op_behavior_is_unchanged` requires the identical setup correction. |
-| `tests/Feature/Usage/FundingAttemptPayerConsentTest.php` | **PARTIALLY REQUIRED** | `test_workspace_owner_can_initiate_a_top_up_when_workspace_pays`, `test_direct_business_owner_cannot_initiate_a_top_up_when_workspace_pays`, `test_direct_business_owner_can_initiate_a_top_up_when_business_pays` remain valid unmodified — the payer-consent check runs before any provider-object decision and its own assertions (`no_provider_customer`/`UnauthorizedPayerAssignmentException`) are purpose-agnostic. `test_platform_administrator_can_resume_a_stuck_attempt` **requires correction** — it forces `paymentIntentOutcomes = ['*' => 'requires_action']` on a `ManualTopUp` attempt, a state a Checkout-Session-backed attempt cannot reach via that mechanism; it must instead force a `provider_pending`, unconfirmed Checkout Session and exercise `retryFundingAttemptAsAdministrator()`'s new Checkout-Session branch (§12). |
-| `tests/Feature/Usage/FakePaymentProviderGatewayTest.php` | **Verify at implementation time; likely REQUIRED for the widened signature only** | Must be checked against the corrected `createCheckoutSession()` signature (§8); if it asserts against the interface's parameter list directly it needs the one new parameter reflected, otherwise unaffected — `FakePaymentProviderGateway`'s own observable behavior is unchanged by this correction. |
+| `tests/Feature/Usage/TopUpStateMachineTest.php` | **REQUIRED — modification** | `test_successful_top_up_transitions_created_to_provider_pending_to_succeeded` asserts a synchronous `created → provider_pending → succeeded` sequence a Checkout Session cannot produce; corrected to assert `created → provider_pending`, then a separate `confirmAttemptFromReturn()` call reaching `succeeded`. `test_declined_card_transitions_to_failed_with_a_reason` and `test_requires_action_leaves_the_attempt_pending_authentication` assert mid-*creation* PaymentIntent outcomes inapplicable to Session creation; corrected or removed as the Checkout-Session lifecycle dictates (a decline/3DS-equivalent outcome for Checkout surfaces at confirmation, not creation — asserted instead via `checkoutSessionOutcomes`). `test_no_payment_instrument_denies_the_attempt_without_creating_a_provider_call` is corrected to reflect §9's removed instrument requirement for `ManualTopUp` (superseded by the new `test_manual_top_up_succeeds_without_a_pre_saved_default_instrument`, §17 below). `test_no_provider_customer_denies_the_attempt` and `test_repeat_commit_on_an_already_succeeded_attempt_is_idempotent` remain valid **unmodified** (§9's Option 1 preserves this exact behavior). |
+| `tests/Feature/Usage/AddonPurchaseTransitionAuditTest.php` | **REQUIRED — modification** | Every crash/replay test assumes `initiateAddonPurchase()` reaches `Succeeded` synchronously inside the initiating call — true only for the current off-session-PaymentIntent design. Each test's own setup is corrected to drive an explicit `confirmAttemptFromWebhook()`/`confirmAttemptFromReturn()` call (configuring `checkoutSessionOutcomes` for a paid/complete Session) before asserting the crash/replay behavior; the replay-hole proof itself (§12) remains valid once the setup reflects the corrected two-step lifecycle. `test_manual_top_up_already_succeeded_no_op_behavior_is_unchanged` requires the identical setup correction. |
+| `tests/Feature/Usage/FundingAttemptPayerConsentTest.php` | **PARTIALLY REQUIRED** | `test_workspace_owner_can_initiate_a_top_up_when_workspace_pays`, `test_direct_business_owner_cannot_initiate_a_top_up_when_workspace_pays`, `test_direct_business_owner_can_initiate_a_top_up_when_business_pays` remain valid **unmodified** — the payer-consent check runs before any provider-object decision, and §9's Option 1 keeps `no_provider_customer` byte-for-byte unchanged. `test_platform_administrator_can_resume_a_stuck_attempt` **requires correction** — it forces `paymentIntentOutcomes = ['*' => 'requires_action']` on a `ManualTopUp` attempt, a mechanism a Checkout-Session-backed attempt cannot reach; corrected to instead configure a `provider_pending`, not-yet-`complete` `checkoutSessionOutcomes` entry and exercise `retryFundingAttemptAsAdministrator()`'s new Checkout-Session branch (§12). |
+| `tests/Feature/Usage/FakePaymentProviderGatewayTest.php` | **REQUIRED** | Determined, not hedged: the widened `createCheckoutSession()` signature (§8.B) adds a recording field the fake must expose; one new test asserts the recorded `setupFutureUsageOffSession` value for a given call (§17 new-tests list). Every existing test in this file remains valid unmodified — none constructs a `createCheckoutSession()` call whose assertions are affected by the ninth, defaulted parameter. |
 | `tests/Feature/Usage/WebhookDuplicateEventReplayTest.php` | **NOT REQUIRED** | Tests generic `provider_event_id` deduplication via `UNIQUE(provider, provider_event_id)`, entirely orthogonal to funding-attempt purpose or provider-object family. |
-| `tests/Feature/Usage/ConcurrentTopUpConcurrencyTest.php` | **REQUIRED — fixture-level correction only, proof structure unchanged** | `createPendingAttempt()`'s own mechanism for producing a "pending, not yet confirmed" `ManualTopUp` attempt (`paymentIntentOutcomes = ['*' => 'requires_action']`) no longer applies once `initiateTopUp()` never calls `createOffSessionPaymentIntent()`; it must instead configure a `provider_pending`, not-yet-`complete` `checkoutSessionOutcomes` entry. The race/lock proof itself — two workers racing `confirmAttemptFromReturn()` against the same Business, each crediting exactly once — is unaffected and requires no redesign. |
-| Directly related Checkout Session / slot tests (`AdditionalBusinessSlotAgreement*Test`, etc.) | **Precedent only, NOT REQUIRED** | Read for their established Checkout Session fixture/verification patterns; the slot-agreement flow itself is unchanged by this correction and its own tests require no modification. |
+| `tests/Feature/Usage/ConcurrentTopUpConcurrencyTest.php` | **REQUIRED — fixture-level correction only** | `createPendingAttempt()`'s mechanism for producing a "pending, not yet confirmed" `ManualTopUp` attempt (`paymentIntentOutcomes = ['*' => 'requires_action']`) no longer applies once `initiateTopUp()` never calls `createOffSessionPaymentIntent()`; corrected to configure a `provider_pending`, not-yet-`complete` `checkoutSessionOutcomes` entry instead. The race/lock proof itself — two workers racing `confirmAttemptFromReturn()` against the same Business, each crediting exactly once — requires no redesign. |
 
-**New, narrowly-named tests required** (added to the files above, not a new file, unless a file's own scope genuinely cannot host one cleanly):
+**No new test file is authorized.** Every new proof below is assigned to an exact existing file — the implementer may not create any test path not named in this table.
 
-- `test_manual_top_up_creates_a_checkout_session_not_a_payment_intent` — asserts the gateway received a `createCheckoutSession()` call (via a `FakePaymentProviderGateway` call-recording addition, or by asserting the resulting attempt's `provider_session_or_intent_reference` matches a `cs_fake_*`-shaped id) and never an off-session PaymentIntent call, for `ManualTopUp`.
-- `test_addon_purchase_creates_a_checkout_session_not_a_payment_intent` — identical, for `AddonPurchase`.
-- `test_auto_recharge_still_creates_an_off_session_payment_intent` — the explicit regression guard for §13.
-- `test_manual_top_up_succeeds_without_a_pre_saved_default_instrument` — the direct regression test for §9's removed `no_payment_instrument` check, superseding `TopUpStateMachineTest`'s own now-incorrect denial test.
-- `test_initiate_top_up_returns_a_hosted_redirect_url` — asserts `FundingAttemptResult->redirectUrl` is non-null and matches the fake gateway's own Session URL shape.
-- `test_confirm_from_return_never_trusts_the_query_string_alone` — asserts `confirmAttemptFromReturn()` calls `retrieveCheckoutSession()` (via the fake's own call-recording, or by configuring a `checkoutSessionOutcomes` mismatch and asserting denial) rather than trusting any browser-supplied parameter.
-- `test_checkout_session_completed_webhook_confirms_a_manual_top_up` / `..._an_addon_purchase` — the direct regression test for §1's second confirmed defect: a `checkout.session.completed` event for a `ManualTopUp`/`AddonPurchase` attempt reaches `succeeded` and credits the wallet exactly once.
-- `test_checkout_amount_total_is_validated_against_the_expected_amount` — an `amount_total` mismatch on a `ManualTopUp`/`AddonPurchase` event is rejected exactly as an `amount` mismatch already is for `AutoRecharge`.
-- `test_wrong_amount_currency_customer_object_or_operation_is_rejected_for_checkout_events` — the full existing mismatch-rejection matrix, re-asserted against the Checkout-Session shape.
-- `test_a_checkout_session_event_cannot_confirm_an_auto_recharge_attempt` / `test_a_payment_intent_event_cannot_confirm_a_manual_top_up_or_addon_purchase_attempt` — the direct regression test for §10's purpose-based (never event-type-based) family selection: an event of the wrong shape for the loaded attempt's own purpose is rejected, never coerced.
-- `test_duplicate_webhook_and_browser_return_credit_a_checkout_backed_top_up_exactly_once` — the Checkout-Session-backed sibling of the existing PaymentIntent-backed idempotency proof.
-- `test_platform_administrator_cannot_originate_a_fresh_top_up_via_checkout_session` — re-confirms RFC-005 §16's already-locked narrowing is unaffected by the provider-object change (no new administrator capability was introduced).
-- `test_completing_a_top_up_never_enables_auto_recharge` — the direct regression test for §8's core invariant.
-- `test_existing_slot_agreement_checkout_flow_is_unaffected_by_the_widened_gateway_signature` — the direct regression test for §8's interface-widening safety (the slot agreement's own `setup_future_usage: true` call site still produces the byte-identical outbound request).
+| New test | Assigned file |
+|---|---|
+| `test_manual_top_up_creates_a_checkout_session_not_a_payment_intent` | `TopUpStateMachineTest.php` |
+| `test_manual_top_up_succeeds_without_a_pre_saved_default_instrument` | `TopUpStateMachineTest.php` |
+| `test_initiate_top_up_returns_a_hosted_redirect_url` | `TopUpStateMachineTest.php` |
+| `test_confirm_from_return_never_trusts_the_query_string_alone` | `TopUpStateMachineTest.php` |
+| `test_confirm_from_return_rejects_a_business_scope_mismatch` | `TopUpStateMachineTest.php` (or a `UsageBillingTopUpControllerTest.php` HTTP-level test **only if one already exists** — if no such controller test file exists today, this proof is asserted at the manager/repository level inside `TopUpStateMachineTest.php` instead of authorizing a new HTTP test file) |
+| `test_checkout_backed_attempt_starts_with_the_pending_checkout_sentinel_and_finalizes_it_on_confirmation` | `TopUpStateMachineTest.php` |
+| `test_failed_or_expired_checkout_never_finalizes_a_payment_method_display_snapshot` | `TopUpStateMachineTest.php` |
+| `test_checkout_session_completed_webhook_confirms_a_manual_top_up` | `TopUpStateMachineTest.php` |
+| `test_addon_purchase_creates_a_checkout_session_not_a_payment_intent` | `AddonPurchaseTransitionAuditTest.php` |
+| `test_checkout_session_completed_webhook_confirms_an_addon_purchase` | `AddonPurchaseTransitionAuditTest.php` |
+| `test_auto_recharge_still_creates_an_off_session_payment_intent` | `FundingAttemptPayerConsentTest.php` |
+| `test_auto_recharge_webhook_confirmation_performs_no_new_provider_call` | `FundingAttemptPayerConsentTest.php` |
+| `test_platform_administrator_cannot_originate_a_fresh_top_up_via_checkout_session` | `FundingAttemptPayerConsentTest.php` |
+| `test_completing_a_top_up_never_enables_auto_recharge` | `FundingAttemptPayerConsentTest.php` |
+| `test_checkout_amount_total_is_validated_against_the_expected_amount` | `TopUpStateMachineTest.php` |
+| `test_wrong_amount_currency_customer_object_or_operation_is_rejected_for_checkout_events` | `TopUpStateMachineTest.php` |
+| `test_a_checkout_session_event_cannot_confirm_an_auto_recharge_attempt` | `FundingAttemptPayerConsentTest.php` |
+| `test_a_payment_intent_event_cannot_confirm_a_manual_top_up_or_addon_purchase_attempt` | `TopUpStateMachineTest.php` |
+| `test_duplicate_webhook_and_browser_return_credit_a_checkout_backed_top_up_exactly_once` | `ConcurrentTopUpConcurrencyTest.php` |
+| `test_existing_slot_agreement_checkout_flow_is_unaffected_by_the_widened_gateway_signature` | `FakePaymentProviderGatewayTest.php` |
+| `test_create_checkout_session_records_the_setup_future_usage_flag_per_call` | `FakePaymentProviderGatewayTest.php` |
 
-**Do not push general §35 cleanup into this correction** — every test change above is scoped exclusively to the provider-object/webhook-classification defect this contract locks; no unrelated test in any of these files may be rewritten or weakened.
+**Do not push general §35 cleanup into this correction** — every test change above is scoped exclusively to the provider-object/webhook-classification/display-snapshot defect this contract locks; no unrelated test in any of these files may be rewritten or weakened.
 
 ---
 
@@ -301,27 +424,19 @@ C:\laragon\bin\php\php-8.3.30-Win32-vs16-x64\php.exe artisan test tests/Unit/Usa
 git diff --check
 ```
 
-`migrate:fresh --env=testing` is required as environment hygiene (the established, repeatedly-used pattern throughout this engagement) despite this correction authorizing no schema change — it guarantees a clean baseline before the focused suite runs, and cheaply confirms the "no migration" claim (§3/§16) by construction: if a migration were mistakenly introduced, this same command would surface it. No live Stripe call is permitted in any automated test — every test uses `FakePaymentProviderGateway`, exactly as every existing M3/M4 test already does. **These focused gates do not replace M6's later six-gate regression.** After every pre-M6 correction eventually merges, M6 will rerun all six gates from corrected `main` (§22).
+`migrate:fresh --env=testing` is required as environment hygiene despite this correction authorizing no schema change (§3/§5/§16) — it guarantees a clean baseline before the focused suite runs, and cheaply confirms the "no migration" claim by construction: if a migration were mistakenly introduced, this same command would surface it. No live Stripe call is permitted in any automated test — every test uses `FakePaymentProviderGateway`. **These focused gates do not replace M6's later six-gate regression.** After every pre-M6 correction eventually merges, M6 will rerun all six gates from corrected `main` (§20).
 
 ---
 
 ## 19. Relationship to the other five remaining remediations
 
-This correction does **not** authorize, and its merge does **not** by itself unblock M6 or begin:
-
-- Receipt Boundary (remediation #3)
-- Job/Event Dispatch Completion (remediation #4)
-- Admin Usage Billing Surface (remediation #5)
-- Provider Refund/Dispute Outcome Handling (remediation #6)
-- §35 Test-Coverage Completion (remediation #7)
-
-Each remains a separate, independently governed future document. M6 remains frozen until every required remediation is merged and a fresh static conformance audit passes.
+This correction does **not** authorize, and its merge does **not** by itself unblock M6 or begin: Receipt Boundary (#3), Job/Event Dispatch Completion (#4), Admin Usage Billing Surface (#5), Provider Refund/Dispute Outcome Handling (#6), §35 Test-Coverage Completion (#7). Each remains a separate, independently governed future document. M6 remains frozen until every required remediation is merged and a fresh static conformance audit passes.
 
 ---
 
 ## 20. M6 resumption rule — unchanged
 
-This contract does not touch `agent/rfc-005-m6`. After **all** separately-authorized pre-M6 corrections are eventually merged: discard/reset the zero-commit old `agent/rfc-005-m6`, recreate it fresh from corrected `origin/main`, repeat full static conformance from scratch, rerun all six M6 regression gates, write both M6 documents, obtain human merge, run the post-merge exact-tag-candidate gate, and only then seek separate explicit human authorization for the annotated tag. This contract does not itself resume M6, and does not authorize any of those steps.
+This contract does not touch `agent/rfc-005-m6`. After **all** separately-authorized pre-M6 corrections are eventually merged: discard/reset the zero-commit old `agent/rfc-005-m6`, recreate it fresh from corrected `origin/main`, repeat full static conformance from scratch, rerun all six M6 regression gates, write both M6 documents, obtain human merge, run the post-merge exact-tag-candidate gate, and only then seek separate explicit human authorization for the annotated tag. This contract does not itself resume M6.
 
 ---
 
@@ -337,9 +452,9 @@ Not modified by this PR: `docs/automation/RFC-005-M6-CONTRACT.md`, `docs/automat
 
 Before commit: `git diff --check` clean; exactly one changed path confirmed via `git diff --name-only origin/main`.
 
-Commit title: `docs: define RFC-005 funding provider-flow correction contract`.
+Commit title (this correction round): `docs: correct RFC-005 funding provider-flow contract`.
 
-Push normally to `chore/rfc-005-funding-provider-flow-correction-contract`. No force push. Open a Draft PR if tooling permits; otherwise provide the exact compare URL. Do not mark Ready. Do not merge.
+Push normally to `chore/rfc-005-funding-provider-flow-correction-contract`. No force push. Draft PR (or the exact compare URL if `gh` is unavailable) remains open, not marked Ready, not merged.
 
 ---
 
@@ -347,11 +462,11 @@ Push normally to `chore/rfc-005-funding-provider-flow-correction-contract`. No f
 
 The eventual, separately-authorized implementation PR on `agent/rfc-005-funding-provider-flow-correction` must, at minimum:
 
-1. Confirm the cumulative diff is a subset of exactly the REQUIRED paths in §16 (production) and the REQUIRED files in §17 (tests) — no eleventh production path, no additional test file beyond the ones named REQUIRED or PARTIALLY REQUIRED above.
+1. Confirm the cumulative diff is a subset of exactly the REQUIRED paths in §16 (production) and the REQUIRED/PARTIALLY-REQUIRED files in §17 (tests) — no eleventh production path, no test file and no new test name beyond those explicitly listed in §17's two tables.
 2. Run `migrate:fresh --env=testing`, then `artisan test tests/Unit/Usage tests/Feature/Usage`, then `git diff --check` (§18), recording exact test/assertion/runtime counts, zero failures, exit 0.
 3. Confirm every `AutoRecharge`-scoped existing test still passes unmodified (§13's regression proof).
-4. Confirm the existing slot-agreement Checkout Session flow's own tests still pass unmodified (§17's precedent-only row).
+4. Confirm the existing slot-agreement Checkout Session flow's own tests still pass unmodified.
 5. Confirm `AI-AUTONOMY-STATE.json`, package files, migrations, and RFC/governance docs remain untouched.
-6. Confirm this correction's own two-round budget (§0) remains unconsumed unless a genuine contradiction required a human-reviewed correction round.
+6. Confirm this correction's own two-round budget (§0) remains at 1/2 unless a genuine contradiction required a second, human-reviewed correction round.
 
 This implementation-time gate does not replace M6's later six-gate regression (§18/§20).
