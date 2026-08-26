@@ -11,7 +11,7 @@ This correction exists because RFC-005 Milestone 6's static conformance audit �
 ## 0. Governance
 
 - Drafted on branch `chore/rfc-005-reservation-admission-correction-contract`, in an isolated linked worktree (`../rfc-005-reservation-admission-correction-contract-worktree`), based on `origin/main` at `31b16c55c9b2a3cc7fe1a8c34aa738ae348dddb4` — the RFC-005 Milestone 6 contract's own merge commit (PR [#133](https://github.com/os-creator1/os-ai/pull/133)), confirmed the current tip of `main` and confirmed an ancestor of this branch via direct `git rev-parse` before drafting.
-- `agent/rfc-005-m6` is confirmed, at drafting time, to carry **zero** authored commits and to be byte-identical to `origin/main` (`git diff origin/main agent/rfc-005-m6` empty). This contract does not touch, reset, or recreate that branch in any way.
+- `agent/rfc-005-m6` is confirmed, at drafting time, to be a **local-only branch in the drafting environment — never pushed to `origin`** (`git ls-remote origin` shows no such ref; the branch exists only as a local ref/worktree on this machine). It is confirmed to carry **zero** authored commits and to be byte-identical to `origin/main` (`git diff origin/main agent/rfc-005-m6` empty). No claim is made that GitHub currently hosts a remote `agent/rfc-005-m6` branch. This contract does not touch, reset, or recreate that branch in any way.
 - **This is a new, independently bounded pre-M6 correction contract — not a correction round against M1, M2, M5, or M6's own contracts.** Its `maximum_correction_rounds: 2` budget is its own, freshly opened, **0 of 2 consumed** at initial drafting. No counter is borrowed or altered on `RFC-005-M1-CONTRACT.md`, `RFC-005-M2-CONTRACT.md`, `RFC-005-M5-CONTRACT.md`, or `RFC-005-M6-CONTRACT.md`.
 - Locked:
   - `human_only_merge: true`
@@ -78,20 +78,22 @@ A Business **must** remain able to remain structurally entitled to a metered fea
 
 ### 4.A Business monthly spend cap
 
-Reuses the wallet's own already-correctly-maintained cached counters — no new query needed for this control:
+Reuses the wallet's own already-correctly-maintained cached counters — no new query needed for this control. **Corrected this round: expressed through explicit, non-negative headroom, not a raw `consumption + candidate > limit` comparison** — the two are not equivalent once a cap has been tightened below already-consumed spend, and a headroom-based formulation is the only one that stays consistent with §5's own zero-candidate rule in every case:
 
 ```
 if (wallet.monthly_spend_cap_micro !== null):
-    deny if (committed_spend_this_period_micro + reserved_spend_this_period_micro + candidateReservedAmountMicro) > monthly_spend_cap_micro
+    currentBusinessConsumption = committed_spend_this_period_micro + reserved_spend_this_period_micro
+    businessHeadroom = max(0, monthly_spend_cap_micro - currentBusinessConsumption)
+    deny if candidateReservedAmountMicro > businessHeadroom
 ```
 
-Evaluated **after** the wallet's lazy period rollover (`rollOverPeriodsIfNeeded()`, already the first step of `reserve()`), so the counters are always current-period. `committed_spend_this_period_micro`'s own correctness is already governed, unmodified, by RFC-005 §13's committed-amount formula (`commit()`'s existing, correct implementation) — this correction reads that counter, it does not alter how it is computed or written.
+Evaluated **after** the wallet's lazy period rollover (`rollOverPeriodsIfNeeded()`, already the first step of `reserve()`), so the counters are always current-period. `committed_spend_this_period_micro`'s own correctness is already governed, unmodified, by RFC-005 §13's committed-amount formula (`commit()`'s existing, correct implementation) — this correction reads that counter, it does not alter how it is computed or written. `max(0, ...)` exists solely to keep `businessHeadroom` a well-defined non-negative quantity for the comparison above; a negative intermediate value is never itself stored, returned, or treated as a meaningful state anywhere in this design.
 
 ### 4.B Per-feature monthly limit — keyed by `feature_key`, aggregated across every `meter_key` sharing it
 
 `business_feature_usage_limits` is keyed by `business_id + feature_key`, **not** `meter_key`. Amendment 1 permits multiple `meter_key`s to share one `feature_key`; `business_usage_reservations` and `business_usage_ledger_entries` both deliberately retained their own `feature_key` column through Amendment 1's meter-key tightening specifically as *"a permanent owning-feature snapshot"* (confirmed by direct migration/docblock read). Per-feature consumption must therefore aggregate by `feature_key`, never by a single `meter_key`.
 
-No cached counter exists at this granularity (only wallet-level aggregates exist), so it is computed live, reusing RFC-005 §13's own committed-amount formula, re-scoped by an additional `feature_key` filter — not a new formula:
+No cached counter exists at this granularity (only wallet-level aggregates exist), so it is computed live, reusing RFC-005 §13's own committed-amount formula, re-scoped by an additional `feature_key` filter — not a new formula. **Corrected this round, same reason as §4.A: the admission check is expressed through explicit, non-negative headroom, not a raw `consumption + candidate > limit` comparison:**
 
 ```
 reservedPortion  = SUM(business_usage_reservations.reserved_amount_micro
@@ -106,37 +108,41 @@ committedPortion = SUM over business_usage_ledger_entries
 featureConsumption = reservedPortion + committedPortion
 
 if (a business_feature_usage_limits row exists for business_id=X, feature_key=Y, and monthly_limit_micro !== null):
-    deny if (featureConsumption + candidateReservedAmountMicro) > monthly_limit_micro
+    featureHeadroom = max(0, monthly_limit_micro - featureConsumption)
+    deny if candidateReservedAmountMicro > featureHeadroom
 ```
 
 **No `business_feature_usage_limits` row for this Business+feature = unbounded from this control** (the safety limit, §4.C, may still apply). This is not invented — it mirrors the wallet-level cap's own already-established null-is-unbounded convention exactly.
 
 ### 4.C Platform safety limit — a third, independent control over the same consumption figure
 
-`platform_feature_usage_safety_limits` is platform-scoped (one row per `feature_key`, confirmed unique; `max_monthly_limit_micro` is `NOT NULL` when a row exists). It is evaluated against the **identical** `featureConsumption` value computed in §4.B — confirmed by direct read of `setFeatureLimit()`'s own existing bound-check (`app/Library/Usage/UsageWalletManager.php:917-923`), which already compares a proposed *configured* feature-limit value against this same platform ceiling. This control is decisive at reserve-time precisely when no Business feature-limit row exists (§4.B unbounded) or when the Business's own configured limit has not yet been tightened to match:
+`platform_feature_usage_safety_limits` is platform-scoped (one row per `feature_key`, confirmed unique; `max_monthly_limit_micro` is `NOT NULL` when a row exists). It is evaluated against the **identical** `featureConsumption` value computed in §4.B — confirmed by direct read of `setFeatureLimit()`'s own existing bound-check (`app/Library/Usage/UsageWalletManager.php:917-923`), which already compares a proposed *configured* feature-limit value against this same platform ceiling. This control is decisive at reserve-time precisely when no Business feature-limit row exists (§4.B unbounded) or when the Business's own configured limit has not yet been tightened to match. **Corrected this round, same headroom form as §4.A/§4.B:**
 
 ```
 if (a platform_feature_usage_safety_limits row exists for feature_key = Y):
-    deny if (featureConsumption + candidateReservedAmountMicro) > max_monthly_limit_micro
+    safetyHeadroom = max(0, max_monthly_limit_micro - featureConsumption)
+    deny if candidateReservedAmountMicro > safetyHeadroom
 ```
 
-**No safety-limit row for this feature = unbounded from this control.** No default ceiling is fabricated.
+**No safety-limit row for this feature = unbounded from this control.** No default ceiling is fabricated. As in §4.A, `max(0, ...)` only keeps the comparison well-defined — a negative intermediate headroom is never itself a meaningful or externally observable state.
 
 ---
 
-## 5. Null/boundary semantics — locked
+## 5. Null/boundary semantics — locked, expressed through headroom
+
+**Corrected this round: every row below is now stated in terms of the `max(0, limit − consumption)` headroom each of §4.A/§4.B/§4.C actually computes, not a raw `consumption + candidate > limit` comparison.** The two are not interchangeable once a limit has been tightened below already-consumed spend — expressing everything through non-negative headroom is what keeps the zero-candidate row true in every case, including that one.
 
 | Condition | Behavior |
 |---|---|
-| No limit/cap row, or configured value `NULL` | Control skipped entirely |
-| Configured limit/cap `= 0` | Any positive-amount reservation denied by that control (consumption `0 + candidate > 0`) |
-| `consumption + candidate == limit` | **Allowed** — boundary is `<=`, not `<` |
-| `consumption + candidate == limit + 1` | Denied |
-| Limit/cap tightened below already-consumed current-period spend | Never rejected retroactively (already the law, M2 contract §6.D) — historical `committed_spend_this_period_micro`/ledger rows are never touched; only future reservations see reduced or zero headroom |
-| Candidate reservation amount `= 0` | Passes every one of the three new controls trivially (adding zero never crosses a boundary) |
+| No limit/cap row, or configured value `NULL` | Control skipped entirely (no headroom computation for that control at all) |
+| Configured limit/cap `= 0`, any existing consumption `>= 0` | `headroom = max(0, 0 - consumption) = 0` — any positive-amount candidate denied; a zero-amount candidate still allowed (`0 > 0` is false) |
+| Candidate exactly equals a positive headroom | **Allowed** — the check is `candidate > headroom`, so equality is never a denial |
+| Candidate exceeds headroom by one micro-unit | Denied |
+| Limit/cap tightened below already-consumed current-period spend | `headroom` clamps to exactly `0` (never negative); historical `committed_spend_this_period_micro`/`featureConsumption`/ledger rows are never touched or rewritten — only *future* reservations are affected, and only because their own headroom is now `0` |
+| Candidate reservation amount `= 0` | **Always allowed by all three controls, unconditionally — including when headroom has clamped to `0`.** Because headroom is always `>= 0` by construction, `0 > headroom` can never be true; this is the direct, load-bearing reason the admission check is expressed as non-negative headroom rather than a raw `consumption + candidate > limit` comparison, which would otherwise deny a zero-amount candidate the instant consumption exceeds a newly tightened limit — a result §5 has never intended and RFC-005 §13's own "prospective only" rule forbids |
 | Wallet period rollover | Always performed before any of the three new checks run, exactly as it already runs before the three existing checks |
 
-No historical accounting of any kind is altered by this correction.
+Negative headroom is never introduced as an externally meaningful state anywhere in this design — `max(0, ...)` exists purely to keep the comparison well-defined; no historical accounting of any kind is altered by this correction.
 
 ---
 
@@ -220,7 +226,7 @@ This correction connects three already-designed M2 admission controls into `rese
 | `tests/Feature/Usage/UsageWalletManagerConcurrencyTest.php` | **REQUIRED** | New forced-race scenarios per §8.B/8.D: two same-Business/same-feature reservations racing final feature headroom must resolve to exactly one winner; unrelated Businesses must remain provably independent. |
 | `tests/Feature/Usage/ConversationsPlainSmsMeteringTest.php` | **REQUIRED** | Proves the real M5 production path: a denied qualifying send (via any of the three new controls) reaches no provider call and creates no reservation/ledger mutation — mirroring the pattern this file already proves for `insufficient_balance`. |
 
-The implementation must prove, at minimum, everywhere applicable across these five files: each of the three controls independently denies `reserve()`; the exact §6 denial-order precedence when multiple controls would deny simultaneously; equality-at-boundary is allowed and one-micro-over is denied; no-row/`NULL` skips that control; a cap/limit tightened below already-consumed spend affects only future reservations, never historical counters; feature-usage aggregation spans every `meter_key` sharing a `feature_key`, while a different `feature_key` remains independent; current-period isolation (a stale prior-period reservation does not pollute new-period admission); a released or expired reservation reopens the headroom it previously consumed; committed usage (including overage) consumes future headroom exactly per the existing §13 formula; an idempotent retry never consumes headroom twice; a same-Business race cannot oversubscribe any control; unrelated Businesses remain fully independent. No test may duplicate proof an existing test already supplies exactly.
+The implementation must prove, at minimum, everywhere applicable across these five files: each of the three controls independently denies `reserve()`; the exact §6 denial-order precedence when multiple controls would deny simultaneously; a candidate exactly equal to positive headroom is allowed and a candidate one micro-unit above headroom is denied (§5); no-row/`NULL` skips that control; a cap/limit tightened below already-consumed spend clamps that control's headroom to exactly `0` — never negative — so historical counters are never touched while a zero-amount candidate remains allowed and any positive-amount candidate is denied (§5); feature-usage aggregation spans every `meter_key` sharing a `feature_key`, while a different `feature_key` remains independent; current-period isolation (a stale prior-period reservation does not pollute new-period admission); a released or expired reservation reopens the headroom it previously consumed; committed usage (including overage) consumes future headroom exactly per the existing §13 formula; an idempotent retry never consumes headroom twice; a same-Business race cannot oversubscribe any control; unrelated Businesses remain fully independent. No test may duplicate proof an existing test already supplies exactly.
 
 ---
 
@@ -259,18 +265,26 @@ This contract does not touch, reset, recreate, or resume `agent/rfc-005-m6` in a
 
 ---
 
-## 15. This contract's own exact file scope
+## 15. Exact file scope — this governance PR versus the future implementation PR
 
-This contract-creation branch (`chore/rfc-005-reservation-admission-correction-contract`) may change **exactly one file**: `docs/automation/RFC-005-RESERVATION-ADMISSION-CORRECTION-CONTRACT.md`. Nothing else.
+**Corrected this round: the prior text conflated this contract-drafting PR's own scope with the future implementation PR's scope, producing an apparent self-contradiction against §9/§11's own allowlists. The two are distinguished explicitly below.**
 
-Explicitly forbidden by this contract, now and by the eventual implementation PR alike (unless a human-reviewed correction round first authorizes otherwise):
+**A. This governance-contract PR** (`chore/rfc-005-reservation-admission-correction-contract`) may change **exactly one file**: `docs/automation/RFC-005-RESERVATION-ADMISSION-CORRECTION-CONTRACT.md`. It may not touch `app/**`, `tests/**`, `database/**`, `routes/**`, `config/**`, `resources/**`, or any other path — this PR is documentation only.
+
+**B. The future implementation PR** — created only on `agent/rfc-005-reservation-admission-correction`, only after this contract is human-merged, and only after a *separate*, explicit human instruction to begin (§0) — may change **only** the exact paths locked in §9 (five production paths) and §11 (five test paths), and nothing else. `app/**`/`tests/**` are not blanket-forbidden to that future PR; they are forbidden **everywhere except** those ten named paths.
+
+**C. The following remain forbidden to the future implementation PR as well, with no narrower exception anywhere in this contract** (a human-reviewed correction round against this same contract, or a new separately-authorized governance document, is required before any of these may be touched):
 
 - `docs/automation/AI-AUTONOMY-STATE.json`
 - `docs/automation/RFC-005-M6-CONTRACT.md`
-- `docs/rfcs/RFC-005-BUSINESS-USAGE-BILLING-AND-WALLETS.md`
-- any other existing RFC-005 M1–M6 contract, closure, or Amendment 1 document
-- `app/**`, `tests/**`, `database/**`, `routes/**`, `config/**`, `resources/**` (all deferred to the future, separately-authorized implementation PR)
+- `docs/rfcs/RFC-005-BUSINESS-USAGE-BILLING-AND-WALLETS.md` (the governing RFC source)
+- any other existing RFC-005 M1–M6 contract, closure, or Amendment 1 governance document
+- any database migration
+- any route file
+- any `config/**` file
+- any `resources/**` file
 - any dependency, package, or workflow file
+- any `app/**` or `tests/**` path **not** explicitly named in §9 or §11
 
 ---
 
