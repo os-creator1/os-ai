@@ -93,9 +93,35 @@ exact completion evidence.
 
 ## Final verification evidence
 
-Repository-verifiable, reproduced directly on the disposable
-`ultimatesms_testing` database at the final implementation head before
-human merge:
+This closure commit is governance-only: it does not re-run any migration
+or test command. The evidence below is split between what this
+repository/GitHub state directly proves today, and what was recorded as
+verification evidence at the time of the final implementation, prior to
+merge.
+
+**(A) Repository/GitHub-verifiable facts** — directly confirmed from
+current Git and GitHub state (`git log`, `git show --stat`, `git
+merge-base --is-ancestor`, and the recorded GitHub Actions run):
+
+- PR #128 final head `f9c399e229b00abfe8c0bace5d510e148a8f72c1`, merged
+  as `985a5413f752396af61da732c34ea791f25e3a49`.
+- The final cumulative implementation scope is exactly the 18 paths
+  authorized by `docs/automation/AI-AUTONOMY-STATE.json` at the time of
+  implementation — confirmed by diffing the final head against
+  `origin/main`'s pre-implementation base.
+- The full governance PR/merge history recorded above: PR #128 (merge
+  `985a5413f752396af61da732c34ea791f25e3a49`), PR #130 (merge
+  `3f180bfa253787a8b113ad33b3a95e538af2b56c`), PR #131 (merge
+  `675ed3e8e4f58943bd691fb1afda3660016a755e`).
+- GitHub deterministic **AI Subscription Test Gate**, run
+  `32955609671`, on the exact final head
+  `f9c399e229b00abfe8c0bace5d510e148a8f72c1` — **SUCCESS**.
+
+**(B) Previously completed implementation verification evidence** —
+recorded from the final implementation verification performed before
+human merge, on the disposable `ultimatesms_testing` database; **not
+re-executed by this governance-only closure commit** and not
+independently derivable from Git history alone:
 
 - `php artisan migrate:fresh --env=testing -vvv` — **PASS**.
 - `php artisan test tests/Feature/Usage/ConversationsPlainSmsMeteringTest.php --compact` — **31 passed, 177 assertions**.
@@ -107,37 +133,44 @@ human merge:
 - `php artisan test tests/Feature/Entitlement --compact` (full) — **311 passed, 0 failed, 833 assertions**.
 - `php artisan test tests/Feature/Workspace --compact` (full) — **745 passed, 0 failed, 1850 assertions**.
 - `git diff --check` — clean.
-
-Externally reported verification evidence (recorded as reported, not
-independently re-executed by this closure document):
-
-- GitHub deterministic **AI Subscription Test Gate**, run
-  `32955609671`, on the exact final head `f9c399e229b00abfe8c0bace5d510e148a8f72c1`
-  — **SUCCESS**.
 - Final independent review of the final head — **PASS**, no remaining
   blocking finding, following the corrections recorded above.
 
 ## Post-merge safety — no real activation occurred
 
-Merging PR #128 performed **zero** real-environment side effects:
+Merging PR #128, by itself, contains **no automatic real-environment
+activation path**. What the repository directly proves:
 
-- **Merging M5 did not automatically activate a real Conversations
-  meter.** `Conversations.is_metered` and the pilot `UsageMeter`'s own
-  `is_metered` flag remain unset/false in every real (non-test)
-  environment.
-- **Merging M5 did not automatically set a real rate.** No
-  `retail_rate_micro`/`provider_cost_micro`/`unit_label` value was
-  seeded, defaulted, or fabricated anywhere outside test fixtures.
-- **Merging M5 did not fabricate `pilot_business_id`,
-  `pilot_country_id`, or `pilot_sending_server_id`.** All three remain
-  `null` by default in `config/usage_billing.php` in every real
-  environment.
-- Any real-environment activation remains a separate, explicit, human
-  operator action through `usage:activate-conversations-rate` — the
-  authorized command built and tested in this milestone, never invoked
-  by this closure, by the implementation itself, or by any automation.
-- **This closure document does not execute the activation command and
-  does not mutate any real environment data.**
+- **The merge itself does not activate a real Conversations meter.** No
+  migration, seeder, model boot logic, or service provider introduced by
+  PR #128 sets `Conversations.is_metered` or a `UsageMeter`'s
+  `is_metered` flag to `true`; the only place either flag is set to
+  `true` anywhere in this milestone's changes is inside test fixtures
+  under `tests/`.
+- **The merge itself does not set a real rate.** No migration, seeder,
+  or default configuration value introduced by PR #128 seeds
+  `retail_rate_micro`, `provider_cost_micro`, or `unit_label`; the only
+  paths introduced by this milestone that write those columns are the
+  explicit, human-invoked `usage:activate-conversations-rate` command
+  and the test fixtures under `tests/`.
+- **The merge itself does not fabricate `pilot_business_id`,
+  `pilot_country_id`, or `pilot_sending_server_id`.**
+  `config/usage_billing.php` defines all three with a default of
+  `null`; PR #128 did not change those defaults, and no migration or
+  seeder introduced by this milestone assigns them a value.
+- **This closure document executes no activation command and mutates no
+  environment.** It does not invoke `usage:activate-conversations-rate`,
+  run any migration or seeder, or write to any real environment's data
+  or configuration.
+- **Scope of this claim.** The above is provable from the repository's
+  own code, migrations, and configuration defaults. Whether any real
+  environment has since had any of these values changed by a separate
+  human operator action — through `usage:activate-conversations-rate`
+  or by direct configuration — is outside what this repository or this
+  closure document can observe or attest to. Any such activation or
+  configuration, past, present, or future, is a distinct, explicit human
+  operator action, separate from and not caused by merging PR #128 or by
+  this closure.
 - Human-only merge (`merge_policy: human_only`) was preserved
   throughout: every implementation, correction, and governance-exception
   commit was pushed to a branch and merged only by explicit human
