@@ -1103,25 +1103,36 @@ class ConversationsPlainSmsMeteringTest extends TestCase
         $this->assertTrue($baseline->allowed);
         $this->assertNull($baseline->reason);
 
+        // Test-alignment correction — decision->allowed and
+        // decision->reason are independent properties on
+        // EntitlementDecision; an allowed===true result is not
+        // structurally guaranteed to carry the identical reason. Every
+        // state below must assert both against the baseline, not
+        // allowed alone.
+        $assertSameDecision = function ($decision, string $label) use ($baseline): void {
+            $this->assertSame($baseline->allowed, $decision->allowed, "{$label}: allowed must remain identical.");
+            $this->assertSame($baseline->reason, $decision->reason, "{$label}: reason must remain identical.");
+        };
+
         // Healthy wallet (baseline) already proven above. Now mutate wallet
         // health independently and re-decide each time.
         DB::table('business_usage_wallets')->where('business_id', $business->id)->update(['available_balance_micro' => 0]);
-        $this->assertTrue($decideNow()->allowed, 'Insufficient balance must not affect the entitlement decision.');
+        $assertSameDecision($decideNow(), 'Insufficient balance');
 
         DB::table('business_usage_wallets')->where('business_id', $business->id)->update(['billing_status' => 'suspended']);
-        $this->assertTrue($decideNow()->allowed, 'Suspended wallet must not affect the entitlement decision.');
+        $assertSameDecision($decideNow(), 'Suspended wallet');
 
         DB::table('business_usage_wallets')->where('business_id', $business->id)->update(['billing_status' => 'active', 'debt_balance_micro' => 5_000_000]);
-        $this->assertTrue($decideNow()->allowed, 'Outstanding debt must not affect the entitlement decision.');
+        $assertSameDecision($decideNow(), 'Outstanding debt');
 
         DB::table('business_usage_wallets')->where('business_id', $business->id)->update(['debt_balance_micro' => 0]);
 
         DB::table('usage_meters')->where('meter_key', $meterKey)->update(['is_metered' => false]);
-        $this->assertTrue($decideNow()->allowed, 'Pilot meter inactive must not affect the entitlement decision.');
+        $assertSameDecision($decideNow(), 'Pilot meter inactive');
 
         $activeRateId = DB::table('usage_meters')->where('meter_key', $meterKey)->value('active_rate_id');
         DB::table('usage_meters')->where('meter_key', $meterKey)->update(['is_metered' => true, 'active_rate_id' => null]);
-        $this->assertTrue($decideNow()->allowed, 'Pilot meter with no active rate must not affect the entitlement decision.');
+        $assertSameDecision($decideNow(), 'Pilot meter with no active rate');
 
         // Exceptional correction, Defect 2 — the pilot meter entirely
         // absent must actually be executed, not merely asserted safe from
@@ -1133,7 +1144,7 @@ class ConversationsPlainSmsMeteringTest extends TestCase
         DB::table('business_usage_rates')->where('meter_key', $meterKey)->delete();
         DB::table('usage_meters')->where('meter_key', $meterKey)->delete();
         $this->assertSame(0, DB::table('usage_meters')->where('meter_key', $meterKey)->count());
-        $this->assertTrue($decideNow()->allowed, 'A pilot meter entirely absent must not affect the entitlement decision — decide() never queries usage_meters at all.');
+        $assertSameDecision($decideNow(), 'Pilot meter entirely absent');
 
         // Exceptional correction, Defect 2 — the legacy
         // platform_feature_usage_classifications row for 'conversations'
@@ -1142,10 +1153,10 @@ class ConversationsPlainSmsMeteringTest extends TestCase
         // is_metered value, since that legacy table is not the M5
         // activation authority.
         DB::table('platform_feature_usage_classifications')->where('feature_key', 'conversations')->update(['is_metered' => false]);
-        $this->assertTrue($decideNow()->allowed, 'Legacy classification row is_metered=false must not affect the entitlement decision.');
+        $assertSameDecision($decideNow(), 'Legacy classification row is_metered=false');
 
         DB::table('platform_feature_usage_classifications')->where('feature_key', 'conversations')->update(['is_metered' => true]);
-        $this->assertTrue($decideNow()->allowed, 'Legacy classification row is_metered=true must not affect the entitlement decision.');
+        $assertSameDecision($decideNow(), 'Legacy classification row is_metered=true');
     }
 
     // ========================================================================
