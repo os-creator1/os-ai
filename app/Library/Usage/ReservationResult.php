@@ -8,6 +8,7 @@ final readonly class ReservationResult
         public bool $granted,
         public ?int $reservationId,
         public ?string $denialReason,
+        public bool $createdByThisInvocation = false,
     ) {
     }
 }

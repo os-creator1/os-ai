@@ -475,14 +475,36 @@
                             if ($get_response->status == 'queued' || $get_response->status == 'accepted') {
                                 $get_sms_status  = 'Delivered|' . $get_response->sid;
                                 $customer_status = 'Delivered';
+
+                                if ($data['m5_conversations_usage_tracking'] ?? false) {
+                                    $m5Outcome = 'accepted';
+                                }
                             } else {
                                 $get_sms_status  = $get_response->status . '|' . $get_response->sid;
                                 $customer_status = ucfirst($get_response->status);
+
+                                if ($data['m5_conversations_usage_tracking'] ?? false) {
+                                    // A genuine, non-throwing provider response
+                                    // explicitly saying "not accepted" is a
+                                    // definitive rejection (M5 contract §3.9) —
+                                    // release the reservation, never leave it
+                                    // ambiguous.
+                                    $m5Outcome = 'definitive_rejection';
+                                }
                             }
 
                         } catch (ConfigurationException|TwilioException $e) {
                             $get_sms_status  = $e->getMessage();
                             $customer_status = 'Rejected';
+
+                            if ($data['m5_conversations_usage_tracking'] ?? false) {
+                                // A caught provider/config exception leaves
+                                // real acceptance genuinely uncertain (M5
+                                // contract §3.9) — must stay Pending, never
+                                // release, never retry the provider under
+                                // the same token.
+                                $m5Outcome = 'ambiguous_exception';
+                            }
                         }
 
                         break;
@@ -508,14 +530,36 @@
                             if ($get_response->status == 'queued' || $get_response->status == 'accepted') {
                                 $get_sms_status  = 'Delivered|' . $get_response->sid;
                                 $customer_status = 'Delivered';
+
+                                if ($data['m5_conversations_usage_tracking'] ?? false) {
+                                    $m5Outcome = 'accepted';
+                                }
                             } else {
                                 $get_sms_status  = $get_response->status . '|' . $get_response->sid;
                                 $customer_status = ucfirst($get_response->status);
+
+                                if ($data['m5_conversations_usage_tracking'] ?? false) {
+                                    // A genuine, non-throwing provider response
+                                    // explicitly saying "not accepted" is a
+                                    // definitive rejection (M5 contract §3.9) —
+                                    // release the reservation, never leave it
+                                    // ambiguous.
+                                    $m5Outcome = 'definitive_rejection';
+                                }
                             }
 
                         } catch (ConfigurationException|TwilioException $e) {
                             $get_sms_status  = $e->getMessage();
                             $customer_status = 'Rejected';
+
+                            if ($data['m5_conversations_usage_tracking'] ?? false) {
+                                // A caught provider/config exception leaves
+                                // real acceptance genuinely uncertain (M5
+                                // contract §3.9) — must stay Pending, never
+                                // release, never retry the provider under
+                                // the same token.
+                                $m5Outcome = 'ambiguous_exception';
+                            }
                         }
                         break;
 
@@ -13419,6 +13463,16 @@
             $status = Reports::create($reportsData);
 
             if ($status) {
+                // RFC-005 Milestone 5 §F — transient, non-persisted
+                // outcome marker for the two Twilio/TwilioCopilot case
+                // blocks above, opt-in only via
+                // $data['m5_conversations_usage_tracking']. Never written
+                // to $reportsData/the reports table; Reports persistence
+                // is otherwise completely unchanged.
+                if (isset($m5Outcome)) {
+                    $status->m5_outcome = $m5Outcome;
+                }
+
                 return $status;
             }
 

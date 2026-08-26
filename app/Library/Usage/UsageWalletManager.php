@@ -43,6 +43,7 @@ use App\Repositories\Contracts\WorkspaceMembershipBusinessRepository;
 use App\Repositories\Contracts\WorkspaceMembershipRepository;
 use App\Jobs\Usage\EvaluateBusinessAutoRecharge;
 use Illuminate\Database\QueryException;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -239,12 +240,20 @@ class UsageWalletManager
         $existing = $this->reservationRepository->findByIdempotencyKey($idempotencyKey);
 
         if ($existing !== null) {
-            return new ReservationResult(true, $existing->id, null);
+            return new ReservationResult(true, $existing->id, null, false);
         }
 
         $shouldDispatchAutoRecharge = false;
 
-        $result = DB::transaction(function () use ($business, $featureKey, $idempotencyKey, $estimatedQuantity, &$shouldDispatchAutoRecharge) {
+        // RFC-005 Milestone 5 §3.8 correction — the race-loser catch must
+        // surround DB::transaction() itself, not sit inside the closure.
+        // DB::transaction() rolls the losing transaction back completely
+        // (and rethrows) before this catch ever runs, so the narrow
+        // constraint-name match and refetch below only ever happen against
+        // a fully-closed transaction — never while the loser's own
+        // transaction is still open.
+        try {
+            $result = DB::transaction(function () use ($business, $featureKey, $idempotencyKey, $estimatedQuantity, &$shouldDispatchAutoRecharge) {
             $wallet = $this->walletRepository->findForUpdateByBusinessId($business->id);
 
             if ($wallet === null) {
@@ -292,19 +301,29 @@ class UsageWalletManager
             );
 
             if ($wallet->billing_status === WalletBillingStatus::Suspended) {
-                return new ReservationResult(false, null, 'wallet_suspended');
+                return new ReservationResult(false, null, 'wallet_suspended', false);
             }
 
             if ($wallet->debt_balance_micro > 0) {
-                return new ReservationResult(false, null, 'outstanding_debt');
+                return new ReservationResult(false, null, 'outstanding_debt', false);
             }
 
             if ($wallet->available_balance_micro < $reservedAmountMicro) {
-                return new ReservationResult(false, null, 'insufficient_balance');
+                return new ReservationResult(false, null, 'insufficient_balance', false);
             }
 
             $reservedAt = Carbon::now();
 
+            // RFC-005 Milestone 5 §3.8/§6 widening: idempotencyKey carries
+            // a real database UNIQUE constraint
+            // (business_usage_reservations_idempotency_key_unique). Two
+            // concurrent invocations racing the same key can both pass the
+            // pre-transaction findByIdempotencyKey() read above; only one
+            // of them can win this insert. The loser lets this exception
+            // propagate out of the transaction closure — no provider call
+            // may ever be reachable from inside this still-open
+            // transaction — and is handled only after DB::transaction()
+            // below has fully rolled it back (outer try/catch).
             $reservation = $this->reservationRepository->create([
                 'business_id' => $business->id,
                 'wallet_id' => $wallet->id,
@@ -358,8 +377,21 @@ class UsageWalletManager
                 'reserved_spend_this_period_micro' => $wallet->reserved_spend_this_period_micro + $reservedAmountMicro,
             ]);
 
-            return new ReservationResult(true, $reservation->id, null);
-        });
+            return new ReservationResult(true, $reservation->id, null, true);
+            });
+        } catch (UniqueConstraintViolationException $e) {
+            if (! $this->isDuplicateRace($e, 'business_usage_reservations_idempotency_key_unique')) {
+                throw $e;
+            }
+
+            $winner = $this->reservationRepository->findByIdempotencyKey($idempotencyKey);
+
+            if ($winner === null) {
+                throw $e;
+            }
+
+            return new ReservationResult(true, $winner->id, null, false);
+        }
 
         if ($shouldDispatchAutoRecharge) {
             EvaluateBusinessAutoRecharge::dispatch((int) $business->id);

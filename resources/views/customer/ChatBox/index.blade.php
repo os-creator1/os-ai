@@ -418,6 +418,20 @@ $("#media_image").val("");
       }
 
 
+      // RFC-005 Milestone 5 §6.1 — a chatBoxId-keyed map, never a single
+      // flat/session-global token: two different open conversations
+      // never share or collide on one token, and a fresh compose always
+      // gets a fresh token unless the server explicitly asked this exact
+      // conversation to 'retain' its existing one.
+      var pendingConversationTokens = pendingConversationTokens || {};
+
+      function m5UuidV4() {
+        return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+          var r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);
+          return v.toString(16);
+        });
+      }
+
       function enter_chat() {
         let message = $(".message"),
           chatBoxId = $(".chat_id").val(),
@@ -426,10 +440,15 @@ $("#media_image").val("");
 
         $(".send").attr("disabled", true);
 
+        if (!pendingConversationTokens[chatBoxId]) {
+          pendingConversationTokens[chatBoxId] = m5UuidV4();
+        }
+
         // Use FormData to handle file uploads
         let formData = new FormData();
         formData.append("message", messageValue);
         formData.append("_token", "{{ csrf_token() }}");
+        formData.append("idempotency_token", pendingConversationTokens[chatBoxId]);
 
         if (mediaImage) {
           formData.append("media_image", mediaImage);
@@ -447,7 +466,24 @@ $("#media_image").val("");
 
             console.log(response);
 
-            if (response.status === "success") {
+            // RFC-005 Milestone 5 §6.1 — explicit m5_token_action drives
+            // clear/retain, applied uniformly across every response
+            // branch below (including the former always-retain error
+            // branch). Absent the field entirely (a fully legacy send),
+            // default to 'clear' — nothing to retry against.
+            if ((response.m5_token_action || 'clear') === 'clear') {
+              delete pendingConversationTokens[chatBoxId];
+            }
+
+            if (response.status === "processing") {
+              toastr["info"](response.message, "{{ __('locale.labels.attention') }}", {
+                closeButton: true,
+                positionClass: "toast-top-right",
+                progressBar: true,
+                newestOnTop: true,
+                rtl: isRtl
+              });
+            } else if (response.status === "success") {
               toastr["success"](response.message, "Success!!", {
                 closeButton: true,
                 positionClass: "toast-top-right",

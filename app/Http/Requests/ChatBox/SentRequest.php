@@ -28,6 +28,7 @@
                 'sender_id' => ['required', new Phone($this->sender_id)],
                 'recipient' => 'required',
                 'message'   => 'required',
+                'idempotency_token' => 'required|uuid',
             ];
         }
 

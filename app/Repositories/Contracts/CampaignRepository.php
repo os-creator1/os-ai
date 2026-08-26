@@ -11,10 +11,17 @@ interface CampaignRepository extends BaseRepository
      *
      * @param  Campaigns  $campaign
      * @param  array  $input
+     * @param  bool  $conversationContext  RFC-005 Milestone 5 — trusted,
+     *         explicitly-typed discriminator. true only when this call
+     *         originates from ChatBoxController::sent()/::reply(), passed
+     *         as a literal by that controller — never derived from
+     *         request/input data, and therefore never forgeable through
+     *         any HTTP payload. Every other caller omits it and gets the
+     *         default false, with zero behavior change.
      *
      * @return mixed
      */
-    public function quickSend(Campaigns $campaign, array $input);
+    public function quickSend(Campaigns $campaign, array $input, bool $conversationContext = false);
 
     /**
      * send campaign

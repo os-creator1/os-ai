@@ -48,7 +48,7 @@
                                                 <select class="select2 form-select" name="sending_server">
                                                     @foreach($sendingServers as $server)
                                                         @if(isset($server->sendingServer) && $server->sendingServer->status == 1 && $server->sendingServer->two_way)
-                                                            <option value="{{$server->sendingServer->id}}"> {{ $server->sendingServer->name }}</option>
+                                                            <option value="{{$server->sendingServer->id}}" @selected(old('sending_server') == $server->sendingServer->id)> {{ $server->sendingServer->name }}</option>
                                                         @endif
                                                     @endforeach
                                                 </select>
@@ -68,7 +68,7 @@
                                                    class="form-label required">{{__('locale.labels.originator')}}</label>
                                             <select class="form-select select2" id="sender_id" name="sender_id">
                                                 @foreach($phone_numbers as $number)
-                                                    <option value="{{$number->number}}"> {{ $number->number }}</option>
+                                                    <option value="{{$number->number}}" @selected(old('sender_id') == $number->number)> {{ $number->number }}</option>
                                                 @endforeach
                                             </select>
 
@@ -87,7 +87,7 @@
                                                     <select class="form-select select2" id="country_code"
                                                             name="country_code">
                                                         @foreach($coverage as $code)
-                                                            <option value="{{ $code->country_id }}">
+                                                            <option value="{{ $code->country_id }}" @selected(old('country_code') == $code->country_id)>
                                                                 +{{ $code->country->country_code }} </option>
                                                         @endforeach
                                                     </select>
@@ -145,6 +145,9 @@
                                 <div class="row">
                                     <div class="col-12">
                                         <input type="hidden" name="sms_type" value="plain">
+                                        {{-- RFC-005 Milestone 5 §6.1 — controller-passed token (fresh, or the
+                                             same one on a 'retain' retry), never minted inline here. --}}
+                                        <input type="hidden" name="idempotency_token" value="{{ $idempotencyToken }}">
                                         <button type="submit" class="btn btn-primary mr-1 mb-1 float-end">
                                             <i data-feather="send"></i> {{__('locale.buttons.send')}}
                                         </button>
