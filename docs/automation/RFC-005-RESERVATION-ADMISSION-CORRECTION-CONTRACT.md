@@ -2,7 +2,7 @@
 
 **Status: PROPOSED — NOT AUTHORIZED UNTIL HUMAN MERGE.**
 
-This document authorizes drafting one thing: a bounded, independently governed correction to `UsageWalletManager::reserve()`, connecting three already-designed RFC-005 §15 admission controls that were never wired into reservation admission after Milestones 1–5 closed. Human merge of this contract does **not** itself start implementation — a human must separately, explicitly instruct that implementation begin on the branch locked in §2 below, exactly as every RFC-003/RFC-004/RFC-005 milestone and correction contract before it has required.
+This document authorizes drafting one thing: a bounded, independently governed correction to `UsageWalletManager::reserve()`, connecting three already-designed RFC-005 §15 admission controls that were never wired into reservation admission after Milestones 1–5 closed. Human merge of this contract does **not** itself start implementation — a human must separately, explicitly instruct that implementation begin on the branch locked in §15.B below, exactly as every RFC-003/RFC-004/RFC-005 milestone and correction contract before it has required.
 
 This correction exists because RFC-005 Milestone 6's static conformance audit — performed after M1–M5 had already closed and after all six of M6's own locked regression gates passed cleanly — discovered that `reserve()` silently omits three of the eight admission steps RFC-005 §15 and §13 both explicitly lock. M6 itself remains **BLOCKED** under its own merged Gap Rule (`docs/automation/RFC-005-M6-CONTRACT.md` §3) pending this and six other independently governed corrections. This contract is exactly one of those seven; it does not by itself unblock M6.
 
