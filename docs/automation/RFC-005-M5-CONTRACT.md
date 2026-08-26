@@ -1,16 +1,27 @@
 # RFC-005 Milestone 5 — Metered Feature Classification
 
-**Status: PROPOSED — READY FOR HUMAN SELECTION REVIEW. NOT AUTHORIZED FOR
-IMPLEMENTATION.** Merging this document authorizes drafting this one
-document only — it does not write any `app/`, `database/`, `routes/`,
-`config/`, or `resources/` file, does not flip `Conversations`'
-classification to `is_metered = true`, does not activate any real
-retail/provider rate, does not begin M6 (conformance/tag) in any way, and
-does not authorize any live charge to any real Business. A separate,
-explicit, human-reviewed `docs/automation/AI-AUTONOMY-STATE.json` update
-pinning a real implementation PR/branch/SHA remains required before any
-M5 product work may begin, per every prior RFC-005 milestone's own
-convention.
+**Status: completed and closed.** Implementation was PR #128 (branch
+`agent/rfc-005-m5`), human-merged as
+`985a5413f752396af61da732c34ea791f25e3a49`, final head
+`f9c399e229b00abfe8c0bace5d510e148a8f72c1`. Both ordinary correction
+rounds (`maximum_correction_rounds: 2`), one exceptional correction
+(PR #130), and one post-verification test-alignment correction
+(PR #131) were authorized and applied against the locked scope below
+before merge. See
+[`docs/automation/RFC-005-M5-CLOSURE.md`](RFC-005-M5-CLOSURE.md) for
+full closure evidence.
+
+Historical context below, prepared as a PROPOSED, human-selection-review
+document: merging it alone authorized drafting this one document
+only — it did not write any `app/`, `database/`, `routes/`, `config/`,
+or `resources/` file, did not flip `Conversations`' classification to
+`is_metered = true`, did not activate any real retail/provider rate,
+did not begin M6 (conformance/tag) in any way, and did not authorize
+any live charge to any real Business. A separate, explicit,
+human-reviewed `docs/automation/AI-AUTONOMY-STATE.json` update pinning
+the real implementation PR/branch/SHA (PR #127 preparation, PR #129
+authorization) was required, and was completed, before M5 product work
+began, per every prior RFC-005 milestone's own convention.
 
 **Remediation notice (this pass).** This document's own prior text
 declared a **STRUCTURAL BLOCKER — NOT SAFE TO MERGE OR IMPLEMENT AS
