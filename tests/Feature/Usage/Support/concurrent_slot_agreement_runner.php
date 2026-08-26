@@ -215,8 +215,9 @@ class BarrierGatedPaymentProviderGateway implements App\Library\Usage\Contracts\
         string $cancelUrl,
         string $idempotencyKey,
         array $metadata,
+        bool $setupFutureUsageOffSession = false,
     ): App\Library\Usage\CheckoutSessionResult {
-        return $this->inner->createCheckoutSession($providerCustomerId, $amountMinorUnits, $currencyCode, $lineItemName, $successUrl, $cancelUrl, $idempotencyKey, $metadata);
+        return $this->inner->createCheckoutSession($providerCustomerId, $amountMinorUnits, $currencyCode, $lineItemName, $successUrl, $cancelUrl, $idempotencyKey, $metadata, $setupFutureUsageOffSession);
     }
 
     public function retrieveCheckoutSession(string $providerCheckoutSessionId): App\Library\Usage\CheckoutSessionResult

@@ -59,6 +59,16 @@ class InstrumentDetachDuringPendingChargeTest extends TestCase
         return $workspace->fresh();
     }
 
+    /**
+     * RFC-005 Funding Provider-Flow Correction Contract §17 —
+     * re-scoped from initiateTopUp()/ManualTopUp to initiateAutoRecharge()/
+     * AutoRecharge: this is the only purpose that still (a) requires a
+     * pre-saved instrument and (b) actually consumes it through
+     * confirmation, which is what this test's real invariant is about — a
+     * Checkout-Session-backed ManualTopUp never references the local
+     * instrument row at all once the Session is created, so the original
+     * invariant was never really about ManualTopUp in the first place.
+     */
     public function test_detaching_an_instrument_with_a_pending_attempt_does_not_fail_that_attempt(): void
     {
         $customer = $this->createCustomer();
@@ -79,7 +89,7 @@ class InstrumentDetachDuringPendingChargeTest extends TestCase
 
         $this->gateway->paymentIntentOutcomes = ['*' => 'requires_action'];
         $checkoutManager = app(UsageBillingCheckoutManager::class);
-        $result = $checkoutManager->initiateTopUp($business, $customer->user_id, 5_000_000);
+        $result = $checkoutManager->initiateAutoRecharge($business, 5_000_000);
         $attempt = app(BusinessFundingAttemptRepository::class)->findById($result->fundingAttemptId);
         $this->assertSame(FundingAttemptState::RequiresAction, $attempt->state);
         $frozenDisplaySnapshot = $attempt->payment_method_display_snapshot;
@@ -96,6 +106,12 @@ class InstrumentDetachDuringPendingChargeTest extends TestCase
         $this->assertSame(FundingAttemptState::Succeeded, $confirmed->state);
     }
 
+    /**
+     * RFC-005 Funding Provider-Flow Correction Contract §17 — re-scoped
+     * to initiateAutoRecharge()/AutoRecharge for the identical reason: the
+     * `no_payment_instrument` denial no longer applies to ManualTopUp at
+     * all (§9), but remains true, unchanged, for AutoRecharge.
+     */
     public function test_a_detached_instrument_is_never_selected_for_a_new_attempt(): void
     {
         $customer = $this->createCustomer();
@@ -119,7 +135,7 @@ class InstrumentDetachDuringPendingChargeTest extends TestCase
         $default = app(BusinessPaymentInstrumentRepository::class)->findDefaultForProviderCustomer((int) $providerCustomer->id);
         $this->assertNull($default, 'A detached instrument must never remain resolvable as the default for new attempts.');
 
-        $result = app(UsageBillingCheckoutManager::class)->initiateTopUp($business, $customer->user_id, 1_000_000);
+        $result = app(UsageBillingCheckoutManager::class)->initiateAutoRecharge($business, 1_000_000);
         $this->assertSame('no_payment_instrument', $result->denialReason);
     }
 }

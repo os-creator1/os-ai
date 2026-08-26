@@ -202,8 +202,15 @@ class StripePaymentProviderGateway implements PaymentProviderGateway
      * M4 contract §15a — mode: 'payment' with exactly one non-adjustable
      * line item built from inline price_data (never a separately-created
      * Stripe Price/Product); unit_amount derives only from the caller's
-     * own frozen amount. setup_future_usage: 'off_session' establishes the
-     * card for later off-session renewal.
+     * own frozen amount.
+     *
+     * RFC-005 Funding Provider-Flow Correction Contract §8.A/§8.B —
+     * payment_intent_data.setup_future_usage: 'off_session' is included
+     * only when $setupFutureUsageOffSession is true (the additional-slot
+     * agreement's own initial charge, establishing the card for later
+     * off-session renewal); omitted entirely for a one-time Checkout
+     * Session (ManualTopUp/AddonPurchase), which must never automatically
+     * establish future off-session authority.
      */
     public function createCheckoutSession(
         string $providerCustomerId,
@@ -214,29 +221,33 @@ class StripePaymentProviderGateway implements PaymentProviderGateway
         string $cancelUrl,
         string $idempotencyKey,
         array $metadata,
+        bool $setupFutureUsageOffSession = false,
     ): CheckoutSessionResult {
-        $session = $this->call(
-            fn () => $this->client->checkout->sessions->create([
-                'mode' => 'payment',
-                'customer' => $providerCustomerId,
-                'payment_method_types' => ['card'],
-                'line_items' => [[
-                    'price_data' => [
-                        'currency' => strtolower($currencyCode),
-                        'unit_amount' => $amountMinorUnits,
-                        'product_data' => [
-                            'name' => $lineItemName,
-                        ],
+        $params = [
+            'mode' => 'payment',
+            'customer' => $providerCustomerId,
+            'payment_method_types' => ['card'],
+            'line_items' => [[
+                'price_data' => [
+                    'currency' => strtolower($currencyCode),
+                    'unit_amount' => $amountMinorUnits,
+                    'product_data' => [
+                        'name' => $lineItemName,
                     ],
-                    'quantity' => 1,
-                ]],
-                'payment_intent_data' => [
-                    'setup_future_usage' => 'off_session',
                 ],
-                'success_url' => $successUrl,
-                'cancel_url' => $cancelUrl,
-                'metadata' => $metadata,
-            ], ['idempotency_key' => $idempotencyKey]),
+                'quantity' => 1,
+            ]],
+            'success_url' => $successUrl,
+            'cancel_url' => $cancelUrl,
+            'metadata' => $metadata,
+        ];
+
+        if ($setupFutureUsageOffSession) {
+            $params['payment_intent_data'] = ['setup_future_usage' => 'off_session'];
+        }
+
+        $session = $this->call(
+            fn () => $this->client->checkout->sessions->create($params, ['idempotency_key' => $idempotencyKey]),
         );
 
         if (blank($session->url)) {

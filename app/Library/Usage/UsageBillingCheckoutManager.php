@@ -205,9 +205,10 @@ class UsageBillingCheckoutManager
 
                 $createdPurchaseId = $purchase->id;
             },
+            (string) $catalogRow->display_name,
         );
 
-        return new AddonPurchaseResult((int) $createdPurchaseId, $fundingResult->fundingAttemptId, $fundingResult->state, $fundingResult->denialReason);
+        return new AddonPurchaseResult((int) $createdPurchaseId, $fundingResult->fundingAttemptId, $fundingResult->state, $fundingResult->denialReason, $fundingResult->redirectUrl);
     }
 
     /**
@@ -221,8 +222,18 @@ class UsageBillingCheckoutManager
      * ManualTopUp/AutoRecharge, the hook is simply absent — their own
      * existing behavior, ordering, and observable outcome are entirely
      * unchanged.
+     *
+     * RFC-005 Funding Provider-Flow Correction Contract §4/§9 — purpose is
+     * the sole dispatch authority between the two provider-object
+     * families: AutoRecharge remains the original off-session PaymentIntent
+     * path (pre-saved default instrument required); ManualTopUp/
+     * AddonPurchase route through a one-time Checkout Session (no saved
+     * instrument required, no lazy provider-customer creation, §9's Option
+     * 1). $lineItemNameOverride lets initiateAddonPurchase() supply the
+     * add-on catalog row's own truthful display_name (§7); ManualTopUp
+     * always uses the fixed 'Wallet top-up' label.
      */
-    private function initiateCharge(Business $business, FundingAttemptPurpose $purpose, PayerType $payerType, int $amountMicro, ?int $actorUserId, ?\Closure $postAttemptCreationHook = null): FundingAttemptResult
+    private function initiateCharge(Business $business, FundingAttemptPurpose $purpose, PayerType $payerType, int $amountMicro, ?int $actorUserId, ?\Closure $postAttemptCreationHook = null, ?string $lineItemNameOverride = null): FundingAttemptResult
     {
         $businessId = (int) $business->id;
         $wallet = $this->walletRepository->findByBusinessId($businessId);
@@ -240,14 +251,33 @@ class UsageBillingCheckoutManager
             return new FundingAttemptResult(0, FundingAttemptState::Failed, 'no_provider_customer');
         }
 
-        $instrument = $this->instrumentRepository->findDefaultForProviderCustomer($providerCustomer->id);
+        // §9 — a saved default instrument is required only for the
+        // off-session PaymentIntent path (AutoRecharge); a Checkout
+        // Session (ManualTopUp/AddonPurchase) collects payment information
+        // customer-present and never requires one, mirroring the
+        // already-conforming additional-slot-agreement Checkout flow.
+        $isCheckoutBacked = $purpose === FundingAttemptPurpose::ManualTopUp || $purpose === FundingAttemptPurpose::AddonPurchase;
+        $instrument = null;
 
-        if ($instrument === null) {
-            return new FundingAttemptResult(0, FundingAttemptState::Failed, 'no_payment_instrument');
+        if (! $isCheckoutBacked) {
+            $instrument = $this->instrumentRepository->findDefaultForProviderCustomer($providerCustomer->id);
+
+            if ($instrument === null) {
+                return new FundingAttemptResult(0, FundingAttemptState::Failed, 'no_payment_instrument');
+            }
         }
 
         $contact = $this->billingContactRepository->findByBusinessId($businessId);
         $idempotencyKey = 'funding-attempt-'.$purpose->value.'-'.$businessId.'-'.Str::uuid();
+
+        // §5.A — a Checkout-backed attempt's real payment method is
+        // genuinely unknown at creation time; the sentinel is replaced
+        // exactly once, by confirmSucceeded(), after authoritative Checkout
+        // confirmation (mirrors additional_business_slot_agreements' own
+        // already-shipped 'Pending Checkout' precedent). AutoRecharge
+        // continues snapshotting its already-known, already-saved
+        // instrument at creation time, unchanged.
+        $paymentMethodDisplaySnapshot = $isCheckoutBacked ? 'Pending Checkout' : $this->formatInstrumentDisplay($instrument);
 
         // M3 contract §15 — "Outstanding attempt idempotency": the wallet
         // row lock serializes this check-then-create against any other
@@ -259,7 +289,7 @@ class UsageBillingCheckoutManager
         // attempt rule applies there), but locking unconditionally keeps
         // attempt creation for both purposes inside one consistent,
         // already-established wallet-row-lock pattern.
-        $attempt = DB::transaction(function () use ($businessId, $wallet, $purpose, $payerType, $contact, $providerCustomer, $instrument, $actorUserId, $amountMicro, $idempotencyKey, $postAttemptCreationHook) {
+        $attempt = DB::transaction(function () use ($businessId, $wallet, $purpose, $payerType, $contact, $providerCustomer, $paymentMethodDisplaySnapshot, $actorUserId, $amountMicro, $idempotencyKey, $postAttemptCreationHook) {
             $this->walletRepository->findForUpdateByBusinessId($businessId);
 
             if ($purpose === FundingAttemptPurpose::AutoRecharge
@@ -276,7 +306,7 @@ class UsageBillingCheckoutManager
                 'billing_contact_email_snapshot' => $contact?->contact_email,
                 'provider_customer_external_id_snapshot' => $providerCustomer->provider_customer_id,
                 'provider_customer_id' => $providerCustomer->id,
-                'payment_method_display_snapshot' => $this->formatInstrumentDisplay($instrument),
+                'payment_method_display_snapshot' => $paymentMethodDisplaySnapshot,
                 'requesting_actor_user_id' => $actorUserId,
                 'expected_currency_id' => $wallet->currency_id,
                 'expected_amount_micro' => $amountMicro,
@@ -299,6 +329,21 @@ class UsageBillingCheckoutManager
 
         $currencyCode = (string) DB::table('currencies')->where('id', $wallet->currency_id)->value('code');
 
+        if (! $isCheckoutBacked) {
+            return $this->driveOffSessionPaymentIntentAttempt1($attempt, $providerCustomer, $instrument, $amountMicro, $currencyCode, $idempotencyKey);
+        }
+
+        return $this->driveCheckoutSessionCreation($business, $attempt, $providerCustomer, $purpose, $amountMicro, $currencyCode, $idempotencyKey, $lineItemNameOverride);
+    }
+
+    /**
+     * The original AutoRecharge off-session PaymentIntent attempt-1 flow,
+     * extracted verbatim (byte-for-byte unchanged behavior) from
+     * initiateCharge() so the purpose-based dispatch above can route to it
+     * without duplicating any of its logic.
+     */
+    private function driveOffSessionPaymentIntentAttempt1(BusinessFundingAttempt $attempt, $providerCustomer, $instrument, int $amountMicro, string $currencyCode, string $idempotencyKey): FundingAttemptResult
+    {
         try {
             $minorUnits = $this->microToMinorUnits($amountMicro, $currencyCode);
             $this->assertWithinStripeAmountBounds($minorUnits);
@@ -347,6 +392,79 @@ class UsageBillingCheckoutManager
     }
 
     /**
+     * RFC-005 Funding Provider-Flow Correction Contract §6/§7/§8 — creates
+     * the one-time Checkout Session for a ManualTopUp/AddonPurchase
+     * attempt. Never synchronously credits — a Checkout Session always
+     * requires a separate confirmation step (§6/§12), unlike an
+     * off-session PaymentIntent which can synchronously succeed at
+     * creation.
+     */
+    private function driveCheckoutSessionCreation(Business $business, BusinessFundingAttempt $attempt, $providerCustomer, FundingAttemptPurpose $purpose, int $amountMicro, string $currencyCode, string $idempotencyKey, ?string $lineItemNameOverride): FundingAttemptResult
+    {
+        if ($purpose === FundingAttemptPurpose::ManualTopUp) {
+            $lineItemName = 'Wallet top-up';
+            $successUrl = route('customer.workspaces.businesses.usage-billing.top-up.confirm', [
+                'workspaceUid' => $business->workspace->uid,
+                'businessUid' => $business->uid,
+                'attempt' => $attempt->id,
+            ]);
+            $cancelUrl = route('customer.workspaces.businesses.usage-billing.show', [
+                'workspaceUid' => $business->workspace->uid,
+                'businessUid' => $business->uid,
+            ]);
+        } else {
+            // §7 — AddonPurchase: no add-on-specific HTTP surface exists;
+            // the existing dashboard is the only honest landing page,
+            // mirroring the additional-slot agreement's own
+            // ?session_id={CHECKOUT_SESSION_ID} success-url convention.
+            $lineItemName = $lineItemNameOverride ?? 'Add-on purchase';
+            $dashboardUrl = route('customer.workspaces.businesses.usage-billing.show', [
+                'workspaceUid' => $business->workspace->uid,
+                'businessUid' => $business->uid,
+            ]);
+            $successUrl = $dashboardUrl.'?session_id={CHECKOUT_SESSION_ID}';
+            $cancelUrl = $dashboardUrl;
+        }
+
+        try {
+            $minorUnits = $this->microToMinorUnits($amountMicro, $currencyCode);
+            $this->assertWithinStripeAmountBounds($minorUnits);
+
+            $session = $this->gateway->createCheckoutSession(
+                $providerCustomer->provider_customer_id,
+                $minorUnits,
+                $currencyCode,
+                $lineItemName,
+                $successUrl,
+                $cancelUrl,
+                $idempotencyKey,
+                [
+                    'app_subject_kind' => 'funding_attempt',
+                    'app_subject_id' => (string) $attempt->id,
+                    'app_operation_id' => $idempotencyKey,
+                ],
+                false,
+            );
+        } catch (ProviderApiUnavailableException $e) {
+            $this->markFailed($attempt, $e->getMessage(), TransitionSource::SyncResponse, null);
+
+            return new FundingAttemptResult($attempt->id, FundingAttemptState::Failed, 'provider_unavailable');
+        } catch (ProviderInvalidRequestException $e) {
+            $this->markFailed($attempt, $e->getMessage(), TransitionSource::SyncResponse, null);
+
+            return new FundingAttemptResult($attempt->id, FundingAttemptState::Failed, 'invalid_request');
+        }
+
+        $attempt = $this->attemptRepository->update($attempt, [
+            'provider_session_or_intent_reference' => $session->providerCheckoutSessionId,
+            'state' => FundingAttemptState::ProviderPending->value,
+        ]);
+        $this->recordTransition($attempt, FundingAttemptState::Created, FundingAttemptState::ProviderPending, TransitionSource::SyncResponse, null, null);
+
+        return new FundingAttemptResult($attempt->id, FundingAttemptState::ProviderPending, null, $session->redirectUrl);
+    }
+
+    /**
      * M3 contract §10 item 6/§11 item 11 — the synchronous confirmation
      * path a browser-return handler calls. Never trusts the redirect
      * alone; independently retrieves the PaymentIntent from the provider
@@ -368,6 +486,21 @@ class UsageBillingCheckoutManager
 
         if ($attempt->provider_session_or_intent_reference === null) {
             return new FundingAttemptResult($attempt->id, $attempt->state, null);
+        }
+
+        // RFC-005 Funding Provider-Flow Correction Contract §12 — purpose-
+        // aware retrieval: a Checkout-backed attempt (ManualTopUp/
+        // AddonPurchase) is never a PaymentIntent, and vice versa.
+        if ($attempt->purpose === FundingAttemptPurpose::ManualTopUp || $attempt->purpose === FundingAttemptPurpose::AddonPurchase) {
+            $session = $this->gateway->retrieveCheckoutSession($attempt->provider_session_or_intent_reference);
+
+            if (! $this->fundingAttemptCheckoutVerified($attempt, $session)) {
+                return new FundingAttemptResult($attempt->id, $attempt->state, null);
+            }
+
+            $this->confirmSucceeded($attempt, TransitionSource::SyncResponse, null, null, $this->resolveVerifiedPaymentMethodDisplay($attempt, $session));
+
+            return new FundingAttemptResult($attempt->id, FundingAttemptState::Succeeded, null);
         }
 
         $paymentIntent = $this->gateway->retrievePaymentIntent($attempt->provider_session_or_intent_reference);
@@ -396,6 +529,34 @@ class UsageBillingCheckoutManager
             if ($attempt->purpose === FundingAttemptPurpose::AddonPurchase) {
                 $this->finalizeAddonPurchaseIfPending($attempt, TransitionSource::WebhookEvent, $event->id);
             }
+
+            return;
+        }
+
+        // RFC-005 Funding Provider-Flow Correction Contract §12 — for a
+        // Checkout-backed purpose, ProcessPaymentProviderEvent's own
+        // field-level webhook validation is never trusted alone: this
+        // independently re-fetches and re-verifies the authoritative
+        // Checkout Session before ever mutating, mirroring
+        // confirmSlotAgreementFromWebhook()'s own already-shipped design.
+        // AutoRecharge is completely unchanged — no new provider call.
+        if ($attempt->purpose === FundingAttemptPurpose::ManualTopUp || $attempt->purpose === FundingAttemptPurpose::AddonPurchase) {
+            if ($attempt->provider_session_or_intent_reference === null) {
+                return;
+            }
+
+            $session = $this->gateway->retrieveCheckoutSession($attempt->provider_session_or_intent_reference);
+
+            if (! $this->fundingAttemptCheckoutVerified($attempt, $session)) {
+                // CASE 1 (contract §12) — the provider call itself
+                // succeeded but re-verification failed: no mutation, no
+                // exception; the caller (ProcessPaymentProviderEvent) still
+                // marks the event processed under its own existing flow,
+                // and ReconcileProviderPendingState may recover later.
+                return;
+            }
+
+            $this->confirmSucceeded($attempt, TransitionSource::WebhookEvent, $event->id, null, $this->resolveVerifiedPaymentMethodDisplay($attempt, $session));
 
             return;
         }
@@ -429,6 +590,22 @@ class UsageBillingCheckoutManager
             throw new FundingAttemptNotResumableException($attempt->id, $attempt->state->value);
         }
 
+        // RFC-005 Funding Provider-Flow Correction Contract §12 — the
+        // identical purpose-based branch: a stuck ManualTopUp/AddonPurchase
+        // attempt is Checkout-Session-backed, never PaymentIntent-backed.
+        // No new capability — still resume-only, never origination.
+        if ($attempt->purpose === FundingAttemptPurpose::ManualTopUp || $attempt->purpose === FundingAttemptPurpose::AddonPurchase) {
+            $session = $this->gateway->retrieveCheckoutSession($attempt->provider_session_or_intent_reference);
+
+            if ($this->fundingAttemptCheckoutVerified($attempt, $session)) {
+                $this->confirmSucceeded($attempt, TransitionSource::AdminAction, null, $actorUserId, $this->resolveVerifiedPaymentMethodDisplay($attempt, $session));
+
+                return new FundingAttemptResult($attempt->id, FundingAttemptState::Succeeded, null);
+            }
+
+            return new FundingAttemptResult($attempt->id, $attempt->state, null);
+        }
+
         $paymentIntent = $this->gateway->retrievePaymentIntent($attempt->provider_session_or_intent_reference);
 
         if ($paymentIntent->status === 'succeeded') {
@@ -448,11 +625,17 @@ class UsageBillingCheckoutManager
      * unchanged; only AddonPurchase (never set by any M3 code path) gains
      * new behavior where none existed before.
      */
-    private function confirmSucceeded(BusinessFundingAttempt $attempt, TransitionSource $source, ?int $providerEventId, ?int $actorUserId = null): void
+    private function confirmSucceeded(BusinessFundingAttempt $attempt, TransitionSource $source, ?int $providerEventId, ?int $actorUserId = null, ?string $verifiedPaymentMethodDisplay = null): void
     {
         $fromState = $attempt->state;
 
-        $this->attemptRepository->update($attempt, ['state' => FundingAttemptState::Succeeded->value]);
+        $updateAttributes = ['state' => FundingAttemptState::Succeeded->value];
+
+        if ($verifiedPaymentMethodDisplay !== null) {
+            $updateAttributes['payment_method_display_snapshot'] = $verifiedPaymentMethodDisplay;
+        }
+
+        $this->attemptRepository->update($attempt, $updateAttributes);
         $this->recordTransition($attempt, $fromState, FundingAttemptState::Succeeded, $source, $providerEventId, $actorUserId);
 
         if ($attempt->purpose === FundingAttemptPurpose::AddonPurchase) {
@@ -587,6 +770,74 @@ class UsageBillingCheckoutManager
     private function formatInstrumentDisplay($instrument): string
     {
         return sprintf('%s •••• %s, exp %02d/%d', $instrument->brand ?? $instrument->type->value, $instrument->last_four ?? '????', $instrument->expiry_month ?? 0, $instrument->expiry_year ?? 0);
+    }
+
+    /**
+     * RFC-005 Funding Provider-Flow Correction Contract §5.A — the
+     * PaymentMethodResult-shaped sibling of formatInstrumentDisplay(),
+     * producing the byte-identical display shape from a gateway-retrieved
+     * PaymentMethodResult's own scalars instead of a saved
+     * BusinessPaymentInstrument model.
+     */
+    private function formatPaymentMethodDisplay(PaymentMethodResult $method): string
+    {
+        return sprintf('%s •••• %s, exp %02d/%d', $method->brand ?? $method->type, $method->lastFour ?? '????', $method->expiryMonth ?? 0, $method->expiryYear ?? 0);
+    }
+
+    /**
+     * RFC-005 Funding Provider-Flow Correction Contract §12 — the
+     * BusinessFundingAttempt-shaped sibling of slotAgreementCheckoutVerified(),
+     * the identical eight conditions: Session complete, payment_status
+     * paid, matching session id/amount/currency/provider customer,
+     * non-null PaymentIntent and PaymentMethod references.
+     */
+    private function fundingAttemptCheckoutVerified(BusinessFundingAttempt $attempt, CheckoutSessionResult $session): bool
+    {
+        if ($session->status !== 'complete' || $session->paymentStatus !== 'paid') {
+            return false;
+        }
+
+        if ($session->providerCheckoutSessionId !== $attempt->provider_session_or_intent_reference) {
+            return false;
+        }
+
+        if ($session->amountMinorUnits !== $this->expectedMinorUnitsFor($attempt) || $session->currencyCode !== $this->expectedCurrencyCodeFor($attempt)) {
+            return false;
+        }
+
+        if ($session->providerCustomerId !== $attempt->provider_customer_external_id_snapshot) {
+            return false;
+        }
+
+        if ($session->providerPaymentIntentId === null || $session->providerPaymentMethodId === null) {
+            return false;
+        }
+
+        return true;
+    }
+
+    /**
+     * RFC-005 Funding Provider-Flow Correction Contract §5.C — a one-time
+     * Checkout Session created without setup_future_usage may legitimately
+     * produce a PaymentMethod Stripe never attaches to any Customer at
+     * all. The authoritative ownership/amount/currency evidence remains
+     * the already-verified Checkout Session itself
+     * (fundingAttemptCheckoutVerified(), called before this); this method
+     * is used only to obtain safe display metadata, never as an
+     * additional ownership gate. An empty providerCustomerId is expected
+     * and accepted; a present-but-contradictory one skips display
+     * finalization only (returns null) — it never denies the already-
+     * independently-verified successful payment.
+     */
+    private function resolveVerifiedPaymentMethodDisplay(BusinessFundingAttempt $attempt, CheckoutSessionResult $session): ?string
+    {
+        $paymentMethod = $this->gateway->retrievePaymentMethod((string) $session->providerPaymentMethodId);
+
+        if ($paymentMethod->providerCustomerId !== '' && $paymentMethod->providerCustomerId !== $attempt->provider_customer_external_id_snapshot) {
+            return null;
+        }
+
+        return $this->formatPaymentMethodDisplay($paymentMethod);
     }
 
     /**
@@ -767,6 +1018,7 @@ class UsageBillingCheckoutManager
                 'app_subject_id' => (string) $agreement->id,
                 'app_operation_id' => $agreement->local_idempotency_key,
             ],
+            true,
         );
 
         $fromState = $agreement->state;

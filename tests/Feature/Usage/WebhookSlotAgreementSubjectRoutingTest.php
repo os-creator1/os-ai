@@ -83,6 +83,22 @@ class WebhookSlotAgreementSubjectRoutingTest extends TestCase
         return [$workspace, $owner, app(AdditionalBusinessSlotAgreementRepository::class)->findById($agreement->id)];
     }
 
+    /**
+     * RFC-005 Funding Provider-Flow Correction Contract §8.B — proves the
+     * real UsageBillingCheckoutManager::initiateSlotAgreementCheckout()
+     * call site (via this file's own checkoutPendingAgreement() helper,
+     * not merely the gateway fake in isolation) actually passes
+     * setupFutureUsageOffSession: true, preserving its own
+     * designed-future-off-session-renewal semantics unchanged.
+     */
+    public function test_initiate_slot_agreement_checkout_passes_setup_future_usage_true(): void
+    {
+        $this->checkoutPendingAgreement();
+
+        $this->assertCount(1, $this->gateway->createCheckoutSessionCalls);
+        $this->assertTrue($this->gateway->createCheckoutSessionCalls[0]['setupFutureUsageOffSession']);
+    }
+
     public function test_slot_agreement_checkout_session_completes_via_webhook_using_amount_total_fallback(): void
     {
         [$workspace, , $agreement] = $this->checkoutPendingAgreement();

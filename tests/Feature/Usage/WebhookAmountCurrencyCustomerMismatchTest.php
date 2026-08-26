@@ -56,6 +56,16 @@ class WebhookAmountCurrencyCustomerMismatchTest extends TestCase
         return $workspace->fresh();
     }
 
+    /**
+     * RFC-005 Funding Provider-Flow Correction Contract §17 — re-scoped
+     * from initiateTopUp() to initiateAutoRecharge(): AutoRecharge is the
+     * only purpose remaining genuinely PaymentIntent-shaped, so the
+     * existing payment_intent.succeeded/top-level-"amount" webhook
+     * fixtures below stay accurate rather than becoming a stale hybrid.
+     * The Checkout-Session-shaped sibling of this exact mismatch-rejection
+     * invariant (amount_total, checkout.session.completed) is separate,
+     * new coverage in TopUpStateMachineTest.php.
+     */
     private function createPendingAttempt(): array
     {
         $customer = $this->createCustomer();
@@ -76,7 +86,7 @@ class WebhookAmountCurrencyCustomerMismatchTest extends TestCase
 
         $this->gateway->paymentIntentOutcomes = ['*' => 'requires_action'];
         // 5,000,000 micro-units -> 500 minor units (USD, 2-decimal exponent).
-        $result = app(UsageBillingCheckoutManager::class)->initiateTopUp($business, $customer->user_id, 5_000_000);
+        $result = app(UsageBillingCheckoutManager::class)->initiateAutoRecharge($business, 5_000_000);
         $attempt = app(BusinessFundingAttemptRepository::class)->findById($result->fundingAttemptId);
 
         return [$business, $attempt];

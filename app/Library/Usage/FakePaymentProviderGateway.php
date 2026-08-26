@@ -74,6 +74,30 @@ class FakePaymentProviderGateway implements PaymentProviderGateway
     /** @var array<string, array{idempotencyKey: string, amountMinorUnits: int, currencyCode: string, providerCustomerId: string, providerPaymentIntentId: string}> */
     private array $createdCheckoutSessions = [];
 
+    /**
+     * RFC-005 Funding Provider-Flow Correction Contract §8.B — records
+     * every createCheckoutSession() call received, including the
+     * setupFutureUsageOffSession flag, so a test can assert which value a
+     * specific caller actually passed (mirrors confirmPaymentIntentCalls,
+     * M4 contract §3 item 7k).
+     *
+     * @var array<int, array{providerCustomerId: string, amountMinorUnits: int, currencyCode: string, lineItemName: string, successUrl: string, cancelUrl: string, idempotencyKey: string, metadata: array<string, mixed>, setupFutureUsageOffSession: bool}>
+     */
+    public array $createCheckoutSessionCalls = [];
+
+    /**
+     * RFC-005 Funding Provider-Flow Correction Contract §16.A — a test-only
+     * explicit Checkout Session retrieval registration, keyed by
+     * providerCheckoutSessionId, checked first by retrieveCheckoutSession()
+     * before its own existing createdCheckoutSessions-keyed lookup and
+     * unknown-Session fallback. Needed by ConcurrentTopUpConcurrencyTest's
+     * independently-booted child processes, which share no in-memory state
+     * with the parent process that actually created the Session.
+     *
+     * @var array<string, CheckoutSessionResult>
+     */
+    private array $registeredCheckoutSessionResults = [];
+
     public function createOrRetrieveCustomer(?string $existingProviderCustomerId, string $idempotencyKey): ProviderCustomerResult
     {
         if ($existingProviderCustomerId !== null) {
@@ -203,6 +227,7 @@ class FakePaymentProviderGateway implements PaymentProviderGateway
         string $cancelUrl,
         string $idempotencyKey,
         array $metadata,
+        bool $setupFutureUsageOffSession = false,
     ): CheckoutSessionResult {
         $id = 'cs_fake_'.Str::random(16);
         $paymentIntentId = 'pi_fake_'.Str::random(16);
@@ -213,6 +238,18 @@ class FakePaymentProviderGateway implements PaymentProviderGateway
             'currencyCode' => $currencyCode,
             'providerCustomerId' => $providerCustomerId,
             'providerPaymentIntentId' => $paymentIntentId,
+        ];
+
+        $this->createCheckoutSessionCalls[] = [
+            'providerCustomerId' => $providerCustomerId,
+            'amountMinorUnits' => $amountMinorUnits,
+            'currencyCode' => $currencyCode,
+            'lineItemName' => $lineItemName,
+            'successUrl' => $successUrl,
+            'cancelUrl' => $cancelUrl,
+            'idempotencyKey' => $idempotencyKey,
+            'metadata' => $metadata,
+            'setupFutureUsageOffSession' => $setupFutureUsageOffSession,
         ];
 
         return new CheckoutSessionResult(
@@ -228,8 +265,23 @@ class FakePaymentProviderGateway implements PaymentProviderGateway
         );
     }
 
+    /**
+     * RFC-005 Funding Provider-Flow Correction Contract §16.A — registers
+     * an explicit CheckoutSessionResult this Fake must return the next
+     * time retrieveCheckoutSession() is called for that exact Session id,
+     * regardless of whether this same Fake instance ever created it.
+     */
+    public function registerCheckoutSessionResult(CheckoutSessionResult $result): void
+    {
+        $this->registeredCheckoutSessionResults[$result->providerCheckoutSessionId] = $result;
+    }
+
     public function retrieveCheckoutSession(string $providerCheckoutSessionId): CheckoutSessionResult
     {
+        if (isset($this->registeredCheckoutSessionResults[$providerCheckoutSessionId])) {
+            return $this->registeredCheckoutSessionResults[$providerCheckoutSessionId];
+        }
+
         $session = $this->createdCheckoutSessions[$providerCheckoutSessionId] ?? null;
 
         if ($session === null) {

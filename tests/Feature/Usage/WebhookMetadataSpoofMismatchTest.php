@@ -59,6 +59,14 @@ class WebhookMetadataSpoofMismatchTest extends TestCase
     /**
      * A pending (requires_action) attempt with a real, valid provider
      * reference — the target for the webhook confirmation this test sends.
+     *
+     * RFC-005 Funding Provider-Flow Correction Contract §17 — re-scoped
+     * from initiateTopUp() to initiateAutoRecharge(): AutoRecharge is the
+     * only purpose remaining genuinely PaymentIntent-shaped, so this
+     * fixture's own payment_intent.succeeded-shaped webhook stays
+     * accurate rather than becoming a stale hybrid. The metadata-spoof-
+     * produces-zero-mutation invariant itself is unaffected by which
+     * purpose exercises it.
      */
     private function createPendingAttempt(): array
     {
@@ -79,7 +87,7 @@ class WebhookMetadataSpoofMismatchTest extends TestCase
         $instrumentManager->confirmSetupIntentAndAttach($business, $customer->user_id, $setupIntent->providerSetupIntentId);
 
         $this->gateway->paymentIntentOutcomes = ['*' => 'requires_action'];
-        $result = app(UsageBillingCheckoutManager::class)->initiateTopUp($business, $customer->user_id, 5_000_000);
+        $result = app(UsageBillingCheckoutManager::class)->initiateAutoRecharge($business, 5_000_000);
         $attempt = app(BusinessFundingAttemptRepository::class)->findById($result->fundingAttemptId);
 
         return [$business, $attempt];

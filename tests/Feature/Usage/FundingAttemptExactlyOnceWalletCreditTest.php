@@ -60,6 +60,17 @@ class FundingAttemptExactlyOnceWalletCreditTest extends TestCase
         return $workspace->fresh();
     }
 
+    /**
+     * RFC-005 Funding Provider-Flow Correction Contract §17 — corrected:
+     * a ManualTopUp attempt is Checkout-Session-backed (provider_pending,
+     * never requires_action via paymentIntentOutcomes, which no longer
+     * applies since createOffSessionPaymentIntent() is never called for
+     * this purpose), and requires no pre-saved instrument. The two
+     * confirmation paths remain genuinely independent — the attempt
+     * reaches provider_pending at creation, never succeeded, so the
+     * synchronous confirmation and the later webhook are still two real,
+     * separate confirmation attempts.
+     */
     public function test_synchronous_confirmation_then_a_duplicate_webhook_credits_exactly_once(): void
     {
         $customer = $this->createCustomer();
@@ -67,25 +78,28 @@ class FundingAttemptExactlyOnceWalletCreditTest extends TestCase
         $business = app(BusinessRepository::class)->createForCustomerInWorkspace($customer, $workspace, $this->businessAttributes());
         app(UsageWalletManager::class)->initializeWalletForNewBusiness($business->id);
         app(BillingProfileManager::class)->changePayer($business, PayerType::Workspace, $customer->user_id, 'Test.');
+        app(PaymentInstrumentManager::class)->resolveProviderCustomer($business, $customer->user_id);
 
-        $instrumentManager = app(PaymentInstrumentManager::class);
-        $setupIntent = $instrumentManager->createSetupIntent($business, $customer->user_id);
-        $providerCustomer = app(PaymentProviderCustomerRepository::class)->findActiveByWorkspaceId((int) $workspace->id);
-        $this->gateway->registerPaymentMethod(new PaymentMethodResult(
-            'pm_fake_'.substr($setupIntent->providerSetupIntentId, strlen('seti_fake_')),
-            $providerCustomer->provider_customer_id,
-            'card', 'visa', '4242', 12, 2030,
-        ));
-        $instrumentManager->confirmSetupIntentAndAttach($business, $customer->user_id, $setupIntent->providerSetupIntentId);
-
-        // Forces requires_action so the attempt is not synchronously
-        // confirmed inside initiateTopUp() itself — the two confirmation
-        // paths below are then genuinely independent.
-        $this->gateway->paymentIntentOutcomes = ['*' => 'requires_action'];
         $checkoutManager = app(UsageBillingCheckoutManager::class);
         $result = $checkoutManager->initiateTopUp($business, $customer->user_id, 5_000_000);
         $attempt = app(BusinessFundingAttemptRepository::class)->findById($result->fundingAttemptId);
-        $this->assertSame(FundingAttemptState::RequiresAction, $attempt->state);
+        $this->assertSame(FundingAttemptState::ProviderPending, $attempt->state);
+
+        $paymentMethodId = 'pm_fake_exactly_once';
+        $this->gateway->registerPaymentMethod(new PaymentMethodResult(
+            $paymentMethodId, $attempt->provider_customer_external_id_snapshot, 'card', 'visa', '4242', 12, 2030,
+        ));
+        $this->gateway->registerCheckoutSessionResult(new \App\Library\Usage\CheckoutSessionResult(
+            (string) $attempt->provider_session_or_intent_reference,
+            'complete',
+            'paid',
+            null,
+            $checkoutManager->expectedMinorUnitsFor($attempt),
+            $checkoutManager->expectedCurrencyCodeFor($attempt),
+            $attempt->provider_customer_external_id_snapshot,
+            'pi_fake_exactly_once',
+            $paymentMethodId,
+        ));
 
         // Path 1: the synchronous browser-return confirmation.
         $checkoutManager->confirmAttemptFromReturn($attempt);
@@ -96,7 +110,7 @@ class FundingAttemptExactlyOnceWalletCreditTest extends TestCase
         $event = PaymentProviderEvent::query()->create([
             'provider' => 'stripe',
             'provider_event_id' => 'evt_'.uniqid(),
-            'event_type' => 'payment_intent.succeeded',
+            'event_type' => 'checkout.session.completed',
             'provider_object_id' => $attempt->provider_session_or_intent_reference,
             'state' => 'processing',
             'attempts' => 1,

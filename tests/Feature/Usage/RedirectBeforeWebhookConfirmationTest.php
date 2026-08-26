@@ -59,6 +59,15 @@ class RedirectBeforeWebhookConfirmationTest extends TestCase
         return $workspace->fresh();
     }
 
+    /**
+     * RFC-005 Funding Provider-Flow Correction Contract §17 — corrected:
+     * a ManualTopUp attempt is Checkout-Session-backed (provider_pending,
+     * never requires_action, and requires no pre-saved instrument). The
+     * "bare redirect never credits the wallet" invariant is fully
+     * preserved — a browser being sent to the hosted Checkout page, with
+     * no confirmAttemptFromReturn()/webhook call following, must never
+     * itself credit anything.
+     */
     public function test_a_bare_redirect_return_with_no_confirmation_call_never_credits_the_wallet(): void
     {
         $customer = $this->createCustomer();
@@ -66,25 +75,14 @@ class RedirectBeforeWebhookConfirmationTest extends TestCase
         $business = app(BusinessRepository::class)->createForCustomerInWorkspace($customer, $workspace, $this->businessAttributes());
         app(UsageWalletManager::class)->initializeWalletForNewBusiness($business->id);
         app(BillingProfileManager::class)->changePayer($business, PayerType::Workspace, $customer->user_id, 'Test.');
+        app(PaymentInstrumentManager::class)->resolveProviderCustomer($business, $customer->user_id);
 
-        $instrumentManager = app(PaymentInstrumentManager::class);
-        $setupIntent = $instrumentManager->createSetupIntent($business, $customer->user_id);
-        $providerCustomer = app(PaymentProviderCustomerRepository::class)->findActiveByWorkspaceId((int) $workspace->id);
-        $this->gateway->registerPaymentMethod(new PaymentMethodResult(
-            'pm_fake_'.substr($setupIntent->providerSetupIntentId, strlen('seti_fake_')),
-            $providerCustomer->provider_customer_id,
-            'card', 'visa', '4242', 12, 2030,
-        ));
-        $instrumentManager->confirmSetupIntentAndAttach($business, $customer->user_id, $setupIntent->providerSetupIntentId);
-
-        // Simulates the customer being sent to Stripe for additional
-        // authentication (a genuine browser redirect scenario) — no
-        // confirmAttemptFromReturn()/webhook call follows.
-        $this->gateway->paymentIntentOutcomes = ['*' => 'requires_action'];
+        // Simulates the customer being sent to the hosted Checkout page —
+        // no confirmAttemptFromReturn()/webhook call follows.
         $result = app(UsageBillingCheckoutManager::class)->initiateTopUp($business, $customer->user_id, 5_000_000);
 
         $attempt = app(BusinessFundingAttemptRepository::class)->findById($result->fundingAttemptId);
-        $this->assertSame(FundingAttemptState::RequiresAction, $attempt->state);
+        $this->assertSame(FundingAttemptState::ProviderPending, $attempt->state);
         $this->assertNotSame(FundingAttemptState::Succeeded, $attempt->state);
 
         $ledgerCount = app(BusinessUsageLedgerEntryRepository::class)->query()

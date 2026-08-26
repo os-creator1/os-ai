@@ -87,6 +87,12 @@ class StripeAmountMinMaxValidationTest extends TestCase
         $this->assertSame('invalid_request', $result->denialReason);
     }
 
+    /**
+     * RFC-005 Funding Provider-Flow Correction Contract §17 — assertion-
+     * only correction: the boundary-value invariant itself is fully
+     * preserved; only the terminal state assertion changes, since
+     * Checkout Session creation cannot synchronously reach Succeeded.
+     */
     public function test_an_amount_at_exactly_the_minimum_succeeds(): void
     {
         [$customer, $business] = $this->businessWithAttachedInstrument();
@@ -94,7 +100,8 @@ class StripeAmountMinMaxValidationTest extends TestCase
         // Exactly 50 cents (500,000 micro-units).
         $result = app(UsageBillingCheckoutManager::class)->initiateTopUp($business, $customer->user_id, 500_000);
 
-        $this->assertSame(FundingAttemptState::Succeeded, $result->state);
+        $this->assertSame(FundingAttemptState::ProviderPending, $result->state);
+        $this->assertNull($result->denialReason);
     }
 
     public function test_an_amount_above_the_eight_digit_maximum_is_rejected(): void
@@ -116,6 +123,7 @@ class StripeAmountMinMaxValidationTest extends TestCase
         // Exactly 99,999,999 minor units.
         $result = app(UsageBillingCheckoutManager::class)->initiateTopUp($business, $customer->user_id, 999_999_990_000);
 
-        $this->assertSame(FundingAttemptState::Succeeded, $result->state);
+        $this->assertSame(FundingAttemptState::ProviderPending, $result->state);
+        $this->assertNull($result->denialReason);
     }
 }

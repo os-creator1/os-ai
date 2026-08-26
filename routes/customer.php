@@ -605,6 +605,9 @@
         Route::post('{workspaceUid}/businesses/{businessUid}/usage-billing/payment-method/confirm', 'Business\UsageBillingPaymentMethodController@confirmSetupIntent')->name('businesses.usage-billing.payment-method.confirm');
         Route::post('{workspaceUid}/businesses/{businessUid}/usage-billing/payment-method/{instrument}/detach', 'Business\UsageBillingPaymentMethodController@detachInstrument')->name('businesses.usage-billing.payment-method.detach');
         Route::post('{workspaceUid}/businesses/{businessUid}/usage-billing/top-up', 'Business\UsageBillingTopUpController@initiate')->name('businesses.usage-billing.top-up.initiate');
+        // RFC-005 Funding Provider-Flow Correction Contract §6: the
+        // Checkout-hosted return confirmation for a manual top-up attempt.
+        Route::get('{workspaceUid}/businesses/{businessUid}/usage-billing/top-up/{attempt}/confirm', 'Business\UsageBillingTopUpController@confirmFromReturn')->name('businesses.usage-billing.top-up.confirm')->whereNumber('attempt');
         Route::post('{workspaceUid}/businesses/{businessUid}/usage-billing/auto-recharge', 'Business\UsageBillingAutoRechargeController@configure')->name('businesses.usage-billing.auto-recharge.configure');
 
         // RFC-005 Milestone 4: Workspace-scoped additional-slot agreement

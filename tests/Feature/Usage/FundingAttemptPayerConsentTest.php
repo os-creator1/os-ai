@@ -100,7 +100,56 @@ class FundingAttemptPayerConsentTest extends TestCase
         $this->assertSame('no_provider_customer', $result->denialReason);
     }
 
+    /**
+     * RFC-005 Funding Provider-Flow Correction Contract §17 — corrected:
+     * a stuck ManualTopUp attempt is now Checkout-Session-backed
+     * (provider_pending, never requires_action via paymentIntentOutcomes,
+     * which no longer applies once initiateTopUp() never calls
+     * createOffSessionPaymentIntent()), and needs no pre-saved instrument.
+     * retryFundingAttemptAsAdministrator()'s new Checkout-Session branch
+     * is exercised by registering a verified complete/paid Session.
+     */
     public function test_platform_administrator_can_resume_a_stuck_attempt(): void
+    {
+        $customer = $this->createCustomer();
+        $workspace = $this->entitledWorkspace($customer->user);
+        $business = app(BusinessRepository::class)->createForCustomerInWorkspace($customer, $workspace, $this->businessAttributes());
+        app(UsageWalletManager::class)->initializeWalletForNewBusiness($business->id);
+        app(BillingProfileManager::class)->changePayer($business, PayerType::Workspace, $customer->user_id, 'Test.');
+        app(PaymentInstrumentManager::class)->resolveProviderCustomer($business, $customer->user_id);
+
+        $checkoutManager = app(UsageBillingCheckoutManager::class);
+        $stuck = $checkoutManager->initiateTopUp($business, $customer->user_id, 1_000_000);
+        $attempt = app(BusinessFundingAttemptRepository::class)->findById($stuck->fundingAttemptId);
+        $this->assertSame(FundingAttemptState::ProviderPending, $attempt->state);
+
+        $paymentMethodId = 'pm_fake_admin_resume';
+        $this->gateway->registerPaymentMethod(new PaymentMethodResult(
+            $paymentMethodId, $attempt->provider_customer_external_id_snapshot, 'card', 'visa', '4242', 12, 2030,
+        ));
+        $this->gateway->registerCheckoutSessionResult(new \App\Library\Usage\CheckoutSessionResult(
+            (string) $attempt->provider_session_or_intent_reference,
+            'complete',
+            'paid',
+            null,
+            $checkoutManager->expectedMinorUnitsFor($attempt),
+            $checkoutManager->expectedCurrencyCodeFor($attempt),
+            $attempt->provider_customer_external_id_snapshot,
+            'pi_fake_admin_resume',
+            $paymentMethodId,
+        ));
+
+        $admin = User::create([
+            'first_name' => 'Admin', 'last_name' => 'User', 'email' => 'admin' . uniqid() . '@example.test',
+            'status' => true, 'is_admin' => true, 'is_customer' => false, 'active_portal' => 'admin',
+        ]);
+
+        $resumed = $checkoutManager->retryFundingAttemptAsAdministrator($attempt, (int) $admin->id, 'Customer confirmed via support call.');
+
+        $this->assertSame(FundingAttemptState::Succeeded, $resumed->state);
+    }
+
+    private function businessWithAttachedInstrument(): array
     {
         $customer = $this->createCustomer();
         $workspace = $this->entitledWorkspace($customer->user);
@@ -118,20 +167,146 @@ class FundingAttemptPayerConsentTest extends TestCase
         ));
         $instrumentManager->confirmSetupIntentAndAttach($business, $customer->user_id, $setupIntent->providerSetupIntentId);
 
+        return [$customer, $business];
+    }
+
+    /**
+     * RFC-005 Funding Provider-Flow Correction Contract §13 — AutoRecharge
+     * must not regress: unchanged off-session PaymentIntent path, unchanged
+     * pre-saved-instrument requirement, unchanged creation-time display
+     * snapshot.
+     */
+    public function test_auto_recharge_still_creates_an_off_session_payment_intent_and_snapshots_the_instrument_at_creation(): void
+    {
+        [$customer, $business] = $this->businessWithAttachedInstrument();
+
+        $result = app(UsageBillingCheckoutManager::class)->initiateAutoRecharge($business, 5_000_000);
+
+        $this->assertSame(FundingAttemptState::Succeeded, $result->state);
+        $attempt = app(BusinessFundingAttemptRepository::class)->findById($result->fundingAttemptId);
+        $this->assertStringStartsWith('pi_fake_', (string) $attempt->provider_session_or_intent_reference);
+        $this->assertStringContainsString('••••', $attempt->payment_method_display_snapshot);
+        $this->assertNotSame('Pending Checkout', $attempt->payment_method_display_snapshot);
+        $this->assertEmpty($this->gateway->createCheckoutSessionCalls, 'AutoRecharge must never create a Checkout Session.');
+    }
+
+    /**
+     * RFC-005 Funding Provider-Flow Correction Contract §12/§13 —
+     * AutoRecharge's own webhook confirmation gains no new provider call:
+     * proven indirectly by confirming success is reached without any
+     * Checkout Session ever being registered/created for this
+     * PaymentIntent-backed attempt (had the code taken the Checkout
+     * branch, the unknown-Session fallback's zero amount would have
+     * failed verification and confirmation would never have succeeded).
+     */
+    public function test_auto_recharge_webhook_confirmation_performs_no_new_provider_call(): void
+    {
+        [$customer, $business] = $this->businessWithAttachedInstrument();
         $this->gateway->paymentIntentOutcomes = ['*' => 'requires_action'];
-        $checkoutManager = app(UsageBillingCheckoutManager::class);
-        $stuck = $checkoutManager->initiateTopUp($business, $customer->user_id, 1_000_000);
-        $attempt = app(BusinessFundingAttemptRepository::class)->findById($stuck->fundingAttemptId);
+
+        $result = app(UsageBillingCheckoutManager::class)->initiateAutoRecharge($business, 5_000_000);
+        $attempt = app(BusinessFundingAttemptRepository::class)->findById($result->fundingAttemptId);
         $this->assertSame(FundingAttemptState::RequiresAction, $attempt->state);
+
+        $event = \App\Models\PaymentProviderEvent::create([
+            'provider' => 'stripe', 'provider_event_id' => 'evt_fake_'.uniqid(), 'event_type' => 'payment_intent.succeeded',
+            'provider_object_id' => $attempt->provider_session_or_intent_reference, 'payload_encrypted' => '{}',
+            'payload_hash' => hash('sha256', '{}'), 'state' => 'received', 'attempts' => 0, 'received_at' => now(),
+        ]);
+
+        app(UsageBillingCheckoutManager::class)->confirmAttemptFromWebhook($attempt, $event);
+
+        $freshAttempt = app(BusinessFundingAttemptRepository::class)->findById($attempt->id);
+        $this->assertSame(FundingAttemptState::Succeeded, $freshAttempt->state);
+        $this->assertEmpty($this->gateway->createCheckoutSessionCalls);
+    }
+
+    public function test_platform_administrator_cannot_originate_a_fresh_top_up_via_checkout_session(): void
+    {
+        $customer = $this->createCustomer();
+        $workspace = $this->entitledWorkspace($customer->user);
+        $business = app(BusinessRepository::class)->createForCustomerInWorkspace($customer, $workspace, $this->businessAttributes());
+        app(UsageWalletManager::class)->initializeWalletForNewBusiness($business->id);
+        app(BillingProfileManager::class)->changePayer($business, PayerType::Workspace, $customer->user_id, 'Test.');
+        app(PaymentInstrumentManager::class)->resolveProviderCustomer($business, $customer->user_id);
 
         $admin = User::create([
             'first_name' => 'Admin', 'last_name' => 'User', 'email' => 'admin' . uniqid() . '@example.test',
             'status' => true, 'is_admin' => true, 'is_customer' => false, 'active_portal' => 'admin',
         ]);
 
-        $resumed = $checkoutManager->retryFundingAttemptAsAdministrator($attempt, (int) $admin->id, 'Customer confirmed via support call.');
+        // initiateTopUp() itself has no administrator-override branch of
+        // any kind, Checkout Session or otherwise — the provider-object
+        // correction introduces no new origination authority.
+        $this->expectException(UnauthorizedPayerAssignmentException::class);
+        app(UsageBillingCheckoutManager::class)->initiateTopUp($business, (int) $admin->id, 1_000_000);
+    }
 
-        $this->assertSame(FundingAttemptState::Succeeded, $resumed->state);
+    public function test_completing_a_top_up_never_enables_auto_recharge(): void
+    {
+        $customer = $this->createCustomer();
+        $workspace = $this->entitledWorkspace($customer->user);
+        $business = app(BusinessRepository::class)->createForCustomerInWorkspace($customer, $workspace, $this->businessAttributes());
+        app(UsageWalletManager::class)->initializeWalletForNewBusiness($business->id);
+        app(BillingProfileManager::class)->changePayer($business, PayerType::Workspace, $customer->user_id, 'Test.');
+        app(PaymentInstrumentManager::class)->resolveProviderCustomer($business, $customer->user_id);
+
+        $checkoutManager = app(UsageBillingCheckoutManager::class);
+        $result = $checkoutManager->initiateTopUp($business, $customer->user_id, 5_000_000);
+        $attempt = app(BusinessFundingAttemptRepository::class)->findById($result->fundingAttemptId);
+
+        $paymentMethodId = 'pm_fake_no_auto_recharge';
+        $this->gateway->registerPaymentMethod(new PaymentMethodResult(
+            $paymentMethodId, $attempt->provider_customer_external_id_snapshot, 'card', 'visa', '4242', 12, 2030,
+        ));
+        $this->gateway->registerCheckoutSessionResult(new \App\Library\Usage\CheckoutSessionResult(
+            (string) $attempt->provider_session_or_intent_reference,
+            'complete',
+            'paid',
+            null,
+            $checkoutManager->expectedMinorUnitsFor($attempt),
+            $checkoutManager->expectedCurrencyCodeFor($attempt),
+            $attempt->provider_customer_external_id_snapshot,
+            'pi_fake_no_auto_recharge',
+            $paymentMethodId,
+        ));
+
+        $checkoutManager->confirmAttemptFromReturn($attempt);
+
+        $wallet = app(\App\Repositories\Contracts\BusinessUsageWalletRepository::class)->findByBusinessId((int) $business->id);
+        $this->assertFalse((bool) $wallet->auto_recharge_enabled);
+    }
+
+    public function test_a_checkout_session_event_cannot_confirm_an_auto_recharge_attempt(): void
+    {
+        [$customer, $business] = $this->businessWithAttachedInstrument();
+        $this->gateway->paymentIntentOutcomes = ['*' => 'requires_action'];
+        $manager = app(UsageBillingCheckoutManager::class);
+
+        $result = $manager->initiateAutoRecharge($business, 5_000_000);
+        $attempt = app(BusinessFundingAttemptRepository::class)->findById($result->fundingAttemptId);
+
+        $rawBody = json_encode([
+            'id' => 'evt_'.uniqid(),
+            'type' => 'checkout.session.completed',
+            'data' => ['object' => [
+                'id' => $attempt->provider_session_or_intent_reference,
+                'metadata' => ['app_subject_kind' => 'funding_attempt', 'app_subject_id' => (string) $attempt->id, 'app_operation_id' => $attempt->local_idempotency_key],
+                'amount_total' => $manager->expectedMinorUnitsFor($attempt),
+                'currency' => strtolower($manager->expectedCurrencyCodeFor($attempt)),
+                'customer' => $attempt->provider_customer_external_id_snapshot,
+            ]],
+        ]);
+
+        $this->call('POST', route('webhooks.stripe.usage-billing'), [], [], [], [
+            'CONTENT_TYPE' => 'application/json', 'HTTP_Stripe-Signature' => 'valid',
+        ], $rawBody)->assertStatus(200);
+
+        $event = \App\Models\PaymentProviderEvent::query()->latest('id')->first();
+        $this->assertSame('failed', $event->state->value);
+
+        $freshAttempt = app(BusinessFundingAttemptRepository::class)->findById($attempt->id);
+        $this->assertSame(FundingAttemptState::RequiresAction, $freshAttempt->state);
     }
 
     public function test_platform_administrator_cannot_resume_an_attempt_with_no_provider_reference(): void
