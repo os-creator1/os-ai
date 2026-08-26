@@ -20,4 +20,25 @@ class EloquentBusinessUsageLedgerEntryRepository extends EloquentBaseRepository 
 
         return $entry;
     }
+
+    public function sumCommittedAmountForFeature(int $businessId, string $featureKey, string $periodKey): int
+    {
+        $usageChargeReservedDelta = (int) $this->query()
+            ->where('business_id', $businessId)
+            ->where('feature_key', $featureKey)
+            ->where('period_key', $periodKey)
+            ->where('entry_type', 'usage_charge')
+            ->sum('reserved_delta_micro');
+
+        $overageQuery = fn () => $this->query()
+            ->where('business_id', $businessId)
+            ->where('feature_key', $featureKey)
+            ->where('period_key', $periodKey)
+            ->where('entry_type', 'usage_overage_charge');
+
+        $overageAvailableDelta = (int) $overageQuery()->sum('available_delta_micro');
+        $overageDebtDelta = (int) $overageQuery()->sum('debt_delta_micro');
+
+        return (-$usageChargeReservedDelta) + ((-$overageAvailableDelta) + $overageDebtDelta);
+    }
 }

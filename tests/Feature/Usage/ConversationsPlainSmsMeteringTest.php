@@ -673,6 +673,47 @@ class ConversationsPlainSmsMeteringTest extends TestCase
     }
 
     /**
+     * RFC-005 Reservation Admission Correction Contract §11 — a denied
+     * qualifying M5 Conversations send must never reach the provider and
+     * must create no new reservation/ledger mutation, proven through the
+     * REAL production guard chain (quickSend() ->
+     * qualifyConversationsMeterReservation() -> UsageWalletManager::reserve()
+     * -> early response), not merely through a direct reserve() call.
+     * setFeatureLimit() (one of the three admission controls this
+     * correction adds) is tightened to zero headroom on the fully
+     * qualifying pilot Business, and the Campaigns mock asserts its
+     * provider method is never invoked at all.
+     */
+    public function test_real_quicksend_feature_limit_denial_never_reaches_provider_or_mutates_state(): void
+    {
+        $fixture = $this->buildQualifyingQuickSendFixture();
+
+        app(UsageWalletManager::class)->setFeatureLimit(
+            $fixture['business'],
+            'conversations',
+            '0',
+            (int) $fixture['business']->workspace->owner_user_id,
+            'No Conversations headroom at all.',
+        );
+
+        $campaign = \Mockery::mock(Campaigns::class);
+        $campaign->shouldNotReceive('sendPlainSMS');
+
+        $response = app(EloquentCampaignRepository::class)->quickSend(
+            $campaign,
+            $this->baseQuickSendInput($fixture),
+            true,
+        );
+
+        $payload = $response->getData();
+        $this->assertSame('error', $payload->status, 'A wallet-admission denial must return status=error, not reach the provider.');
+        $this->assertSame('retain', $payload->m5_token_action);
+
+        $this->assertSame(0, DB::table('business_usage_reservations')->where('business_id', $fixture['business']->id)->count());
+        $this->assertSame(0, DB::table('business_usage_ledger_entries')->where('business_id', $fixture['business']->id)->count());
+    }
+
+    /**
      * Drives the REAL, unmocked SendCampaignSMS::sendPlainSMS() Twilio case
      * block: a Twilio SendingServer with empty credentials makes the real
      * twilio/sdk Client constructor throw a real, synchronous

@@ -227,10 +227,47 @@ class UsageWalletManager
     }
 
     /**
-     * RFC-005 §13's reserve() algorithm, narrowed to M1's own evaluation
-     * order (per-feature limit, Business spend cap, and platform safety
-     * limit are skipped — their tables do not exist until M2, M1 contract
-     * §8 item 1). M3 contract §15 — dispatches EvaluateBusinessAutoRecharge
+     * RFC-005 Reservation Admission Correction Contract §4/§5 — evaluates
+     * one admission control's headroom as a non-negative quantity,
+     * consistently for the per-feature limit, the Business spend cap, and
+     * the platform safety limit alike. $configuredLimitMicro === null
+     * means the control is unconfigured and always allows (headroom
+     * null, not evaluated). $denialReason is embedded directly into the
+     * returned CapEvaluation only on denial, since only the caller knows
+     * which of the three controls this particular call represents.
+     * max(0, ...) is the entire fix for the case where consumption
+     * already exceeds a since-tightened limit: headroom clamps to
+     * exactly zero rather than going negative, which is what keeps a
+     * zero-amount candidate always allowed and never fabricates a denial
+     * for reasons rooted in already-historical spend.
+     */
+    private function evaluateHeadroom(?int $configuredLimitMicro, int $consumptionMicro, int $candidateMicro, string $denialReason): CapEvaluation
+    {
+        if ($configuredLimitMicro === null) {
+            return new CapEvaluation(true, null, null);
+        }
+
+        $headroomMicro = max(0, $configuredLimitMicro - $consumptionMicro);
+
+        if ($candidateMicro > $headroomMicro) {
+            return new CapEvaluation(false, $denialReason, (string) $headroomMicro);
+        }
+
+        return new CapEvaluation(true, null, (string) $headroomMicro);
+    }
+
+    /**
+     * RFC-005 §13's reserve() algorithm. RFC-005 Reservation Admission
+     * Correction Contract §6 — full wallet-admission order, all six
+     * steps: billing_status -> outstanding_debt -> per-feature limit ->
+     * Business spend cap -> platform safety limit -> available-balance
+     * sufficiency. Three of these six were M1's original scope:
+     * billing_status, outstanding_debt, and available-balance sufficiency;
+     * the per-feature limit, Business spend cap, and platform safety
+     * limit were M2-designed but never connected here until this
+     * correction — M1 contract §8 item 1 deferred them only because their
+     * tables did not exist yet, not because they are out of reserve()'s
+     * own scope. M3 contract §15 — dispatches EvaluateBusinessAutoRecharge
      * after commit, only for a genuine new negative-available_delta_micro
      * reservation (never the idempotent-repeat early return above, and
      * never a zero-amount reservation).
@@ -306,6 +343,66 @@ class UsageWalletManager
 
             if ($wallet->debt_balance_micro > 0) {
                 return new ReservationResult(false, null, 'outstanding_debt', false);
+            }
+
+            // RFC-005 Reservation Admission Correction Contract §4.B —
+            // keyed by feature_key, never meter_key: Amendment 1 permits
+            // multiple meter_keys to share one feature_key, and this is
+            // the same consumption figure §4.C's platform safety limit
+            // reuses below, so it is computed exactly once.
+            $featureConsumptionMicro = $this->reservationRepository->sumPendingReservedAmountForFeature(
+                (int) $business->id,
+                $meter->feature_key,
+                $wallet->spend_period_key,
+            ) + $this->ledgerRepository->sumCommittedAmountForFeature(
+                (int) $business->id,
+                $meter->feature_key,
+                $wallet->spend_period_key,
+            );
+
+            // Contract §8.B — the row-locking variant is required here:
+            // this is the same Business+feature-scoped row setFeatureLimit()
+            // already locks, so the two interoperate safely without any
+            // cross-Business contention or deadlock risk.
+            $featureLimit = $this->featureLimitRepository->findForUpdateByBusinessAndFeature((int) $business->id, $meter->feature_key);
+            $featureLimitEvaluation = $this->evaluateHeadroom(
+                $featureLimit?->monthly_limit_micro,
+                $featureConsumptionMicro,
+                $reservedAmountMicro,
+                'feature_limit',
+            );
+
+            if (! $featureLimitEvaluation->allowed) {
+                return new ReservationResult(false, null, $featureLimitEvaluation->denialReason, false);
+            }
+
+            // Contract §4.A — reuses the wallet's own already-correct
+            // cached counters; no new query.
+            $businessSpendCapEvaluation = $this->evaluateHeadroom(
+                $wallet->monthly_spend_cap_micro,
+                $wallet->committed_spend_this_period_micro + $wallet->reserved_spend_this_period_micro,
+                $reservedAmountMicro,
+                'business_spend_cap',
+            );
+
+            if (! $businessSpendCapEvaluation->allowed) {
+                return new ReservationResult(false, null, $businessSpendCapEvaluation->denialReason, false);
+            }
+
+            // Contract §8.C — deliberately the plain, non-locking read:
+            // locking this platform-global row here would serialize every
+            // Business's reservations for this feature against one shared
+            // row, which the contract explicitly forbids.
+            $safetyLimit = $this->safetyLimitRepository->findByFeatureKey($meter->feature_key);
+            $safetyLimitEvaluation = $this->evaluateHeadroom(
+                $safetyLimit?->max_monthly_limit_micro,
+                $featureConsumptionMicro,
+                $reservedAmountMicro,
+                'platform_safety_limit',
+            );
+
+            if (! $safetyLimitEvaluation->allowed) {
+                return new ReservationResult(false, null, $safetyLimitEvaluation->denialReason, false);
             }
 
             if ($wallet->available_balance_micro < $reservedAmountMicro) {

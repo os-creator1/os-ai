@@ -68,6 +68,8 @@ class UsageWalletManagerConcurrencyTest extends TestCase
         }
 
         if ($this->createdBusinessIds !== []) {
+            DB::table('business_usage_limit_transitions')->whereIn('business_id', $this->createdBusinessIds)->delete();
+            DB::table('business_feature_usage_limits')->whereIn('business_id', $this->createdBusinessIds)->delete();
             DB::table('business_usage_ledger_entries')->whereIn('business_id', $this->createdBusinessIds)->delete();
             DB::table('business_usage_reservations')->whereIn('business_id', $this->createdBusinessIds)->delete();
             DB::table('business_usage_wallets')->whereIn('business_id', $this->createdBusinessIds)->delete();
@@ -294,6 +296,56 @@ PHP;
 
         $this->assertStringContainsString('GRANTED', $holder->getOutput());
         $this->assertStringContainsString('DENIED:insufficient_balance', $waiter->getOutput());
+
+        $this->assertSame(1, DB::table('business_usage_reservations')->where('business_id', $businessId)->count());
+    }
+
+    /**
+     * RFC-005 Reservation Admission Correction Contract §8.B — the
+     * feature-limit read uses the same locking findForUpdateByBusinessAndFeature()
+     * lookup, on the same Business-scoped serialization point the wallet
+     * row itself already provides (reserve() always locks the wallet row
+     * first), so two workers racing the same feature_key's headroom
+     * cannot oversubscribe it — exactly one wins, the loser is denied
+     * 'feature_limit', not a balance shortfall. Available balance is set
+     * generously here so it is never the binding control; the feature
+     * limit is the only thing exactly one reservation can satisfy.
+     */
+    public function test_two_workers_racing_the_final_feature_limit_headroom_resolve_to_exactly_one_winner(): void
+    {
+        $businessId = $this->createBusinessWithWallet(10_000_000);
+        $ownerId = (int) DB::table('businesses')->where('id', $businessId)->value('customer_id');
+        $business = \App\Models\Business::find($businessId);
+
+        // Room for exactly one 1,000,000-micro reservation.
+        app(UsageWalletManager::class)->setFeatureLimit($business, 'crm', '1000000', $ownerId, 'Exactly one reservation.');
+
+        $holder = new Process([$this->phpBinary(), $this->runnerPath, 'hold-then-reserve', (string) $businessId, '2', 'holder-key-'.uniqid()]);
+        $holder->start();
+
+        $locked = false;
+        $holder->waitUntil(function ($type, $output) use (&$locked) {
+            if (str_contains($output, 'LOCKED')) {
+                $locked = true;
+
+                return true;
+            }
+
+            return false;
+        });
+        $this->assertTrue($locked, 'Holder process never confirmed its lock.');
+
+        $waiter = new Process([$this->phpBinary(), $this->runnerPath, 'reserve', (string) $businessId, 'waiter-key-'.uniqid()]);
+        $start = microtime(true);
+        $waiter->run();
+        $elapsed = microtime(true) - $start;
+
+        $holder->wait();
+
+        $this->assertGreaterThan(1.0, $elapsed, 'The waiter genuinely blocked on the shared wallet-row lock for close to the full hold duration.');
+
+        $this->assertStringContainsString('GRANTED', $holder->getOutput());
+        $this->assertStringContainsString('DENIED:feature_limit', $waiter->getOutput());
 
         $this->assertSame(1, DB::table('business_usage_reservations')->where('business_id', $businessId)->count());
     }
