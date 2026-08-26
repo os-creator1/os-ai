@@ -5,8 +5,11 @@ namespace Tests\Feature\Usage;
 use App\Exceptions\Usage\UnauthorizedUsageBillingManagementException;
 use App\Library\Usage\UsageWalletManager;
 use App\Models\Currency;
+use App\Models\User;
+use App\Repositories\Contracts\UsageMeterRepository;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Tests\Feature\Business\Concerns\CreatesBusinessTestData;
 use Tests\TestCase;
 
@@ -95,5 +98,107 @@ class UsageWalletManagerSpendCapTest extends TestCase
 
         $this->expectException(UnauthorizedUsageBillingManagementException::class);
         app(UsageWalletManager::class)->setSpendCap($business, '1000000', (int) $staffCustomer->user_id, 'Denied.');
+    }
+
+    /**
+     * RFC-005 Reservation Admission Correction Contract §4.A/§9 — a
+     * genuine, disposable UsageMeter/active rate must exist before
+     * reserve() will accept the feature key (mirrors
+     * UsageWalletManagerReservationLifecycleTest's own established
+     * fixture sequence).
+     */
+    private function activateRate(string $featureKey = 'crm', string $retailRateMicro = '1000000'): void
+    {
+        $actorId = User::create([
+            'first_name' => 'Test', 'last_name' => 'Actor',
+            'email' => 'actor' . uniqid() . '@example.test', 'status' => true,
+            'is_admin' => true, 'is_customer' => false, 'active_portal' => 'admin',
+        ])->id;
+        $currencyId = Currency::query()->first()->id;
+
+        app(UsageMeterRepository::class)->create([
+            'meter_key' => $featureKey, 'feature_key' => $featureKey, 'business_id' => null,
+            'currency_id' => $currencyId, 'description' => 'Spend-cap fixture meter.', 'updated_by_user_id' => $actorId,
+        ]);
+
+        app(UsageWalletManager::class)->setActiveRate($featureKey, $retailRateMicro, '500000', 'per message', $currencyId, $actorId, 'Fixture.');
+        app(UsageWalletManager::class)->activateMetering($featureKey, $actorId, 'Fixture.');
+    }
+
+    public function test_business_spend_cap_denies_reserve_when_headroom_exhausted(): void
+    {
+        Currency::create(['name' => 'US Dollar', 'code' => 'USD', 'format' => '$', 'status' => true]);
+        $customer = $this->createCustomer();
+        $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
+        $business->loadMissing('workspace');
+        app(UsageWalletManager::class)->initializeWalletForNewBusiness($business->id);
+        $this->activateRate();
+        DB::table('business_usage_wallets')->where('business_id', $business->id)->update(['available_balance_micro' => 10_000_000]);
+        $actorId = (int) $business->workspace->owner_user_id;
+
+        app(UsageWalletManager::class)->setSpendCap($business, '1000000', $actorId, 'Exactly one reservation.');
+
+        $first = app(UsageWalletManager::class)->reserve($business, 'crm', (string) Str::uuid(), '1');
+        $this->assertTrue($first->granted);
+
+        $second = app(UsageWalletManager::class)->reserve($business, 'crm', (string) Str::uuid(), '1');
+        $this->assertFalse($second->granted);
+        $this->assertSame('business_spend_cap', $second->denialReason);
+        $this->assertSame(1, DB::table('business_usage_reservations')->where('business_id', $business->id)->count());
+    }
+
+    public function test_business_spend_cap_allows_candidate_exactly_equal_to_headroom(): void
+    {
+        Currency::create(['name' => 'US Dollar', 'code' => 'USD', 'format' => '$', 'status' => true]);
+        $customer = $this->createCustomer();
+        $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
+        $business->loadMissing('workspace');
+        app(UsageWalletManager::class)->initializeWalletForNewBusiness($business->id);
+        $this->activateRate();
+        DB::table('business_usage_wallets')->where('business_id', $business->id)->update(['available_balance_micro' => 10_000_000]);
+        $actorId = (int) $business->workspace->owner_user_id;
+
+        app(UsageWalletManager::class)->setSpendCap($business, '1000000', $actorId, 'Exactly one reservation.');
+
+        $result = app(UsageWalletManager::class)->reserve($business, 'crm', (string) Str::uuid(), '1');
+
+        $this->assertTrue($result->granted, 'A candidate exactly equal to headroom must be allowed, never denied.');
+    }
+
+    /**
+     * RFC-005 Reservation Admission Correction Contract §5 — the exact
+     * contradiction the merged contract itself was corrected to resolve:
+     * a cap tightened below already-consumed spend clamps headroom to
+     * zero (never negative), so a positive-amount candidate is denied
+     * while a zero-amount candidate remains allowed, and the historical
+     * committed_spend_this_period_micro counter is never touched.
+     */
+    public function test_business_spend_cap_tightened_below_already_committed_spend_clamps_headroom_to_zero(): void
+    {
+        Currency::create(['name' => 'US Dollar', 'code' => 'USD', 'format' => '$', 'status' => true]);
+        $customer = $this->createCustomer();
+        $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
+        $business->loadMissing('workspace');
+        app(UsageWalletManager::class)->initializeWalletForNewBusiness($business->id);
+        $this->activateRate();
+        DB::table('business_usage_wallets')->where('business_id', $business->id)->update([
+            'available_balance_micro' => 10_000_000,
+            'committed_spend_this_period_micro' => 10_000_000,
+        ]);
+        $actorId = (int) $business->workspace->owner_user_id;
+
+        app(UsageWalletManager::class)->setSpendCap($business, '1000000', $actorId, 'Tighten below committed.');
+
+        $positiveCandidate = app(UsageWalletManager::class)->reserve($business, 'crm', (string) Str::uuid(), '1');
+        $this->assertFalse($positiveCandidate->granted);
+        $this->assertSame('business_spend_cap', $positiveCandidate->denialReason);
+
+        $zeroCandidate = app(UsageWalletManager::class)->reserve($business, 'crm', (string) Str::uuid(), '0');
+        $this->assertTrue($zeroCandidate->granted, 'A zero-amount candidate must remain allowed even when headroom has clamped to zero.');
+
+        $this->assertDatabaseHas('business_usage_wallets', [
+            'business_id' => $business->id,
+            'committed_spend_this_period_micro' => 10_000_000,
+        ]);
     }
 }

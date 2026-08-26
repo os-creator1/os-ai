@@ -176,6 +176,34 @@ class ConversationsPlainSmsMeteringTest extends TestCase
         $this->assertSame(0, DB::table('business_usage_reservations')->where('business_id', $pilot['business']->id)->count());
     }
 
+    /**
+     * RFC-005 Reservation Admission Correction Contract §11 — a denied
+     * qualifying M5 Conversations send must never reach the provider and
+     * must create no new reservation/ledger mutation, exercised through
+     * one of the three new admission controls rather than the
+     * pre-existing insufficient_balance denial covered above. Mirrors
+     * test_reserve_wallet_denial_blocks_before_any_reservation_is_written's
+     * own pattern exactly: reserve() is called directly, so
+     * Campaigns::sendPlainSMS() is never reached by construction — the
+     * provider is simply never given a chance to run.
+     */
+    public function test_reserve_feature_limit_denial_blocks_before_any_reservation_or_ledger_mutation(): void
+    {
+        $pilot = $this->provisionPilot();
+        $manager = app(UsageWalletManager::class);
+        $actorId = (int) $pilot['business']->workspace->owner_user_id;
+
+        $manager->setFeatureLimit($pilot['business'], 'conversations', '0', $actorId, 'No Conversations headroom at all.');
+
+        $result = $manager->reserve($pilot['business'], $pilot['meter_key'], 'idem-' . uniqid(), '1');
+
+        $this->assertFalse($result->granted);
+        $this->assertSame('feature_limit', $result->denialReason);
+        $this->assertFalse($result->createdByThisInvocation);
+        $this->assertSame(0, DB::table('business_usage_reservations')->where('business_id', $pilot['business']->id)->count());
+        $this->assertSame(0, DB::table('business_usage_ledger_entries')->where('business_id', $pilot['business']->id)->count());
+    }
+
     public function test_meter_business_scope_mismatch_is_a_configuration_integrity_failure(): void
     {
         $pilot = $this->provisionPilot();

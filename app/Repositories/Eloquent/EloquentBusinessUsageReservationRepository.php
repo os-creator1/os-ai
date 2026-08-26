@@ -38,6 +38,16 @@ class EloquentBusinessUsageReservationRepository extends EloquentBaseRepository 
             ->get();
     }
 
+    public function sumPendingReservedAmountForFeature(int $businessId, string $featureKey, string $periodKey): int
+    {
+        return (int) $this->query()
+            ->where('business_id', $businessId)
+            ->where('feature_key', $featureKey)
+            ->where('period_key', $periodKey)
+            ->where('status', 'pending')
+            ->sum('reserved_amount_micro');
+    }
+
     public function create(array $attributes): BusinessUsageReservation
     {
         /** @var BusinessUsageReservation $reservation */
