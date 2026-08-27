@@ -33,6 +33,22 @@ No genuinely new blocking product/schema question was found this round beyond wh
 
 ---
 
+## Correction Round 2 record
+
+Independent post-Round-1 review of head `3a6a1b6cd1053033a972d1dc78508cd84169843a` found one genuine remaining defect, resolved below by direct mechanical re-audit of `ReconcileProviderPendingState.php`, `confirmAttemptFromReturn()`, and `confirmSucceeded()`. Every other item raised in this round's review request (notification-delivery wording, allowlist counts, the `requires_action` conflict, low-balance applicability, the expiry cadence, the low-balance/auto-recharge-disable transaction semantics, the `BusinessFundingAttemptSucceeded` emission point, the seven wallet/reservation events' semantic map, and the production/test allowlist recomputation) was independently re-verified against the current file this round and found **already correctly resolved by Correction Round 1** — restated below rather than reworded by inertia. **This is the final ordinary correction round: 2 of 2 consumed; 0 ordinary rounds remain.**
+
+Exact issue resolved this round:
+
+1. **`ReconcileProviderPendingState`'s test method 5 described an impossible scenario.** The prior wording, `test_reconciliation_never_duplicates_accounting_for_an_already_succeeded_attempt`, fed an already-`Succeeded` attempt directly into a code path the job's own query (`whereIn('state', [ProviderPending, RequiresAction])`) can never select it through. Re-audited and replaced with `test_the_reconciliation_query_never_selects_an_already_succeeded_attempt`, which proves the one guarantee this job's actual query structure honestly supports. Corrected in §9.
+
+One additional, previously-undiscovered mechanical fact found while designing that method's replacement, disclosed per this contract's own zero-discretion standard rather than silently absorbed or silently ignored:
+
+- **A genuine, pre-existing race-condition robustness gap in already-merged M3 code**, unrelated to this correction's own scope: `ReconcileProviderPendingState.handle()` iterates already-loaded, potentially-stale in-memory attempt models rather than re-fetching each one immediately before confirmation, and `confirmSucceeded()`'s main branch has no guard against being invoked twice for the same attempt (unlike its `AddonPurchase` branch, which does catch `UniqueConstraintViolationException` around its own credit call). A concurrent webhook racing a reconciliation pass on the same stuck attempt could, in the current code, cause an uncaught `UniqueConstraintViolationException` to crash the entire scheduled run. **Not fixed by this correction** (out of the locked "does not redesign the reconciliation flow" boundary) — disclosed in §9/§12/§14 for a future, separately-governed decision.
+
+No other genuinely new blocking product/schema question was found this round.
+
+---
+
 ## 0. Governance
 
 - Drafted on branch `chore/rfc-005-job-event-dispatch-completion-correction-contract`, in an isolated linked worktree (`../rfc-005-job-event-dispatch-completion-contract-worktree`), based on `origin/main` at `ae0aba36057360eb1149ef980beeb90f9d2d250f` — the Receipt Boundary correction's own merge commit (PR [#139](https://github.com/os-creator1/os-ai/pull/139)). Reconfirmed unchanged this round via `git fetch origin && git rev-parse origin/main` and `git merge-base origin/main HEAD` (both returned `ae0aba36057360eb1149ef980beeb90f9d2d250f`) — this branch remains legitimately based on current `origin/main`, no rebase needed.
@@ -41,7 +57,7 @@ No genuinely new blocking product/schema question was found this round beyond wh
 - Locked:
   - `human_only_merge: true`
   - `maximum_correction_rounds: 2`
-  - **Correction rounds: 1 of 2 consumed; 1 ordinary round remains.**
+  - **Correction rounds: 2 of 2 consumed; 0 ordinary rounds remain.**
   - `advance_automatically: false`
   - `start_automatically_after_contract_merge: false`
   - `M6 remains frozen` — untouched, not resumed, no M6 document created or modified.
@@ -266,17 +282,23 @@ private function confirmSucceeded(...): void
 
 ---
 
-## 9. `ReconcileProviderPendingState` — test-gap requirement, methods updated for the corrected event ordering
+## 9. `ReconcileProviderPendingState` — test-gap requirement, race-realism corrected this round
 
 **Confirmed again this round: zero test coverage anywhere in `tests/` for this class.** Delegation chain unchanged: `ReconcileProviderPendingState.handle()` → `confirmAttemptFromReturn()` → (on genuine success) `confirmSucceeded()`.
 
-**Locked test file, unchanged path:** `tests/Feature/Usage/ReconcileProviderPendingStateTest.php` (new). **Locked test methods, method 1 updated per §7.1's corrected ordering:**
+**Method 5 corrected this round — the prior wording described an impossible scenario.** The job's own query (`ReconcileProviderPendingState.php:29-33`) is `whereIn('state', [ProviderPending, RequiresAction])->where('updated_at', '<', $cutoff)->whereNotNull('provider_session_or_intent_reference')` — an attempt already in `Succeeded` state can never be selected by this query in the first place, so a test titled "never duplicates accounting for an already-succeeded attempt" that feeds a `Succeeded` row directly into the job's own selection path was proving nothing real.
 
-1. `test_reconciles_a_stuck_provider_pending_attempt_to_succeeded_after_local_accounting_completes` — renamed and strengthened from the initial draft's `test_reconciles_a_stuck_provider_pending_attempt_to_succeeded`: a `ProviderPending` attempt older than 30 minutes, with a provider-confirmed-succeeded fixture, is reconciled to `Succeeded`; the test asserts, inside the `Event::assertDispatched(BusinessFundingAttemptSucceeded::class, function (...) { ... })` callback, that the corresponding ledger entry (for `ManualTopUp`/`AutoRecharge`) or completed addon purchase (for `AddonPurchase`) already exists in the database at the moment the assertion callback runs — proving the event is observed only after local accounting/finalization has committed, per §7.1's corrected design, not merely that the class was eventually dispatched.
+**Direct re-audit this round of the actual race this class of test should prove, by reading `confirmAttemptFromReturn()` and `confirmSucceeded()` fresh** (`UsageBillingCheckoutManager.php:477-515`, `:628-658`): `ReconcileProviderPendingState.handle()` loads its `$stuck` collection once via `->get()`, then iterates the already-loaded, potentially-stale in-memory `BusinessFundingAttempt` models — it does not re-fetch each row immediately before calling `confirmAttemptFromReturn($attempt)`. If a concurrent webhook confirms the same attempt between the query and that loop iteration reaching it, the in-memory `$attempt->state` still reads its pre-race value (e.g., `ProviderPending`), so `confirmAttemptFromReturn()`'s own already-`Succeeded` early return (line 479) does not catch it on the in-memory object; execution proceeds to re-verify against the *provider* (not the local DB) and, on a provider-confirmed success, calls `confirmSucceeded()` again. **Confirmed by direct read: `confirmSucceeded()`'s main (non-`AddonPurchase`) branch has no guard against being called twice for the same attempt** — `$this->attemptRepository->update($attempt, ...)` is an unconditional update (not a `WHERE state = X` guarded one), `recordTransition()` would insert a second, redundant `Succeeded → Succeeded` audit row, and the subsequent `creditFromFunding()` call is not wrapped in a `try/catch` in this branch (unlike `finalizeAddonPurchaseIfPending()`'s own `AddonPurchase` branch, which does catch `UniqueConstraintViolationException` around its own `creditFromFunding()` call, `UsageBillingCheckoutManager.php:690-701`). The ledger's own `UNIQUE` constraint on `correlation_key` (`$attempt->local_idempotency_key.':credit'`) would reject the second credit at the database level, but **the resulting `UniqueConstraintViolationException` would propagate uncaught out of `confirmSucceeded()`, out of `confirmAttemptFromReturn()`, and out of the job's own `foreach` loop** (which also has no per-iteration `try/catch`) — crashing the entire scheduled run rather than gracefully no-opping.
+
+**This is a genuine, newly-discovered, pre-existing gap in already-merged M3 reconciliation code, not something introduced by this correction.** Per this correction's own locked constraint ("does not redesign the reconciliation flow") and the instruction to STOP and report rather than invent a fix under scope pressure, **this correction does not add a `try/catch` to `ReconcileProviderPendingState.handle()`'s loop or to `confirmSucceeded()`'s main branch** — doing so would be a genuine, separate defect fix to already-merged M3 behavior, unrelated to making the currently-unreachable job schedulable and tested, and is disclosed here for a human decision rather than silently absorbed into this correction's scope.
+
+**Locked test file, unchanged path:** `tests/Feature/Usage/ReconcileProviderPendingStateTest.php` (new). **Locked test methods, methods 1 and 5 both corrected this round:**
+
+1. `test_reconciles_a_stuck_provider_pending_attempt_to_succeeded_after_local_accounting_completes` — a `ProviderPending` attempt older than 30 minutes, with a provider-confirmed-succeeded fixture, is reconciled to `Succeeded`; the test asserts, inside the `Event::assertDispatched(BusinessFundingAttemptSucceeded::class, function (...) { ... })` callback, that the corresponding ledger entry (for `ManualTopUp`/`AutoRecharge`) or completed addon purchase (for `AddonPurchase`) already exists in the database at the moment the assertion callback runs — proving the event is observed only after local accounting/finalization has committed, per §7.1's corrected design, not merely that the class was eventually dispatched.
 2. `test_does_not_reconcile_an_attempt_updated_within_the_stuck_window` — unchanged from the initial draft.
 3. `test_does_not_mutate_a_still_pending_attempt_the_provider_confirms_as_unresolved` — unchanged.
 4. `test_skips_an_attempt_with_no_provider_session_or_intent_reference` — unchanged.
-5. `test_reconciliation_never_duplicates_accounting_for_an_already_succeeded_attempt` — unchanged.
+5. `test_the_reconciliation_query_never_selects_an_already_succeeded_attempt` — **replaces** the prior draft's impossible-scenario method. Creates an attempt already in `Succeeded` state with `updated_at` older than 30 minutes and a non-null `provider_session_or_intent_reference` (otherwise matching every other selection criterion) and asserts it is absent from the job's own query result set — proving the query-level exclusion mechanically, which is the one part of "never duplicates accounting for an already-succeeded attempt" this job's actual code structure can honestly guarantee. The stale-in-memory-object race described above is **not** given a test method here, since no current code path provides the graceful behavior such a test would need to assert; it is disclosed above as a found-but-out-of-scope defect instead of being asserted as proven-safe.
 
 **This correction does not redesign the reconciliation flow.**
 
@@ -327,7 +349,7 @@ No path is marked with "or sibling," "if needed," or any other discretionary qua
 |---|---|---|---|
 | 1 | `tests/Feature/Usage/UsageWalletDomainEventDispatchTest.php` | REQUIRED (new) | Covers all 7 wallet/reservation events' exact emission/non-emission (§6), including the non-mutual-exclusivity assertions for `BusinessWalletCredited`+`BusinessWalletDebtCleared` and `BusinessWalletDebited`+`BusinessWalletDebtIncurred`, via `Event::fake([...])` scoped to exactly these 7 classes. |
 | 2 | `tests/Feature/Usage/FundingAttemptTerminalEventDispatchTest.php` | REQUIRED (new) | Updated per §7.1's corrected ordering. Exact methods: `test_succeeded_is_not_observable_before_the_wallet_credit_commits_for_a_topup` and `test_succeeded_is_not_observable_before_the_wallet_credit_commits_for_an_auto_recharge` (each asserts, inside the `Event::assertDispatched()` callback, that the corresponding ledger entry already exists — proving post-finalization ordering, not merely eventual dispatch); `test_succeeded_is_not_observable_before_the_addon_purchase_is_completed` (same technique against `business_usage_addon_purchases.status`); `test_failed_dispatches_immediately_after_the_transition_record`; `test_replay_of_an_already_succeeded_attempt_does_not_redispatch`; `test_replay_of_an_already_terminal_failed_attempt_does_not_redispatch`. |
-| 3 | `tests/Feature/Usage/ReconcileProviderPendingStateTest.php` | REQUIRED (new) | Exact 5 methods, §9 (method 1 renamed/strengthened this round). |
+| 3 | `tests/Feature/Usage/ReconcileProviderPendingStateTest.php` | REQUIRED (new) | Exact 5 methods, §9 (methods 1 and 5 both corrected this round — method 5 now proves the query-level exclusion of already-`Succeeded` rows, replacing the prior draft's impossible-scenario wording). |
 | 4 | `tests/Feature/Usage/SendLowBalanceNotificationTest.php` | REQUIRED (new) | Exact methods: `test_dispatches_when_a_reservation_drops_the_balance_to_or_below_threshold`; `test_dispatches_when_a_commit_overage_drops_the_balance_to_or_below_threshold`; `test_does_not_redispatch_while_the_marker_is_already_set`; `test_does_not_dispatch_when_auto_recharge_is_disabled`; `test_does_not_dispatch_when_no_threshold_is_configured`; `test_clears_the_marker_on_recovery_via_credit_from_funding`; `test_clears_the_marker_on_recovery_via_commits_unused_reservation_release`; `test_clears_the_marker_on_recovery_via_reservation_release`; `test_re_enabling_auto_recharge_alone_does_not_clear_the_marker`; `test_skips_when_no_billing_contact_is_configured`; `test_skips_when_the_contact_has_opted_out`; `test_skips_when_the_resolved_email_is_blank`. |
 | 5 | `tests/Feature/Usage/SendAutoRechargeDisabledNotificationTest.php` | REQUIRED (new) | Exact methods (job/notification-level, recipient resolution only — the wallet-manager triggering logic is proven in file #6 below, mirroring `SendReceiptNotification`'s own separation of concerns): `test_sends_the_notification_to_the_opted_in_billing_contact`; `test_skips_when_no_billing_contact_is_configured`; `test_skips_when_the_contact_has_opted_out`; `test_skips_when_the_resolved_email_is_blank`; `test_resolves_email_via_the_contact_user_when_contact_user_id_is_set`. |
 | 6 | `tests/Feature/Usage/AutoRechargeFailedPaymentRetryTest.php` | REQUIRED (modified existing) | See breakdown below. |
@@ -357,6 +379,7 @@ This correction does not implement, design, or absorb any of the following:
 - Conversations pilot activation; tax/VAT implementation; legacy invoices.
 - `SendReceiptNotification`/`ReceiptAvailableNotification` — Receipt Boundary is closed; regression-verified only (§10), never modified.
 - Any migration or schema change (§13).
+- **The stale-in-memory-object reconciliation race disclosed in §9** — `ReconcileProviderPendingState.handle()`'s lack of per-iteration exception isolation and `confirmSucceeded()`'s lack of a guard against a second call for an already-terminal attempt are both genuine, pre-existing gaps in already-merged M3 code, unrelated to this correction's own job/event dispatch reachability scope. This correction adds the missing query-level test proof (§9 method 5) but does not add exception handling to either method.
 
 Do not reopen Reservation Admission, Funding Provider-Flow, or Receipt Boundary — none is touched, contradicted, or reinterpreted anywhere above.
 
@@ -368,15 +391,18 @@ Do not reopen Reservation Admission, Funding Provider-Flow, or Receipt Boundary 
 - `AI-AUTONOMY-STATE.json` is untouched by this branch.
 - M6 remains frozen.
 - No product, test, config, route, or RFC-source file is touched by this branch. This governance branch changes exactly one file.
-- No implementation has occurred. **Correction rounds: 1 of 2 consumed; 1 ordinary round remains.**
+- No implementation has occurred. **Correction rounds: 2 of 2 consumed; 0 ordinary rounds remain.**
 - Reservation Admission, Funding Provider-Flow, and Receipt Boundary are not reopened, contradicted, or reinterpreted anywhere above.
 
 ---
 
 ## 14. Open items requiring human resolution before implementation can proceed to full scope
 
-**All three items from the initial draft are resolved this round** (cadence — §3; the `requires_action` counter conflict — §5; low-balance applicability — §4) and are removed from this list. Fresh re-audit this round found no genuinely new blocking product or schema question. The only remaining sub-detail is not a product/policy question and is disclosed in §11's scheduler test design note instead of listed here: the exact `Illuminate\Console\Scheduling\Event` property that identifies a `$schedule->job(...)` registration could not be mechanically confirmed in this vendor-less worktree, and must be verified against the actual installed `laravel/framework` source at implementation time before `UsageJobSchedulingTest.php` can be finalized — a trivial mechanical check, not a decision requiring human policy input.
+**All three items from the initial draft are resolved** (cadence — §3; the `requires_action` counter conflict — §5; low-balance applicability — §4) and remain removed from this list. Two further items found during independent review and this correction's own re-audit are disclosed below, neither of which blocks implementation authorization:
 
-**No open items remain that block implementation authorization.**
+1. **The exact `Illuminate\Console\Scheduling\Event` property that identifies a `$schedule->job(...)` registration** could not be mechanically confirmed in this vendor-less worktree (no `laravel/framework` source present to read); disclosed in §11's scheduler test design note. A trivial mechanical check against the real installed framework at implementation time, not a decision requiring human policy input.
+2. **The `ReconcileProviderPendingState`/`confirmSucceeded()` stale-in-memory-object race disclosed in §9**, found during this round's re-audit. This is a genuine, pre-existing robustness gap in already-merged M3 code (a concurrent webhook racing a reconciliation pass on the same attempt could, in the current code, raise an uncaught `UniqueConstraintViolationException` that crashes the entire scheduled run rather than gracefully no-opping). It is **not** created by this correction and this correction does not fix it — it is flagged here for a human decision on whether a future, separately-scoped correction should add exception isolation to `ReconcileProviderPendingState.handle()`'s loop and/or a terminal-state guard to `confirmSucceeded()`. It does not block authorizing this correction's own scope (adding the missing jobs/events/scheduling), since fixing it is unrelated to reachability of the new jobs/events this contract adds.
+
+**No open item blocks implementation authorization for this correction's own scope.** Item 2 above is a recommendation for a future, separately-governed correction, not a precondition for this one.
 
 ---
