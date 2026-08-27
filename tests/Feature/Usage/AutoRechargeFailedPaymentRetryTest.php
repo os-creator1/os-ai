@@ -237,9 +237,17 @@ require '{$escapedVendor}';
 putenv('APP_ENV=testing');
 \$_ENV['APP_ENV'] = 'testing';
 \$_SERVER['APP_ENV'] = 'testing';
+putenv('QUEUE_CONNECTION=sync');
+\$_ENV['QUEUE_CONNECTION'] = 'sync';
+\$_SERVER['QUEUE_CONNECTION'] = 'sync';
 \$app = require '{$escapedBootstrap}';
 \$kernel = \$app->make(Illuminate\Contracts\Console\Kernel::class);
 \$kernel->bootstrap();
+
+if (config('queue.default') !== 'sync') {
+    fwrite(STDERR, "QUEUE_CONNECTION_NOT_SYNC\\n");
+    exit(1);
+}
 
 \$businessId = (int) \$argv[1];
 \$signalPath = \$argv[2];
