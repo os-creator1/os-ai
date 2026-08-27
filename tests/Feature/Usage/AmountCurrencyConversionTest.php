@@ -88,6 +88,15 @@ class AmountCurrencyConversionTest extends TestCase
         return [$customer, $business];
     }
 
+    /**
+     * RFC-005 Funding Provider-Flow Correction Contract §17 — assertion-
+     * only correction: the currency-conversion invariant itself (a
+     * zero-decimal currency converts and proceeds past the exponent
+     * lookup without failing) is fully preserved; only the terminal state
+     * assertion changes, since Checkout Session creation cannot
+     * synchronously reach Succeeded the way an off-session PaymentIntent
+     * previously could.
+     */
     public function test_conversion_is_never_hard_coded_to_usd_and_succeeds_for_a_zero_decimal_currency(): void
     {
         [$customer, $business] = $this->businessWithAttachedInstrument('JPY');
@@ -96,7 +105,8 @@ class AmountCurrencyConversionTest extends TestCase
         // minor units (whole yen) — well above the 50-minor-unit floor.
         $result = app(UsageBillingCheckoutManager::class)->initiateTopUp($business, $customer->user_id, 100_000_000);
 
-        $this->assertSame(\App\Enums\Usage\FundingAttemptState::Succeeded, $result->state);
+        $this->assertSame(\App\Enums\Usage\FundingAttemptState::ProviderPending, $result->state);
+        $this->assertNull($result->denialReason);
     }
 
     public function test_conversion_fails_closed_for_an_unrecognized_currency_code(): void

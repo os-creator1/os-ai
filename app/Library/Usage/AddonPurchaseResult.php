@@ -10,6 +10,13 @@ use App\Enums\Usage\FundingAttemptState;
  * business_funding_attempts (M4 contract §18/§21), so state reflects the
  * underlying funding attempt's own state, not a separate purchase-status
  * enum.
+ *
+ * RFC-005 Funding Provider-Flow Correction Contract §7/§8.C —
+ * redirectUrl, propagated from the underlying FundingAttemptResult, lets a
+ * future, separately authorized add-on HTTP caller reach the hosted
+ * Checkout URL without reaching into the gateway or manager internals.
+ * Trailing/nullable so every existing positional call site remains valid
+ * unchanged.
  */
 final readonly class AddonPurchaseResult
 {
@@ -18,6 +25,7 @@ final readonly class AddonPurchaseResult
         public int $fundingAttemptId,
         public FundingAttemptState $state,
         public ?string $denialReason,
+        public ?string $redirectUrl = null,
     ) {
     }
 }

@@ -167,6 +167,27 @@ class FakePaymentProviderGatewayTest extends TestCase
         $this->assertSame('cus_x', $retrieved->providerCustomerId);
     }
 
+    /**
+     * RFC-005 Funding Provider-Flow Correction Contract §8.B — proves
+     * createCheckoutSessionCalls records the exact setupFutureUsageOffSession
+     * value each caller actually passed, mirroring confirmPaymentIntentCalls'
+     * own existing "prove a specific call happened with specific
+     * parameters" purpose.
+     */
+    public function test_create_checkout_session_records_the_setup_future_usage_flag_per_call(): void
+    {
+        $gateway = new FakePaymentProviderGateway();
+
+        $gateway->createCheckoutSession('cus_x', 2000, 'USD', 'Additional Business slots', 'https://success.test', 'https://cancel.test', 'idem-true', [], true);
+        $gateway->createCheckoutSession('cus_y', 1000, 'USD', 'Wallet top-up', 'https://success.test', 'https://cancel.test', 'idem-false', [], false);
+        $gateway->createCheckoutSession('cus_z', 500, 'USD', 'Wallet top-up', 'https://success.test', 'https://cancel.test', 'idem-default', []);
+
+        $this->assertCount(3, $gateway->createCheckoutSessionCalls);
+        $this->assertTrue($gateway->createCheckoutSessionCalls[0]['setupFutureUsageOffSession']);
+        $this->assertFalse($gateway->createCheckoutSessionCalls[1]['setupFutureUsageOffSession']);
+        $this->assertFalse($gateway->createCheckoutSessionCalls[2]['setupFutureUsageOffSession'], 'The default must be false when the caller omits the argument.');
+    }
+
     public function test_checkout_session_outcome_is_configurable_per_idempotency_key(): void
     {
         $gateway = new FakePaymentProviderGateway();

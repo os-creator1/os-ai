@@ -3,14 +3,23 @@
 namespace Tests\Feature\Usage;
 
 use App\Enums\Entitlement\WorkspacePlanTier;
+use App\Enums\Usage\FundingAttemptState;
+use App\Enums\Usage\PayerType;
 use App\Enums\Workspace\WorkspaceBusinessAccessScope;
 use App\Enums\Workspace\WorkspaceMembershipRole;
 use App\Library\Entitlement\EntitlementManager;
+use App\Library\Usage\BillingProfileManager;
+use App\Library\Usage\Contracts\PaymentProviderGateway;
+use App\Library\Usage\FakePaymentProviderGateway;
+use App\Library\Usage\PaymentInstrumentManager;
+use App\Library\Usage\UsageBillingCheckoutManager;
+use App\Library\Usage\UsageWalletManager;
 use App\Models\AppConfig;
 use App\Models\Currency;
 use App\Models\Customer;
 use App\Models\User;
 use App\Models\Workspace;
+use App\Repositories\Contracts\BusinessFundingAttemptRepository;
 use App\Repositories\Contracts\BusinessRepository;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\Feature\Business\Concerns\CreatesBusinessTestData;
@@ -204,5 +213,46 @@ class UsageBillingDashboardAuthorizationTest extends TestCase
         $this->post(route('customer.workspaces.businesses.usage-billing.payer', [$workspace->uid, $business->uid]), ['payer_type' => 'workspace'])
             ->assertRedirect()
             ->assertSessionHas('flash_error');
+    }
+
+    /**
+     * RFC-005 Funding Provider-Flow Correction Contract §6 — the new
+     * top-up confirmation route's own Business-isolation check: an actor
+     * who can view Business A cannot use Business A's own route to
+     * confirm a funding attempt that actually belongs to Business B.
+     * Response is 404 (never 403, RFC-005 §24), Business B's attempt
+     * remains completely unchanged, and no provider confirmation call
+     * ever reaches the gateway (proven indirectly — the attempt's own
+     * state is unaffected, which could not be true had
+     * confirmAttemptFromReturn() actually run).
+     */
+    public function test_top_up_confirm_route_rejects_a_cross_business_attempt(): void
+    {
+        app()->instance(PaymentProviderGateway::class, new FakePaymentProviderGateway());
+
+        $ownerA = $this->actingAsHttpCustomer();
+        $workspaceA = $this->entitledWorkspace($ownerA->user);
+        $businessA = app(BusinessRepository::class)->createForCustomerInWorkspace($ownerA, $workspaceA, $this->businessAttributes());
+        app(UsageWalletManager::class)->initializeWalletForNewBusiness($businessA->id);
+        app(BillingProfileManager::class)->changePayer($businessA, PayerType::Workspace, $ownerA->user_id, 'Test.');
+
+        $ownerB = $this->createCustomer();
+        $workspaceB = $this->entitledWorkspace($ownerB->user);
+        $businessB = app(BusinessRepository::class)->createForCustomerInWorkspace($ownerB, $workspaceB, $this->businessAttributes());
+        app(UsageWalletManager::class)->initializeWalletForNewBusiness($businessB->id);
+        app(BillingProfileManager::class)->changePayer($businessB, PayerType::Workspace, $ownerB->user_id, 'Test.');
+        app(PaymentInstrumentManager::class)->resolveProviderCustomer($businessB, $ownerB->user_id);
+
+        $resultB = app(UsageBillingCheckoutManager::class)->initiateTopUp($businessB, $ownerB->user_id, 1_000_000);
+        $attemptB = app(BusinessFundingAttemptRepository::class)->findById($resultB->fundingAttemptId);
+        $this->assertSame(FundingAttemptState::ProviderPending, $attemptB->state);
+
+        // Business A's own actor attempts to confirm Business B's attempt
+        // through Business A's own route.
+        $this->get(route('customer.workspaces.businesses.usage-billing.top-up.confirm', [$workspaceA->uid, $businessA->uid, $attemptB->id]))
+            ->assertNotFound();
+
+        $freshAttemptB = app(BusinessFundingAttemptRepository::class)->findById($attemptB->id);
+        $this->assertSame(FundingAttemptState::ProviderPending, $freshAttemptB->state, 'Business B\'s attempt must remain completely unchanged — confirmAttemptFromReturn() must never have run.');
     }
 }

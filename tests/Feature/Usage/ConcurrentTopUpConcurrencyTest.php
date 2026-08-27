@@ -33,6 +33,7 @@ class ConcurrentTopUpConcurrencyTest extends TestCase
     private array $createdBusinessIds = [];
     private array $createdWorkspaceIds = [];
     private array $createdUserIds = [];
+    private array $createdPaymentProviderEventIds = [];
     private ?string $runnerPath = null;
     private ?string $signalPath = null;
     private ?int $createdCurrencyId = null;
@@ -58,6 +59,10 @@ class ConcurrentTopUpConcurrencyTest extends TestCase
 
         if ($this->signalPath !== null && file_exists($this->signalPath)) {
             @unlink($this->signalPath);
+        }
+
+        if ($this->createdPaymentProviderEventIds !== []) {
+            DB::table('payment_provider_events')->whereIn('id', $this->createdPaymentProviderEventIds)->delete();
         }
 
         if ($this->createdBusinessIds !== []) {
@@ -154,12 +159,19 @@ class ConcurrentTopUpConcurrencyTest extends TestCase
         return [$businessId, $workspaceId, $ownerId];
     }
 
+    /**
+     * RFC-005 Funding Provider-Flow Correction Contract §16.A — a
+     * ManualTopUp attempt is now Checkout-Session-backed: initiateTopUp()
+     * itself already leaves it in provider_pending (never
+     * requires_action, which no longer applies since
+     * createOffSessionPaymentIntent() is never called for this purpose),
+     * so the prior paymentIntentOutcomes fixture is no longer needed or
+     * meaningful here.
+     */
     private function createPendingAttempt(int $businessId, int $ownerId, int $amountMicro): int
     {
         $business = \App\Models\Business::find($businessId);
-        $this->gateway->paymentIntentOutcomes = ['*' => 'requires_action'];
         $result = app(UsageBillingCheckoutManager::class)->initiateTopUp($business, $ownerId, $amountMicro);
-        $this->gateway->paymentIntentOutcomes = [];
 
         return $result->fundingAttemptId;
     }
@@ -205,6 +217,16 @@ function waitForSignal(string \$path): void
 PHP;
     }
 
+    /**
+     * RFC-005 Funding Provider-Flow Correction Contract §16.A — each
+     * child process boots its own fresh FakePaymentProviderGateway, which
+     * shares no in-memory state with the parent process that actually
+     * created the Checkout Session. This child registers its own
+     * deterministic, complete/paid CheckoutSessionResult (and a matching
+     * PaymentMethodResult) for the exact persisted Session id before
+     * calling confirmAttemptFromReturn() — never relying on the parent's
+     * own gateway state, which never existed here at all.
+     */
     private function confirmRunnerScript(): string
     {
         return $this->baseRunnerPreamble()."\n".<<<'PHP'
@@ -217,7 +239,28 @@ fflush(STDOUT);
 waitForSignal($signalPath);
 
 $attempt = App\Models\BusinessFundingAttempt::find($attemptId);
-app(App\Library\Usage\UsageBillingCheckoutManager::class)->confirmAttemptFromReturn($attempt);
+$manager = app(App\Library\Usage\UsageBillingCheckoutManager::class);
+$fake = app(App\Library\Usage\Contracts\PaymentProviderGateway::class);
+
+$paymentMethodId = 'pm_fake_child_confirm';
+$fake->registerPaymentMethod(new App\Library\Usage\PaymentMethodResult(
+    $paymentMethodId,
+    '',
+    'card', 'visa', '4242', 12, 2030,
+));
+$fake->registerCheckoutSessionResult(new App\Library\Usage\CheckoutSessionResult(
+    $attempt->provider_session_or_intent_reference,
+    'complete',
+    'paid',
+    null,
+    $manager->expectedMinorUnitsFor($attempt),
+    $manager->expectedCurrencyCodeFor($attempt),
+    $attempt->provider_customer_external_id_snapshot,
+    'pi_fake_child_confirm',
+    $paymentMethodId,
+));
+
+$manager->confirmAttemptFromReturn($attempt);
 fwrite(STDOUT, "DONE\n");
 PHP;
     }
@@ -237,6 +280,57 @@ Illuminate\Support\Facades\DB::transaction(function () use ($businessId, $signal
 });
 fwrite(STDOUT, "RELEASED\n");
 PHP;
+    }
+
+    /**
+     * RFC-005 Funding Provider-Flow Correction Contract §17 — the
+     * Checkout-Session-backed sibling of FundingAttemptExactlyOnceWalletCreditTest's
+     * own PaymentIntent-backed idempotency proof: an in-process browser
+     * return followed by a redundant webhook for the exact same attempt
+     * must credit exactly once, never twice.
+     */
+    public function test_duplicate_webhook_and_browser_return_credit_a_checkout_backed_top_up_exactly_once(): void
+    {
+        [$businessId, , $ownerId] = $this->createBusinessWithAttachedInstrument();
+        $attemptId = $this->createPendingAttempt($businessId, $ownerId, 4_000_000);
+
+        $attempt = \App\Models\BusinessFundingAttempt::find($attemptId);
+        $manager = app(UsageBillingCheckoutManager::class);
+
+        $paymentMethodId = 'pm_fake_dup_confirm';
+        $this->gateway->registerPaymentMethod(new PaymentMethodResult(
+            $paymentMethodId, $attempt->provider_customer_external_id_snapshot, 'card', 'visa', '4242', 12, 2030,
+        ));
+        $this->gateway->registerCheckoutSessionResult(new \App\Library\Usage\CheckoutSessionResult(
+            (string) $attempt->provider_session_or_intent_reference,
+            'complete',
+            'paid',
+            null,
+            $manager->expectedMinorUnitsFor($attempt),
+            $manager->expectedCurrencyCodeFor($attempt),
+            $attempt->provider_customer_external_id_snapshot,
+            'pi_fake_dup_confirm',
+            $paymentMethodId,
+        ));
+
+        // Path 1: the synchronous browser-return confirmation.
+        $manager->confirmAttemptFromReturn($attempt);
+
+        // Path 2: a later, redundant webhook for the exact same attempt.
+        $event = \App\Models\PaymentProviderEvent::create([
+            'provider' => 'stripe', 'provider_event_id' => 'evt_fake_'.uniqid(), 'event_type' => 'checkout.session.completed',
+            'provider_object_id' => $attempt->provider_session_or_intent_reference, 'payload_encrypted' => '{}',
+            'payload_hash' => hash('sha256', '{}'), 'state' => 'received', 'attempts' => 0, 'received_at' => now(),
+        ]);
+        $this->createdPaymentProviderEventIds[] = $event->id;
+        $freshAttempt = \App\Models\BusinessFundingAttempt::find($attemptId);
+        $manager->confirmAttemptFromWebhook($freshAttempt, $event);
+
+        $ledgerCount = DB::table('business_usage_ledger_entries')->where('funding_attempt_id', $attemptId)->count();
+        $this->assertSame(1, $ledgerCount, 'Exactly one ledger entry must exist for this Checkout-backed funding attempt.');
+
+        $wallet = app(BusinessUsageWalletRepository::class)->findByBusinessId($businessId);
+        $this->assertSame('4000000', (string) $wallet->available_balance_micro);
     }
 
     public function test_two_concurrent_confirmations_for_the_same_business_each_credit_exactly_once(): void

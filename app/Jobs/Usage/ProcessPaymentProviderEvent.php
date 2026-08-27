@@ -82,11 +82,19 @@ class ProcessPaymentProviderEvent extends Base
     }
 
     /**
-     * M3 contract §13 — unchanged behavior. The purpose-aware dispatch
-     * (ManualTopUp/AutoRecharge/AddonPurchase) lives entirely inside
-     * UsageBillingCheckoutManager's own confirmAttemptFromWebhook()/
-     * confirmSucceeded() (M4 contract §21) — this branch never inspects
-     * purpose itself.
+     * M3 contract §13 — unchanged behavior for AutoRecharge.
+     *
+     * RFC-005 Funding Provider-Flow Correction Contract §10/§11 — becomes
+     * purpose-aware, branching on the already-loaded $attempt->purpose
+     * (never event_type) to select the expected provider-object family:
+     * AutoRecharge remains PaymentIntent-shaped (amount/.succeeded/
+     * .payment_failed, unchanged); ManualTopUp/AddonPurchase are
+     * Checkout-Session-shaped (amount_total/.completed+.async_payment_succeeded/
+     * .expired), mirroring processSlotAgreementInitialCheckout()'s own
+     * already-correct pattern. The purpose-based branch runs before any
+     * event-type comparison, so an event of the wrong family fails the
+     * amount-field-presence check first — a PaymentIntent event can never
+     * confirm a Checkout-backed attempt and vice versa.
      */
     private function processFundingAttempt($event, array $metadata, ?array $decoded, BusinessFundingAttemptRepository $attemptRepository, UsageBillingCheckoutManager $checkoutManager, PaymentProviderEventRepository $eventRepository): void
     {
@@ -117,17 +125,22 @@ class ProcessPaymentProviderEvent extends Base
         }
 
         $object = $decoded['data']['object'] ?? [];
+        $isCheckoutBacked = $attempt->purpose === \App\Enums\Usage\FundingAttemptPurpose::ManualTopUp
+            || $attempt->purpose === \App\Enums\Usage\FundingAttemptPurpose::AddonPurchase;
 
-        // M4 contract §15 (Correction Round 2 §E.6) — a payment_intent
-        // event always carries amount/currency/customer; a genuinely
-        // absent field is missing required evidence, not "check skipped".
-        if (! array_key_exists('amount', $object)) {
+        // A payment_intent event always carries amount; a Checkout Session
+        // event always carries amount_total — never both, never the other
+        // for a given purpose. A genuinely absent field for the expected
+        // family is missing required evidence, not "check skipped".
+        $amountField = $isCheckoutBacked ? 'amount_total' : 'amount';
+
+        if (! array_key_exists($amountField, $object)) {
             $eventRepository->markFailed($event->id, 'missing_required_evidence');
 
             return;
         }
 
-        if ((int) $object['amount'] !== $checkoutManager->expectedMinorUnitsFor($attempt)) {
+        if ((int) $object[$amountField] !== $checkoutManager->expectedMinorUnitsFor($attempt)) {
             $eventRepository->markFailed($event->id, 'amount_mismatch');
 
             return;
@@ -157,14 +170,28 @@ class ProcessPaymentProviderEvent extends Base
             return;
         }
 
-        if (str_ends_with((string) $event->event_type, '.succeeded')) {
-            $checkoutManager->confirmAttemptFromWebhook($attempt, $event);
-            $eventRepository->markProcessed($event->id);
+        $successSuffixes = $isCheckoutBacked ? ['.completed', '.async_payment_succeeded'] : ['.succeeded'];
+        $failureSuffixes = $isCheckoutBacked ? ['.expired'] : ['.payment_failed'];
 
-            return;
+        foreach ($successSuffixes as $suffix) {
+            if (str_ends_with((string) $event->event_type, $suffix)) {
+                $checkoutManager->confirmAttemptFromWebhook($attempt, $event);
+                $eventRepository->markProcessed($event->id);
+
+                return;
+            }
         }
 
-        if (str_ends_with((string) $event->event_type, '.payment_failed') || str_contains((string) $event->event_type, 'canceled')) {
+        foreach ($failureSuffixes as $suffix) {
+            if (str_ends_with((string) $event->event_type, $suffix)) {
+                $checkoutManager->markAttemptFailedFromWebhook($attempt, 'provider_reported_failure', $event);
+                $eventRepository->markProcessed($event->id);
+
+                return;
+            }
+        }
+
+        if (! $isCheckoutBacked && str_contains((string) $event->event_type, 'canceled')) {
             $checkoutManager->markAttemptFailedFromWebhook($attempt, 'provider_reported_failure', $event);
             $eventRepository->markProcessed($event->id);
 

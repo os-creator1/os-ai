@@ -117,7 +117,9 @@ class UsageBillingDashboardStripeIntegrationTest extends TestCase
         ));
         $instrumentManager->confirmSetupIntentAndAttach($business, $customer->user_id, $setupIntent->providerSetupIntentId);
 
-        app(UsageBillingCheckoutManager::class)->initiateTopUp($business, $customer->user_id, 5_000_000);
+        $result = app(UsageBillingCheckoutManager::class)->initiateTopUp($business, $customer->user_id, 5_000_000);
+        $attempt = app(\App\Repositories\Contracts\BusinessFundingAttemptRepository::class)->findById($result->fundingAttemptId);
+        app(UsageBillingCheckoutManager::class)->confirmAttemptFromReturn($attempt);
 
         $response = $this->get(route('customer.workspaces.businesses.usage-billing.show', [$workspace->uid, $business->uid]))
             ->assertOk();
@@ -197,6 +199,34 @@ class UsageBillingDashboardStripeIntegrationTest extends TestCase
         $result = app(UsageBillingCheckoutManager::class)->initiateTopUp($business, $customer->user_id, 1_000_000);
 
         $this->assertNotNull($result->fundingAttemptId);
-        $this->assertSame(\App\Enums\Usage\FundingAttemptState::Succeeded, $result->state);
+        $this->assertSame(\App\Enums\Usage\FundingAttemptState::ProviderPending, $result->state);
+
+        // Proves the entire flow — not only initiation — completes
+        // without a live call: confirmation, too, only ever reaches the
+        // FakePaymentProviderGateway bound above.
+        $attempt = app(\App\Repositories\Contracts\BusinessFundingAttemptRepository::class)->findById($result->fundingAttemptId);
+        $confirmed = app(UsageBillingCheckoutManager::class)->confirmAttemptFromReturn($attempt);
+        $this->assertSame(\App\Enums\Usage\FundingAttemptState::Succeeded, $confirmed->state);
+    }
+
+    /**
+     * RFC-005 Funding Provider-Flow Correction Contract §6 — proves the
+     * controller genuinely redirects the browser to Stripe's own hosted
+     * Checkout URL rather than completing synchronously back to the
+     * dashboard.
+     */
+    public function test_initiating_a_top_up_redirects_to_the_hosted_checkout_url(): void
+    {
+        $customer = $this->actingAsHttpCustomer();
+        $workspace = $this->entitledWorkspace($customer->user);
+        $business = app(BusinessRepository::class)->createForCustomerInWorkspace($customer, $workspace, $this->businessAttributes());
+        app(UsageWalletManager::class)->initializeWalletForNewBusiness($business->id);
+        app(BillingProfileManager::class)->changePayer($business, PayerType::Workspace, $customer->user_id, 'Test.');
+        app(PaymentInstrumentManager::class)->resolveProviderCustomer($business, $customer->user_id);
+
+        $response = $this->post(route('customer.workspaces.businesses.usage-billing.top-up.initiate', [$workspace->uid, $business->uid]), ['amount_micro' => 1_000_000]);
+
+        $response->assertRedirect();
+        $this->assertStringStartsWith('https://checkout.fake.stripe.test/', $response->headers->get('Location'));
     }
 }

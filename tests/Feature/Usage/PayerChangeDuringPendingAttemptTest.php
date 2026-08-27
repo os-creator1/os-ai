@@ -58,6 +58,16 @@ class PayerChangeDuringPendingAttemptTest extends TestCase
         return $workspace->fresh();
     }
 
+    /**
+     * RFC-005 Funding Provider-Flow Correction Contract §17 — corrected:
+     * a ManualTopUp attempt is Checkout-Session-backed (provider_pending,
+     * never requires_action via paymentIntentOutcomes, which no longer
+     * applies), and requires no pre-saved instrument; only a resolved
+     * provider customer (§9's Option 1, unchanged). The actual invariant
+     * under test — the frozen payer_type_snapshot is unaffected by a
+     * later payer change, and the in-flight attempt remains independently
+     * confirmable — is fully preserved.
+     */
     public function test_an_in_flight_attempts_payer_snapshot_is_unaffected_by_a_later_payer_change(): void
     {
         $ownerCustomer = $this->createCustomer();
@@ -66,23 +76,13 @@ class PayerChangeDuringPendingAttemptTest extends TestCase
         $business = app(BusinessRepository::class)->createForCustomerInWorkspace($directOwner, $workspace, $this->businessAttributes());
         app(UsageWalletManager::class)->initializeWalletForNewBusiness($business->id);
         app(BillingProfileManager::class)->changePayer($business, PayerType::Workspace, $ownerCustomer->user_id, 'Test.');
+        app(PaymentInstrumentManager::class)->resolveProviderCustomer($business, $ownerCustomer->user_id);
 
-        $instrumentManager = app(PaymentInstrumentManager::class);
-        $setupIntent = $instrumentManager->createSetupIntent($business, $ownerCustomer->user_id);
-        $providerCustomer = app(PaymentProviderCustomerRepository::class)->findActiveByWorkspaceId((int) $workspace->id);
-        $this->gateway->registerPaymentMethod(new PaymentMethodResult(
-            'pm_fake_'.substr($setupIntent->providerSetupIntentId, strlen('seti_fake_')),
-            $providerCustomer->provider_customer_id,
-            'card', 'visa', '4242', 12, 2030,
-        ));
-        $instrumentManager->confirmSetupIntentAndAttach($business, $ownerCustomer->user_id, $setupIntent->providerSetupIntentId);
-
-        $this->gateway->paymentIntentOutcomes = ['*' => 'requires_action'];
         $checkoutManager = app(UsageBillingCheckoutManager::class);
         $result = $checkoutManager->initiateTopUp($business, $ownerCustomer->user_id, 5_000_000);
         $attempt = app(BusinessFundingAttemptRepository::class)->findById($result->fundingAttemptId);
         $this->assertSame(PayerType::Workspace, $attempt->payer_type_snapshot);
-        $this->assertSame(FundingAttemptState::RequiresAction, $attempt->state);
+        $this->assertSame(FundingAttemptState::ProviderPending, $attempt->state);
 
         // The payer change happens while the attempt is still in flight.
         app(BillingProfileManager::class)->changePayer($business, PayerType::Business, $directOwner->user_id, 'Mid-flight payer change.');
@@ -91,6 +91,22 @@ class PayerChangeDuringPendingAttemptTest extends TestCase
         $this->assertSame(PayerType::Workspace, $freshAttempt->payer_type_snapshot, 'The already-created attempt\'s own frozen snapshot must not retroactively change.');
 
         // The already-in-flight attempt is still independently confirmable.
+        $paymentMethodId = 'pm_fake_payer_change';
+        $this->gateway->registerPaymentMethod(new PaymentMethodResult(
+            $paymentMethodId, $freshAttempt->provider_customer_external_id_snapshot, 'card', 'visa', '4242', 12, 2030,
+        ));
+        $this->gateway->registerCheckoutSessionResult(new \App\Library\Usage\CheckoutSessionResult(
+            (string) $freshAttempt->provider_session_or_intent_reference,
+            'complete',
+            'paid',
+            null,
+            $checkoutManager->expectedMinorUnitsFor($freshAttempt),
+            $checkoutManager->expectedCurrencyCodeFor($freshAttempt),
+            $freshAttempt->provider_customer_external_id_snapshot,
+            'pi_fake_payer_change',
+            $paymentMethodId,
+        ));
+
         $confirmed = $checkoutManager->confirmAttemptFromReturn($freshAttempt);
         $this->assertSame(FundingAttemptState::Succeeded, $confirmed->state);
     }

@@ -49,6 +49,15 @@ interface PaymentProviderGateway
      * slots'), never a new commercial product or price. Fails closed
      * (throws) if the newly-created Session unexpectedly carries no url.
      */
+    /**
+     * RFC-005 Funding Provider-Flow Correction Contract §8.A/§8.B —
+     * $setupFutureUsageOffSession controls whether the outbound Session
+     * requests setup_future_usage: 'off_session' (true, for the
+     * additional-slot agreement's own recurring-renewal design) or omits
+     * it entirely (false, the default — a one-time Checkout Session that
+     * never establishes future off-session authority, per ManualTopUp/
+     * AddonPurchase).
+     */
     public function createCheckoutSession(
         string $providerCustomerId,
         int $amountMinorUnits,
@@ -58,6 +67,7 @@ interface PaymentProviderGateway
         string $cancelUrl,
         string $idempotencyKey,
         array $metadata,
+        bool $setupFutureUsageOffSession = false,
     ): CheckoutSessionResult;
 
     /**
