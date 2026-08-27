@@ -8,30 +8,50 @@ This correction exists because the M6 static conformance audit found Receipt Bou
 
 ---
 
+## Correction Round 1 record
+
+Independent pre-merge review of the initial draft (head `9b7b62ed56878152d36e93bb60b6cdad00f4829f`) found one architectural blocker and ten supporting defects, all resolved below by direct re-audit of the current repository. **This independent review failure consumes Correction Round 1 — correction rounds are consumed by a failing review, not only by a post-merge failure.** `maximum_correction_rounds: 2` is unchanged. **1 of 2 ordinary correction rounds consumed; 1 ordinary round remains.** The contract remains `PROPOSED — NOT AUTHORIZED UNTIL HUMAN MERGE`; no implementation authorization exists at any point during this correction.
+
+Exact issues resolved this round:
+
+1. **Architectural blocker (§C of the review): a synchronous `AutoRecharge` success path was omitted entirely.** Direct code re-read of `UsageBillingCheckoutManager::driveOffSessionPaymentIntentAttempt1()` confirms `confirmSucceeded()` is called immediately, in the initiation call itself, when `createOffSessionPaymentIntent()` synchronously returns `status === 'succeeded'` — there is no later browser-return or webhook step for this path. The Round-0 draft's "fetch receipt before `confirmSucceeded()`'s locked transaction" language also incorrectly implied an outer transaction around `confirmSucceeded()` that does not exist in the current code. **Resolved by replacing the entire receipt-recovery architecture** (§3 below): the receipt job is now dispatched from inside `UsageWalletManager::creditFromFunding()`'s own existing transaction — the one method every receipt-eligible credit already passes through, regardless of which of the five entry points reached it — rather than from any purpose-specific confirmation branch. This mechanically covers all five financial-success entry points (ManualTopUp Checkout confirmation, AddonPurchase Checkout confirmation, AutoRecharge webhook confirmation, AutoRecharge administrator/reconciliation confirmation, AutoRecharge synchronous success) with zero purpose-specific code, and mechanically excludes every ineligible flow (`direct_deliverable` add-ons, all slot-agreement charges, refunds/disputes) because none of them ever calls `creditFromFunding()` — re-confirmed unchanged from Round 0's own audit.
+2. **`SendReceiptNotification`'s job design inverted (§E).** The job no longer owns table writes or provider calls directly. Its constructor now carries `fundingAttemptId`+`ledgerEntryId` (not a pre-resolved receipt id, since no receipt is guaranteed to exist yet when the job is dispatched). It orchestrates: validate inputs, delegate the provider-facing read and receipt persistence to one new `UsageBillingCheckoutManager::ensureFundingReceipt()` method (§6), then evaluate notification preferences only after a receipt row is confirmed to exist.
+3. **Recoverability claim corrected to match actual code (§F).** `App\Jobs\Base` sets `$tries = 1`, `$maxExceptions = 1` — confirmed by direct read. The Round-0 draft's "standard Laravel queue retry" was false; no retry count is invented. Recovery is instead the existing, real `failed_jobs` table/mechanism (confirmed present via `database/migrations/2019_08_19_000000_create_failed_jobs_table.php` and `config/queue.php`'s `'failed'` block) plus the job's own structural idempotency, so a manual re-dispatch (via `queue:retry` where the deployed queue connection populates `failed_jobs`, or a direct re-dispatch with the same two ids in any deployment) is always safe and correct, never assumed to be a specific automatic retry count.
+4. **Checkout-backed verification-vs-receipt conflation removed (§G).** Under the corrected architecture, receipt-evidence retrieval never shares a call with the original payment-verification retrieval — `confirmAttemptFromReturn()`/`confirmAttemptFromWebhook()`'s own existing `retrieveCheckoutSession()`/`retrievePaymentIntent()` calls are **completely unmodified** by this correction. `ensureFundingReceipt()` (§6) makes its own, separate, later, asynchronous provider call, invoked only from the queued job, only after accounting has already committed — so a failure there can never affect payment verification or accounting, by construction, not by added failure-branching logic.
+5. **`UsageWalletManager` receipt-write locking corrected to use the repository convention (§H).** `attachFundingReceipt()` no longer issues a raw query; it uses a new `BusinessUsageLedgerEntryRepository::findForUpdateById()` method, mirroring the existing `findForUpdateByBusinessId()` wallet-locking convention. `findLedgerEntryIdByCorrelationKey()` is removed — mechanically unnecessary, since `creditFromFunding()` already holds the just-created `BusinessUsageLedgerEntry` model (Eloquent's `create()` populates `id` immediately) and can capture it directly, confirmed by direct read of `EloquentBusinessUsageLedgerEntryRepository::create()`.
+6. **`UNIQUE(ledger_entry_id)` removed as a decision point (§I).** Human review decision: do not add it; the RFC §23 schema does not define it, and the ledger-row `FOR UPDATE` lock is the sole idempotency mechanism. No longer listed as unresolved. The `business_id` convenience index is also removed — not present in the RFC's own table definition, added in Round 0 by unauthorized precedent-copying, not RFC evidence.
+7. **Exact migration filename locked (§J):** `database/migrations/2026_08_27_120001_create_business_billing_receipts_table.php`, confirmed non-colliding against the current migration sequence (latest existing: `2026_08_24_120003_...`).
+8. **`FakePaymentProviderGateway` design corrected to match actual current code (§K).** Direct read confirms `$paymentIntentOutcomes` is `array<string, string>` (a status map only) and `retrievePaymentIntent()` currently ignores it entirely, always returning a hardcoded succeeded result — the Round-0 draft's "extend `paymentIntentOutcomes` with receipt keys" was not possible against the actual type. Corrected: a new `registerPaymentIntentResult(PaymentIntentResult $result): void` + registry, checked first by `retrievePaymentIntent()`, mirroring the already-existing `registerCheckoutSessionResult()`/`retrieveCheckoutSession()` pattern exactly. `checkoutSessionOutcomes`'s existing meaning is untouched; its unregistered-fallback path is extended with deterministic default receipt-evidence fields so no existing test needs new setup.
+9. **`PaymentProviderGateway.php` removed from the production allowlist (§M).** Confirmed by design: no interface method signature changes; a doc-comment-only change is not a required production diff.
+10. **`StripePaymentProviderGatewayCompatibilityTest.php` added to the test allowlist (§N).** Confirmed by direct read: line 87 asserts the literal substring `"'expand' => ['payment_intent.payment_method']"`, which becomes false once the array gains a second element. Corrected assertion and two new tests locked in §10.
+11. **Test-file discretion eliminated (§O); the impossible exact-once-mail guarantee replaced with an honest one (§P).** Every reused/new file is now named exactly, every proof assigned exactly one method name (§10). The duplicate-dispatch guarantee is restated as application-level dispatch idempotency (one ledger row → one dispatch; a duplicate replay cannot create a second ledger row) plus an explicit, honest disclaimer that at-least-once queue/mail delivery semantics mean exact-once email delivery is not claimed, consistent with `business_billing_receipts`'s own RFC-defined schema carrying no notification-state column.
+
+No genuinely unresolved contradiction remains that could not be mechanically resolved from direct repository evidence; every blocker raised had a direct, evidence-backed answer (§11 restates only the three genuine human-review decisions the assigning review itself already resolved, so none remain open).
+
+---
+
 ## 0. Governance
 
-- Drafted on branch `chore/rfc-005-receipt-boundary-correction-contract`, in an isolated linked worktree (`../rfc-005-receipt-boundary-contract-worktree`), based on `origin/main` at `1eba17ae4112a1e5e832627d44c185a0ee3f56ca` — the Funding Provider-Flow correction's own merge commit (PR [#137](https://github.com/os-creator1/os-ai/pull/137)), confirmed via `git fetch origin main && git rev-parse origin/main` immediately before branching, and confirmed to be the merge of `agent/rfc-005-funding-provider-flow-correction` via `git log -1 --format='%H %s'`.
+- Drafted on branch `chore/rfc-005-receipt-boundary-correction-contract`, in an isolated linked worktree (`../rfc-005-receipt-boundary-contract-worktree`), based on `origin/main` at `1eba17ae4112a1e5e832627d44c185a0ee3f56ca` — the Funding Provider-Flow correction's own merge commit (PR [#137](https://github.com/os-creator1/os-ai/pull/137)), reconfirmed via `git fetch origin main && git rev-parse origin/main` at the start of this correction round, unchanged since initial drafting.
 - **Future implementation branch (authorized only after this contract's human merge, and only after a further, separate, explicit human instruction to begin implementation): `agent/rfc-005-receipt-boundary-correction`.**
-- Confirmed before drafting: no `docs/automation/RFC-005-RECEIPT-BOUNDARY-CORRECTION-CONTRACT.md` exists anywhere in `origin/main`'s history, and no `agent/rfc-005-receipt-boundary-correction` branch exists on `origin`.
+- Confirmed at this correction round: no `agent/rfc-005-receipt-boundary-correction` branch exists on `origin`; no product/test/config/route/RFC-source file has been touched by this branch at any point.
 - Locked:
   - `human_only_merge: true`
   - `maximum_correction_rounds: 2`
-  - `contract_drafting_consumes: 0/2` — drafting this document consumes no correction round; only a post-merge independent-review failure requiring a redraft would consume one.
+  - **Correction rounds: 1 of 2 consumed as of this round; 1 ordinary round remains.**
   - `advance_automatically: false`
   - `start_automatically_after_contract_merge: false`
-  - `M6 remains frozen` — this contract does not resume M6, does not touch any M6 conformance document, and does not narrow M6's own blocking-gap list beyond noting that Receipt Boundary's *contract* (not its implementation) now exists.
+  - `M6 remains frozen` — untouched, not resumed, no M6 document created or modified.
   - `AI-AUTONOMY-STATE.json` is untouched by this branch.
-  - **Implementation requires a separate, explicit human instruction issued after this contract itself is human-merged** — mirroring every prior RFC-005 correction contract's own governance clause.
+  - **Implementation requires a separate, explicit human instruction issued after this contract itself is human-merged.**
 - This is a new, independently bounded pre-M6 correction contract — not a correction round against M1–M6's own contracts, and not a correction round against the already-merged Reservation Admission or Funding Provider-Flow contracts. Its `maximum_correction_rounds: 2` budget is its own; no counter is borrowed or altered on any other contract.
 - This governance branch changes exactly one tracked file: `docs/automation/RFC-005-RECEIPT-BOUNDARY-CORRECTION-CONTRACT.md`.
 
 ---
 
-## 1. Re-confirmed governing design facts (direct source audit, not trusted from the assigning prompt)
+## 1. Preserved Round-0 findings (re-confirmed unchanged; no contradiction found)
 
-All read directly from `docs/rfcs/RFC-005-BUSINESS-USAGE-BILLING-AND-WALLETS.md` on this exact base commit.
-
-**§23 — `business_billing_receipts`, confirmed verbatim:**
+**§23 — `business_billing_receipts`, confirmed verbatim, unchanged this round:**
 
 | Column | Type | Nullable | Default |
 |---|---|---|---|
@@ -42,281 +62,314 @@ All read directly from `docs/rfcs/RFC-005-BUSINESS-USAGE-BILLING-AND-WALLETS.md`
 | `provider_reference` | `string(191)` | No | — |
 | `created_at` | `timestamp` | No | `now()` |
 
-No `updated_at`. No `UNIQUE` index declared on any column beyond the implicit PK. Confirmed: §25's table inventory lists `business_billing_receipts` as `unchanged`, sole write authority `UsageWalletManager` — consistent with §28's authority table, which lists `receipts` as one of `UsageWalletManager`'s method-level responsibilities.
+No `updated_at`. No `UNIQUE` index beyond the implicit PK — **preserved exactly; not added to, per §5 below.**
 
-**§28 — confirmed:** `UsageWalletManager` is the sole write authority for wallets, ledger, reservations, rates/activations, classifications, limits, billing-status, **and receipts**. "No controller, job, or event listener ever writes to a table in §25 directly."
+1. Stripe-hosted receipts remain authoritative for v1.
+2. Legacy `invoices` are never reused.
+3. `business_billing_receipts` retains exactly the six-column shape above.
+4. `provider_receipt_url` comes from Stripe `Charge.receipt_url`.
+5. `provider_reference` is the Stripe Charge id (`ch_...`), never the PaymentIntent or Checkout Session id.
+6. Receipt-eligible charged flows remain exactly: `ManualTopUp`, `AutoRecharge`, `AddonPurchase` with `wallet_credit` fulfillment — re-confirmed this round by the same `creditFromFunding()` call-site audit (exactly three call sites: `UsageBillingCheckoutManager.php` lines 651 and 691, the latter guarded by `fulfillment_mode === 'wallet_credit'`; zero call sites anywhere in slot-agreement code).
+7. These remain **NO-receipt** in this correction: `AddonPurchase` `direct_deliverable`, initial additional-slot agreement, scheduled slot renewal, mid-period slot increase, `Refund`, `DisputeChargeback`. **This is now a closed human-review decision, not an open one** (§11).
+8. `UsageWalletManager` remains sole write authority for `business_billing_receipts`.
+9. `notification_opt_in = false` prevents notification but never prevents receipt persistence — the job now enforces this by construction, since persistence (via `ensureFundingReceipt()`) happens **before** notification-preference evaluation (§7).
+10. No local invoice/receipt document is generated.
 
-**§29 — confirmed:** `SendReceiptNotification` is one of thirteen named `App\Jobs\Usage\*` jobs, `ShouldQueue` + `ShouldQueueAfterCommit` where dispatched from within a request-handling transaction.
+**Provider receipt evidence source, preserved unchanged:** the Stripe `Charge.receipt_url` object, reached via `expand: ['latest_charge']` (PaymentIntent) or `expand: ['payment_intent.latest_charge']` (Checkout Session) — confirmed supported by the installed `stripe/stripe-php: ^7.76` SDK (`composer.json`/`composer.lock`).
 
-**§20/§21 — confirmed:** Stripe-only v1, behind `PaymentProviderGateway`; every outbound provider call normalized to a DTO; "no outbound Stripe call ever occurs while a database row lock is held" (unchanged, load-bearing for this correction's design, §4 below).
+---
 
-**Current-implementation gap, re-confirmed by direct repository search on this exact base commit (zero matches unless noted):**
+## 2. Mechanical fact re-confirmed this round: every receipt-eligible credit passes through exactly one method
 
+Direct re-read of `UsageWalletManager::creditFromFunding()` (current signature: `creditFromFunding(int $businessId, UsageLedgerEntryType $entryType, int $amountMicro, int $fundingAttemptId, string $correlationKey): void`) confirms it:
+
+- opens one `DB::transaction()`, locks the wallet row (`findForUpdateByBusinessId()`), computes debt-clearing,
+- calls `$this->ledgerRepository->create([...])`, whose Eloquent implementation (`EloquentBusinessUsageLedgerEntryRepository::create()`) calls `$entry->save()` and returns `$entry` — the created model, with `id` populated immediately (standard Eloquent auto-increment population on insert), confirmed by direct read,
+- updates the wallet balances,
+- and is the **exact and only** method called by all three receipt-eligible flows (§1 item 6).
+
+Direct re-read of every call site that can reach `confirmSucceeded()` — `confirmAttemptFromReturn()`, `confirmAttemptFromWebhook()`, `retryFundingAttemptAsAdministrator()`, and `driveOffSessionPaymentIntentAttempt1()`'s own direct synchronous call — confirms **all five** financial-success entry points ultimately call `creditFromFunding()` (directly, for `ManualTopUp`/`AutoRecharge`; via `finalizeAddonPurchaseIfPending()`, for `AddonPurchase` `wallet_credit`). This is the mechanical anchor for §3's corrected architecture.
+
+---
+
+## 3. Corrected receipt-dispatch architecture (replaces Round 0's "fetch before confirmSucceeded" design entirely)
+
+**Locked:** `UsageWalletManager::creditFromFunding()` is widened to capture the ledger entry it already creates and, after the wallet update succeeds (still inside the same transaction), dispatch the receipt job:
+
+```php
+public function creditFromFunding(
+    int $businessId,
+    UsageLedgerEntryType $entryType,
+    int $amountMicro,
+    int $fundingAttemptId,
+    string $correlationKey,
+): void {
+    DB::transaction(function () use ($businessId, $entryType, $amountMicro, $fundingAttemptId, $correlationKey) {
+        // ...existing wallet lock, debt-clearing computation (unchanged)...
+
+        $ledgerEntry = $this->ledgerRepository->create([ /* ...unchanged attributes... */ ]);
+
+        // ...existing wallet balance update (unchanged)...
+
+        \App\Jobs\Usage\SendReceiptNotification::dispatch($fundingAttemptId, (int) $ledgerEntry->id)
+            ->afterCommit();
+    });
+}
 ```
-grep -rn "business_billing_receipts" app database   → zero matches
-grep -rln "SendReceiptNotification" app             → zero matches
-grep -rln "receipt_url|receiptUrl|ReceiptUrl" app    → one unrelated match (App\Models\SendCampaignSMS.php — a pre-existing, unrelated legacy SMS-campaign field, not this domain)
-grep -rn "latest_charge" app                        → zero matches
-```
 
-`PaymentIntentResult` (`app/Library/Usage/PaymentIntentResult.php`) fields: `providerPaymentIntentId, status, clientSecret, amountMinorUnits, currencyCode` — no receipt field.
-`CheckoutSessionResult` (`app/Library/Usage/CheckoutSessionResult.php`) fields: `providerCheckoutSessionId, status, paymentStatus, redirectUrl, amountMinorUnits, currencyCode, providerCustomerId, providerPaymentIntentId, providerPaymentMethodId` — no receipt field.
-`StripePaymentProviderGateway::retrievePaymentIntent()` calls `paymentIntents->retrieve($id)` with **no `expand` parameter at all**. `retrieveCheckoutSession()` expands only `payment_intent.payment_method`. Neither reaches a `Charge` object, which is where Stripe's `receipt_url` actually lives.
+**Exact behavior, locked:**
 
-All five gap claims in the assigning prompt are confirmed true on this exact base commit. No claim required correction.
+- The dispatch is registered from inside the accounting transaction: a rollback (e.g., the wallet row not found, throwing `UsageWalletNotFoundException`) means the job is never queued at all; a successful commit is what makes the job eligible to run (`->afterCommit()`).
+- No provider call of any kind occurs inside this transaction or method — `creditFromFunding()`'s own outbound-call-free character (already required, unchanged from M1) is preserved exactly.
+- **Return type, parameters, and every other line of `creditFromFunding()` are otherwise byte-for-byte unchanged.** No caller's existing invocation changes.
+- This single change mechanically covers **all five** financial-success entry points named in the assigning review (§2), with zero purpose-specific branching added anywhere in `UsageBillingCheckoutManager`, and mechanically excludes every ineligible flow because none of them calls this method at all — re-confirmed, not assumed.
 
-**One additional fact discovered by this audit, not stated in the assigning prompt, that is load-bearing for §5 below:** `UsageBillingCheckoutManager::confirmSucceeded()` calls `UsageWalletManager::creditFromFunding()` for exactly three cases — `ManualTopUp`, `AutoRecharge`, and `AddonPurchase` with `fulfillment_mode: wallet_credit` (confirmed by direct grep: `creditFromFunding(` appears at exactly three call sites in `UsageBillingCheckoutManager.php`, lines 651 and 691, the latter guarded by `$catalogRow->fulfillment_mode->value === 'wallet_credit'`). **No additional-slot-agreement code path (initial Checkout, `scheduled_renewal`, or `mid_period_increase`) ever calls `creditFromFunding()` or creates any `business_usage_ledger_entries` row** — slot agreements are Workspace-scoped capacity purchases, not Business wallet credits, and RFC-004's `workspace_plan_assignments.additional_business_slots` remains their sole authoritative entitlement value (§22). This is mechanically decisive for §5.
+**Receipt-evidence retrieval itself is never performed here.** It happens later, asynchronously, only inside the queued job's own delegation to `UsageBillingCheckoutManager::ensureFundingReceipt()` (§6) — fully decoupled in time and code path from both the accounting transaction above and the original payment-verification calls in `confirmAttemptFromReturn()`/`confirmAttemptFromWebhook()`, which this correction does not modify at all.
 
 ---
 
-## 2. Exact provider receipt evidence source (§4 of the assigning prompt)
+## 4. Receipt-producing flow matrix (unchanged from Round 0's own audit; re-confirmed)
 
-**Stripe object family:** the hosted receipt URL (`receipt_url`) exists only on a Stripe **Charge** object. Neither `PaymentIntent` nor `Checkout Session` carries it directly; both reach it only via expansion to their own `latest_charge`.
+| # | Flow | Provider object family | Creates a ledger entry? | Ledger entry type | Receipt row? | `SendReceiptNotification`? |
+|---|---|---|---|---|---|---|
+| 1 | `ManualTopUp` | Checkout Session → Charge | Yes | `PaidTopUp` | **YES** | **YES** |
+| 2 | `AutoRecharge` (all four entry points: return / webhook / admin-resume / synchronous) | PaymentIntent → Charge | Yes | `AutoRecharge` | **YES** | **YES** |
+| 3 | `AddonPurchase` — `wallet_credit` | Checkout Session → Charge | Yes (`PaidTopUp`, reused) | `PaidTopUp` | **YES** | **YES** |
+| 4 | `AddonPurchase` — `direct_deliverable` | Checkout Session → Charge | **No** | — | **NO — mechanically impossible** | **NO** |
+| 5 | Initial additional-slot agreement Checkout | Checkout Session → Charge | **No** | — | **NO — mechanically impossible** | **NO** |
+| 6 | Scheduled additional-slot renewal | PaymentIntent → Charge | **No** | — | **NO — mechanically impossible** | **NO** |
+| 7 | Mid-period additional-slot increase | PaymentIntent → Charge | **No** | — | **NO — mechanically impossible** | **NO** |
+| 8 | `Refund` | Charge refund | Yes (`Refund` entry) | `Refund` | **NO — closed human-review decision** | **NO** |
+| 9 | `DisputeChargeback` | Stripe-initiated clawback | Yes (`DisputeChargeback` entry) | `DisputeChargeback` | **NO — closed human-review decision** | **NO** |
+| 10 | Any other RFC-005-defined provider-backed path | — | — | **NONE FOUND** | — | — |
 
-**Confirmed SDK support:** `composer.json` pins `stripe/stripe-php: ^7.76` (confirmed installed via `composer.lock`). `latest_charge` and multi-level dot-path `expand` (Stripe's API supports up to 4 levels of expansion per call) have been stable in the Stripe API for years; both this SDK version's method signatures already accept an arbitrary `expand` array in the params hash exactly as `retrieveCheckoutSession()` already demonstrates today (`'expand' => ['payment_intent.payment_method']`).
-
-**Exact retrieval mechanism, locked per purpose:**
-
-- **`AutoRecharge` (PaymentIntent-backed):** `$this->client->paymentIntents->retrieve($id, ['expand' => ['latest_charge']])`. Receipt evidence: `$paymentIntent->latest_charge->receipt_url` / `$paymentIntent->latest_charge->id`. If `latest_charge` is null (should not happen for a `succeeded` PaymentIntent, but is not assumed impossible), treat as evidence-unavailable (§3).
-- **`ManualTopUp` / `AddonPurchase` (Checkout-Session-backed):** `$this->client->checkout->sessions->retrieve($id, ['expand' => ['payment_intent.latest_charge']])` — a single two-level nested expansion, well within Stripe's documented 4-level cap. Receipt evidence: `$session->payment_intent->latest_charge->receipt_url` / `->id`.
-
-**Exact `provider_reference` rule, locked:** `provider_reference` persists the **Stripe Charge id** (`ch_...`), never the PaymentIntent id and never the Checkout Session id. Rationale: `receipt_url` is intrinsically a Charge-scoped fact in Stripe's own data model — Stripe has no separate "Receipt" API object; the Charge *is* the receipt's identity. The PaymentIntent/Checkout Session id is already durably captured elsewhere (`business_funding_attempts.provider_session_or_intent_reference`), so re-storing it as `provider_reference` would be redundant and would misname the column's own purpose. `provider_reference` uniquely and correctly identifies *which specific Charge* this receipt describes.
-
-**Exact accounting-vs-receipt failure rule, locked (the assigning prompt's strong safety requirement):** a successfully verified payment/accounting mutation (the `creditFromFunding()` ledger write and the funding attempt's `Succeeded` transition) **never** depends on, is gated by, or can be rolled back because of receipt-evidence retrieval failure or unavailability. The receipt re-fetch call (above) is always performed **before** `confirmSucceeded()`'s locked transaction begins (identical ordering discipline to the existing Checkout-verification re-fetch, preserving §20's "no outbound Stripe call while a row lock is held" rule) and is wrapped so that **any** exception from it (`ProviderApiUnavailableException`, a malformed/missing `latest_charge`, or any other `Provider*Exception`) is caught, logged, and treated as "no receipt evidence this pass" — `confirmSucceeded()` always proceeds to credit and transition regardless.
-
----
-
-## 3. Recoverability of missing receipt evidence — the exact, narrow retry mechanism (no new job)
-
-**Mechanical fact, confirmed by direct re-read of `UsageBillingCheckoutManager::confirmAttemptFromReturn()`/`confirmAttemptFromWebhook()`/`retryFundingAttemptAsAdministrator()` (current post-Funding-Provider-Flow-correction code):** each already opens with `if ($attempt->state === Succeeded) { …; return; }` before ever reaching `confirmSucceeded()` again — the funding attempt's own state machine, not a try/catch pattern, is what prevents a double credit. This early-return branch already exists and already fires on every subsequent natural touch of an already-succeeded attempt (a browser return arriving after the webhook already confirmed it, or vice versa; `AddonPurchase`'s own idempotent `finalizeAddonPurchaseIfPending()` re-check already lives here).
-
-**Locked design:** this correction extends that exact existing early-return branch, for every purpose, with one additional check: *if the funding attempt's ledger entry has no `business_billing_receipts` row yet, attempt the §2 receipt re-fetch once more and attach it if it now succeeds.* This requires zero new job, zero new schedule, and zero new provider-call path beyond what already exists for `ManualTopUp`/`AddonPurchase` — it is the same re-fetch, on the same call, just also consulted on a second or third natural touch.
-
-**One genuinely new provider call, explicitly flagged (assigning-prompt §9's own required disclosure):** `AutoRecharge`'s webhook confirmation path (`confirmAttemptFromWebhook()`'s final `else` branch) currently calls `confirmSucceeded()` directly, with **no** provider re-fetch of any kind — a deliberate M3-era design choice to keep the trusted webhook path to zero additional Stripe calls for this purpose. Attaching receipt evidence for `AutoRecharge` requires **one new `retrievePaymentIntent(..., expand: ['latest_charge'])` call on this specific path**, executed before `confirmSucceeded()`, outside any lock, exception-guarded per §2. This is the one path where Receipt Boundary is a genuine, disclosed extension beyond the Funding Provider-Flow contract's own "no new provider call" description of that branch.
-
-**Open human-review point, narrowest recommendation given (assigning-prompt §5's escape hatch, used here honestly):** `AutoRecharge` has no browser-return leg at all — it is initiated by a background job (`EvaluateBusinessAutoRecharge`) and confirmed only by webhook (or, for a *stuck, not-yet-succeeded* attempt, `retryFundingAttemptAsAdministrator()`, whose own guard explicitly rejects an already-`Succeeded` attempt and is therefore not a retry path for a missing receipt). If the one new webhook-path fetch above fails, **no further automated retry exists for that specific `AutoRecharge` charge within this correction's scope** — inventing a dedicated backfill/reconciliation job for this narrow case is explicitly out of scope (§12). **Recommendation: accept this as a bounded v1 gap.** It affects only `AutoRecharge` charges where the one additional fetch fails at the exact moment of webhook confirmation (expected rare — the PaymentIntent/Charge already exists at Stripe by this point; only a transient Stripe read-side failure would trigger it), and Stripe's own separately-configured `receipt_email` (if ever set at PaymentIntent-creation time — **not currently set anywhere in this codebase**, confirmed by grep) would remain an independent channel outside this system's control. A human reviewer may instead require a bounded reconciliation job in a future correction; this contract does not preclude that, and does not build it.
+Rows 8–9 are now a **closed** decision per the assigning review (§11) — this correction does not create receipts for refunds/chargebacks; a future correction may design that separately.
 
 ---
 
-## 4. Receipt-producing flow matrix (mechanically derived, not assumed)
+## 5. Receipt cardinality / idempotency — no `UNIQUE` constraint, no convenience index
 
-Derived entirely from §1's `creditFromFunding()` call-site audit — the schema's own `ledger_entry_id NOT NULL` FK is used mechanically, not a fabricated ledger entry.
+**Locked, closed decision:** `business_billing_receipts` gains **no** additional index beyond its implicit PK — no `UNIQUE(ledger_entry_id)`, no `index('business_id')`. The RFC §23 schema defines neither, and Round 0's addition of both was unauthorized precedent-copying, not RFC evidence.
 
-| # | Flow | Provider object family | Creates a `business_usage_ledger_entries` row? | Ledger entry type | Receipt row? | `SendReceiptNotification`? | Governing source | Exact trigger point |
-|---|---|---|---|---|---|---|---|---|
-| 1 | `ManualTopUp` | Checkout Session → Charge | Yes | `PaidTopUp` | **YES** | **YES** | §1 audit; §20 (Checkout-backed) | `UsageBillingCheckoutManager::confirmSucceeded()`, immediately after `creditFromFunding()` succeeds, for this purpose |
-| 2 | `AutoRecharge` | PaymentIntent → Charge | Yes | `AutoRecharge` | **YES** | **YES** | §1 audit; §20 (PaymentIntent-backed) | Same, for this purpose (§3's one new webhook-path fetch applies here) |
-| 3 | `AddonPurchase` — `wallet_credit` | Checkout Session → Charge | Yes (via `creditFromFunding()`, entry type `PaidTopUp`, reused) | `PaidTopUp` | **YES** | **YES** | §1 audit (`finalizeAddonPurchaseIfPending()` line 691) | Same call site, inside `finalizeAddonPurchaseIfPending()` |
-| 4 | `AddonPurchase` — `direct_deliverable` | Checkout Session → Charge | **No** — pure state-machine completion, no wallet mutation (§18, confirmed by direct code read: the `fulfillment_mode !== 'wallet_credit'` branch skips `creditFromFunding()` entirely) | — | **NO — mechanically impossible**, no `ledger_entry_id` exists to reference | **NO** | §1 audit; RFC §18 | N/A |
-| 5 | Initial additional-slot agreement Checkout | Checkout Session → Charge | **No** — Workspace-scoped capacity purchase, never a Business wallet credit (§22; confirmed zero `creditFromFunding()` call sites in any slot-agreement code path) | — | **NO — mechanically impossible** | **NO** | §1 audit; RFC §22 | N/A |
-| 6 | Scheduled additional-slot renewal (`charge_kind: scheduled_renewal`) | PaymentIntent → Charge | **No**, same reason as #5 | — | **NO — mechanically impossible** | **NO** | §1 audit; RFC §22 | N/A |
-| 7 | Mid-period additional-slot increase (`charge_kind: mid_period_increase`) | PaymentIntent → Charge | **No**, same reason as #5 | — | **NO — mechanically impossible** | **NO** | §1 audit; RFC §22 | N/A |
-| 8 | `Refund` | Charge refund (no new Checkout/PaymentIntent) | Yes (`Refund` ledger entry, an existing, unrelated mechanism) | `Refund` | **NO — human-review, narrowest recommendation given below** | **NO** in this correction's scope | RFC §23 ("Stripe-hosted receipts authoritative"); §39 does not list this as an open item, but this correction does not implement refund flows at all (§12) | N/A this correction |
-| 9 | `DisputeChargeback` | Stripe-initiated clawback | Yes (`DisputeChargeback` ledger entry) | `DisputeChargeback` | **NO — same reasoning as #8** | **NO** | Same | N/A this correction |
-| 10 | Any other RFC-005-defined provider-backed path | — | — | — | **NONE FOUND** — the audit found no tenth provider-backed charge path in RFC-005 beyond rows 1–9 | — | §1 audit (exhaustive `creditFromFunding()`/slot-agreement grep) | — |
+**Mechanism (unchanged from Round 0's own reasoning, re-confirmed as sufficient without any index):** `UsageWalletManager::attachFundingReceipt()` (§6) locks the **already-existing** `business_usage_ledger_entries` row via a new repository method, `findForUpdateById()` (§9) — a genuine row lock on a real PK, mirroring the existing `findForUpdateByBusinessId()` wallet-locking convention exactly, not a new index or a lock on a not-yet-existing row. Every caller that ever attempts to attach a receipt for a given `ledger_entry_id` — the queued job's first run, a manual operator re-dispatch after a prior failure, a theoretical duplicate dispatch — serializes on this same row lock, because they all name the same `ledger_entry_id`. Whichever transaction commits first wins the "no existing receipt" check inside the lock; every subsequent one sees the row and returns it unchanged.
 
-**Human-review flag for rows 8–9 (narrowest interpretation applied, per the assigning prompt's own instruction):** a Stripe *refund* does not itself carry a new "payment receipt" in Stripe's data model — Stripe's hosted receipt describes the original charge, and any refund notice is a structurally distinct communication this RFC does not yet design (§23 lists refunds/disputes/receipts as four *structurally distinct* entry types, never conflated). Building a `business_billing_receipts` row for a `Refund`/`DisputeChargeback` ledger entry would require designing what "the receipt for a refund" even means — explicitly out of scope for this correction (§12: "executable provider refund/dispute handling beyond what is strictly needed to define that those flows do or do not create receipts"). **Locked recommendation: rows 8–9 do NOT create a `business_billing_receipts` row and do NOT dispatch `SendReceiptNotification` in this correction.** A human may authorize a separate future correction to design refund-receipt semantics; this contract neither builds nor precludes it.
+Since exactly one ledger entry is created per receipt-eligible charge (§1 item 6, §2), and exactly one dispatch is registered per ledger entry (§3), and `attachFundingReceipt()` converges on repeat invocation (this section), the cardinality invariant — "one successful receipt-bearing ledger entry produces at most one `business_billing_receipts` row" — holds without any new schema constraint.
 
 ---
 
-## 5. Receipt cardinality / idempotency — no new `UNIQUE` constraint required
+## 6. `UsageWalletManager` and `UsageBillingCheckoutManager` — exact method signatures
 
-**Mechanical analysis (assigning prompt §6):** the RFC's own `business_billing_receipts` schema (§1 above) declares no `UNIQUE` index beyond the implicit PK. This contract does **not** invent one. Instead, it reuses an already-real, already-unique anchor: `business_usage_ledger_entries.id` — a genuine PK-backed row that, for every receipt-eligible flow (§4 rows 1–3), is created deterministically at most once per funding attempt (guarded by `business_usage_ledger_entries.correlation_key UNIQUE`, already schema-enforced, confirmed in `database/migrations/2026_08_16_120007_create_business_usage_ledger_entries_table.php:39`).
-
-**Locked mechanism:** `UsageWalletManager` gains a new method (exact signature §7) that, inside one DB transaction, issues `SELECT * FROM business_usage_ledger_entries WHERE id = ? FOR UPDATE` against the **already-existing** ledger entry row (a real row lock on a real PK — not a lock on a not-yet-existing row, and not a new index), then checks `business_billing_receipts WHERE ledger_entry_id = ?` for an existing row before inserting. Every caller — the first successful confirmation (§2), a later natural retry (§3), a genuinely concurrent double-webhook race — serializes on this exact same row lock, because they all name the same `ledger_entry_id`. This gives real mutual exclusion without a new `UNIQUE` constraint:
-
-- **Return + webhook replay converge:** both call sites resolve to the same `ledger_entry_id` (via `correlation_key` lookup, §7) and lock the same row; whichever commits first wins the "no existing receipt" check, the second sees the row and no-ops.
-- **Duplicate jobs converge:** `SendReceiptNotification` (§8) is dispatched only from inside the same transaction that just created (or confirmed pre-existing) the receipt row, keyed by the receipt's own `id` — a duplicate dispatch for the same receipt id is itself idempotent at the notification layer (§8's own dedup rule), independent of this section.
-- **Concurrent execution converges:** MySQL's row lock serializes concurrent transactions naming the same `ledger_entry_id`; there is no window where two transactions both observe "no receipt exists" for the same ledger entry.
-
-**Defense-in-depth recommendation (not locked as blocking, explicitly flagged per the assigning prompt's own instruction not to sneak in a schema decision):** adding `UNIQUE (ledger_entry_id)` to `business_billing_receipts` as a schema-level backstop is a narrow, low-risk, mechanically obvious hardening that a human may choose to authorize alongside the migration in §10 — but it is **not required for correctness** under the row-lock design above, and this contract does not assume it will be added. If a human declines it, no other part of this design changes.
-
----
-
-## 6. `UsageWalletManager` write-authority design (§28, assigning-prompt §7)
-
-**Exact new method — receipt persistence (write, sole authority):**
+**`UsageWalletManager`, three methods (write authority preserved exactly — no other class ever writes `business_billing_receipts`):**
 
 ```php
 public function attachFundingReceipt(
     int $ledgerEntryId,
+    int $fundingAttemptId,
     int $businessId,
     string $providerReceiptUrl,
     string $providerReference,
+): BusinessBillingReceipt
+```
+
+- Opens one `DB::transaction()`. Locks `business_usage_ledger_entries` via `$this->ledgerRepository->findForUpdateById($ledgerEntryId)`. If null, throws `\InvalidArgumentException` — a caller must only ever pass an id it already knows exists (the job always resolves it from `creditFromFunding()`'s own dispatch payload).
+- Validates, throwing `\InvalidArgumentException` on any mismatch: `$ledgerEntry->business_id === $businessId` and `$ledgerEntry->funding_attempt_id === $fundingAttemptId`. This is a defensive, fail-closed cross-check against a caller passing inconsistent ids — never expected to trigger under correct operation.
+- Checks `BusinessBillingReceiptRepository::findByLedgerEntryId($ledgerEntryId)`. If found, returns it unchanged (the sole idempotency convergence point, §5).
+- Otherwise creates and returns one new row: `business_id`, `ledger_entry_id`, `provider_receipt_url`, `provider_reference`, `created_at: now()`.
+- Never called with an open outbound-provider call in flight — the caller (`UsageBillingCheckoutManager::ensureFundingReceipt()`) always completes its Stripe re-fetch before invoking this method.
+
+```php
+public function findFundingReceipt(int $ledgerEntryId): ?BusinessBillingReceipt
+```
+
+Thin, unlocked read wrapper over `BusinessBillingReceiptRepository::findByLedgerEntryId()` — used by `ensureFundingReceipt()` to avoid a wasted Stripe call when a receipt is already known to exist. The authoritative convergence check remains `attachFundingReceipt()`'s own locked re-check.
+
+`creditFromFunding()` itself: unchanged signature and body except for the two additions in §3 (capturing `$ledgerEntry` and the trailing dispatch). `findLedgerEntryIdByCorrelationKey()` from Round 0 is **removed** — not needed (§2).
+
+**`UsageBillingCheckoutManager`, one new method — the sole provider-facing boundary for receipt evidence:**
+
+```php
+public function ensureFundingReceipt(
+    BusinessFundingAttempt $attempt,
+    int $ledgerEntryId,
 ): ?BusinessBillingReceipt
 ```
 
-- Opens one `DB::transaction()`. Locks `business_usage_ledger_entries` `WHERE id = $ledgerEntryId FOR UPDATE` (§5). If no such row exists, throws (a programmer error — the caller must only ever pass a `ledger_entry_id` it already knows exists, per §7's lookup).
-- Checks `BusinessBillingReceiptRepository::findByLedgerEntryId($ledgerEntryId)`. If found, returns the existing row unchanged (idempotent no-op — this is the sole convergence point for §5).
-- Otherwise inserts one row: `business_id` (the caller-supplied value, validated equal to the ledger entry's own `business_id` — a defensive cross-check, throws on mismatch, never silently reassigns), `ledger_entry_id`, `provider_receipt_url`, `provider_reference`, `created_at: now()`. Returns the newly-created row.
-- **Never called with an open outbound-provider call in flight** — the caller (`UsageBillingCheckoutManager`) always completes its Stripe re-fetch (§2) before invoking this method, matching §20's existing "no provider call under a lock" discipline exactly.
+Exact behavior, locked:
 
-**Exact new method — existence check (read, for the caller to decide whether a re-fetch is worth attempting, §3):**
+1. `$existing = $this->walletManager->findFundingReceipt($ledgerEntryId);` — if non-null, return it immediately. **No provider call.**
+2. Branch by `$attempt->purpose`:
+   - `ManualTopUp` / `AddonPurchase`: `$session = $this->gateway->retrieveCheckoutSession($attempt->provider_session_or_intent_reference);` then require `$session->providerCheckoutSessionId === $attempt->provider_session_or_intent_reference && $session->status === 'complete' && $session->paymentStatus === 'paid'`.
+   - `AutoRecharge`: `$paymentIntent = $this->gateway->retrievePaymentIntent($attempt->provider_session_or_intent_reference);` then require `$paymentIntent->providerPaymentIntentId === $attempt->provider_session_or_intent_reference && $paymentIntent->status === 'succeeded'`.
+   - Any provider exception from either call is **not caught here** — it propagates to the job (§7), which is the layer responsible for treating it as "evidence unavailable" and failing cleanly.
+3. If the object-id/status check in step 2 fails (should not happen for an already-`Succeeded` attempt, but not assumed impossible — e.g. transient provider-side inconsistency), return `null`.
+4. Read `$receiptUrl`/`$receiptChargeId` off the returned DTO's two new fields (§8). If either is empty/null, return `null` — **evidence unavailable, not an error**.
+5. Otherwise call `$this->walletManager->attachFundingReceipt($ledgerEntryId, $attempt->id, $attempt->business_id, $receiptUrl, $receiptChargeId)` and return its result.
+6. **Never calls `BusinessBillingReceiptRepository` directly** — every write goes through step 5.
 
-```php
-public function hasFundingReceipt(int $ledgerEntryId): bool
-```
-
-Thin wrapper over `BusinessBillingReceiptRepository::findByLedgerEntryId()`, no lock — used only to avoid a wasted Stripe call when a receipt is already known to exist; the authoritative check remains `attachFundingReceipt()`'s own locked re-check.
-
-**Exact widened method — resolving the ledger entry id (§7's own caller needs this; no `creditFromFunding()` behavior change):**
-
-```php
-public function findLedgerEntryIdByCorrelationKey(string $correlationKey): ?int
-```
-
-Thin wrapper over a new `BusinessUsageLedgerEntryRepository::findByCorrelationKey()` read method (§9). `creditFromFunding()`'s own signature, body, and `void` return type are **byte-for-byte unchanged** — this correction does not touch the credit path itself at all, preserving the Funding Provider-Flow contract's own just-shipped behavior exactly. `UsageBillingCheckoutManager` calls `creditFromFunding()` first (unchanged), then separately calls `findLedgerEntryIdByCorrelationKey($attempt->local_idempotency_key.':credit')` to resolve the id it needs for `attachFundingReceipt()` — the same deterministic `correlationKey` string `confirmSucceeded()`/`finalizeAddonPurchaseIfPending()` already construct today, reused verbatim, not re-derived.
-
-**No controller, job, listener, or `UsageBillingCheckoutManager` method ever calls `BusinessBillingReceiptRepository`'s create/update methods directly** — only `UsageWalletManager::attachFundingReceipt()` does. `UsageBillingCheckoutManager` is granted **read-only** injection of `BusinessBillingReceiptRepository` (for a display/lookup need only, e.g. surfacing `hasFundingReceipt`-equivalent state) if implementation finds it needed, but never its own write call — mirroring the already-established precedent that `UsageBillingCheckoutManager` already directly injects `BusinessUsageWalletRepository` for reads today (confirmed, constructor line 127) while every wallet **write** still routes exclusively through `UsageWalletManager`.
+This method makes exactly one provider call per invocation, only when no receipt yet exists, and never while any lock is held (steps 2 happen entirely before step 5's own locked write) — preserving §20's "no outbound Stripe call while a database row lock is held" rule exactly.
 
 ---
 
-## 7. `SendReceiptNotification` design (§29, assigning-prompt §8)
-
-**Exact constructor — IDs/scalars only, per RFC §29's own convention:**
+## 7. `SendReceiptNotification` — exact job design
 
 ```php
 public function __construct(
-    private readonly int $receiptId,
+    private readonly int $fundingAttemptId,
+    private readonly int $ledgerEntryId,
 ) {}
 ```
 
-**Queue/after-commit behavior:** `extends App\Jobs\Base`, `implements ShouldQueue`; dispatched via `dispatch(new SendReceiptNotification($receipt->id))->afterCommit()` from inside `UsageBillingCheckoutManager`'s own confirmation transaction, mirroring every other `App\Jobs\Usage\*` dispatch convention already in this codebase (`ShouldQueueAfterCommit` where dispatched from within a request-handling transaction, per §29).
+`extends App\Jobs\Base` — inherits `ShouldQueue` (already implemented by `Base`; this class does not redundantly re-declare it), `$tries = 1`, `$maxExceptions = 1`, `$failOnTimeout = true`, all **unchanged, not overridden**. Dispatched via `->afterCommit()` from inside `creditFromFunding()`'s own transaction (§3).
 
-**`handle()` algorithm, locked:**
+**`handle()`, exact sequence, locked:**
 
-1. Load `BusinessBillingReceipt::find($this->receiptId)` (via its repository). If null (should not happen — a dispatch always follows a real insert — but handled defensively), log and return; never throws into the queue's retry machinery for a receipt that no longer exists.
-2. Load the receipt's own `Business` (`business_id`), then `BusinessBillingContactRepository::findByBusinessId()`.
-3. **Missing billing contact:** if none exists, log at `info` level and return — no notification is sent, no error is raised. A `Business` with no configured billing contact is a valid, non-error state (§17.A: `business_billing_contacts` is created only when a billing contact is explicitly configured; it is not auto-created).
-4. **`notification_opt_in` handling:** if the contact exists but `notification_opt_in === false`, log at `info` level and return — no send. This is a hard gate, checked before any recipient resolution.
-5. **Recipient selection:** if `contact_email` is non-null, use it directly (the schema's own "required together with `contact_name` if `contact_user_id` is null" rule guarantees at least one addressable identity whenever a contact row exists and `contact_user_id` is null; when `contact_user_id` is set, resolve that `User`'s own email as the recipient, since `contact_email` may be null in that branch per §17.A's own nullability).
-6. **Missing/unresolvable email** (a `contact_user_id` pointing at a user with no valid email — not expected under normal data, but not assumed impossible): log at `warning` level and return — never throws.
-7. Send via Laravel's `Notification` facade, ad-hoc/anonymous routing: `Notification::route('mail', $email)->notify(new ReceiptAvailableNotification($receipt->provider_receipt_url))` — this works identically whether or not `contact_user_id` is set, and is the correct mechanism for a billing contact with no local `User` account at all (§17.A explicitly allows `contact_user_id: NULL`).
-8. **Idempotency / duplicate-send protection:** the job is dispatched exactly once, from exactly one call site (`attachFundingReceipt()`'s own "newly created" branch in §6 — **never** from the "already existed" branch, which returns the existing row without dispatching anything). Combined with §5's row-lock convergence (only one caller ever observes "newly created" for a given `ledger_entry_id`), this makes a duplicate dispatch for the same receipt structurally impossible under normal operation; Laravel's own queue-level `ShouldBeUnique` is **not** added, since the dispatch-site guarantee already provides the real protection and an additional unique-job lock would be redundant.
-9. **Send failure does not affect accounting or receipt persistence** — by construction, this job runs strictly after both have already committed (dispatched `afterCommit()`); a mail-delivery exception here can only fail the notification itself, never unwind the receipt row or the funding attempt's `Succeeded` state.
-10. **Retry behavior:** standard Laravel queue retry (the app's existing default job-retry configuration, unchanged by this correction) — a transient mail-transport failure retries; a permanent failure (e.g., an invalid address) exhausts retries and lands in the existing failed-jobs mechanism, unchanged from every other job in this codebase.
-11. **Content:** the notification sends **only** the Stripe-hosted `provider_receipt_url` as a link — no local invoice/receipt document is generated or attached, per RFC §23's "Stripe-hosted receipts authoritative for v1" and this correction's own explicit exclusion (§12).
+1. Load `$attempt = BusinessFundingAttemptRepository::findById($this->fundingAttemptId)`. If null, throw `\RuntimeException` (a dispatch always follows a real, committed attempt; a missing row is a genuine integrity fault, correctly surfaced as a failed job).
+2. Require `$attempt->state === FundingAttemptState::Succeeded` — throw `\RuntimeException` otherwise (defensive; this job is only ever dispatched from the credit path itself, which only runs for an attempt already transitioning to `Succeeded`).
+3. Load `$ledgerEntry = BusinessUsageLedgerEntryRepository::findById($this->ledgerEntryId)` (new read method, §9). If null, or if `$ledgerEntry->funding_attempt_id !== $attempt->id`, or if `$ledgerEntry->business_id !== $attempt->business_id`, throw `\InvalidArgumentException` — the job's own pre-check, independent of and in addition to `attachFundingReceipt()`'s own internal cross-check (§6), both fail-closed.
+4. `$receipt = $this->checkoutManager->ensureFundingReceipt($attempt, $this->ledgerEntryId);`
+5. **If `$receipt === null`:** throw `App\Exceptions\Usage\ReceiptEvidenceUnavailableException` — the job fails clearly (its single try is exhausted, `Base`'s `$tries = 1` applies), landing in the existing `failed_jobs` mechanism (§9's confirmation). **Accounting is never touched by this failure** — it already committed in a separate, earlier transaction (§3). If a genuine provider exception (e.g. `ProviderApiUnavailableException`) escaped `ensureFundingReceipt()` uncaught, that exception itself is what fails the job — no additional catch/rethrow is added, since the failed-job mechanism records the real underlying exception either way.
+6. **Receipt now exists (either just-created or found pre-existing).** Only now does notification-preference evaluation begin — receipt persistence has already completed, satisfying §1 item 9's ordering requirement structurally, not by a documentation promise alone.
+7. Load the billing contact: `BusinessBillingContactRepository::findByBusinessId($attempt->business_id)`. **Missing contact:** log at `info`, return — no send, no exception (a Business with no configured billing contact is a valid, non-error state per §17.A).
+8. **`notification_opt_in === false`:** log at `info`, return — no send.
+9. **Recipient resolution:** `contact_email` if non-null; else the `contact_user_id`-linked `User`'s own email if `contact_user_id` is set. If neither resolves to a usable email, log at `warning`, return — no send, no exception.
+10. Send via `Notification::route('mail', $email)->notify(new \App\Notifications\Usage\ReceiptAvailableNotification($receipt->provider_receipt_url));` — a plain Laravel `Notification` (`via(): ['mail']`), sending only the Stripe-hosted link, no local document.
 
-**One new, narrow production path beyond the assigning prompt's own candidate list, disclosed per its own instruction not to widen scope silently:** `app/Notifications/Usage/ReceiptAvailableNotification.php` — a plain Laravel `Notification` (`use Queueable`, `via(): ['mail']`, `toMail(): MailMessage`), the concrete class `SendReceiptNotification`'s `handle()` sends. This codebase's existing Laravel notification/mail infrastructure (`app/Notifications/*`, e.g. `TopupNotification.php`, `WelcomeEmailNotification.php`) is fully functional and configured — confirmed by direct read — but **no `App\Jobs\Usage\*` job has ever sent through it yet**; the only prior attempt at a Usage-domain notification, `SendSlotAgreementPriceChangeNotice.php`, explicitly documents in its own docblock that it stops at a `Log::info()` call because "no notification-delivery infrastructure exists in this codebase yet" for this domain. That statement is correct for the *Usage domain's own wiring*, not for Laravel's underlying notification/mail system itself, which this correction is the first to actually use. Added to §11's allowlist.
+**Recoverability — honest, evidence-based, per the assigning review's own correction:**
+
+- `App\Jobs\Base`'s `$tries = 1`/`$maxExceptions = 1` are **not overridden**. A failure at step 5 exhausts the job's one attempt.
+- `database/migrations/2019_08_19_000000_create_failed_jobs_table.php` and `config/queue.php`'s `'failed' => ['driver' => env('QUEUE_FAILED_DRIVER', 'database-uuids'), ...]` confirm the standard Laravel failed-jobs mechanism is present in this repository's own schema/config — genuine, pre-existing tooling, not invented by this correction. Whether a given deployment's actual `QUEUE_CONNECTION` populates `failed_jobs` (true for `database`/`redis`/etc.) or executes inline (`sync`, `.env.example`'s own default, where an uncaught exception instead propagates to whatever dispatched it and the application's existing exception-reporting pipeline) is a deployment-configuration fact this contract does not control and does not need to, because:
+- **The job is fully idempotent from either recovery path**, by construction: re-dispatching `new SendReceiptNotification($fundingAttemptId, $ledgerEntryId)` with the same two ids — whether via `php artisan queue:retry {uuid}` against a captured `failed_jobs` row, or a direct manual re-dispatch — re-enters at step 1, and step 4's `ensureFundingReceipt()` immediately returns the existing receipt with **zero provider call** if one was already attached, or safely retries the provider fetch if not. **Financial accounting is never re-touched by any retry, under any circumstance** — it is not part of this job at all.
+- No specific automatic retry count, and no specific operator-facing retry UI, is claimed or built. This is the honest, narrow recovery guarantee: *manual or operator-triggered re-dispatch is always safe and correct; nothing about this correction guarantees it happens automatically more than once.*
+
+**Duplicate-dispatch/delivery semantics — restated honestly, per the assigning review's correction, since `business_billing_receipts` carries no notification-state column and none is added:**
+
+- **Application dispatch idempotency (claimed, guaranteed):** one new receipt-eligible ledger entry causes exactly one `SendReceiptNotification::dispatch()` call (§3). A duplicate financial confirmation replay (return-then-webhook, webhook-then-admin-resume, etc.) cannot create a second ledger row for the same funding attempt (pre-existing, unmodified `correlation_key UNIQUE` guarantee) and therefore cannot trigger a second normal dispatch.
+- **Queue/mail delivery semantics (not claimed as exact-once):** the underlying queue and mail transport are ordinary at-least-once systems; a worker crash after a mail provider has accepted a send but before the job records completion could, in principle, result in a duplicate send on a manual operator retry. **Exact-once email delivery is not claimed by this correction** and is not achievable without durable notification state that RFC §23's own schema does not define and this correction does not invent (§1 item 3, preserved).
 
 ---
 
-## 8. DTO / gateway boundary — exact additions (§9 of the assigning prompt)
+## 8. DTO / gateway boundary — exact additions (unchanged design from Round 0, re-confirmed backward-compatible)
 
-All additions are new, trailing, nullable/optional constructor parameters — confirmed backward-compatible by direct grep of every construction site of both DTOs (`app/Library/Usage/FakePaymentProviderGateway.php`, `app/Library/Usage/StripePaymentProviderGateway.php`, `tests/Feature/Usage/AddonPurchaseTransitionAuditTest.php`, `tests/Feature/Usage/TopUpStateMachineTest.php` — exactly four sites, none broken by an appended optional parameter).
-
-- **`PaymentIntentResult`** — add `public ?string $receiptUrl = null, public ?string $receiptChargeId = null` (trailing, both nullable).
+- **`PaymentIntentResult`** — add trailing `public ?string $receiptUrl = null, public ?string $receiptChargeId = null`.
 - **`CheckoutSessionResult`** — add the same two trailing nullable fields.
-- **`PaymentProviderGateway`** — no interface method signature changes; `retrievePaymentIntent()`/`retrieveCheckoutSession()` keep their existing signatures, now internally requesting the wider `expand` (§2) and populating the two new DTO fields. `createOffSessionPaymentIntent()`/`createCheckoutSession()` are **unchanged** — receipt evidence is never available at creation time (a Charge does not exist until the payment actually completes), so no new field is ever populated on the *create* path, only on *retrieve*.
-- **`StripePaymentProviderGateway`** — `retrievePaymentIntent()` gains `['expand' => ['latest_charge']]`; `retrieveCheckoutSession()`'s existing expand array gains `'payment_intent.latest_charge'` alongside its current `'payment_intent.payment_method'` (both expansions requested in the same call — Stripe's API permits multiple expand paths per request). Both map `latest_charge->receipt_url`/`->id` into the two new DTO fields when present, `null` when `latest_charge` is absent or the object is not yet in a state where a Charge exists.
-- **`FakePaymentProviderGateway`** — gains a deterministic way for a test to register receipt evidence for a given fake PaymentIntent/Checkout Session (exact shape: extend the existing `paymentIntentOutcomes`/`checkoutSessionOutcomes` registration arrays, already used for other per-call outcome overrides, with two new optional keys, `receiptUrl`/`receiptChargeId`; absent keys default to a deterministic fake value, e.g. `'https://fake.stripe.test/receipts/...'` / `'ch_fake_...'`, so an existing test that does not care about receipts continues to pass unchanged with zero new setup).
-
-**Provider-flow correction invariants explicitly preserved, re-confirmed unaffected by every change above:**
-
-- `ManualTopUp`/`AddonPurchase` remain Checkout-Session-backed; `AutoRecharge` remains PaymentIntent-backed — this correction changes only what is *read* from the already-retrieved object, never which object type is created for which purpose.
-- The additional-slot agreement's initial Checkout Session still requests `setup_future_usage: 'off_session'` exactly as before — untouched by this correction, and never receipt-relevant (§4 row 5).
-- No silent payment-instrument persistence and no silent auto-recharge enablement — this correction touches no instrument or auto-recharge-enablement code path at all.
-- The one new provider call this correction introduces (§3, `AutoRecharge`'s webhook path) is exhaustively disclosed there; no other path gains an undisclosed new call.
+- Confirmed by direct grep: exactly four construction sites for these two DTOs across the entire repository (`FakePaymentProviderGateway.php`, `StripePaymentProviderGateway.php`, `AddonPurchaseTransitionAuditTest.php`, `TopUpStateMachineTest.php`) — none broken by an appended optional trailing parameter.
+- **`PaymentProviderGateway.php` — no change.** Removed from the allowlist (Round-0 correction §9 above); confirmed no interface signature changes.
+- **`StripePaymentProviderGateway`** — `retrievePaymentIntent()` gains `['expand' => ['latest_charge']]`. `retrieveCheckoutSession()`'s existing `['expand' => ['payment_intent.payment_method']]` becomes `['expand' => ['payment_intent.payment_method', 'payment_intent.latest_charge']]` (both expansions in one call — Stripe's API permits multiple `expand` paths per request; each is independently within its 4-level nesting cap). Both call sites map evidence **fail-closed**: `receiptChargeId` is populated only from the expanded Charge object's own real `id`; `receiptUrl` only from that same Charge's non-empty `receipt_url`. If `latest_charge` is absent, not expanded, not object-like, or its `receipt_url` is empty, **both** fields are `null` — never a locally-constructed URL, never a Charge id inferred from the PaymentIntent id.
+- **`FakePaymentProviderGateway`** — corrected design (Round-0 correction §8 above):
+  - New `registerPaymentIntentResult(PaymentIntentResult $result): void`, storing by `$result->providerPaymentIntentId`. `retrievePaymentIntent()` checks this registry first; if not found, preserves its existing hardcoded-succeeded fallback (now also carrying deterministic default `receiptUrl`/`receiptChargeId` values, e.g. `'https://fake.stripe.test/receipts/'.$providerPaymentIntentId` / `'ch_fake_'.Str::random(16)`, so no existing test needs new setup).
+  - `checkoutSessionOutcomes`'s existing meaning and keys are **unchanged**. `retrieveCheckoutSession()`'s own unregistered-fallback and outcome-driven branches gain the same two deterministic default receipt fields when the outcome does not explicitly override them via two new optional outcome keys, `receiptUrl`/`receiptChargeId` (absent ⇒ deterministic default, exactly mirroring the existing `providerPaymentMethodId` optional-key pattern already in this method).
+  - `registerCheckoutSessionResult()` is unchanged in shape (it already accepts a full `CheckoutSessionResult`, which now simply carries the two new fields when a test explicitly constructs one with specific receipt evidence).
+  - No new call-recording array is required: `ensureFundingReceipt()`'s own provider calls are already observable through the existing `createCheckoutSessionCalls`/`confirmPaymentIntentCalls`-style pattern is not needed here since `retrievePaymentIntent()`/`retrieveCheckoutSession()` are retrieval, not creation, calls with no existing call-recording precedent; a test proving "no provider call occurred" (the already-has-a-receipt short-circuit) asserts this by registering a receipt directly via `UsageWalletManager::attachFundingReceipt()` in its own arrange step and confirming no exception/state change occurred from a subsequent `ensureFundingReceipt()` call against a Fake configured to throw if either retrieval method is invoked (a one-off anonymous class or Mockery spy at the test's own discretion — a test-authoring detail, not a contract-level fixture addition).
 
 ---
 
-## 9. Model / repository / migration — exact derivation (§10 of the assigning prompt)
+## 9. Model / repository / migration — exact paths (finalized, no placeholder)
 
-**Required, following the exact `business_usage_addon_purchases` precedent (`app/Models/BusinessUsageAddonPurchase.php`, its repository pair, and `database/migrations/2026_08_20_150006_create_business_usage_addon_purchases_table.php`) column-for-column:**
-
-- **Migration** `database/migrations/<next-date>_create_business_billing_receipts_table.php` — creates exactly the six columns in §1's table, `$table->foreign('business_id')->references('id')->on('businesses')->restrictOnDelete()`, `$table->foreign('ledger_entry_id')->references('id')->on('business_usage_ledger_entries')->restrictOnDelete()`, `$table->timestamp('created_at')->useCurrent()`, an index on `business_id` (read-path convenience, matching the addon-purchases precedent), and — **only if separately human-authorized per §5's defense-in-depth note** — `$table->unique('ledger_entry_id')`. No other column, index, or constraint.
-- **Model** `app/Models/BusinessBillingReceipt.php` — `protected $table = 'business_billing_receipts'; public $timestamps = false;` (no `updated_at`, matching `BusinessUsageAddonPurchase`'s own pattern exactly), `$fillable = ['business_id', 'ledger_entry_id', 'provider_receipt_url', 'provider_reference', 'created_at']`, `belongsTo(Business::class)` and `belongsTo(BusinessUsageLedgerEntry::class, 'ledger_entry_id')` relations.
-- **Repository contract** `app/Repositories/Contracts/BusinessBillingReceiptRepository.php extends BaseRepository` — `findById(int $id): ?BusinessBillingReceipt`, `findByLedgerEntryId(int $ledgerEntryId): ?BusinessBillingReceipt`, `create(array $attributes): BusinessBillingReceipt`. No `update()` method — the table is create-only, matching its own lack of `updated_at`.
-- **Eloquent implementation** `app/Repositories/Eloquent/EloquentBusinessBillingReceiptRepository.php` — direct implementation, no deviation from the established per-table pattern.
-- **`AppServiceProvider` binding** — one new line in the existing repository-binding array: `\App\Repositories\Contracts\BusinessBillingReceiptRepository::class => \App\Repositories\Eloquent\EloquentBusinessBillingReceiptRepository::class,` alongside the existing `BusinessUsageAddonPurchaseRepository` binding.
-- **One narrow addition to an existing contract**, mechanically required by §6/§7 and not part of the assigning prompt's own candidate list — disclosed per its own instruction: `BusinessUsageLedgerEntryRepository` (existing file, `app/Repositories/Contracts/BusinessUsageLedgerEntryRepository.php`, and its Eloquent implementation) gains one new **read-only** method, `findByCorrelationKey(string $correlationKey): ?BusinessUsageLedgerEntry` — a straightforward `WHERE correlation_key = ?` lookup against the column already confirmed `UNIQUE` (§5). This does not touch the "append-only, no update()/delete()" contract's own existing shape; it adds one more read method alongside `create()`/`sumCommittedAmountForFeature()`.
-
-No column, index, or table beyond what is listed above is authorized. No unrelated schema modification.
-
----
-
-## 10. Test ownership — exact paths (§11 of the assigning prompt)
-
-**Reused existing files (new test methods added to each, no new file):**
-
-- `tests/Feature/Usage/TopUpStateMachineTest.php` — successful `ManualTopUp` receipt: `attachFundingReceipt()` is called with the correct `ledger_entry_id`/`business_id`/`provider_reference` (Charge id, never the Checkout Session id)/`provider_receipt_url`; `SendReceiptNotification` is dispatched exactly once, `afterCommit()`, with the correct receipt id.
-- `tests/Feature/Usage/WebhookAmountCurrencyCustomerMismatchTest.php` or a sibling `AutoRecharge`-scoped file (implementation-time: reuse whichever existing file already owns a successful `AutoRecharge` webhook confirmation, per the Funding Provider-Flow contract's own already-established re-scoping of these fixtures to `AutoRecharge`) — successful `AutoRecharge` receipt, including the one new webhook-path provider call (§3), asserted via the Fake gateway's own call-recording.
-- `tests/Feature/Usage/AddonPurchaseTransitionAuditTest.php` — `wallet_credit` add-on purchase produces a receipt; `direct_deliverable` add-on purchase produces **no** receipt row and **no** `SendReceiptNotification` dispatch (the mechanically-impossible-by-schema case, §4 row 4, asserted directly as a negative).
-- `tests/Feature/Usage/FundingAttemptExactlyOnceWalletCreditTest.php` — extended: a duplicate webhook/return replay for an already-succeeded attempt never creates a second `business_billing_receipts` row and never dispatches a second `SendReceiptNotification`, exercising §5's row-lock convergence directly alongside its existing exactly-once-credit proof.
-- `tests/Feature/Usage/RedirectBeforeWebhookConfirmationTest.php` — extended: if the browser-return confirmation's own receipt fetch fails (simulated via the Fake gateway), accounting still succeeds (existing assertion, unaffected) **and** the subsequent webhook confirmation's own early-return branch (§3) successfully attaches the receipt that the first pass missed — the direct proof of §3's retry mechanism.
-- `tests/Feature/Usage/FakePaymentProviderGatewayTest.php` — the new receipt-evidence registration keys (§8) behave deterministically: registered values are returned verbatim; an unregistered outcome still returns the fake's own default receipt fields (never `null` unless the test explicitly registers a "no evidence" outcome for the missing-evidence proof below).
-- `tests/Feature/Usage/CrossBusinessPaymentIsolationTest.php` — extended: a receipt row's `business_id` always matches its ledger entry's own `business_id`; `attachFundingReceipt()` rejects (throws) a mismatched `business_id` argument (§6's defensive cross-check), asserted directly.
-
-**New test file required — no existing file honestly owns this behavior:**
-
-- `tests/Feature/Usage/ReceiptBoundaryTest.php` — the receipt-boundary-specific proofs that do not naturally fit any existing file's own scope:
-  - exact `business_billing_receipts` schema (columns, types, nullability, the two FKs' `restrictOnDelete()`, absence of `updated_at`) — a schema test mirroring `BusinessUsageAddonPurchaseSchemaTest.php`'s own established pattern.
-  - receipt write authority boundary: a mechanical source-scan test (mirroring §24's existing "no raw query outside its owning manager/repository" boundary test) asserting no file under `app/Http`, `app/Jobs`, `app/Listeners`, or `UsageBillingCheckoutManager.php` itself calls `BusinessBillingReceiptRepository::create()`/`update()` directly — only `UsageWalletManager.php` does.
-  - accounting succeeds even when receipt evidence retrieval is temporarily unavailable — for all three receipt-eligible purposes, simulated via a Fake-gateway-thrown `ProviderApiUnavailableException` on the receipt-evidence expand call specifically, asserting the funding attempt still reaches `Succeeded` and the wallet is still credited, with zero receipt row created that pass.
-  - notification opt-out: `notification_opt_in = false` on the billing contact — receipt row is still created (accounting/evidence persistence is independent of notification preference), but `SendReceiptNotification` sends nothing (asserted via a mail/notification fake, zero mail sent).
-  - missing billing contact: no `business_billing_contacts` row exists for the Business at all — receipt row still created, `SendReceiptNotification` handles it as a clean no-op (no exception, no mail sent).
-  - duplicate job/send idempotency: `SendReceiptNotification` dispatched twice for the same receipt id (simulated directly, bypassing the dispatch-site guarantee, to prove the job itself is also safe if ever double-dispatched by an operational mistake) sends at most one mail.
-  - tenant/Business isolation: a receipt for Business A is never visible/attachable via a lookup scoped to Business B (extends the `CrossBusinessPaymentIsolationTest.php` proof above with a receipt-specific angle where a dedicated new-file assertion reads more naturally than an addition to that file).
-  - `FakePaymentProviderGateway` deterministic receipt behavior beyond what `FakePaymentProviderGatewayTest.php` itself owns — an end-to-end proof that a real `UsageBillingCheckoutManager` confirmation call, using the Fake, produces a receipt row with exactly the Fake's registered `receiptUrl`/`receiptChargeId`.
-  - no legacy `invoices` table reuse: a direct assertion (or source-scan) that no code path in this correction ever references the legacy `invoices` table.
-  - no local receipt/invoice document generation: a direct assertion that `provider_receipt_url` is always the verbatim Stripe-returned URL, never a locally-constructed one, and that no local PDF/HTML receipt-rendering code is introduced anywhere in this correction's diff.
-  - no live Stripe network call in automated tests: the entire file, like every other `tests/Feature/Usage/*` file, binds `FakePaymentProviderGateway` via `app()->instance(PaymentProviderGateway::class, ...)` and never `StripePaymentProviderGateway` — mechanically enforced by the same convention every existing Usage test already follows.
-
-No test file beyond the eight reused files and the one new file above is authorized. Implementation must not create a second new file "for convenience" without a further human-authorized correction.
+- **Migration:** `database/migrations/2026_08_27_120001_create_business_billing_receipts_table.php` — creates exactly the six §1 columns; `$table->foreign('business_id')->references('id')->on('businesses')->restrictOnDelete();`; `$table->foreign('ledger_entry_id')->references('id')->on('business_usage_ledger_entries')->restrictOnDelete();`; `$table->timestamp('created_at')->useCurrent();`. **No index beyond the implicit PK** (§5).
+- **Model:** `app/Models/BusinessBillingReceipt.php` — `protected $table = 'business_billing_receipts'; public $timestamps = false;`, `$fillable = ['business_id', 'ledger_entry_id', 'provider_receipt_url', 'provider_reference', 'created_at']`, `belongsTo(Business::class)`, `belongsTo(BusinessUsageLedgerEntry::class, 'ledger_entry_id')`.
+- **Repository contract:** `app/Repositories/Contracts/BusinessBillingReceiptRepository.php extends BaseRepository` — `findById(int $id): ?BusinessBillingReceipt`, `findByLedgerEntryId(int $ledgerEntryId): ?BusinessBillingReceipt`, `create(array $attributes): BusinessBillingReceipt`. No `update()` — create-only, matching the absence of `updated_at`.
+- **Eloquent implementation:** `app/Repositories/Eloquent/EloquentBusinessBillingReceiptRepository.php` — direct implementation, no deviation.
+- **`AppServiceProvider` binding:** one new line, `\App\Repositories\Contracts\BusinessBillingReceiptRepository::class => \App\Repositories\Eloquent\EloquentBusinessBillingReceiptRepository::class,`.
+- **`BusinessUsageLedgerEntryRepository` (existing contract) — two new read-only methods**, mechanically required by §6:
+  - `findById(int $id): ?BusinessUsageLedgerEntry`
+  - `findForUpdateById(int $id): ?BusinessUsageLedgerEntry` — issues the row-level `SELECT ... WHERE id = ? FOR UPDATE`, mirroring `BusinessUsageWalletRepository::findForUpdateByBusinessId()`'s own existing convention exactly.
+  - Both added to `EloquentBusinessUsageLedgerEntryRepository.php` as well. The contract's existing "append-only, no update()/delete()" character is unchanged — these are reads.
+- **New exception:** `app/Exceptions/Usage/ReceiptEvidenceUnavailableException.php` — a narrow, purpose-built domain exception (mirroring the existing `Exceptions\Usage\*` convention, e.g. `ProviderApiUnavailableException`, `FundingAttemptNotResumableException`), thrown only by `SendReceiptNotification::handle()` step 5 when `ensureFundingReceipt()` returns `null`. The mismatch/integrity checks in §6/§7 use PHP's built-in `\InvalidArgumentException`/`\RuntimeException` — no additional new exception class is introduced for those, minimizing new-file footprint.
 
 ---
 
-## 11. Explicit exclusions (§12 of the assigning prompt, restated as a lock)
+## 10. Test ownership — exact paths and exact method names (zero discretion)
 
-Out of scope for this correction, confirmed by direct source audit that none of the following is required to make Receipt Boundary itself correct:
+**Reused existing files, exact new/modified method names:**
 
-- Job/Event Dispatch Completion work except `SendReceiptNotification` itself.
-- `BusinessFundingAttemptSucceeded` / `BusinessFundingAttemptFailed` event dispatch.
-- `SendLowBalanceNotification` / `SendAutoRechargeDisabledNotification`.
-- `ExpireStaleUsageReservations` scheduling.
-- Admin Usage Billing Surface.
-- `ManualCredit` / `PromotionalCredit` / `UsageChargeReversal` / `CorrectionReversal` admin surface.
-- Executable provider refund/dispute handling beyond §4 rows 8–9's own narrow "does this create a receipt" determination (locked: no).
-- Add-on HTTP routes/controllers/views.
-- M6 conformance docs.
-- Deployment docs.
-- Tag work.
-- Conversations pilot activation.
-- Tax/VAT implementation.
-- Legacy `invoices` table changes.
-- A dedicated receipt-evidence backfill/reconciliation job (§3's disclosed, human-reviewable gap).
-- `UNIQUE (ledger_entry_id)` schema hardening (§5's disclosed, human-reviewable optional addition — not assumed, not built unless separately authorized).
+- **`tests/Feature/Usage/TopUpStateMachineTest.php`** — new: `test_manual_top_up_success_dispatches_exactly_one_send_receipt_notification()`.
+- **`tests/Feature/Usage/FundingAttemptPayerConsentTest.php`** — extend `test_auto_recharge_still_creates_an_off_session_payment_intent_and_snapshots_the_instrument_at_creation()` (the synchronous-success test) with a `Queue::fake()` assertion of exactly one `SendReceiptNotification` dispatch carrying the correct `fundingAttemptId`/`ledgerEntryId`; extend `test_auto_recharge_webhook_confirmation_performs_no_new_provider_call()` identically for the webhook path; new: `test_platform_administrator_resuming_a_stuck_auto_recharge_attempt_dispatches_the_receipt_job()` — the admin/reconciliation entry point, exercising `retryFundingAttemptAsAdministrator()` against an `AutoRecharge`-purpose attempt (not currently covered by the file's existing `test_platform_administrator_can_resume_a_stuck_attempt()`, which is `ManualTopUp`-scoped).
+- **`tests/Feature/Usage/AddonPurchaseTransitionAuditTest.php`** — new: `test_wallet_credit_addon_purchase_dispatches_exactly_one_send_receipt_notification()`; new: `test_direct_deliverable_addon_purchase_dispatches_no_receipt_notification()`.
+- **`tests/Feature/Usage/FundingAttemptExactlyOnceWalletCreditTest.php`** — new: `test_repeated_receipt_attachment_for_the_same_ledger_entry_is_idempotent()`.
+- **`tests/Feature/Usage/CrossBusinessPaymentIsolationTest.php`** — new: `test_attach_funding_receipt_rejects_a_mismatched_business_id()`.
+- **`tests/Feature/Usage/RedirectBeforeWebhookConfirmationTest.php`** — new: `test_missing_receipt_evidence_fails_the_notification_job_without_reversing_accounting()`; new: `test_duplicate_return_and_webhook_confirmation_dispatches_the_receipt_job_exactly_once()`.
+- **`tests/Feature/Usage/FakePaymentProviderGatewayTest.php`** — new: `test_registered_payment_intent_result_is_returned_verbatim()`; new: `test_unregistered_payment_intent_retrieval_still_returns_deterministic_default_receipt_fields()`; new: `test_checkout_session_receipt_fields_are_returned_verbatim_when_explicitly_registered()`.
+- **`tests/Feature/Usage/StripePaymentProviderGatewayCompatibilityTest.php`** — correct `test_gateway_source_fails_closed_on_a_missing_redirect_url_and_resolves_payment_method_via_expansion()`'s final assertion from the now-false full-array literal to two separate substring assertions: `assertStringContainsString("'payment_intent.payment_method'", $source)` and `assertStringContainsString("'payment_intent.latest_charge'", $source)`; new: `test_payment_intent_retrieval_expands_latest_charge_for_receipt_evidence()` asserting the source contains `"'expand' => ['latest_charge']"`.
+
+**New test file — no existing file honestly owns these proofs:**
+
+- **`tests/Feature/Usage/ReceiptBoundaryTest.php`**:
+  - `test_business_billing_receipts_schema_matches_the_rfc_exactly()` — six columns, both FKs' `restrictOnDelete()`, no `updated_at`.
+  - `test_business_billing_receipts_has_no_extra_unique_or_convenience_index()` — no `UNIQUE(ledger_entry_id)`, no `business_id` index, beyond the implicit PK.
+  - `test_slot_agreement_flows_never_create_a_business_billing_receipt()` — runs an initial slot-agreement Checkout confirmation (reusing the existing slot-agreement test fixture pattern) and asserts zero `business_billing_receipts` rows and zero `SendReceiptNotification` dispatches.
+  - `test_ensure_funding_receipt_resolves_evidence_for_a_checkout_backed_attempt()`.
+  - `test_ensure_funding_receipt_resolves_evidence_for_a_payment_intent_backed_attempt()`.
+  - `test_ensure_funding_receipt_returns_null_and_makes_no_write_when_a_receipt_already_exists()` — proves the no-provider-call short-circuit.
+  - `test_a_manually_redispatched_send_receipt_notification_persists_the_receipt_after_a_prior_evidence_failure()` — the exact recovery proof for §7.
+  - `test_notification_opt_out_still_persists_the_receipt_but_sends_no_mail()`.
+  - `test_missing_billing_contact_still_persists_the_receipt_but_sends_no_mail()`.
+  - `test_no_code_path_in_this_correction_references_the_legacy_invoices_table()` — a source-scan assertion over the exact file list in §12.
+  - `test_provider_receipt_url_is_always_the_verbatim_stripe_value_never_locally_constructed()`.
+  - `test_receipt_boundary_tests_bind_only_the_fake_gateway_never_the_real_stripe_gateway()` — a source-scan assertion over this file's own `setUp()`, matching the same convention every other `tests/Feature/Usage/*` file already follows.
+
+No test file beyond the eight reused files and this one new file is authorized.
 
 ---
 
-## 12. Future implementation allowlist — mechanically derived (§13 of the assigning prompt)
+## 11. Human-review decisions — now closed (per the assigning review's own authority)
 
-**Production paths (11 — every candidate in the assigning prompt's own list evaluated; two genuinely necessary paths added beyond it, both disclosed above with rationale; none of the prompt's candidates found unnecessary):**
+1. **`Refund` receipt rows: NO in this correction.** Closed.
+2. **`DisputeChargeback` receipt rows: NO in this correction.** Closed.
+3. **`UNIQUE(ledger_entry_id)`: NO. RFC §23 schema preserved exactly.** Closed.
+4. **The knowingly-unrecoverable `AutoRecharge` receipt gap from Round 0: NOT ACCEPTED, and resolved.** The corrected architecture (§3/§7) gives every receipt-eligible flow, including every `AutoRecharge` entry point, the identical, fully recoverable job-based path — no purpose-specific gap remains.
 
-1. `database/migrations/<next-date>_create_business_billing_receipts_table.php` — new.
+No other human decision is open. No new decision point was discovered during this correction that the assigning review had not already resolved.
+
+---
+
+## 12. Explicit exclusions (unchanged from Round 0)
+
+Job/Event Dispatch Completion work except `SendReceiptNotification` itself; `BusinessFundingAttemptSucceeded`/`BusinessFundingAttemptFailed` event dispatch; `SendLowBalanceNotification`/`SendAutoRechargeDisabledNotification`; `ExpireStaleUsageReservations` scheduling; Admin Usage Billing Surface; `ManualCredit`/`PromotionalCredit`/`UsageChargeReversal`/`CorrectionReversal` admin surface; executable provider refund/dispute handling beyond §4 rows 8–9's closed determination; add-on HTTP routes/controllers/views; M6 conformance docs; deployment docs; tag work; Conversations pilot activation; tax/VAT implementation; legacy `invoices` table changes; a dedicated receipt-evidence backfill/reconciliation job (superseded — no longer needed at all, since the queued job itself is now the recovery mechanism, §7); any new `UNIQUE`/index addition to `business_billing_receipts` (§11, closed as "no").
+
+---
+
+## 13. Exact future production allowlist — 16 files, individually listed, no grouping, no placeholder
+
+1. `database/migrations/2026_08_27_120001_create_business_billing_receipts_table.php` — new.
 2. `app/Models/BusinessBillingReceipt.php` — new.
 3. `app/Repositories/Contracts/BusinessBillingReceiptRepository.php` — new.
 4. `app/Repositories/Eloquent/EloquentBusinessBillingReceiptRepository.php` — new.
 5. `app/Providers/AppServiceProvider.php` — one new binding line.
-6. `app/Library/Usage/UsageWalletManager.php` — `attachFundingReceipt()`, `hasFundingReceipt()`, `findLedgerEntryIdByCorrelationKey()` added; `creditFromFunding()` unchanged.
-7. `app/Library/Usage/UsageBillingCheckoutManager.php` — the three purpose-aware confirmation methods gain the §2/§3 receipt-fetch-and-attach sequence; constructor gains read-only `BusinessBillingReceiptRepository` injection if implementation finds a display need (§6).
-8. `app/Library/Usage/Contracts/PaymentProviderGateway.php` — no signature change (§8); doc-comment update only, if any.
-9. `app/Library/Usage/StripePaymentProviderGateway.php` — `retrievePaymentIntent()`/`retrieveCheckoutSession()` expand widened; both DTO-mapping call sites populate the two new fields.
-10. `app/Library/Usage/FakePaymentProviderGateway.php` — deterministic receipt-evidence registration (§8).
-11. `app/Library/Usage/PaymentIntentResult.php` and `app/Library/Usage/CheckoutSessionResult.php` — two new trailing nullable fields each.
+6. `app/Library/Usage/UsageWalletManager.php` — `creditFromFunding()` widened (§3); `attachFundingReceipt()`, `findFundingReceipt()` added (§6).
+7. `app/Library/Usage/UsageBillingCheckoutManager.php` — `ensureFundingReceipt()` added (§6). No other method modified.
+8. `app/Library/Usage/StripePaymentProviderGateway.php` — `retrievePaymentIntent()`/`retrieveCheckoutSession()` expand widened; DTO mapping populates two new fields (§8).
+9. `app/Library/Usage/FakePaymentProviderGateway.php` — `registerPaymentIntentResult()` + registry; deterministic default receipt fields (§8).
+10. `app/Library/Usage/PaymentIntentResult.php` — two new trailing nullable fields.
+11. `app/Library/Usage/CheckoutSessionResult.php` — two new trailing nullable fields.
 12. `app/Jobs/Usage/SendReceiptNotification.php` — new.
-13. `app/Notifications/Usage/ReceiptAvailableNotification.php` — new, disclosed in §7, not in the assigning prompt's own candidate list.
-14. `app/Repositories/Contracts/BusinessUsageLedgerEntryRepository.php` and `app/Repositories/Eloquent/EloquentBusinessUsageLedgerEntryRepository.php` — one new read-only method each, disclosed in §9, not in the assigning prompt's own candidate list.
+13. `app/Notifications/Usage/ReceiptAvailableNotification.php` — new.
+14. `app/Repositories/Contracts/BusinessUsageLedgerEntryRepository.php` — `findById()`, `findForUpdateById()` added (§9).
+15. `app/Repositories/Eloquent/EloquentBusinessUsageLedgerEntryRepository.php` — same two methods implemented.
+16. `app/Exceptions/Usage/ReceiptEvidenceUnavailableException.php` — new.
 
-*(Numbered for reference; several are file **pairs**, giving 17 actual file paths — the exact count is re-verified mechanically at implementation-contract time via a grep-based diff-scope audit, following every prior RFC-005 correction's own established discipline.)*
+**`app/Library/Usage/Contracts/PaymentProviderGateway.php` is confirmed NOT REQUIRED** — no interface signature change (§8). **`app/Jobs/Usage/ProcessPaymentProviderEvent.php` is confirmed NOT REQUIRED** — it delegates entirely to `UsageBillingCheckoutManager::confirmAttemptFromWebhook()`, which this correction does not modify. **`app/Jobs/Usage/ReconcileProviderPendingState.php` is confirmed NOT REQUIRED** — it delegates entirely to `confirmAttemptFromReturn()`, likewise unmodified.
 
-**Test/support paths — 9, per §10 above:** the eight reused existing files plus `tests/Feature/Usage/ReceiptBoundaryTest.php`.
-
-No production or test path beyond these two lists is authorized without a further human-authorized correction round.
+No production path beyond these 16 is authorized without a further human-authorized correction round.
 
 ---
 
-## 13. Future implementation gates (§14 of the assigning prompt, locked verbatim)
+## 14. Exact future test/support allowlist — 9 files, individually listed
+
+1. `tests/Feature/Usage/TopUpStateMachineTest.php` — reused, 1 new method.
+2. `tests/Feature/Usage/FundingAttemptPayerConsentTest.php` — reused, 2 extended methods + 1 new method.
+3. `tests/Feature/Usage/AddonPurchaseTransitionAuditTest.php` — reused, 2 new methods.
+4. `tests/Feature/Usage/FundingAttemptExactlyOnceWalletCreditTest.php` — reused, 1 new method.
+5. `tests/Feature/Usage/CrossBusinessPaymentIsolationTest.php` — reused, 1 new method.
+6. `tests/Feature/Usage/RedirectBeforeWebhookConfirmationTest.php` — reused, 2 new methods.
+7. `tests/Feature/Usage/FakePaymentProviderGatewayTest.php` — reused, 3 new methods.
+8. `tests/Feature/Usage/StripePaymentProviderGatewayCompatibilityTest.php` — reused, 1 corrected assertion + 1 new method.
+9. `tests/Feature/Usage/ReceiptBoundaryTest.php` — new file, 12 methods (§10).
+
+No test/support path beyond these 9 is authorized.
+
+---
+
+## 15. Future implementation gates (unchanged, locked verbatim)
 
 ```
 "C:\laragon\bin\php\php-8.3.30-Win32-vs16-x64\php.exe" artisan migrate:fresh --env=testing
@@ -324,13 +377,11 @@ No production or test path beyond these two lists is authorized without a furthe
 git diff --check
 ```
 
-Only `ultimatesms_testing` may be used (confirmed via `.env.testing`'s `DB_DATABASE`, per every prior RFC-005 correction's own established safety check). No real Stripe credentials. No live Stripe network request — every test binds `FakePaymentProviderGateway` (§10's own "no live Stripe network call" test proves this mechanically, not just by convention).
+Only `ultimatesms_testing` may be used. No real Stripe credentials. No live Stripe network request — every reused/new test binds `FakePaymentProviderGateway` exclusively, confirmed mechanically by `ReceiptBoundaryTest.php`'s own dedicated proof (§10).
 
 ---
 
-## 14. Contract-branch validation
-
-Run immediately before commit, on this docs-only branch:
+## 16. Contract-branch validation (run and confirmed before this round's commit)
 
 ```
 git status --short
@@ -338,17 +389,7 @@ git diff --check
 git diff --name-only origin/main...HEAD
 ```
 
-The only changed tracked path must be `docs/automation/RFC-005-RECEIPT-BOUNDARY-CORRECTION-CONTRACT.md`. Confirmed below in the final report.
-
----
-
-## 15. Unresolved human decisions carried forward from this contract
-
-1. **§3 — `AutoRecharge`'s one new webhook-path provider call**, and the narrow, undisclosed-in-RFC gap where its own single receipt-fetch attempt failing leaves no further automated retry in this correction's scope. Recommendation: accept as a bounded v1 gap; no job invented.
-2. **§4 rows 8–9 — `Refund`/`DisputeChargeback` never produce a receipt in this correction.** Recommendation: correct as the narrowest interpretation; a future correction may design refund-receipt semantics separately if a human requires it.
-3. **§5/§9 — whether to additionally authorize `UNIQUE (ledger_entry_id)`** on `business_billing_receipts` as schema-level defense-in-depth. Recommendation: not required for correctness (the row-lock design already provides it); a human may add it at implementation-contract time with zero design impact elsewhere.
-
-No other open item was found; every other question the assigning prompt raised was resolved directly against RFC-005's own text or this repository's own current, directly-read implementation.
+The only changed tracked path is `docs/automation/RFC-005-RECEIPT-BOUNDARY-CORRECTION-CONTRACT.md` — confirmed in the final report below.
 
 ---
 
