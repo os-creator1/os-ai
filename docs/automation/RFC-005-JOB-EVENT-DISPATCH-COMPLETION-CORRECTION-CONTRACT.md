@@ -10,15 +10,38 @@ This is **contract-authoring only**. No product code, test code, schema, route, 
 
 ---
 
+## Correction Round 1 record
+
+Independent pre-merge review of the initial draft (head `bea514b83a355a1fe1ed02d45d2e875074ae6d59`) found seven defects, all resolved below by direct mechanical re-audit of `UsageWalletManager.php`, `UsageBillingCheckoutManager.php`, `EvaluateBusinessAutoRecharge.php`, `app/Console/Kernel.php`, and the existing `AutoRechargeFailedPaymentRetryTest.php`/`OpportunitySnoozeSweepScheduleTest.php` test files, plus explicit human resolutions received for the three previously-open product decisions. **1 of 2 ordinary correction rounds consumed by this round; 1 ordinary round remains.**
+
+Exact issues resolved this round:
+
+1. **False `ShouldDispatchAfterCommit` ordering reasoning for `BusinessFundingAttemptSucceeded`.** The initial draft claimed an event dispatched immediately after `recordTransition()` (before `creditFromFunding()`/`finalizeAddonPurchaseIfPending()` run) would still correctly defer to those later operations' own transactions. Direct re-read of `confirmSucceeded()` disproves this: no transaction is open at that point, so the event fires immediately, before the purpose-specific local finalization has committed. Corrected in §7.1 — the dispatch point moves to after `creditFromFunding()`/`finalizeAddonPurchaseIfPending()` each return.
+2. **False "exact-once delivery" claim for both notification jobs.** The initial draft claimed `SendLowBalanceNotification`/`SendAutoRechargeDisabledNotification` achieve "exact-once delivery." Re-audited against `SendReceiptNotification` and Laravel's actual queue/notification semantics: there is no transactional outbox and no provider-level idempotency key for mail delivery anywhere in this repository. The durable marker/transition only guarantees at most one automatic dispatch *decision* per episode — it says nothing about whether the queued job later executes, or whether the mail transport actually delivers. Corrected throughout §4/§5.
+3. **Explicit resolution of the RFC-005 §19 vs. M3-code `requires_action` conflict**, previously left as an open item. Per explicit human authorization, both `Failed` and `RequiresAction` now count as consecutive auto-recharge failures, matching RFC-005 §19's own text; this human-authorized correction is disclosed as superseding both the current `EvaluateBusinessAutoRecharge.php` docblock's stated design ("`requires_action`... does not increment it") and the current passing test `AutoRechargeFailedPaymentRetryTest::test_a_requires_action_outcome_does_not_increment_the_failure_counter`. Neither old behavior is described as still authoritative anywhere below. Corrected in §5.
+4. **`ExpireStaleUsageReservations`'s previously-unresolved schedule cadence**, now explicitly resolved by human authorization to `->everyFiveMinutes()`, matching the repository's own existing five-minute cadence for comparable RFC-005 reconciliation/renewal jobs (`ReconcileProviderPendingState`, `InitiateSlotAgreementRenewal`, `FinalizeSlotAgreementCancellation`). Corrected in §3; `app/Console/Kernel.php` added to the production allowlist; a dedicated scheduler-reachability test locked in §11.
+5. **Low-balance applicability rule tightened to a mechanically safe episode model.** The initial draft's "must mathematically cross from above to below" rule could miss a notification when configuration changed while the wallet was already low. Replaced, per explicit human resolution, with a marker-null-check rule: notify whenever an eligible negative mutation leaves the wallet at-or-below threshold AND the marker is currently null, regardless of whether the previous balance was itself above or below threshold. Corrected in §4.
+6. **Stale allowlist headers.** The initial draft's §10 header claimed "Count: 7" while listing 13 paths, and §14's open-items list still described three items this round's human resolutions now close. Every count and heading below is recomputed from the corrected content, not carried over.
+7. **`recordAutoRechargeFailure()`'s system-disable path was found, on re-audit, to risk erasing `auto_recharge_threshold_micro`/`auto_recharge_amount_micro`/`monthly_recharge_cap_micro` if it were implemented by reusing `configureAutoRecharge(enabled: false)` internally** — that method's own current code (`UsageWalletManager.php:1237-1242`) unconditionally nulls both threshold and amount whenever `enabled` is `false`. This is correct and unchanged for a **deliberate** owner disable, but would be wrong for a **system** disable, which must preserve configuration so a human can decide whether to simply re-enable at the same threshold later. Corrected in §5: the system-disable path writes `auto_recharge_enabled = false` directly via the wallet repository, never through `configureAutoRecharge()`.
+
+Two additional, previously-undiscovered mechanical facts found during this round's audit, disclosed per this contract's own zero-discretion standard:
+
+- **`configureAutoRecharge()` does not currently reset `consecutive_recharge_failures` on any transition**, including disabled→enabled. Human resolution B.6 requires a reset on that specific edge; this requires one further, minimal widening of the same already-modified method, locked in §5.
+- **This worktree has no `vendor/` directory** (dependencies are not installed here), so the exact `Illuminate\Console\Scheduling\Event` property that identifies a `$schedule->job(new X())` registration (as opposed to a `$schedule->command(...)` registration, which the one existing scheduling test in this repository, `OpportunitySnoozeSweepScheduleTest.php`, identifies via its `->command` string) could not be confirmed against the actual installed `laravel/framework` source in this pass. The scheduler test design in §11 discloses this precisely rather than asserting false certainty about the exact property name; the interval assertion (`->expression === '*/5 * * * *'`) does not depend on this and is unaffected.
+
+No genuinely new blocking product/schema question was found this round beyond what §14 discloses.
+
+---
+
 ## 0. Governance
 
-- Drafted on branch `chore/rfc-005-job-event-dispatch-completion-correction-contract`, in an isolated linked worktree (`../rfc-005-job-event-dispatch-completion-contract-worktree`), based on `origin/main` at `ae0aba36057360eb1149ef980beeb90f9d2d250f` — the Receipt Boundary correction's own merge commit (PR [#139](https://github.com/os-creator1/os-ai/pull/139)), confirmed via `git fetch origin main && git rev-parse origin/main` and `git log -1 --format="%H %s"` (`Merge pull request #139 from os-creator1/agent/rfc-005-receipt-boundary-correction`) at the start of this contract.
+- Drafted on branch `chore/rfc-005-job-event-dispatch-completion-correction-contract`, in an isolated linked worktree (`../rfc-005-job-event-dispatch-completion-contract-worktree`), based on `origin/main` at `ae0aba36057360eb1149ef980beeb90f9d2d250f` — the Receipt Boundary correction's own merge commit (PR [#139](https://github.com/os-creator1/os-ai/pull/139)). Reconfirmed unchanged this round via `git fetch origin && git rev-parse origin/main` and `git merge-base origin/main HEAD` (both returned `ae0aba36057360eb1149ef980beeb90f9d2d250f`) — this branch remains legitimately based on current `origin/main`, no rebase needed.
 - **Future implementation branch (authorized only after this contract's human merge, and only after a further, separate, explicit human instruction to begin implementation): `agent/rfc-005-job-event-dispatch-completion-correction`.**
-- Confirmed at drafting: no such branch exists on `origin`; `git status --short` in this worktree is empty; no product/test/config/route/RFC-source file has been touched by this branch at any point.
+- Confirmed this round: no such branch exists on `origin`; `git status --short` in this worktree is empty before and after this round's edit (only the one governance file is modified); no product/test/config/route/RFC-source file has been touched by this branch at any point.
 - Locked:
   - `human_only_merge: true`
   - `maximum_correction_rounds: 2`
-  - `correction_rounds_consumed: 0 of 2`
+  - **Correction rounds: 1 of 2 consumed; 1 ordinary round remains.**
   - `advance_automatically: false`
   - `start_automatically_after_contract_merge: false`
   - `M6 remains frozen` — untouched, not resumed, no M6 document created or modified.
@@ -26,35 +49,35 @@ This is **contract-authoring only**. No product code, test code, schema, route, 
   - **Implementation requires a separate, explicit human instruction issued after this contract itself is human-merged.**
 - This is a new, independently bounded pre-M6 correction contract — not a correction round against M1–M6's own contracts, and not a correction round against the already-merged Reservation Admission, Funding Provider-Flow, or Receipt Boundary contracts. Its `maximum_correction_rounds: 2` budget is its own; no counter is borrowed or altered on any other contract.
 - This governance branch changes exactly one tracked file: `docs/automation/RFC-005-JOB-EVENT-DISPATCH-COMPLETION-CORRECTION-CONTRACT.md`.
-- **Required reading completed before drafting:** RFC-005 §12, §13, §15, §16, §19, §20, §21, §22 (skimmed — slot-agreement-only, no job/event-dispatch-completion content), §25, §28, §29, §31, §32, §35, §36, §37, §39, §40; and the three merged correction contracts (`RFC-005-RESERVATION-ADMISSION-CORRECTION-CONTRACT.md`, `RFC-005-FUNDING-PROVIDER-FLOW-CORRECTION-CONTRACT.md`, `RFC-005-RECEIPT-BOUNDARY-CORRECTION-CONTRACT.md`). None of the three prior corrections is reopened, contradicted, or referenced as needing amendment by anything below.
+- **Re-audited this round, independently, before editing** (not preserved merely because already asserted in the prior draft): `UsageWalletManager.php`'s `reserve()`, `commit()`, `release()`, `creditFromFunding()`, `recordAutoRechargeFailure()`, `configureAutoRecharge()` (full bodies, fresh reads); `UsageBillingCheckoutManager.php`'s `confirmSucceeded()`, `markFailed()`, `confirmAttemptFromReturn()`, `confirmAttemptFromWebhook()`, `retryFundingAttemptAsAdministrator()` (full bodies, fresh reads); `EvaluateBusinessAutoRecharge.php` (full file, fresh read); `app/Console/Kernel.php` (full file, fresh read — unchanged since the initial draft); `app/Enums/Usage/FundingAttemptState.php` (case list); `AutoRechargeFailedPaymentRetryTest.php`'s existing three test methods (full read); `OpportunitySnoozeSweepScheduleTest.php` (full read, the repository's own existing scheduling-test precedent); RFC-005 §19 (re-read verbatim).
 
 ---
 
-## 1. §29 baseline — mechanically re-verified
+## 1. §29 baseline — mechanically re-verified, unchanged since the initial draft
 
 **Jobs, confirmed 10 of 13 exist** (`app/Jobs/Usage/*.php`, all extend `App\Jobs\Base`): `EvaluateBusinessAutoRecharge`, `ProcessPaymentProviderEvent`, `ReconcileProviderPendingState`, `ReconcileSlotAgreementAllocation`, `InitiateSlotAgreementRenewal`, `FinalizeSlotAgreementCancellation`, `PurgeExpiredWebhookPayloads`, `SendReceiptNotification`, `SendSlotAgreementPriceChangeNotice`, `ExpireStaleUsageReservations`. **Confirmed missing, exactly two:** `SendLowBalanceNotification`, `SendAutoRechargeDisabledNotification`.
 
-**Events, confirmed 10 of 17 exist** (`app/Events/Usage/*.php`, all `implements ShouldDispatchAfterCommit`, `use Dispatchable`, carry only scalar/ID constructor properties): `BusinessPayerChanged`, `BusinessBillingContactChanged`, `BusinessFundingAttemptSucceeded`, `BusinessFundingAttemptFailed`, `BusinessWalletBillingStatusChanged`, `AdditionalBusinessSlotAgreementCompleted`, `AdditionalBusinessSlotAllocationFailed`, `AdditionalBusinessSlotAgreementLapsed`, `AdditionalBusinessSlotAgreementCanceled`, `AdditionalBusinessSlotAgreementPaymentRecovered`. **Confirmed missing, exactly seven:** `BusinessWalletCredited`, `BusinessWalletDebited`, `BusinessWalletDebtIncurred`, `BusinessWalletDebtCleared`, `BusinessUsageReserved`, `BusinessUsageCommitted`, `BusinessUsageReservationReleased`.
+**Events, confirmed 10 of 17 exist**, all `implements ShouldDispatchAfterCommit`, `use Dispatchable`, carry only scalar/ID constructor properties: `BusinessPayerChanged`, `BusinessBillingContactChanged`, `BusinessFundingAttemptSucceeded`, `BusinessFundingAttemptFailed`, `BusinessWalletBillingStatusChanged`, `AdditionalBusinessSlotAgreementCompleted`, `AdditionalBusinessSlotAllocationFailed`, `AdditionalBusinessSlotAgreementLapsed`, `AdditionalBusinessSlotAgreementCanceled`, `AdditionalBusinessSlotAgreementPaymentRecovered`. **Confirmed missing, exactly seven:** `BusinessWalletCredited`, `BusinessWalletDebited`, `BusinessWalletDebtIncurred`, `BusinessWalletDebtCleared`, `BusinessUsageReserved`, `BusinessUsageCommitted`, `BusinessUsageReservationReleased`.
 
-**Confirmed dead, exactly two of the ten existing events:** `BusinessFundingAttemptSucceeded::dispatch(` and `BusinessFundingAttemptFailed::dispatch(` have **zero call sites anywhere in `app/`** (exhaustive grep). The classes exist, match the RFC's §29 naming exactly, and are otherwise correctly shaped — they are simply never fired.
+**Confirmed dead, exactly two of the ten existing events:** `BusinessFundingAttemptSucceeded::dispatch(` and `BusinessFundingAttemptFailed::dispatch(` have zero call sites anywhere in `app/`.
 
-**Kernel schedule, confirmed exactly 5 entries** in `app/Console/Kernel.php`'s non-demo `else` branch (lines 110–117): `PurgeExpiredWebhookPayloads` (hourly), `ReconcileProviderPendingState` (everyFiveMinutes), `InitiateSlotAgreementRenewal` (everyFiveMinutes), `FinalizeSlotAgreementCancellation` (everyFiveMinutes), `ReconcileSlotAgreementAllocation` (hourly). **Confirmed absent: `ExpireStaleUsageReservations` is not scheduled anywhere** — it exists (`app/Jobs/Usage/ExpireStaleUsageReservations.php`, 19 lines, `handle(UsageWalletManager $manager)` calling only `$manager->expireStaleReservations()`), is fully built (M1 contract §12 item 41), and per the M1 contract's own §10 item 10 was never intended to be scheduled at M1 — but no later milestone contract (M2–M6) ever added a Kernel entry for it either. This is a genuine, blocking reachability gap: a `pending` reservation past `expires_at` is never automatically released by anything in the current system.
+**Kernel schedule, re-confirmed exactly 5 entries this round** (`app/Console/Kernel.php:110-117`, byte-identical to the initial draft's citation): `PurgeExpiredWebhookPayloads` (hourly), `ReconcileProviderPendingState` (everyFiveMinutes), `InitiateSlotAgreementRenewal` (everyFiveMinutes), `FinalizeSlotAgreementCancellation` (everyFiveMinutes), `ReconcileSlotAgreementAllocation` (hourly). `ExpireStaleUsageReservations` remains absent — resolved this round, §3.
 
-**`AdvanceUsagePeriodBoundaries` confirmed to not exist as a class anywhere in `app/`.**
-
----
-
-## 2. `AdvanceUsagePeriodBoundaries` — classification confirmed, not widened
-
-RFC-005 §15 states verbatim: *"The scheduled `AdvanceUsagePeriodBoundaries` job remains optional proactive maintenance only, never required for correctness."* This is not listed among §39's 14 open human decisions (items 1–14, all carried forward unchanged, "no new item is added by this remediation round" per §39's own preamble) — it is a settled design statement, not an open question. The authoritative rollover mechanism is `UsageWalletManager::rollOverPeriodsIfNeeded()`, already called from inside `reserve()`, `commit()`, `release()`, and `creditFromFunding()` (confirmed by direct read of all four methods, §5 below) — lazy rollover is already fully load-bearing and already exercised by every code path that touches a wallet.
-
-**No RFC or merged-contract evidence contradicts M6's prior OPTIONAL/NON-BLOCKING classification.** Locked: `AdvanceUsagePeriodBoundaries` is **OPTIONAL_NON_BLOCKING / NOT IMPLEMENTED BY THIS CORRECTION**. No class, migration, or Kernel entry for it is authorized by this contract.
+**`AdvanceUsagePeriodBoundaries` confirmed to still not exist as a class anywhere in `app/`.**
 
 ---
 
-## 3. `ExpireStaleUsageReservations` — reachability confirmed, cadence unresolved (STOP)
+## 2. `AdvanceUsagePeriodBoundaries` — classification confirmed, not widened, unchanged since the initial draft
 
-**Mechanical facts, confirmed by direct read:**
+RFC-005 §15 states verbatim: *"The scheduled `AdvanceUsagePeriodBoundaries` job remains optional proactive maintenance only, never required for correctness."* Not listed among §39's 14 open human decisions. `UsageWalletManager::rollOverPeriodsIfNeeded()` is already called from inside `reserve()`, `commit()`, `release()`, and `creditFromFunding()` — lazy rollover is already fully load-bearing.
+
+**No RFC or merged-contract evidence contradicts M6's prior OPTIONAL/NON-BLOCKING classification.** Locked: `AdvanceUsagePeriodBoundaries` is **OPTIONAL_NON_BLOCKING / NOT IMPLEMENTED BY THIS CORRECTION**.
+
+---
+
+## 3. `ExpireStaleUsageReservations` — cadence resolved by explicit human authorization
+
+**Mechanical facts, re-confirmed by direct read this round:**
 
 ```php
 class ExpireStaleUsageReservations extends Base
@@ -67,280 +90,293 @@ class ExpireStaleUsageReservations extends Base
 ```
 
 - No constructor arguments; no self-redispatch; delegates entirely to `UsageWalletManager::expireStaleReservations()`.
-- `release()` (`UsageWalletManager.php:702-773`) is idempotent on an already-terminal reservation (`Released`/`Expired` early-return at lines 722-725) and computes `Expired` vs `Released` by comparing `Carbon::now()` to `expires_at` at the instant it runs (line 737-739) — so `ExpireStaleUsageReservations`'s own calls naturally resolve to `Expired`, never mis-classify as a manual `Released`.
-- Reservation TTL is `RESERVATION_TTL_MINUTES = 30` (`UsageWalletManager.php:67`), used only to compute each reservation's own `expires_at` at creation (line 444) — **this is a reservation lifetime, not a schedule-interval specification**, and is not treated as one below.
-- Current test coverage of the underlying `release()`/expiry mechanics: present (`UsageWalletManagerReservationLifecycleTest.php`). Coverage of the **job's own Kernel reachability**: none, because the job has no Kernel entry to test.
+- `release()` (`UsageWalletManager.php:702-773`) is idempotent on an already-terminal reservation (lines 722-725) and computes `Expired` vs `Released` by comparing `Carbon::now()` to `expires_at` at call time (lines 737-739) — `ExpireStaleUsageReservations`'s own calls naturally resolve to `Expired`.
+- Reservation TTL remains `RESERVATION_TTL_MINUTES = 30` (`UsageWalletManager.php:67`) — this is a reservation lifetime, not a schedule interval, and **is not itself the cadence** (explicitly restated per the human resolution's own rationale).
 
-**Cadence search, exhaustive:**
+**No RFC section or merged contract mechanically specifies a cadence** (re-confirmed this round — see the initial draft's exhaustive search of §29, §13, §39, §40, the M1/M3/M5 contracts, and the three merged correction contracts; nothing has changed in any of those documents since).
 
-- RFC-005 §29 itself: *"Scheduling — unchanged in shape"* — this is a carry-forward reference, not a reprinted cadence.
-- RFC-005 §13 (the reservation/commit/release/expire state-machine section): describes the algorithm only, no interval.
-- RFC-005 §39 (open human decisions, items 1–14): no item names `ExpireStaleUsageReservations` or any reservation-expiry cadence.
-- RFC-005 §40 (contract coverage matrix): no cadence content; purely a section-mapping index.
-- M1 contract (`RFC-005-M1-CONTRACT.md`): builds the job (§12 item 41), explicitly states it is the *only* M1 job and is **not scheduled at M1** (§10 item 10: "Jobs: `ExpireStaleUsageReservations` only... depends on the manager"), does not name a target milestone or cadence for scheduling it.
-- M3 contract (`RFC-005-M3-CONTRACT.md`, §110): adds exactly two Kernel entries — `PurgeExpiredWebhookPayloads` (`->hourly()`) and `ReconcileProviderPendingState` (`->everyFiveMinutes()`) — `ExpireStaleUsageReservations` is not mentioned.
-- M5 contract (`RFC-005-M5-CONTRACT.md` §3.7): *"`ExpireStaleUsageReservations` — unmodified, and now load-bearing... this job's mechanics do not touch meter/rate identity at all"* — confirms the job's domain logic is unaffected by Amendment 1, says nothing about scheduling or cadence.
-- Reservation Admission, Funding Provider-Flow, and Receipt Boundary correction contracts: none references `ExpireStaleUsageReservations` at all.
+**Resolved by explicit human authorization (Correction Round 1):** `ExpireStaleUsageReservations` **must** be scheduled with `->everyFiveMinutes()`. Rationale, recorded verbatim from the authorization: the 30-minute reservation TTL remains unrelated to the schedule interval itself; five minutes bounds stale-reservation overhang without changing reservation semantics; the repository already uses a five-minute cadence for the three comparable RFC-005 reconciliation/renewal jobs already in `Kernel.php` (`ReconcileProviderPendingState`, `InitiateSlotAgreementRenewal`, `FinalizeSlotAgreementCancellation`); `release()`'s own idempotent, row-locked design (confirmed above) means a five-minute cadence changes only reachability, never domain semantics.
 
-**No RFC section or merged contract mechanically specifies an exact schedule interval for this job, at any point in the document history available to this correction.**
+**Locked Kernel change:** one new entry, `$schedule->job(new ExpireStaleUsageReservations())->everyFiveMinutes();`, placed in `app/Console/Kernel.php`'s non-demo `else` branch alongside the existing RFC-005 job registrations (immediately after the `ReconcileSlotAgreementAllocation` line, matching the file's existing grouping of RFC-005 scheduled jobs together, before the closing brace of the `else` block). `app/Console/Kernel.php` is added to the production allowlist (§10). No other Kernel entry, and no change to `ExpireStaleUsageReservations.php` itself, is authorized — the human resolution explicitly confirms this does not alter domain semantics.
 
-**STOP condition triggered, exactly as instructed:** this correction does **not** choose an arbitrary cadence (e.g., copying `ReconcileProviderPendingState`'s `everyFiveMinutes()` or `PurgeExpiredWebhookPayloads`'s `hourly()`) to fill this gap. **The exact schedule interval for `ExpireStaleUsageReservations` is an unresolved open decision and must be supplied by a human before implementation can register a Kernel entry for it.** Everything else about this job (its identity, its idempotency, its non-mutation-of-domain-logic requirement) is locked and ready; only the numeric interval itself is blocked.
+This item is removed from the open-items list (§14).
 
 ---
 
 ## 4. Missing job: `SendLowBalanceNotification`
 
-**Trigger mechanism, confirmed by direct code read:**
+**Trigger mechanism, re-confirmed by direct code read this round:**
 
-- `business_usage_wallets.low_balance_notified_at` (nullable timestamp, "dedup window (§19)") exists in schema (§12) but has **zero references anywhere in `UsageWalletManager.php`** (confirmed by exhaustive grep) — it is a real, migrated column, entirely unwired in current code.
-- `business_usage_wallets.auto_recharge_threshold_micro` is the only concrete numeric quantity RFC-005 ties to "low balance" (§12: *"required if enabled"*; §19: centralized trigger text). No other threshold-bearing column exists for this purpose.
-- RFC-005 §19: *"Low-balance notification dedup and reset — unchanged"* and §12: *"the same shared method clears `low_balance_notified_at` on a positive-delta recovery above threshold"* — both are carry-forward prose describing intended behavior; **neither corresponds to any existing code today.**
+- `business_usage_wallets.low_balance_notified_at` (nullable timestamp) has zero references anywhere in `UsageWalletManager.php` (re-confirmed by fresh grep this round).
+- `auto_recharge_threshold_micro` remains the only concrete numeric quantity RFC-005 ties to "low balance."
 
-**Answering the 9 required questions, mechanically:**
+**Applicability — resolved by explicit human authorization, unchanged from the initial draft's own conclusion:** `SendLowBalanceNotification` applies only when `auto_recharge_enabled === true` AND `auto_recharge_threshold_micro !== null`. No independent general low-balance threshold is invented for a wallet outside this condition. **This item is removed from the open-items list (§14)** — the human resolution ratifies the initial draft's own scope boundary as final, rather than leaving it open.
 
-1. **Threshold basis:** `available_balance_micro <= auto_recharge_threshold_micro`. This is the only RFC-defined numeric quantity available; no independent "low-balance-only" threshold field exists in schema.
-2. **Applicability:** RFC-005 §12 marks `auto_recharge_threshold_micro` nullable, *"required if enabled"* — it is only guaranteed non-null when `auto_recharge_enabled = true`. **Locked scope: `SendLowBalanceNotification` applies only when `auto_recharge_enabled = true` AND `auto_recharge_threshold_micro` is not null.** For a wallet with auto-recharge disabled or unconfigured, RFC-005 defines no numeric "low balance" quantity at all. **This is a genuine, disclosed scope boundary, not a silently invented one:** a wallet outside this condition receives no low-balance notification from this correction. Extending low-balance notification to non-auto-recharge wallets would require a human to define an independent threshold concept the RFC does not currently supply — out of this correction's authority to invent.
-3. **Every-mutation vs. threshold-crossing:** edge-triggered. RFC-005's own "dedup window" and "clears... on recovery" language describes a fire-once-per-episode model, not a fire-on-every-negative-delta model. Locked: notify only when a mutation causes `available_balance_micro` to cross from above-threshold to at-or-below-threshold, gated by `low_balance_notified_at IS NULL` at the moment of the crossing.
-4. **Recipients:** `BusinessBillingContactRepository::findByBusinessId()`, `notification_opt_in = true` gate, `contact_user_id === null ? contact_email : contactUser->email` resolution — **byte-for-byte the same resolution algorithm `SendReceiptNotification::handle()` already uses** (`app/Jobs/Usage/SendReceiptNotification.php:69-93`). Reused exactly, not reinvented.
-5. **Opt-out / missing-contact handling:** mirrors `SendReceiptNotification` exactly — no contact configured, opted out, or blank resolved email each result in a silent no-op (`Log::info`/`Log::warning`, no exception), never a job failure.
-6. **Idempotency / exact-once:** `low_balance_notified_at` is set the instant the notification is sent, checked before sending, and cleared on recovery (`available_balance_micro` rising back above `auto_recharge_threshold_micro` via a positive-delta mutation, e.g. `creditFromFunding()`). This is a genuine durable exact-once marker that already exists in schema — **exact-once delivery per below-threshold episode is honestly supportable** without any new column.
-7. **Delivery guarantee statement:** exact-once-per-episode, durable, schema-backed. Not "best effort."
-8. **Ownership:** per §28's sole-write-authority table, `business_usage_wallets` is `UsageWalletManager`'s alone — the threshold-crossing detection, the `low_balance_notified_at` set/clear, and the job dispatch all belong inside `UsageWalletManager`, never inside a job, listener, or controller.
-9. **No new schema required** — `low_balance_notified_at` and `auto_recharge_threshold_micro` both already exist (§12, confirmed present in the current migration set via §25's table index, which lists no pending change for `business_usage_wallets` beyond "recharge-period columns individually specified," already shipped).
+**Episode rule — corrected this round per explicit human authorization, replacing the initial draft's stricter "must cross from above to below" rule:**
 
-**Exact widening point identified:** any ledger-entry insert with `available_delta_micro < 0` already dispatches `EvaluateBusinessAutoRecharge` after commit (§12/§19, confirmed unchanged) from three sites — `reserve()` (`available_delta_micro: -$reservedAmountMicro`, line 447-468), `commit()`'s overage branch (`available_delta_micro: -$overageFromAvailable`, line 602-622), and `commit()`'s implicit charged-portion accounting. The threshold-crossing check belongs in the same `UsageWalletManager` transaction that performs each such negative-delta mutation, immediately after the wallet row is updated — the natural home is a shared private helper invoked from each of `reserve()`, `commit()`, and (for the recovery/clear side) `creditFromFunding()`, mirroring the existing `$shouldDispatchAutoRecharge` flag pattern already used in those methods. **This correction does not write that helper — it locks its exact responsibility and call sites for the implementation phase (§10).**
+- On an eligible mutation that decreases `available_balance_micro` (only `reserve()`'s reservation-creation delta and `commit()`'s overage-from-available delta currently produce a negative `available_delta_micro` — the same two sites already gating `EvaluateBusinessAutoRecharge`'s own dispatch, confirmed by fresh re-read of both methods this round): after computing the new (post-mutation) `available_balance_micro`, if the new balance `<= auto_recharge_threshold_micro` **and** `low_balance_notified_at IS NULL`, set `low_balance_notified_at = now()` in the same wallet update and dispatch `SendLowBalanceNotification::dispatch($businessId)->afterCommit()`.
+- On a mutation that increases `available_balance_micro`, if the post-mutation balance `> auto_recharge_threshold_micro`, clear `low_balance_notified_at` to `null` in the same wallet update. **Confirmed this round: three code sites produce a positive `available_delta_micro`** — `creditFromFunding()`'s `$remainder` (when positive), `commit()`'s unused-reservation-release branch (`$availableDelta += $unused`, line 632-654), and `release()`'s own `+$amount` (line 762-765, both the `Released` and `Expired` outcomes). The clear check applies at all three sites, not only `creditFromFunding()` — a reservation release genuinely raises available balance exactly as a funding credit does, and the marker's purpose (avoiding a stuck "already notified" state) is defeated if only one of the three recovery paths clears it.
+- **Re-enabling auto-recharge alone does not clear the marker** — only an actual positive-balance mutation crossing back above threshold does, per explicit human resolution. `configureAutoRecharge()` is not touched by this rule.
+- This marker-null-check model (rather than requiring a mathematically-provable prior-above/now-below crossing) is deliberately more permissive: it also correctly notifies once if the wallet is already at/below threshold at the moment eligibility is (re)established (e.g., threshold newly configured while balance is already low), which the initial draft's stricter crossing-only rule would have missed.
+
+**Recipients, opt-out handling:** unchanged from the initial draft — `BusinessBillingContactRepository::findByBusinessId()`, `notification_opt_in = true` gate, `contact_user_id === null ? contact_email : contactUser->email` resolution, silent no-op on missing contact/opt-out/blank email — byte-for-byte the same algorithm `SendReceiptNotification::handle()` already uses (`app/Jobs/Usage/SendReceiptNotification.php:69-93`).
+
+**Delivery guarantee — corrected this round, false claim removed:** `low_balance_notified_at` guarantees **at most one automatic dispatch decision per below-threshold episode** — the wallet-locked mutation that sets the marker and the wallet-locked mutation that dispatches the job are the same atomic unit, so the system will not decide to dispatch a second time while the marker is set. This is **not** a claim that the notification is delivered exactly once: the queued job itself uses this repository's normal queue/mail semantics (the same `ShouldQueueAfterCommit` + default queue connection `SendReceiptNotification` already uses, with `App\Jobs\Base`'s unchanged `$tries = 1` / `$maxExceptions = 1`), with no transactional outbox and no provider-level idempotency key for mail delivery anywhere in this codebase. If the queue fails to run the job after the marker commits (worker crash, exception, queue driver outage), the marker is already set and the email itself may never be sent at all — this is a real, disclosed limitation, not schema-guaranteed delivery. No new outbox/schema/provider-idempotency mechanism is authorized by this correction to close that gap.
+
+**Ownership, no new schema:** unchanged from the initial draft — `UsageWalletManager` remains sole write authority for `business_usage_wallets`; the notification job performs recipient resolution and delivery only and never writes `low_balance_notified_at` itself; no migration required.
+
+**Exact widening point:** `reserve()` (after the wallet update, `UsageWalletManager.php:474-478`) and `commit()`'s overage branch (after the wallet update, `UsageWalletManager.php:674`) each gain the set-side check; `creditFromFunding()` (after the wallet update, line 836), `commit()`'s unused-release branch (after the wallet update, line 674), and `release()` (after the wallet update, line 771) each gain the clear-side check. All five sites are inside their method's existing transaction. This correction locks these exact responsibilities and call sites for the implementation phase (§10); it does not write the code itself.
 
 ---
 
 ## 5. Missing job: `SendAutoRechargeDisabledNotification`
 
-**Trigger mechanism, confirmed by direct code read:**
+**Trigger mechanism, re-confirmed by direct code read this round** (`UsageWalletManager.php:1255-1268`, byte-identical to the initial draft's citation): `recordAutoRechargeFailure()` only increments the counter today; it checks no threshold, sets no disable flag, dispatches nothing.
 
-```php
-public function recordAutoRechargeFailure(int $businessId): void
-{
-    DB::transaction(function () use ($businessId) {
-        $wallet = $this->walletRepository->findForUpdateByBusinessId($businessId);
-        if ($wallet === null) {
-            throw new UsageWalletNotFoundException($businessId);
-        }
-        $this->walletRepository->update($wallet, [
-            'consecutive_recharge_failures' => $wallet->consecutive_recharge_failures + 1,
-        ]);
-    });
-}
-```
+**RFC-005 §19, re-read verbatim this round: *"Consecutive-failure counter — unchanged: `business_usage_wallets.consecutive_recharge_failures`, incremented on `failed`/`requires_action`, reset on `succeeded`; 3 is the recommended (category-3) disable threshold."*** Not a §39 open item. Threshold locked at **3**, as in the initial draft.
 
-(`UsageWalletManager.php:1255-1268`) — **confirmed: this method only increments the counter. It does not check any threshold, does not set `auto_recharge_enabled = false`, and dispatches nothing.** Its own docblock (lines 1250-1251) states it is called *"[when an auto-recharge] attempt reaches `FundingAttemptState::Failed` within that same job execution (never on `requires_action`, never a retry loop)"* — confirmed against `EvaluateBusinessAutoRecharge.php`'s own call site, which invokes it only inside `if ($result->state === FundingAttemptState::Failed)`.
+**The RFC-vs-M3-code `requires_action` conflict is now explicitly resolved by human authorization, not merely disclosed.** Authoritative behavior for this correction, superseding both the current `EvaluateBusinessAutoRecharge.php` docblock (lines 72-75: *"requires_action is not a failure... and does not increment it"*) and the current passing test `AutoRechargeFailedPaymentRetryTest::test_a_requires_action_outcome_does_not_increment_the_failure_counter` — **neither of those is authoritative any longer**:
 
-**RFC-005 §19: *"3 is the recommended (category-3) disable threshold"* for `consecutive_recharge_failures`.** This is a "category-3" confidence-graded design decision, not a §39 open item — it does not appear in §39's 14-item list. Locked: the disable threshold is **3**.
+1. **Both `FundingAttemptState::Failed` and `FundingAttemptState::RequiresAction` count as consecutive auto-recharge failures**, matching RFC-005 §19 exactly.
+2. `consecutive_recharge_failures` resets to `0` on a successful `AutoRecharge` credit — unchanged, already implemented (`creditFromFunding()`, `UsageWalletManager.php:831-834`, gated on `entryType === AutoRecharge && recharge_period_key !== null`). This correction does not touch that reset logic.
+3. **The failure-count transition `2 → 3`, while `auto_recharge_enabled` is currently `true`, is the system-disable edge.**
+4. **On that same wallet-locked mutation:** set `consecutive_recharge_failures = 3`; set `auto_recharge_enabled = false`; **do not** touch `auto_recharge_threshold_micro`/`auto_recharge_amount_micro`/`monthly_recharge_cap_micro` — re-confirmed by direct read this round that `configureAutoRecharge()`'s own existing code (`UsageWalletManager.php:1237-1242`) is the method that nulls threshold/amount when `enabled` is explicitly set `false`, and that method is a **deliberate, distinct code path** the system-disable must not call into, precisely so the system-disable preserves the configured values a human may want to see when deciding whether to re-enable; dispatch `SendAutoRechargeDisabledNotification::dispatch($businessId)->afterCommit()` from inside the same transaction, mirroring `creditFromFunding()`'s own `SendReceiptNotification::dispatch(...)->afterCommit()` precedent (line 838-839) rather than the flag-and-dispatch-after-the-transaction-closure pattern `reserve()`/`commit()` use for `EvaluateBusinessAutoRecharge` — both are valid `ShouldQueueAfterCommit` patterns already present in this file; the in-closure form is chosen here because it is the closer precedent for a job dispatched conditionally from inside a single-purpose method.
+5. **Counts above 3 never re-notify for the same disabled episode.** Locked condition: the disable-and-notify branch fires only when `$newFailureCount === 3 AND $wallet->auto_recharge_enabled === true` at the start of the mutation — not merely `>= 3`. In ordinary operation this can only happen once per episode, because `EvaluateBusinessAutoRecharge::handle()`'s own top-of-method guard (`if ($wallet === null || ! $wallet->auto_recharge_enabled) { return; }`, unchanged) prevents the job from ever re-entering `recordAutoRechargeFailure()` while already disabled. The exact `=== 3` (not `>= 3`) condition is additionally a defensive guard against any future or out-of-band caller of `recordAutoRechargeFailure()`.
+6. **A later, explicit, payer-authorized `configureAutoRecharge(enabled: true, ...)` transition, specifically from `auto_recharge_enabled === false` to `true`, resets `consecutive_recharge_failures` to `0`**, starting a new failure episode. **Newly confirmed this round: `configureAutoRecharge()`'s current code does not reset this counter on any transition today** — this is a genuine, real widening of that method, not merely a restatement of existing behavior. Locked exactly: the reset applies only on the disabled→enabled edge (`$wallet->auto_recharge_enabled === false` immediately before the update, `$enabled === true` as passed in) — not on every call with `enabled: true`, so a benign re-save while already enabled does not spuriously reset an in-progress (but not yet disabled) failure count.
+7. **Deliberate customer/administrator disablement via `configureAutoRecharge(enabled: false, ...)` does not emit `SendAutoRechargeDisabledNotification`.** Confirmed by construction: only `recordAutoRechargeFailure()` dispatches this job; `configureAutoRecharge()` is not widened to dispatch it under any resolution above.
 
-**A genuine RFC-vs-code discrepancy found, disclosed rather than silently resolved:** RFC-005 §19 states the counter is *"incremented on `failed`/`requires_action`, reset on `succeeded`"* — but current code and a current passing test both confirm `requires_action` does **not** increment it: `EvaluateBusinessAutoRecharge.php` only calls `recordAutoRechargeFailure()` on `Failed`, and `AutoRechargeFailedPaymentRetryTest::test_a_requires_action_outcome_does_not_increment_the_failure_counter` (`tests/Feature/Usage/AutoRechargeFailedPaymentRetryTest.php:194-204`) asserts the counter stays `0` after a `requires_action` outcome, and passes today. **This is a pre-existing defect/discrepancy outside this correction's scope** — widening or changing the increment condition would modify already-merged M3 behavior unrelated to job/event dispatch reachability, and is not required to make `SendAutoRechargeDisabledNotification` reachable (the notification's own trigger is the threshold check on whatever value the counter already reaches through its existing, unmodified increment path). **This correction does not touch the increment condition.** Flagged here for a human decision, not resolved.
+**Delivery guarantee — corrected this round, same false-claim removal as §4:** the `true → false` transition on `auto_recharge_enabled`, captured inside the one wallet-locked mutation, guarantees **at most one automatic dispatch decision per disable episode** — not exact-once external delivery. The queued job uses ordinary queue/mail semantics; no outbox or provider-level idempotency key exists or is authorized here.
 
-**Answering the 9 required questions, mechanically:**
+**Ownership, no new schema:** `UsageWalletManager` remains sole write authority; both `consecutive_recharge_failures` and `auto_recharge_enabled` already exist (§12); no migration required.
 
-1. **Threshold basis:** `consecutive_recharge_failures >= 3` (RFC §19, locked, not open).
-2. **Every-mutation vs. crossing:** transition-edge-triggered — fires exactly once, at the exact update that increments the counter from `2` to `3` (i.e., the specific mutation that causes `auto_recharge_enabled` to flip `true → false`), never again while it remains `false`.
-3. **Exact "disabled" definition:** **system-disabled-after-failures**, precisely `auto_recharge_enabled` being set `false` by `recordAutoRechargeFailure()` itself upon reaching the threshold. Explicitly **not** owner-disabled (`configureAutoRecharge(enabled: false)`, a deliberate customer/administrator action the actor is already aware of) and **not** billing-suspension or missing-instrument (both already produce their own signal via `BusinessWalletBillingStatusChanged`, unrelated to this job). Locked: `SendAutoRechargeDisabledNotification` fires only from the system-disable path inside `recordAutoRechargeFailure()`, never from `configureAutoRecharge()`.
-4. **Recipients:** identical resolution to `SendLowBalanceNotification` (§4 item 4) — reused, not reinvented.
-5. **Opt-out / missing-contact handling:** identical to `SendReceiptNotification`/`SendLowBalanceNotification` — silent no-op, never a failure.
-6. **Idempotency / exact-once:** **no new schema column is invented.** The boolean transition itself (`auto_recharge_enabled` observed `true` immediately before the same atomic update that sets it `false`) is the exact-once marker — analogous to how `BusinessWalletBillingStatusChanged` requires no dedicated dedup column beyond the state transition it observes. Once disabled, the counter continuing to increment (if `recordAutoRechargeFailure()` is ever called again while already disabled — it should not be, since a disabled wallet should no longer reach auto-recharge evaluation, but this is not independently verified by this correction) must **not** re-fire the notification; the dispatch is gated strictly on the `true→false` edge of the same update, not on `consecutive_recharge_failures >= 3` being merely true at read time.
-7. **Delivery guarantee statement:** exact-once, since the underlying state transition can only genuinely happen once between a disable and a subsequent re-enable. Honestly supportable without new schema.
-8. **Ownership:** `UsageWalletManager` (§28 sole-write-authority for `business_usage_wallets`) — the threshold check, the `auto_recharge_enabled = false` write, and the dispatch all belong inside `recordAutoRechargeFailure()`'s own existing transaction, never inside `EvaluateBusinessAutoRecharge.php` (a job must never write this table directly, per that job's own docblock, unchanged).
-9. **No new schema required** — `consecutive_recharge_failures` and `auto_recharge_enabled` both already exist (§12).
+**Exact widening points, both inside `app/Library/Usage/UsageWalletManager.php`:**
 
-**Exact widening point identified:** `UsageWalletManager::recordAutoRechargeFailure()` (`UsageWalletManager.php:1255-1268`) must be widened, inside its existing transaction, to: read the wallet's current `auto_recharge_enabled` value before the update; if the post-increment counter reaches `3` and `auto_recharge_enabled` was `true`, include `'auto_recharge_enabled' => false` in the same `update()` call and dispatch `SendAutoRechargeDisabledNotification::dispatch($businessId)->afterCommit()` immediately after. No change to the increment condition itself (out of scope, §5 discrepancy above). **This correction does not write that widening — it locks its exact responsibility for the implementation phase (§10).**
+- `recordAutoRechargeFailure()` (`UsageWalletManager.php:1255-1268`): read `$wallet->auto_recharge_enabled` before the update; compute `$newFailureCount = $wallet->consecutive_recharge_failures + 1`; if `$newFailureCount === 3 && $wallet->auto_recharge_enabled`, include `'auto_recharge_enabled' => false` in the same `update()` call and dispatch `SendAutoRechargeDisabledNotification::dispatch($businessId)->afterCommit()` immediately after that `update()` call, still inside the transaction closure.
+- `configureAutoRecharge()` (`UsageWalletManager.php:1220-1244`): before the existing `update()` call, read the wallet's current `auto_recharge_enabled` value; if it is currently `false` and the incoming `$enabled` is `true`, include `'consecutive_recharge_failures' => 0` in the same `update()` call.
+
+**Additional required production change, newly identified this round:** `app/Jobs/Usage/EvaluateBusinessAutoRecharge.php` (`EvaluateBusinessAutoRecharge.php:76-78`) must widen its conditional from `if ($result->state === FundingAttemptState::Failed)` to `if ($result->state === FundingAttemptState::Failed || $result->state === FundingAttemptState::RequiresAction)`, routing both outcomes through `recordAutoRechargeFailure()`. The method's own docblock (lines 72-75, currently asserting the opposite) must be corrected at implementation time to state the new authoritative behavior — this contract does not itself edit that file, it locks the exact required edit for the implementation phase.
+
+This item is removed from the open-items list (§14) — resolution B is final for this correction, not merely disclosed.
 
 ---
 
-## 6. Seven missing wallet/reservation events — exact emission map
+## 6. Seven missing wallet/reservation events — exact emission map, re-audited this round
 
-All seven are `App\Events\Usage\*`, `implements ShouldDispatchAfterCommit`, `use Dispatchable`, IDs/scalars only, dispatched **inline inside the same `DB::transaction()` closure that performs the mutation** — mirroring the established pattern already used by 8 of the 10 existing events (`BusinessPayerChanged`, `BusinessBillingContactChanged`, `BusinessWalletBillingStatusChanged`, and the 5 slot-agreement events all dispatch from inside their own owning transaction, relying on `ShouldDispatchAfterCommit`'s own framework-level deferral — not the `EvaluateBusinessAutoRecharge`/`SendReceiptNotification` job pattern of dispatching after the transaction closes via an explicit flag, which is a job-specific (`ShouldQueueAfterCommit`) concern this correction does not need to replicate for events).
+All seven remain `App\Events\Usage\*`, `implements ShouldDispatchAfterCommit`, `use Dispatchable`, IDs/scalars only, dispatched inline inside the same `DB::transaction()` closure that performs the mutation — re-confirmed against a fresh read of all four owning methods this round; nothing in this section changed as a result of that re-audit except the cross-reference to §4/§5's widened sites, since those now share some of the same transactions.
 
 ### 6.1 `BusinessUsageReserved`
 
 - **Constructor:** `(int $businessId, int $reservationId, string $featureKey, int $reservedAmountMicro)`.
-- **Emission site:** `UsageWalletManager::reserve()`, immediately before `return new ReservationResult(true, $reservation->id, null, true);` (`UsageWalletManager.php:480`) — the genuine-creation path only.
-- **Non-emission:** the idempotent-repeat early return (`findByIdempotencyKey()` hit, before the transaction opens) and the `UniqueConstraintViolationException` race-loser catch (lines 482-493) must never emit this event — both return a `ReservationResult` whose 4th constructor argument is `false`, the existing, already-correct signal for "not genuinely created this call."
-- **Multiplicity:** exactly one event per genuine reservation creation; never more than one per `reserve()` call.
-- **Ordering:** after the `Reservation` ledger entry and wallet update, both already inside the same transaction.
+- **Emission site:** `UsageWalletManager::reserve()`, immediately before `return new ReservationResult(true, $reservation->id, null, true);` (`UsageWalletManager.php:480`).
+- **Non-emission, re-confirmed:** the idempotent-repeat early return (pre-transaction `findByIdempotencyKey()` hit) and the `UniqueConstraintViolationException` race-loser catch (lines 482-493) never emit this event — both correspond to a `ReservationResult` whose 4th constructor argument is `false`.
+- **Multiplicity:** exactly one per genuine reservation creation.
 
 ### 6.2 `BusinessUsageCommitted`
 
 - **Constructor:** `(int $businessId, int $reservationId, string $featureKey, int $finalAmountMicro, int $reservedAmountMicro)`.
-- **Emission site:** `UsageWalletManager::commit()`, immediately before `return new CommitResult(...)` at line 676 — the genuine-commit path only.
-- **Non-emission:** the already-`Committed` early return (lines 535-543) must never emit this event — it reconstructs a `CommitResult` from already-persisted state with zero new writes.
-- **Multiplicity:** exactly one event per genuine commit, regardless of whether it also produces an overage or an unused-release sub-entry — `BusinessUsageCommitted` is the single per-commit observability event; the overage/debt-specific effects are separately covered by §6.3/§6.4 below, never folded into or substituted for this event.
-- **Ordering:** after the wallet update at line 674, still inside the same transaction.
+- **Emission site:** `UsageWalletManager::commit()`, immediately before `return new CommitResult(...)` at line 676.
+- **Non-emission, re-confirmed:** the already-`Committed` early return (lines 535-543) never emits this event.
+- **Multiplicity:** exactly one per genuine commit, independent of whether it also triggers §6.5's overage events or §4's low-balance check.
 
 ### 6.3 `BusinessUsageReservationReleased`
 
-- **Constructor:** `(int $businessId, int $reservationId, string $featureKey, int $releasedAmountMicro, string $resultingStatus)` — `$resultingStatus` is `'released'` or `'expired'` (the `UsageReservationStatus` enum's own scalar value, already computed at line 737-739).
-- **Emission site:** `UsageWalletManager::release()`, immediately after the wallet update at line 771, before the transaction closure ends.
-- **Non-emission:** the already-terminal early return (lines 722-725, `status === Released || status === Expired`) must never emit this event.
-- **Multiplicity:** exactly one event per genuine release, whether called from a manual admin action or (once §3's cadence is resolved) `ExpireStaleUsageReservations`.
+- **Constructor:** `(int $businessId, int $reservationId, string $featureKey, int $releasedAmountMicro, string $resultingStatus)`.
+- **Emission site:** `UsageWalletManager::release()`, immediately after the wallet update at line 771 (the same site where §4's low-balance recovery-clear check, if applicable, also runs), before the transaction closure ends.
+- **Non-emission, re-confirmed:** the already-terminal early return (lines 722-725) never emits this event.
 
 ### 6.4 `BusinessWalletCredited` and `BusinessWalletDebtCleared`
 
-Both originate from the **same** method, `UsageWalletManager::creditFromFunding()` (`UsageWalletManager.php:793-841`), and are **not mutually exclusive** — a single call can emit both, one, or neither, depending on the independent conditions below. This directly answers the instruction's "a single accounting operation may legitimately change both available balance and debt" question: yes, and the contract locks both as independently gated, non-exclusive dispatches from the one call site.
+Both originate from `UsageWalletManager::creditFromFunding()` (`UsageWalletManager.php:793-841`), **re-confirmed not mutually exclusive** — a single call can emit both, one, or neither.
 
-- `BusinessWalletCredited(int $businessId, int $walletId, int $ledgerEntryId, int $amountMicro)` — dispatched when `$remainder > 0` (line 811), `$amountMicro = $remainder`. `$ledgerEntryId = $ledgerEntry->id`, reusing the already-captured `$ledgerEntry` variable (line 813) — no new query needed.
-- `BusinessWalletDebtCleared(int $businessId, int $walletId, int $ledgerEntryId, int $amountMicro)` — dispatched when `$debtCleared > 0` (line 810), `$amountMicro = $debtCleared`. Same `$ledgerEntry`.
-- **Emission site for both:** immediately after the wallet update at line 836, before the existing `SendReceiptNotification::dispatch(...)->afterCommit()` call at line 838 — still inside the same transaction.
-- **Non-emission:** `creditFromFunding()` has no idempotent-repeat early-return path of its own (it is documented as "deliberately not self-idempotent," relying on the caller's own once-only invocation, per its existing docblock) — so no additional replay guard is needed beyond the two independent `> 0` conditions already governing whether each event fires at all.
-- **Explicitly not emitted from `reserve()`'s or `release()`'s own available-balance deltas** — those are exclusively covered by `BusinessUsageReserved`/`BusinessUsageReservationReleased` (§6.1/§6.3); folding them into `BusinessWalletCredited`/`Debited` as well would double-count the same accounting fact under two event names, which the RFC's own distinct 7-event enumeration does not ask for.
-- **Explicitly not emitted from `commit()`'s unused-release branch** (`$availableDelta += $unused`, line 632-654) — this is an internal reservation-bookkeeping reversal, already fully covered by `BusinessUsageCommitted` (§6.2); it is not a genuine external "credit."
+- `BusinessWalletCredited(int $businessId, int $walletId, int $ledgerEntryId, int $amountMicro)` — dispatched when `$remainder > 0` (line 811), reusing the already-captured `$ledgerEntry->id` (line 813).
+- `BusinessWalletDebtCleared(int $businessId, int $walletId, int $ledgerEntryId, int $amountMicro)` — dispatched when `$debtCleared > 0` (line 810), same `$ledgerEntry`.
+- **Emission site:** immediately after the wallet update at line 836 — now sharing this site with §4's low-balance recovery-clear check and the existing `SendReceiptNotification::dispatch(...)->afterCommit()` call at line 838. All three (the two events, the low-balance clear, and the receipt job) belong in the same transaction, in that relative order (event dispatches, being synchronous framework calls with zero registered listeners, do not need to precede or follow the low-balance clear or the receipt dispatch in any particular order for correctness — this contract does not mandate a specific sub-order among them, only that all remain inside the one transaction).
+- **Explicitly not emitted from `reserve()`/`release()`'s own available-balance deltas** (owned by §6.1/§6.3) or from `commit()`'s unused-release branch (owned by §6.2) — re-confirmed, unchanged reasoning from the initial draft.
 
 ### 6.5 `BusinessWalletDebited` and `BusinessWalletDebtIncurred`
 
-Both originate from `UsageWalletManager::commit()`'s overage branch (`UsageWalletManager.php:596-631`), also **not mutually exclusive** for the same reason as §6.4.
+Both originate from `commit()`'s overage branch (`UsageWalletManager.php:596-631`), re-confirmed not mutually exclusive.
 
-- `BusinessWalletDebited(int $businessId, int $walletId, int $ledgerEntryId, int $amountMicro)` — dispatched when `$overageFromAvailable > 0` (line 606), `$amountMicro = $overageFromAvailable`.
-- `BusinessWalletDebtIncurred(int $businessId, int $walletId, int $ledgerEntryId, int $amountMicro)` — dispatched when `$overageToDebt > 0` (line 608), `$amountMicro = $overageToDebt`.
-- **`$ledgerEntryId`:** currently the `UsageOverageCharge` ledger-entry `create()` call (lines 602-622) does not capture its own return value. **This requires one mechanical widening — capturing `$overageLedgerEntry = $this->ledgerRepository->create([...]);` in place of the current bare `create()` call — to obtain the id for these two events' payloads.** This is a return-value capture only, not a new query or a new write.
-- **Emission site for both:** immediately after the wallet update at line 674, before `return new CommitResult(...)` — same site as §6.2's `BusinessUsageCommitted`, all three potentially firing from the same `commit()` call when an overage spans both available balance and debt.
-- **Non-emission:** governed by the same already-`Committed` early return as §6.2 (lines 535-543); additionally, when `$finalAmountMicro <= $reservedAmountMicro` (no overage at all), neither event fires — this is the existing `elseif` branch structure (line 632), unchanged.
+- `BusinessWalletDebited(int $businessId, int $walletId, int $ledgerEntryId, int $amountMicro)` — `$overageFromAvailable > 0` (line 606).
+- `BusinessWalletDebtIncurred(int $businessId, int $walletId, int $ledgerEntryId, int $amountMicro)` — `$overageToDebt > 0` (line 608).
+- **`$ledgerEntryId`:** still requires capturing `$overageLedgerEntry = $this->ledgerRepository->create([...]);` in place of the current bare `create()` call (lines 602-622) — unchanged from the initial draft.
+- **Emission site:** immediately after the wallet update at line 674 — the same site now also hosting §4's low-balance set-side check (gated on `$overageFromAvailable > 0`, the identical condition already gating `$shouldDispatchAutoRecharge` at line 628-631) and §6.2's `BusinessUsageCommitted` dispatch.
+- **Non-emission, re-confirmed:** governed by the same already-`Committed` early return as §6.2; neither fires when `$finalAmountMicro <= $reservedAmountMicro`.
 
-**Refund/DisputeChargeback/ManualCredit/PromotionalCredit/UsageChargeReversal/CorrectionReversal entry types are explicitly excluded from all four wallet-credit/debit/debt events above** — none of these ledger-entry types has any producing code path in the current codebase (confirmed: Admin Usage Billing Surface #5 and Provider Refund/Dispute #6 are both out of scope, unimplemented remediation groups). This correction adds no dispatch for a mutation method that does not yet exist.
-
----
-
-## 7. Funding-attempt events — exact emission map
-
-Both existing classes, dead since creation, gain exactly one dispatch call each, at their single respective chokepoint — no other caller needs modification.
-
-### 7.1 `BusinessFundingAttemptSucceeded`
-
-- **Chokepoint, confirmed the sole writer of `state => Succeeded`:** `UsageBillingCheckoutManager::confirmSucceeded()` (`UsageBillingCheckoutManager.php:628-658`), called from exactly 4 sites: `confirmAttemptFromReturn()` (line 501), `confirmAttemptFromWebhook()` (lines 559 and 564), `retryFundingAttemptAsAdministrator()` (line 601 and 612) — i.e., the synchronous return path, the webhook path, and the administrator resume path all converge on this one method. Reconciliation (`ReconcileProviderPendingState`) itself calls `confirmAttemptFromReturn()`, which in turn calls `confirmSucceeded()` — so reconciliation is covered transitively, with no separate dispatch needed.
-- **Emission point:** immediately after `$this->recordTransition($attempt, $fromState, FundingAttemptState::Succeeded, ...)` at line 639, **before** the `AddonPurchase`-vs-credit purpose branch at line 641 — so it fires for every purpose (`ManualTopUp`, `AutoRecharge`, `AddonPurchase`) exactly once per genuine transition.
-- **Payload:** `((int) $attempt->id, (int) $attempt->business_id, $attempt->purpose->value, (int) $attempt->expected_amount_micro)` — matches the class's own already-defined constructor exactly (`fundingAttemptId, businessId, purpose, amountMicro`).
-- **Non-emission on replay:** `confirmSucceeded()` is only ever reached through call sites that already early-return on an already-`Succeeded` attempt before calling it (`confirmAttemptFromReturn()` line 479-485, `confirmAttemptFromWebhook()` line 528-534) — so a replay of an already-terminal attempt never re-enters `confirmSucceeded()` at all, and therefore never re-dispatches this event. No new guard is needed inside `confirmSucceeded()` itself.
-- **`requires_action` is never routed through `confirmSucceeded()`** — confirmed: it is non-terminal everywhere (never in any terminal-state array), so it can never falsely trigger this event.
-
-### 7.2 `BusinessFundingAttemptFailed`
-
-- **Chokepoint, confirmed the sole writer of `state => Failed`:** `UsageBillingCheckoutManager::markFailed()` (`UsageBillingCheckoutManager.php:802-812`).
-- **Emission point:** immediately after `$this->recordTransition($attempt, $fromState, FundingAttemptState::Failed, ...)` at line 811.
-- **Payload:** `((int) $attempt->id, (int) $attempt->business_id, $attempt->purpose->value)` — matches the class's own already-defined constructor exactly (`fundingAttemptId, businessId, purpose`).
-- **Non-emission on replay:** `markAttemptFailedFromWebhook()` (the only webhook-driven caller of `markFailed()`) already early-returns when `state` is already `Succeeded`/`Failed`/`Canceled` (line 569-571) before ever calling `markFailed()` — no new guard needed.
-
-**`ShouldDispatchAfterCommit` correctness note:** neither `confirmSucceeded()` nor `markFailed()` wraps its own body in an explicit `DB::transaction()`. `ShouldDispatchAfterCommit`'s own framework semantics (Laravel 12, confirmed genuine, not custom) handle both cases correctly without any code change here: if the call happens to occur inside an outer open transaction (e.g., `creditFromFunding()`'s own transaction, entered later in the same `confirmSucceeded()` call for non-`AddonPurchase` purposes), the event defers to that commit; if no transaction is open at the exact dispatch point, it fires immediately. This is the same reasoning already implicitly relied upon by the 8 existing inline-dispatched events (§6 preamble) and requires no special-casing.
+**Re-confirmed this round, per the explicit re-audit instruction:** no future Admin Usage Billing or Refund/Dispute producer is invented anywhere in this section — `ManualCredit`, `PromotionalCredit`, `Refund`, `DisputeChargeback`, `UsageChargeReversal`, and `CorrectionReversal` ledger-entry types remain entirely without a producing code path in the current codebase, and this correction adds no dispatch for a mutation method that does not exist.
 
 ---
 
-## 8. Existing-event producer reachability audit
+## 7. Funding-attempt events — exact emission map, corrected this round
+
+### 7.1 `BusinessFundingAttemptSucceeded` — dispatch point corrected
+
+**The initial draft's dispatch point and its supporting reasoning were both wrong, and are replaced here, not merely annotated.** The initial draft placed the dispatch immediately after `recordTransition()` (`confirmSucceeded()` line 639) and argued `ShouldDispatchAfterCommit` would still correctly defer to whichever transaction `creditFromFunding()` opens *afterward*. Re-reading `confirmSucceeded()` in full this round confirms this is backwards: at the line-639 dispatch point, **no transaction is open at all** (`confirmSucceeded()` itself is never wrapped in `DB::transaction()`), so the event would fire immediately — before `creditFromFunding()`'s own accounting transaction (for `ManualTopUp`/`AutoRecharge`) or `finalizeAddonPurchaseIfPending()`'s writes (for `AddonPurchase`) have even started, let alone committed. A transaction entered later in the same method cannot retroactively defer an event already dispatched and already fired.
+
+**Corrected chokepoint and dispatch points, confirmed by direct re-read this round** (`UsageBillingCheckoutManager.php:628-658`):
+
+```php
+private function confirmSucceeded(...): void
+{
+    $fromState = $attempt->state;
+    // ...attemptRepository->update(...); recordTransition(...);
+
+    if ($attempt->purpose === FundingAttemptPurpose::AddonPurchase) {
+        $this->finalizeAddonPurchaseIfPending($attempt, $source, $providerEventId);
+        // dispatch here — after finalizeAddonPurchaseIfPending() returns
+        return;
+    }
+
+    // ...$entryType = ...;
+    $this->walletManager->creditFromFunding(...);
+    // dispatch here — after creditFromFunding() returns
+}
+```
+
+- **`ManualTopUp`/`AutoRecharge`:** dispatch `BusinessFundingAttemptSucceeded` immediately after the existing `$this->walletManager->creditFromFunding(...)` call (currently the method's last statement, lines 651-657) returns. `creditFromFunding()`'s own internal transaction has fully committed by the time it returns (it is a synchronous call, not a queued dispatch), so the event now fires only once the wallet credit is genuinely durable.
+- **`AddonPurchase`:** dispatch immediately after `$this->finalizeAddonPurchaseIfPending($attempt, $source, $providerEventId);` (line 642) returns, before the branch's own `return;` (line 644). `finalizeAddonPurchaseIfPending()`'s own writes (the conditional `creditFromFunding()` call for `wallet_credit` fulfillment, then the purchase-status update and transition-audit insert, lines 679-720) are all synchronous and complete by the time it returns.
+- **Payload, unchanged:** `((int) $attempt->id, (int) $attempt->business_id, $attempt->purpose->value, (int) $attempt->expected_amount_micro)`.
+- **Multiplicity, re-confirmed:** exactly one dispatch per genuine transition, at exactly one of the two mutually exclusive branches.
+- **Non-emission on replay, re-confirmed:** `confirmSucceeded()` is only ever reached through call sites that already early-return on an already-`Succeeded` attempt before calling it (`confirmAttemptFromReturn()` line 479-485, `confirmAttemptFromWebhook()` line 528-534) — a replay never re-enters `confirmSucceeded()`, so it never re-dispatches this event, under either the old or corrected dispatch point.
+- **`ShouldDispatchAfterCommit` correctness under the corrected design:** since neither `creditFromFunding()` (already-closed transaction) nor `finalizeAddonPurchaseIfPending()` (no transaction at all) leaves a transaction open by the time execution reaches the new dispatch point, the event fires immediately at that point — which is now also the *correct* point, because the local finalization it reports on has already genuinely completed.
+
+### 7.2 `BusinessFundingAttemptFailed` — dispatch point re-confirmed unchanged
+
+**Re-audited this round per the explicit instruction to verify "both local failure mutations have completed before dispatch."** `markFailed()` (`UsageBillingCheckoutManager.php:802-812`) performs exactly two writes — `$this->attemptRepository->update(...)` (state + failure_reason) and `$this->recordTransition(...)` — and does nothing else. Both are complete by line 811. There is no purpose-specific follow-up write analogous to `creditFromFunding()`/`finalizeAddonPurchaseIfPending()` on the failure path. **Confirmed: the dispatch point remains immediately after `recordTransition()` at line 811-812, unchanged from the initial draft.**
+
+- **Payload, unchanged:** `((int) $attempt->id, (int) $attempt->business_id, $attempt->purpose->value)`.
+- **Non-emission on replay, re-confirmed:** `markAttemptFailedFromWebhook()` already early-returns when `state` is already `Succeeded`/`Failed`/`Canceled` (line 569-571) before calling `markFailed()`.
+
+---
+
+## 8. Existing-event producer reachability audit — unchanged since the initial draft, re-confirmed
 
 | Event | Classification | Evidence |
 |---|---|---|
-| `BusinessPayerChanged` | **REACHABLE_AND_PROVEN** | Sole dispatch in `BillingProfileManager::changePayer()` (line 127), inside its transaction. Covered by `PayerTransitionAuditTest.php`/`PayerAssignmentTransitionScenariosTest.php`. |
-| `BusinessBillingContactChanged` | **REACHABLE_AND_PROVEN** | Sole dispatch in `BillingProfileManager::updateBillingContact()` (line 172), inside its transaction. Covered by `BillingProfileManagerBillingContactTest.php`. |
-| `BusinessWalletBillingStatusChanged` | **REACHABLE_AND_PROVEN** | Sole dispatch in `UsageWalletManager::setBillingStatus()` (line 1205), inside its transaction. Covered by `UsageWalletBillingStatusTransitionTest.php`. Referenced only as a file-path string literal (not a dispatch assertion) in `NoStripeOrProviderCodeAtM2Test.php` — that reference is unrelated to reachability and is not a gap. |
-| `AdditionalBusinessSlotAgreementCompleted` | **REACHABLE_AND_PROVEN** | Dispatch confirmed at `UsageBillingCheckoutManager.php:2017`. The only Usage-suite file using `Event::fake()` at all, `SlotAgreementConcurrencyTest.php` (lines 223, 254), asserts this event directly via `Event::fake([AdditionalBusinessSlotAgreementCompleted::class])`/`Event::assertDispatchedTimes(...)`. |
-| `AdditionalBusinessSlotAllocationFailed` | **REACHABLE_BUT_TEST_GAP** | Dispatch confirmed at `UsageBillingCheckoutManager.php:1991`. No file in `tests/Unit/Usage` or `tests/Feature/Usage` uses `Event::fake(` against this specific class (only `AdditionalBusinessSlotAgreementCompleted` is proven via `Event::fake()`); `SlotAgreementAllocationSagaTest.php` exercises the failure path's side effects but does not assert the event dispatch itself. |
-| `AdditionalBusinessSlotAgreementLapsed` | **REACHABLE_BUT_TEST_GAP** | Dispatch confirmed at `UsageBillingCheckoutManager.php:1782`. `AdditionalBusinessSlotAgreementFailedPeriodTest.php` exercises the lapse state transition but not an `Event::fake()`-based dispatch assertion. |
-| `AdditionalBusinessSlotAgreementCanceled` | **REACHABLE_BUT_TEST_GAP** | Dispatch confirmed at `UsageBillingCheckoutManager.php:1899`. `AdditionalBusinessSlotAgreementCancellationTest.php` exercises the cancellation state machine but not an `Event::fake()`-based dispatch assertion. |
-| `AdditionalBusinessSlotAgreementPaymentRecovered` | **REACHABLE_BUT_TEST_GAP** | Dispatch confirmed at `UsageBillingCheckoutManager.php:1744`. `SlotAgreementLapseRecoveryTest.php` exercises the recovery transition but not an `Event::fake()`-based dispatch assertion. |
+| `BusinessPayerChanged` | **REACHABLE_AND_PROVEN** | Sole dispatch in `BillingProfileManager::changePayer()` (line 127). Covered by `PayerTransitionAuditTest.php`/`PayerAssignmentTransitionScenariosTest.php`. |
+| `BusinessBillingContactChanged` | **REACHABLE_AND_PROVEN** | Sole dispatch in `BillingProfileManager::updateBillingContact()` (line 172). Covered by `BillingProfileManagerBillingContactTest.php`. |
+| `BusinessWalletBillingStatusChanged` | **REACHABLE_AND_PROVEN** | Sole dispatch in `UsageWalletManager::setBillingStatus()` (line 1205). Covered by `UsageWalletBillingStatusTransitionTest.php`. |
+| `AdditionalBusinessSlotAgreementCompleted` | **REACHABLE_AND_PROVEN** | Dispatch at `UsageBillingCheckoutManager.php:2017`. Proven via `Event::fake()` in `SlotAgreementConcurrencyTest.php` (lines 223, 254) — the only Usage-suite file using `Event::fake()` at all. |
+| `AdditionalBusinessSlotAllocationFailed` | **REACHABLE_BUT_TEST_GAP** | Dispatch at `UsageBillingCheckoutManager.php:1991`. No `Event::fake()`-based assertion exists. |
+| `AdditionalBusinessSlotAgreementLapsed` | **REACHABLE_BUT_TEST_GAP** | Dispatch at `UsageBillingCheckoutManager.php:1782`. No `Event::fake()`-based assertion exists. |
+| `AdditionalBusinessSlotAgreementCanceled` | **REACHABLE_BUT_TEST_GAP** | Dispatch at `UsageBillingCheckoutManager.php:1899`. No `Event::fake()`-based assertion exists. |
+| `AdditionalBusinessSlotAgreementPaymentRecovered` | **REACHABLE_BUT_TEST_GAP** | Dispatch at `UsageBillingCheckoutManager.php:1744`. No `Event::fake()`-based assertion exists. |
 
-**No unreachable-blocking event was found beyond the two funding events already covered in §7.** The four `REACHABLE_BUT_TEST_GAP` slot events are a real, disclosed gap, but adding their direct dispatch-assertion tests is **residual §35-only cleanup**, explicitly excluded from this correction's scope (§9) — this correction does not redesign or re-test slot-agreement events beyond stating this classification.
-
----
-
-## 9. `ReconcileProviderPendingState` — test-gap requirement
-
-**Confirmed via exhaustive grep: zero test coverage anywhere in `tests/` for this class**, despite being scheduled every 5 minutes (`Kernel.php:111`) since M3. Mechanical audit does not disprove the M6 static audit's finding — this correction must add the missing proof.
-
-**What the job delegates to, confirmed by direct read** (`ReconcileProviderPendingState.php`, 39 lines): queries `BusinessFundingAttempt::query()->whereIn('state', [ProviderPending, RequiresAction])->where('updated_at', '<', now()->subMinutes(30))->whereNotNull('provider_session_or_intent_reference')->get()`, then calls `$checkoutManager->confirmAttemptFromReturn($attempt)` for each. `confirmAttemptFromReturn()` (`UsageBillingCheckoutManager.php:477-515`) itself: no-ops (returns the attempt's current state, no mutation) if already `Succeeded` or `provider_session_or_intent_reference` is null; otherwise re-verifies against the provider (`retrieveCheckoutSession()`/`retrievePaymentIntent()` per purpose) and calls `confirmSucceeded()` only on a genuinely verified success — never a blind state overwrite.
-
-**Locked test file:** `tests/Feature/Usage/ReconcileProviderPendingStateTest.php` (new). **Locked test methods:**
-
-1. `test_reconciles_a_stuck_provider_pending_attempt_to_succeeded` — a `ProviderPending` attempt with `updated_at` older than 30 minutes and a provider-confirmed-succeeded fixture is reconciled: transitions to `Succeeded`, and (per §7.1) dispatches `BusinessFundingAttemptSucceeded` exactly once.
-2. `test_does_not_reconcile_an_attempt_updated_within_the_stuck_window` — an otherwise-eligible attempt with `updated_at` inside the 30-minute window is left untouched; no provider call is made.
-3. `test_does_not_mutate_a_still_pending_attempt_the_provider_confirms_as_unresolved` — a stuck attempt whose provider re-verification still does not confirm success is left in its current state; no accounting mutation, no event dispatch.
-4. `test_skips_an_attempt_with_no_provider_session_or_intent_reference` — matches the job's own `whereNotNull` guard; no provider call attempted.
-5. `test_reconciliation_never_duplicates_accounting_for_an_already_succeeded_attempt` — an attempt that is already `Succeeded` by the time the job runs (e.g., a race with a webhook) produces no duplicate ledger entry and no duplicate event, exercising `confirmAttemptFromReturn()`'s own already-`Succeeded` early return (line 479-485).
-
-**This correction does not redesign the reconciliation flow** — the job's query, its delegation to `confirmAttemptFromReturn()`, and its 30-minute cutoff are all unchanged.
+**No unreachable-blocking event found beyond the two funding events (§7).** The four `REACHABLE_BUT_TEST_GAP` slot events remain explicitly deferred to remediation #7 (§12).
 
 ---
 
-## 10. Exact production file allowlist (subject to mechanical confirmation at implementation time)
+## 9. `ReconcileProviderPendingState` — test-gap requirement, methods updated for the corrected event ordering
 
-**Count: 7 files.**
+**Confirmed again this round: zero test coverage anywhere in `tests/` for this class.** Delegation chain unchanged: `ReconcileProviderPendingState.handle()` → `confirmAttemptFromReturn()` → (on genuine success) `confirmSucceeded()`.
 
-1. `app/Events/Usage/BusinessWalletCredited.php` — new.
-2. `app/Events/Usage/BusinessWalletDebited.php` — new.
-3. `app/Events/Usage/BusinessWalletDebtIncurred.php` — new.
-4. `app/Events/Usage/BusinessWalletDebtCleared.php` — new.
-5. `app/Events/Usage/BusinessUsageReserved.php` — new.
-6. `app/Events/Usage/BusinessUsageCommitted.php` — new.
-7. `app/Events/Usage/BusinessUsageReservationReleased.php` — new.
-8. `app/Library/Usage/UsageWalletManager.php` — modified, not new: adds the 7 event dispatches at the exact sites in §6 (`reserve()`, `commit()`, `release()`, `creditFromFunding()`), captures `$overageLedgerEntry` in `commit()`'s overage branch (§6.5), and widens `recordAutoRechargeFailure()` per §5's exact widening point. **This correction does not widen `recordAutoRechargeFailure()`'s increment condition itself (§5 discrepancy).**
-9. `app/Library/Usage/UsageBillingCheckoutManager.php` — modified, not new: adds the 2 funding-event dispatches at the exact sites in §7 (`confirmSucceeded()`, `markFailed()`).
-10. `app/Jobs/Usage/SendLowBalanceNotification.php` — new, mirroring `SendReceiptNotification.php`'s exact shape (`extends Base implements ShouldQueueAfterCommit`, recipient resolution per §4 item 4).
-11. `app/Jobs/Usage/SendAutoRechargeDisabledNotification.php` — new, same shape.
-12. `app/Notifications/Usage/LowBalanceNotification.php` — new, mirroring `ReceiptAvailableNotification.php`'s exact shape.
-13. `app/Notifications/Usage/AutoRechargeDisabledNotification.php` — new, same shape.
+**Locked test file, unchanged path:** `tests/Feature/Usage/ReconcileProviderPendingStateTest.php` (new). **Locked test methods, method 1 updated per §7.1's corrected ordering:**
 
-**Corrected count: the list above enumerates 13 distinct paths (7 new events + 2 modified managers + 2 new jobs + 2 new notifications).** No migration, no schema change, no route, no controller, no config file is in this list. **`app/Console/Kernel.php` is explicitly NOT in this list** — scheduling `ExpireStaleUsageReservations` is blocked on §3's unresolved cadence; no other Kernel change is authorized by this correction.
+1. `test_reconciles_a_stuck_provider_pending_attempt_to_succeeded_after_local_accounting_completes` — renamed and strengthened from the initial draft's `test_reconciles_a_stuck_provider_pending_attempt_to_succeeded`: a `ProviderPending` attempt older than 30 minutes, with a provider-confirmed-succeeded fixture, is reconciled to `Succeeded`; the test asserts, inside the `Event::assertDispatched(BusinessFundingAttemptSucceeded::class, function (...) { ... })` callback, that the corresponding ledger entry (for `ManualTopUp`/`AutoRecharge`) or completed addon purchase (for `AddonPurchase`) already exists in the database at the moment the assertion callback runs — proving the event is observed only after local accounting/finalization has committed, per §7.1's corrected design, not merely that the class was eventually dispatched.
+2. `test_does_not_reconcile_an_attempt_updated_within_the_stuck_window` — unchanged from the initial draft.
+3. `test_does_not_mutate_a_still_pending_attempt_the_provider_confirms_as_unresolved` — unchanged.
+4. `test_skips_an_attempt_with_no_provider_session_or_intent_reference` — unchanged.
+5. `test_reconciliation_never_duplicates_accounting_for_an_already_succeeded_attempt` — unchanged.
 
-**Explicitly excluded from this list, per instruction:** `app/Jobs/Usage/SendReceiptNotification.php`, `app/Notifications/Usage/ReceiptAvailableNotification.php` (Receipt Boundary is closed; no regression was found during this audit — `creditFromFunding()`'s existing `SendReceiptNotification::dispatch(...)->afterCommit()` call at line 838-839 is unaffected by inserting the two new event dispatches before it at line 836-837); any `AdvanceUsagePeriodBoundaries` class or migration (§2); any file under Admin Usage Billing Surface, Provider Refund/Dispute Handling, Add-on HTTP surface, or M6 conformance/deployment docs (§9 exclusions, restated in full in §12).
+**This correction does not redesign the reconciliation flow.**
 
 ---
 
-## 11. Exact test/support file allowlist (subject to mechanical confirmation at implementation time)
+## 10. Exact production file allowlist — recomputed from scratch this round
 
-**Count: 4 new files.**
+Every path below is marked `REQUIRED`, `PARTIALLY_REQUIRED`, or `NOT_REQUIRED`, with a reason. **Total REQUIRED/PARTIALLY_REQUIRED paths: 15.**
 
-1. `tests/Feature/Usage/UsageWalletDomainEventDispatchTest.php` — new. Covers all 7 wallet/reservation events' exact emission and non-emission conditions from §6, including the non-mutual-exclusivity assertions for `BusinessWalletCredited`+`BusinessWalletDebtCleared` (single `creditFromFunding()` call, both remainder and debt-clear positive) and `BusinessWalletDebited`+`BusinessWalletDebtIncurred` (single `commit()` overage spanning both available and debt), using `Event::fake([...])` scoped to exactly these 7 classes.
-2. `tests/Feature/Usage/FundingAttemptTerminalEventDispatchTest.php` — new. Covers `BusinessFundingAttemptSucceeded`/`Failed`'s exact emission from §7, across the synchronous-return, webhook, and administrator-resume paths, and the non-re-emission-on-replay guarantee for an already-terminal attempt.
-3. `tests/Feature/Usage/ReconcileProviderPendingStateTest.php` — new, exact 5 methods locked in §9.
-4. `tests/Feature/Usage/SendLowBalanceNotificationTest.php` — new. Covers: threshold-crossing dispatch, non-dispatch while already below threshold and already notified, non-dispatch for a wallet without `auto_recharge_enabled`/`auto_recharge_threshold_micro`, `low_balance_notified_at` clearing on recovery via `creditFromFunding()`, and the opt-out/missing-contact/blank-email no-op paths mirrored from `SendReceiptNotification`'s own established pattern.
-5. `tests/Feature/Usage/SendAutoRechargeDisabledNotificationTest.php` — new. Covers: dispatch exactly on the 3rd consecutive failure's `true→false` transition, non-dispatch on the 1st and 2nd failures, non-dispatch when a deliberate `configureAutoRecharge(enabled: false)` disables it, non-re-dispatch on a subsequent failure while already disabled, and the same recipient/opt-out semantics.
+| # | Path | Status | Reason |
+|---|---|---|---|
+| 1 | `app/Events/Usage/BusinessWalletCredited.php` | REQUIRED | New event class, §6.4. |
+| 2 | `app/Events/Usage/BusinessWalletDebited.php` | REQUIRED | New event class, §6.5. |
+| 3 | `app/Events/Usage/BusinessWalletDebtIncurred.php` | REQUIRED | New event class, §6.5. |
+| 4 | `app/Events/Usage/BusinessWalletDebtCleared.php` | REQUIRED | New event class, §6.4. |
+| 5 | `app/Events/Usage/BusinessUsageReserved.php` | REQUIRED | New event class, §6.1. |
+| 6 | `app/Events/Usage/BusinessUsageCommitted.php` | REQUIRED | New event class, §6.2. |
+| 7 | `app/Events/Usage/BusinessUsageReservationReleased.php` | REQUIRED | New event class, §6.3. |
+| 8 | `app/Library/Usage/UsageWalletManager.php` | REQUIRED | Modified: 7 event dispatches (§6); `$overageLedgerEntry` capture (§6.5); `recordAutoRechargeFailure()` widened for the 2→3 system-disable edge (§5); `configureAutoRecharge()` widened for the disabled→enabled counter reset (§5); low-balance set/clear checks at 5 sites across `reserve()`/`commit()`/`release()`/`creditFromFunding()` (§4). |
+| 9 | `app/Library/Usage/UsageBillingCheckoutManager.php` | REQUIRED | Modified: `confirmSucceeded()`'s dispatch point corrected to after purpose-specific finalization (§7.1); `markFailed()`'s existing dispatch point confirmed, one dispatch call added (§7.2). |
+| 10 | `app/Jobs/Usage/SendLowBalanceNotification.php` | REQUIRED | New job, §4. |
+| 11 | `app/Jobs/Usage/SendAutoRechargeDisabledNotification.php` | REQUIRED | New job, §5. |
+| 12 | `app/Notifications/Usage/LowBalanceNotification.php` | REQUIRED | New notification, §4. |
+| 13 | `app/Notifications/Usage/AutoRechargeDisabledNotification.php` | REQUIRED | New notification, §5. |
+| 14 | `app/Jobs/Usage/EvaluateBusinessAutoRecharge.php` | REQUIRED | Modified: the `Failed`-only conditional (line 76) is widened to `Failed || RequiresAction`, per human resolution B.1 (§5); its docblock's now-false claim is corrected. |
+| 15 | `app/Console/Kernel.php` | REQUIRED | Modified: one new `$schedule->job(new ExpireStaleUsageReservations())->everyFiveMinutes();` entry, per the resolved cadence (§3). |
 
-**Corrected count: 5 new test files**, not 4 — restated exactly: `UsageWalletDomainEventDispatchTest.php`, `FundingAttemptTerminalEventDispatchTest.php`, `ReconcileProviderPendingStateTest.php`, `SendLowBalanceNotificationTest.php`, `SendAutoRechargeDisabledNotificationTest.php`.
+**NOT_REQUIRED, explicitly confirmed:**
 
-**No existing test file is modified by the production allowlist above** except as an incidental consequence already reasoned through: any existing test that reaches `reserve()`/`commit()`/`release()`/`creditFromFunding()`/`confirmSucceeded()`/`markFailed()` without `Event::fake()` will now also execute the newly-dispatched events' listeners — but **zero listeners are registered for any of these 9 events** (confirmed: "do not invent consumer/listener behavior" is honored; no `EventServiceProvider` entry is added by this correction), so dispatching to zero listeners is a complete no-op with no observable side effect on any existing assertion. This mirrors the Receipt Boundary correction's own confirmed reasoning for why a new `ShouldDispatchAfterCommit` dispatch does not require touching unrelated existing tests, except where the Receipt Boundary correction's own subprocess/queue findings (below) apply.
+| Path | Reason |
+|---|---|
+| `app/Jobs/Usage/ExpireStaleUsageReservations.php` | Unmodified — only its Kernel registration changes (§3), not its own code. |
+| `app/Jobs/Usage/SendReceiptNotification.php` | Receipt Boundary is closed; no regression found — `creditFromFunding()`'s existing dispatch at line 838-839 is unaffected by the new event dispatches inserted before it at line 836-837. |
+| `app/Notifications/Usage/ReceiptAvailableNotification.php` | Same reason. |
+| Any migration or schema file | No schema change required or authorized (§13). |
+| Any route, controller, or config file | No HTTP/admin surface, no config value, is touched by this correction. |
+| Any `AdvanceUsagePeriodBoundaries` class/migration | Locked OPTIONAL_NON_BLOCKING / NOT IMPLEMENTED (§2). |
 
-### Test-harness / subprocess audit
-
-Exhaustive grep of `tests/Unit/Usage` and `tests/Feature/Usage` for the 22 required strings (all 7 missing event names, both funding events, `BusinessWalletBillingStatusChanged`, `ExpireStaleUsageReservations`, `ReconcileProviderPendingState`, `SendLowBalanceNotification`, `SendAutoRechargeDisabledNotification`, `Event::fake(`, `Queue::fake(`, `Notification::fake(`, `ShouldDispatchAfterCommit`, `ShouldQueueAfterCommit`) confirms: zero existing coverage for all 7 missing events, zero for both funding events, zero for `ReconcileProviderPendingState`/`SendLowBalanceNotification`/`SendAutoRechargeDisabledNotification`; `SlotAgreementConcurrencyTest.php` is the only file using `Event::fake(`.
-
-**Real-subprocess concurrency tests inspected:** `ConcurrentTopUpConcurrencyTest.php` calls `creditFromFunding()`-reaching confirmation paths from spawned child processes (the Receipt Boundary correction's own exceptional-correction fix already forces `QUEUE_CONNECTION=sync` explicitly in `baseRunnerPreamble()`, independent of any machine-local `.env.testing`, per that contract's §"Exceptional post-review factual/test-harness correction," unchanged by this contract). This correction's new event dispatches inside `creditFromFunding()` (§6.4) will fire inline in those same child processes exactly as `SendReceiptNotification` already does — since zero listeners are registered, this has no observable effect and requires no further child-process fix beyond what Receipt Boundary already locked. `AutoRechargeFailedPaymentRetryTest.php`'s own forced-race child-process tests (lines 220+) exercise `EvaluateBusinessAutoRecharge::dispatch()`/`recordAutoRechargeFailure()`-reaching paths directly; per the same already-established `QUEUE_CONNECTION=sync` discipline, a genuinely implemented `SendAutoRechargeDisabledNotification::dispatch()->afterCommit()` inside `recordAutoRechargeFailure()` would also need to execute correctly inline in that file's spawned children at implementation time — flagged here for the implementation phase to re-verify empirically (per the Receipt Boundary correction's own hard-won lesson: parent `phpunit.xml` settings are never assumed to govern spawned PHP processes), not resolved by this contract-only pass.
+No path is marked with "or sibling," "if needed," or any other discretionary qualifier.
 
 ---
 
-## 12. Excluded scopes — restated in full
+## 11. Exact test/support file allowlist — recomputed from scratch this round
+
+**Total REQUIRED paths: 7** (5 new files, 1 modified existing file, 1 additional new file for the scheduler proof).
+
+| # | Path | Status | Reason / exact methods |
+|---|---|---|---|
+| 1 | `tests/Feature/Usage/UsageWalletDomainEventDispatchTest.php` | REQUIRED (new) | Covers all 7 wallet/reservation events' exact emission/non-emission (§6), including the non-mutual-exclusivity assertions for `BusinessWalletCredited`+`BusinessWalletDebtCleared` and `BusinessWalletDebited`+`BusinessWalletDebtIncurred`, via `Event::fake([...])` scoped to exactly these 7 classes. |
+| 2 | `tests/Feature/Usage/FundingAttemptTerminalEventDispatchTest.php` | REQUIRED (new) | Updated per §7.1's corrected ordering. Exact methods: `test_succeeded_is_not_observable_before_the_wallet_credit_commits_for_a_topup` and `test_succeeded_is_not_observable_before_the_wallet_credit_commits_for_an_auto_recharge` (each asserts, inside the `Event::assertDispatched()` callback, that the corresponding ledger entry already exists — proving post-finalization ordering, not merely eventual dispatch); `test_succeeded_is_not_observable_before_the_addon_purchase_is_completed` (same technique against `business_usage_addon_purchases.status`); `test_failed_dispatches_immediately_after_the_transition_record`; `test_replay_of_an_already_succeeded_attempt_does_not_redispatch`; `test_replay_of_an_already_terminal_failed_attempt_does_not_redispatch`. |
+| 3 | `tests/Feature/Usage/ReconcileProviderPendingStateTest.php` | REQUIRED (new) | Exact 5 methods, §9 (method 1 renamed/strengthened this round). |
+| 4 | `tests/Feature/Usage/SendLowBalanceNotificationTest.php` | REQUIRED (new) | Exact methods: `test_dispatches_when_a_reservation_drops_the_balance_to_or_below_threshold`; `test_dispatches_when_a_commit_overage_drops_the_balance_to_or_below_threshold`; `test_does_not_redispatch_while_the_marker_is_already_set`; `test_does_not_dispatch_when_auto_recharge_is_disabled`; `test_does_not_dispatch_when_no_threshold_is_configured`; `test_clears_the_marker_on_recovery_via_credit_from_funding`; `test_clears_the_marker_on_recovery_via_commits_unused_reservation_release`; `test_clears_the_marker_on_recovery_via_reservation_release`; `test_re_enabling_auto_recharge_alone_does_not_clear_the_marker`; `test_skips_when_no_billing_contact_is_configured`; `test_skips_when_the_contact_has_opted_out`; `test_skips_when_the_resolved_email_is_blank`. |
+| 5 | `tests/Feature/Usage/SendAutoRechargeDisabledNotificationTest.php` | REQUIRED (new) | Exact methods (job/notification-level, recipient resolution only — the wallet-manager triggering logic is proven in file #6 below, mirroring `SendReceiptNotification`'s own separation of concerns): `test_sends_the_notification_to_the_opted_in_billing_contact`; `test_skips_when_no_billing_contact_is_configured`; `test_skips_when_the_contact_has_opted_out`; `test_skips_when_the_resolved_email_is_blank`; `test_resolves_email_via_the_contact_user_when_contact_user_id_is_set`. |
+| 6 | `tests/Feature/Usage/AutoRechargeFailedPaymentRetryTest.php` | REQUIRED (modified existing) | See breakdown below. |
+| 7 | `tests/Feature/Usage/UsageJobSchedulingTest.php` | REQUIRED (new) | Scheduler-reachability + exact-cadence proof, §3. See design note below. |
+
+**Existing-file modification breakdown for `AutoRechargeFailedPaymentRetryTest.php`** (full current body re-read this round):
+
+- `test_a_declined_recharge_increments_the_failure_counter` — **unchanged**, still valid (a single `Failed` outcome still increments to 1 under the corrected rule).
+- `test_a_subsequent_successful_recharge_resets_the_failure_counter` — **unchanged**, still valid (already exercises B.2, which this correction does not touch).
+- `test_a_requires_action_outcome_does_not_increment_the_failure_counter` — **corrected, not merely renamed**: this assertion (`assertSame(0, $wallet->consecutive_recharge_failures)`) is now stale per human resolution B.1 and must be replaced with `test_a_requires_action_outcome_increments_the_failure_counter`, asserting `assertSame(1, ...)`.
+- **New methods added:** `test_the_third_consecutive_failure_disables_auto_recharge_and_dispatches_the_disabled_notification`; `test_the_third_consecutive_requires_action_outcome_also_disables_auto_recharge`; `test_system_disable_preserves_threshold_amount_and_monthly_cap`; `test_a_failure_recorded_while_already_disabled_does_not_redispatch_the_notification` (calls `recordAutoRechargeFailure()` directly, bypassing the job's own top-of-`handle()` guard, to defensively prove the `=== 3` gate per §5 item 5); `test_re_enabling_auto_recharge_resets_the_counter_and_permits_a_new_disable_episode`; `test_deliberate_owner_disable_does_not_dispatch_the_system_disable_notification`.
+
+**Scheduler test design note for `UsageJobSchedulingTest.php`:** this repository already has exactly one precedent scheduling test, `tests/Feature/Opportunity/OpportunitySnoozeSweepScheduleTest.php` — confirmed by direct read this round to invoke `Kernel::schedule()` via `ReflectionMethod` against a fresh `Illuminate\Console\Scheduling\Schedule` instance, then inspect `$schedule->events()` directly, identifying its target event via `str_contains($event->command, 'opportunity:sweep-expired-snoozes')` and asserting `$event->expression`. That identification technique is specific to a `$schedule->command(...)` registration; every RFC-005 scheduled job, including `ExpireStaleUsageReservations`, is registered via `$schedule->job(new X())` instead, which — per Laravel's documented `Schedule::job()` behavior — produces a `CallbackEvent` identified by `$event->description` (internally set to the job's class name), not `$event->command`. **This worktree has no `vendor/` directory, so this could not be mechanically confirmed against the actual installed `laravel/framework` 12.x source in this pass** (disclosed in the Correction Round 1 record above). Locked test intent, independent of the exact identifying property: `test_expire_stale_usage_reservations_is_registered_in_the_schedule` (asserts a matching event is found) and `test_expire_stale_usage_reservations_runs_every_five_minutes` (asserts `$event->expression === '*/5 * * * *'`), using the same reflection-based `Kernel::schedule()` invocation as the existing precedent, filtering `$schedule->events()` by whichever property the implementation phase's mechanical check against real vendor source confirms identifies a `$schedule->job(...)` registration (`description`, expected). This is the one sub-detail in this correction that is a trivial, non-policy, implementation-time verification against installed framework code, not a product/schema question — it does not block this contract's authorization and is not listed in §14.
+
+---
+
+## 12. Excluded scopes — restated in full, unchanged in substance
 
 This correction does not implement, design, or absorb any of the following:
 
 - Admin Usage Billing Surface (remediation #5), including `ManualCredit`/`PromotionalCredit`/`UsageChargeReversal`/`CorrectionReversal` ledger-entry producers or dispatch.
-- Provider Refund/Dispute Outcome Handling (remediation #6), including `Refund`/`DisputeChargeback` ledger writes and dispute-driven billing suspension — except the mere verification already performed in §8 that `BusinessWalletBillingStatusChanged`'s existing producer is unaffected.
-- Residual §35-only cleanup (remediation #7) — except the exact tests directly required by this correction (§9, §11). The four `REACHABLE_BUT_TEST_GAP` slot events identified in §8 are explicitly left for that future remediation, not absorbed here.
+- Provider Refund/Dispute Outcome Handling (remediation #6), including `Refund`/`DisputeChargeback` ledger writes and dispute-driven billing suspension.
+- Residual §35-only cleanup (remediation #7) — except the exact tests required by this correction (§9, §11). The four `REACHABLE_BUT_TEST_GAP` slot events (§8) remain deferred to that remediation.
 - Add-on HTTP surface.
-- `AdvanceUsagePeriodBoundaries` — locked OPTIONAL_NON_BLOCKING / NOT IMPLEMENTED (§2); no contradicting evidence found.
+- `AdvanceUsagePeriodBoundaries` — locked OPTIONAL_NON_BLOCKING / NOT IMPLEMENTED (§2).
 - M6 conformance/deployment docs; the release tag.
 - Conversations pilot activation; tax/VAT implementation; legacy invoices.
-- `SendReceiptNotification`/`ReceiptAvailableNotification` — Receipt Boundary is closed; only regression-verified (§10), never modified.
-- The RFC-vs-code `requires_action` counter-increment discrepancy (§5) — disclosed, not resolved.
-- `ExpireStaleUsageReservations`'s exact schedule cadence (§3) — disclosed as an unresolved STOP condition, not invented.
+- `SendReceiptNotification`/`ReceiptAvailableNotification` — Receipt Boundary is closed; regression-verified only (§10), never modified.
+- Any migration or schema change (§13).
+
+Do not reopen Reservation Admission, Funding Provider-Flow, or Receipt Boundary — none is touched, contradicted, or reinterpreted anywhere above.
 
 ---
 
 ## 13. Confirmations
 
-- **No schema/migration change is required or authorized by this correction.** Every column referenced (`low_balance_notified_at`, `auto_recharge_threshold_micro`, `auto_recharge_enabled`, `consecutive_recharge_failures`, `available_balance_micro`, `debt_balance_micro`) already exists per RFC-005 §12/§25's current, already-shipped schema.
+- **No schema/migration change is required or authorized by this correction.** Every column referenced (`low_balance_notified_at`, `auto_recharge_threshold_micro`, `auto_recharge_amount_micro`, `monthly_recharge_cap_micro`, `auto_recharge_enabled`, `consecutive_recharge_failures`, `available_balance_micro`, `debt_balance_micro`) already exists per RFC-005 §12/§25's current, already-shipped schema.
 - `AI-AUTONOMY-STATE.json` is untouched by this branch.
-- M6 remains frozen — not resumed, not referenced beyond the "this is remediation #4 of 7" framing already established by the three prior merged corrections.
+- M6 remains frozen.
 - No product, test, config, route, or RFC-source file is touched by this branch. This governance branch changes exactly one file.
-- No implementation has occurred. Correction rounds: 0 of 2 consumed.
+- No implementation has occurred. **Correction rounds: 1 of 2 consumed; 1 ordinary round remains.**
 - Reservation Admission, Funding Provider-Flow, and Receipt Boundary are not reopened, contradicted, or reinterpreted anywhere above.
 
 ---
 
 ## 14. Open items requiring human resolution before implementation can proceed to full scope
 
-1. **`ExpireStaleUsageReservations`'s exact schedule cadence (§3).** No RFC section or merged contract specifies one. A human must choose an exact interval (the 30-minute reservation TTL is offered only as context, not as an authoritative answer) before `app/Console/Kernel.php` can be touched.
-2. **The RFC-vs-code `requires_action` counter-increment discrepancy (§5).** RFC-005 §19 says the counter increments on `failed`/`requires_action`; current merged code and a current passing test both confirm only `failed` increments it. A human must decide whether to correct the RFC text, correct the code (a change outside this correction's own scope), or explicitly ratify the current code as authoritative.
-3. **Low-balance notification's non-applicability to wallets without auto-recharge configured (§4 item 2).** RFC-005 defines no independent "low balance" threshold for a wallet with `auto_recharge_enabled = false` or `auto_recharge_threshold_micro` null. If low-balance notification should also apply to such wallets, a human must define the threshold concept RFC-005 currently omits.
+**All three items from the initial draft are resolved this round** (cadence — §3; the `requires_action` counter conflict — §5; low-balance applicability — §4) and are removed from this list. Fresh re-audit this round found no genuinely new blocking product or schema question. The only remaining sub-detail is not a product/policy question and is disclosed in §11's scheduler test design note instead of listed here: the exact `Illuminate\Console\Scheduling\Event` property that identifies a `$schedule->job(...)` registration could not be mechanically confirmed in this vendor-less worktree, and must be verified against the actual installed `laravel/framework` source at implementation time before `UsageJobSchedulingTest.php` can be finalized — a trivial mechanical check, not a decision requiring human policy input.
+
+**No open items remain that block implementation authorization.**
 
 ---
