@@ -42,7 +42,13 @@ class FakePaymentProviderGateway implements PaymentProviderGateway
      * establishes). Unconfigured defaults to a fully paid, complete
      * Session — the happy path most tests exercise.
      *
-     * @var array<string, array{status?: string, paymentStatus?: string, providerPaymentMethodId?: ?string}>
+     * Receipt Boundary Correction Contract §8 — receiptUrl/receiptChargeId
+     * are optional keys, absent by default, in which case
+     * retrieveCheckoutSession() falls back to its own deterministic
+     * per-session default rather than requiring every existing test to
+     * opt in.
+     *
+     * @var array<string, array{status?: string, paymentStatus?: string, providerPaymentMethodId?: ?string, receiptUrl?: ?string, receiptChargeId?: ?string}>
      */
     public array $checkoutSessionOutcomes = [];
 
@@ -97,6 +103,30 @@ class FakePaymentProviderGateway implements PaymentProviderGateway
      * @var array<string, CheckoutSessionResult>
      */
     private array $registeredCheckoutSessionResults = [];
+
+    /**
+     * Receipt Boundary Correction Contract §8 — a test-only explicit
+     * PaymentIntent retrieval registration, keyed by
+     * providerPaymentIntentId, checked first by retrievePaymentIntent()
+     * before its own deterministic default. Mirrors
+     * registerCheckoutSessionResult()'s own established pattern.
+     *
+     * @var array<string, PaymentIntentResult>
+     */
+    private array $registeredPaymentIntentResults = [];
+
+    /**
+     * Receipt Boundary Correction Contract §8 — records every
+     * retrievePaymentIntent()/retrieveCheckoutSession() call's own
+     * requested provider object id, so a test can assert no provider call
+     * occurred (e.g. the existing-receipt short-circuit).
+     *
+     * @var array<int, string>
+     */
+    public array $retrievePaymentIntentCalls = [];
+
+    /** @var array<int, string> */
+    public array $retrieveCheckoutSessionCalls = [];
 
     public function createOrRetrieveCustomer(?string $existingProviderCustomerId, string $idempotencyKey): ProviderCustomerResult
     {
@@ -178,7 +208,48 @@ class FakePaymentProviderGateway implements PaymentProviderGateway
 
     public function retrievePaymentIntent(string $providerPaymentIntentId): PaymentIntentResult
     {
-        return new PaymentIntentResult($providerPaymentIntentId, 'succeeded', null, 0, 'USD');
+        $this->retrievePaymentIntentCalls[] = $providerPaymentIntentId;
+
+        if (isset($this->registeredPaymentIntentResults[$providerPaymentIntentId])) {
+            return $this->registeredPaymentIntentResults[$providerPaymentIntentId];
+        }
+
+        return new PaymentIntentResult(
+            $providerPaymentIntentId,
+            'succeeded',
+            null,
+            0,
+            'USD',
+            $this->fakeReceiptUrl($providerPaymentIntentId),
+            $this->fakeReceiptChargeId($providerPaymentIntentId),
+        );
+    }
+
+    /**
+     * Receipt Boundary Correction Contract §8 — registers an explicit
+     * PaymentIntentResult this Fake must return the next time
+     * retrievePaymentIntent() is called for that exact PaymentIntent id.
+     */
+    public function registerPaymentIntentResult(PaymentIntentResult $result): void
+    {
+        $this->registeredPaymentIntentResults[$result->providerPaymentIntentId] = $result;
+    }
+
+    /**
+     * Receipt Boundary Correction Contract §8/§J — deterministic, never
+     * random: the same $providerObjectId always yields the same
+     * receiptChargeId/receiptUrl. Applies only to this Fake's own
+     * unregistered/default construction paths — never overrides an
+     * explicit registration.
+     */
+    private function fakeReceiptChargeId(string $providerObjectId): string
+    {
+        return 'ch_fake_'.substr(hash('sha256', $providerObjectId), 0, 24);
+    }
+
+    private function fakeReceiptUrl(string $providerObjectId): string
+    {
+        return 'https://fake.stripe.test/receipts/'.$this->fakeReceiptChargeId($providerObjectId);
     }
 
     public function verifyWebhookSignature(string $rawBody, string $signatureHeader, string $webhookSecret): WebhookVerificationResult
@@ -278,6 +349,8 @@ class FakePaymentProviderGateway implements PaymentProviderGateway
 
     public function retrieveCheckoutSession(string $providerCheckoutSessionId): CheckoutSessionResult
     {
+        $this->retrieveCheckoutSessionCalls[] = $providerCheckoutSessionId;
+
         if (isset($this->registeredCheckoutSessionResults[$providerCheckoutSessionId])) {
             return $this->registeredCheckoutSessionResults[$providerCheckoutSessionId];
         }
@@ -290,7 +363,19 @@ class FakePaymentProviderGateway implements PaymentProviderGateway
             // manually chosen id) — treated as already paid by default,
             // mirroring createOffSessionPaymentIntent()'s own succeeded
             // default.
-            return new CheckoutSessionResult($providerCheckoutSessionId, 'complete', 'paid', null, 0, 'USD', 'cus_fake_unknown', 'pi_fake_'.Str::random(16), 'pm_fake_'.Str::random(16));
+            return new CheckoutSessionResult(
+                $providerCheckoutSessionId,
+                'complete',
+                'paid',
+                null,
+                0,
+                'USD',
+                'cus_fake_unknown',
+                'pi_fake_'.Str::random(16),
+                'pm_fake_'.Str::random(16),
+                $this->fakeReceiptUrl($providerCheckoutSessionId),
+                $this->fakeReceiptChargeId($providerCheckoutSessionId),
+            );
         }
 
         $outcome = $this->checkoutSessionOutcomes[$session['idempotencyKey']] ?? $this->checkoutSessionOutcomes['*'] ?? [];
@@ -299,6 +384,8 @@ class FakePaymentProviderGateway implements PaymentProviderGateway
         $providerPaymentMethodId = array_key_exists('providerPaymentMethodId', $outcome)
             ? $outcome['providerPaymentMethodId']
             : ($status === 'complete' ? 'pm_fake_'.substr($session['providerPaymentIntentId'], strlen('pi_fake_')) : null);
+        $receiptUrl = array_key_exists('receiptUrl', $outcome) ? $outcome['receiptUrl'] : $this->fakeReceiptUrl($providerCheckoutSessionId);
+        $receiptChargeId = array_key_exists('receiptChargeId', $outcome) ? $outcome['receiptChargeId'] : $this->fakeReceiptChargeId($providerCheckoutSessionId);
 
         return new CheckoutSessionResult(
             $providerCheckoutSessionId,
@@ -310,6 +397,8 @@ class FakePaymentProviderGateway implements PaymentProviderGateway
             $session['providerCustomerId'],
             $status === 'complete' ? $session['providerPaymentIntentId'] : null,
             $providerPaymentMethodId,
+            $receiptUrl,
+            $receiptChargeId,
         );
     }
 

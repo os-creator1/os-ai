@@ -21,8 +21,10 @@ use App\Repositories\Contracts\BusinessFundingAttemptRepository;
 use App\Repositories\Contracts\BusinessRepository;
 use App\Repositories\Contracts\BusinessUsageLedgerEntryRepository;
 use App\Repositories\Contracts\BusinessUsageWalletRepository;
+use App\Repositories\Contracts\BusinessBillingReceiptRepository;
 use App\Repositories\Contracts\PaymentProviderCustomerRepository;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Tests\Feature\Business\Concerns\CreatesBusinessTestData;
 use Tests\TestCase;
 
@@ -99,6 +101,8 @@ class FundingAttemptExactlyOnceWalletCreditTest extends TestCase
             $attempt->provider_customer_external_id_snapshot,
             'pi_fake_exactly_once',
             $paymentMethodId,
+            'https://fake.stripe.test/receipts/ch_fake_exactly_once',
+            'ch_fake_exactly_once',
         ));
 
         // Path 1: the synchronous browser-return confirmation.
@@ -124,5 +128,62 @@ class FundingAttemptExactlyOnceWalletCreditTest extends TestCase
 
         $wallet = app(BusinessUsageWalletRepository::class)->findByBusinessId((int) $business->id);
         $this->assertSame('5000000', (string) $wallet->available_balance_micro);
+    }
+
+    /**
+     * Receipt Boundary Correction Contract §5 — attachFundingReceipt()'s
+     * own row-lock convergence: a second invocation for the same
+     * ledgerEntryId returns the already-existing row unchanged, never a
+     * second business_billing_receipts row.
+     */
+    public function test_repeated_receipt_attachment_for_the_same_ledger_entry_is_idempotent(): void
+    {
+        $customer = $this->createCustomer();
+        $workspace = $this->entitledWorkspace($customer->user);
+        $business = app(BusinessRepository::class)->createForCustomerInWorkspace($customer, $workspace, $this->businessAttributes());
+        app(UsageWalletManager::class)->initializeWalletForNewBusiness($business->id);
+        app(BillingProfileManager::class)->changePayer($business, PayerType::Workspace, $customer->user_id, 'Test.');
+        app(PaymentInstrumentManager::class)->resolveProviderCustomer($business, $customer->user_id);
+
+        $checkoutManager = app(UsageBillingCheckoutManager::class);
+        $result = $checkoutManager->initiateTopUp($business, $customer->user_id, 5_000_000);
+        $attempt = app(BusinessFundingAttemptRepository::class)->findById($result->fundingAttemptId);
+
+        $paymentMethodId = 'pm_fake_idempotent_receipt';
+        $this->gateway->registerPaymentMethod(new PaymentMethodResult(
+            $paymentMethodId, $attempt->provider_customer_external_id_snapshot, 'card', 'visa', '4242', 12, 2030,
+        ));
+        $this->gateway->registerCheckoutSessionResult(new \App\Library\Usage\CheckoutSessionResult(
+            (string) $attempt->provider_session_or_intent_reference,
+            'complete',
+            'paid',
+            null,
+            $checkoutManager->expectedMinorUnitsFor($attempt),
+            $checkoutManager->expectedCurrencyCodeFor($attempt),
+            $attempt->provider_customer_external_id_snapshot,
+            'pi_fake_idempotent_receipt',
+            $paymentMethodId,
+            'https://fake.stripe.test/receipts/ch_fake_idempotent_receipt',
+            'ch_fake_idempotent_receipt',
+        ));
+
+        $checkoutManager->confirmAttemptFromReturn($attempt);
+        $attempt = app(BusinessFundingAttemptRepository::class)->findById($attempt->id);
+
+        $ledgerEntry = DB::table('business_usage_ledger_entries')->where('funding_attempt_id', $attempt->id)->first();
+        $this->assertNotNull($ledgerEntry);
+
+        $walletManager = app(UsageWalletManager::class);
+        $first = $walletManager->attachFundingReceipt(
+            (int) $ledgerEntry->id, (int) $attempt->id, (int) $attempt->business_id,
+            'https://fake.stripe.test/receipts/ch_fake_idempotent_receipt', 'ch_fake_idempotent_receipt',
+        );
+        $second = $walletManager->attachFundingReceipt(
+            (int) $ledgerEntry->id, (int) $attempt->id, (int) $attempt->business_id,
+            'https://fake.stripe.test/receipts/ch_fake_idempotent_receipt', 'ch_fake_idempotent_receipt',
+        );
+
+        $this->assertSame($first->id, $second->id);
+        $this->assertSame(1, app(BusinessBillingReceiptRepository::class)->query()->where('ledger_entry_id', $ledgerEntry->id)->count());
     }
 }

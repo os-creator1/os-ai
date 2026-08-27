@@ -186,6 +186,7 @@
                 \App\Repositories\Contracts\BusinessUsageAddonCatalogRepository::class => \App\Repositories\Eloquent\EloquentBusinessUsageAddonCatalogRepository::class,
                 \App\Repositories\Contracts\BusinessUsageAddonPurchaseRepository::class => \App\Repositories\Eloquent\EloquentBusinessUsageAddonPurchaseRepository::class,
                 \App\Repositories\Contracts\BusinessUsageAddonPurchaseTransitionRepository::class => \App\Repositories\Eloquent\EloquentBusinessUsageAddonPurchaseTransitionRepository::class,
+                \App\Repositories\Contracts\BusinessBillingReceiptRepository::class => \App\Repositories\Eloquent\EloquentBusinessBillingReceiptRepository::class,
                 \App\Repositories\Contracts\PlatformThemePresetRepository::class => \App\Repositories\Eloquent\EloquentPlatformThemePresetRepository::class,
                 \App\Repositories\Contracts\PlatformThemeFontRepository::class => \App\Repositories\Eloquent\EloquentPlatformThemeFontRepository::class,
             ];
