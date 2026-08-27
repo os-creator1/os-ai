@@ -14,6 +14,8 @@ final readonly class PaymentIntentResult
         public ?string $clientSecret,
         public int $amountMinorUnits,
         public string $currencyCode,
+        public ?string $receiptUrl = null,
+        public ?string $receiptChargeId = null,
     ) {
     }
 }

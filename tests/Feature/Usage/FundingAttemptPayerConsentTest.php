@@ -18,10 +18,12 @@ use App\Library\Usage\UsageWalletManager;
 use App\Models\Currency;
 use App\Models\User;
 use App\Models\Workspace;
+use App\Jobs\Usage\SendReceiptNotification;
 use App\Repositories\Contracts\BusinessFundingAttemptRepository;
 use App\Repositories\Contracts\BusinessRepository;
 use App\Repositories\Contracts\PaymentProviderCustomerRepository;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Queue;
 use Tests\Feature\Business\Concerns\CreatesBusinessTestData;
 use Tests\TestCase;
 
@@ -137,6 +139,8 @@ class FundingAttemptPayerConsentTest extends TestCase
             $attempt->provider_customer_external_id_snapshot,
             'pi_fake_admin_resume',
             $paymentMethodId,
+            'https://fake.stripe.test/receipts/ch_fake_admin_resume',
+            'ch_fake_admin_resume',
         ));
 
         $admin = User::create([
@@ -178,6 +182,8 @@ class FundingAttemptPayerConsentTest extends TestCase
      */
     public function test_auto_recharge_still_creates_an_off_session_payment_intent_and_snapshots_the_instrument_at_creation(): void
     {
+        Queue::fake();
+
         [$customer, $business] = $this->businessWithAttachedInstrument();
 
         $result = app(UsageBillingCheckoutManager::class)->initiateAutoRecharge($business, 5_000_000);
@@ -188,6 +194,12 @@ class FundingAttemptPayerConsentTest extends TestCase
         $this->assertStringContainsString('••••', $attempt->payment_method_display_snapshot);
         $this->assertNotSame('Pending Checkout', $attempt->payment_method_display_snapshot);
         $this->assertEmpty($this->gateway->createCheckoutSessionCalls, 'AutoRecharge must never create a Checkout Session.');
+
+        // Receipt Boundary Correction Contract §3 — the synchronous
+        // AutoRecharge success path is one of the five financial-success
+        // entry points that must dispatch SendReceiptNotification exactly
+        // once, mechanically, via creditFromFunding() itself.
+        Queue::assertPushed(SendReceiptNotification::class, 1);
     }
 
     /**
@@ -201,6 +213,8 @@ class FundingAttemptPayerConsentTest extends TestCase
      */
     public function test_auto_recharge_webhook_confirmation_performs_no_new_provider_call(): void
     {
+        Queue::fake();
+
         [$customer, $business] = $this->businessWithAttachedInstrument();
         $this->gateway->paymentIntentOutcomes = ['*' => 'requires_action'];
 
@@ -219,6 +233,41 @@ class FundingAttemptPayerConsentTest extends TestCase
         $freshAttempt = app(BusinessFundingAttemptRepository::class)->findById($attempt->id);
         $this->assertSame(FundingAttemptState::Succeeded, $freshAttempt->state);
         $this->assertEmpty($this->gateway->createCheckoutSessionCalls);
+
+        // Receipt Boundary Correction Contract §3 — the webhook
+        // confirmation entry point dispatches SendReceiptNotification
+        // exactly once too, mechanically, via creditFromFunding() itself.
+        Queue::assertPushed(SendReceiptNotification::class, 1);
+    }
+
+    /**
+     * Receipt Boundary Correction Contract §10 item 3 — the
+     * administrator/reconciliation AutoRecharge entry point, not
+     * exercised by test_platform_administrator_can_resume_a_stuck_attempt
+     * above (which is ManualTopUp-scoped), also dispatches the receipt
+     * job — using the Fake's own deterministic retrievePaymentIntent()
+     * default, no explicit registration needed.
+     */
+    public function test_platform_administrator_resuming_a_stuck_auto_recharge_attempt_dispatches_the_receipt_job(): void
+    {
+        Queue::fake();
+
+        [$customer, $business] = $this->businessWithAttachedInstrument();
+        $this->gateway->paymentIntentOutcomes = ['*' => 'requires_action'];
+
+        $result = app(UsageBillingCheckoutManager::class)->initiateAutoRecharge($business, 5_000_000);
+        $attempt = app(BusinessFundingAttemptRepository::class)->findById($result->fundingAttemptId);
+        $this->assertSame(FundingAttemptState::RequiresAction, $attempt->state);
+
+        $admin = User::create([
+            'first_name' => 'Admin', 'last_name' => 'User', 'email' => 'admin' . uniqid() . '@example.test',
+            'status' => true, 'is_admin' => true, 'is_customer' => false, 'active_portal' => 'admin',
+        ]);
+
+        $resumed = app(UsageBillingCheckoutManager::class)->retryFundingAttemptAsAdministrator($attempt, (int) $admin->id, 'Customer confirmed via support call.');
+
+        $this->assertSame(FundingAttemptState::Succeeded, $resumed->state);
+        Queue::assertPushed(SendReceiptNotification::class, 1);
     }
 
     public function test_platform_administrator_cannot_originate_a_fresh_top_up_via_checkout_session(): void
@@ -269,6 +318,8 @@ class FundingAttemptPayerConsentTest extends TestCase
             $attempt->provider_customer_external_id_snapshot,
             'pi_fake_no_auto_recharge',
             $paymentMethodId,
+            'https://fake.stripe.test/receipts/ch_fake_no_auto_recharge',
+            'ch_fake_no_auto_recharge',
         ));
 
         $checkoutManager->confirmAttemptFromReturn($attempt);

@@ -28,6 +28,8 @@ use App\Models\Business;
 use App\Models\BusinessUsageReservation;
 use App\Models\BusinessUsageWallet;
 use App\Models\Currency;
+use App\Models\BusinessBillingReceipt;
+use App\Repositories\Contracts\BusinessBillingReceiptRepository;
 use App\Repositories\Contracts\BusinessFeatureUsageLimitRepository;
 use App\Repositories\Contracts\BusinessUsageLedgerEntryRepository;
 use App\Repositories\Contracts\BusinessUsageLimitTransitionRepository;
@@ -76,6 +78,7 @@ class UsageWalletManager
         private readonly PlatformFeatureUsageSafetyLimitRepository $safetyLimitRepository,
         private readonly BusinessUsageLimitTransitionRepository $limitTransitionRepository,
         private readonly BusinessUsageWalletBillingStatusTransitionRepository $billingStatusTransitionRepository,
+        private readonly BusinessBillingReceiptRepository $receiptRepository,
     ) {
     }
 
@@ -807,7 +810,7 @@ class UsageWalletManager
             $debtCleared = min($amountMicro, max(0, $wallet->debt_balance_micro));
             $remainder = $amountMicro - $debtCleared;
 
-            $this->ledgerRepository->create([
+            $ledgerEntry = $this->ledgerRepository->create([
                 'business_id' => $businessId,
                 'wallet_id' => $wallet->id,
                 'entry_type' => $entryType->value,
@@ -831,7 +834,63 @@ class UsageWalletManager
             }
 
             $this->walletRepository->update($wallet, $walletUpdate);
+
+            \App\Jobs\Usage\SendReceiptNotification::dispatch($fundingAttemptId, (int) $ledgerEntry->id)
+                ->afterCommit();
         });
+    }
+
+    /**
+     * Receipt Boundary Correction Contract §5/§6 — the sole write
+     * authority for business_billing_receipts. Locks the already-existing
+     * ledger entry row (never a new UNIQUE constraint) as the sole
+     * idempotency mechanism: whichever caller reaches this first for a
+     * given ledgerEntryId wins the "no existing receipt" check; every
+     * later caller (a manual re-dispatch, a genuinely concurrent race)
+     * converges on the same already-created row.
+     */
+    public function attachFundingReceipt(
+        int $ledgerEntryId,
+        int $fundingAttemptId,
+        int $businessId,
+        string $providerReceiptUrl,
+        string $providerReference,
+    ): BusinessBillingReceipt {
+        return DB::transaction(function () use ($ledgerEntryId, $fundingAttemptId, $businessId, $providerReceiptUrl, $providerReference) {
+            $ledgerEntry = $this->ledgerRepository->findForUpdateById($ledgerEntryId);
+
+            if ($ledgerEntry === null) {
+                throw new \InvalidArgumentException("Ledger entry {$ledgerEntryId} does not exist.");
+            }
+
+            if ((int) $ledgerEntry->business_id !== $businessId || (int) $ledgerEntry->funding_attempt_id !== $fundingAttemptId) {
+                throw new \InvalidArgumentException("Ledger entry {$ledgerEntryId} does not match business {$businessId}/funding attempt {$fundingAttemptId}.");
+            }
+
+            $existing = $this->receiptRepository->findByLedgerEntryId($ledgerEntryId);
+
+            if ($existing !== null) {
+                return $existing;
+            }
+
+            return $this->receiptRepository->create([
+                'business_id' => $businessId,
+                'ledger_entry_id' => $ledgerEntryId,
+                'provider_receipt_url' => $providerReceiptUrl,
+                'provider_reference' => $providerReference,
+                'created_at' => Carbon::now(),
+            ]);
+        });
+    }
+
+    /**
+     * Receipt Boundary Correction Contract §6 — thin, unlocked read,
+     * used by ensureFundingReceipt() to avoid a wasted provider call
+     * when a receipt already exists.
+     */
+    public function findFundingReceipt(int $ledgerEntryId): ?BusinessBillingReceipt
+    {
+        return $this->receiptRepository->findByLedgerEntryId($ledgerEntryId);
     }
 
     /**

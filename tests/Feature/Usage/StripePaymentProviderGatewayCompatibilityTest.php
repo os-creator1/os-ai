@@ -84,7 +84,19 @@ class StripePaymentProviderGatewayCompatibilityTest extends TestCase
 
         $this->assertStringContainsString('blank($session->url)', $source);
         $this->assertStringContainsString('ProviderInvalidRequestException', $source);
-        $this->assertStringContainsString("'expand' => ['payment_intent.payment_method']", $source);
+        $this->assertStringContainsString("'payment_intent.payment_method'", $source);
+        $this->assertStringContainsString("'payment_intent.latest_charge'", $source);
+    }
+
+    /**
+     * Receipt Boundary Correction Contract §N/§10 — the PaymentIntent
+     * retrieval side of the same expand widening.
+     */
+    public function test_payment_intent_retrieval_expands_latest_charge_for_receipt_evidence(): void
+    {
+        $source = file_get_contents(app_path('Library/Usage/StripePaymentProviderGateway.php'));
+
+        $this->assertStringContainsString("'expand' => ['latest_charge']", $source);
     }
 
     /**

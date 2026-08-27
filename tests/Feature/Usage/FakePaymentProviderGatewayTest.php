@@ -4,7 +4,9 @@ namespace Tests\Feature\Usage;
 
 use App\Exceptions\Usage\ProviderCardDeclinedException;
 use App\Exceptions\Usage\WebhookSignatureVerificationException;
+use App\Library\Usage\CheckoutSessionResult;
 use App\Library\Usage\FakePaymentProviderGateway;
+use App\Library\Usage\PaymentIntentResult;
 use App\Library\Usage\PaymentMethodResult;
 use Tests\TestCase;
 
@@ -225,5 +227,92 @@ class FakePaymentProviderGatewayTest extends TestCase
             $this->assertSame('pm_fake_y', $gateway->confirmPaymentIntentCalls[0]['providerPaymentMethodId']);
             $this->assertSame('idem-confirm-succeed', $gateway->confirmPaymentIntentCalls[0]['idempotencyKey']);
         }
+    }
+
+    /**
+     * Receipt Boundary Correction Contract §8 — mirrors
+     * registerCheckoutSessionResult()'s own established pattern: an
+     * explicit registration is returned verbatim, including a
+     * deliberately-null receipt field simulating missing evidence.
+     */
+    public function test_registered_payment_intent_result_is_returned_verbatim(): void
+    {
+        $gateway = new FakePaymentProviderGateway();
+        $result = new PaymentIntentResult('pi_registered', 'succeeded', null, 5000, 'USD', null, null);
+        $gateway->registerPaymentIntentResult($result);
+
+        $this->assertSame($result, $gateway->retrievePaymentIntent('pi_registered'));
+    }
+
+    /**
+     * Receipt Boundary Correction Contract §8/§J — the Fake's own default
+     * fallback (no explicit registration) always carries non-null
+     * deterministic receipt evidence, so existing tests relying on the
+     * default need zero fixture changes.
+     */
+    public function test_unregistered_payment_intent_retrieval_returns_stable_deterministic_receipt_fields(): void
+    {
+        $gateway = new FakePaymentProviderGateway();
+        $result = $gateway->retrievePaymentIntent('pi_unregistered');
+
+        $this->assertNotNull($result->receiptUrl);
+        $this->assertNotNull($result->receiptChargeId);
+        $this->assertStringStartsWith('ch_fake_', $result->receiptChargeId);
+    }
+
+    /**
+     * Receipt Boundary Correction Contract §J — deterministic, never
+     * random: the same provider object id always yields the same
+     * receiptChargeId/receiptUrl across repeated calls.
+     */
+    public function test_repeated_unregistered_payment_intent_retrieval_returns_the_same_receipt_identity(): void
+    {
+        $gateway = new FakePaymentProviderGateway();
+
+        $first = $gateway->retrievePaymentIntent('pi_repeated');
+        $second = $gateway->retrievePaymentIntent('pi_repeated');
+
+        $this->assertSame($first->receiptChargeId, $second->receiptChargeId);
+        $this->assertSame($first->receiptUrl, $second->receiptUrl);
+    }
+
+    /**
+     * Receipt Boundary Correction Contract §8 — an explicitly registered
+     * CheckoutSessionResult's own receipt fields are returned verbatim,
+     * never overridden by the Fake's own deterministic default.
+     */
+    public function test_checkout_session_receipt_fields_are_returned_verbatim_when_explicitly_registered(): void
+    {
+        $gateway = new FakePaymentProviderGateway();
+        $result = new CheckoutSessionResult('cs_registered', 'complete', 'paid', null, 2000, 'USD', 'cus_x', 'pi_x', 'pm_x', 'https://example.test/receipt', 'ch_explicit');
+        $gateway->registerCheckoutSessionResult($result);
+
+        $retrieved = $gateway->retrieveCheckoutSession('cs_registered');
+        $this->assertSame('https://example.test/receipt', $retrieved->receiptUrl);
+        $this->assertSame('ch_explicit', $retrieved->receiptChargeId);
+    }
+
+    /**
+     * Receipt Boundary Correction Contract §I — removes all test-author
+     * discretion for proving "no provider call occurred": the Fake itself
+     * records every requested provider object id.
+     */
+    public function test_retrieve_payment_intent_calls_are_recorded(): void
+    {
+        $gateway = new FakePaymentProviderGateway();
+
+        $gateway->retrievePaymentIntent('pi_call_recorded_1');
+        $gateway->retrievePaymentIntent('pi_call_recorded_2');
+
+        $this->assertSame(['pi_call_recorded_1', 'pi_call_recorded_2'], $gateway->retrievePaymentIntentCalls);
+    }
+
+    public function test_retrieve_checkout_session_calls_are_recorded(): void
+    {
+        $gateway = new FakePaymentProviderGateway();
+
+        $gateway->retrieveCheckoutSession('cs_call_recorded_1');
+
+        $this->assertSame(['cs_call_recorded_1'], $gateway->retrieveCheckoutSessionCalls);
     }
 }

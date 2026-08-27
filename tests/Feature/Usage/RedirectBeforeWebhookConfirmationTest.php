@@ -20,8 +20,12 @@ use App\Repositories\Contracts\BusinessFundingAttemptRepository;
 use App\Repositories\Contracts\BusinessRepository;
 use App\Repositories\Contracts\BusinessUsageLedgerEntryRepository;
 use App\Repositories\Contracts\BusinessUsageWalletRepository;
+use App\Exceptions\Usage\ReceiptEvidenceUnavailableException;
+use App\Jobs\Usage\SendReceiptNotification;
+use App\Models\PaymentProviderEvent;
 use App\Repositories\Contracts\PaymentProviderCustomerRepository;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Queue;
 use Tests\Feature\Business\Concerns\CreatesBusinessTestData;
 use Tests\TestCase;
 
@@ -91,5 +95,115 @@ class RedirectBeforeWebhookConfirmationTest extends TestCase
 
         $wallet = app(BusinessUsageWalletRepository::class)->findByBusinessId((int) $business->id);
         $this->assertSame('0', (string) $wallet->available_balance_micro);
+    }
+
+    /**
+     * Receipt Boundary Correction Contract §1 item 10/§7 step 5 — a
+     * genuinely absent receiptUrl/receiptChargeId makes
+     * ensureFundingReceipt() return null, so the queued job (running
+     * inline under the sync queue) throws
+     * ReceiptEvidenceUnavailableException — but the accounting
+     * transaction has already committed by that point and is never
+     * touched by this failure.
+     */
+    public function test_missing_receipt_evidence_fails_the_notification_job_without_reversing_accounting(): void
+    {
+        $customer = $this->createCustomer();
+        $workspace = $this->entitledWorkspace($customer->user);
+        $business = app(BusinessRepository::class)->createForCustomerInWorkspace($customer, $workspace, $this->businessAttributes());
+        app(UsageWalletManager::class)->initializeWalletForNewBusiness($business->id);
+        app(BillingProfileManager::class)->changePayer($business, PayerType::Workspace, $customer->user_id, 'Test.');
+        app(PaymentInstrumentManager::class)->resolveProviderCustomer($business, $customer->user_id);
+
+        $checkoutManager = app(UsageBillingCheckoutManager::class);
+        $result = $checkoutManager->initiateTopUp($business, $customer->user_id, 5_000_000);
+        $attempt = app(BusinessFundingAttemptRepository::class)->findById($result->fundingAttemptId);
+
+        $paymentMethodId = 'pm_fake_missing_evidence';
+        $this->gateway->registerPaymentMethod(new PaymentMethodResult(
+            $paymentMethodId, $attempt->provider_customer_external_id_snapshot, 'card', 'visa', '4242', 12, 2030,
+        ));
+        $this->gateway->registerCheckoutSessionResult(new \App\Library\Usage\CheckoutSessionResult(
+            (string) $attempt->provider_session_or_intent_reference,
+            'complete',
+            'paid',
+            null,
+            $checkoutManager->expectedMinorUnitsFor($attempt),
+            $checkoutManager->expectedCurrencyCodeFor($attempt),
+            $attempt->provider_customer_external_id_snapshot,
+            'pi_fake_missing_evidence',
+            $paymentMethodId,
+            null,
+            null,
+        ));
+
+        try {
+            $checkoutManager->confirmAttemptFromReturn($attempt);
+            $this->fail('Expected ReceiptEvidenceUnavailableException to propagate from the sync-queued job.');
+        } catch (ReceiptEvidenceUnavailableException $exception) {
+            // Expected — the job fails clearly; accounting is unaffected.
+        }
+
+        $freshAttempt = app(BusinessFundingAttemptRepository::class)->findById($attempt->id);
+        $this->assertSame(FundingAttemptState::Succeeded, $freshAttempt->state);
+
+        $wallet = app(BusinessUsageWalletRepository::class)->findByBusinessId((int) $business->id);
+        $this->assertSame('5000000', (string) $wallet->available_balance_micro);
+
+        $receiptCount = app(\App\Repositories\Contracts\BusinessBillingReceiptRepository::class)->query()
+            ->where('business_id', $business->id)->count();
+        $this->assertSame(0, $receiptCount);
+    }
+
+    /**
+     * Receipt Boundary Correction Contract §7 — application dispatch
+     * idempotency: a duplicate return-then-webhook confirmation for an
+     * already-Succeeded attempt never re-credits, so it never re-dispatches
+     * a second SendReceiptNotification.
+     */
+    public function test_duplicate_return_and_webhook_confirmation_dispatches_the_receipt_job_exactly_once(): void
+    {
+        $customer = $this->createCustomer();
+        $workspace = $this->entitledWorkspace($customer->user);
+        $business = app(BusinessRepository::class)->createForCustomerInWorkspace($customer, $workspace, $this->businessAttributes());
+        app(UsageWalletManager::class)->initializeWalletForNewBusiness($business->id);
+        app(BillingProfileManager::class)->changePayer($business, PayerType::Workspace, $customer->user_id, 'Test.');
+        app(PaymentInstrumentManager::class)->resolveProviderCustomer($business, $customer->user_id);
+
+        $checkoutManager = app(UsageBillingCheckoutManager::class);
+        $result = $checkoutManager->initiateTopUp($business, $customer->user_id, 5_000_000);
+        $attempt = app(BusinessFundingAttemptRepository::class)->findById($result->fundingAttemptId);
+
+        $paymentMethodId = 'pm_fake_duplicate_dispatch';
+        $this->gateway->registerPaymentMethod(new PaymentMethodResult(
+            $paymentMethodId, $attempt->provider_customer_external_id_snapshot, 'card', 'visa', '4242', 12, 2030,
+        ));
+        $this->gateway->registerCheckoutSessionResult(new \App\Library\Usage\CheckoutSessionResult(
+            (string) $attempt->provider_session_or_intent_reference,
+            'complete',
+            'paid',
+            null,
+            $checkoutManager->expectedMinorUnitsFor($attempt),
+            $checkoutManager->expectedCurrencyCodeFor($attempt),
+            $attempt->provider_customer_external_id_snapshot,
+            'pi_fake_duplicate_dispatch',
+            $paymentMethodId,
+            'https://fake.stripe.test/receipts/ch_fake_duplicate_dispatch',
+            'ch_fake_duplicate_dispatch',
+        ));
+
+        Queue::fake();
+
+        $checkoutManager->confirmAttemptFromReturn($attempt);
+        $attempt = app(BusinessFundingAttemptRepository::class)->findById($attempt->id);
+
+        $event = PaymentProviderEvent::create([
+            'provider' => 'stripe', 'provider_event_id' => 'evt_fake_'.uniqid(), 'event_type' => 'checkout.session.completed',
+            'provider_object_id' => $attempt->provider_session_or_intent_reference, 'payload_encrypted' => '{}',
+            'payload_hash' => hash('sha256', '{}'), 'state' => 'received', 'attempts' => 0, 'received_at' => now(),
+        ]);
+        $checkoutManager->confirmAttemptFromWebhook($attempt, $event);
+
+        Queue::assertPushed(SendReceiptNotification::class, 1);
     }
 }

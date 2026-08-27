@@ -78,6 +78,14 @@ class AutoRechargeFailedPaymentRetryTest extends TestCase
             DB::table('payment_provider_customers')->whereIn('business_id', $this->createdBusinessIds)
                 ->orWhereIn('workspace_id', $this->createdWorkspaceIds)->delete();
             DB::table('business_payer_assignments')->whereIn('business_id', $this->createdBusinessIds)->delete();
+            // Receipt Boundary Correction Contract §3 — a successful
+            // AutoRecharge credit now synchronously creates a
+            // business_billing_receipts row (this class deliberately does
+            // not use RefreshDatabase, so it is a real, committed row);
+            // its ledger_entry_id FK must be cleared before the ledger
+            // rows below, mirroring ConcurrentTopUpConcurrencyTest's own
+            // identical fix.
+            DB::table('business_billing_receipts')->whereIn('business_id', $this->createdBusinessIds)->delete();
             DB::table('business_usage_ledger_entries')->whereIn('business_id', $this->createdBusinessIds)->delete();
             DB::table('business_usage_wallets')->whereIn('business_id', $this->createdBusinessIds)->delete();
             DB::table('businesses')->whereIn('id', $this->createdBusinessIds)->delete();
@@ -229,9 +237,17 @@ require '{$escapedVendor}';
 putenv('APP_ENV=testing');
 \$_ENV['APP_ENV'] = 'testing';
 \$_SERVER['APP_ENV'] = 'testing';
+putenv('QUEUE_CONNECTION=sync');
+\$_ENV['QUEUE_CONNECTION'] = 'sync';
+\$_SERVER['QUEUE_CONNECTION'] = 'sync';
 \$app = require '{$escapedBootstrap}';
 \$kernel = \$app->make(Illuminate\Contracts\Console\Kernel::class);
 \$kernel->bootstrap();
+
+if (config('queue.default') !== 'sync') {
+    fwrite(STDERR, "QUEUE_CONNECTION_NOT_SYNC\\n");
+    exit(1);
+}
 
 \$businessId = (int) \$argv[1];
 \$signalPath = \$argv[2];

@@ -21,6 +21,16 @@ class EloquentBusinessUsageLedgerEntryRepository extends EloquentBaseRepository 
         return $entry;
     }
 
+    public function findById(int $id): ?BusinessUsageLedgerEntry
+    {
+        return $this->query()->find($id);
+    }
+
+    public function findForUpdateById(int $id): ?BusinessUsageLedgerEntry
+    {
+        return $this->query()->where('id', $id)->lockForUpdate()->first();
+    }
+
     public function sumCommittedAmountForFeature(int $businessId, string $featureKey, string $periodKey): int
     {
         $usageChargeReservedDelta = (int) $this->query()

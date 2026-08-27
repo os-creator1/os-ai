@@ -20,6 +20,7 @@ use App\Repositories\Contracts\BusinessFundingAttemptRepository;
 use App\Repositories\Contracts\BusinessRepository;
 use App\Repositories\Contracts\PaymentProviderCustomerRepository;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Tests\Feature\Business\Concerns\CreatesBusinessTestData;
 use Tests\TestCase;
 
@@ -121,5 +122,82 @@ class CrossBusinessPaymentIsolationTest extends TestCase
 
         $viewModelB = app(UsageBillingPresenter::class)->buildDashboardViewModel($businessB);
         $this->assertTrue($viewModelB->fundingHistory->isEmpty(), 'Business B\'s dashboard must never render Business A\'s funding history.');
+    }
+
+    private function businessWithSuccessfulTopUp(): array
+    {
+        $owner = $this->createCustomer();
+        $workspace = $this->entitledWorkspace($owner->user);
+        $business = app(BusinessRepository::class)->createForCustomerInWorkspace($owner, $workspace, $this->businessAttributes());
+        app(UsageWalletManager::class)->initializeWalletForNewBusiness($business->id);
+        app(BillingProfileManager::class)->changePayer($business, PayerType::Workspace, $owner->user_id, 'Test.');
+        app(PaymentInstrumentManager::class)->resolveProviderCustomer($business, $owner->user_id);
+
+        $checkoutManager = app(UsageBillingCheckoutManager::class);
+        $result = $checkoutManager->initiateTopUp($business, $owner->user_id, 5_000_000);
+        $attempt = app(BusinessFundingAttemptRepository::class)->findById($result->fundingAttemptId);
+
+        $paymentMethodId = 'pm_fake_isolation_receipt';
+        $this->gateway->registerPaymentMethod(new PaymentMethodResult(
+            $paymentMethodId, $attempt->provider_customer_external_id_snapshot, 'card', 'visa', '4242', 12, 2030,
+        ));
+        $this->gateway->registerCheckoutSessionResult(new \App\Library\Usage\CheckoutSessionResult(
+            (string) $attempt->provider_session_or_intent_reference,
+            'complete',
+            'paid',
+            null,
+            $checkoutManager->expectedMinorUnitsFor($attempt),
+            $checkoutManager->expectedCurrencyCodeFor($attempt),
+            $attempt->provider_customer_external_id_snapshot,
+            'pi_fake_isolation_receipt',
+            $paymentMethodId,
+            'https://fake.stripe.test/receipts/ch_fake_isolation_receipt',
+            'ch_fake_isolation_receipt',
+        ));
+
+        $checkoutManager->confirmAttemptFromReturn($attempt);
+        $attempt = app(BusinessFundingAttemptRepository::class)->findById($attempt->id);
+
+        $ledgerEntry = DB::table('business_usage_ledger_entries')->where('funding_attempt_id', $attempt->id)->first();
+
+        return [$business, $attempt, (int) $ledgerEntry->id];
+    }
+
+    /**
+     * Receipt Boundary Correction Contract §6/§Q — attachFundingReceipt()
+     * fails closed (never silently reassigns the receipt to a different
+     * Business) when the supplied businessId disagrees with the ledger
+     * entry's own persisted business_id.
+     */
+    public function test_attach_funding_receipt_rejects_a_mismatched_business_id(): void
+    {
+        [$business, $attempt, $ledgerEntryId] = $this->businessWithSuccessfulTopUp();
+
+        $otherBusiness = app(BusinessRepository::class)->createForCustomerInWorkspace(
+            $this->createCustomer(), $this->entitledWorkspace($this->createCustomer()->user), $this->businessAttributes(),
+        );
+
+        $this->expectException(\InvalidArgumentException::class);
+
+        app(UsageWalletManager::class)->attachFundingReceipt(
+            $ledgerEntryId, (int) $attempt->id, (int) $otherBusiness->id,
+            'https://fake.stripe.test/receipts/ch_fake_mismatch', 'ch_fake_mismatch',
+        );
+    }
+
+    /**
+     * Receipt Boundary Correction Contract §6/§Q — the identical
+     * defensive check for a mismatched fundingAttemptId.
+     */
+    public function test_attach_funding_receipt_rejects_a_mismatched_funding_attempt_id(): void
+    {
+        [$business, $attempt, $ledgerEntryId] = $this->businessWithSuccessfulTopUp();
+
+        $this->expectException(\InvalidArgumentException::class);
+
+        app(UsageWalletManager::class)->attachFundingReceipt(
+            $ledgerEntryId, (int) $attempt->id + 999_999, (int) $attempt->business_id,
+            'https://fake.stripe.test/receipts/ch_fake_mismatch', 'ch_fake_mismatch',
+        );
     }
 }

@@ -720,6 +720,63 @@ class UsageBillingCheckoutManager
     }
 
     /**
+     * Receipt Boundary Correction Contract §6 — the sole provider-facing
+     * boundary for receipt evidence. Never writes
+     * business_billing_receipts directly; every write goes through
+     * UsageWalletManager::attachFundingReceipt(). Returns the existing
+     * receipt (never null) if one already exists — no provider call, no
+     * write, in that case. Returns null only when evidence is genuinely
+     * unavailable (object-id/status mismatch, or an absent/empty
+     * receiptUrl/receiptChargeId) — never conflated with "already
+     * exists."
+     */
+    public function ensureFundingReceipt(BusinessFundingAttempt $attempt, int $ledgerEntryId): ?\App\Models\BusinessBillingReceipt
+    {
+        $existing = $this->walletManager->findFundingReceipt($ledgerEntryId);
+
+        if ($existing !== null) {
+            return $existing;
+        }
+
+        if ($attempt->purpose === FundingAttemptPurpose::ManualTopUp || $attempt->purpose === FundingAttemptPurpose::AddonPurchase) {
+            $session = $this->gateway->retrieveCheckoutSession($attempt->provider_session_or_intent_reference);
+
+            if ($session->providerCheckoutSessionId !== $attempt->provider_session_or_intent_reference
+                || $session->status !== 'complete'
+                || $session->paymentStatus !== 'paid'
+            ) {
+                return null;
+            }
+
+            $receiptUrl = $session->receiptUrl;
+            $receiptChargeId = $session->receiptChargeId;
+        } else {
+            $paymentIntent = $this->gateway->retrievePaymentIntent($attempt->provider_session_or_intent_reference);
+
+            if ($paymentIntent->providerPaymentIntentId !== $attempt->provider_session_or_intent_reference
+                || $paymentIntent->status !== 'succeeded'
+            ) {
+                return null;
+            }
+
+            $receiptUrl = $paymentIntent->receiptUrl;
+            $receiptChargeId = $paymentIntent->receiptChargeId;
+        }
+
+        if (blank($receiptUrl) || blank($receiptChargeId)) {
+            return null;
+        }
+
+        return $this->walletManager->attachFundingReceipt(
+            $ledgerEntryId,
+            (int) $attempt->id,
+            (int) $attempt->business_id,
+            $receiptUrl,
+            $receiptChargeId,
+        );
+    }
+
+    /**
      * M3 contract §13 step 10 — the exact minor-unit amount a verified
      * webhook event must carry to match this attempt's own frozen
      * expectation. Used by ProcessPaymentProviderEvent for pre-mutation

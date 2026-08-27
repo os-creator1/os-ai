@@ -25,8 +25,10 @@ use App\Repositories\Contracts\BusinessFundingAttemptTransitionRepository;
 use App\Repositories\Contracts\BusinessPaymentInstrumentRepository;
 use App\Repositories\Contracts\BusinessRepository;
 use App\Repositories\Contracts\BusinessUsageWalletRepository;
+use App\Jobs\Usage\SendReceiptNotification;
 use App\Repositories\Contracts\PaymentProviderCustomerRepository;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Queue;
 use Tests\Feature\Business\Concerns\CreatesBusinessTestData;
 use Tests\TestCase;
 
@@ -121,6 +123,8 @@ class TopUpStateMachineTest extends TestCase
             $attempt->provider_customer_external_id_snapshot,
             'pi_fake_verified_'.uniqid(),
             $paymentMethodId,
+            'https://fake.stripe.test/receipts/ch_fake_topup_verified',
+            'ch_fake_topup_verified',
         ));
     }
 
@@ -155,6 +159,25 @@ class TopUpStateMachineTest extends TestCase
             ->where('funding_attempt_id', $result->fundingAttemptId)->orderBy('id')->pluck('to_state')
             ->map(fn ($s) => $s->value)->all();
         $this->assertSame(['created', 'provider_pending', 'succeeded'], $transitions);
+    }
+
+    /**
+     * Receipt Boundary Correction Contract §3 — every receipt-eligible
+     * credit dispatches SendReceiptNotification exactly once, from inside
+     * UsageWalletManager::creditFromFunding()'s own transaction.
+     */
+    public function test_manual_top_up_success_dispatches_exactly_one_send_receipt_notification(): void
+    {
+        Queue::fake();
+
+        [$customer, $business] = $this->businessWithProviderCustomer();
+
+        $result = app(UsageBillingCheckoutManager::class)->initiateTopUp($business, $customer->user_id, 5_000_000);
+        $attempt = app(BusinessFundingAttemptRepository::class)->findById($result->fundingAttemptId);
+
+        app(UsageBillingCheckoutManager::class)->confirmAttemptFromReturn($attempt);
+
+        Queue::assertPushed(SendReceiptNotification::class, 1);
     }
 
     public function test_no_provider_customer_denies_the_attempt(): void

@@ -77,6 +77,7 @@ class ConcurrentTopUpConcurrencyTest extends TestCase
             )->delete();
             DB::table('payment_provider_customers')->whereIn('workspace_id', $this->createdWorkspaceIds)->delete();
             DB::table('business_payer_assignments')->whereIn('business_id', $this->createdBusinessIds)->delete();
+            DB::table('business_billing_receipts')->whereIn('business_id', $this->createdBusinessIds)->delete();
             DB::table('business_usage_ledger_entries')->whereIn('business_id', $this->createdBusinessIds)->delete();
             DB::table('business_usage_wallets')->whereIn('business_id', $this->createdBusinessIds)->delete();
             DB::table('businesses')->whereIn('id', $this->createdBusinessIds)->delete();
@@ -194,9 +195,17 @@ require '{$escapedVendor}';
 putenv('APP_ENV=testing');
 \$_ENV['APP_ENV'] = 'testing';
 \$_SERVER['APP_ENV'] = 'testing';
+putenv('QUEUE_CONNECTION=sync');
+\$_ENV['QUEUE_CONNECTION'] = 'sync';
+\$_SERVER['QUEUE_CONNECTION'] = 'sync';
 \$app = require '{$escapedBootstrap}';
 \$kernel = \$app->make(Illuminate\Contracts\Console\Kernel::class);
 \$kernel->bootstrap();
+
+if (config('queue.default') !== 'sync') {
+    fwrite(STDERR, "QUEUE_CONNECTION_NOT_SYNC\\n");
+    exit(1);
+}
 
 app()->instance(
     \App\Library\Usage\Contracts\PaymentProviderGateway::class,
@@ -258,6 +267,8 @@ $fake->registerCheckoutSessionResult(new App\Library\Usage\CheckoutSessionResult
     $attempt->provider_customer_external_id_snapshot,
     'pi_fake_child_confirm',
     $paymentMethodId,
+    'https://fake.stripe.test/receipts/ch_fake_child_confirm',
+    'ch_fake_child_confirm',
 ));
 
 $manager->confirmAttemptFromReturn($attempt);
@@ -311,6 +322,8 @@ PHP;
             $attempt->provider_customer_external_id_snapshot,
             'pi_fake_dup_confirm',
             $paymentMethodId,
+            'https://fake.stripe.test/receipts/ch_fake_dup_confirm',
+            'ch_fake_dup_confirm',
         ));
 
         // Path 1: the synchronous browser-return confirmation.

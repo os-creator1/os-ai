@@ -157,9 +157,20 @@ class StripePaymentProviderGateway implements PaymentProviderGateway
         );
     }
 
+    /**
+     * Receipt Boundary Correction Contract §8 — expands latest_charge so
+     * receipt evidence is opportunistically available; never consumed by
+     * any existing payment-verification condition, only by
+     * ensureFundingReceipt()'s own separate, later call through this same
+     * method.
+     */
     public function retrievePaymentIntent(string $providerPaymentIntentId): PaymentIntentResult
     {
-        $paymentIntent = $this->call(fn () => $this->client->paymentIntents->retrieve($providerPaymentIntentId));
+        $paymentIntent = $this->call(fn () => $this->client->paymentIntents->retrieve($providerPaymentIntentId, [
+            'expand' => ['latest_charge'],
+        ]));
+
+        [$receiptUrl, $receiptChargeId] = $this->resolveReceiptEvidence($paymentIntent->latest_charge ?? null);
 
         return new PaymentIntentResult(
             $paymentIntent->id,
@@ -167,7 +178,24 @@ class StripePaymentProviderGateway implements PaymentProviderGateway
             $paymentIntent->client_secret,
             $paymentIntent->amount,
             strtoupper($paymentIntent->currency),
+            $receiptUrl,
+            $receiptChargeId,
         );
+    }
+
+    /**
+     * Receipt Boundary Correction Contract §8 — fail-closed: both values
+     * are null unless $charge is a real expanded Charge object with a
+     * non-empty receipt_url. Never infers a Charge id from a
+     * PaymentIntent/Session id, never constructs a local URL.
+     */
+    private function resolveReceiptEvidence(mixed $charge): array
+    {
+        if (! is_object($charge) || ! isset($charge->id) || blank($charge->receipt_url ?? null)) {
+            return [null, null];
+        }
+
+        return [$charge->receipt_url, $charge->id];
     }
 
     public function verifyWebhookSignature(string $rawBody, string $signatureHeader, string $webhookSecret): WebhookVerificationResult
@@ -257,11 +285,18 @@ class StripePaymentProviderGateway implements PaymentProviderGateway
         return $this->mapCheckoutSession($session, null);
     }
 
+    /**
+     * Receipt Boundary Correction Contract §8 — expand widened to also
+     * carry payment_intent.latest_charge, opportunistically supplying
+     * receipt evidence; never consumed by the existing complete/paid
+     * verification below, only by ensureFundingReceipt()'s own separate,
+     * later call through this same method.
+     */
     public function retrieveCheckoutSession(string $providerCheckoutSessionId): CheckoutSessionResult
     {
         $session = $this->call(
             fn () => $this->client->checkout->sessions->retrieve($providerCheckoutSessionId, [
-                'expand' => ['payment_intent.payment_method'],
+                'expand' => ['payment_intent.payment_method', 'payment_intent.latest_charge'],
             ]),
         );
 
@@ -272,7 +307,9 @@ class StripePaymentProviderGateway implements PaymentProviderGateway
             $providerPaymentMethodId = is_string($paymentMethod) ? $paymentMethod : ($paymentMethod->id ?? null);
         }
 
-        return $this->mapCheckoutSession($session, $providerPaymentMethodId);
+        [$receiptUrl, $receiptChargeId] = $this->resolveReceiptEvidence($session->payment_intent->latest_charge ?? null);
+
+        return $this->mapCheckoutSession($session, $providerPaymentMethodId, $receiptUrl, $receiptChargeId);
     }
 
     /**
@@ -300,7 +337,7 @@ class StripePaymentProviderGateway implements PaymentProviderGateway
         );
     }
 
-    private function mapCheckoutSession($session, ?string $providerPaymentMethodId): CheckoutSessionResult
+    private function mapCheckoutSession($session, ?string $providerPaymentMethodId, ?string $receiptUrl = null, ?string $receiptChargeId = null): CheckoutSessionResult
     {
         $paymentIntentId = $session->payment_intent ?? null;
 
@@ -318,6 +355,8 @@ class StripePaymentProviderGateway implements PaymentProviderGateway
             (string) $session->customer,
             $paymentIntentId,
             $providerPaymentMethodId,
+            $receiptUrl,
+            $receiptChargeId,
         );
     }
 

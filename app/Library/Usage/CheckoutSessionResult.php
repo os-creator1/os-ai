@@ -23,6 +23,8 @@ final readonly class CheckoutSessionResult
         public string $providerCustomerId,
         public ?string $providerPaymentIntentId,
         public ?string $providerPaymentMethodId,
+        public ?string $receiptUrl = null,
+        public ?string $receiptChargeId = null,
     ) {
     }
 }

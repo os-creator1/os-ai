@@ -105,6 +105,8 @@ class PayerChangeDuringPendingAttemptTest extends TestCase
             $freshAttempt->provider_customer_external_id_snapshot,
             'pi_fake_payer_change',
             $paymentMethodId,
+            'https://fake.stripe.test/receipts/ch_fake_payer_change',
+            'ch_fake_payer_change',
         ));
 
         $confirmed = $checkoutManager->confirmAttemptFromReturn($freshAttempt);

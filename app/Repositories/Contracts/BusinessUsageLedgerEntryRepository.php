@@ -12,6 +12,22 @@ interface BusinessUsageLedgerEntryRepository extends BaseRepository
     public function create(array $attributes): BusinessUsageLedgerEntry;
 
     /**
+     * Receipt Boundary Correction Contract §9 — a plain, unlocked read,
+     * used by SendReceiptNotification's own pre-check.
+     */
+    public function findById(int $id): ?BusinessUsageLedgerEntry;
+
+    /**
+     * Receipt Boundary Correction Contract §5/§9 — locks the row via
+     * SELECT ... FOR UPDATE, mirroring
+     * BusinessUsageWalletRepository::findForUpdateByBusinessId()'s own
+     * convention. The sole idempotency mechanism for
+     * UsageWalletManager::attachFundingReceipt() — no new UNIQUE
+     * constraint is introduced.
+     */
+    public function findForUpdateById(int $id): ?BusinessUsageLedgerEntry;
+
+    /**
      * RFC-005 Reservation Admission Correction Contract §4.B/§9 — the
      * current-period committed amount for one Business+feature_key,
      * reusing RFC-005 §13's own committed-amount formula: a UsageCharge
