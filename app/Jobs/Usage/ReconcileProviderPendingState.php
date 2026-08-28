@@ -6,6 +6,7 @@ use App\Enums\Usage\FundingAttemptState;
 use App\Jobs\Base;
 use App\Library\Usage\UsageBillingCheckoutManager;
 use App\Repositories\Contracts\BusinessFundingAttemptRepository;
+use Illuminate\Database\UniqueConstraintViolationException;
 
 /**
  * M3 contract §11 item 10 — finds funding attempts stuck in
@@ -15,6 +16,15 @@ use App\Repositories\Contracts\BusinessFundingAttemptRepository;
  * provider call happens outside any wallet lock (the attempt is only
  * ever briefly locked by UsageBillingCheckoutManager's own confirmation
  * path, never held across the outbound call here).
+ *
+ * RFC-005 Reconciliation-Race Correction Contract §2 — the initially
+ * loaded collection can go stale between load and iteration (a webhook
+ * may confirm/fail/cancel an attempt after `$stuck` is loaded but before
+ * the loop reaches it); each iteration re-fetches persisted state
+ * immediately before confirming, and the narrow ledger-correlation
+ * UniqueConstraintViolationException from a genuinely simultaneous
+ * confirmation race (§1 Tier 2) is caught so this one recognized
+ * collision cannot abort reconciliation of the remaining collection.
  */
 class ReconcileProviderPendingState extends Base
 {
@@ -32,8 +42,22 @@ class ReconcileProviderPendingState extends Base
             ->whereNotNull('provider_session_or_intent_reference')
             ->get();
 
-        foreach ($stuck as $attempt) {
-            $checkoutManager->confirmAttemptFromReturn($attempt);
+        foreach ($stuck as $staleAttempt) {
+            $attempt = $attemptRepository->findById($staleAttempt->id);
+
+            if ($attempt === null) {
+                continue;
+            }
+
+            if (! in_array($attempt->state, [FundingAttemptState::ProviderPending, FundingAttemptState::RequiresAction], true)) {
+                continue;
+            }
+
+            try {
+                $checkoutManager->confirmAttemptFromReturn($attempt);
+            } catch (UniqueConstraintViolationException) {
+                continue;
+            }
         }
     }
 }

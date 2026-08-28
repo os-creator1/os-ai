@@ -6,7 +6,9 @@ use App\Enums\Entitlement\WorkspacePlanTier;
 use App\Enums\Usage\FundingAttemptState;
 use App\Enums\Usage\PayerType;
 use App\Events\Usage\BusinessFundingAttemptSucceeded;
+use App\Exceptions\Usage\UsageWalletNotFoundException;
 use App\Jobs\Usage\ReconcileProviderPendingState;
+use App\Jobs\Usage\SendReceiptNotification;
 use App\Library\Entitlement\EntitlementManager;
 use App\Library\Usage\BillingProfileManager;
 use App\Library\Usage\CheckoutSessionResult;
@@ -23,9 +25,13 @@ use App\Models\User;
 use App\Models\Workspace;
 use App\Repositories\Contracts\BusinessFundingAttemptRepository;
 use App\Repositories\Contracts\BusinessRepository;
+use App\Repositories\Eloquent\EloquentBusinessFundingAttemptRepository;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Queue;
+use Mockery;
 use Tests\Feature\Business\Concerns\CreatesBusinessTestData;
 use Tests\TestCase;
 
@@ -235,5 +241,188 @@ class ReconcileProviderPendingStateTest extends TestCase
 
         $this->assertNotContains($succeededReference, $this->gateway->retrieveCheckoutSessionCalls, 'An already-Succeeded attempt must never be selected by the reconciliation query.');
         Event::assertNotDispatched(BusinessFundingAttemptSucceeded::class);
+    }
+
+    /**
+     * RFC-005 Reconciliation-Race Correction Contract §5 test 1 — proves
+     * only the Tier 1 (§1) eligibility-recheck skip, not the try/catch.
+     * $attemptA is the job's own collection's first member; while its own
+     * BusinessFundingAttemptSucceeded dispatch is still synchronously in
+     * flight, a real listener directly re-fetches and confirms $attemptB
+     * — the collection's second, not-yet-processed member — simulating a
+     * concurrent webhook resolving it before the job's own loop reaches
+     * it. $attemptC is never touched by the race and reconciles normally.
+     */
+    public function test_a_stale_collection_member_resolved_before_its_turn_is_skipped_via_the_fresh_eligibility_recheck(): void
+    {
+        [$customerA, $businessA] = $this->businessWithProviderCustomer();
+        $resultA = app(UsageBillingCheckoutManager::class)->initiateTopUp($businessA, $customerA->user_id, 5_000_000);
+        $attemptA = app(BusinessFundingAttemptRepository::class)->findById($resultA->fundingAttemptId);
+        $this->registerVerifiedCheckoutOutcome($attemptA);
+        $this->markStuck($attemptA->id);
+
+        [$customerB, $businessB] = $this->businessWithProviderCustomer();
+        $resultB = app(UsageBillingCheckoutManager::class)->initiateTopUp($businessB, $customerB->user_id, 5_000_000);
+        $attemptB = app(BusinessFundingAttemptRepository::class)->findById($resultB->fundingAttemptId);
+        $this->registerVerifiedCheckoutOutcome($attemptB);
+        $this->markStuck($attemptB->id);
+
+        [$customerC, $businessC] = $this->businessWithProviderCustomer();
+        $resultC = app(UsageBillingCheckoutManager::class)->initiateTopUp($businessC, $customerC->user_id, 5_000_000);
+        $attemptC = app(BusinessFundingAttemptRepository::class)->findById($resultC->fundingAttemptId);
+        $this->registerVerifiedCheckoutOutcome($attemptC);
+        $this->markStuck($attemptC->id);
+
+        $triggered = false;
+        Event::listen(BusinessFundingAttemptSucceeded::class, function (BusinessFundingAttemptSucceeded $event) use (&$triggered, $attemptB) {
+            if ($triggered) {
+                return;
+            }
+
+            $triggered = true;
+
+            $freshB = app(BusinessFundingAttemptRepository::class)->findById($attemptB->id);
+            app(UsageBillingCheckoutManager::class)->confirmAttemptFromReturn($freshB);
+        });
+
+        $this->runJob();
+
+        $this->assertTrue($triggered, 'The simulated concurrent-webhook listener must have run exactly once.');
+
+        foreach ([$attemptA, $attemptB, $attemptC] as $attempt) {
+            $fresh = app(BusinessFundingAttemptRepository::class)->findById($attempt->id);
+            $this->assertSame(FundingAttemptState::Succeeded, $fresh->state, "Attempt {$attempt->id} must be Succeeded.");
+
+            $creditCount = DB::table('business_usage_ledger_entries')
+                ->where('correlation_key', $attempt->local_idempotency_key.':credit')
+                ->count();
+            $this->assertSame(1, $creditCount, "Attempt {$attempt->id} must have exactly one credit ledger entry.");
+
+            $succeededTransitionCount = DB::table('business_funding_attempt_transitions')
+                ->where('funding_attempt_id', $attempt->id)
+                ->where('to_state', FundingAttemptState::Succeeded->value)
+                ->count();
+            $this->assertSame(1, $succeededTransitionCount, "Attempt {$attempt->id} must have exactly one succeeded transition row — confirmSucceeded() must not have been re-entered for it.");
+        }
+    }
+
+    /**
+     * RFC-005 Reconciliation-Race Correction Contract §5 test 2 — drives
+     * the Tier 2 (§1) residual collision through confirmSucceeded()
+     * itself, inside ReconcileProviderPendingState::handle()'s own loop,
+     * so it is genuinely handle()'s own `catch
+     * (UniqueConstraintViolationException) { continue; }` that catches
+     * it — not a test-owned try/catch. The BusinessFundingAttemptRepository
+     * contract is replaced with a constructor-initialized Mockery partial
+     * mock (exceptional post-review correction): findById() is stubbed
+     * once for the raced attempt's own id to perform the interleaving
+     * (fetch two independent pre-race snapshots, confirm the winner for
+     * real, return the still-stale loser to the job), and for every other
+     * id to explicitly delegate to a separately-held, normally-constructed
+     * real repository — so the later, unrelated attempt's own re-fetch
+     * still reaches genuine persisted state.
+     */
+    public function test_a_true_duplicate_credit_race_is_caught_by_the_jobs_own_exception_boundary_and_reconciliation_continues_to_later_attempts(): void
+    {
+        [$racedCustomer, $racedBusiness] = $this->businessWithProviderCustomer();
+        $racedResult = app(UsageBillingCheckoutManager::class)->initiateTopUp($racedBusiness, $racedCustomer->user_id, 5_000_000);
+        $racedAttempt = app(BusinessFundingAttemptRepository::class)->findById($racedResult->fundingAttemptId);
+        $this->registerVerifiedCheckoutOutcome($racedAttempt);
+        $this->markStuck($racedAttempt->id);
+        $racedAttemptId = $racedAttempt->id;
+
+        [$laterCustomer, $laterBusiness] = $this->businessWithProviderCustomer();
+        $laterResult = app(UsageBillingCheckoutManager::class)->initiateTopUp($laterBusiness, $laterCustomer->user_id, 5_000_000);
+        $laterAttempt = app(BusinessFundingAttemptRepository::class)->findById($laterResult->fundingAttemptId);
+        $this->registerVerifiedCheckoutOutcome($laterAttempt);
+        $this->markStuck($laterAttempt->id);
+
+        Event::fake([BusinessFundingAttemptSucceeded::class]);
+        Queue::fake();
+
+        $realRepository = app(BusinessFundingAttemptRepository::class);
+
+        $mock = Mockery::mock(EloquentBusinessFundingAttemptRepository::class, [new BusinessFundingAttempt()])->makePartial();
+
+        $mock->shouldReceive('findById')
+            ->with($racedAttemptId)
+            ->once()
+            ->andReturnUsing(function () use ($realRepository, $racedAttemptId) {
+                $winner = $realRepository->findById($racedAttemptId);
+                $loser = $realRepository->findById($racedAttemptId);
+
+                // The real confirmation path, run to completion here —
+                // this is what makes the loser's own later confirmation,
+                // driven by the job's own code below, a genuine duplicate.
+                app(UsageBillingCheckoutManager::class)->confirmAttemptFromReturn($winner);
+
+                return $loser;
+            });
+
+        $mock->shouldReceive('findById')
+            ->withAnyArgs()
+            ->andReturnUsing(fn (int $id) => $realRepository->findById($id));
+
+        $this->app->instance(BusinessFundingAttemptRepository::class, $mock);
+
+        // The container swap above happens before this call — $this->runJob()
+        // resolves BusinessFundingAttemptRepository::class itself and passes
+        // it into handle(), so it receives the mock configured above.
+        $this->runJob();
+
+        $freshRaced = app(BusinessFundingAttemptRepository::class)->findById($racedAttemptId);
+        $this->assertSame(FundingAttemptState::Succeeded, $freshRaced->state, 'The raced attempt must still end up Succeeded (the winner\'s own confirmation).');
+
+        $freshLater = app(BusinessFundingAttemptRepository::class)->findById($laterAttempt->id);
+        $this->assertSame(FundingAttemptState::Succeeded, $freshLater->state, 'The later, unrelated attempt must still be reconciled in the same run — the job\'s own catch must preserve continuation.');
+
+        $creditCount = DB::table('business_usage_ledger_entries')
+            ->where('correlation_key', $racedAttempt->local_idempotency_key.':credit')
+            ->count();
+        $this->assertSame(1, $creditCount, 'Exactly one credit ledger entry must exist for the raced attempt — the ledger correlation_key unique constraint prevents a second.');
+
+        $succeededTransitionCount = DB::table('business_funding_attempt_transitions')
+            ->where('funding_attempt_id', $racedAttemptId)
+            ->where('to_state', FundingAttemptState::Succeeded->value)
+            ->count();
+        $this->assertSame(2, $succeededTransitionCount, 'Exactly two succeeded transition rows must exist for the raced attempt — the known, accepted Tier 2 residual side effect (§3 item 2), not a hidden defect.');
+
+        $succeededEventCount = Event::dispatched(BusinessFundingAttemptSucceeded::class, fn (BusinessFundingAttemptSucceeded $event) => $event->fundingAttemptId === $racedAttemptId)->count();
+        $this->assertSame(1, $succeededEventCount, 'Exactly one BusinessFundingAttemptSucceeded dispatch must exist for the raced attempt — the loser\'s own execution never reaches that dispatch site.');
+
+        $receiptDispatchCount = Queue::pushed(SendReceiptNotification::class, function (SendReceiptNotification $job) use ($racedAttemptId) {
+            return (new \ReflectionProperty($job, 'fundingAttemptId'))->getValue($job) === $racedAttemptId;
+        })->count();
+        $this->assertSame(1, $receiptDispatchCount, 'Exactly one SendReceiptNotification dispatch decision must exist for the raced attempt — only the winner\'s.');
+    }
+
+    /**
+     * RFC-005 Reconciliation-Race Correction Contract §5 test 3 —
+     * unchanged design (guarantee 5): the job's new catch is scoped to
+     * exactly Illuminate\Database\UniqueConstraintViolationException, so a
+     * genuinely unrelated exception (here, UsageWalletNotFoundException,
+     * forced by deleting the business's own wallet row before
+     * confirmation) still propagates out of handle() uncaught.
+     */
+    public function test_a_genuinely_unrelated_exception_is_not_caught_and_still_propagates(): void
+    {
+        [$customer, $business] = $this->businessWithProviderCustomer();
+        $result = app(UsageBillingCheckoutManager::class)->initiateTopUp($business, $customer->user_id, 5_000_000);
+        $attempt = app(BusinessFundingAttemptRepository::class)->findById($result->fundingAttemptId);
+        $this->registerVerifiedCheckoutOutcome($attempt);
+        $this->markStuck($attempt->id);
+
+        // The funding attempt's own row still references this wallet via a
+        // composite (wallet_id, business_id) foreign key, so a plain delete
+        // is rejected (1451) — the row is deliberately orphaned here rather
+        // than also deleting the attempt, since the test needs the job's
+        // own query to still select it and reach the unrelated exception.
+        DB::statement('SET FOREIGN_KEY_CHECKS=0');
+        DB::table('business_usage_wallets')->where('business_id', $attempt->business_id)->delete();
+        DB::statement('SET FOREIGN_KEY_CHECKS=1');
+
+        $this->expectException(UsageWalletNotFoundException::class);
+
+        $this->runJob();
     }
 }
