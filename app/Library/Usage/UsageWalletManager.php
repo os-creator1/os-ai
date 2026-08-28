@@ -15,7 +15,12 @@ use App\Events\Usage\BusinessWalletBillingStatusChanged;
 use App\Exceptions\Usage\BusinessCurrencyUnresolvableException;
 use App\Library\Entitlement\PlatformFeatureRegistry;
 use App\Exceptions\Usage\FeatureLimitExceedsPlatformSafetyLimitException;
+use App\Exceptions\Usage\InvalidAdminCreditAmountException;
+use App\Exceptions\Usage\InvalidAdminCreditEntryTypeException;
+use App\Exceptions\Usage\InvalidAdminCreditOperationIdException;
+use App\Exceptions\Usage\InvalidAdminCreditReasonException;
 use App\Exceptions\Usage\InvalidReservationStateTransitionException;
+use App\Exceptions\Usage\ManualCreditOperationConflictException;
 use App\Exceptions\Usage\NoActiveRateForFeatureException;
 use App\Exceptions\Usage\UnauthorizedUsageBillingManagementException;
 use App\Exceptions\Usage\UsageMeterBusinessScopeMismatchException;
@@ -25,6 +30,7 @@ use App\Exceptions\Usage\UsageMeterRateIntegrityException;
 use App\Exceptions\Usage\UsageReservationNotFoundException;
 use App\Exceptions\Usage\UsageWalletNotFoundException;
 use App\Models\Business;
+use App\Models\BusinessUsageLedgerEntry;
 use App\Models\BusinessUsageReservation;
 use App\Models\BusinessUsageWallet;
 use App\Models\Currency;
@@ -49,6 +55,7 @@ use Illuminate\Database\UniqueConstraintViolationException;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 /**
  * Sole write authority for all seven RFC-005 Milestone 1 tables (M1
@@ -1316,6 +1323,112 @@ class UsageWalletManager
             ]);
 
             BusinessWalletBillingStatusChanged::dispatch((int) $business->id, $fromStatus->value, $status->value);
+        });
+    }
+
+    /**
+     * RFC-005 Admin Usage Billing Surface Contract §2.3 — platform-
+     * administrator-only, auditable manual/promotional credit. Never
+     * calls creditFromFunding() (this is deliberately new, independent
+     * code, not a funding-attempt-backed credit). Idempotent on a
+     * deterministic, caller-supplied operation id: an identical replay
+     * (same normalized Business/type/amount/actor/reason) returns the
+     * original ledger row unchanged; a reused operation id with a
+     * different payload throws ManualCreditOperationConflictException
+     * and mutates nothing.
+     */
+    public function issueManualCredit(Business $business, UsageLedgerEntryType $entryType, int $amountMicro, int $actorUserId, string $reason, string $operationId): BusinessUsageLedgerEntry
+    {
+        $this->assertPlatformAdministrator($actorUserId);
+
+        if (! in_array($entryType, [UsageLedgerEntryType::ManualCredit, UsageLedgerEntryType::PromotionalCredit], true)) {
+            throw new InvalidAdminCreditEntryTypeException($entryType->value);
+        }
+
+        if ($amountMicro <= 0) {
+            throw new InvalidAdminCreditAmountException($amountMicro);
+        }
+
+        $normalizedReason = trim($reason);
+        if ($normalizedReason === '') {
+            throw new InvalidAdminCreditReasonException((int) $business->id);
+        }
+
+        $normalizedOperationId = strtolower(trim($operationId));
+        if (! Str::isUuid($normalizedOperationId)) {
+            throw new InvalidAdminCreditOperationIdException($operationId);
+        }
+
+        $correlationKey = 'admin_credit:'.$business->id.':'.$normalizedOperationId;
+
+        return DB::transaction(function () use ($business, $entryType, $amountMicro, $actorUserId, $normalizedReason, $correlationKey) {
+            $wallet = $this->walletRepository->findForUpdateByBusinessId((int) $business->id);
+
+            if ($wallet === null) {
+                throw new UsageWalletNotFoundException((int) $business->id);
+            }
+
+            $existing = $this->ledgerRepository->findByCorrelationKey($correlationKey);
+
+            if ($existing !== null) {
+                $samePayload = (int) $existing->business_id === (int) $business->id
+                    && $existing->entry_type === $entryType
+                    && (int) $existing->gross_amount_micro === $amountMicro
+                    && (int) $existing->actor_user_id === $actorUserId
+                    && $existing->reason === $normalizedReason;
+
+                if (! $samePayload) {
+                    throw new ManualCreditOperationConflictException($correlationKey);
+                }
+
+                return $existing; // idempotent replay: zero balance change, zero events, zero new row
+            }
+
+            $wallet = $this->rollOverPeriodsIfNeeded($wallet, $business);
+
+            $debtCleared = min($amountMicro, max(0, $wallet->debt_balance_micro));
+            $creditedToAvailable = $amountMicro - $debtCleared;
+
+            $ledgerEntry = $this->ledgerRepository->create([
+                'business_id' => $business->id,
+                'wallet_id' => $wallet->id,
+                'entry_type' => $entryType->value,
+                'available_delta_micro' => $creditedToAvailable,
+                'reserved_delta_micro' => 0,
+                'debt_delta_micro' => -$debtCleared,
+                'gross_amount_micro' => $amountMicro,
+                'currency_id' => $wallet->currency_id,
+                'actor_user_id' => $actorUserId,
+                'reason' => $normalizedReason,
+                'correlation_key' => $correlationKey,
+                'created_at' => Carbon::now(),
+            ]);
+
+            $walletUpdate = [
+                'available_balance_micro' => $wallet->available_balance_micro + $creditedToAvailable,
+                'debt_balance_micro' => $wallet->debt_balance_micro - $debtCleared,
+            ];
+
+            $shouldDispatchLowBalanceNotification = false;
+            $lowBalanceFragment = $creditedToAvailable > 0
+                ? $this->lowBalanceMarkerUpdate($wallet, $wallet->available_balance_micro + $creditedToAvailable, $shouldDispatchLowBalanceNotification)
+                : [];
+
+            $this->walletRepository->update($wallet, array_merge($walletUpdate, $lowBalanceFragment));
+
+            if ($creditedToAvailable > 0) {
+                \App\Events\Usage\BusinessWalletCredited::dispatch($business->id, (int) $wallet->id, (int) $ledgerEntry->id, $creditedToAvailable);
+            }
+
+            if ($debtCleared > 0) {
+                \App\Events\Usage\BusinessWalletDebtCleared::dispatch($business->id, (int) $wallet->id, (int) $ledgerEntry->id, $debtCleared);
+            }
+
+            if ($shouldDispatchLowBalanceNotification) {
+                \App\Jobs\Usage\SendLowBalanceNotification::dispatch($business->id)->afterCommit();
+            }
+
+            return $ledgerEntry;
         });
     }
 

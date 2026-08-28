@@ -577,12 +577,24 @@ class UsageBillingCheckoutManager
     /**
      * M3 contract §14/§17 — platform administrator resume-only authority.
      * Never originates a new attempt; only re-drives an already-created,
-     * payer-authorized one that is stuck. Unmodified this milestone (M4
-     * contract §3 item 7k) — M4's own retry methods below use a genuinely
-     * different, real-retry mechanism instead of mirroring this one.
+     * payer-authorized one that is stuck. M4 contract §3 item 7k — M4's
+     * own retry methods use a genuinely different, real-retry mechanism
+     * instead of mirroring this one.
+     *
+     * RFC-005 Admin Usage Billing Surface Contract §2.1.2 — corrected to
+     * genuinely enforce platform-administrator authorization and a
+     * mandatory reason, both before any provider-gateway call, and to
+     * persist the normalized reason on the resulting transition row.
      */
     public function retryFundingAttemptAsAdministrator(BusinessFundingAttempt $attempt, int $actorUserId, string $reason): FundingAttemptResult
     {
+        $this->assertPlatformAdministrator($actorUserId);
+
+        $normalizedReason = trim($reason);
+        if ($normalizedReason === '') {
+            throw new UnauthorizedSlotAgreementActionException($actorUserId, null, 'retry a funding attempt without a reason');
+        }
+
         if (! in_array($attempt->state, [FundingAttemptState::ProviderPending, FundingAttemptState::RequiresAction, FundingAttemptState::Failed], true)) {
             throw new FundingAttemptNotResumableException($attempt->id, $attempt->state->value);
         }
@@ -599,7 +611,7 @@ class UsageBillingCheckoutManager
             $session = $this->gateway->retrieveCheckoutSession($attempt->provider_session_or_intent_reference);
 
             if ($this->fundingAttemptCheckoutVerified($attempt, $session)) {
-                $this->confirmSucceeded($attempt, TransitionSource::AdminAction, null, $actorUserId, $this->resolveVerifiedPaymentMethodDisplay($attempt, $session));
+                $this->confirmSucceeded($attempt, TransitionSource::AdminAction, null, $actorUserId, $this->resolveVerifiedPaymentMethodDisplay($attempt, $session), $normalizedReason);
 
                 return new FundingAttemptResult($attempt->id, FundingAttemptState::Succeeded, null);
             }
@@ -610,7 +622,7 @@ class UsageBillingCheckoutManager
         $paymentIntent = $this->gateway->retrievePaymentIntent($attempt->provider_session_or_intent_reference);
 
         if ($paymentIntent->status === 'succeeded') {
-            $this->confirmSucceeded($attempt, TransitionSource::AdminAction, null, $actorUserId);
+            $this->confirmSucceeded($attempt, TransitionSource::AdminAction, null, $actorUserId, null, $normalizedReason);
 
             return new FundingAttemptResult($attempt->id, FundingAttemptState::Succeeded, null);
         }
@@ -652,9 +664,9 @@ class UsageBillingCheckoutManager
      * inside creditFromFunding()'s own nested transaction) could fire
      * before the attempt's own state ever reached Succeeded.
      */
-    private function confirmSucceeded(BusinessFundingAttempt $attempt, TransitionSource $source, ?int $providerEventId, ?int $actorUserId = null, ?string $verifiedPaymentMethodDisplay = null): void
+    private function confirmSucceeded(BusinessFundingAttempt $attempt, TransitionSource $source, ?int $providerEventId, ?int $actorUserId = null, ?string $verifiedPaymentMethodDisplay = null, ?string $reason = null): void
     {
-        $didFinalize = DB::transaction(function () use ($attempt, $source, $providerEventId, $actorUserId, $verifiedPaymentMethodDisplay) {
+        $didFinalize = DB::transaction(function () use ($attempt, $source, $providerEventId, $actorUserId, $verifiedPaymentMethodDisplay, $reason) {
             if ($attempt->purpose === FundingAttemptPurpose::AddonPurchase) {
                 $this->finalizeAddonPurchaseIfPending($attempt, $source, $providerEventId);
             } else {
@@ -679,7 +691,7 @@ class UsageBillingCheckoutManager
                 }
             }
 
-            return $this->finalizeFundingAttemptState($attempt, $source, $providerEventId, $actorUserId, $verifiedPaymentMethodDisplay);
+            return $this->finalizeFundingAttemptState($attempt, $source, $providerEventId, $actorUserId, $verifiedPaymentMethodDisplay, $reason);
         });
 
         // RFC-005 Job/Event Dispatch Completion Correction Contract §7.1 —
@@ -706,9 +718,9 @@ class UsageBillingCheckoutManager
      * when its own finalization call happens to run relative to another
      * caller's.
      */
-    private function finalizeFundingAttemptState(BusinessFundingAttempt $attempt, TransitionSource $source, ?int $providerEventId, ?int $actorUserId, ?string $verifiedPaymentMethodDisplay): bool
+    private function finalizeFundingAttemptState(BusinessFundingAttempt $attempt, TransitionSource $source, ?int $providerEventId, ?int $actorUserId, ?string $verifiedPaymentMethodDisplay, ?string $reason = null): bool
     {
-        return DB::transaction(function () use ($attempt, $source, $providerEventId, $actorUserId, $verifiedPaymentMethodDisplay) {
+        return DB::transaction(function () use ($attempt, $source, $providerEventId, $actorUserId, $verifiedPaymentMethodDisplay, $reason) {
             $locked = $this->attemptRepository->findForUpdateById((int) $attempt->id);
 
             if ($locked === null || $locked->state === FundingAttemptState::Succeeded) {
@@ -723,7 +735,7 @@ class UsageBillingCheckoutManager
 
             $fromState = $locked->state;
             $this->attemptRepository->update($locked, $updateAttributes);
-            $this->recordTransition($locked, $fromState, FundingAttemptState::Succeeded, $source, $providerEventId, $actorUserId);
+            $this->recordTransition($locked, $fromState, FundingAttemptState::Succeeded, $source, $providerEventId, $actorUserId, $reason);
 
             return true;
         });
@@ -913,7 +925,7 @@ class UsageBillingCheckoutManager
         );
     }
 
-    private function recordTransition(BusinessFundingAttempt $attempt, ?FundingAttemptState $from, FundingAttemptState $to, TransitionSource $source, ?int $providerEventId, ?int $actorUserId): void
+    private function recordTransition(BusinessFundingAttempt $attempt, ?FundingAttemptState $from, FundingAttemptState $to, TransitionSource $source, ?int $providerEventId, ?int $actorUserId, ?string $reason = null): void
     {
         $this->transitionRepository->create([
             'funding_attempt_id' => $attempt->id,
@@ -922,6 +934,7 @@ class UsageBillingCheckoutManager
             'source' => $source->value,
             'provider_event_id' => $providerEventId,
             'actor_user_id' => $actorUserId,
+            'reason' => $reason,
             'created_at' => now(),
         ]);
     }

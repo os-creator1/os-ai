@@ -4,6 +4,7 @@ namespace App\Repositories\Eloquent;
 
 use App\Models\PlatformFeatureUsageSafetyLimit;
 use App\Repositories\Contracts\PlatformFeatureUsageSafetyLimitRepository;
+use Illuminate\Support\Collection;
 
 class EloquentPlatformFeatureUsageSafetyLimitRepository extends EloquentBaseRepository implements PlatformFeatureUsageSafetyLimitRepository
 {
@@ -37,5 +38,10 @@ class EloquentPlatformFeatureUsageSafetyLimitRepository extends EloquentBaseRepo
         $limit->save();
 
         return $limit;
+    }
+
+    public function all(): Collection
+    {
+        return $this->query()->orderBy('feature_key')->get();
     }
 }

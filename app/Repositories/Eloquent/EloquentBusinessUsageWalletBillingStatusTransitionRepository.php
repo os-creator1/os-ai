@@ -4,6 +4,7 @@ namespace App\Repositories\Eloquent;
 
 use App\Models\BusinessUsageWalletBillingStatusTransition;
 use App\Repositories\Contracts\BusinessUsageWalletBillingStatusTransitionRepository;
+use Illuminate\Support\Collection;
 
 class EloquentBusinessUsageWalletBillingStatusTransitionRepository extends EloquentBaseRepository implements BusinessUsageWalletBillingStatusTransitionRepository
 {
@@ -19,5 +20,14 @@ class EloquentBusinessUsageWalletBillingStatusTransitionRepository extends Eloqu
         $transition->save();
 
         return $transition;
+    }
+
+    public function recentForBusiness(int $businessId, int $limit = 20): Collection
+    {
+        return $this->query()
+            ->where('business_id', $businessId)
+            ->orderByDesc('id')
+            ->limit($limit)
+            ->get();
     }
 }

@@ -598,6 +598,18 @@
             'only' => ['index', 'show', 'edit', 'update'],
         ]);
         Route::patch('businesses/{business}/status', 'BusinessController@updateStatus')->name('businesses.status.update');
+
+        // RFC-005 Admin Usage Billing Surface Contract — remediation #5.
+        Route::prefix('businesses/{business}/usage-billing')->name('businesses.usage-billing.')->group(function () {
+            Route::get('/', 'UsageBillingController@show')->name('show');
+            Route::post('credit', 'UsageBillingController@issueManualCredit')->name('credit');
+            Route::post('suspend', 'UsageBillingController@suspendBilling')->name('suspend');
+            Route::post('resume', 'UsageBillingController@resumeBilling')->name('resume');
+            Route::post('funding-attempts/{attempt}/retry', 'UsageBillingController@retryFundingAttempt')
+                ->name('funding-attempts.retry')->whereNumber('attempt');
+        });
+        Route::get('usage-billing/safety-limits', 'UsageBillingController@safetyLimits')->name('usage-billing.safety-limits.index');
+        Route::post('usage-billing/safety-limits', 'UsageBillingController@setSafetyLimit')->name('usage-billing.safety-limits.update');
     });
     Route::post('ai-settings-toggle', 'SettingsController@toggleAiSettings')->name('settings.ai-settings.toggle');
 

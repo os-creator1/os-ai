@@ -2,8 +2,12 @@
 
 namespace App\Repositories\Eloquent;
 
+use App\Enums\Usage\UsageLedgerEntryType;
 use App\Models\BusinessUsageLedgerEntry;
 use App\Repositories\Contracts\BusinessUsageLedgerEntryRepository;
+use Illuminate\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 
 class EloquentBusinessUsageLedgerEntryRepository extends EloquentBaseRepository implements BusinessUsageLedgerEntryRepository
 {
@@ -50,5 +54,62 @@ class EloquentBusinessUsageLedgerEntryRepository extends EloquentBaseRepository 
         $overageDebtDelta = (int) $overageQuery()->sum('debt_delta_micro');
 
         return (-$usageChargeReservedDelta) + ((-$overageAvailableDelta) + $overageDebtDelta);
+    }
+
+    public function forBusinessPaginated(int $businessId, int $perPage, array $filters = []): LengthAwarePaginator
+    {
+        $query = $this->query()
+            ->where('business_id', $businessId)
+            ->orderByDesc('id');
+
+        if (! empty($filters['entry_type'])) {
+            $query->where('entry_type', $filters['entry_type']);
+        }
+
+        if (! empty($filters['from'])) {
+            $query->where('created_at', '>=', $filters['from']);
+        }
+
+        if (! empty($filters['to'])) {
+            $query->where('created_at', '<=', $filters['to']);
+        }
+
+        return $query->paginate($perPage);
+    }
+
+    public function findByCorrelationKey(string $correlationKey): ?BusinessUsageLedgerEntry
+    {
+        return $this->query()->where('correlation_key', $correlationKey)->first();
+    }
+
+    /**
+     * Deliberately DB::table(), never $this->query() (an Eloquent
+     * Builder): BusinessUsageLedgerEntry::$casts casts provider_cost_micro
+     * to PHP int, and Eloquent applies that cast on every attribute read
+     * — hydrating this aggregate through the model would silently
+     * re-truncate the exact string this method exists to preserve, the
+     * identical failure mode this correction closes. A plain query
+     * builder returns raw, uncast PDO string values for every DECIMAL
+     * result column.
+     */
+    public function marginAggregateForBusiness(int $businessId, string $periodKey): Collection
+    {
+        return DB::table('business_usage_ledger_entries')
+            ->selectRaw('feature_key')
+            ->selectRaw('SUM(gross_amount_micro) AS retail_revenue_micro')
+            ->selectRaw('ROUND(SUM(CAST(provider_cost_micro AS DECIMAL(20,0)) * quantity), 0) AS provider_cost_micro')
+            ->where('business_id', $businessId)
+            ->where('period_key', $periodKey)
+            ->whereIn('entry_type', [UsageLedgerEntryType::UsageCharge->value, UsageLedgerEntryType::UsageOverageCharge->value])
+            ->whereNotNull('provider_cost_micro')
+            ->groupBy('feature_key')
+            ->get()
+            ->map(function ($row) {
+                $row->retail_revenue_micro = (string) $row->retail_revenue_micro;
+                $row->provider_cost_micro = (string) $row->provider_cost_micro;
+                $row->margin_micro = bcsub($row->retail_revenue_micro, $row->provider_cost_micro, 0);
+
+                return $row;
+            });
     }
 }
