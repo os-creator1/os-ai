@@ -69,11 +69,15 @@ class EvaluateBusinessAutoRecharge extends Base implements ShouldQueueAfterCommi
 
         $result = app(UsageBillingCheckoutManager::class)->initiateAutoRecharge($business, $amountMicro);
 
-        // M3 contract §15 — a failed outcome increments the counter and
-        // stops for this trigger event; requires_action is not a failure
-        // (the customer must complete additional authentication) and does
-        // not increment it; no immediate retry loop within this execution.
-        if ($result->state === \App\Enums\Usage\FundingAttemptState::Failed) {
+        // RFC-005 §19, as made authoritative by the Job/Event Dispatch
+        // Completion Correction Contract §5: both a Failed outcome and a
+        // RequiresAction outcome count as consecutive auto-recharge
+        // failures — no immediate retry loop within this execution either
+        // way. recordAutoRechargeFailure() itself owns the 2->3 disable
+        // edge and the disabled-notification dispatch decision.
+        if ($result->state === \App\Enums\Usage\FundingAttemptState::Failed
+            || $result->state === \App\Enums\Usage\FundingAttemptState::RequiresAction
+        ) {
             app(\App\Library\Usage\UsageWalletManager::class)->recordAutoRechargeFailure($this->businessId);
         }
     }
