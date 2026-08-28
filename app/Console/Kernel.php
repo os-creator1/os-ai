@@ -23,6 +23,7 @@
     use App\Console\Commands\uSupportDemo;
     use App\Console\Commands\VisionUpInboundMessage;
     use App\Console\Commands\WarmDashboardCache;
+    use App\Jobs\Usage\ExpireStaleUsageReservations;
     use App\Jobs\Usage\FinalizeSlotAgreementCancellation;
     use App\Jobs\Usage\InitiateSlotAgreementRenewal;
     use App\Jobs\Usage\PurgeExpiredWebhookPayloads;
@@ -115,6 +116,13 @@
                 $schedule->job(new InitiateSlotAgreementRenewal())->everyFiveMinutes();
                 $schedule->job(new FinalizeSlotAgreementCancellation())->everyFiveMinutes();
                 $schedule->job(new ReconcileSlotAgreementAllocation())->hourly();
+
+                // RFC-005 Job/Event Dispatch Completion Correction Contract
+                // §3 — human-authorized cadence; without this the job is
+                // built (M1) but permanently unreachable. release() is
+                // idempotent/row-locked, so cadence affects only latency,
+                // never domain semantics.
+                $schedule->job(new ExpireStaleUsageReservations())->everyFiveMinutes();
             }
         }
 

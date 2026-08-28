@@ -3,15 +3,19 @@
 namespace Tests\Feature\Usage;
 
 use App\Jobs\Usage\EvaluateBusinessAutoRecharge;
+use App\Jobs\Usage\SendAutoRechargeDisabledNotification;
 use App\Library\Usage\Contracts\PaymentProviderGateway;
 use App\Library\Usage\FakePaymentProviderGateway;
 use App\Library\Usage\PaymentInstrumentManager;
 use App\Library\Usage\PaymentMethodResult;
 use App\Library\Usage\UsageWalletManager;
+use App\Models\Business;
 use App\Models\Currency;
+use App\Repositories\Contracts\BusinessFundingAttemptRepository;
 use App\Repositories\Contracts\BusinessUsageWalletRepository;
 use App\Repositories\Contracts\PaymentProviderCustomerRepository;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Str;
 use Symfony\Component\Process\PhpExecutableFinder;
 use Symfony\Component\Process\Process;
@@ -191,7 +195,13 @@ class AutoRechargeFailedPaymentRetryTest extends TestCase
         $this->assertSame('1000000', (string) $wallet->available_balance_micro);
     }
 
-    public function test_a_requires_action_outcome_does_not_increment_the_failure_counter(): void
+    /**
+     * RFC-005 §19, made authoritative by the Job/Event Dispatch Completion
+     * Correction Contract §5 item 1 — a requires_action outcome now
+     * increments the failure counter exactly like a Failed outcome,
+     * superseding this test's own prior name/assertion.
+     */
+    public function test_a_requires_action_outcome_increments_the_failure_counter(): void
     {
         [$businessId] = $this->createBusinessWithAutoRechargeConfigured();
         DB::table('business_usage_wallets')->where('business_id', $businessId)->update(['available_balance_micro' => '1000000']);
@@ -200,7 +210,7 @@ class AutoRechargeFailedPaymentRetryTest extends TestCase
         EvaluateBusinessAutoRecharge::dispatch($businessId);
 
         $wallet = app(BusinessUsageWalletRepository::class)->findByBusinessId($businessId);
-        $this->assertSame(0, $wallet->consecutive_recharge_failures);
+        $this->assertSame(1, $wallet->consecutive_recharge_failures);
     }
 
     public function test_a_subsequent_successful_recharge_resets_the_failure_counter(): void
@@ -215,6 +225,169 @@ class AutoRechargeFailedPaymentRetryTest extends TestCase
         $wallet = app(BusinessUsageWalletRepository::class)->findByBusinessId($businessId);
         $this->assertSame(0, $wallet->consecutive_recharge_failures);
         $this->assertSame('4000000', (string) $wallet->available_balance_micro);
+    }
+
+    /**
+     * Contract §5 items 3-4 — three real, sequential Failed outcomes (each
+     * creates its own attempt; 'failed' is not an OUTSTANDING_STATES
+     * value, so it never blocks the next one) reach the 2->3 edge, which
+     * must disable auto-recharge and dispatch the notification exactly
+     * once. Queue::fake() is safe here because EvaluateBusinessAutoRecharge
+     * is invoked via a direct handle() call, never ::dispatch(), so the
+     * fake only ever observes SendAutoRechargeDisabledNotification.
+     */
+    public function test_the_third_consecutive_failure_disables_auto_recharge_and_dispatches_the_disabled_notification(): void
+    {
+        Queue::fake();
+
+        [$businessId] = $this->createBusinessWithAutoRechargeConfigured();
+        DB::table('business_usage_wallets')->where('business_id', $businessId)->update(['available_balance_micro' => '1000000']);
+        $this->gateway->paymentIntentOutcomes = ['*' => 'declined'];
+
+        $walletRepository = app(BusinessUsageWalletRepository::class);
+        $attemptRepository = app(BusinessFundingAttemptRepository::class);
+
+        for ($i = 0; $i < 3; $i++) {
+            (new EvaluateBusinessAutoRecharge($businessId))->handle($walletRepository, $attemptRepository);
+        }
+
+        $wallet = $walletRepository->findByBusinessId($businessId);
+        $this->assertSame(3, $wallet->consecutive_recharge_failures);
+        $this->assertFalse((bool) $wallet->auto_recharge_enabled);
+        Queue::assertPushed(SendAutoRechargeDisabledNotification::class, 1);
+    }
+
+    /**
+     * Contract §5 items 1/3/4 — requires_action now counts toward the same
+     * disable threshold. A requires_action attempt is itself an
+     * OUTSTANDING_STATES value, so a real attempt left in that state
+     * blocks a second automatic evaluation from ever creating a second
+     * attempt — a genuine, pre-existing mechanical constraint, not
+     * something this correction changes. The failure count is therefore
+     * seeded to 2 (mirroring test_a_subsequent_successful_recharge_resets_
+     * the_failure_counter's own established seeding convention for
+     * threshold-boundary tests), and the real job's widened conditional
+     * is exercised once for the exact 2->3 transition under test.
+     */
+    public function test_the_third_consecutive_requires_action_outcome_also_disables_auto_recharge(): void
+    {
+        Queue::fake();
+
+        [$businessId] = $this->createBusinessWithAutoRechargeConfigured();
+        DB::table('business_usage_wallets')->where('business_id', $businessId)
+            ->update(['available_balance_micro' => '1000000', 'consecutive_recharge_failures' => 2]);
+        $this->gateway->paymentIntentOutcomes = ['*' => 'requires_action'];
+
+        $walletRepository = app(BusinessUsageWalletRepository::class);
+        $attemptRepository = app(BusinessFundingAttemptRepository::class);
+
+        (new EvaluateBusinessAutoRecharge($businessId))->handle($walletRepository, $attemptRepository);
+
+        $wallet = $walletRepository->findByBusinessId($businessId);
+        $this->assertSame(3, $wallet->consecutive_recharge_failures);
+        $this->assertFalse((bool) $wallet->auto_recharge_enabled);
+        Queue::assertPushed(SendAutoRechargeDisabledNotification::class, 1);
+    }
+
+    /**
+     * Contract §5 item 4 — the system-disable path must never reuse
+     * configureAutoRecharge(enabled: false, ...) internally, since that
+     * method nulls threshold/amount/cap; a system disable preserves them
+     * exactly so a human can decide whether to re-enable at the same
+     * configuration later.
+     */
+    public function test_system_disable_preserves_threshold_amount_and_monthly_cap(): void
+    {
+        [$businessId] = $this->createBusinessWithAutoRechargeConfigured();
+        DB::table('business_usage_wallets')->where('business_id', $businessId)
+            ->update(['available_balance_micro' => '1000000', 'consecutive_recharge_failures' => 2]);
+        $this->gateway->paymentIntentOutcomes = ['*' => 'declined'];
+
+        EvaluateBusinessAutoRecharge::dispatch($businessId);
+
+        $wallet = app(BusinessUsageWalletRepository::class)->findByBusinessId($businessId);
+        $this->assertFalse((bool) $wallet->auto_recharge_enabled);
+        $this->assertSame('2000000', (string) $wallet->auto_recharge_threshold_micro);
+        $this->assertSame('3000000', (string) $wallet->auto_recharge_amount_micro);
+    }
+
+    /**
+     * Contract §5 item 5 — the disable-and-notify branch is gated on
+     * exactly === 3, not >= 3, defending against any out-of-band caller
+     * reached after the wallet is already disabled.
+     */
+    public function test_a_failure_recorded_while_already_disabled_does_not_redispatch_the_notification(): void
+    {
+        Queue::fake();
+
+        [$businessId] = $this->createBusinessWithAutoRechargeConfigured();
+        DB::table('business_usage_wallets')->where('business_id', $businessId)
+            ->update(['consecutive_recharge_failures' => 3, 'auto_recharge_enabled' => false]);
+
+        app(UsageWalletManager::class)->recordAutoRechargeFailure($businessId);
+
+        $wallet = app(BusinessUsageWalletRepository::class)->findByBusinessId($businessId);
+        $this->assertSame(4, $wallet->consecutive_recharge_failures);
+        Queue::assertNotPushed(SendAutoRechargeDisabledNotification::class);
+    }
+
+    /**
+     * Contract §5 item 6 — an explicit disabled->enabled transition resets
+     * the counter and starts a new failure episode, permitting a fresh
+     * disable-and-notify dispatch on a later, genuinely new 2->3 edge.
+     */
+    public function test_re_enabling_auto_recharge_resets_the_counter_and_permits_a_new_disable_episode(): void
+    {
+        Queue::fake();
+
+        [$businessId, $ownerId] = $this->createBusinessWithAutoRechargeConfigured();
+        $business = Business::find($businessId);
+        DB::table('business_usage_wallets')->where('business_id', $businessId)
+            ->update(['consecutive_recharge_failures' => 3, 'auto_recharge_enabled' => false]);
+
+        app(UsageWalletManager::class)->configureAutoRecharge($business, true, '2000000', '3000000', null, $ownerId);
+
+        $wallet = app(BusinessUsageWalletRepository::class)->findByBusinessId($businessId);
+        $this->assertSame(0, $wallet->consecutive_recharge_failures);
+        $this->assertTrue((bool) $wallet->auto_recharge_enabled);
+
+        DB::table('business_usage_wallets')->where('business_id', $businessId)
+            ->update(['consecutive_recharge_failures' => 2, 'available_balance_micro' => '1000000']);
+        $this->gateway->paymentIntentOutcomes = ['*' => 'declined'];
+
+        $walletRepository = app(BusinessUsageWalletRepository::class);
+        $attemptRepository = app(BusinessFundingAttemptRepository::class);
+
+        // Queue::fake() is already active from the top of this test, so
+        // EvaluateBusinessAutoRecharge::dispatch() would be faked, not
+        // run — a direct handle() call is required to genuinely exercise
+        // the new episode.
+        (new EvaluateBusinessAutoRecharge($businessId))->handle($walletRepository, $attemptRepository);
+
+        $wallet = $walletRepository->findByBusinessId($businessId);
+        $this->assertSame(3, $wallet->consecutive_recharge_failures);
+        $this->assertFalse((bool) $wallet->auto_recharge_enabled);
+        Queue::assertPushed(SendAutoRechargeDisabledNotification::class, 1);
+    }
+
+    /**
+     * Contract §5 item 7 — a deliberate owner/administrator disable via
+     * configureAutoRecharge(enabled: false, ...) is never the system-
+     * disable path and must never dispatch the notification.
+     */
+    public function test_deliberate_owner_disable_does_not_dispatch_the_system_disable_notification(): void
+    {
+        Queue::fake();
+
+        [$businessId, $ownerId] = $this->createBusinessWithAutoRechargeConfigured();
+        $business = Business::find($businessId);
+
+        app(UsageWalletManager::class)->configureAutoRecharge($business, false, null, null, null, $ownerId);
+
+        $wallet = app(BusinessUsageWalletRepository::class)->findByBusinessId($businessId);
+        $this->assertFalse((bool) $wallet->auto_recharge_enabled);
+        $this->assertNull($wallet->auto_recharge_threshold_micro);
+        Queue::assertNotPushed(SendAutoRechargeDisabledNotification::class);
     }
 
     // --- Forced-race: concurrent evaluations never spawn two attempts ---

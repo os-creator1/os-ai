@@ -284,6 +284,7 @@ class UsageWalletManager
         }
 
         $shouldDispatchAutoRecharge = false;
+        $shouldDispatchLowBalanceNotification = false;
 
         // RFC-005 Milestone 5 §3.8 correction — the race-loser catch must
         // surround DB::transaction() itself, not sit inside the closure.
@@ -293,7 +294,7 @@ class UsageWalletManager
         // a fully-closed transaction — never while the loser's own
         // transaction is still open.
         try {
-            $result = DB::transaction(function () use ($business, $featureKey, $idempotencyKey, $estimatedQuantity, &$shouldDispatchAutoRecharge) {
+            $result = DB::transaction(function () use ($business, $featureKey, $idempotencyKey, $estimatedQuantity, &$shouldDispatchAutoRecharge, &$shouldDispatchLowBalanceNotification) {
             $wallet = $this->walletRepository->findForUpdateByBusinessId($business->id);
 
             if ($wallet === null) {
@@ -471,11 +472,20 @@ class UsageWalletManager
                 $shouldDispatchAutoRecharge = true;
             }
 
-            $this->walletRepository->update($wallet, [
-                'available_balance_micro' => $wallet->available_balance_micro - $reservedAmountMicro,
+            $newAvailableBalanceMicro = $wallet->available_balance_micro - $reservedAmountMicro;
+
+            $this->walletRepository->update($wallet, array_merge([
+                'available_balance_micro' => $newAvailableBalanceMicro,
                 'reserved_balance_micro' => $wallet->reserved_balance_micro + $reservedAmountMicro,
                 'reserved_spend_this_period_micro' => $wallet->reserved_spend_this_period_micro + $reservedAmountMicro,
-            ]);
+            ], $this->lowBalanceMarkerUpdate($wallet, $newAvailableBalanceMicro, $shouldDispatchLowBalanceNotification)));
+
+            \App\Events\Usage\BusinessUsageReserved::dispatch(
+                (int) $business->id,
+                (int) $reservation->id,
+                $reservation->feature_key,
+                $reservedAmountMicro,
+            );
 
             return new ReservationResult(true, $reservation->id, null, true);
             });
@@ -497,6 +507,10 @@ class UsageWalletManager
             EvaluateBusinessAutoRecharge::dispatch((int) $business->id);
         }
 
+        if ($shouldDispatchLowBalanceNotification) {
+            \App\Jobs\Usage\SendLowBalanceNotification::dispatch((int) $business->id);
+        }
+
         return $result;
     }
 
@@ -513,8 +527,9 @@ class UsageWalletManager
     {
         $shouldDispatchAutoRecharge = false;
         $dispatchBusinessId = null;
+        $shouldDispatchLowBalanceNotification = false;
 
-        $result = DB::transaction(function () use ($reservationId, $finalQuantity, &$shouldDispatchAutoRecharge, &$dispatchBusinessId) {
+        $result = DB::transaction(function () use ($reservationId, $finalQuantity, &$shouldDispatchAutoRecharge, &$dispatchBusinessId, &$shouldDispatchLowBalanceNotification) {
             $peek = $this->reservationRepository->findById($reservationId);
 
             if ($peek === null) {
@@ -550,6 +565,8 @@ class UsageWalletManager
                 );
             }
 
+            $dispatchBusinessId = (int) $reservation->business_id;
+
             $quantity = $finalQuantity ?? (string) $reservation->estimated_quantity;
             $finalAmountMicro = (int) self::bcRoundHalfUp(
                 bcmul((string) $reservation->retail_rate_micro, $quantity, 10),
@@ -566,6 +583,11 @@ class UsageWalletManager
             $committedFormulaAmount = 0;
             $hadOverage = false;
             $hadUnusedRelease = false;
+
+            $overageLedgerEntry = null;
+            $overageFromAvailable = 0;
+            $overageToDebt = 0;
+            $lowBalanceFragment = [];
 
             $chargedPortion = min($finalAmountMicro, $reservedAmountMicro);
 
@@ -599,7 +621,7 @@ class UsageWalletManager
                 $overageFromAvailable = min($overage, max(0, $wallet->available_balance_micro));
                 $overageToDebt = $overage - $overageFromAvailable;
 
-                $this->ledgerRepository->create([
+                $overageLedgerEntry = $this->ledgerRepository->create([
                     'business_id' => $reservation->business_id,
                     'wallet_id' => $wallet->id,
                     'entry_type' => UsageLedgerEntryType::UsageOverageCharge->value,
@@ -627,7 +649,12 @@ class UsageWalletManager
 
                 if ($overageFromAvailable > 0) {
                     $shouldDispatchAutoRecharge = true;
-                    $dispatchBusinessId = (int) $reservation->business_id;
+
+                    $lowBalanceFragment = $this->lowBalanceMarkerUpdate(
+                        $wallet,
+                        $wallet->available_balance_micro + $availableDelta,
+                        $shouldDispatchLowBalanceNotification,
+                    );
                 }
             } elseif ($finalAmountMicro < $reservedAmountMicro) {
                 $hadUnusedRelease = true;
@@ -651,6 +678,12 @@ class UsageWalletManager
 
                 $availableDelta += $unused;
                 $reservedDelta -= $unused;
+
+                $lowBalanceFragment = $this->lowBalanceMarkerUpdate(
+                    $wallet,
+                    $wallet->available_balance_micro + $availableDelta,
+                    $shouldDispatchLowBalanceNotification,
+                );
             }
 
             $this->reservationRepository->update($reservation, [
@@ -671,7 +704,35 @@ class UsageWalletManager
                 $walletUpdate['reserved_spend_this_period_micro'] = $wallet->reserved_spend_this_period_micro - $reservedAmountMicro;
             }
 
-            $this->walletRepository->update($wallet, $walletUpdate);
+            $this->walletRepository->update($wallet, array_merge($walletUpdate, $lowBalanceFragment));
+
+            \App\Events\Usage\BusinessUsageCommitted::dispatch(
+                (int) $reservation->business_id,
+                (int) $reservation->id,
+                $reservation->feature_key,
+                $finalAmountMicro,
+                $reservedAmountMicro,
+            );
+
+            if ($overageLedgerEntry !== null) {
+                if ($overageFromAvailable > 0) {
+                    \App\Events\Usage\BusinessWalletDebited::dispatch(
+                        (int) $reservation->business_id,
+                        (int) $wallet->id,
+                        (int) $overageLedgerEntry->id,
+                        $overageFromAvailable,
+                    );
+                }
+
+                if ($overageToDebt > 0) {
+                    \App\Events\Usage\BusinessWalletDebtIncurred::dispatch(
+                        (int) $reservation->business_id,
+                        (int) $wallet->id,
+                        (int) $overageLedgerEntry->id,
+                        $overageToDebt,
+                    );
+                }
+            }
 
             return new CommitResult(
                 $reservation->id,
@@ -684,6 +745,10 @@ class UsageWalletManager
 
         if ($shouldDispatchAutoRecharge) {
             EvaluateBusinessAutoRecharge::dispatch($dispatchBusinessId);
+        }
+
+        if ($shouldDispatchLowBalanceNotification) {
+            \App\Jobs\Usage\SendLowBalanceNotification::dispatch($dispatchBusinessId);
         }
 
         return $result;
@@ -701,7 +766,10 @@ class UsageWalletManager
      */
     public function release(int $reservationId): void
     {
-        DB::transaction(function () use ($reservationId) {
+        $shouldDispatchLowBalanceNotification = false;
+        $dispatchBusinessId = null;
+
+        DB::transaction(function () use ($reservationId, &$shouldDispatchLowBalanceNotification, &$dispatchBusinessId) {
             $peek = $this->reservationRepository->findById($reservationId);
 
             if ($peek === null) {
@@ -768,8 +836,26 @@ class UsageWalletManager
                 $walletUpdate['reserved_spend_this_period_micro'] = $wallet->reserved_spend_this_period_micro - $amount;
             }
 
-            $this->walletRepository->update($wallet, $walletUpdate);
+            $dispatchBusinessId = (int) $reservation->business_id;
+
+            $lowBalanceFragment = $amount > 0
+                ? $this->lowBalanceMarkerUpdate($wallet, $wallet->available_balance_micro + $amount, $shouldDispatchLowBalanceNotification)
+                : [];
+
+            $this->walletRepository->update($wallet, array_merge($walletUpdate, $lowBalanceFragment));
+
+            \App\Events\Usage\BusinessUsageReservationReleased::dispatch(
+                (int) $reservation->business_id,
+                (int) $reservation->id,
+                $reservation->feature_key,
+                $amount,
+                $resultingStatus->value,
+            );
         });
+
+        if ($shouldDispatchLowBalanceNotification) {
+            \App\Jobs\Usage\SendLowBalanceNotification::dispatch($dispatchBusinessId);
+        }
     }
 
     /**
@@ -833,7 +919,34 @@ class UsageWalletManager
                 $walletUpdate['consecutive_recharge_failures'] = 0;
             }
 
-            $this->walletRepository->update($wallet, $walletUpdate);
+            $shouldDispatchLowBalanceNotification = false;
+            $lowBalanceFragment = $remainder > 0
+                ? $this->lowBalanceMarkerUpdate($wallet, $wallet->available_balance_micro + $remainder, $shouldDispatchLowBalanceNotification)
+                : [];
+
+            $this->walletRepository->update($wallet, array_merge($walletUpdate, $lowBalanceFragment));
+
+            if ($remainder > 0) {
+                \App\Events\Usage\BusinessWalletCredited::dispatch(
+                    $businessId,
+                    (int) $wallet->id,
+                    (int) $ledgerEntry->id,
+                    $remainder,
+                );
+            }
+
+            if ($debtCleared > 0) {
+                \App\Events\Usage\BusinessWalletDebtCleared::dispatch(
+                    $businessId,
+                    (int) $wallet->id,
+                    (int) $ledgerEntry->id,
+                    $debtCleared,
+                );
+            }
+
+            if ($shouldDispatchLowBalanceNotification) {
+                \App\Jobs\Usage\SendLowBalanceNotification::dispatch($businessId)->afterCommit();
+            }
 
             \App\Jobs\Usage\SendReceiptNotification::dispatch($fundingAttemptId, (int) $ledgerEntry->id)
                 ->afterCommit();
@@ -1234,23 +1347,46 @@ class UsageWalletManager
                 throw new UsageWalletNotFoundException((int) $business->id);
             }
 
-            $this->walletRepository->update($wallet, [
+            $walletUpdate = [
                 'auto_recharge_enabled' => $enabled,
                 'auto_recharge_threshold_micro' => $enabled ? $thresholdMicro : null,
                 'auto_recharge_amount_micro' => $enabled ? $amountMicro : null,
                 'monthly_recharge_cap_micro' => $monthlyCapMicro,
-            ]);
+            ];
+
+            // RFC-005 Job/Event Dispatch Completion Correction Contract §5
+            // item 6 — an explicit disabled->enabled transition starts a
+            // new failure episode. Gated strictly on the transition edge,
+            // never on every call with enabled: true, so a benign re-save
+            // while already enabled never spuriously resets an
+            // in-progress (but not yet disabled) failure count.
+            if (! $wallet->auto_recharge_enabled && $enabled) {
+                $walletUpdate['consecutive_recharge_failures'] = 0;
+            }
+
+            $this->walletRepository->update($wallet, $walletUpdate);
         });
     }
 
     /**
      * M3 contract §15 — "Failed payment behavior: consecutive_recharge_failures
      * incremented (M1 column, first written by M3)." Called only by
-     * EvaluateBusinessAutoRecharge, only when a triggered auto-recharge
-     * attempt reaches FundingAttemptState::Failed within that same job
-     * execution (never on requires_action, never a retry loop). Preserves
-     * this class's sole write authority for business_usage_wallets — the
-     * job itself never writes this table directly.
+     * EvaluateBusinessAutoRecharge, whenever a triggered auto-recharge
+     * attempt reaches FundingAttemptState::Failed or RequiresAction within
+     * that same job execution (RFC-005 §19, made authoritative by the
+     * Job/Event Dispatch Completion Correction Contract §5 — superseding
+     * this method's own prior Failed-only behavior). Preserves this
+     * class's sole write authority for business_usage_wallets — the job
+     * itself never writes this table directly.
+     *
+     * Correction Contract §5 items 3-5 — the 2->3 transition, while
+     * auto_recharge_enabled is currently true, is the system-disable
+     * edge: set exactly once, on that exact atomic mutation, never
+     * reusing configureAutoRecharge(enabled: false) internally (that
+     * method nulls threshold/amount/cap, which a system disable must
+     * never do). Gated on === 3, not >= 3, so a defensive out-of-band
+     * caller reached after the wallet is already disabled never
+     * re-notifies for the same episode.
      */
     public function recordAutoRechargeFailure(int $businessId): void
     {
@@ -1261,9 +1397,20 @@ class UsageWalletManager
                 throw new UsageWalletNotFoundException($businessId);
             }
 
-            $this->walletRepository->update($wallet, [
-                'consecutive_recharge_failures' => $wallet->consecutive_recharge_failures + 1,
-            ]);
+            $newFailureCount = $wallet->consecutive_recharge_failures + 1;
+            $walletUpdate = ['consecutive_recharge_failures' => $newFailureCount];
+
+            $shouldDisableAndNotify = $newFailureCount === 3 && $wallet->auto_recharge_enabled;
+
+            if ($shouldDisableAndNotify) {
+                $walletUpdate['auto_recharge_enabled'] = false;
+            }
+
+            $this->walletRepository->update($wallet, $walletUpdate);
+
+            if ($shouldDisableAndNotify) {
+                \App\Jobs\Usage\SendAutoRechargeDisabledNotification::dispatch($businessId)->afterCommit();
+            }
         });
     }
 
@@ -1373,6 +1520,53 @@ class UsageWalletManager
         $shifted = bcmul($rawQuotient, $shift, $extraPrecision);
 
         return bcadd($shifted, '0.5', 0);
+    }
+
+    /**
+     * RFC-005 Job/Event Dispatch Completion Correction Contract §4 — the
+     * shared low_balance_notified_at set/clear evaluation, called from
+     * every mutation site that changes available_balance_micro (reserve(),
+     * commit()'s overage and unused-release branches, creditFromFunding(),
+     * release()). Returns only the fragment to merge into that same
+     * caller's own already-open walletRepository->update() call — never a
+     * second query or a second write. Applies only when
+     * auto_recharge_enabled is true and auto_recharge_threshold_micro is
+     * configured (contract §4 item 2); a wallet outside that condition
+     * returns an empty fragment and never sets $shouldDispatch.
+     *
+     * The episode rule is symmetric around the resulting balance, not the
+     * direction of the caller's own delta: a positive-delta caller can
+     * still legitimately set the marker (and set $shouldDispatch) if the
+     * wallet remains at/below threshold and the marker was null — e.g.
+     * eligibility was just established while already low — and a
+     * negative-delta caller can still legitimately clear it if the
+     * mutation happens to be a net recovery.
+     */
+    private function lowBalanceMarkerUpdate(BusinessUsageWallet $wallet, int $newAvailableBalanceMicro, bool &$shouldDispatch): array
+    {
+        $shouldDispatch = false;
+
+        if (! $wallet->auto_recharge_enabled || $wallet->auto_recharge_threshold_micro === null) {
+            return [];
+        }
+
+        $threshold = (int) $wallet->auto_recharge_threshold_micro;
+
+        if ($newAvailableBalanceMicro <= $threshold) {
+            if ($wallet->low_balance_notified_at === null) {
+                $shouldDispatch = true;
+
+                return ['low_balance_notified_at' => Carbon::now()];
+            }
+
+            return [];
+        }
+
+        if ($wallet->low_balance_notified_at !== null) {
+            return ['low_balance_notified_at' => null];
+        }
+
+        return [];
     }
 
     /**

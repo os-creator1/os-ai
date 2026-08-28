@@ -641,6 +641,13 @@ class UsageBillingCheckoutManager
         if ($attempt->purpose === FundingAttemptPurpose::AddonPurchase) {
             $this->finalizeAddonPurchaseIfPending($attempt, $source, $providerEventId);
 
+            \App\Events\Usage\BusinessFundingAttemptSucceeded::dispatch(
+                (int) $attempt->id,
+                (int) $attempt->business_id,
+                $attempt->purpose->value,
+                (int) $attempt->expected_amount_micro,
+            );
+
             return;
         }
 
@@ -654,6 +661,18 @@ class UsageBillingCheckoutManager
             (int) $attempt->expected_amount_micro,
             (int) $attempt->id,
             $attempt->local_idempotency_key.':credit',
+        );
+
+        // RFC-005 Job/Event Dispatch Completion Correction Contract §7.1 —
+        // dispatched only after creditFromFunding() returns, since that
+        // call's own transaction has already committed by the time it
+        // returns; no transaction is open here, so this fires immediately,
+        // at the point the local accounting effect is genuinely durable.
+        \App\Events\Usage\BusinessFundingAttemptSucceeded::dispatch(
+            (int) $attempt->id,
+            (int) $attempt->business_id,
+            $attempt->purpose->value,
+            (int) $attempt->expected_amount_micro,
         );
     }
 
@@ -809,6 +828,12 @@ class UsageBillingCheckoutManager
         ]);
 
         $this->recordTransition($attempt, $fromState, FundingAttemptState::Failed, $source, $providerEventId, null);
+
+        \App\Events\Usage\BusinessFundingAttemptFailed::dispatch(
+            (int) $attempt->id,
+            (int) $attempt->business_id,
+            $attempt->purpose->value,
+        );
     }
 
     private function recordTransition(BusinessFundingAttempt $attempt, ?FundingAttemptState $from, FundingAttemptState $to, TransitionSource $source, ?int $providerEventId, ?int $actorUserId): void
