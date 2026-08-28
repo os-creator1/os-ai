@@ -321,6 +321,16 @@ class ReconcileProviderPendingStateTest extends TestCase
      * id to explicitly delegate to a separately-held, normally-constructed
      * real repository — so the later, unrelated attempt's own re-fetch
      * still reaches genuine persisted state.
+     *
+     * RFC-005 Funding Confirmation Concurrency Correction Contract §5 —
+     * the Tier 2 residual collision this test drives previously produced
+     * two succeeded transition rows for the raced attempt, disclosed as
+     * an accepted residual side effect. That defect is now closed at its
+     * shared root: confirmSucceeded() routes every caller — winner and
+     * loser alike — through one shared, always-row-locked finalizer, so
+     * the loser observes the row already `Succeeded` under lock and
+     * performs no transition at all. Exactly one succeeded transition row
+     * now exists for the raced attempt.
      */
     public function test_a_true_duplicate_credit_race_is_caught_by_the_jobs_own_exception_boundary_and_reconciliation_continues_to_later_attempts(): void
     {
@@ -385,7 +395,7 @@ class ReconcileProviderPendingStateTest extends TestCase
             ->where('funding_attempt_id', $racedAttemptId)
             ->where('to_state', FundingAttemptState::Succeeded->value)
             ->count();
-        $this->assertSame(2, $succeededTransitionCount, 'Exactly two succeeded transition rows must exist for the raced attempt — the known, accepted Tier 2 residual side effect (§3 item 2), not a hidden defect.');
+        $this->assertSame(1, $succeededTransitionCount, 'Exactly one succeeded transition row must exist for the raced attempt — the Funding Confirmation Concurrency Correction closes the residual duplicate-transition defect PR #143 disclosed; the job\'s own re-fetch skip and confirmSucceeded()\'s own shared, always-locked finalizer now jointly guarantee this.');
 
         $succeededEventCount = Event::dispatched(BusinessFundingAttemptSucceeded::class, fn (BusinessFundingAttemptSucceeded $event) => $event->fundingAttemptId === $racedAttemptId)->count();
         $this->assertSame(1, $succeededEventCount, 'Exactly one BusinessFundingAttemptSucceeded dispatch must exist for the raced attempt — the loser\'s own execution never reaches that dispatch site.');

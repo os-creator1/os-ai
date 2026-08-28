@@ -32,6 +32,7 @@ use App\Models\AdditionalBusinessSlotAgreement;
 use App\Models\AdditionalBusinessSlotRenewalCharge;
 use App\Models\Business;
 use App\Models\BusinessFundingAttempt;
+use App\Models\BusinessUsageAddonPurchase;
 use App\Models\PaymentProviderEvent;
 use App\Models\User;
 use App\Models\Workspace;
@@ -625,55 +626,107 @@ class UsageBillingCheckoutManager
      * unchanged; only AddonPurchase (never set by any M3 code path) gains
      * new behavior where none existed before.
      */
+    /**
+     * RFC-005 Funding Confirmation Concurrency Correction Contract §2.1 —
+     * credit (or add-on fulfillment) happens before the funding attempt's
+     * own state is ever finalized, and finalization itself always routes
+     * through the one shared, row-locked, idempotent finalizer below — no
+     * separate unlocked fast path for any purpose or any caller. This is
+     * what closes the reconciliation contract's own residual two-
+     * transition side effect at its shared root, and what makes a crash
+     * between crediting and finalizing recoverable on replay: a caller
+     * whose own credit collides with an already-committed one simply
+     * falls through to the same finalizer, which decides — under lock,
+     * never by branching on the credit outcome — whether this caller must
+     * still perform the attempt's own terminal transition.
+     */
+    /**
+     * RFC-005 Funding Confirmation Concurrency Correction Contract's own
+     * exceptional post-merge implementation correction — the
+     * credit-or-add-on-fulfillment step and the shared finalizer call are
+     * wrapped in a single outer DB::transaction() so that
+     * finalizeFundingAttemptState()'s own write can never be observed as
+     * committed independently of (and therefore ahead of) the credit or
+     * add-on fulfillment it accompanies. This closes the window in which
+     * SendReceiptNotification's own ->afterCommit() dispatch (queued from
+     * inside creditFromFunding()'s own nested transaction) could fire
+     * before the attempt's own state ever reached Succeeded.
+     */
     private function confirmSucceeded(BusinessFundingAttempt $attempt, TransitionSource $source, ?int $providerEventId, ?int $actorUserId = null, ?string $verifiedPaymentMethodDisplay = null): void
     {
-        $fromState = $attempt->state;
+        $didFinalize = DB::transaction(function () use ($attempt, $source, $providerEventId, $actorUserId, $verifiedPaymentMethodDisplay) {
+            if ($attempt->purpose === FundingAttemptPurpose::AddonPurchase) {
+                $this->finalizeAddonPurchaseIfPending($attempt, $source, $providerEventId);
+            } else {
+                $entryType = $attempt->purpose === FundingAttemptPurpose::AutoRecharge
+                    ? UsageLedgerEntryType::AutoRecharge
+                    : UsageLedgerEntryType::PaidTopUp;
 
-        $updateAttributes = ['state' => FundingAttemptState::Succeeded->value];
+                try {
+                    $this->walletManager->creditFromFunding(
+                        (int) $attempt->business_id,
+                        $entryType,
+                        (int) $attempt->expected_amount_micro,
+                        (int) $attempt->id,
+                        $attempt->local_idempotency_key.':credit',
+                    );
+                } catch (UniqueConstraintViolationException) {
+                    // A concurrent/replayed caller already committed this
+                    // exact credit. Fall through to the same shared finalizer
+                    // below — it alone determines, under lock, whether this
+                    // caller must still perform the attempt's own terminal
+                    // transition.
+                }
+            }
 
-        if ($verifiedPaymentMethodDisplay !== null) {
-            $updateAttributes['payment_method_display_snapshot'] = $verifiedPaymentMethodDisplay;
-        }
+            return $this->finalizeFundingAttemptState($attempt, $source, $providerEventId, $actorUserId, $verifiedPaymentMethodDisplay);
+        });
 
-        $this->attemptRepository->update($attempt, $updateAttributes);
-        $this->recordTransition($attempt, $fromState, FundingAttemptState::Succeeded, $source, $providerEventId, $actorUserId);
-
-        if ($attempt->purpose === FundingAttemptPurpose::AddonPurchase) {
-            $this->finalizeAddonPurchaseIfPending($attempt, $source, $providerEventId);
-
+        // RFC-005 Job/Event Dispatch Completion Correction Contract §7.1 —
+        // dispatched only after the outer transaction above has genuinely
+        // committed, and only by whichever single caller actually
+        // performed the terminal transition.
+        if ($didFinalize) {
             \App\Events\Usage\BusinessFundingAttemptSucceeded::dispatch(
                 (int) $attempt->id,
                 (int) $attempt->business_id,
                 $attempt->purpose->value,
                 (int) $attempt->expected_amount_micro,
             );
-
-            return;
         }
+    }
 
-        $entryType = $attempt->purpose === FundingAttemptPurpose::AutoRecharge
-            ? UsageLedgerEntryType::AutoRecharge
-            : UsageLedgerEntryType::PaidTopUp;
+    /**
+     * RFC-005 Funding Confirmation Concurrency Correction Contract §2.1 —
+     * the one shared funding-attempt finalizer, invoked identically by
+     * every path in confirmSucceeded(). Always acquires a row lock before
+     * re-checking persisted state, so at most one caller, ever, for a
+     * given attempt, performs the terminal transition — regardless of
+     * whether that caller's own credit won or lost, and regardless of
+     * when its own finalization call happens to run relative to another
+     * caller's.
+     */
+    private function finalizeFundingAttemptState(BusinessFundingAttempt $attempt, TransitionSource $source, ?int $providerEventId, ?int $actorUserId, ?string $verifiedPaymentMethodDisplay): bool
+    {
+        return DB::transaction(function () use ($attempt, $source, $providerEventId, $actorUserId, $verifiedPaymentMethodDisplay) {
+            $locked = $this->attemptRepository->findForUpdateById((int) $attempt->id);
 
-        $this->walletManager->creditFromFunding(
-            (int) $attempt->business_id,
-            $entryType,
-            (int) $attempt->expected_amount_micro,
-            (int) $attempt->id,
-            $attempt->local_idempotency_key.':credit',
-        );
+            if ($locked === null || $locked->state === FundingAttemptState::Succeeded) {
+                return false;
+            }
 
-        // RFC-005 Job/Event Dispatch Completion Correction Contract §7.1 —
-        // dispatched only after creditFromFunding() returns, since that
-        // call's own transaction has already committed by the time it
-        // returns; no transaction is open here, so this fires immediately,
-        // at the point the local accounting effect is genuinely durable.
-        \App\Events\Usage\BusinessFundingAttemptSucceeded::dispatch(
-            (int) $attempt->id,
-            (int) $attempt->business_id,
-            $attempt->purpose->value,
-            (int) $attempt->expected_amount_micro,
-        );
+            $updateAttributes = ['state' => FundingAttemptState::Succeeded->value];
+
+            if ($verifiedPaymentMethodDisplay !== null) {
+                $updateAttributes['payment_method_display_snapshot'] = $verifiedPaymentMethodDisplay;
+            }
+
+            $fromState = $locked->state;
+            $this->attemptRepository->update($locked, $updateAttributes);
+            $this->recordTransition($locked, $fromState, FundingAttemptState::Succeeded, $source, $providerEventId, $actorUserId);
+
+            return true;
+        });
     }
 
     /**
@@ -715,27 +768,51 @@ class UsageBillingCheckoutManager
                     $attempt->local_idempotency_key.':credit',
                 );
             } catch (UniqueConstraintViolationException $exception) {
-                // Already credited on an earlier pass; only the purchase
-                // record's own completion was lost to the crash.
+                // Falls through to the same lock-protected purchase-level
+                // completion below, exactly like the winner path — the
+                // purchase's own fulfillment record must still be
+                // finalized even when this caller lost the credit race.
             }
         }
 
-        $fromStatus = $purchase->status;
-        $purchase = $this->addonPurchaseRepository->update($purchase, [
-            'status' => AddonPurchaseStatus::Completed->value,
-            'completed_at' => now(),
-        ]);
+        $this->completeAddonPurchaseUnderLock($purchase, $source, $providerEventId);
+    }
 
-        $this->addonPurchaseTransitionRepository->create([
-            'purchase_id' => $purchase->id,
-            'from_status' => $fromStatus->value,
-            'to_status' => AddonPurchaseStatus::Completed->value,
-            'source' => $source->value,
-            'provider_event_id' => $providerEventId,
-            'actor_user_id' => null,
-            'failure_reason' => null,
-            'created_at' => now(),
-        ]);
+    /**
+     * RFC-005 Funding Confirmation Concurrency Correction Contract §2.2 —
+     * the purchase-level completion mutation, applied uniformly to every
+     * fulfillment mode (including direct_deliverable, which reaches this
+     * with no credit-based first-pass filter at all — the lock is the
+     * only available serialization point for that mode). Always acquires
+     * a row lock before re-checking persisted status, mirroring
+     * finalizeFundingAttemptState()'s own design exactly.
+     */
+    private function completeAddonPurchaseUnderLock(BusinessUsageAddonPurchase $purchase, TransitionSource $source, ?int $providerEventId): void
+    {
+        DB::transaction(function () use ($purchase, $source, $providerEventId) {
+            $locked = $this->addonPurchaseRepository->findForUpdateByFundingAttemptId((int) $purchase->funding_attempt_id);
+
+            if ($locked === null || $locked->status === AddonPurchaseStatus::Completed) {
+                return;
+            }
+
+            $fromStatus = $locked->status;
+            $locked = $this->addonPurchaseRepository->update($locked, [
+                'status' => AddonPurchaseStatus::Completed->value,
+                'completed_at' => now(),
+            ]);
+
+            $this->addonPurchaseTransitionRepository->create([
+                'purchase_id' => $locked->id,
+                'from_status' => $fromStatus->value,
+                'to_status' => AddonPurchaseStatus::Completed->value,
+                'source' => $source->value,
+                'provider_event_id' => $providerEventId,
+                'actor_user_id' => null,
+                'failure_reason' => null,
+                'created_at' => now(),
+            ]);
+        });
     }
 
     /**
