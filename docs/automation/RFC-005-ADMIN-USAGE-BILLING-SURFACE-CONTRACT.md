@@ -8,31 +8,49 @@ This document authorizes drafting one thing: a bounded, independently governed c
 
 ---
 
+## Correction Round 1 record
+
+A focused review of the initial draft (head `5d0fc3db78aaef2ca34a8c050e5194542aa4938b`) found six defects, four of them blocking, one an efficiency blocker, and one an internal-consistency cleanup. **1 of 2 ordinary correction rounds consumed by this round; 1 ordinary round remains.**
+
+Exact issues resolved this round:
+
+1. **§1.3's own claim that `UsageBillingCheckoutManager::retryFundingAttemptAsAdministrator()` already calls `assertPlatformAdministrator()` and independently validates its own `reason` argument was false.** Confirmed by direct re-read of `app/Library/Usage/UsageBillingCheckoutManager.php:584-619` at this exact base: the method's own `$reason` parameter is accepted but never read anywhere in its body — no admin check, no blank-reason rejection, no persistence of the reason anywhere. **Corrected: §2.1.2 (new) locks changes to `UsageBillingCheckoutManager.php` itself** — the method now calls `assertPlatformAdministrator($actorUserId)` and rejects a blank trimmed reason, both before any provider-gateway call; the normalized reason is threaded through `confirmSucceeded()`/`finalizeFundingAttemptState()`/`recordTransition()` (each widened with one new, trailing, backward-compatible `?string $reason = null` parameter) and persisted on the resulting `business_funding_attempt_transitions` row. A new, nullable `reason` column and its migration are mechanically derived and locked (§2.1.2), along with the corresponding `BusinessFundingAttemptTransition` model change. `UsageBillingCheckoutManager.php` moves from NOT_REQUIRED to REQUIRED on the production allow-list as a direct consequence.
+2. **§2.9's own claim that "every write action's own manager method re-validates that the resolved model genuinely belongs to the id the URL named" was false for `retryFundingAttempt` specifically.** `retryFundingAttemptAsAdministrator()` receives only a `BusinessFundingAttempt`, never a `Business` — it has no way to know which `{business}` appeared in the URL, so it cannot perform this check itself. **Corrected: §2.1.2 locks an explicit controller-level guard** — `(int) $attempt->business_id !== (int) $business->id` → `abort(404)`, executed before the manager or the payment-provider gateway is ever reached — and §2.9 is corrected to describe this accurately instead of claiming a manager-level check that cannot exist for this one action.
+3. **The manual-credit correlation-key design was a genuine financial-idempotency defect, not a disclosed trade-off.** A fresh, random correlation key per call, combined with the claim that "duplicate form submissions... produce two independent, genuinely-intended-as-separate ledger entries," meant a double form submission would double-credit a wallet — a disabled submit button is UI polish, not an idempotency boundary. **Corrected: §2.3 is redesigned around a client-supplied, form-preserved `operation_id` UUID**, a deterministic correlation key derived from it (Business ID + operation ID), a new ledger lookup by correlation key, and an explicit, locked conflict rule: an identical replay (same normalized Business/type/amount/actor/reason) returns the original result unchanged; a reused `operation_id` with a different payload throws a new, explicitly allow-listed exception and mutates nothing. The pre-existing `UNIQUE` constraint on `business_usage_ledger_entries.correlation_key` remains the database-level backstop underneath this application-level check.
+4. **The Job/Event Dispatch Completion contract's own exclusion was read too narrowly — the ledger-entry producer this contract builds must dispatch the two wallet-balance domain events that already exist and already govern every other credit-type ledger entry, not stay silent.** `creditFromFunding()` already dispatches `BusinessWalletCredited`/`BusinessWalletDebtCleared` (existing, `ShouldDispatchAfterCommit`, unmodified) whenever a credit increases available balance or clears debt, respectively. **Corrected: §2.3 locks the identical dispatch behavior for `issueManualCredit()`** — both may fire for one credit, both carry the created ledger-entry id, and the method mirrors `creditFromFunding()`'s own low-balance-marker reset/re-evaluation semantics exactly, while still never dispatching `SendReceiptNotification` (no provider evidence exists for an admin-issued credit — unchanged). No new event class is introduced.
+5. **The proposed transition-history repository methods were unbounded, and the margin aggregate loaded every matching ledger row into PHP for aggregation there — both contradicted this contract's own bounded-read claims and were needlessly expensive.** **Corrected: §2.4's transition-history methods are now explicitly limited** (`recentForBusiness(int $businessId, int $limit = 20)`, `recentPlatformSafetyLimitHistory(int $limit = 50)`), and **§2.5's margin computation now happens entirely inside the Eloquent repository, in SQL**, via a single `GROUP BY feature_key` aggregate query using exact `DECIMAL` arithmetic, returning aggregate rows (`retail_revenue_micro`, `provider_cost_micro`, `margin_micro` per feature) instead of raw ledger rows. The rounding rule (SQL `ROUND()` to the nearest whole micro) and the already-locked per-month/per-feature grouping are both stated exactly, and the controller-side responsibility is narrowed to formatting only, via a locked controller-private method — no value-object path is added.
+6. **Internal-consistency cleanup, six items:** §2.1.1's own "one manager/repository call each" claim was corrected to accurately describe `show()` as a multi-repository read (never a write, still zero raw queries); §0's own required-reading bullet and §5.3's own boundary-test description were both corrected from "four" to the actually-correct five Eloquent repository implementation files (unchanged count, only the prose was wrong, in two places); every "TBD at implementation"/"left to implementation discretion" exception-naming and value-object-path phrase is removed and replaced with an exact, locked name or path; §12's four previously-open items are resolved and locked by this round's own corrections 3–5 above and are removed from §12 rather than carried forward; and every production-path count, test-path count, method count, import list, guarantee-mapping cross-reference, and regression-command list is recalculated below to match the redesign.
+
+No genuinely new blocking product/schema question was found this round beyond what is resolved above. §1.1, §1.2, and §1.4 are unchanged and re-confirmed unaffected; only §1.3 required correction (item 1).
+
+---
+
 ## 0. Governance
 
-- Drafted on branch `chore/rfc-005-admin-usage-billing-surface-contract`, in an isolated linked worktree (`../rfc-005-admin-usage-billing-surface-contract-worktree`), based on `origin/main` at `376fda52ecf449bbb622d2dd0ec40f4411587cc5` — PR [#146](https://github.com/os-creator1/os-ai/pull/146)'s own merge commit (the RFC-005 Funding Confirmation Concurrency Correction's implementation) — confirmed via `git fetch origin && git rev-parse origin/main` at the start of this contract.
+- Drafted on branch `chore/rfc-005-admin-usage-billing-surface-contract`, in an isolated linked worktree (`../rfc-005-admin-usage-billing-surface-contract-worktree`), based on `origin/main` at `376fda52ecf449bbb622d2dd0ec40f4411587cc5` — PR [#146](https://github.com/os-creator1/os-ai/pull/146)'s own merge commit (the RFC-005 Funding Confirmation Concurrency Correction's implementation) — confirmed via `git fetch origin && git rev-parse origin/main` at the start of this contract, unchanged this round.
 - **Future implementation branch (authorized only after this contract's human merge, and only after a further, separate, explicit human instruction to begin implementation): `agent/rfc-005-admin-usage-billing-surface`.**
-- Confirmed at drafting: `git status --short` in this worktree is empty at every point except this one new file; no product/test/config/route/RFC-source file has been touched by this branch at any point.
+- Confirmed at drafting and re-confirmed this round: `git status --short` in this worktree is empty at every point except this one file; no product/test/config/route/RFC-source file has been touched by this branch at any point.
 - Locked:
   - `human_only_merge: true`
   - `maximum_correction_rounds: 2`
+  - **Correction rounds: 1 of 2 consumed; 1 ordinary round remains.**
   - `advance_automatically: false`
   - `start_automatically_after_contract_merge: false`
   - `M6 remains frozen` — untouched, not resumed, no M6 document created or modified. Confirmed by direct read: `docs/automation/RFC-005-M6-CONTRACT.md` (366 lines) contains zero mentions of any of the seven remediations, including this one — it was merged (PR #133) before M6's own release-readiness attempt discovered the remediation-sequence gap, and has never been amended to reflect it. Its own two required deliverables, `docs/automation/RFC-005-M6-CONFORMANCE.md` and `docs/rfcs/RFC-005-BUSINESS-USAGE-BILLING-AND-WALLETS-DEPLOYMENT.md`, do not exist anywhere in this repository (confirmed via direct `ls`, both `No such file or directory`) — M6 remains genuinely open/blocked, not merely paused.
   - `AI-AUTONOMY-STATE.json` is untouched by this branch. (Confirmed stale relative to the actual remediation sequence — its own `"status": "m5_closed_pending_next_locked_contract"` / `"active_milestone": "Milestone 5"` fields have never been updated since M5 closed; this is consistent with every prior remediation contract's own confirmation that this file is untouched, not a new finding.)
   - No tag is created or moved. No live Stripe/rate/meter/pilot activation occurs.
   - **Implementation requires a separate, explicit human instruction issued after this contract itself is human-merged.**
-- This is a new, independently bounded pre-M6 remediation contract — not a correction round against M1–M5's own contracts, and not a correction round against any of the six already-merged corrections in this sequence (Reservation Admission, Funding Provider-Flow, Receipt Boundary, Job/Event Dispatch Completion, Reconciliation-Race, Funding Confirmation Concurrency). Its `maximum_correction_rounds: 2` budget is its own; no counter is borrowed or altered on any other contract.
+- This is a new, independently bounded pre-M6 remediation contract — not a correction round against M1–M5's own contracts, and not a correction round against any of the six already-merged corrections in this sequence (Reservation Admission, Funding Provider-Flow, Receipt Boundary, Job/Event Dispatch Completion, Reconciliation-Race, Funding Confirmation Concurrency). Its own `maximum_correction_rounds: 2` budget is its own; no counter is borrowed or altered on any other contract.
 - This governance branch changes exactly one tracked file: `docs/automation/RFC-005-ADMIN-USAGE-BILLING-SURFACE-CONTRACT.md`.
-- **Required reading completed before drafting, independently audited fresh in this pass:**
+- **Required reading completed before drafting, independently audited fresh in this pass; re-verified directly again this correction round wherever items 1–5 above required it (`UsageBillingCheckoutManager.php:577-619,655-729,916-927,2206-2213`, `database/migrations/2026_08_16_140005_create_business_funding_attempt_transitions_table.php`, `app/Models/BusinessFundingAttemptTransition.php`, `app/Events/Usage/BusinessWalletCredited.php`, `.../BusinessWalletDebtCleared.php`, `UsageWalletManager.php:879-963,1501-1508,1545-1568`):**
   - `docs/rfcs/RFC-005-BUSINESS-USAGE-BILLING-AND-WALLETS.md` — §15 (lines 476–547, platform safety limit / limit-transition schema), §16 (549–601, the narrowed platform-administrator charge-origination rule), §18 (734–793, manual/promotional credit and add-on schema), §21 (845–908, webhook exhaustion/disposition design), §24 (1052–1082, the authorization/tenant-isolation capability table), §28 (1142–1146, manager/domain authority), §30 (1160–1170, the HTTP/admin surface blueprint), §34 (1210–1214), §35 (1216–1250), §36–§39 (1253–1300).
   - Every merged RFC-005 correction/remediation contract naming "Admin Usage Billing Surface" as remaining, unbuilt scope: `RFC-005-RESERVATION-ADMISSION-CORRECTION-CONTRACT.md`, `RFC-005-FUNDING-PROVIDER-FLOW-CORRECTION-CONTRACT.md`, `RFC-005-RECEIPT-BOUNDARY-CORRECTION-CONTRACT.md`, `RFC-005-JOB-EVENT-DISPATCH-COMPLETION-CORRECTION-CONTRACT.md`, `RFC-005-RECONCILIATION-RACE-CORRECTION-CONTRACT.md`, and the already-known-in-full `RFC-005-FUNDING-CONFIRMATION-CONCURRENCY-CORRECTION-CONTRACT.md` (including its exceptional post-merge implementation correction and both of its own focused review fixes).
   - `RFC-005-M2-CONTRACT.md` and `RFC-005-M3-CONTRACT.md` and `RFC-005-M4-CONTRACT.md` — the three milestones that built (M2) or exposed the manager-layer methods this contract wires an HTTP surface onto, or (M3/M4) built the two narrow admin sub-surfaces this contract explicitly does not duplicate.
   - `routes/admin.php` (full file, 767 lines); `app/Http/Controllers/Admin/PaymentProviderEventController.php`, `app/Http/Controllers/Admin/AdditionalBusinessSlotAgreementController.php`, `app/Http/Controllers/Admin/BusinessController.php`, `app/Http/Controllers/Admin/WorkspaceEntitlementController.php`, `app/Http/Controllers/Admin/WorkspacePlanCatalogController.php` (full files); their FormRequests, views, and every existing Feature test governing an Admin controller in this codebase (`tests/Feature/Workspace/AdminWorkspaceEntitlementControllerTest.php`, `tests/Feature/Workspace/AdminWorkspacePlanCatalogControllerTest.php`, `tests/Feature/Business/AdminBusinessControllerTest.php`, `tests/Feature/Usage/SlotAgreementAdminAuthorityTest.php`, `tests/Feature/Usage/EntitlementCatalogSourceBoundaryTest.php`).
   - `app/Http/Middleware/EnsureUserIsAdministrator.php` (full file); `app/Helpers/Helper.php`'s `menuData()` (lines 550–902); `app/Providers/MenuServiceProvider.php`; `app/Providers/RouteServiceProvider.php` (the `mapWebRoutes()` group wrapping `routes/admin.php`).
   - `app/Library/Usage/UsageWalletManager.php`, `app/Library/Usage/BillingProfileManager.php`, `app/Library/Usage/PaymentInstrumentManager.php`, `app/Library/Usage/UsageBillingCheckoutManager.php` (full files, all public and relevant private methods).
-  - Every repository contract under `app/Repositories/Contracts/` whose name contains Usage/Wallet/Funding/Ledger/Limit/BillingReceipt/AddonPurchase (19 files); the four repositories this contract widens, in full, with their Eloquent implementations; the underlying migrations for `business_usage_wallets`, `business_usage_ledger_entries`, `business_usage_wallet_billing_status_transitions`, `business_usage_limit_transitions`, `platform_feature_usage_safety_limits`, `usage_meters` — each confirmed by direct read this pass, not merely cited from a prior contract.
-  - `app/Enums/Usage/*.php` (every enum in the Usage namespace); `app/Policies/UserPolicy.php` (confirmed the only Policy class in the repository — no Usage/Wallet/Business Policy exists).
+  - Every repository contract under `app/Repositories/Contracts/` whose name contains Usage/Wallet/Funding/Ledger/Limit/BillingReceipt/AddonPurchase (19 files); the **five** repositories this contract widens, in full, with their Eloquent implementations (corrected this round from an earlier miscount of "four," §0's own Correction Round 1 record item 6); the underlying migrations for `business_usage_wallets`, `business_usage_ledger_entries`, `business_usage_wallet_billing_status_transitions`, `business_usage_limit_transitions`, `platform_feature_usage_safety_limits`, `usage_meters`, `business_funding_attempt_transitions` — each confirmed by direct read this pass, not merely cited from a prior contract.
+  - `app/Enums/Usage/*.php` (every enum in the Usage namespace); `app/Exceptions/Usage/*.php` (every existing exception in the Usage namespace, to confirm reuse opportunities before naming new ones — confirmed `UnauthorizedSlotAgreementActionException`, `UnauthorizedUsageBillingManagementException`, `FundingAttemptNotResumableException`, `UsageWalletNotFoundException` all already exist and are reused, §2.1.2, §2.3); `app/Policies/UserPolicy.php` (confirmed the only Policy class in the repository — no Usage/Wallet/Business Policy exists).
   - None of the six already-merged corrections in this sequence is reopened, contradicted, or referenced as needing amendment by anything below.
 
 ---
@@ -53,15 +71,15 @@ Both milestones explicitly declined to build the rest, on record. `RFC-005-M4-CO
 
 **This contract is exactly that refused scope: the remaining M1–M3 admin capability set.** It does not touch, rebuild, or duplicate either existing controller.
 
-### 1.3 What already exists at the manager layer, fully built, with zero HTTP caller
+### 1.3 What already exists at the manager layer — two methods fully built; one requires this contract's own correction
 
-Three manager methods are **fully implemented, already platform-administrator-gated, already RFC-compliant, and confirmed by direct read to have no admin-controller caller anywhere in the repository today**:
+**Corrected this round (§0's own Correction Round 1 record, item 1).** Two manager methods are fully implemented, already platform-administrator-gated, already RFC-compliant, and confirmed by direct read to have no admin-controller caller anywhere in the repository today. A third — `retryFundingAttemptAsAdministrator()` — was previously, incorrectly, described the same way; it is not:
 
 - **`UsageWalletManager::setBillingStatus(Business $business, WalletBillingStatus $status, BillingStatusTransitionSource $source, ?int $actorUserId, string $reason): void`** (`app/Library/Usage/UsageWalletManager.php:1284`). Gated via `assertPlatformAdministrator()` when `$source === BillingStatusTransitionSource::AdminAction` (requiring a non-null `actorUserId`). Records a `BusinessUsageWalletBillingStatusTransition` row (`wallet_id`, `business_id`, `from_status`, `to_status`, `source`, `actor_user_id` nullable, `reason` — **NOT NULL**, `created_at`; confirmed directly from `database/migrations/2026_08_16_130004_create_business_usage_wallet_billing_status_transitions_table.php:18-26`), updates `wallets.billing_status`, dispatches `BusinessWalletBillingStatusChanged`. Its own docblock (`UsageWalletManager.php:1276-1283`) states it "ships as a fully functional, tested capability with zero calling production code path at M2 — no admin HTTP route exists yet."
 - **`UsageWalletManager::setSafetyLimit(string $featureKey, string $maxMonthlyLimitMicro, int $actorUserId, string $reason): void`** (`app/Library/Usage/UsageWalletManager.php:1240`). Platform-administrator-only (`assertPlatformAdministrator()` at line 1242). Upserts the `platform_feature_usage_safety_limits` row keyed by `feature_key` (`unique`, `varchar(64)`, `NOT NULL`; confirmed from `database/migrations/2026_08_16_130002_create_platform_feature_usage_safety_limits_table.php:18`), records a `BusinessUsageLimitTransition` with `business_id: null`, `limit_type: platform_safety_limit`, `feature_key` populated, `actor_user_id`/`reason` both **NOT NULL** (confirmed from `database/migrations/..._create_business_usage_limit_transitions_table.php:18-26`).
-- **`UsageBillingCheckoutManager::retryFundingAttemptAsAdministrator(BusinessFundingAttempt $attempt, int $actorUserId, string $reason): FundingAttemptResult`** (`app/Library/Usage/UsageBillingCheckoutManager.php:584-619`). Throws `FundingAttemptNotResumableException` unless state is `ProviderPending`/`RequiresAction`/`Failed` and a provider reference exists; re-verifies with the provider (never trusts local state); on success calls the shared `confirmSucceeded()` finalizer with `TransitionSource::AdminAction`. Confirmed by repo-wide grep: its only callers today are `tests/Feature/Usage/FundingAttemptPayerConsentTest.php` and this method's own docs — **no controller under `app/Http/Controllers/Admin` references it.**
+- **`UsageBillingCheckoutManager::retryFundingAttemptAsAdministrator(BusinessFundingAttempt $attempt, int $actorUserId, string $reason): FundingAttemptResult`** (`app/Library/Usage/UsageBillingCheckoutManager.php:584-619`). Confirmed by direct read at this exact base: throws `FundingAttemptNotResumableException` unless state is `ProviderPending`/`RequiresAction`/`Failed` and a provider reference exists; re-verifies with the provider (never trusts local state); on success calls the shared `confirmSucceeded()` finalizer with `TransitionSource::AdminAction`. **Its own `$reason` and `$actorUserId` parameters, however, are confirmed unused for authorization or audit purposes as the method stands today: `assertPlatformAdministrator()` is never called anywhere in this method's own body, and `$reason` is accepted but never read.** This contract's own §2.1.2 corrects both, mechanically deriving the exact production changes required. Confirmed by repo-wide grep: its only callers today are `tests/Feature/Usage/FundingAttemptPayerConsentTest.php` and this method's own docs — **no controller under `app/Http/Controllers/Admin` references it.**
 
-None of these three methods requires any change. This contract's design (§2) wires an HTTP entry point to each, exactly as written.
+The first two require no change. **The third requires the correction locked in §2.1.2 before this contract's own HTTP entry point can safely rely on it** — this contract's design (§2) wires an HTTP entry point to all three, but only after §2.1.2's own production change is applied to the third.
 
 ### 1.4 What is genuinely missing (net-new)
 
@@ -86,27 +104,89 @@ None of these three methods requires any change. This contract's design (§2) wi
 2. **Every capability in this contract's scope operates on the same small set of manager methods** (`UsageWalletManager`, `UsageBillingCheckoutManager`) through the same authorization boundary (`assertPlatformAdministrator()`) and the same mandatory-reason convention — unlike webhook-event disposition or slot-agreement allocation, none of these capabilities has its own independent state machine that would justify a dedicated controller.
 3. **Splitting it would fragment a single administrator's mental model** of "the usage-billing screen for Business X" across multiple controllers with duplicated Business-resolution logic, for no corresponding gain in cohesion — the closest precedent for a correctly-scoped split, `WorkspaceEntitlementController` vs. `WorkspacePlanCatalogController`, splits along a genuine resource-ownership boundary (Workspace-scoped entitlement mutation vs. platform-wide catalog read) that this contract's own capability set does not have, except for the one platform-wide action (§2.1.1 below), which stays in the same controller under a different, non-Business-scoped route.
 
-**This controller does not touch, wrap, or extend `PaymentProviderEventController` or `AdditionalBusinessSlotAgreementController`.** Those remain exactly as shipped; this contract's only interaction with them is a read-only navigation cross-reference (§2.6).
+**This controller does not touch, wrap, or extend `PaymentProviderEventController` or `AdditionalBusinessSlotAgreementController`.** Those remain exactly as shipped; this contract's only interaction with them is a read-only navigation cross-reference (§2.7).
 
-#### 2.1.1 Seven actions, all thin, one manager/repository call each
+#### 2.1.1 Seven actions — one manager call per write action; `show` reads via multiple repositories
+
+**Corrected this round (§0's own Correction Round 1 record, item 6):** the prior heading claimed "one manager/repository call each" for every action — false for `show`, which is read-only and reads via six repository methods, never a write query.
 
 | Action | Verb + URI | What it does | Calls |
 |---|---|---|---|
-| `show` | `GET businesses/{business}/usage-billing` | Renders the wallet/ledger/limits/funding-attempts dashboard for one Business. | `BusinessUsageWalletRepository::findByBusinessId()`, `BusinessFeatureUsageLimitRepository::forBusiness()`, `BusinessUsageLedgerEntryRepository::forBusinessPaginated()` (new), `BusinessFundingAttemptRepository::recentForBusiness()` (new), `BusinessUsageWalletBillingStatusTransitionRepository::forBusiness()` (new), `BusinessUsageLimitTransitionRepository::forBusiness()` (new) |
-| `issueManualCredit` | `POST businesses/{business}/usage-billing/credit` | Issues an auditable manual or promotional credit. | `UsageWalletManager::issueManualCredit()` (new, §2.3) |
+| `show` | `GET businesses/{business}/usage-billing` | Renders the wallet/ledger/limits/funding-attempts dashboard for one Business — reads via multiple repositories, never a write. | `BusinessUsageWalletRepository::findByBusinessId()`, `BusinessFeatureUsageLimitRepository::forBusiness()`, `BusinessUsageLedgerEntryRepository::forBusinessPaginated()` (new), `BusinessUsageLedgerEntryRepository::marginAggregateForBusiness()` (new, §2.5), `BusinessFundingAttemptRepository::recentForBusiness()` (new), `BusinessUsageWalletBillingStatusTransitionRepository::recentForBusiness()` (new), `BusinessUsageLimitTransitionRepository::recentForBusiness()` (new) |
+| `issueManualCredit` | `POST businesses/{business}/usage-billing/credit` | Issues an auditable, idempotent manual or promotional credit. | `UsageWalletManager::issueManualCredit()` (new, §2.3) |
 | `suspendBilling` | `POST businesses/{business}/usage-billing/suspend` | Sets `billing_status = Suspended`. | `UsageWalletManager::setBillingStatus()` (existing, unmodified) |
 | `resumeBilling` | `POST businesses/{business}/usage-billing/resume` | Sets `billing_status = Active`. | `UsageWalletManager::setBillingStatus()` (existing, unmodified) |
-| `retryFundingAttempt` | `POST businesses/{business}/usage-billing/funding-attempts/{attempt}/retry` | Resumes an already-created, payer-authorized attempt. | `UsageBillingCheckoutManager::retryFundingAttemptAsAdministrator()` (existing, unmodified) |
-| `safetyLimits` | `GET usage-billing/safety-limits` | Platform-wide (not Business-scoped): lists every configured platform feature-usage safety limit. | `PlatformFeatureUsageSafetyLimitRepository::all()` (new), `BusinessUsageLimitTransitionRepository::platformSafetyLimitHistory()` (new) |
+| `retryFundingAttempt` | `POST businesses/{business}/usage-billing/funding-attempts/{attempt}/retry` | Resumes an already-created, payer-authorized attempt, after an explicit controller-level cross-business ownership guard (§2.1.2, new this round). | `UsageBillingCheckoutManager::retryFundingAttemptAsAdministrator()` (corrected this round, §2.1.2) |
+| `safetyLimits` | `GET usage-billing/safety-limits` | Platform-wide (not Business-scoped): lists every configured platform feature-usage safety limit. | `PlatformFeatureUsageSafetyLimitRepository::all()` (new), `BusinessUsageLimitTransitionRepository::recentPlatformSafetyLimitHistory()` (new) |
 | `setSafetyLimit` | `POST usage-billing/safety-limits` | Sets or updates one platform-wide safety limit. | `UsageWalletManager::setSafetyLimit()` (existing, unmodified) |
 
-Every write action follows the identical shape already established by `AdditionalBusinessSlotAgreementController` (§1.2): resolve the target model (404 if not found, before any manager call — RFC §24 line 1078's "fail closed with a 404-shaped response, never a 403" for unrelated resources), call exactly one manager method with `(int) Auth::id()` as the actor and the FormRequest's validated `reason`, catch only the specific typed exception(s) that method can throw and map to `flash_error`, otherwise `flash_success` redirect back to `show`. No action ever contains a raw `DB::table(...)` call, a raw Eloquent write against `BusinessUsageWallet`/`BusinessUsageLedgerEntry`/any Usage-domain model, or more than one manager call.
+Every write action follows the identical shape already established by `AdditionalBusinessSlotAgreementController` (§1.2): resolve the target model (404 if not found, before any manager call — RFC §24 line 1078's "fail closed with a 404-shaped response, never a 403" for unrelated resources), call exactly one manager method with `(int) Auth::id()` as the actor and the FormRequest's validated `reason`, catch only the specific typed exception(s) that method can throw and map to `flash_error`, otherwise `flash_success` redirect back to `show`. `retryFundingAttempt` additionally performs the plain conditional guard locked in §2.1.2 before its own single manager call — that guard is not itself a manager or repository call, so "exactly one manager call" still holds for every write action. No action ever contains a raw `DB::table(...)` call, a raw Eloquent write against `BusinessUsageWallet`/`BusinessUsageLedgerEntry`/any Usage-domain model, or more than one manager call.
 
 `{business}` route-model-binds by primary key `id` — confirmed by direct read of `app/Models/Business.php` (no `getRouteKeyName()` override) and `routes/admin.php:597-600` (the existing `Route::resource('businesses', ...)` and `businesses/{business}/status` route both already bind this way with no `whereUuid`/`whereNumber` constraint needed). `{attempt}` binds by primary key `id`, constrained `->whereNumber('attempt')`, matching the existing `additional-business-slot-agreements/{agreement}/renewals/{charge}/retry` precedent (`routes/admin.php:710`) exactly.
 
+#### 2.1.2 Funding-attempt retry — authorization, mandatory reason, and audit correction
+
+**New this round (§0's own Correction Round 1 record, items 1 and 2).** `retryFundingAttemptAsAdministrator()`'s current body (confirmed by direct read at this contract's own base SHA, §1.3) neither authorizes nor audits its own caller — `assertPlatformAdministrator()` is never called, and `$reason` is accepted but never used. This contract locks the following change to `app/Library/Usage/UsageBillingCheckoutManager.php`:
+
+```php
+public function retryFundingAttemptAsAdministrator(BusinessFundingAttempt $attempt, int $actorUserId, string $reason): FundingAttemptResult
+{
+    $this->assertPlatformAdministrator($actorUserId);
+
+    $normalizedReason = trim($reason);
+    if ($normalizedReason === '') {
+        throw new UnauthorizedSlotAgreementActionException($actorUserId, null, 'retry a funding attempt without a reason');
+    }
+
+    if (! in_array($attempt->state, [FundingAttemptState::ProviderPending, FundingAttemptState::RequiresAction, FundingAttemptState::Failed], true)) {
+        throw new FundingAttemptNotResumableException($attempt->id, $attempt->state->value);
+    }
+
+    if ($attempt->provider_session_or_intent_reference === null) {
+        throw new FundingAttemptNotResumableException($attempt->id, $attempt->state->value);
+    }
+
+    if ($attempt->purpose === FundingAttemptPurpose::ManualTopUp || $attempt->purpose === FundingAttemptPurpose::AddonPurchase) {
+        $session = $this->gateway->retrieveCheckoutSession($attempt->provider_session_or_intent_reference);
+
+        if ($this->fundingAttemptCheckoutVerified($attempt, $session)) {
+            $this->confirmSucceeded($attempt, TransitionSource::AdminAction, null, $actorUserId, $this->resolveVerifiedPaymentMethodDisplay($attempt, $session), $normalizedReason);
+
+            return new FundingAttemptResult($attempt->id, FundingAttemptState::Succeeded, null);
+        }
+
+        return new FundingAttemptResult($attempt->id, $attempt->state, null);
+    }
+
+    $paymentIntent = $this->gateway->retrievePaymentIntent($attempt->provider_session_or_intent_reference);
+
+    if ($paymentIntent->status === 'succeeded') {
+        $this->confirmSucceeded($attempt, TransitionSource::AdminAction, null, $actorUserId, null, $normalizedReason);
+
+        return new FundingAttemptResult($attempt->id, FundingAttemptState::Succeeded, null);
+    }
+
+    return new FundingAttemptResult($attempt->id, $attempt->state, null);
+}
+```
+
+Locked design points:
+- **`assertPlatformAdministrator()` (already present on this exact class, `UsageBillingCheckoutManager.php:2206`, throwing `UnauthorizedSlotAgreementActionException`) and the blank-reason check both run first, before either gateway call** — matching this class's own established M4 convention (`retrySlotRenewalAsAdministrator()`/`allocateSlotAgreementAsAdministrator()` already perform an identical pair of checks, `UsageBillingCheckoutManager.php:1547-1562,2131-2140`). No new exception class is introduced for either check — both reuse the existing `UnauthorizedSlotAgreementActionException`, exactly as this class's own sibling M4 methods already do for their own blank-reason rejection.
+- **`confirmSucceeded()`, `finalizeFundingAttemptState()`, and `recordTransition()` each gain one new, trailing, optional `?string $reason = null` parameter** — confirmed backward-compatible with every existing call site (`confirmAttemptFromReturn()`, `confirmAttemptFromWebhook()`, and every other internal caller, confirmed by direct grep of every call site of all three methods at this base) since PHP permits omitting a trailing optional parameter; no other call site is modified.
+- **`recordTransition()`'s own `$this->transitionRepository->create([...])` array gains one new key, `'reason' => $reason`**, persisting the normalized reason on the resulting `business_funding_attempt_transitions` row only when one is supplied (`null` for every non-admin transition source, exactly as today).
+- **New, nullable migration required and locked**: `database/migrations/2026_08_28_120001_add_reason_to_business_funding_attempt_transitions_table.php` — adds `$table->text('reason')->nullable()->after('actor_user_id');` to `business_funding_attempt_transitions`. Mechanically derived: every other transition-style table in this domain that records a mandatory-reason admin action already has its own `reason` column (`business_usage_wallet_billing_status_transitions.reason`, `business_usage_limit_transitions.reason`, both confirmed NOT NULL since both are exclusively admin-actor tables); `business_funding_attempt_transitions` is shared by four transition sources (`SyncResponse`, `WebhookEvent`, `ReconciliationJob`, and now `AdminAction`) so its own `reason` column must be **nullable**, storing `null` for every existing, non-admin-actor row, unlike the two admin-only tables.
+- **`app/Models/BusinessFundingAttemptTransition.php` gains `'reason'` in its own `$fillable` array** — no new cast (plain nullable text), no relation change.
+- **Explicit controller-level cross-business guard, locked in `UsageBillingController::retryFundingAttempt()`** — `retryFundingAttemptAsAdministrator()` receives only a `BusinessFundingAttempt`, never a `Business`, so it has no way to validate which `{business}` the URL named; the manager cannot perform this check for itself. The controller therefore performs it explicitly, before calling the manager or the payment-provider gateway:
+  ```php
+  if ((int) $attempt->business_id !== (int) $business->id) {
+      abort(404);
+  }
+  ```
+  This corrects §2.9's own prior, inaccurate claim that every write action's manager method re-validates URL ownership — that claim is true for `issueManualCredit`/`suspendBilling`/`resumeBilling`/`setSafetyLimit` (each receives the resolved `Business` directly) but was never true for `retryFundingAttempt`, and §2.9 is corrected below to say so.
+
 ### 2.2 Routes — exact addition to `routes/admin.php`
 
-Added inside the **same** `EnsureUserIsAdministrator` group already wrapping the `businesses` resource (`routes/admin.php:596-601`), immediately after the existing `businesses/{business}/status` route:
+Unchanged this round. Added inside the **same** `EnsureUserIsAdministrator` group already wrapping the `businesses` resource (`routes/admin.php:596-601`), immediately after the existing `businesses/{business}/status` route:
 
 ```php
 Route::middleware(EnsureUserIsAdministrator::class)->group(function () {
@@ -131,10 +211,12 @@ Route::middleware(EnsureUserIsAdministrator::class)->group(function () {
 
 Resulting full route names (with the `admin.` prefix `RouteServiceProvider.php:70` already applies to the whole file): `admin.businesses.usage-billing.show`, `admin.businesses.usage-billing.credit`, `admin.businesses.usage-billing.suspend`, `admin.businesses.usage-billing.resume`, `admin.businesses.usage-billing.funding-attempts.retry`, `admin.usage-billing.safety-limits.index`, `admin.usage-billing.safety-limits.update`. **Exactly 7 new route declarations.** Placed inside the businesses group (not the separate Workspace/Usage group at line 666) because every action but the two safety-limit routes is Business-scoped, keeping Business-admin routes textually together; the two safety-limit routes are placed adjacently in the same group rather than opening a third `EnsureUserIsAdministrator::class` wrapper, since one additional gate-wrapper per unrelated concern would fragment this file's own established convention of a small, fixed number of such groups.
 
-### 2.3 New manager method: `UsageWalletManager::issueManualCredit()`
+### 2.3 New manager method: `UsageWalletManager::issueManualCredit()` — idempotent, event-dispatching
+
+**Corrected this round (§0's own Correction Round 1 record, items 3 and 4).**
 
 ```php
-public function issueManualCredit(Business $business, UsageLedgerEntryType $entryType, int $amountMicro, int $actorUserId, string $reason): void
+public function issueManualCredit(Business $business, UsageLedgerEntryType $entryType, int $amountMicro, int $actorUserId, string $reason, string $operationId): BusinessUsageLedgerEntry
 {
     $this->assertPlatformAdministrator($actorUserId);
 
@@ -146,78 +228,146 @@ public function issueManualCredit(Business $business, UsageLedgerEntryType $entr
         throw new InvalidAdminCreditAmountException($amountMicro);
     }
 
-    if (trim($reason) === '') {
-        throw new InvalidAdminCreditReasonException($business->id); // reason-blank branch; exact exception type TBD at implementation, see note below
+    $normalizedReason = trim($reason);
+    if ($normalizedReason === '') {
+        throw new InvalidAdminCreditReasonException((int) $business->id);
     }
 
-    DB::transaction(function () use ($business, $entryType, $amountMicro, $actorUserId, $reason) {
-        $wallet = $this->walletRepository->findForUpdateByBusinessId((int) $business->id);
-        // ... debt-clears-first, then credits available_balance_micro,
-        // identical arithmetic shape to creditFromFunding()'s own
-        // existing debt-clearing logic (UsageWalletManager.php:879-963),
-        // but implemented as new, independent code — creditFromFunding()
-        // itself is not modified, reused, or called (§5.3's own
-        // boundary test enforces this at the source level).
+    $correlationKey = 'admin_credit:'.$business->id.':'.$operationId;
 
-        $this->ledgerRepository->create([
+    return DB::transaction(function () use ($business, $entryType, $amountMicro, $actorUserId, $normalizedReason, $correlationKey) {
+        $wallet = $this->walletRepository->findForUpdateByBusinessId((int) $business->id);
+
+        if ($wallet === null) {
+            throw new UsageWalletNotFoundException((int) $business->id);
+        }
+
+        $existing = $this->ledgerRepository->findByCorrelationKey($correlationKey);
+
+        if ($existing !== null) {
+            $samePayload = (int) $existing->business_id === (int) $business->id
+                && $existing->entry_type === $entryType->value
+                && (int) $existing->gross_amount_micro === $amountMicro
+                && (int) $existing->actor_user_id === $actorUserId
+                && $existing->reason === $normalizedReason;
+
+            if (! $samePayload) {
+                throw new ManualCreditOperationConflictException($correlationKey);
+            }
+
+            return $existing; // idempotent replay: zero balance change, zero events, zero new row
+        }
+
+        $wallet = $this->rollOverPeriodsIfNeeded($wallet, $business);
+
+        $debtCleared = min($amountMicro, max(0, $wallet->debt_balance_micro));
+        $creditedToAvailable = $amountMicro - $debtCleared;
+
+        $ledgerEntry = $this->ledgerRepository->create([
             'business_id' => $business->id,
             'wallet_id' => $wallet->id,
             'entry_type' => $entryType->value,
-            'available_delta_micro' => $creditedToAvailable, // computed after debt-clearing
+            'available_delta_micro' => $creditedToAvailable,
             'reserved_delta_micro' => 0,
-            'debt_delta_micro' => -$clearedFromDebt,
+            'debt_delta_micro' => -$debtCleared,
             'gross_amount_micro' => $amountMicro,
             'currency_id' => $wallet->currency_id,
             'actor_user_id' => $actorUserId,
-            'reason' => $reason,
-            'correlation_key' => 'admin_credit:'.$business->id.':'.(string) Str::uuid(),
-            'created_at' => now(),
-            // feature_key, meter_key, period_key, quantity, rate_id,
-            // rate_version, retail_rate_micro, provider_cost_micro,
-            // unit_label, rounding_rule, reservation_id,
-            // funding_attempt_id, provider_reference, reversed_entry_id
-            // all null — this entry has no rate/usage/funding-attempt/
-            // provider basis, matching UsageLedgerEntryType::ManualCredit/
-            // ::PromotionalCredit's own schema-level intent.
+            'reason' => $normalizedReason,
+            'correlation_key' => $correlationKey,
+            'created_at' => Carbon::now(),
         ]);
+
+        $walletUpdate = [
+            'available_balance_micro' => $wallet->available_balance_micro + $creditedToAvailable,
+            'debt_balance_micro' => $wallet->debt_balance_micro - $debtCleared,
+        ];
+
+        $shouldDispatchLowBalanceNotification = false;
+        $lowBalanceFragment = $creditedToAvailable > 0
+            ? $this->lowBalanceMarkerUpdate($wallet, $wallet->available_balance_micro + $creditedToAvailable, $shouldDispatchLowBalanceNotification)
+            : [];
+
+        $this->walletRepository->update($wallet, array_merge($walletUpdate, $lowBalanceFragment));
+
+        if ($creditedToAvailable > 0) {
+            \App\Events\Usage\BusinessWalletCredited::dispatch($business->id, (int) $wallet->id, (int) $ledgerEntry->id, $creditedToAvailable);
+        }
+
+        if ($debtCleared > 0) {
+            \App\Events\Usage\BusinessWalletDebtCleared::dispatch($business->id, (int) $wallet->id, (int) $ledgerEntry->id, $debtCleared);
+        }
+
+        if ($shouldDispatchLowBalanceNotification) {
+            \App\Jobs\Usage\SendLowBalanceNotification::dispatch($business->id)->afterCommit();
+        }
+
+        return $ledgerEntry;
     });
 }
 ```
 
 Locked design points:
-- **Platform-administrator-gated via the existing private `assertPlatformAdministrator()`**, the identical convention `setSafetyLimit()`/`setBillingStatus()`/`UsageBillingCheckoutManager::assertPlatformAdministrator()` already use (a direct `DB::table('users')->where('id', $actorUserId)->value('is_admin')` read, never trusting a passed-in flag) — no new authorization mechanism is introduced.
-- **`entryType` is constrained to exactly `ManualCredit`/`PromotionalCredit`**, checked inside the manager (not only the FormRequest), matching this codebase's own established defense-in-depth discipline (the FormRequest already constrains this via `in:manual_credit,promotional_credit`, and the manager independently re-checks, exactly as `retrySlotRenewalAsAdministrator()`/`allocateSlotAgreementAsAdministrator()` independently re-check their own mandatory-reason precondition even though their FormRequests already enforce it, `UsageBillingCheckoutManager.php:1547-1562,2131-2140`).
-- **A fresh, per-call correlation key** (`'admin_credit:'.$business->id.':'.Str::uuid()`) satisfies `business_usage_ledger_entries.correlation_key`'s `UNIQUE` constraint. Unlike `creditFromFunding()`, this method has no funding attempt or webhook to naturally key against and no replay/redelivery scenario to guard against (a manual admin action is not retried by any queue/webhook mechanism) — so, unlike the funding-confirmation path, no unique-constraint collision is ever expected in normal operation; a double form submission would produce two independent, genuinely-intended-as-separate ledger entries rather than erroring, mitigated only by ordinary UI affordances (a disabled-after-submit button), not by manager-level idempotency. This is a disclosed, deliberate design choice, not an oversight — flagged again in §12.
-- **Debt-clears-first, then credits `available_balance_micro`**, mirroring `creditFromFunding()`'s own existing arithmetic shape for consistency of wallet semantics across every credit-type ledger entry — but as **entirely new, independent code**; `creditFromFunding()` itself is not modified, and `issueManualCredit()` never calls it. `SendReceiptNotification` is never dispatched by this method — a manual/promotional credit has no provider-side evidence to attach a receipt to, and this is an intentional exclusion, not a gap (§9).
-- **No domain event is dispatched by this method.** `RFC-005-JOB-EVENT-DISPATCH-COMPLETION-CORRECTION-CONTRACT.md:389` explicitly named "`ManualCredit`/`PromotionalCredit`/`UsageChargeReversal`/`CorrectionReversal` ledger-entry producers or dispatch" as excluded from that contract's own scope — deferred, by name, to this one. This contract locks the **producer** (the manager method above) but deliberately does not design a new domain event for it, since none of the RFC's own text (§28/§29/§34) names a required event for this specific action, and inventing one would exceed this contract's own bounded scope (view/credit/suspend/limit/resume — an HTTP+manager+repository surface, not a notification/observability design). This is a genuinely disclosed exclusion, restated in §9 and §12, not a silent omission.
-- Exact exception-type naming for the three new guard branches (invalid entry type, non-positive amount, blank reason) is left to implementation to choose consistent, narrowly-scoped names (e.g. `InvalidAdminCreditEntryTypeException`, `InvalidAdminCreditAmountException`, `InvalidAdminCreditReasonException`) mirroring the existing `FundingAttemptNotResumableException`/`UnauthorizedSlotAgreementActionException` naming convention (one exception class per distinct guard condition, each extending a shared base if the codebase already has one for this domain — not otherwise specified by this contract, since it is a naming-only implementation detail with no governance weight).
+- **Return type, locked: `BusinessUsageLedgerEntry`** — the created row on a fresh credit, or the original, already-existing row on an idempotent replay. No new value object/DTO is introduced.
+- **Four new, single-purpose exceptions, each explicitly on the production allow-list (§6) — no "TBD" naming is left to implementation:** `InvalidAdminCreditEntryTypeException`, `InvalidAdminCreditAmountException`, `InvalidAdminCreditReasonException`, `ManualCreditOperationConflictException` (all `app/Exceptions/Usage/`). Non-admin actor rejection reuses the existing `UnauthorizedUsageBillingManagementException` (`UsageWalletManager`'s own established convention, e.g. `setBillingStatus()`'s identical reuse) — no new file for that guard.
+- **`operationId` is supplied by the caller, not generated inside the manager** (§2.6 locks exactly how the controller/view produce and preserve it). The correlation key is **deterministic** — `'admin_credit:'.$business->id.':'.$operationId` — not random, so the identical HTTP request replayed (a double form submission, a retried request after a timeout, a browser back-button resubmission) always produces the identical correlation key.
+- **Idempotency is checked inside the wallet-row-locked transaction, before any balance mutation, any event dispatch, or any low-balance-marker update** — `BusinessUsageLedgerEntryRepository::findByCorrelationKey()` (new, §2.4) is the lookup. An existing row with an **identical normalized payload** (Business id, entry type, gross amount, actor, normalized reason — the same five fields this correction round named) is treated as the same operation and its own already-persisted row is returned unchanged: no second `create()`, no wallet update, no event dispatch, no low-balance re-evaluation. An existing row with **any of those five fields different** is treated as a genuine conflict — `ManualCreditOperationConflictException` is thrown, and nothing is mutated (the throw happens before `rollOverPeriodsIfNeeded()`/`create()`/`update()` are ever reached).
+- **The pre-existing `UNIQUE` constraint on `business_usage_ledger_entries.correlation_key` remains the database-level backstop** underneath this application-level check, exactly as it already is for `creditFromFunding()`'s own funding-attempt-keyed correlation keys — this contract does not relax, bypass, or duplicate that constraint.
+- **Debt-clears-first, then credits `available_balance_micro`, mirroring `creditFromFunding()`'s own existing arithmetic exactly** (`UsageWalletManager.php:879-954`) — `$debtCleared = min($amountMicro, max(0, $wallet->debt_balance_micro))`, `$creditedToAvailable = $amountMicro - $debtCleared`. As before, this is new, independent code — `creditFromFunding()` itself is not modified, and `issueManualCredit()` never calls it (enforced by §5.3's boundary test).
+- **Dispatches the two already-shipped wallet-balance domain events `creditFromFunding()` already dispatches for the identical arithmetic shape** — `BusinessWalletCredited::dispatch($businessId, $walletId, $ledgerEntryId, $creditedToAvailable)` when `$creditedToAvailable > 0`, and `BusinessWalletDebtCleared::dispatch($businessId, $walletId, $ledgerEntryId, $debtCleared)` when `$debtCleared > 0` — both may fire for the same credit (a credit larger than the outstanding debt), both carry the created ledger-entry id, and both are `ShouldDispatchAfterCommit` (unmodified event classes, `app/Events/Usage/BusinessWalletCredited.php`, `.../BusinessWalletDebtCleared.php`) — their own existing after-commit deferral behavior is preserved unmodified, exactly as it already works for `creditFromFunding()`. **No new event class is introduced.**
+- **Mirrors `creditFromFunding()`'s own low-balance-marker reset/re-evaluation semantics exactly** — the same private `lowBalanceMarkerUpdate()` helper (`UsageWalletManager.php:1545`), called only when `$creditedToAvailable > 0`, with the identical `SendLowBalanceNotification::dispatch(...)->afterCommit()` follow-up when it signals a marker reset.
+- **`SendReceiptNotification` is never dispatched** — unchanged from the initial draft; a manual/promotional credit has no provider-side evidence to attach a receipt to.
+- **An idempotent replay dispatches zero events of any kind and touches no wallet column** — the early `return $existing;` happens before every event-dispatch statement and before the wallet-update call in the method body, confirmed directly by the code block's own control flow above.
 
-### 2.4 New repository methods — exact, per contract
+### 2.4 New repository methods — exact, per contract, all bounded
 
-Every new method is a plain, non-locking read (the two write paths this contract adds — `issueManualCredit`, and the pre-existing `setSafetyLimit`/`setBillingStatus`/`retryFundingAttemptAsAdministrator` — already lock correctly inside their own manager methods; no new locking read is required anywhere in this contract's own scope):
+**Corrected this round (§0's own Correction Round 1 record, item 5's bounded-reads half).** Every new method is a plain, non-locking read, and every history/listing method is now explicitly bounded — no unbounded `Collection` read is introduced anywhere in this contract's own scope:
 
-- **`BusinessUsageLedgerEntryRepository::forBusinessPaginated(int $businessId, int $perPage, array $filters = []): LengthAwarePaginator`** — `$filters` supports `entry_type` (exact match) and `from`/`to` (inclusive `created_at` date-range bounds). Ordered `orderByDesc('id')`. New contract method + Eloquent implementation.
-- **`BusinessFundingAttemptRepository::recentForBusiness(int $businessId, int $limit = 20): Collection`** — plain (no `FOR UPDATE`), `orderByDesc('id')->limit($limit)->get()`. Deliberately distinct from, and never delegates to, the existing locking `findOutstandingForBusiness()` (§1.4). New contract method + Eloquent implementation.
-- **`PlatformFeatureUsageSafetyLimitRepository::all(): Collection`** — `orderBy('feature_key')->get()`. New contract method + Eloquent implementation.
-- **`BusinessUsageWalletBillingStatusTransitionRepository::forBusiness(int $businessId): Collection`** — `where('business_id', $businessId)->orderByDesc('id')->get()`. New contract method + Eloquent implementation.
-- **`BusinessUsageLimitTransitionRepository::forBusiness(int $businessId): Collection`** — `where('business_id', $businessId)->orderByDesc('id')->get()` (per-Business spend-cap/feature-limit history). **`BusinessUsageLimitTransitionRepository::platformSafetyLimitHistory(): Collection`** — `whereNull('business_id')->where('limit_type', UsageLimitType::PlatformSafetyLimit->value)->orderByDesc('id')->get()` (platform-safety-limit-only history, confirmed correct against the migration's own nullable `business_id`/`feature_key` columns, §1.2). Both new contract methods + Eloquent implementation, on the same repository.
+- **`BusinessUsageLedgerEntryRepository::forBusinessPaginated(int $businessId, int $perPage, array $filters = []): LengthAwarePaginator`** — unchanged from the initial draft; `$filters` supports `entry_type` (exact match) and `from`/`to` (inclusive `created_at` date-range bounds), ordered `orderByDesc('id')`. Already bounded by construction (a real paginator, §2.11).
+- **`BusinessUsageLedgerEntryRepository::findByCorrelationKey(string $correlationKey): ?BusinessUsageLedgerEntry`** — new this round, the idempotency lookup `issueManualCredit()` requires (§2.3): `where('correlation_key', $correlationKey)->first()`.
+- **`BusinessUsageLedgerEntryRepository::marginAggregateForBusiness(int $businessId, string $periodKey): Collection`** — new, replacing the initial draft's unbounded `marginAggregateRowsForBusiness()`; full design in §2.5.
+- **`BusinessFundingAttemptRepository::recentForBusiness(int $businessId, int $limit = 20): Collection`** — unchanged from the initial draft; already bounded by its own explicit `$limit`. Plain (no `FOR UPDATE`), `orderByDesc('id')->limit($limit)->get()`. Deliberately distinct from, and never delegates to, the existing locking `findOutstandingForBusiness()` (§1.4).
+- **`PlatformFeatureUsageSafetyLimitRepository::all(): Collection`** — unchanged; `orderBy('feature_key')->get()`. Not bounded by a `$limit`, but deliberately so: this table holds at most one row per platform feature key, a genuinely small, operator-controlled set (M2 contract §6.C: zero rows until a feature is actually metered — only Conversations today, per M5), not an unbounded, ever-growing history table — the same category `PaymentProviderEventController::index()`'s own unbounded-but-genuinely-small exhausted-event read already establishes as an acceptable pattern in this exact domain.
+- **`BusinessUsageWalletBillingStatusTransitionRepository::recentForBusiness(int $businessId, int $limit = 20): Collection`** — **renamed and bounded this round** (was `forBusiness()`, unbounded, in the initial draft): `where('business_id', $businessId)->orderByDesc('id')->limit($limit)->get()`.
+- **`BusinessUsageLimitTransitionRepository::recentForBusiness(int $businessId, int $limit = 20): Collection`** — **renamed and bounded this round** (was `forBusiness()`): `where('business_id', $businessId)->orderByDesc('id')->limit($limit)->get()` (per-Business spend-cap/feature-limit history).
+- **`BusinessUsageLimitTransitionRepository::recentPlatformSafetyLimitHistory(int $limit = 50): Collection`** — **renamed and bounded this round** (was `platformSafetyLimitHistory()`): `whereNull('business_id')->where('limit_type', UsageLimitType::PlatformSafetyLimit->value)->orderByDesc('id')->limit($limit)->get()`, confirmed correct against the migration's own nullable `business_id`/`feature_key` columns (§1.3).
 
-**No new method is added to `BusinessUsageWalletRepository` or `BusinessFeatureUsageLimitRepository`** — `findByBusinessId()` and `forBusiness()` already exist and are reused verbatim (§1.4 confirms `forBusiness()` already supports the per-Business limits read this contract needs).
+**No new method is added to `BusinessUsageWalletRepository` or `BusinessFeatureUsageLimitRepository`** — unchanged from the initial draft; `findByBusinessId()` and `forBusiness()` already exist and are reused verbatim.
 
-### 2.5 Provider-cost/margin aggregate — read-only, bounded, locked
+### 2.5 Provider-cost/margin aggregate — SQL-computed, bounded, locked
 
-**`BusinessUsageLedgerEntryRepository::marginAggregateRowsForBusiness(int $businessId, string $periodKey): Collection`** (new contract method + Eloquent implementation) returns raw rows — `feature_key`, `quantity`, `provider_cost_micro`, `gross_amount_micro` — for every ledger entry belonging to that Business and period whose `entry_type` is `usage_charge` or `usage_overage_charge` (the only two entry types ever populated with a rate/cost basis, confirmed §1.4) and whose `provider_cost_micro` is not null. The repository owns the query; it performs no aggregation itself.
+**Corrected this round (§0's own Correction Round 1 record, item 5's aggregation half).** The initial draft's `marginAggregateRowsForBusiness()` returned one raw row per matching ledger entry for PHP-side summation — for a Business with a large volume of metered usage in one period, this loads every matching row into memory merely to add them up. **Redesigned: the aggregation itself happens inside `EloquentBusinessUsageLedgerEntryRepository::marginAggregateForBusiness()`, in SQL**, returning one row per `feature_key` — never one row per ledger entry:
 
-A new, small, stateless computation — either a private method on `UsageBillingController` or a dedicated value object, left to implementation discretion since it carries no governance weight either way, but **must** use `bcmath` (matching the codebase's own existing `UsageWalletManager::bcRoundHalfUp()` static helper convention, since `quantity` is a `decimal(14,6)` and float arithmetic would silently lose precision) — sums `gross_amount_micro` as retail revenue, sums `provider_cost_micro × quantity` (via `bcmul`) as provider cost, and reports `revenue − cost` as margin, grouped by `feature_key`, for the requested Business and period. **Never edits `provider_cost_micro`** — this is a pure read aggregation; no write path to that column exists anywhere in this contract's own scope (§3).
+```php
+public function marginAggregateForBusiness(int $businessId, string $periodKey): Collection
+{
+    return $this->query()
+        ->selectRaw('feature_key')
+        ->selectRaw('ROUND(SUM(gross_amount_micro)) AS retail_revenue_micro')
+        ->selectRaw('ROUND(SUM(CAST(provider_cost_micro AS DECIMAL(20,6)) * quantity)) AS provider_cost_micro')
+        ->selectRaw('ROUND(SUM(gross_amount_micro) - SUM(CAST(provider_cost_micro AS DECIMAL(20,6)) * quantity)) AS margin_micro')
+        ->where('business_id', $businessId)
+        ->where('period_key', $periodKey)
+        ->whereIn('entry_type', [UsageLedgerEntryType::UsageCharge->value, UsageLedgerEntryType::UsageOverageCharge->value])
+        ->whereNotNull('provider_cost_micro')
+        ->groupBy('feature_key')
+        ->get();
+}
+```
 
-The exact period-key/feature-key grouping granularity locked here (one month, one feature, per row) is a reasonable default derived from how every other period-scoped concept in this domain is already keyed (`period_key` format `YYYY-MM`, matching `business_usage_ledger_entries.period_key`'s own existing shape) — not an RFC-mandated grouping (§24/§30 say only "view... aggregates," without specifying granularity). This is flagged again in §12 as a minor, implementation-level choice a human could reasonably adjust without contract amendment.
+Locked design points:
+- **The aggregation is exact `DECIMAL` arithmetic, performed by MySQL, not PHP.** `provider_cost_micro` (a `bigint`) is explicitly `CAST(... AS DECIMAL(20,6))` before multiplying by `quantity` (already `decimal(14,6)`), so the multiplication is fixed-point-exact, never an implicit float — MySQL's own `DECIMAL` type performs exact arithmetic, unlike PHP's native float type, which is exactly why the initial draft required `bcmath` for the same computation done in PHP; doing the computation in SQL removes the need for `bcmath` here entirely, and no `bcmath` call is added to the controller.
+- **Rounding rule, locked: SQL `ROUND()` to the nearest whole micro (MySQL's own default round-half-away-from-zero for `DECIMAL` values)**, applied once per aggregate column, matching every other `*_micro` column in this schema's own integer-only precision.
+- **Grouping, locked and unchanged from the initial draft: one row per `feature_key`, for one Business and one `period_key` (format `YYYY-MM`, matching `business_usage_ledger_entries.period_key`'s own existing shape)** — scoped to `entry_type IN ('usage_charge', 'usage_overage_charge')` (the only two entry types ever populated with a rate/cost basis, confirmed §1.4) and `provider_cost_micro IS NOT NULL`.
+- **The controller-side responsibility is formatting only, via a locked controller-private method — no dedicated value object is introduced.** `UsageBillingController` receives the already-aggregated `Collection` of rows (`feature_key`, `retail_revenue_micro`, `provider_cost_micro`, `margin_micro`, all already-rounded integers) from the repository and formats them for display; it performs no summation, no `bcmath` call, and no per-row computation of its own.
+- **Never edits `provider_cost_micro`.** This is a pure read aggregation; no write path to that column is added anywhere (§3).
 
 ### 2.6 Views
 
 All new views live under `resources/views/admin/usage-billing/` and use the `x-*` design-system component idiom (`x-card`, `x-table`, `x-badge`, `x-alert`, `x-empty-state`, `x-button`) — confirmed as the current, consistently-applied convention within the Usage domain specifically (`provider-events/index.blade.php`, `additional-business-slot-agreements/index.blade.php` and `show.blade.php`), not the older raw-Bootstrap idiom still used by `workspace-plan-catalog/index.blade.php`.
 
-- **`resources/views/admin/usage-billing/businesses/show.blade.php`** — the single per-Business dashboard: wallet snapshot (available/reserved/debt balances, spend cap, committed/reserved spend this period, `billing_status` badge, auto-recharge configuration shown **read-only**, never editable here — §3), configured per-feature limits (`x-table`), a paginated/filterable ledger listing (`{{ $ledgerEntries->links() }}`, entry-type and date-range filter inputs as a `GET` form, mirroring `AdditionalBusinessSlotAgreementController::index()`'s own `->paginate(25)` convention), recent funding attempts with an inline "Retry" form per resumable row (`state` in `ProviderPending`/`RequiresAction`/`Failed`, mirroring the show page's own conditional-form-per-state pattern already established at `additional-business-slot-agreements/show.blade.php`), billing-status suspend/resume forms (each a single required `reason` text input, no confirmation modal — matching the established no-JS-modal convention), manual-credit issuance form (`entry_type` select constrained to Manual Credit/Promotional Credit, an amount input, a required `reason`), and billing-status/limit-change history tables. If no wallet exists for the Business (an edge case; every Business should have one via `initializeWalletForNewBusiness()` at creation, M1), the page renders an explicit `x-empty-state` rather than throwing.
-- **`resources/views/admin/usage-billing/safety-limits/index.blade.php`** — platform-wide: a table of every currently configured safety limit (`x-table`, one row per `feature_key`), an inline set/update form per row plus one "configure a new feature key" form, and the platform-safety-limit-scoped transition history.
+- **`resources/views/admin/usage-billing/businesses/show.blade.php`** — the single per-Business dashboard: wallet snapshot (available/reserved/debt balances, spend cap, committed/reserved spend this period, `billing_status` badge, auto-recharge configuration shown **read-only**, never editable here — §3), configured per-feature limits (`x-table`), the SQL-computed margin aggregate (§2.5, formatted by a controller-private method), a paginated/filterable ledger listing (`{{ $ledgerEntries->links() }}`, entry-type and date-range filter inputs as a `GET` form, mirroring `AdditionalBusinessSlotAgreementController::index()`'s own `->paginate(25)` convention), recent funding attempts with an inline "Retry" form per resumable row (`state` in `ProviderPending`/`RequiresAction`/`Failed`, mirroring the show page's own conditional-form-per-state pattern already established at `additional-business-slot-agreements/show.blade.php`), billing-status suspend/resume forms (each a single required `reason` text input, no confirmation modal — matching the established no-JS-modal convention), a manual-credit issuance form (`entry_type` select constrained to Manual Credit/Promotional Credit, an amount input, a required `reason`, and a hidden `operation_id` input — **new this round (§2.3)**: `value="{{ old('operation_id', $operationId) }}"`, where `$operationId` is a fresh UUID `show()` generates on every `GET` render; a validation-failure redirect preserves the identical UUID via Laravel's own default old-input mechanism, so a corrected-and-resubmitted form reuses the same operation, while a genuinely fresh page load always receives a new one), and billing-status/limit-change history tables (bounded, §2.4). If no wallet exists for the Business (an edge case; every Business should have one via `initializeWalletForNewBusiness()` at creation, M1), the page renders an explicit `x-empty-state` rather than throwing.
+- **`resources/views/admin/usage-billing/safety-limits/index.blade.php`** — platform-wide: a table of every currently configured safety limit (`x-table`, one row per `feature_key`), an inline set/update form per row plus one "configure a new feature key" form, and the platform-safety-limit-scoped transition history (bounded, §2.4).
 - **`resources/views/admin/businesses/show.blade.php` (MODIFIED, one line)** — adds a single link to `admin.businesses.usage-billing.show` from the existing Business detail page (mirroring the existing `admin.businesses.edit` link already there at line 13), so an administrator reaches the new dashboard from the Business they are already viewing rather than through a new, duplicated Business-search UI. This is the one, narrowly-justified, pre-existing-file modification this contract makes outside its own new files — explicitly required because Business discovery already exists (`admin.businesses.index`) and must not be rebuilt (per this contract's own explicit instruction not to duplicate already-shipped surfaces).
 
 ### 2.7 Navigation integration — one new nav group, read-only cross-links to the two existing surfaces
@@ -256,11 +406,11 @@ All new views live under `resources/views/admin/usage-billing/` and use the `x-*
 
 This is the **only** shared navigation/read-model integration point with the two already-shipped surfaces this contract touches, and it is genuinely required and explicitly justified: it is the first sidebar nav entry any RFC-00x admin-only module has ever received (§1.4 — a pre-existing, systemic gap this contract does not otherwise attempt to close for unrelated modules), and grouping it with the two existing, functionally-related Usage-domain admin surfaces gives an administrator one discoverable entry point instead of three undiscoverable ones, **without duplicating either surface's own routes, controllers, or mutations** — each child link points at the existing route name verbatim (`admin.provider-events.index`, `admin.additional-business-slot-agreements.index`); no new controller action, view, or FormRequest is created for either. The per-Business dashboard itself is deliberately **not** a sidebar destination (it has no meaning without a specific Business) and is reached only via §2.6's link on the Business detail page — consistent with not rebuilding Business discovery.
 
-`access: 'access backend'` on every child (no new permission string) matches the established convention (`PaymentProviderEventController.php:14-15`'s own "no new config/permissions.php entry is authorized," and the Dashboard entry's own identical `'access' => 'access backend'` at `Helper.php:560`) — whether a dedicated permission string should eventually replace this is flagged as an open, genuinely undecided item (§12), not resolved here.
+**`access: 'access backend'` on every child (no new permission string) is locked this round (§0's own Correction Round 1 record item 6, resolving the initial draft's own open item 1): this contract continues the established Usage-admin convention** (`PaymentProviderEventController.php:14-15`'s own "no new config/permissions.php entry is authorized," and the Dashboard entry's own identical `'access' => 'access backend'` at `Helper.php:560`) of relying on `access backend` + `EnsureUserIsAdministrator` alone, with no dedicated permission string introduced by this contract.
 
 ### 2.8 Read-model/query ownership — no raw billing-table access from controllers
 
-**Locked, and enforced by a static source-boundary test (§5.3):** `UsageBillingController` contains zero raw `DB::table(...)`/`DB::select(...)` calls and zero direct Eloquent query-builder calls against `BusinessUsageWallet`, `BusinessUsageLedgerEntry`, `BusinessFeatureUsageLimit`, `PlatformFeatureUsageSafetyLimit`, `BusinessUsageWalletBillingStatusTransition`, or `BusinessUsageLimitTransition`. Every read and every write goes through the seven repositories/one manager named in §2.1's table — the controller's own body is a sequence of "resolve route params → call exactly one repository or manager method → pass the result to the view / redirect," identical in shape to `AdditionalBusinessSlotAgreementController`'s own established discipline (§1, "one manager call per action").
+**Locked, and enforced by a static source-boundary test (§5.3):** `UsageBillingController` contains zero raw `DB::table(...)`/`DB::select(...)` calls and zero direct Eloquent query-builder calls against `BusinessUsageWallet`, `BusinessUsageLedgerEntry`, `BusinessFeatureUsageLimit`, `PlatformFeatureUsageSafetyLimit`, `BusinessUsageWalletBillingStatusTransition`, or `BusinessUsageLimitTransition`. Every read and every write goes through the repositories and managers named in §2.1's table — the controller's own body is a sequence of "resolve route params → call exactly one repository or manager method per line of work → pass the result to the view / redirect," identical in shape to `AdditionalBusinessSlotAgreementController`'s own established discipline (§1, "one manager call per action").
 
 ### 2.9 Authorization model — reused, not reinvented
 
@@ -268,16 +418,16 @@ The identical four-layer defense-in-depth already established for `AdditionalBus
 
 1. **Route-group Gate**: `can:access backend` (`RouteServiceProvider.php:67`), applied to every route in `routes/admin.php` including this contract's own.
 2. **`EnsureUserIsAdministrator` middleware** (`app/Http/Middleware/EnsureUserIsAdministrator.php`), wrapping this contract's own new route block exactly as it wraps the existing `businesses` resource (§2.2) — a direct `$request->user()->is_admin` check, independent of any permission string, throwing `AuthorizationException` on failure.
-3. **No controller-level `$this->authorize(...)` call** — matching the M3/M4 Usage-domain convention (not the RFC-004 Workspace convention), since no dedicated permission string is introduced (§2.7, §12).
-4. **Manager-level independent re-verification**: every write action's underlying manager method (`issueManualCredit`, `setBillingStatus`, `setSafetyLimit`, `retryFundingAttemptAsAdministrator`) calls `assertPlatformAdministrator()` itself, so a mutation is safe even if the HTTP-layer boundary were somehow bypassed — proven the same way `SlotAgreementAdminAuthorityTest.php`'s `test_a_non_admin_actor_directly_invoking_...` methods already prove it for the existing controller (§5.2 adds the equivalent test for `issueManualCredit`).
+3. **No controller-level `$this->authorize(...)` call** — matching the M3/M4 Usage-domain convention (not the RFC-004 Workspace convention), since no dedicated permission string is introduced (§2.7).
+4. **Manager-level independent re-verification**: every write action's underlying manager method (`issueManualCredit`, `setBillingStatus`, `setSafetyLimit`, and — corrected this round, §2.1.2 — `retryFundingAttemptAsAdministrator`) calls `assertPlatformAdministrator()` itself, so a mutation is safe even if the HTTP-layer boundary were somehow bypassed — proven the same way `SlotAgreementAdminAuthorityTest.php`'s `test_a_non_admin_actor_directly_invoking_...` methods already prove it for the existing controller (§5.2 and §5.4 add the equivalent tests for `issueManualCredit` and `retryFundingAttemptAsAdministrator` respectively).
 
 **FormRequest `authorize()` returns `true` unconditionally on every new FormRequest**, matching the M3/M4 Usage-domain convention exactly (not the RFC-004 controller-level-Gate convention) — since this contract's entire scope lives inside the Usage domain, it follows that domain's own already-established pattern rather than introducing a third one (§1, "General platform-admin UI/controller conventions").
 
-**Cross-tenant fail-closed behavior**: every action resolves `{business}` via implicit route-model binding (a 404 before any manager call, for a nonexistent Business id) and every write action's own manager method re-validates that the resolved model genuinely belongs to the id the URL named — no action ever accepts a Business id from the request body, only from the route, so one Business's mutation can never be redirected at another's data by a tampered form field. This directly matches RFC §24 line 1078's "Unrelated Workspace/Business resources fail closed with a 404-shaped response, never a 403."
+**Cross-tenant fail-closed behavior, corrected this round (§0's own Correction Round 1 record, item 2):** every action resolves `{business}` via implicit route-model binding (a 404 before any manager call, for a nonexistent Business id). For `issueManualCredit`/`suspendBilling`/`resumeBilling`/`setSafetyLimit`, the resolved `Business` model is passed directly into the underlying manager method, so there is no separate id to spoof. **For `retryFundingAttempt` specifically — the underlying manager method receives only the resolved `BusinessFundingAttempt`, not the `Business`, so it cannot itself validate which `{business}` the URL named; the controller performs this check explicitly and first** (§2.1.2's own `(int) $attempt->business_id !== (int) $business->id → abort(404)` guard, executed before the manager or the payment-provider gateway is ever reached). No action ever accepts a Business id from the request body, only from the route, so one Business's mutation can never be redirected at another's data by a tampered form field.
 
 ### 2.10 Pagination/filtering
 
-`forBusinessPaginated()` (§2.4) defaults to 25 rows/page (matching `AdditionalBusinessSlotAgreementController::index()`'s own `->paginate(25)`), accepts `entry_type` and `from`/`to` filters via `GET` query-string parameters, and the view renders `{{ $ledgerEntries->appends($request->query())->links() }}` so filters survive pagination. `recentForBusiness()` (§2.4) is deliberately **not** paginated — bounded by an explicit `$limit` (default 20), matching `PaymentProviderEventController::index()`'s own precedent of skipping pagination for a small, bounded list rather than over-engineering pagination for a screen that never needs it. Business discovery itself is not duplicated (§2.6) — the existing `admin.businesses.index` (already paginated/filterable, per `WorkspaceController`'s own analogous `paginateForAdmin()` precedent, not modified by this contract) remains the sole Business-discovery entry point.
+`forBusinessPaginated()` (§2.4) defaults to 25 rows/page (matching `AdditionalBusinessSlotAgreementController::index()`'s own `->paginate(25)`), accepts `entry_type` and `from`/`to` filters via `GET` query-string parameters, and the view renders `{{ $ledgerEntries->appends($request->query())->links() }}` so filters survive pagination. `recentForBusiness()` (funding attempts, billing-status transitions, limit transitions) and `recentPlatformSafetyLimitHistory()` (§2.4) are deliberately **not** paginated — each bounded by an explicit `$limit` (default 20 or 50) instead, matching `PaymentProviderEventController::index()`'s own precedent of skipping pagination for a small, bounded list rather than over-engineering pagination for a screen that never needs it. Business discovery itself is not duplicated (§2.6) — the existing `admin.businesses.index` (already paginated/filterable, per `WorkspaceController`'s own analogous `paginateForAdmin()` precedent, not modified by this contract) remains the sole Business-discovery entry point.
 
 ---
 
@@ -288,7 +438,7 @@ This contract's design (§2) never, under any code path:
 - **Originates a fresh customer charge.** `UsageBillingController` never calls `initiateTopUp()`, `initiateAutoRecharge()`, `initiateAddonPurchase()`, `quoteAdditionalSlotAgreement()`, or any other charge-originating manager method — confirmed absent from every action's own call table (§2.1.1) and enforced by a static source-boundary test (§5.3).
 - **Enables or configures auto-recharge.** `configureAutoRecharge()` is never called; the dashboard's own auto-recharge display (§2.6) is read-only.
 - **Directly edits any derived/formula counter** (`committed_spend_this_period_micro`, `reserved_spend_this_period_micro`, `recharged_this_period_micro`, `consecutive_recharge_failures`, or any wallet balance column) — every balance mutation happens exclusively inside `issueManualCredit()`'s own `UsageWalletManager`-owned transaction (§2.3), and every other wallet field this contract's views display is read-only.
-- **Mutates any ledger row directly.** `BusinessUsageLedgerEntryRepository::create()` is called exactly once, from inside `issueManualCredit()` — no `update()`/`delete()` is ever called against a ledger entry anywhere in this contract's scope (the repository itself, unmodified by this contract, still exposes no such method at all, §1.4).
+- **Mutates any ledger row directly.** `BusinessUsageLedgerEntryRepository::create()` is called at most once per `operation_id`, exclusively from inside `issueManualCredit()` — never on an idempotent replay (§2.3) — and no `update()`/`delete()` is ever called against a ledger entry anywhere in this contract's scope (the repository itself, unmodified in this respect by this contract, still exposes no such method at all, §1.4).
 - **Bypasses manager/repository authority.** §2.8's boundary is absolute — no raw query against a billing table from the controller, ever.
 - **Edits `provider_cost_micro`.** §2.5's aggregate is read-only by construction; no write path to that column is added anywhere.
 - **Duplicates `PaymentProviderEventController`'s or `AdditionalBusinessSlotAgreementController`'s own mutations.** §2.7's integration is link-only.
@@ -299,22 +449,22 @@ This contract's design (§2) never, under any code path:
 ## 4. Guarantee-by-guarantee mapping (mirrors RFC §24's own capability-table rows)
 
 1. **View any Business's wallet balance, ledger, and configured limits.** `show()` (§2.1.1) reads via `BusinessUsageWalletRepository::findByBusinessId()`, `BusinessFeatureUsageLimitRepository::forBusiness()`, `BusinessUsageLedgerEntryRepository::forBusinessPaginated()` (new) — no write, any Business, platform-administrator only (§2.9).
-2. **Issue auditable manual/promotional credit.** `issueManualCredit()` (§2.1.1) calls `UsageWalletManager::issueManualCredit()` (new, §2.3) — writes `actor_user_id`/`reason` on the ledger row, platform-administrator-gated, mandatory reason.
+2. **Issue auditable manual/promotional credit.** `issueManualCredit()` (§2.1.1) calls `UsageWalletManager::issueManualCredit()` (§2.3, corrected this round for idempotency and event dispatch) — writes `actor_user_id`/`reason` on the ledger row, platform-administrator-gated, mandatory reason, and a repeated submission of the identical operation credits the wallet at most once.
 3. **Set or clear `billing_status` suspension through the manager boundary.** `suspendBilling()`/`resumeBilling()` (§2.1.1) call the existing, unmodified `UsageWalletManager::setBillingStatus()` — no new mutation logic, only a new HTTP entry point.
 4. **Configure the platform feature-usage safety limit.** `safetyLimits()`/`setSafetyLimit()` (§2.1.1) read via the new `PlatformFeatureUsageSafetyLimitRepository::all()` and write via the existing, unmodified `UsageWalletManager::setSafetyLimit()`.
-5. **View provider-cost/margin aggregates without editing `provider_cost_micro`.** §2.5 — a new, bounded, read-only aggregate; §3 confirms no write path exists.
-6. **Resume/retry an already-created, payer-authorized funding attempt where not already exposed.** `retryFundingAttempt()` (§2.1.1) calls the existing, unmodified `UsageBillingCheckoutManager::retryFundingAttemptAsAdministrator()` — confirmed unexposed by any admin controller before this contract (§1.3).
+5. **View provider-cost/margin aggregates without editing `provider_cost_micro`.** §2.5 — a new, bounded, SQL-computed, read-only aggregate; §3 confirms no write path exists.
+6. **Resume/retry an already-created, payer-authorized funding attempt where not already exposed.** `retryFundingAttempt()` (§2.1.1) calls `UsageBillingCheckoutManager::retryFundingAttemptAsAdministrator()`, corrected this round (§2.1.2) to genuinely enforce platform-administrator authorization and a mandatory reason and to persist that reason on the resulting transition row — confirmed unexposed by any admin controller before this contract (§1.3), and confirmed **not** already self-authorizing before this correction.
 7. **Integrate links/read-only visibility for already-shipped provider-event and additional-slot-agreement admin surfaces without duplicating their mutations.** §2.7 — one nav group, three links, zero new controller actions for either existing surface.
-8. **Preserve mandatory reasons and the administrator's real identity wherever the RFC requires them.** Every write action in §2.1.1's table requires a `reason` (validated `required|string|max:5000` at the FormRequest layer, re-validated inside the manager layer per §2.3's `issueManualCredit()` and the pre-existing manager methods' own established duplication of this check) and passes `(int) Auth::id()` as the actor — never a synthetic or session-derived alternate identity, matching RFC §24's own "using the administrator's own real identity" language (line 1074) and the split-provenance precedent already proven correct for the M4 slot-agreement surface (`SlotAgreementAdminAuthorityTest::test_manual_allocation_records_identity_provenance_correctly`).
+8. **Preserve mandatory reasons and the administrator's real identity wherever the RFC requires them.** Every write action in §2.1.1's table requires a `reason` (validated `required|string|max:5000` at the FormRequest layer, re-validated inside the manager layer per §2.3's `issueManualCredit()` and — corrected this round — §2.1.2's `retryFundingAttemptAsAdministrator()`) and passes `(int) Auth::id()` as the actor — never a synthetic or session-derived alternate identity, matching RFC §24's own "using the administrator's own real identity" language (line 1074) and the split-provenance precedent already proven correct for the M4 slot-agreement surface (`SlotAgreementAdminAuthorityTest::test_manual_allocation_records_identity_provenance_correctly`). After this round's own correction, the funding-attempt retry path's own reason is genuinely validated and durably persisted rather than silently accepted and discarded.
 9. **Never originate a fresh customer charge, enable auto-recharge, directly edit derived counters, mutate ledger rows directly, or bypass manager/repository authority.** §3, enforced by §5.3's static boundary test.
 
 ---
 
 ## 5. Test plan
 
-### 5.1 New file: `tests/Feature/Usage/AdminUsageBillingControllerTest.php` — 26 methods
+### 5.1 New file: `tests/Feature/Usage/AdminUsageBillingControllerTest.php` — 27 methods
 
-HTTP-level tests, following `tests/Feature/Workspace/AdminWorkspaceEntitlementControllerTest.php`'s own established template (§0's required reading) — the richest existing precedent in this codebase for exactly this shape of test:
+HTTP-level tests, following `tests/Feature/Workspace/AdminWorkspaceEntitlementControllerTest.php`'s own established template (§0's required reading) — the richest existing precedent in this codebase for exactly this shape of test. **+1 method this round (item 27).**
 
 1. `test_all_new_routes_exist_with_expected_verbs` — route-shape regression guard for all 7 routes (§2.2).
 2. `test_guest_cannot_view_a_businesss_usage_billing_dashboard`
@@ -338,16 +488,17 @@ HTTP-level tests, following `tests/Feature/Workspace/AdminWorkspaceEntitlementCo
 20. `test_resuming_billing_status_requires_a_mandatory_reason`
 21. `test_an_administrator_can_retry_an_outstanding_funding_attempt`
 22. `test_retrying_a_funding_attempt_requires_a_mandatory_reason`
-23. `test_retrying_a_funding_attempt_for_an_unrelated_business_is_not_found`
+23. `test_retrying_a_funding_attempt_for_an_unrelated_business_is_not_found` — **strengthened this round** (§0's own Correction Round 1 record, item 2): additionally asserts the funding attempt's own `state` is unchanged and that neither the payment-provider gateway nor `retryFundingAttemptAsAdministrator()` was ever reached, proving the controller-level cross-business guard (§2.1.2) executes before either.
 24. `test_mutating_one_businesss_wallet_never_affects_an_unrelated_businesss_wallet` — cross-tenant isolation, direct database assertions on both Businesses.
 25. `test_an_administrator_can_view_and_set_the_platform_feature_usage_safety_limit`
 26. `test_setting_the_platform_safety_limit_requires_a_mandatory_reason`
+27. `test_a_repeated_manual_credit_submission_with_the_same_operation_id_creates_exactly_one_ledger_entry` — **new this round** (§0's own Correction Round 1 record, item 3): submits the same `issueManualCredit` form twice with an identical `operation_id`, asserts exactly one `business_usage_ledger_entries` row and one balance increase.
 
 Every mandatory-reason test follows the established pattern exactly: post with `reason` omitted, `assertSessionHasErrors('reason')`, then assert the affected row/state is unchanged from before the (failed) request — proving the FormRequest validation failure happens before any mutation.
 
-### 5.2 New file: `tests/Feature/Usage/UsageWalletManagerManualCreditTest.php` — 7 methods
+### 5.2 New file: `tests/Feature/Usage/UsageWalletManagerManualCreditTest.php` — 12 methods
 
-Manager-layer tests for `issueManualCredit()` (§2.3), mirroring `SlotAgreementAdminAuthorityTest.php`'s own established manager-layer pattern:
+Manager-layer tests for `issueManualCredit()` (§2.3), mirroring `SlotAgreementAdminAuthorityTest.php`'s own established manager-layer pattern. **+5 methods this round (8–12).**
 
 1. `test_issuing_a_manual_credit_increases_available_balance_and_records_the_ledger_entry`
 2. `test_issuing_a_manual_credit_clears_existing_debt_first`
@@ -356,22 +507,37 @@ Manager-layer tests for `issueManualCredit()` (§2.3), mirroring `SlotAgreementA
 5. `test_issuing_a_credit_with_a_disallowed_entry_type_is_rejected`
 6. `test_issuing_a_credit_requires_a_mandatory_reason`
 7. `test_issuing_a_credit_requires_a_positive_amount`
+8. `test_replaying_the_same_operation_id_with_an_identical_payload_returns_the_original_ledger_entry_without_a_second_credit` — new this round.
+9. `test_reusing_the_same_operation_id_with_a_different_payload_is_rejected_and_changes_nothing` — new this round.
+10. `test_issuing_a_manual_credit_dispatches_business_wallet_credited_when_available_balance_increases` — new this round.
+11. `test_issuing_a_manual_credit_dispatches_business_wallet_debt_cleared_when_debt_is_cleared` — new this round.
+12. `test_an_idempotent_replay_dispatches_no_additional_events_and_causes_no_balance_change` — new this round.
 
 ### 5.3 New file: `tests/Feature/Usage/AdminUsageBillingSurfaceBoundaryTest.php` — 5 methods
 
-Static source-boundary tests, mirroring `EntitlementCatalogSourceBoundaryTest.php`'s own established grep-the-source-text technique (§0) — enforcing §3's exclusions mechanically, not merely by convention:
+Static source-boundary tests, mirroring `EntitlementCatalogSourceBoundaryTest.php`'s own established grep-the-source-text technique (§0) — enforcing §3's exclusions mechanically, not merely by convention. Unchanged count; method 4's own description is corrected this round (§0's own Correction Round 1 record, item 6).
 
 1. `test_the_admin_usage_billing_controller_never_calls_a_charge_originating_manager_method` — greps `UsageBillingController.php`'s own source text for `initiateTopUp|initiateAutoRecharge|initiateAddonPurchase|quoteAdditionalSlotAgreement`, asserts zero matches.
 2. `test_the_admin_usage_billing_controller_never_calls_configure_auto_recharge` — greps for `configureAutoRecharge`, asserts zero matches.
 3. `test_issue_manual_credit_never_calls_credit_from_funding` — greps `UsageWalletManager.php`'s own `issueManualCredit()` method body text for `creditFromFunding`, asserts zero matches.
-4. `test_no_admin_usage_billing_production_file_contains_a_raw_billing_table_query` — greps every file on this contract's own production allow-list (§6) for `DB::table('business_usage_|DB::table('platform_feature_usage_safety_limits`, asserts zero matches outside the four repository Eloquent-implementation files (which are expected/authorized to contain them).
+4. `test_no_admin_usage_billing_production_file_contains_a_raw_billing_table_query` — greps every file on this contract's own production allow-list (§6) for `DB::table('business_usage_|DB::table('platform_feature_usage_safety_limits`, asserts zero matches outside the **five** repository Eloquent-implementation files (corrected this round from an incorrect "four" — the allow-list has always contained five: `EloquentBusinessUsageLedgerEntryRepository`, `EloquentBusinessFundingAttemptRepository`, `EloquentPlatformFeatureUsageSafetyLimitRepository`, `EloquentBusinessUsageWalletBillingStatusTransitionRepository`, `EloquentBusinessUsageLimitTransitionRepository`), which are expected/authorized to contain them.
 5. `test_the_admin_usage_billing_controller_never_references_payment_instrument_manager` — greps `UsageBillingController.php`'s own source text for `PaymentInstrumentManager`, asserts zero matches.
 
-### 5.4 Required new imports, by file
+### 5.4 New file: `tests/Feature/Usage/FundingAttemptRetryAsAdministratorAuthorityTest.php` — 4 methods
 
-- `AdminUsageBillingControllerTest.php`: `App\Enums\Usage\UsageLedgerEntryType`, `App\Enums\Usage\WalletBillingStatus`, `App\Enums\Usage\FundingAttemptState`, `App\Enums\Usage\FundingAttemptPurpose`, `App\Library\Usage\UsageBillingCheckoutManager`, `App\Library\Usage\UsageWalletManager`, `App\Models\Business`, `App\Repositories\Contracts\BusinessFundingAttemptRepository`, `App\Repositories\Contracts\BusinessUsageWalletRepository`, `App\Repositories\Contracts\PlatformFeatureUsageSafetyLimitRepository`, `Illuminate\Support\Facades\DB`, `Tests\Feature\Business\Concerns\CreatesBusinessTestData`, `Tests\TestCase`, plus the same `actingAsAdmin()`/`ensureRequiredAppConfigRowsExist()` private-helper pattern `AdminWorkspaceEntitlementControllerTest.php` already establishes (reused by structure, not by cross-file dependency — each Feature test file owns its own private copies of these helpers, matching this codebase's own existing convention of duplicating rather than sharing test fixtures across files).
-- `UsageWalletManagerManualCreditTest.php`: `App\Enums\Usage\UsageLedgerEntryType`, `App\Library\Usage\UsageWalletManager`, `App\Repositories\Contracts\BusinessUsageLedgerEntryRepository`, `Tests\Feature\Business\Concerns\CreatesBusinessTestData`, `Tests\TestCase`.
+**New this round** (§0's own Correction Round 1 record, item 1), manager-layer tests for the corrected `retryFundingAttemptAsAdministrator()` (§2.1.2), mirroring `SlotAgreementAdminAuthorityTest.php`'s own established manager-layer pattern for the sibling M4 admin methods on the same class:
+
+1. `test_a_non_admin_actor_directly_invoking_retry_as_administrator_is_denied_before_any_gateway_call` — asserts the payment-provider gateway is never invoked (via a Mockery expectation/spy bound in place of the fake gateway) when the actor is not a platform administrator.
+2. `test_a_blank_reason_retry_is_denied_before_any_gateway_call` — identical gateway-not-invoked proof for a blank/whitespace-only reason.
+3. `test_a_successful_admin_retry_records_the_actor_and_the_normalized_reason_on_the_transition` — asserts the resulting `business_funding_attempt_transitions` row has `actor_user_id` equal to the admin and `reason` equal to the trimmed input.
+4. `test_existing_non_admin_transition_sources_still_persist_a_null_reason` — confirms a `SyncResponse`/`WebhookEvent`/`ReconciliationJob`-sourced transition (produced through the ordinary, non-admin confirmation path, unmodified by this contract) still persists `reason: null`.
+
+### 5.5 Required new imports, by file
+
+- `AdminUsageBillingControllerTest.php`: `App\Enums\Usage\UsageLedgerEntryType`, `App\Enums\Usage\WalletBillingStatus`, `App\Enums\Usage\FundingAttemptState`, `App\Enums\Usage\FundingAttemptPurpose`, `App\Library\Usage\UsageBillingCheckoutManager`, `App\Library\Usage\UsageWalletManager`, `App\Models\Business`, `App\Repositories\Contracts\BusinessFundingAttemptRepository`, `App\Repositories\Contracts\BusinessUsageWalletRepository`, `App\Repositories\Contracts\PlatformFeatureUsageSafetyLimitRepository`, `Illuminate\Support\Facades\DB`, `Illuminate\Support\Str`, `Tests\Feature\Business\Concerns\CreatesBusinessTestData`, `Tests\TestCase`, plus the same `actingAsAdmin()`/`ensureRequiredAppConfigRowsExist()` private-helper pattern `AdminWorkspaceEntitlementControllerTest.php` already establishes (reused by structure, not by cross-file dependency — each Feature test file owns its own private copies of these helpers, matching this codebase's own existing convention of duplicating rather than sharing test fixtures across files).
+- `UsageWalletManagerManualCreditTest.php`: `App\Enums\Usage\UsageLedgerEntryType`, `App\Events\Usage\BusinessWalletCredited`, `App\Events\Usage\BusinessWalletDebtCleared`, `App\Exceptions\Usage\InvalidAdminCreditEntryTypeException`, `App\Exceptions\Usage\InvalidAdminCreditAmountException`, `App\Exceptions\Usage\InvalidAdminCreditReasonException`, `App\Exceptions\Usage\ManualCreditOperationConflictException`, `App\Library\Usage\UsageWalletManager`, `App\Repositories\Contracts\BusinessUsageLedgerEntryRepository`, `Illuminate\Support\Facades\Event`, `Illuminate\Support\Str`, `Tests\Feature\Business\Concerns\CreatesBusinessTestData`, `Tests\TestCase`.
 - `AdminUsageBillingSurfaceBoundaryTest.php`: no new imports beyond `Tests\TestCase` — a pure static-file-read test, matching `EntitlementCatalogSourceBoundaryTest.php`'s own minimal import list.
+- `FundingAttemptRetryAsAdministratorAuthorityTest.php`: `App\Enums\Usage\FundingAttemptPurpose`, `App\Enums\Usage\FundingAttemptState`, `App\Enums\Usage\TransitionSource`, `App\Library\Usage\Contracts\PaymentProviderGateway`, `App\Library\Usage\FakePaymentProviderGateway`, `App\Library\Usage\UsageBillingCheckoutManager`, `App\Repositories\Contracts\BusinessFundingAttemptRepository`, `App\Repositories\Contracts\BusinessFundingAttemptTransitionRepository`, `Mockery`, `Tests\Feature\Business\Concerns\CreatesBusinessTestData`, `Tests\TestCase`.
 
 ---
 
@@ -379,28 +545,35 @@ Static source-boundary tests, mirroring `EntitlementCatalogSourceBoundaryTest.ph
 
 | # | Path | Status | Reason |
 |---|---|---|---|
-| 1 | `app/Http/Controllers/Admin/UsageBillingController.php` | REQUIRED (new file) | The one unified controller, 7 thin actions (§2.1). |
-| 2 | `app/Http/Requests/Admin/IssueManualWalletCreditRequest.php` | REQUIRED (new file) | Validates `entry_type`, `amount_micro`, `reason` (§2.3). |
+| 1 | `app/Http/Controllers/Admin/UsageBillingController.php` | REQUIRED (new file) | The one unified controller, 7 thin actions (§2.1), including the cross-business retry guard (§2.1.2) and the operation-id-generating `show()` action (§2.3, §2.6). |
+| 2 | `app/Http/Requests/Admin/IssueManualWalletCreditRequest.php` | REQUIRED (new file) | Validates `operation_id` (uuid), `entry_type`, `amount_micro`, `reason` (§2.3). |
 | 3 | `app/Http/Requests/Admin/SuspendBusinessWalletBillingRequest.php` | REQUIRED (new file) | Validates `reason` (§2.1.1). |
 | 4 | `app/Http/Requests/Admin/ResumeBusinessWalletBillingRequest.php` | REQUIRED (new file) | Validates `reason` (§2.1.1). |
-| 5 | `app/Http/Requests/Admin/RetryFundingAttemptAsAdministratorRequest.php` | REQUIRED (new file) | Validates `reason` (§2.1.1). |
+| 5 | `app/Http/Requests/Admin/RetryFundingAttemptAsAdministratorRequest.php` | REQUIRED (new file) | Validates `reason` (§2.1.1, §2.1.2). |
 | 6 | `app/Http/Requests/Admin/SetPlatformFeatureUsageSafetyLimitRequest.php` | REQUIRED (new file) | Validates `feature_key`, `max_monthly_limit_micro`, `reason` (§2.1.1). |
-| 7 | `app/Library/Usage/UsageWalletManager.php` | REQUIRED (modified) | One new method, `issueManualCredit()` (§2.3). No existing method changed. |
-| 8 | `app/Repositories/Contracts/BusinessUsageLedgerEntryRepository.php` | REQUIRED (modified) | Two new methods: `forBusinessPaginated()`, `marginAggregateRowsForBusiness()` (§2.4, §2.5). |
-| 9 | `app/Repositories/Eloquent/EloquentBusinessUsageLedgerEntryRepository.php` | REQUIRED (modified) | Implements both. |
-| 10 | `app/Repositories/Contracts/BusinessFundingAttemptRepository.php` | REQUIRED (modified) | One new method: `recentForBusiness()` (§2.4). |
-| 11 | `app/Repositories/Eloquent/EloquentBusinessFundingAttemptRepository.php` | REQUIRED (modified) | Implements it. |
-| 12 | `app/Repositories/Contracts/PlatformFeatureUsageSafetyLimitRepository.php` | REQUIRED (modified) | One new method: `all()` (§2.4). |
-| 13 | `app/Repositories/Eloquent/EloquentPlatformFeatureUsageSafetyLimitRepository.php` | REQUIRED (modified) | Implements it. |
-| 14 | `app/Repositories/Contracts/BusinessUsageWalletBillingStatusTransitionRepository.php` | REQUIRED (modified) | One new method: `forBusiness()` (§2.4). |
-| 15 | `app/Repositories/Eloquent/EloquentBusinessUsageWalletBillingStatusTransitionRepository.php` | REQUIRED (modified) | Implements it. |
-| 16 | `app/Repositories/Contracts/BusinessUsageLimitTransitionRepository.php` | REQUIRED (modified) | Two new methods: `forBusiness()`, `platformSafetyLimitHistory()` (§2.4). |
-| 17 | `app/Repositories/Eloquent/EloquentBusinessUsageLimitTransitionRepository.php` | REQUIRED (modified) | Implements both. |
-| 18 | `routes/admin.php` | REQUIRED (modified) | 7 new route declarations (§2.2). |
-| 19 | `resources/views/admin/usage-billing/businesses/show.blade.php` | REQUIRED (new file) | Per-Business dashboard (§2.6). |
-| 20 | `resources/views/admin/usage-billing/safety-limits/index.blade.php` | REQUIRED (new file) | Platform-wide safety-limit screen (§2.6). |
-| 21 | `resources/views/admin/businesses/show.blade.php` | REQUIRED (modified, 1 line) | One link to the new dashboard (§2.6) — the sole justified integration point into an existing, unrelated view. |
-| 22 | `app/Helpers/Helper.php` | REQUIRED (modified) | One new nav group, `menuData()`'s `'admin'` array (§2.7). |
+| 7 | `app/Library/Usage/UsageWalletManager.php` | REQUIRED (modified) | One new method, `issueManualCredit()`, redesigned this round for idempotency and event dispatch (§2.3). No existing method changed. |
+| 8 | `app/Library/Usage/UsageBillingCheckoutManager.php` | REQUIRED (modified) — **moved from NOT_REQUIRED this round** | `retryFundingAttemptAsAdministrator()` corrected to call `assertPlatformAdministrator()` and validate/persist its own reason; `confirmSucceeded()`, `finalizeFundingAttemptState()`, `recordTransition()` each gain one new trailing optional `?string $reason = null` parameter (§2.1.2). |
+| 9 | `app/Exceptions/Usage/InvalidAdminCreditEntryTypeException.php` | REQUIRED (new file) | Guard exception for `issueManualCredit()` (§2.3). |
+| 10 | `app/Exceptions/Usage/InvalidAdminCreditAmountException.php` | REQUIRED (new file) | Guard exception for `issueManualCredit()` (§2.3). |
+| 11 | `app/Exceptions/Usage/InvalidAdminCreditReasonException.php` | REQUIRED (new file) | Guard exception for `issueManualCredit()` (§2.3). |
+| 12 | `app/Exceptions/Usage/ManualCreditOperationConflictException.php` | REQUIRED (new file) | Thrown when an `operation_id` is reused with a different normalized payload (§2.3). |
+| 13 | `app/Repositories/Contracts/BusinessUsageLedgerEntryRepository.php` | REQUIRED (modified) | Three new methods: `forBusinessPaginated()`, `findByCorrelationKey()`, `marginAggregateForBusiness()` (§2.4, §2.5). |
+| 14 | `app/Repositories/Eloquent/EloquentBusinessUsageLedgerEntryRepository.php` | REQUIRED (modified) | Implements all three. |
+| 15 | `app/Repositories/Contracts/BusinessFundingAttemptRepository.php` | REQUIRED (modified) | One new method: `recentForBusiness()` (§2.4). |
+| 16 | `app/Repositories/Eloquent/EloquentBusinessFundingAttemptRepository.php` | REQUIRED (modified) | Implements it. |
+| 17 | `app/Repositories/Contracts/PlatformFeatureUsageSafetyLimitRepository.php` | REQUIRED (modified) | One new method: `all()` (§2.4). |
+| 18 | `app/Repositories/Eloquent/EloquentPlatformFeatureUsageSafetyLimitRepository.php` | REQUIRED (modified) | Implements it. |
+| 19 | `app/Repositories/Contracts/BusinessUsageWalletBillingStatusTransitionRepository.php` | REQUIRED (modified) | One new, bounded method: `recentForBusiness()` (§2.4). |
+| 20 | `app/Repositories/Eloquent/EloquentBusinessUsageWalletBillingStatusTransitionRepository.php` | REQUIRED (modified) | Implements it. |
+| 21 | `app/Repositories/Contracts/BusinessUsageLimitTransitionRepository.php` | REQUIRED (modified) | Two new, bounded methods: `recentForBusiness()`, `recentPlatformSafetyLimitHistory()` (§2.4). |
+| 22 | `app/Repositories/Eloquent/EloquentBusinessUsageLimitTransitionRepository.php` | REQUIRED (modified) | Implements both. |
+| 23 | `app/Models/BusinessFundingAttemptTransition.php` | REQUIRED (modified) — **new this round** | Adds `'reason'` to `$fillable` (§2.1.2). |
+| 24 | `database/migrations/2026_08_28_120001_add_reason_to_business_funding_attempt_transitions_table.php` | REQUIRED (new file) — **new this round** | Adds nullable `reason` text column to `business_funding_attempt_transitions` (§2.1.2). |
+| 25 | `routes/admin.php` | REQUIRED (modified) | 7 new route declarations (§2.2). |
+| 26 | `resources/views/admin/usage-billing/businesses/show.blade.php` | REQUIRED (new file) | Per-Business dashboard, including the operation-id hidden field (§2.6). |
+| 27 | `resources/views/admin/usage-billing/safety-limits/index.blade.php` | REQUIRED (new file) | Platform-wide safety-limit screen (§2.6). |
+| 28 | `resources/views/admin/businesses/show.blade.php` | REQUIRED (modified, 1 line) | One link to the new dashboard (§2.6) — the sole justified integration point into an existing, unrelated view. |
+| 29 | `app/Helpers/Helper.php` | REQUIRED (modified) | One new nav group, `menuData()`'s `'admin'` array (§2.7). |
 
 **NOT_REQUIRED, explicitly confirmed:**
 
@@ -409,35 +582,36 @@ Static source-boundary tests, mirroring `EntitlementCatalogSourceBoundaryTest.ph
 | `app/Http/Controllers/Admin/PaymentProviderEventController.php` | Zero lines changed — not duplicated, only linked (§2.7). |
 | `app/Http/Controllers/Admin/AdditionalBusinessSlotAgreementController.php` | Zero lines changed — not duplicated, only linked (§2.7). |
 | `app/Http/Controllers/Admin/BusinessController.php` | Zero lines changed — Business discovery/detail is reused, not rebuilt (§2.6). |
-| `app/Library/Usage/UsageBillingCheckoutManager.php` | Zero lines changed — `retryFundingAttemptAsAdministrator()` is called as-is (§1.3). |
 | `app/Library/Usage/PaymentInstrumentManager.php` | Zero lines changed, never called (§3). |
 | `app/Library/Usage/BillingProfileManager.php` | Zero lines changed — billing-contact/payer management is not among this contract's own locked capabilities (opening scope paragraph; not one of the nine guarantees §4 maps). |
-| Any migration or schema file | No schema change — every column and table this contract writes to or reads from already exists, already shipped, unmodified (§1). |
-| `config/permissions.php` | No new permission string is introduced this contract (§2.7, §12). |
-| Any event, job, or notification class | No new domain event, job, or notification is introduced (§2.3, §9). |
+| Any migration or schema file other than #24 above | No other schema change — every other column and table this contract reads from or writes to already exists, already shipped, unmodified (§1). |
+| `config/permissions.php` | No new permission string is introduced this contract (§2.7, §2.9, locked this round). |
+| Any new event, job, or notification class | `issueManualCredit()` dispatches only the two already-shipped `BusinessWalletCredited`/`BusinessWalletDebtCleared` events (§2.3, §9) — no new event/job/notification class is introduced. |
 | `app/Http/Controllers/Customer/**` or `routes/customer.php` | No customer-facing surface is touched. |
 
-**Exactly 22 production paths: 8 new files (#1–6, #19–20) + 14 modified files (#7–18, #21–22).**
+**Exactly 29 production paths: 13 new files (#1–6, #9–12, #24, #26–27) + 16 modified files (#7–8, #13–23, #25, #28–29).**
 
 ## 7. Exact test allow-list
 
 | # | Path | Status | Reason |
 |---|---|---|---|
-| 1 | `tests/Feature/Usage/AdminUsageBillingControllerTest.php` | REQUIRED (new file) | 26 methods (§5.1), proving guarantees 1–8. |
-| 2 | `tests/Feature/Usage/UsageWalletManagerManualCreditTest.php` | REQUIRED (new file) | 7 methods (§5.2), proving guarantee 2's own manager-layer authority. |
+| 1 | `tests/Feature/Usage/AdminUsageBillingControllerTest.php` | REQUIRED (new file) | 27 methods (§5.1), proving guarantees 1–8. |
+| 2 | `tests/Feature/Usage/UsageWalletManagerManualCreditTest.php` | REQUIRED (new file) | 12 methods (§5.2), proving guarantee 2's own manager-layer authority, idempotency, and event dispatch. |
 | 3 | `tests/Feature/Usage/AdminUsageBillingSurfaceBoundaryTest.php` | REQUIRED (new file) | 5 methods (§5.3), proving guarantee 9. |
+| 4 | `tests/Feature/Usage/FundingAttemptRetryAsAdministratorAuthorityTest.php` | REQUIRED (new file) — **new this round** | 4 methods (§5.4), proving guarantee 6's own manager-layer authorization and audit correction. |
 
-**Exactly 3 test paths, 38 total new test methods.** No existing test file is modified — every capability this contract adds is net-new HTTP/manager/repository surface with no prior test coverage to correct (unlike the correction contracts in this sequence, this is new construction, not a fix to an existing, already-tested design).
+**Exactly 4 test paths, 48 total new test methods.** No existing test file is modified — every capability this contract adds is net-new HTTP/manager/repository surface with no prior test coverage to correct (unlike the correction contracts in this sequence, this is new construction, not a fix to an existing, already-tested design).
 
 ---
 
 ## 8. Regression commands — streamlined, per this contract's own explicit verification policy
 
-- `php artisan test tests/Feature/Usage/AdminUsageBillingControllerTest.php` — the new HTTP-level file; expected 26 methods, all passing.
-- `php artisan test tests/Feature/Usage/UsageWalletManagerManualCreditTest.php` — the new manager-level file; expected 7 methods, all passing.
+- `php artisan test tests/Feature/Usage/AdminUsageBillingControllerTest.php` — the new HTTP-level file; expected 27 methods, all passing.
+- `php artisan test tests/Feature/Usage/UsageWalletManagerManualCreditTest.php` — the new manual-credit manager-level file; expected 12 methods, all passing.
 - `php artisan test tests/Feature/Usage/AdminUsageBillingSurfaceBoundaryTest.php` — the new boundary file; expected 5 methods, all passing.
-- `php artisan test tests/Feature/Usage tests/Unit/Usage` — the complete Usage domain suite (covers every already-existing test this contract's changes could plausibly affect: `UsageWalletManager`'s own existing test files, since one new method is added to that class; every repository's own existing tests, since methods are added to seven of them).
-- One complete `php artisan test --stop-on-failure` run (full suite) — catches any unexpected interaction with the Business/Workspace domains this contract's own view/route/nav changes touch.
+- `php artisan test tests/Feature/Usage/FundingAttemptRetryAsAdministratorAuthorityTest.php` — the new funding-attempt-retry authority file; expected 4 methods, all passing.
+- `php artisan test tests/Feature/Usage tests/Unit/Usage` — the complete Usage domain suite (covers every already-existing test this contract's changes could plausibly affect: every existing test exercising `confirmSucceeded()`/`finalizeFundingAttemptState()`/`recordTransition()`, since all three gain a new optional parameter this round; `UsageWalletManager`'s own existing test files, since one new method is added to that class; every repository's own existing tests, since methods are added to five of them).
+- One complete `php artisan test --stop-on-failure` run (full suite) — catches any unexpected interaction with the Business/Workspace domains this contract's own view/route/nav/migration changes touch.
 - `git diff --check`.
 
 Per this contract's own explicit instruction, no separate unrelated domain-suite run (Entitlement, Workspace, Business, Opportunity) is run on its own — the full-suite gate already covers them, and this contract touches nothing in those domains beyond the one linked line in `resources/views/admin/businesses/show.blade.php` and the one nav-array addition in `app/Helpers/Helper.php`, both trivial, additive, and non-behavioral for any existing Business/Workspace test.
@@ -448,7 +622,7 @@ Per this contract's own explicit instruction, no separate unrelated domain-suite
 
 **Finding A (carried forward, unchanged, already classified non-blocking).** The Job/Event Dispatch Completion PR #141 audit's own low-balance-notification-after-successful-auto-recharge timing observation remains exactly what every prior contract in this lineage recorded it as: disclosed, contract-faithful, deferred for a separate, future human decision. This contract does not widen scope to include it.
 
-**Finding B (new this contract, disclosed, non-blocking).** `UsageLedgerEntryType::ManualCredit`/`::PromotionalCredit` now have a real producer (§2.3), but no domain event is dispatched when either fires, and `RFC-005-JOB-EVENT-DISPATCH-COMPLETION-CORRECTION-CONTRACT.md:389`'s own naming of this gap is only half-closed by this contract (the producer exists; the dispatch does not). This is a deliberate scope boundary (§2.3, §3), not an oversight — a future, separately-authorized contract could add event dispatch for these two entry types without touching anything this contract builds. `UsageLedgerEntryType::UsageChargeReversal`/`::CorrectionReversal`, also named in that same excluded-scope sentence, remain entirely unproduced by any code path — this contract does not build a reversal/correction-issuance capability of any kind (§3, §10), since neither RFC §24 nor §30 names it as an admin capability this remediation must close.
+**Finding B (revised this round — no longer a gap).** The initial draft deferred both the ledger-entry producer and the event dispatch for `ManualCredit`/`PromotionalCredit`. This round's own correction (§2.3, §0's Correction Round 1 record item 4) closes the dispatch half using the two already-shipped wallet-balance events (`BusinessWalletCredited`, `BusinessWalletDebtCleared`) — no new event class was needed, since `RFC-005-JOB-EVENT-DISPATCH-COMPLETION-CORRECTION-CONTRACT.md:389`'s own exclusion named "producers or dispatch" broadly, and the events these two ledger-entry types need already exist and already govern every other credit-type entry. `UsageLedgerEntryType::UsageChargeReversal`/`::CorrectionReversal`, also named in that same excluded-scope sentence, remain entirely unproduced by any code path — this contract still does not build a reversal/correction-issuance capability of any kind (§3, §10), since neither RFC §24 nor §30 names it as an admin capability this remediation must close.
 
 ---
 
@@ -458,14 +632,13 @@ This contract does not implement, design, or absorb any of the following:
 
 - Provider Refund/Dispute Outcome Handling (remediation #6), RFC-005 §35 Test-Coverage Completion (remediation #7) — both remain untouched, in their existing sequence position after this contract.
 - The low-balance-notification timing observation (§9 Finding A) — carried forward, unresolved, non-blocking.
-- Domain-event dispatch for `ManualCredit`/`PromotionalCredit` (§9 Finding B) — the producer is built; the dispatch is not.
 - `UsageChargeReversal`/`CorrectionReversal` ledger-entry production of any kind — no reversal/correction-issuance capability exists in this contract's scope.
-- Any change to `creditFromFunding()`, `configureAutoRecharge()`, `initiateTopUp()`, `initiateAutoRecharge()`, `initiateAddonPurchase()`, `quoteAdditionalSlotAgreement()`, or any other charge-originating or auto-recharge-configuring method — confirmed unaffected and unmodified (§1.3, §3, §6).
+- Any change to `creditFromFunding()`, `configureAutoRecharge()`, `initiateTopUp()`, `initiateAutoRecharge()`, `initiateAddonPurchase()`, `quoteAdditionalSlotAgreement()`, or any other charge-originating or auto-recharge-configuring method — confirmed unaffected and unmodified (§1.3, §3, §6). `confirmSucceeded()`/`finalizeFundingAttemptState()`/`recordTransition()` gain one new, trailing, backward-compatible optional parameter each (§2.1.2) but are otherwise unmodified — every existing call site's own behavior is unaffected.
 - Any change to `PaymentInstrumentManager`, `BillingProfileManager`, `ProcessPaymentProviderEvent`, `ReconcileProviderPendingState`, or any webhook/provider-verification code path.
 - Any change to `PaymentProviderEventController` or `AdditionalBusinessSlotAgreementController` themselves, or their own routes/views/FormRequests — integration is link-only (§2.7).
-- A dedicated `config/permissions.php` entry for this domain — deferred as a genuine open item (§12), not decided here.
+- A dedicated `config/permissions.php` entry for this domain — locked this round as **not** introduced (§2.7, §2.9, §12).
 - M6 conformance/deployment docs; the release tag; Conversations pilot activation; tax/VAT implementation; legacy invoices.
-- Any migration or schema change.
+- Any migration or schema change beyond the single, narrowly-scoped `reason` column addition locked in §2.1.2 (production allow-list #24).
 
 Do not reopen Reservation Admission, Funding Provider-Flow, Receipt Boundary, Job/Event Dispatch Completion, Reconciliation-Race, or the Funding Confirmation Concurrency Correction (including its exceptional post-merge implementation correction and both of its own focused review fixes) — none is touched, contradicted, or reinterpreted by anything above.
 
@@ -473,22 +646,24 @@ Do not reopen Reservation Admission, Funding Provider-Flow, Receipt Boundary, Jo
 
 ## 11. Confirmations
 
-- **No schema/migration change is required or authorized by this contract.** Every column this contract reads from or writes to (`business_usage_ledger_entries.actor_user_id`/`.reason`/`.correlation_key`, `business_usage_wallet_billing_status_transitions.*`, `business_usage_limit_transitions.*`, `platform_feature_usage_safety_limits.*`) already exists, already shipped, unmodified — confirmed by direct migration read this pass (§0, §1).
+- **No schema/migration change is required or authorized by this contract beyond the single, narrowly-scoped `reason` column addition locked in §2.1.2** (production allow-list #24). Every other column this contract reads from or writes to (`business_usage_ledger_entries.actor_user_id`/`.reason`/`.correlation_key`, `business_usage_wallet_billing_status_transitions.*`, `business_usage_limit_transitions.*`, `platform_feature_usage_safety_limits.*`) already exists, already shipped, unmodified — confirmed by direct migration read this pass (§0, §1).
 - `AI-AUTONOMY-STATE.json` is untouched by this branch.
 - M6 remains frozen; still genuinely open/blocked, not merely paused (§0).
 - No product, test, config, route, or RFC-source file is touched by this branch. This governance branch changes exactly one file.
-- No implementation has occurred. **Correction rounds: 0 of 2 consumed; 2 remain.**
+- No implementation has occurred. **Correction rounds: 1 of 2 consumed; 1 ordinary round remains.**
 - Reservation Admission, Funding Provider-Flow, Receipt Boundary, Job/Event Dispatch Completion, Reconciliation-Race, and the Funding Confirmation Concurrency Correction (and its own exceptional post-merge implementation correction and focused review fixes) are not reopened, contradicted, or reinterpreted anywhere above.
 
 ---
 
-## 12. Open items — genuine human decisions this contract does not resolve
+## 12. Open items — resolved this round
 
-1. **Dedicated permission string vs. continued reliance on `access backend` + `EnsureUserIsAdministrator`.** Every existing Usage-domain admin controller (M3, M4) deliberately has no dedicated permission string, and both of their own docblocks state a new `config/permissions.php` entry is "not authorized." This contract's own design (§2.7, §2.9) continues that precedent for consistency, but it is a genuine, undecided permissions-model choice — not something derivable from RFC-005's own text, which never specifies a permission-string granularity for admin actions. A human could authorize introducing `view usage billing`/`manage usage billing` permission strings (mirroring the RFC-004 Workspace convention instead) in a future, separate governance step without contradicting anything this contract locks.
-2. **Whether `ManualCredit`/`PromotionalCredit` should eventually dispatch a domain event** (§9 Finding B) — this contract deliberately does not decide this, leaving it as a smaller, separately-authorizable follow-on.
-3. **The exact grouping granularity of the provider-cost/margin aggregate** (§2.5) — locked to a reasonable default (per-month, per-feature) derived from this domain's own existing `period_key` convention, but not RFC-mandated; a human reviewer could reasonably prefer a different granularity (e.g., per-meter instead of per-feature, given Amendment 1's own meter-identity decoupling, §0) without this being a defect in this contract's own design.
-4. **Whether a double form submission of `issueManualCredit()` should be protected by an idempotency mechanism** (§2.3) — this contract deliberately relies on ordinary UI affordances only, disclosed explicitly, not a defect; a human could authorize a stronger mechanism (e.g., a client-supplied idempotency token) in a future correction without contradicting this contract's own locked design.
+**All four items the initial draft flagged as open are resolved and locked by this round's own corrections (§0's Correction Round 1 record):**
 
-No other genuinely open human decision was identified during this audit. Every other design choice in §2 was derivable mechanically from RFC-005 §16/§18/§21/§24/§28/§30/§34/§35/§36–§39, the six already-merged remediation contracts' own repeated exclusion language, and the current, directly-read code, schema, and test conventions.
+1. **Permission string vs. `access backend` convention** — locked: continue the established Usage-admin convention, no new permission string (§2.7, §2.9).
+2. **Whether `ManualCredit`/`PromotionalCredit` should dispatch a domain event** — locked: yes, using the two already-shipped wallet-balance events, no new event class (§2.3, §9 Finding B).
+3. **Margin aggregate grouping granularity** — locked: per-month, per-feature, unchanged from the initial draft's own default, now computed in SQL rather than PHP (§2.5).
+4. **Manual-credit double-submission idempotency** — locked: a client-supplied, form-preserved `operation_id`, a deterministic correlation key, and an explicit conflict rule (§2.3).
+
+**No genuinely open human decision remains.** Every design choice in §2 is now derivable mechanically from RFC-005's own text, the six already-merged remediation contracts' own repeated exclusion language, this contract's own initial-draft evidence, and this round's own direct re-verification of the exact current-repository code this correction touches.
 
 ---
