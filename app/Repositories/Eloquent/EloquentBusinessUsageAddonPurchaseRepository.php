@@ -22,6 +22,11 @@ class EloquentBusinessUsageAddonPurchaseRepository extends EloquentBaseRepositor
         return $this->query()->where('funding_attempt_id', $fundingAttemptId)->first();
     }
 
+    public function findForUpdateByFundingAttemptId(int $fundingAttemptId): ?BusinessUsageAddonPurchase
+    {
+        return $this->query()->where('funding_attempt_id', $fundingAttemptId)->lockForUpdate()->first();
+    }
+
     public function create(array $attributes): BusinessUsageAddonPurchase
     {
         /** @var BusinessUsageAddonPurchase $purchase */

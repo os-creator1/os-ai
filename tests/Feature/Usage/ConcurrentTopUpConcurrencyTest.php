@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Usage;
 
+use App\Enums\Usage\FundingAttemptState;
 use App\Library\Usage\Contracts\PaymentProviderGateway;
 use App\Library\Usage\FakePaymentProviderGateway;
 use App\Library\Usage\PaymentInstrumentManager;
@@ -456,5 +457,68 @@ PHP;
 
             @unlink($holdScriptPath);
         }
+    }
+
+    /**
+     * RFC-005 Funding Confirmation Concurrency Correction Contract §5.3 —
+     * the true, OS-level-concurrency complement to the single-process
+     * interleaving tests in FundingConfirmationConcurrencyCorrectionTest.
+     * Reuses confirmRunnerScript() and the WAITING-handshake barrier
+     * pattern verbatim — the only change from
+     * test_two_concurrent_confirmations_for_the_same_business_each_credit_exactly_once()
+     * is pointing both child processes at the SAME attempt id instead of
+     * two different ones, so they race the identical row across two real,
+     * independent OS processes rather than a single-process interleaving.
+     */
+    public function test_two_genuinely_concurrent_processes_confirming_the_same_attempt_produce_exactly_one_ledger_credit_and_transition(): void
+    {
+        [$businessId, , $ownerId] = $this->createBusinessWithAttachedInstrument();
+        $attemptId = $this->createPendingAttempt($businessId, $ownerId, 4_000_000);
+
+        $this->runnerPath = sys_get_temp_dir().'/topup_race_same_attempt_runner_'.uniqid().'.php';
+        file_put_contents($this->runnerPath, $this->confirmRunnerScript());
+        $this->signalPath = sys_get_temp_dir().'/topup_race_same_attempt_signal_'.uniqid().'.flag';
+
+        $processOne = new Process([$this->phpBinary(), $this->runnerPath, (string) $attemptId, $this->signalPath]);
+        $processTwo = new Process([$this->phpBinary(), $this->runnerPath, (string) $attemptId, $this->signalPath]);
+        $processOne->setTimeout(15.0);
+        $processTwo->setTimeout(15.0);
+
+        $processOne->start();
+        $processTwo->start();
+
+        $bufferOne = '';
+        $bufferTwo = '';
+        $deadline = microtime(true) + 10.0;
+
+        while ((! str_contains($bufferOne, 'WAITING') || ! str_contains($bufferTwo, 'WAITING')) && microtime(true) < $deadline) {
+            $bufferOne .= $processOne->getIncrementalOutput();
+            $bufferTwo .= $processTwo->getIncrementalOutput();
+            usleep(2000);
+        }
+
+        $this->assertTrue(str_contains($bufferOne, 'WAITING') && str_contains($bufferTwo, 'WAITING'), 'Both processes must announce readiness before the race is triggered.');
+
+        file_put_contents($this->signalPath, '1');
+
+        $processOne->wait();
+        $processTwo->wait();
+
+        $this->assertTrue($processOne->isSuccessful(), 'Process one did not complete: '.$processOne->getErrorOutput());
+        $this->assertTrue($processTwo->isSuccessful(), 'Process two did not complete: '.$processTwo->getErrorOutput());
+        $this->assertStringContainsString('DONE', $processOne->getOutput());
+        $this->assertStringContainsString('DONE', $processTwo->getOutput());
+
+        $ledgerCount = DB::table('business_usage_ledger_entries')->where('funding_attempt_id', $attemptId)->count();
+        $this->assertSame(1, $ledgerCount, 'Exactly one ledger entry must exist for the raced attempt, regardless of which process won.');
+
+        $succeededTransitionCount = DB::table('business_funding_attempt_transitions')
+            ->where('funding_attempt_id', $attemptId)
+            ->where('to_state', FundingAttemptState::Succeeded->value)
+            ->count();
+        $this->assertSame(1, $succeededTransitionCount, 'Exactly one succeeded transition row must exist for the raced attempt.');
+
+        $wallet = app(BusinessUsageWalletRepository::class)->findByBusinessId($businessId);
+        $this->assertSame('4000000', (string) $wallet->available_balance_micro, 'The credit must be reflected exactly once.');
     }
 }

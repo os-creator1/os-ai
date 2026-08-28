@@ -5,6 +5,7 @@ namespace Tests\Feature\Usage;
 use App\Enums\Usage\AddonPurchaseStatus;
 use App\Enums\Usage\FundingAttemptState;
 use App\Enums\Usage\PayerType;
+use App\Events\Usage\BusinessFundingAttemptSucceeded;
 use App\Library\Usage\BillingProfileManager;
 use App\Library\Usage\CheckoutSessionResult;
 use App\Library\Usage\Contracts\PaymentProviderGateway;
@@ -23,6 +24,7 @@ use App\Jobs\Usage\SendReceiptNotification;
 use App\Repositories\Contracts\PaymentProviderCustomerRepository;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Queue;
 use Tests\Feature\Business\Concerns\CreatesBusinessTestData;
 use Tests\TestCase;
@@ -406,5 +408,69 @@ class AddonPurchaseTransitionAuditTest extends TestCase
 
         $receiptCount = DB::table('business_billing_receipts')->where('business_id', $business->id)->count();
         $this->assertSame(0, $receiptCount);
+    }
+
+    /**
+     * RFC-005 Funding Confirmation Concurrency Correction Contract §5.2 —
+     * proves completeAddonPurchaseUnderLock()'s own uniform lock
+     * protection for the fulfillment mode with no credit-based first-pass
+     * filter at all: direct_deliverable never reaches creditFromFunding(),
+     * so the row lock is the only available serialization point. Two
+     * independently-fetched snapshots of the same attempt are confirmed
+     * directly, no test-owned try/catch around either call, and the
+     * funding-attempt-level outcome is asserted alongside the purchase-
+     * level one.
+     */
+    public function test_a_genuinely_simultaneous_double_confirmation_of_a_direct_deliverable_addon_purchase_completes_exactly_once(): void
+    {
+        Queue::fake();
+        Event::fake([BusinessFundingAttemptSucceeded::class]);
+
+        $customer = $this->createCustomer();
+        $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
+        app(UsageWalletManager::class)->initializeWalletForNewBusiness($business->id);
+        app(BillingProfileManager::class)->changePayer($business, PayerType::Workspace, $customer->user_id, 'Test.');
+        app(PaymentInstrumentManager::class)->resolveProviderCustomer($business, $customer->user_id);
+
+        $currencyId = Currency::query()->first()->id;
+        DB::table('business_usage_addon_catalog')->insert([
+            'addon_key' => 'fixture-deliverable-race-addon', 'display_name' => 'Fixture Deliverable Race Add-on', 'price_micro' => 1_000_000,
+            'currency_id' => $currencyId, 'fulfillment_mode' => 'direct_deliverable', 'is_active' => true,
+            'created_at' => now(), 'updated_at' => now(),
+        ]);
+
+        $manager = app(UsageBillingCheckoutManager::class);
+        $result = $manager->initiateAddonPurchase($business, 'fixture-deliverable-race-addon', $customer->user_id);
+        $attempt = app(BusinessFundingAttemptRepository::class)->findById($result->fundingAttemptId);
+        $this->registerVerifiedCheckoutOutcome($attempt);
+
+        $winner = app(BusinessFundingAttemptRepository::class)->findById($attempt->id);
+        $loser = app(BusinessFundingAttemptRepository::class)->findById($attempt->id);
+
+        $manager->confirmAttemptFromReturn($winner);
+        $manager->confirmAttemptFromReturn($loser);
+
+        $purchase = app(BusinessUsageAddonPurchaseRepository::class)->findById($result->addonPurchaseId);
+        $this->assertSame(AddonPurchaseStatus::Completed, $purchase->status);
+        $this->assertNotNull($purchase->completed_at);
+
+        $transitions = app(BusinessUsageAddonPurchaseTransitionRepository::class)->forPurchase($result->addonPurchaseId);
+        $this->assertCount(1, $transitions);
+
+        $ledgerCount = DB::table('business_usage_ledger_entries')->where('funding_attempt_id', $attempt->id)->count();
+        $this->assertSame(0, $ledgerCount, 'direct_deliverable performs no wallet mutation of any kind, regardless of the race.');
+
+        Queue::assertNotPushed(SendReceiptNotification::class);
+
+        $freshAttempt = app(BusinessFundingAttemptRepository::class)->findById($attempt->id);
+        $this->assertSame(FundingAttemptState::Succeeded, $freshAttempt->state);
+
+        $succeededTransitionCount = DB::table('business_funding_attempt_transitions')
+            ->where('funding_attempt_id', $attempt->id)
+            ->where('to_state', FundingAttemptState::Succeeded->value)
+            ->count();
+        $this->assertSame(1, $succeededTransitionCount);
+
+        Event::assertDispatchedTimes(BusinessFundingAttemptSucceeded::class, 1);
     }
 }
