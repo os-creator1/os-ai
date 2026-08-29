@@ -1,146 +1,294 @@
 # RFC-005 Remediation #6 — Provider Refund/Dispute Outcome Handling Contract
 
-## Correction Round 1 record — 1 of 2 consumed, 1 remaining
+## Governance
 
-Twelve independently confirmed blockers corrected this round: (1) the production path count was false (11 paths existed, not 8 — recomputed mechanically below, no repository pair grouped into one count); (2) payment-intent-only identification was incomplete (Stripe marks `payment_intent` nullable on both `Charge` and `Dispute`) — a second identifier, `provider_charge_reference`, is now persisted alongside `provider_payment_intent_reference`, both synchronously at confirmation time from data the existing DTOs already expose, with an explicit conflicting-match failure mode; (3) dispute accounting keyed off `Dispute.amount`/`.status`, which are not reliable statements of actual funds movement — redesigned to key off `Dispute.balance_transactions[]`'s own signed `amount`/`id`; (4) `reverseChargebackEntry()` exactly negated the original entry's stored deltas, which can drive debt negative — redesigned to clear *current* debt first and credit any remainder, exactly mirroring `creditFromFunding()`'s own formula; (5) a single "net reversed" accumulator incorrectly let dispute activity suppress/reopen refund progress — split into two independent, SQL-aggregate (not PHP-collection-reduced) accumulators; (6) funding-attempt state was transitioned per-event instead of recomputed from every outstanding dispute — redesigned as a full recomputation under lock after every mutation; (7) ledger row shapes were under-specified and violated the RFC's own mandatory-reason rule for `Refund`/`CorrectionReversal` — every field is now locked, with a redundant-suspend guard added; (8) the claimed retry/reclaim path does not exist in current code (`tries=1`, no scheduled scanner) — a real bounded scanner job is now designed and allow-listed; (9) `ignored`/`processed` events were not administrator-visible and their identity thins to unattributed columns after purge — the existing `payment_provider_events` table gains normalized attribution columns and the existing admin surface gains a bounded recent-outcomes read; (10) `refund.*`/`charge.refund.updated` events were left unhandled, which would poison the retry/exhaustion queue since intake is event-type-agnostic — now explicitly routed to audit-only handling; (11) the test plan is fully re-derived (8 files, 80 methods, including genuine forced-concurrency coverage using the repository's own established subprocess/causal-barrier convention); (12) three of four "open" human decisions were not genuinely open (each resolves mechanically from the RFC's own authorization table or from this round's own redesign) and are now locked; exactly one genuine, unresolvable-from-the-RFC product decision remains open in §12.
-
----
-
-## 0. Governance
-
-- `maximum_correction_rounds`: 2 — **this is Correction Round 1 of 2. 1 consumed, 1 remaining.**
+- `maximum_correction_rounds`: 2 — **2 of 2 ordinary correction rounds consumed. 0 remaining.**
 - `human_only_merge`: true — this document, and any implementation branch built from it, is merged only by a human.
-- **M6 remains frozen.** Nothing in this document authorizes any M6 work (conformance, deployment, tag).
+- **M6 remains frozen.** Nothing in this document authorizes any M6 work — no conformance document, no deployment guide, no release/tag work of any kind.
 - No tag is authorized by this document.
 - No deployment, live Stripe action, refund, dispute simulation against production, rate activation, meter activation, or pilot activation is authorized by this document or by authoring it.
 - `docs/automation/AI-AUTONOMY-STATE.json` is untouched by this document and must remain untouched by any commit on this branch.
 - This remediation is sequenced **before** remediation #7 (RFC-005 §35 test-coverage completion).
 - **Authoring only.** This document locks a design. Implementing it is a separately, explicitly authorized future phase — this contract does not itself grant implementation authority, and no product or test code accompanies it.
 
-**Base SHA (unchanged from the original authoring pass):** `a8d2a0f9c03f8295262a9ec7b36374b4b0437294` — PR #148's merge commit.
+**Base SHA:** `a8d2a0f9c03f8295262a9ec7b36374b4b0437294` — PR #148's merge commit, confirmed as `origin/main` before the branch was first created.
 
 **Branch:** `chore/rfc-005-provider-refund-dispute-outcome-handling-contract`.
 
----
-
-## 1. Required reading — re-confirmed this round, plus the additional facts this correction required
-
-Everything read for the original pass (RFC §12/§13/§17/§20/§21/§23/§24/§25–§30, the ten exclusion-mentioning contracts, the Admin Usage Billing Surface implementation, the full webhook/checkout/wallet/ledger/receipt/reconciliation code, every relevant migration/enum) remains read and re-confirmed. **Newly read this round, to resolve the twelve blockers:**
-
-- `docs.stripe.com/api/disputes/object` — re-fetched specifically for `balance_transactions` (*"List of zero, one, or two balance transactions that show funds withdrawn and reinstated to your Stripe account as a result of this dispute"*) and re-confirmed `payment_intent` is nullable.
-- `docs.stripe.com/api/balance_transactions/object` — `id`, `amount` (signed, *"a positive value represents funds charged to another party, and a negative value represents funds sent to another party"*), `currency`, `net`, `type`.
-- `docs.stripe.com/api/refunds/object` — the `Refund` object's own `payment_intent`/`charge`/`status` fields, confirming both cross-reference fields the correction requires are present there too.
-- `app/Jobs/Base.php` — confirmed `public int $tries = 1; public int $maxExceptions = 1;`, the exact fact underlying blocker 8.
-- `app/Console/Kernel.php` — confirmed the exact scheduling convention (`$schedule->job(new ReconcileProviderPendingState())->everyFiveMinutes();`) this correction's new scanner job mirrors, and confirmed no scanner for `payment_provider_events` exists today.
-- `app/Jobs/Usage/ReconcileProviderPendingState.php` — the exact "load a bounded candidate set, redispatch/reprocess, no direct mutation" shape this correction's new job mirrors.
-- `app/Http/Controllers/Admin/PaymentProviderEventController.php`, `app/Repositories/Contracts/PaymentProviderEventRepository.php` — confirmed `index()` renders only `exhausted()` rows; no "recent processed/ignored" read exists anywhere.
-- `tests/Feature/Usage/ConcurrentTopUpConcurrencyTest.php` — the exact, established subprocess/causal-barrier convention (`Symfony\Component\Process\Process`, a `WAITING`-handshake before a shared signal file is written, no `RefreshDatabase`, manual fixture teardown) this correction's own forced-concurrency tests reuse verbatim, per the correction instruction.
-- Direct re-read of `business_usage_ledger_entries`'s own migration confirming `provider_reference` (`string(191)`, nullable) already exists on that table, unused by any write path — the field this correction uses to key per-dispute/per-refund attribution, avoiding a new ledger column entirely.
+**No human product decision remains open.** The dedicated chargeback/dispute email (§11) is resolved: send it. The wallet-refund debt policy (§6) is a binding human directive, applied throughout this document — not a decision this document leaves open.
 
 ---
 
-## 2. Exact prior exclusion language — unchanged from the original pass, re-confirmed still accurate
+## Correction history (informational only — no live design, guarantee, allow-list row, or test instruction below depends on this section; every normative rule is restated live in its own section)
 
-No exclusion-language finding from the original authoring pass is altered by this round's corrections — every quoted exclusion in the original §2 remains accurate; the redesign below corrects *how* this remediation implements what those exclusions already left open, not *whether* it may.
-
----
-
-## 3. Stripe object/event facts — corrected and extended this round
-
-**`Charge` object:** `id`, `payment_intent` (**nullable** — re-confirmed, blocker 2), `customer`, `amount`, `amount_refunded` (cumulative), `refunded` (boolean, full-refund only), `currency`, `disputed`. `metadata` is independent, not inherited (unchanged from the original pass).
-
-**`Dispute` object:** `id`, `charge`, `payment_intent` (**nullable**), `amount` (the *claimed* disputed amount — **corrected this round: not a reliable statement of actual funds movement**, blocker 3), `currency`, `status`, `reason`, **`balance_transactions`** (array of zero, one, or two `BalanceTransaction` objects — **new this round, the actual authority for what happened to the money**).
-
-**`BalanceTransaction` object** (new to this contract this round): `id` (`txn_...`), `amount` (integer, minor units, **signed** — *"a positive value represents funds charged to another party, and a negative value represents funds sent to another party"*), `currency`, `net`, `type`. For a dispute, a negative-`amount` entry represents funds withdrawn; a positive-`amount` entry represents funds reinstated. Stripe's own documentation confirms a dispute may carry **zero** (not yet resolved to any balance impact), **one** (withdrawal only, still open or lost), or **two** (withdrawal, then reinstatement) such entries — never more assumed, but the design below (§4.3) does not hard-code a maximum of two, since Stripe does not guarantee that ceiling in every edge case (e.g. partial-then-partial).
-
-**`Refund` object:** `id` (`re_...`), `amount`, `currency`, `charge` (nullable), `payment_intent` (nullable), `status` (`pending`\|`requires_action`\|`succeeded`\|`failed`\|`canceled`), `balance_transaction`. **Both cross-reference fields this contract's identification design needs (`payment_intent`, `charge`) are present here too** — used identically for audit-only attribution (§4.10).
-
-**Locked design consequence, corrected this round:** `charge.refunded` remains the sole cumulative-refund mutation authority (unchanged — its own `amount_refunded` field is still the correct, monotonic accumulator). `charge.dispute.funds_withdrawn`/`.funds_reinstated` now drive mutation from the verified event's own `data.object.balance_transactions[]` entries, never from `Dispute.amount`. `charge.dispute.created`/`.updated`/`.closed` and the entire `refund.*`/`charge.refund.updated` event family are audit-only (§4.3, §4.10) — **explicitly handled, never left to fall through to a generic failure branch (blocker 10).**
+- **Correction Round 1** corrected twelve blockers in the original authoring pass, spanning identification, dispute accounting authority, reinstatement mechanics, accumulator isolation, state-machine correctness, ledger row completeness, the retry mechanism's actual existence, audit visibility, unhandled event families, and false-open human decisions.
+- **Correction Round 2 (this document)** corrected ten further blockers confirmed independently against current `main` and Stripe's own current documentation — self-containment (no rule depends on deleted text), `direct_deliverable` outcome persistence and idempotency, a received-row recovery hole in the retry scanner, an unbounded dispute-reference scan replaced with one bounded query, dispute balance-transaction cardinality locked to Stripe's own documented shape with mechanical reversal lineage, the low-balance/auto-recharge/receipt boundary, the one open human decision (resolved: send a dedicated notification), ambiguous audit amounts split into reported/applied fields backed by a typed outcome result, the complete transaction/crash-recovery sequence, and every allow-list/test count recomputed from zero — **and, mid-round, one binding human policy directive, applied throughout this same round: a provider-confirmed Refund can never create or increase wallet debt.** Previously consumed usage remains consumed and non-refundable; an externally-issued over-refund (bypassing this platform's own policy directly against Stripe) is recorded, capped at currently-available balance, and flagged for administrator review — never retried indefinitely, never quietly absorbed as debt. `DisputeChargeback` is explicitly unaffected by this policy and may still create debt, exactly as the RFC's own §13 delta table already specifies.
 
 ---
 
-## 4. Mechanical findings — corrected and extended this round
+## 1. Required reading, confirmed by direct re-read this round
 
-### 4.1 Identification — two independent identifiers, with an explicit ambiguity failure mode (blocker 2)
+- The authoritative RFC (`docs/rfcs/RFC-005-BUSINESS-USAGE-BILLING-AND-WALLETS.md`), specifically §12 (ledger invariants), §13 (the twelve-entry-type delta table, mandatory-reason rule, `reversed_entry_id`), §17 (provider-customer identity), §20/§21 (Stripe boundary, webhook verification/claim/disposition), §23 (refunds/disputes/receipts), §24 (authorization table), §25–§30 (schema/enums/managers/jobs/events).
+- Every merged RFC-005 milestone/correction contract whose exclusions mention refunds/disputes/reversals — every load-bearing exclusion from these is restated in full, in this document's own words, in §17 below; none is referenced by pointer only.
+- Current production code, re-read directly: `app/Http/Controllers/StripeWebhookController.php`; `app/Jobs/Usage/ProcessPaymentProviderEvent.php`; `app/Jobs/Usage/ReconcileProviderPendingState.php`; `app/Jobs/Usage/PurgeExpiredWebhookPayloads.php`; `app/Jobs/Base.php` (`$tries = 1; $maxExceptions = 1;`); `app/Console/Kernel.php`; `app/Http/Controllers/Admin/PaymentProviderEventController.php`; `app/Repositories/Contracts/PaymentProviderEventRepository.php` and its Eloquent implementation; `app/Library/Usage/UsageWalletManager.php` in full (`lowBalanceMarkerUpdate()`'s exact contract; every existing debit call site's exact `EvaluateBusinessAutoRecharge`/`SendLowBalanceNotification` pattern in `reserve()` and `commit()`'s own overage branch; `setBillingStatus()` is not self-idempotent); `app/Library/Usage/UsageBillingCheckoutManager.php` in full; `app/Jobs/Usage/SendLowBalanceNotification.php` and `app/Notifications/Usage/LowBalanceNotification.php` (the exact template this document's new notification job/class mirror); `app/Repositories/Contracts/BusinessBillingContactRepository.php`; `app/Enums/Usage/BillingStatusTransitionSource.php` (currently `DisputeWebhook`\|`AdminAction` — this document adds one new case, §11); every relevant migration under `database/migrations/2026_08_16_*`/`2026_08_27_*`/`2026_08_28_*` (`business_usage_ledger_entries.provider_reference` already exists, nullable, unused; `payment_provider_events` carries only its own `UNIQUE(provider, provider_event_id)` index); the full existing webhook/provider-event test suite (`tests/Feature/Usage/PaymentProviderEventSchemaTest.php`'s three methods require no modification; `tests/Feature/Usage/SendLowBalanceNotificationTest.php`'s own thirteen-method shape is the sizing precedent for the new notification test file); `tests/Feature/Usage/ConcurrentTopUpConcurrencyTest.php` (the subprocess/causal-barrier convention this document's forced-concurrency tests reuse).
+- Stripe's own current official documentation, fetched live: `docs.stripe.com/api/charges/object`, `docs.stripe.com/api/disputes/object` (*"a list of zero, one, or two balance transactions"* — locked exactly, §5), `docs.stripe.com/api/balance_transactions/object`, `docs.stripe.com/api/refunds/object`, `docs.stripe.com/api/events/types`.
 
-**Corrected: a single `payment_intent`-based identifier is not a complete guarantee** — Stripe's own documentation marks `payment_intent` nullable on both `Charge` and `Dispute`. Both already-normalized result DTOs this codebase owns expose a **second**, independent identifier at zero additional provider-call cost:
+---
 
-- `CheckoutSessionResult::$providerPaymentIntentId` and `CheckoutSessionResult::$receiptChargeId` (`app/Library/Usage/CheckoutSessionResult.php:24,26`).
-- `PaymentIntentResult::$receiptChargeId` (`app/Library/Usage/PaymentIntentResult.php:12`) — the PaymentIntent id itself is already `$attempt->provider_session_or_intent_reference` for AutoRecharge, no DTO field needed for that half.
+## 2. Stripe object/event facts
 
-**Locked design:** two new nullable, independently-`UNIQUE`-when-populated columns on `business_funding_attempts`: `provider_payment_intent_reference` and `provider_charge_reference`. Populated synchronously, inside the same transaction that finalizes the attempt, from data already in hand at every existing call site — never a new provider round-trip:
+**`Charge` object:** `id`, `payment_intent` (nullable), `customer`, `amount`, `amount_refunded` (cumulative, monotonically non-decreasing), `refunded` (boolean, true only once fully refunded), `currency`, `disputed`. `metadata` is independent, never inherited from the originating PaymentIntent.
 
-| Purpose | Confirmed via | `provider_payment_intent_reference` | `provider_charge_reference` |
-|---|---|---|---|
-| `AutoRecharge`, confirmed via `confirmAttemptFromReturn()`/`retryFundingAttemptAsAdministrator()` | both branches already call `retrievePaymentIntent()`, discarding the result today | `$attempt->provider_session_or_intent_reference` (already known, trivial) | `$paymentIntent->receiptChargeId` — **already fetched, in hand** |
-| `AutoRecharge`, confirmed via the ordinary webhook path (`confirmAttemptFromWebhook()`) | that branch trusts the raw, signature-verified payload directly and never fetches a `PaymentIntentResult` (M4's own established, unchanged design) | `$attempt->provider_session_or_intent_reference` (still trivially known — never requires the fetch) | **left `NULL`** — no additional provider call is introduced to obtain it (governance); harmless in practice because PI-reference resolution for AutoRecharge never fails (below) |
-| `ManualTopUp`/`AddonPurchase`, any of the three confirmation paths | every path already calls `retrieveCheckoutSession()` | `$session->providerPaymentIntentId` | `$session->receiptChargeId` — **already fetched, in hand** |
+**`Dispute` object:** `id`, `charge`, `payment_intent` (nullable), `amount` (the cardholder's *claimed* disputed amount — not a reliable statement of actual funds movement, §7), `currency`, `status`, `reason`, and **`balance_transactions`** — *"a list of zero, one, or two balance transactions that show funds withdrawn and reinstated to your Stripe account as a result of this dispute."* Locked to exactly that documented shape.
 
-**At-least-one-identifier precondition (blocker 2's own explicit requirement) is already structurally guaranteed, not newly enforced:** `fundingAttemptCheckoutVerified()` already refuses to proceed when `$session->providerPaymentIntentId === null` (confirmed, `UsageBillingCheckoutManager.php:984,1298`) — a Checkout-backed attempt can never reach `Succeeded` with a null PaymentIntent id. For AutoRecharge, `provider_session_or_intent_reference` is itself required non-null before a status check is even possible. **This contract adds one explicit, defensive assertion inside `finalizeFundingAttemptState()`** — refuse to persist `state = Succeeded` if the resolved `provider_payment_intent_reference` value about to be written is null — restating this already-true precondition as code, not introducing new fallible logic.
+**`BalanceTransaction` object:** `id` (`txn_...`), `amount` (signed, minor units — negative = funds sent away from the platform's balance, positive = funds credited to it), `currency`, `net`, `type`.
 
-**Routing/resolution algorithm, corrected and extended (blocker 2):** for a `charge.refunded`/`charge.dispute.*`/`refund.*` event, read **both** `payment_intent` and (`Charge.id` for a Charge-object event, `charge` for a Dispute/Refund-object event) from the verified payload. Resolve each independently via `findByProviderPaymentIntentReference()`/`findByProviderChargeReference()` (§5). Then:
+**`Refund` object:** `id` (`re_...`), `amount`, `currency`, `charge` (nullable), `payment_intent` (nullable), `status`, `balance_transaction`.
 
-- **Both resolve, to the same attempt** → proceed.
-- **Both resolve, to different attempts** → `markFailed('cross_reference_ambiguity')`, zero mutation. This is a genuine, structural mismatch (never expected in a correctly-functioning system) and is treated exactly like every other pre-mutation validation failure — logged, retryable, never silently resolved by picking one.
-- **Exactly one resolves** (the other field was absent from the payload, or present but matches no local row) → use the one that resolved.
-- **Neither resolves** → `markFailed('no_matching_local_record')`, zero mutation (unchanged from the original pass).
+**Locked event routing:**
 
-### 4.2 Full/partial/repeated refunds — unchanged in semantics from the original pass, now isolated from dispute activity (blocker 5, §4.5 below)
+| Event type | Drives mutation? | Handling |
+|---|---|---|
+| `charge.refunded` | Yes — the sole cumulative-refund mutation authority | §6 |
+| `charge.dispute.funds_withdrawn` | Yes | §8 |
+| `charge.dispute.funds_reinstated` | Yes | §9 |
+| `charge.dispute.created` / `.updated` / `.closed` | No | Audit-only, §15 |
+| `refund.created` / `refund.updated` / `refund.failed` / `charge.refund.updated` | No | Audit-only, §16 |
 
-No change to the customer-requested-vs-provider-confirmed distinction, the charge-reversal-is-not-a-separate-category finding, or the full-vs-partial mechanical distinction. The **accumulator** feeding this logic is corrected in §4.5.
+---
 
-### 4.3 Dispute withdrawal/reinstatement — corrected to key off signed balance transactions, never `Dispute.amount`/`.status` alone (blocker 3)
+## 3. Identification — two independent provider references, with an explicit ambiguity failure mode
 
-**Corrected:** `Dispute.amount` is *"usually the amount of the charge, but it can differ"* — Stripe's own documentation, and the correction's own worked examples (a dispute can be partial; can exceed the original payment; a partially-refunded charge can be disputed for its full remaining amount; `funds_reinstated` may restore only part of what was withdrawn; more than one dispute can exist for one payment) all confirm `Dispute.amount`/`.status` are claims, not settlement facts.
+`payment_intent` is nullable on both `Charge` and `Dispute`. Two already-normalized result DTOs expose a second, independent identifier at zero additional provider-call cost: `CheckoutSessionResult::$providerPaymentIntentId`/`$receiptChargeId`, `PaymentIntentResult::$receiptChargeId`.
 
-**Locked design:** on `charge.dispute.funds_withdrawn`, read `data.object.balance_transactions[]` from the verified payload. For every entry whose `amount` is **negative** and whose own `id` has not already been applied (idempotency key, below), apply exactly one `DisputeChargeback` ledger entry for `abs(amount)` (converted to micro via `expectedMicroForMinorUnits()`, currency-verified against `entry.currency`). On `charge.dispute.funds_reinstated`, identically, for every entry whose `amount` is **positive** and not already applied, apply exactly one `CorrectionReversal` (§4.4). A dispute event carrying an **empty** `balance_transactions` array (a mere inquiry/warning with no balance impact yet) produces **zero** mutation from either event type — durably recorded as audit-only (§4.10), exactly as if it were `.created`/`.updated`. `charge.dispute.created`/`.updated`/`.closed` remain audit-only regardless of `balance_transactions` content, per the original pass's own §4.3 reasoning (unchanged) — the two event types Stripe fires specifically when a balance transaction newly appears are the only ones this contract keys mutation to, exactly per the correction's own instruction.
+**Locked:** two new nullable, independently-`UNIQUE`-when-populated columns on `business_funding_attempts`: `provider_payment_intent_reference`, `provider_charge_reference`. Populated synchronously, inside the transaction that finalizes the attempt to `Succeeded`, from data already in hand:
 
-**Idempotency, corrected (feeds blocker 3 and blocker 5):** the correlation key for a `DisputeChargeback` row is `'dispute_chargeback:'.$attempt->id.':'.$balanceTransactionId` — keyed to the **provider balance-transaction id itself**, not a computed cumulative figure (there is no cumulative figure for disputes — each balance transaction is its own discrete, permanent fact). Identically, `'dispute_reversal:'.$attempt->id.':'.$balanceTransactionId` for a `CorrectionReversal` row. `provider_reference` (the existing, currently-unused `business_usage_ledger_entries.provider_reference` column, §4.6) is set to the **dispute's own id** (`Dispute.id`, e.g. `du_...`) on both entry types — grouping key for §4.4/§4.6's own per-dispute bounding, distinct from the row's own per-balance-transaction correlation key.
+| Purpose/path | `provider_payment_intent_reference` | `provider_charge_reference` |
+|---|---|---|
+| `AutoRecharge` via `confirmAttemptFromReturn()`/`retryFundingAttemptAsAdministrator()` (both already call `retrievePaymentIntent()`) | `$attempt->provider_session_or_intent_reference` | `$paymentIntent->receiptChargeId` — already fetched |
+| `AutoRecharge` via the ordinary webhook path (trusts the raw, verified payload directly, never fetches a `PaymentIntentResult`) | `$attempt->provider_session_or_intent_reference` | Left `NULL` — no new provider call is introduced; harmless, PI-reference resolution for AutoRecharge never fails |
+| `ManualTopUp`/`AddonPurchase`, any confirmation path (all already call `retrieveCheckoutSession()`) | `$session->providerPaymentIntentId` | `$session->receiptChargeId` — already fetched |
 
-### 4.4 Reinstatement uses current wallet state, never a negation of the original entry (blocker 4)
+**At-least-one-identifier precondition** is already structurally guaranteed (`fundingAttemptCheckoutVerified()` already refuses a null `providerPaymentIntentId`; AutoRecharge requires `provider_session_or_intent_reference` non-null before any status check). `finalizeFundingAttemptState()` adds one defensive assertion restating this.
 
-**Corrected:** the original design's `reverseChargebackEntry()` negated the original `DisputeChargeback` row's own stored `debt_delta_micro`/`available_delta_micro` exactly. Worked counter-example, confirmed correct by the correction instruction: a chargeback creates €100 debt; a later, unrelated top-up clears that debt (via `creditFromFunding()`'s own debt-clear-first formula, entirely independent of the dispute); the dispute is later won and funds are reinstated — negating the *original* entry's own `debt_delta_micro = +100` would write `debt_delta_micro = -100` against a wallet whose debt is already `0`, driving debt negative, a value the schema and every other write path in this codebase treats as structurally impossible.
+**Routing:** resolve both `payment_intent` and (`Charge.id`/`Dispute.charge`/`Refund.charge`) independently.
 
-**Locked design — `UsageWalletManager::reinstateDisputedFunds()`** (renamed from the original pass's `reverseChargebackEntry()`), computed from the wallet's **currently locked** state, exactly mirroring `creditFromFunding()`'s own debt-clear-first formula, never the original entry's stored deltas:
+- **Both resolve, same attempt** → proceed.
+- **Both resolve, different attempts** → `markFailed('cross_reference_ambiguity')`, zero mutation.
+- **Exactly one resolves** → use it.
+- **Neither resolves** → `markFailed('no_matching_local_record')`, zero mutation.
+
+---
+
+## 4. Which entries can ever be the subject of a provider refund — the wallet-backed determination and the promotional/manual-credit boundary
+
+`findCreditEntryForFundingAttempt(int $fundingAttemptId): ?BusinessUsageLedgerEntry` finds the original wallet-crediting entry for a funding attempt, scoped **exclusively** to `entry_type IN ('paid_top_up', 'auto_recharge')`. `ManualTopUp`/`AutoRecharge` attempts always have one; an `AddonPurchase` attempt has one only when `fulfillment_mode = wallet_credit`.
+
+**Locked, explicit boundary — restated because a future maintainer must never widen this scope:** `ManualCredit` and `PromotionalCredit` ledger entries are **never** eligible to be selected as refundable provider funding. Neither entry type has a provider payment behind it — `issueManualCredit()` never associates a `funding_attempt_id` with the entries it writes, and no refund/dispute code path this document authorizes ever queries `entry_type IN ('manual_credit', 'promotional_credit')` for any purpose. Complimentary and promotional credit has no cash value and is not cash-refundable through this or any mechanism this document introduces.
+
+**`$walletBacked`**, resolved once per attempt from `findCreditEntryForFundingAttempt() !== null` and held for every reversal call against that attempt, controls whether a mutation touches `available_balance_micro`/`debt_balance_micro` at all (§10) — it never controls whether the outcome's own ledger row is written, whether an accumulator advances, whether the durable audit records the outcome, or whether the funding attempt's own state is recomputed (§13, §18).
+
+**A refunded/disputed `direct_deliverable` AddonPurchase remains historically `Completed` forever.** No refund/dispute code path calls `finalizeAddonPurchaseIfPending()`, `completeAddonPurchaseUnderLock()`, or writes `business_usage_addon_purchases.status`. The later outcome is recorded entirely through the funding attempt's own state (§13), the zero-delta ledger row (§10), and the durable audit (§18) — never by un-completing the purchase or reversing any deliverable. No entitlement/deliverable-rollback mechanism exists or is introduced. Commercial eligibility for refunding an already-delivered digital product remains an entirely external, separately governed business decision — this design only ever records the provider's own already-settled outcome, and a `direct_deliverable` outcome is never classified as a wallet-credit "over-refund" (§6), since no wallet credit ever existed for that money in the first place.
+
+---
+
+## 5. Dispute balance-transaction shape — locked to zero/one/two, exact validation
+
+`Dispute.amount`/`.status` are claims, not settlement facts. The authority is `Dispute.balance_transactions[]`, locked to exactly the documented shape:
+
+- **Zero entries** — no balance impact yet. Zero mutation; audit-only (§15).
+- **One entry, negative** — the ordinary withdrawal shape. Drives §8.
+- **One entry, positive, on `funds_reinstated` with no accompanying negative entry** — unexpected; fails closed per §9's own explicit rule, never guessed.
+- **Two entries, one negative and one positive** — the documented withdrawal-then-reinstatement shape.
+- **More than two entries** → `markFailed('malformed_balance_transaction_array')`, zero mutation.
+- **Two entries of the same sign** → `markFailed('malformed_balance_transaction_array')`, zero mutation.
+- **Duplicate `id` values** → `markFailed('malformed_balance_transaction_array')`, zero mutation.
+- **A currency mismatch on any entry** → `markFailed('currency_mismatch')`, zero mutation.
+
+Every applied amount converts via `expectedMicroForMinorUnits()` (§14).
+
+---
+
+## 6. Refund policy — locked, binding: a provider-confirmed Refund can never create or increase wallet debt
+
+**Binding human policy, applied throughout this document:** valid, consumed wallet credit is non-refundable. Previously consumed usage remains consumed. A Refund ledger entry **never** carries a non-zero `debt_delta_micro`, under any circumstance — this supersedes every general "debt formation on insufficient balance" pattern this codebase otherwise uses (`UsageOverageCharge`, `DisputeChargeback`, which are explicitly and deliberately **not** affected by this policy, §8). This design still does not authorize any application-side refund-origination action of any kind — refund initiation remains entirely external (a Stripe dashboard action, a bank-initiated return, or any other provider-side event) and separately governed; any future application-side refund-initiation feature would itself need to validate this same available-balance cap before ever calling Stripe, as its own, separately authorized contract.
+
+**Exact formula, computed inside the locked transaction (wallet row locked first, §20):**
+
+```
+providerRefundDelta   = min(providerCumulativeRefundMicro, attempt.expected_amount_micro) − alreadyRecordedRefundGrossMicro
+refundableAvailableMicro = max(0, lockedWallet.available_balance_micro)
+walletDebitMicro       = min(providerRefundDelta, refundableAvailableMicro)
+policyExcessMicro      = providerRefundDelta − walletDebitMicro
+```
+
+`alreadyRecordedRefundGrossMicro` is `sumRefundedMicroForFundingAttempt()`'s own existing exact-string SQL aggregate (§12) — unchanged mechanism from the accumulator already locked earlier in this correction round. `providerRefundDelta === 0` is a pure replay/no-op: no row is written, `normalized_outcome = refund_already_applied` (§18), and no further step in this section executes.
+
+**This cap applies to every funding attempt that originally credited the wallet** — `ManualTopUp`, `AutoRecharge`, and `AddonPurchase` with `fulfillment_mode = wallet_credit` alike. **It does not apply to a `direct_deliverable` AddonPurchase at all** — no wallet credit ever existed for that money, so there is no "used credits" calculation to perform; that case remains the unconditional zero-delta design of §10, and is never classified as an over-refund.
+
+**No credit-lot or source-level attribution is introduced.** The wallet's current `available_balance_micro` is a single fungible pool — this design makes no attempt to trace whether "this specific top-up's own money" is still present versus already spent on usage or already mixed with other credits; the cap is simply the wallet's own current total available balance at the moment of processing, exactly matching how every other wallet-debiting method in this codebase already treats `available_balance_micro`.
+
+### Normal, policy-compliant refund (`policyExcessMicro === 0`)
+
+The `Refund` ledger row (§12):
+
+```php
+[
+    'gross_amount_micro' => $providerRefundDelta,
+    'available_delta_micro' => -$walletDebitMicro,
+    'reserved_delta_micro' => 0,
+    'debt_delta_micro' => 0,   // unconditional — no Refund code path ever writes a positive value here
+    // correlation_key, provider_reference, reason: §12, unchanged in shape
+]
+```
+
+### Externally issued over-refund (`policyExcessMicro > 0`)
+
+The application cannot prevent a bypass of this policy directly against Stripe (a provider-dashboard refund exceeding what this platform would itself allow). Because the webhook arrives only after Stripe has already returned the money, this design does not pretend the outcome never happened, and does not retry it indefinitely — it is recorded once, contained, and surfaced for administrator review:
+
+1. **Debit only the currently available amount** (`walletDebitMicro`, computed above) — never more.
+2. **Never create wallet debt** — `debt_delta_micro = 0`, identically to the compliant path.
+3. **Still write one idempotent `Refund` outcome row:** `gross_amount_micro = providerRefundDelta` (the complete newly-confirmed delta, including the unrecoverable portion — this is what drives §13's own state recomputation, so a provider-confirmed full refund can still reach `Refunded` even though part of it violated this platform's own policy); `available_delta_micro = -walletDebitMicro` (only the amount actually removable); `debt_delta_micro = 0`.
+4. **Funding-attempt state recomputes from gross refund progress** (§13) — unchanged mechanism; `sumRefundedMicroForFundingAttempt()` already sums `gross_amount_micro`, which already reflects the full confirmed delta regardless of how much of it was actually removable from the wallet.
+5. **Suspend billing, in the same transaction, as a protective control** — via `UsageWalletManager::setBillingStatus(..., WalletBillingStatus::Suspended, BillingStatusTransitionSource::ProviderRefundMismatch, null, $reason)`. **A new, precise enum case** — `BillingStatusTransitionSource::ProviderRefundMismatch` (`'provider_refund_mismatch'`) — is added to the existing, otherwise-unmodified `BillingStatusTransitionSource` enum (currently `DisputeWebhook`\|`AdminAction`) specifically for this outcome; `DisputeWebhook` and `AdminAction` are never repurposed for it. The identical redundant-suspend guard already locked for dispute withdrawals (§8, §11) applies here too — a repeated policy-excess outcome on an already-suspended Business writes no second transition row.
+6. **Durable audit:** `normalized_outcome = refund_exceeds_refundable_balance`; `normalized_policy_excess_micro` (§18, a new audit column) persists `policyExcessMicro` exactly, as an integer-micro value, never a float.
+7. **Terminal state: `processed`, never `failed`.** Retrying cannot undo a refund Stripe has already issued — this event's own processing is complete and correct the moment the outcome row is written and billing is suspended; it is never left to retry indefinitely, and it never appears in the exhausted-events queue for this reason.
+8. **Surfaced in the existing administrator audit table** (`admin.provider-events.index`'s own widened `recentOutcomes` section, §18) for manual investigation — the same reused surface, not a new one.
+9. **No auto-recharge, no receipt, no dedicated chargeback notification.** `EvaluateBusinessAutoRecharge` is never dispatched by any refund path (§17); no receipt is ever written or sent; the dedicated notification authorized in §11 is chargeback/dispute-only and is **never** dispatched for a refund-policy-excess outcome — an excessive externally-issued refund is an administrator-facing audit fact, never disguised as a chargeback.
+10. **Replays and different-event-id reports of the same cumulative refund produce no additional ledger row, wallet debit, suspension transition, or notification** — identical correlation-key idempotency to the compliant path (§11), keyed to the same cumulative reported figure.
+
+### Low-balance marker and wallet events, both paths
+
+`lowBalanceMarkerUpdate()` is applied using the wallet's resulting available balance after `walletDebitMicro` is actually removed (§11); `SendLowBalanceNotification` dispatches after commit only when the marker rule itself requests it. `BusinessWalletDebited` dispatches only for the actual `walletDebitMicro` — when `walletDebitMicro === 0` (available balance was already exhausted), no debit event is dispatched at all, though the outcome row, state recomputation, and (if `policyExcessMicro > 0`) suspension still occur.
+
+---
+
+## 7. Dispute exposure — signed, per-transaction, per-dispute; unaffected by the refund policy
+
+**Restated explicitly, since §6's binding policy applies to `Refund` only:** `DisputeChargeback` may still create debt, exactly as the RFC's own §13 delta table specifies (`-min(amt, avail)`/`0`/`+max(0, amt-avail)`) — nothing in this correction round removes that behavior. On `charge.dispute.funds_withdrawn`, for the (at most one, §5) negative-`amount` entry not yet applied, apply exactly one `DisputeChargeback` entry for `abs(amount)`.
+
+**Per-dispute bounding, independent of the refund accumulator (§6) and of any other dispute on the same attempt:** `provider_reference` (`business_usage_ledger_entries`'s own existing, previously-unused nullable column) is set to the dispute's own `id` on every `DisputeChargeback`/`CorrectionReversal` row:
+
+```
+withdrawn  = SUM(gross_amount_micro) WHERE funding_attempt_id = ? AND provider_reference = ? AND entry_type = 'dispute_chargeback'
+reinstated = SUM(gross_amount_micro) WHERE funding_attempt_id = ? AND provider_reference = ? AND entry_type = 'correction_reversal'
+```
+
+Exact SQL-aggregate strings (§14), one dispute at a time — never combined with any other dispute's own figures, and never combined with the refund accumulator (§6).
+
+---
+
+## 8. Reinstatement — current wallet state, mechanically resolved lineage, bounded to the specific dispute
+
+**Never a negation of the original entry's own stored deltas** — a chargeback creates debt; an unrelated later top-up clears it; negating the original entry's own deltas on reinstatement would drive debt negative.
+
+**Locked formula, from the wallet's currently-locked state, mirroring `creditFromFunding()`'s own debt-clear-first shape:**
 
 ```
 debtCleared = min(reinstatementAmountMicro, max(0, wallet.debt_balance_micro))
-remainder   = reinstatementAmountMicro - debtCleared
-available_delta_micro = +remainder
-debt_delta_micro      = -debtCleared
+remainder   = reinstatementAmountMicro − debtCleared
+available_delta_micro = +remainder      (0 if not wallet-backed, §10)
+debt_delta_micro      = −debtCleared    (0 if not wallet-backed, §10)
 ```
 
-- **Never produces negative debt** — `debtCleared` is bounded to the wallet's own current `debt_balance_micro`, exactly as `creditFromFunding()`'s identical clamp already guarantees for every other crediting path in this codebase.
-- **`reversed_entry_id`** is set to the **original `DisputeChargeback` entry's own id** for full audit lineage — even across a partial reinstatement, and even if a second, later reinstatement event for the *same* dispute (a further balance transaction) also references the same original entry id (§4.3's own per-balance-transaction idempotency already prevents any double-application; multiple `CorrectionReversal` rows sharing one `reversed_entry_id` is the correct, auditable shape for a dispute reinstated in more than one Stripe-side movement).
-- **Bounded to the actual withdrawn amount for that specific dispute (blocker 3's own explicit bullet), never the attempt's own `expected_amount_micro`:** before applying, `sumDisputeMicroForFundingAttemptAndDispute($attemptId, $disputeId, DisputeChargeback)` and the identical call for `CorrectionReversal` (§5, both new SQL-aggregate reads, §4.5's own discipline) compute, for **this dispute only**, `withdrawn` and `alreadyReinstated`. The amount actually applied is `min(reportedBalanceTransactionAmount, withdrawn − alreadyReinstated)`, clamped to a minimum of `0`. A clamped-to-zero result is a no-op — no row written, no event dispatched — the mechanism that makes a duplicate/replayed reinstatement event idempotent by construction, independent of the correlation-key `UNIQUE` constraint (which remains the second, structural line of defense, matching the refund design's own two-layer discipline).
-- **Dispatches `BusinessWalletCredited` (if `remainder > 0`) and/or `BusinessWalletDebtCleared` (if `debtCleared > 0`)** — the credit-direction pair, matching `creditFromFunding()`'s own dispatch shape exactly (corrected from the original pass's incorrect negated-shape guess, which would have dispatched the *debit*-direction pair for a *crediting* operation).
+**Bounded to the specific dispute's own actual withdrawn amount** (§7's two sums): `min(reportedBalanceTransactionAmount, withdrawn − reinstated)`, clamped to `0`.
 
-### 4.5 Refund and dispute accumulators are independent — never one shared "net reversed" figure (blocker 5)
+**Lineage — mechanically resolved, never guessed:** a `funds_reinstated` event's own `balance_transactions[]` array carries, per §5's documented two-entry shape, both the reinstatement entry and its own withdrawal counterpart. The withdrawal entry's own `id` deterministically identifies its correlation key (`'dispute_chargeback:'.$attempt->id.':'.$withdrawalBalanceTransactionId`, §11); `findByCorrelationKey()` (existing, unmodified) resolves the exact original `DisputeChargeback` row. `reversed_entry_id` is set to that row's own id.
 
-**Corrected:** the original design's single formula, `Σ Refund + Σ DisputeChargeback − Σ CorrectionReversal`, let dispute activity change how much refund headroom an unrelated, ordinary partial-refund sequence has left — a genuine correctness defect, not merely an inefficiency.
+- **Missing or ambiguous withdrawal lineage fails closed:** no negative-`amount` entry present, or `findByCorrelationKey()` finds nothing → `markFailed('missing_original_chargeback_reference')`, zero mutation. No arbitrary row is ever chosen.
+- **Never produces negative debt.**
+- **Dispatches `BusinessWalletCredited`/`BusinessWalletDebtCleared`** when wallet-backed; dispatches neither when not (§10).
 
-**Locked design — two structurally independent bounded SQL aggregates, both returning exact decimal strings (never a native PHP-integer sum, matching the margin-aggregate's own already-established `DECIMAL`-string discipline from the Admin Usage Billing Surface Contract), computed entirely in SQL, never by loading rows into PHP for reduction:**
+---
 
-- **Refund progress**, scoped to the funding attempt alone, entirely independent of any dispute ever raised against it: `already_refunded = SUM(gross_amount_micro) WHERE funding_attempt_id = ? AND entry_type = 'refund'` (`BusinessUsageLedgerEntryRepository::sumRefundedMicroForFundingAttempt()`, §5). `refund_delta = min(cumulativeAmountRefundedMicro, expected_amount_micro) − already_refunded`, clamped to a minimum of `0`, computed via `bcsub()`/`bccomp()` on the SQL-returned strings, never native subtraction on a PHP-cast value.
-- **Dispute withdrawal/reinstatement progress**, scoped to the funding attempt **and** one specific dispute id (§4.4's own `sumDisputeMicroForFundingAttemptAndDispute()`), entirely independent of the attempt's own refund progress and of any *other* dispute.
+## 9. Wallet-backed versus zero-delta outcome rows
 
-**Neither accumulator ever reads the other's entry type.** A refund is computed exclusively from `Refund` rows; a dispute's own exposure is computed exclusively from `DisputeChargeback`/`CorrectionReversal` rows filtered to that one dispute's own `provider_reference`. The two are combined only at the very end, when recomputing the attempt's own overall `state` (§4.6) — never when computing either one's own delta.
+**Every genuinely new provider financial outcome writes an append-only ledger outcome row, whether or not the original funding attempt ever credited the wallet.** `$walletBacked` (§4) controls only:
 
-### 4.6 Funding-attempt state is recomputed from every outstanding outcome, under lock, after every mutation — never transitioned per-event (blocker 6)
+| | Wallet-backed | Zero-delta (`direct_deliverable`) |
+|---|---|---|
+| `available_delta_micro`/`debt_delta_micro` (`Refund`) | `-walletDebitMicro` / `0` (§6, always) | `0` / `0` |
+| `available_delta_micro`/`debt_delta_micro` (`DisputeChargeback`) | `-min(amt,avail)` / `+max(0,amt-avail)` (§7) | `0` / `0` |
+| `available_delta_micro`/`debt_delta_micro` (`CorrectionReversal`) | Per §8 | `0` / `0` |
+| `gross_amount_micro` | The exact applied/confirmed delta | Identical |
+| Wallet row `UPDATE` | Applied | **Never applied** — the wallet row is still locked first (§20), balance columns untouched |
+| `lowBalanceMarkerUpdate()` | Applied | **Never touched** |
+| Wallet balance events | Dispatched per formula, and only when the corresponding delta is non-zero | **Never dispatched** |
+| Billing-status suspension (`DisputeChargeback` or refund policy-excess only) | Applied | **Still applied — a risk-control decision, not conditional on wallet-credit fulfillment** |
+| Chargeback notification (`DisputeChargeback` only, §11) | Dispatched | **Still dispatched, for the identical reason** |
+| Refund policy-excess suspension/audit (§6) | Applied | **Not applicable — no wallet credit ever existed, so `walletDebitMicro`/`policyExcessMicro` are both always `0`; the outcome is always `refund_recorded_no_wallet_effect` (§18), never `refund_exceeds_refundable_balance`** |
+| Funding-attempt state recomputation (§13) | Applied | **Still applied, identically** |
+| Durable audit attribution (§18) | Applied | **Still applied, identically** |
 
-**Corrected:** the original design transitioned `state` directly in response to whichever single event had just been processed (e.g. "a `funds_reinstated` event transitions the attempt back to `Succeeded`"). Stripe permits multiple disputes against one payment; reinstating one cannot correctly force `Succeeded` while a second, unrelated dispute against the same charge remains outstanding.
+**A reinstatement of a zero-delta chargeback remains zero-delta — it never credits the wallet.** `reinstateDisputedFunds()` receives the same `$walletBacked` flag the original withdrawal was recorded with.
 
-**Locked design — `UsageBillingCheckoutManager::recomputeFundingAttemptState()`**, called once, under the attempt's own row lock, as the final step of `applyRefundOutcome()`/`applyDisputeChargebackOutcome()`/`applyDisputeReinstatementOutcome()` alike, inside the same outer transaction as the wallet mutation it follows:
+---
+
+## 10. Idempotency — deterministic correlation keys
+
+1. **Event-identity layer:** `payment_provider_events.UNIQUE(provider, provider_event_id)`.
+2. **Outcome layer**, keyed to the outcome, not the delivering event:
+   - `Refund`: `'refund:'.$attempt->id.':'.$newCumulativeAmountRefundedMicro` — identical whether the outcome is policy-compliant or policy-excess (§6), so a replay of either is a guaranteed no-op.
+   - `DisputeChargeback`: `'dispute_chargeback:'.$attempt->id.':'.$balanceTransactionId`.
+   - `CorrectionReversal`: `'dispute_reversal:'.$attempt->id.':'.$balanceTransactionId`.
+
+Both layers apply identically to wallet-backed and zero-delta rows.
+
+---
+
+## 11. Billing-status suspension/resumption and the dedicated chargeback/dispute notification
+
+**Suspension** fires for two, and only two, reasons: (a) every genuinely new `DisputeChargeback` write, wallet-backed or not (`BillingStatusTransitionSource::DisputeWebhook`); (b) every genuinely new refund outcome whose `policyExcessMicro > 0` (`BillingStatusTransitionSource::ProviderRefundMismatch`, §6). Both call the identical, existing `UsageWalletManager::setBillingStatus()`, gated by the identical redundant-suspend guard (`$wallet->billing_status !== WalletBillingStatus::Suspended` checked first) — a second dispute, or a second policy-excess refund, against an already-suspended Business writes no additional transition row, regardless of which of the two reasons suspended it first.
+
+**Resumption after a won dispute (or after an administrator resolves a policy-excess flag) remains administrator-only, unconditionally.** RFC §24's own authorization table reserves *"Set/clear `billing_status = 'suspended'`"* to the platform administrator with no automatic-resume row. The already-built `admin.businesses.usage-billing.resume` action is reused unmodified.
+
+**The dedicated notification — one new job, `App\Jobs\Usage\SendChargebackDisputeNotification`, one new notification class, `App\Notifications\Usage\ChargebackDisputeNotification`** — mirrors `SendLowBalanceNotification`/`LowBalanceNotification`'s own exact recipient-resolution shape (billing-contact lookup, `notification_opt_in`, `contact_user_id`-or-`contact_email` fallback, blank-email skip). **It is chargeback/dispute-only.** It is dispatched **only** by the correlation-key winner of a genuinely new `DisputeChargeback` write (`->afterCommit()`, from inside `UsageWalletManager`'s own method, mirroring `confirmSucceeded()`'s own loser-never-dispatches pattern) — never by a refund outcome of any kind, compliant or policy-excess. Dispatched identically for a `direct_deliverable` withdrawal (the decision is keyed to "a new `DisputeChargeback` row was written," not to "the wallet was debited," §9).
+
+**No dispatch** for: a replayed event; the correlation-key loser of a race; a zero/clamped applied amount; a malformed event; any audit-only event; a reinstatement; **any refund outcome, including a policy-excess one** — a refund-driven suspension is shown only to administrators via the audit surface (§18), never disguised as a chargeback email.
+
+**Content, locked:** identifies that a provider chargeback/dispute caused the action; states the exact affected amount and currency as strings (never a float conversion); states that billing is now suspended; directs the Business to contact support/administration. Not a receipt; never claims a new charge occurred.
+
+---
+
+## 12. Ledger row shapes — every field locked
+
+The RFC's own §13 table states `reason` is mandatory for `ManualCredit`, `UsageChargeReversal`, `CorrectionReversal`, and `Refund` — not `DisputeChargeback`. This design populates a deterministic, non-blank reason for all three entry types it writes; `reason` is never null for any row this design writes.
+
+**`Refund`** (§6 — `debt_delta_micro` is always `0`, unconditionally, on every branch):
+
+```php
+[
+    'business_id' => $attempt->business_id,
+    'wallet_id' => $wallet->id,
+    'funding_attempt_id' => $attempt->id,
+    'entry_type' => UsageLedgerEntryType::Refund->value,
+    'available_delta_micro' => $walletBacked ? -$walletDebitMicro : 0,
+    'reserved_delta_micro' => 0,
+    'debt_delta_micro' => 0,
+    'gross_amount_micro' => $providerRefundDelta,
+    'currency_id' => $wallet->currency_id,
+    'correlation_key' => 'refund:'.$attempt->id.':'.$newCumulativeAmountRefundedMicro,
+    'provider_reference' => $providerChargeReference,
+    'actor_user_id' => null,
+    'reason' => "Provider-confirmed refund of {$providerRefundDelta} micro-units against charge {$providerChargeReference}.",
+    'reversed_entry_id' => null,
+    'created_at' => now(),
+]
+```
+
+**`DisputeChargeback`:** identical shape, `entry_type = dispute_chargeback`, deltas per §7/§9 (may create debt when wallet-backed), `provider_reference = $providerDisputeId`, `reason = "Provider dispute {$providerDisputeId} withdrew funds ({$disputeReasonOrGeneral})."`, `reversed_entry_id = null`.
+
+**`CorrectionReversal`:** `entry_type = correction_reversal`, deltas per §8/§9, `provider_reference = $providerDisputeId`, `reversed_entry_id = $originalChargebackEntry->id` (§8's own mechanically-resolved lineage), `reason = "Provider dispute {$providerDisputeId} funds reinstated."`.
+
+No method signature accepts a nullable `?string $reason`. **No `Refund`-writing code path ever assigns a non-zero `debt_delta_micro`, under any circumstance.**
+
+---
+
+## 13. Funding-attempt state — recomputed from every outstanding outcome, under lock, after every mutation
 
 ```
-refunded = sumRefundedMicroForFundingAttempt(attemptId)                         // §4.5, exact string
-disputeReferences = distinctDisputeReferencesForFundingAttempt(attemptId)        // §5, bounded, realistically 0-3 rows
-anyDisputeOutstanding = false
-foreach (disputeReferences as $disputeId) {
-    withdrawn   = sumDisputeMicroForFundingAttemptAndDispute(attemptId, $disputeId, DisputeChargeback)
-    reinstated  = sumDisputeMicroForFundingAttemptAndDispute(attemptId, $disputeId, CorrectionReversal)
-    if (bccomp(withdrawn, reinstated, 0) > 0) { anyDisputeOutstanding = true; break; }
-}
+refunded = sumRefundedMicroForFundingAttempt(attemptId)                                  // §6, gross figure, exact string
+anyDisputeOutstanding = hasOutstandingDisputeExposureForFundingAttempt(attemptId)         // §19, one bounded SQL query, boolean
 
 state = match (true) {
     anyDisputeOutstanding => Disputed,
@@ -149,161 +297,241 @@ state = match (true) {
 };
 ```
 
-- **One dispute's reinstatement does not erase another's** — `anyDisputeOutstanding` is evaluated across *every* distinct dispute ever raised against this attempt, not just the one the current event concerns.
-- **Partial reinstatement leaves `Disputed`** while exposure remains — `bccomp(withdrawn, reinstated, 0) > 0` is exact-string comparison, never a native numeric truthiness check.
-- **A fully-refunded attempt returns to `Refunded`, not `Succeeded`,** once its final outstanding dispute exposure clears — the `match` checks `anyDisputeOutstanding` first, and falls through to the `refunded`-vs-`expected_amount_micro` comparison only once no dispute exposure remains at all.
-- **A lost dispute remains `Disputed` permanently** — its own withdrawal is never matched by a `CorrectionReversal` (none is ever written for a lost dispute, §4.3), so `withdrawn > reinstated` (`> 0`) holds forever for that dispute id, and `state` never advances past `Disputed` for this attempt again (unless a *different*, later dispute against the same charge is itself fully reinstated and no other exposure remains — the recomputation is correct for that case too, by construction, since it evaluates every dispute id independently every time).
-- **The write is skipped, and no `business_funding_attempt_transitions` row is inserted, when the recomputed state equals the currently-persisted state** — avoiding a redundant transition row on every single mutation event (mirroring the identical discipline §4.9 below locks for billing-status transitions).
+`refunded` sums `gross_amount_micro` — for a policy-excess refund row, this is the **complete** confirmed delta (§6), not merely `walletDebitMicro` — so a provider-confirmed full refund still correctly reaches `Refunded` even though part of it exceeded this platform's own refundable-balance policy. State recomputation never itself distinguishes wallet-backed from zero-delta, or compliant from policy-excess — it is driven entirely by the gross accumulator and the dispute-exposure query, both already correct for every case by construction. The write, and the transition row, are skipped when the recomputed state equals the currently-persisted one.
 
-### 4.7 Whether a wallet mutation applies at all — unchanged from the original pass
+---
 
-The `AddonPurchase`/`direct_deliverable` nuance (§4.6 of the original pass) is unchanged: `findCreditEntryForFundingAttempt()` (§5, retained) still gates whether any refund mutation is attempted at all. **Corrected this round only in that a `direct_deliverable` refund's own zero-wallet-mutation outcome is now durably, normalizedly audited (§4.10, blocker 9) rather than leaving only the bare `payment_provider_events` row this contract's original pass relied on.**
+## 14. Amount/currency conversion
 
-### 4.8 Idempotency/uniqueness boundary — corrected to reflect the balance-transaction-keyed design
+`UsageBillingCheckoutManager::minorUnitsToMicro()`/`expectedMicroForMinorUnits()` invert `microToMinorUnits()`'s own existing exact `bcmath` exponent table — no new currency table, no new exponent logic.
 
-Two independent layers, restated exactly as the original pass's §4.7, with the outcome-layer correlation keys corrected per §4.3/§4.4/§4.5 above (refund: `'refund:'.$attempt->id.':'.$newCumulativeAmountRefundedMicro`, unchanged; dispute withdrawal/reinstatement: keyed to the provider balance-transaction id, corrected from the original pass's dispute-id-only key). **Row-lock ordering is unchanged** — the wallet row is locked first, inside one `DB::transaction()`, before any delta computation or ledger insert; the funding attempt's own row is locked a second time, inside the same outer transaction, immediately before `recomputeFundingAttemptState()` writes (§4.6) — never before the wallet lock, matching this codebase's own consistent wallet-then-attempt lock order already established by `finalizeFundingAttemptState()`'s own existing call shape inside `confirmSucceeded()`.
+---
 
-### 4.9 Billing-status suspension/resumption — corrected to avoid a redundant transition row (blocker 7's own explicit bullet)
+## 15. Dispute audit-only events
 
-`setBillingStatus()` is confirmed, by direct read, to be **not** idempotent on its own — it unconditionally inserts a transition row and dispatches `BusinessWalletBillingStatusChanged` even when `$fromStatus === $status`. **Locked design:** the new `UsageWalletManager` method that applies a dispute withdrawal (§5) checks `$wallet->billing_status !== WalletBillingStatus::Suspended` **before** calling `setBillingStatus(..., Suspended, DisputeWebhook, null, $reason)` — a second (or later) dispute against a Business whose billing is already suspended writes its own `DisputeChargeback` ledger entry exactly as before, but produces **zero** additional billing-status transition rows. Resumption after a won dispute remains administrator-only (§12 — no longer an open decision, locked this round).
+`charge.dispute.created`/`.updated`/`.closed`, and a `funds_withdrawn`/`funds_reinstated` event whose own `balance_transactions[]` is empty, produce zero mutation, are durably recorded (`normalized_outcome = dispute_audit_only`, §18), and are marked `ignored`.
 
-### 4.10 Ledger row shapes — every field locked, reason never null for `Refund`/`CorrectionReversal` (blocker 7)
+---
 
-The RFC's own §13 table (quoted in the original pass's §2) states `reason` is mandatory (manager-enforced) for `ManualCredit`, `UsageChargeReversal`, `CorrectionReversal`, and `Refund` — **not** for `DisputeChargeback`. This design populates a deterministic, non-blank system reason for **all three** entry types it writes, for audit consistency, even though the RFC leaves `DisputeChargeback`'s own reason technically optional — `reason` is never actually null in practice for any row this contract writes.
+## 16. `refund.*`/`charge.refund.updated` — explicit audit-only handling
 
-**`Refund`:**
+Recognized explicitly, before the metadata-based default; attempts the identical dual-identifier resolution (§3) against the `Refund` object's own `payment_intent`/`charge` fields, best-effort; durably recorded (`normalized_outcome = refund_object_audit_only`); marked `ignored`, never `failed`. Zero wallet/ledger mutation.
+
+---
+
+## 17. Exclusions — restated in full, live
+
+This design never:
+
+- **Originates a provider-side refund, dispute response, or evidence submission.** Every code path processes an inbound, already-settled outcome; none calls a Stripe refund-creation, dispute-response, or evidence-submission endpoint.
+- **Introduces any new customer- or administrator-facing action to request, initiate, or simulate a refund or dispute**, and any future such action would itself need to independently validate the §6 available-balance cap before ever calling Stripe, as its own, separately authorized contract.
+- **Introduces any new HTTP route beyond the one widened, reused read** (§18).
+- **Un-completes, reverses, or rolls back any entitlement or deliverable an `AddonPurchase` may have unlocked** (§4).
+- **Performs any live provider call to backfill historical data** — `provider_charge_reference` for pre-existing Checkout-backed attempts is never backfilled; a refund/dispute event for an unbackfilled attempt fails closed into the existing exhausted-event queue.
+- **Performs any M6 work.**
+- **Fabricates a new "successful payment" receipt** for a refund or dispute of any kind — `business_billing_receipts`'s sole write authority is never invoked by any code path this document authorizes. Stripe's own hosted receipt page is live and already reflects a refund.
+- **Dispatches `EvaluateBusinessAutoRecharge` from any refund or dispute code path, compliant or policy-excess** — a provider-driven refund or chargeback is not usage consumption; automatically originating a fresh charge in direct response to money Stripe just moved would be actively harmful, particularly against a payment method already under dispute or already the subject of a refund.
+- **Calls `SendReceiptNotification` or writes a receipt from any refund/dispute code path.**
+- **Treats `ManualCredit`/`PromotionalCredit` as refundable provider funding** (§4).
+- **Introduces credit-lot or source-level attribution among fungible available wallet credits** (§6).
+
+---
+
+## 18. Durable, administrator-visible, Business-attributed audit records
+
+**Locked — widen the existing `payment_provider_events` table, never a new table.** Ten new, nullable columns: `business_id` (no FK, matching `disposed_by_user_id`'s own precedent), `funding_attempt_id` (no FK), `normalized_outcome` (`string(32)`), `normalized_status` (`string(32)`), `normalized_reported_amount_micro` (bigint), `normalized_applied_amount_micro` (bigint), **`normalized_policy_excess_micro`** (bigint — new this correction), `normalized_currency_code` (`string(3)`), `normalized_reason` (`string(64)`), `normalized_recorded_at` (timestamp — the dedicated ordering column for `recentOutcomes()`).
+
+**Exact semantics, per event family — every value an exact integer-micro amount, never a float:**
+
+| `normalized_outcome` | `normalized_reported_amount_micro` | `normalized_applied_amount_micro` | `normalized_policy_excess_micro` |
+|---|---|---|---|
+| `refund_applied` (compliant, wallet-backed, `policyExcessMicro = 0`) | `providerRefundDelta` | `walletDebitMicro` (`= providerRefundDelta`) | `0` |
+| `refund_recorded_no_wallet_effect` (`direct_deliverable`, §9) | `providerRefundDelta` | `0` | `0` |
+| `refund_already_applied` (replay, `providerRefundDelta = 0`) | `0` | `0` | `0` |
+| `refund_exceeds_refundable_balance` (`policyExcessMicro > 0`) | `providerRefundDelta` (the complete newly-confirmed delta) | `walletDebitMicro` (may be `0`) | `policyExcessMicro` |
+| `dispute_withdrawal` | The balance transaction's own `abs(amount)` | The amount actually applied (§7, may be less if bounded by remaining exposure) | `0` |
+| `dispute_reinstatement` | The balance transaction's own `amount` | The amount actually applied (§8) | `0` |
+| `dispute_audit_only` | `null` (or the Dispute's own claimed `amount`, informational only — never drives mutation) | `0` | `0` |
+| `refund_object_audit_only` | `null` | `0` | `0` |
+
+**A typed outcome result drives the write — never a job-side recomputation.** `App\Library\Usage\ProviderOutcomeResult` (new readonly value object):
 
 ```php
-[
-    'business_id' => $attempt->business_id,
-    'wallet_id' => $wallet->id,
-    'funding_attempt_id' => $attempt->id,
-    'entry_type' => UsageLedgerEntryType::Refund->value,
-    'available_delta_micro' => -$debitFromAvailable,   // -min(amountMicro, wallet.available_balance_micro)
-    'reserved_delta_micro' => 0,
-    'debt_delta_micro' => $debtIncurred,                // +max(0, amountMicro - wallet.available_balance_micro)
-    'gross_amount_micro' => $amountMicro,               // the exact refund delta this row applies
-    'currency_id' => $wallet->currency_id,
-    'correlation_key' => 'refund:'.$attempt->id.':'.$newCumulativeAmountRefundedMicro,
-    'provider_reference' => $providerChargeReference,   // the Charge id this refund concerns, when known
-    'actor_user_id' => null,
-    'reason' => "Provider-confirmed refund of {$amountMicro} micro-units against charge {$providerChargeReference}.",
-    'reversed_entry_id' => null,
-    'created_at' => now(),
-]
-```
-
-**`DisputeChargeback`:** identical shape, `entry_type = dispute_chargeback`, `available_delta_micro`/`debt_delta_micro` per the identical `-min`/`+max` formula against the balance-transaction's own `abs(amount)`, `provider_reference = $providerDisputeId`, `reason = "Provider dispute {$providerDisputeId} withdrew funds ({$disputeReasonOrGeneral})."`, `reversed_entry_id = null`.
-
-**`CorrectionReversal`:** `entry_type = correction_reversal`, deltas per §4.4's own current-wallet-state formula, `provider_reference = $providerDisputeId`, `reversed_entry_id = $originalChargebackEntry->id`, `reason = "Provider dispute {$providerDisputeId} funds reinstated."`.
-
-Every field above is locked; no method signature in §5 accepts a nullable `?string $reason` for any of these three writes.
-
-### 4.11 The claimed retry/reclaim path does not exist — a real one is designed (blocker 8)
-
-**Confirmed, mechanically:** `app/Jobs/Base.php` sets `public int $tries = 1;`. `ProcessPaymentProviderEvent::handle()`'s own `markFailed()` branches return normally (no exception thrown) — the job reports success to the queue regardless of outcome. The scheduled `queue:work ... --tries=1 --stop-when-empty` command (`Kernel.php`) never redispatches a job that already ran once and returned. **No scheduled command or job anywhere in this codebase queries `payment_provider_events` for retryable `failed`/stale-`processing` rows.** The original pass's claim that "the existing bounded retry/reclaim system is fully reusable" was false — the *claim algorithm* (§14 of the M3 contract, the atomic `UPDATE ... WHERE state = 'received' OR (state = 'failed' AND attempts < 5) OR ...`) exists and is correct, but **nothing ever calls it a second time** for an event that already failed once.
-
-**Locked design — one new job, `App\Jobs\Usage\RetryStuckPaymentProviderEvents`, scheduled `everyFiveMinutes()`** (identical cadence to `ReconcileProviderPendingState`, the established precedent for "find stuck things and redrive them"):
-
-```php
-class RetryStuckPaymentProviderEvents extends Base
+final readonly class ProviderOutcomeResult
 {
-    private const BATCH_LIMIT = 200;
-
-    public function handle(PaymentProviderEventRepository $eventRepository): void
-    {
-        $maxAttempts = (int) config('usage_billing.webhook_event.max_attempts');
-
-        foreach ($eventRepository->retryable($maxAttempts, self::BATCH_LIMIT) as $candidate) {
-            ProcessPaymentProviderEvent::dispatch($candidate->id);
-        }
-    }
+    public function __construct(
+        public string $normalizedOutcome,
+        public int $reportedAmountMicro,
+        public int $appliedAmountMicro,
+        public int $policyExcessMicro,
+        public ?int $ledgerEntryId,
+        public FundingAttemptState $resultingState,
+    ) {}
 }
 ```
 
-- **Bounded query, new repository method** — `PaymentProviderEventRepository::retryable(int $maxAttempts, int $limit): Collection`: `WHERE (state = 'failed' AND attempts < ?) OR (state = 'processing' AND lease_expires_at < NOW() AND attempts < ?) ORDER BY id LIMIT ?` — the identical `WHERE` shape as the existing claim statement's own retry/reclaim branches, so a row this query returns is, by construction, exactly the set of rows the claim statement would itself still match.
-- **Batch limit, locked at 200** — a plain class constant (matching `ReconcileProviderPendingState::STUCK_AFTER_MINUTES`'s own precedent of a private const, not a new config key), bounding one scheduler tick's own work regardless of how large the retryable backlog grows.
-- **Cadence, locked at every five minutes** — matching the existing 5-minute claim lease exactly, so a stale-`processing` row becomes reclaimable at almost exactly the same cadence this scanner checks for it.
-- **Maximum-attempt behavior** — once `attempts >= maxAttempts`, a row matches neither `retryable()`'s own `WHERE` clause nor the claim statement's — it stops being redispatched and instead surfaces in the existing `exhausted()` admin query, unchanged.
-- **No accounting mutation inside the scanner** — the scanner's own `handle()` performs exactly one bounded read and zero-or-more `dispatch()` calls; every actual claim/validate/mutate step still happens exclusively inside `ProcessPaymentProviderEvent::handle()`, unmodified in this respect.
-- **Concurrency-safe by construction, no new code required in `ProcessPaymentProviderEvent`** — if the scanner and an original webhook-triggered dispatch (or two overlapping scanner ticks) both queue the same event id, each queued job independently calls the claim UPDATE; the claim's own atomicity (a single, `WHERE`-gated SQL statement) guarantees only one ever matches, and the existing `if ($claimed === 0) { return; }` early-return (already present, unmodified) makes every other concurrent dispatch a silent, correct no-op.
-- **`processed`/`ignored`/`disposed` events are never redispatched** — none matches `retryable()`'s own `WHERE` clause, identically to how none matches the claim statement's.
+`UsageBillingCheckoutManager::applyRefundOutcome()`/`applyDisputeChargebackOutcome()`/`applyDisputeReinstatementOutcome()` each return this DTO. `ProcessPaymentProviderEvent` reads its fields directly into `$attribution` — it never independently recomputes any of the four amount/outcome fields.
 
-### 4.12 Durable, administrator-visible, Business-attributed audit records (blocker 9)
+**Populated at the exact moment the event reaches its terminal state** — `markProcessed()`/`markIgnored()` each gain one new trailing optional parameter, `array $attribution = []`. A policy-excess refund is marked `processed` (§6 item 7) — never `failed`, never left to retry.
 
-**Confirmed, mechanically:** `PaymentProviderEventController::index()` renders only `exhausted()` rows (`app/Http/Controllers/Admin/PaymentProviderEventController.php:26-33`) — a `processed`/`ignored` row is never displayed anywhere, and its `payload_encrypted` is eventually purged (§4.13 of the original pass, unchanged), leaving only `event_type`/`provider_object_id`/timestamps — no `business_id`, no `funding_attempt_id`, no normalized amount/currency/dispute reason. This is not a complete Business-attributed audit record, and the `direct_deliverable` AddonPurchase refund case (§4.7) especially needs it, since that case intentionally writes zero wallet ledger entry — without this widening, that refund would leave no attributable trace anywhere once its payload is purged.
+**Admin surface widened, not duplicated:** `PaymentProviderEventController::index()` gains `recentOutcomes` from a new bounded method, `recentOutcomes(int $limit = 50): Collection`, its accepted limit clamped internally to a locked maximum of 100 (`min($limit, self::MAX_RECENT_OUTCOMES_LIMIT)`), ordered by `normalized_recorded_at DESC`, filtered `WHERE normalized_outcome IS NOT NULL`. The view's new section renders Business, funding attempt, outcome, status, reported amount, applied amount, **policy-excess amount**, currency, reason, recorded-at — a `refund_exceeds_refundable_balance` row is visually distinguishable (its own non-zero policy-excess column) for prompt administrator investigation. The existing exhausted-events table and disposition form are unmodified.
 
-**Locked design — widen the existing `payment_provider_events` table itself (mechanically appropriate: it is already the permanent, purge-exempt-for-key-columns identity record for this exact event; a second, parallel table would duplicate that identity for no benefit), never a new table:**
+**Bounded database work:** two new indexes — `(state, attempts)` (supports the scanner's `retryable()`, §19) and `(normalized_recorded_at)` (supports `recentOutcomes()`).
 
-Seven new, nullable columns: `business_id` (unsigned bigint, **no FK** — matching `disposed_by_user_id`'s own established "audit column, no FK" precedent on this exact table, so a later, unrelated Business-record change can never be blocked by an audit row), `funding_attempt_id` (unsigned bigint, no FK, identical reasoning), `normalized_outcome` (`string(32)` — e.g. `refund_applied`, `refund_ignored_no_wallet_entry`, `dispute_withdrawn`, `dispute_reinstated`, `dispute_audit_only`, `refund_object_audit_only`), `normalized_status` (`string(32)` — the verified Dispute's/Refund's own `status` value), `normalized_amount_micro` (bigint), `normalized_currency_code` (`string(3)`), `normalized_reason` (`string(64)` — the verified Dispute's own `reason` value, where present).
-
-**Populated at the exact moment the event reaches its terminal state** — `PaymentProviderEventRepository::markProcessed()`/`markIgnored()` each gain one new, trailing, backward-compatible optional parameter, `array $attribution = []`, merged into the same terminal `UPDATE` those methods already issue (the established "widen with a new trailing optional parameter" pattern, reused a third time on this exact codebase's own convention). No new repository method for the write side — only for the new bounded read (below).
-
-**Admin surface widened, not duplicated (per the correction's own explicit instruction to reuse, not create a second module):** `PaymentProviderEventController::index()` gains a second view-data key, `recentOutcomes`, from a new bounded repository method `recentOutcomes(int $limit = 50): Collection` (`WHERE normalized_outcome IS NOT NULL ORDER BY id DESC LIMIT ?`); `resources/views/admin/usage-billing/provider-events/index.blade.php` gains one new `x-card`/`x-table` section rendering it (Business, funding attempt, outcome, status, amount, currency, reason, received-at) — the existing exhausted-events table and disposition form are entirely unmodified.
-
-**Proof that attribution survives payload purge:** `PurgeExpiredWebhookPayloads` (unmodified) only ever nulls `payload_encrypted`/sets `payload_purged_at` — it never touches any other column, including the seven new ones, exactly as it already never touches `event_type`/`provider_object_id`/`state`/`attempts` today.
-
-### 4.13 `refund.*`/`charge.refund.updated` events — explicit audit-only handling, not silence (blocker 10)
-
-**Confirmed mechanically required, not optional:** webhook intake is event-type-agnostic (`StripeWebhookController::handle()` persists and dispatches for processing regardless of `event_type`, unchanged). If a Stripe webhook endpoint is ever configured to also deliver `refund.created`/`refund.updated`/`refund.failed`/`charge.refund.updated`, `ProcessPaymentProviderEvent`'s own existing default branch (`missing_or_unrecognized_metadata`) would mark every one of them `failed` — genuinely poisoning the retry/exhaustion queue with events this system was never going to act on financially in the first place (`charge.refunded`'s own cumulative field already supersedes them for every mutation guarantee, §3/§12 item 4).
-
-**Locked design:** `ProcessPaymentProviderEvent::handle()`'s own `match` recognizes `refund.created`, `refund.updated`, `refund.failed`, `charge.refund.updated` explicitly, **before** falling through to the metadata-based default. Each: attempts the identical dual-identifier resolution (§4.1) against the `Refund` object's own `payment_intent`/`charge` fields, best-effort (if it resolves, the normalized-audit row, §4.12, is attributed to that Business/attempt with `normalized_outcome = refund_object_audit_only`; if it does not resolve, the event is still durably recorded, attribution columns left null) — and is marked `ignored`, **never** `failed`, in both cases. No wallet/ledger mutation of any kind is ever performed for this event family.
+**Attribution survives payload purge** — `PurgeExpiredWebhookPayloads` (unmodified) only ever nulls `payload_encrypted`/sets `payload_purged_at`.
 
 ---
 
-## 5. Locked design — exact production allow-list, recomputed path by path, no pair grouped into one count
+## 19. Retry/reclaim — recovers a stranded `received` row
 
-**19 files: 5 new + 14 modified.**
+`StripeWebhookController::handle()` persists the event row (`state: received`) and only then dispatches `ProcessPaymentProviderEvent`. If that dispatch throws, or the process dies immediately after persistence, the row is stuck at `state = received, attempts = 0` forever under a two-branch (`failed`/stale-`processing`) scanner — a Stripe redelivery then hits the `UNIQUE` constraint and returns `200` without ever redispatching the existing row.
 
-| # | Path | Status | Justified by |
+**Corrected — `retryable()` selects three branches:**
+
+```sql
+WHERE (state = 'received' AND received_at < NOW() - INTERVAL ? MINUTE)
+   OR (state = 'failed' AND attempts < ?)
+   OR (state = 'processing' AND lease_expires_at < NOW() AND attempts < ?)
+ORDER BY id
+LIMIT ?
+```
+
+The `received` branch is **deliberately narrower** than the underlying claim statement's own unconditional `state = 'received'` match — it requires the row to be older than one claim-lease interval (the existing `webhook_event.lease_minutes` config, reused). It is shape-identical to the claim statement only for the `failed`/stale-`processing` branches.
+
+- **`RetryStuckPaymentProviderEvents`** (`everyFiveMinutes()`, matching the claim-lease duration and `ReconcileProviderPendingState`'s own cadence) performs exactly one bounded read (`retryable($maxAttempts, $leaseMinutes, self::BATCH_LIMIT = 200)`) and zero-or-more `dispatch()` calls — no accounting mutation inside the scanner.
+- **Concurrency-safe with no new code in `ProcessPaymentProviderEvent`** — the claim's own atomicity guarantees at most one caller ever matches; every other concurrent dispatch hits the existing `if ($claimed === 0) { return; }`.
+- **Once `attempts >= maxAttempts`,** a `failed`/stale-`processing` row matches neither `retryable()` nor the claim statement — it surfaces in the existing `exhausted()` admin queue.
+- **`processed`/`ignored`/`disposed` events are never redispatched.**
+
+---
+
+## 20. Complete transaction/lock/crash-recovery sequence
+
+1. The event's signature is verified and persisted; dual-reference resolution (§3) runs before any lock is acquired.
+2. The wallet row is locked first (`findForUpdateByBusinessId()`), inside one `DB::transaction()`.
+3. `$walletBacked` (§4) is determined once and held for the remainder of the call.
+4. The unique outcome row is inserted (§9, §12); the wallet `UPDATE` (including `lowBalanceMarkerUpdate()`, and, for a `DisputeChargeback` or a policy-excess `Refund`, the redundant-suspend-guarded suspension, §11) applies only when `$walletBacked` is true for the balance columns, and applies to suspension regardless.
+5. The funding attempt's own row is locked a second time, inside the same outer transaction, immediately before state recomputation (§13) writes.
+6. The outer transaction commits.
+7. **After** commit: the low-balance notification (if requested) and the dedicated chargeback notification (if a genuinely new `DisputeChargeback` was the row just inserted, never for any refund outcome, §11) are dispatched — never before commit, never at all on rollback.
+8. The provider event is marked `processed`/`ignored`, carrying `$attribution` built directly from the returned `ProviderOutcomeResult` (§18).
+
+**Crash between steps 6 and 8:** the outcome row, any wallet mutation, and the state recomputation have already durably committed. On retry (§19), processing re-enters from the top; §10's own correlation-key idempotency finds the outcome already applied and computes a delta of `0`; no duplicate financial or state effect occurs; no notification fires twice (§11's correlation-key-winner rule); step 8 completes correctly. **No notification ever fires on rollback** — every dispatch in step 7 is `->afterCommit()`.
+
+---
+
+## 21. `hasOutstandingDisputeExposureForFundingAttempt()` — one bounded scalar query
+
+**Locked — one SQL query, grouped by `provider_reference`, returning a boolean:**
+
+```php
+public function hasOutstandingDisputeExposureForFundingAttempt(int $fundingAttemptId): bool
+{
+    return DB::table('business_usage_ledger_entries')
+        ->select('provider_reference')
+        ->where('funding_attempt_id', $fundingAttemptId)
+        ->whereIn('entry_type', ['dispute_chargeback', 'correction_reversal'])
+        ->whereNotNull('provider_reference')
+        ->groupBy('provider_reference')
+        ->havingRaw(
+            "SUM(CASE WHEN entry_type = 'dispute_chargeback' THEN gross_amount_micro ELSE 0 END) > ".
+            "SUM(CASE WHEN entry_type = 'correction_reversal' THEN gross_amount_micro ELSE 0 END)"
+        )
+        ->limit(1)
+        ->get()
+        ->isNotEmpty();
+}
+```
+
+No PHP-side list or reduction; complete across every dispute for the attempt in one query; supported by the composite index `(funding_attempt_id, entry_type, provider_reference)` (§22 Migration 3).
+
+---
+
+## 22. Locked design — exact production allow-list
+
+**24 files: 9 new + 15 modified.**
+
+| # | Path | Status | Content |
 |---|---|---|---|
-| 1 | `database/migrations/2026_08_29_120001_add_provider_references_to_business_funding_attempts_table.php` | NEW | §4.1 — adds **both** `provider_payment_intent_reference` and `provider_charge_reference` (each nullable `string(191)`) in one `Schema::table()` call, then **both** `UNIQUE` indexes in a second `Schema::table()` call (§7) — one coherent, two-column identification change for one table, not a grouping of unrelated concerns. |
-| 2 | `database/migrations/2026_08_29_120002_backfill_provider_payment_intent_reference_for_auto_recharge_attempts.php` | NEW | §4.1 — unchanged from the original pass: pure local-data copy for AutoRecharge only; `provider_charge_reference` is deliberately **not** backfilled here (§4.1's own table — it is not reliably known for historical AutoRecharge rows without a new provider call, which governance does not authorize). |
-| 3 | `database/migrations/2026_08_29_120003_add_funding_attempt_id_index_to_business_usage_ledger_entries_table.php` | NEW | §4.5/§4.6/§4.4 — unchanged from the original pass. |
-| 4 | `database/migrations/2026_08_29_120004_add_normalized_outcome_columns_to_payment_provider_events_table.php` | NEW | §4.12 — the seven new nullable audit columns. |
-| 5 | `app/Jobs/Usage/RetryStuckPaymentProviderEvents.php` | NEW | §4.11 — the retry/reclaim scanner job. |
-| 6 | `app/Models/BusinessFundingAttempt.php` | MODIFIED | §4.1 — `$fillable` gains both new columns. |
-| 7 | `app/Models/PaymentProviderEvent.php` | MODIFIED | §4.12 — `$fillable` gains the seven new columns; `$casts` unchanged (all plain scalars). |
-| 8 | `app/Repositories/Contracts/BusinessFundingAttemptRepository.php` | MODIFIED | §4.1 — two new methods: `findByProviderPaymentIntentReference(string $reference): ?BusinessFundingAttempt`, `findByProviderChargeReference(string $reference): ?BusinessFundingAttempt`. |
-| 9 | `app/Repositories/Eloquent/EloquentBusinessFundingAttemptRepository.php` | MODIFIED | Implements both. |
-| 10 | `app/Repositories/Contracts/BusinessUsageLedgerEntryRepository.php` | MODIFIED | §4.5/§4.6/§4.7 — four new methods, all bounded SQL-aggregate/DISTINCT reads returning exact strings, none loading an unbounded row set into PHP: `sumRefundedMicroForFundingAttempt(int $fundingAttemptId): string`; `sumDisputeMicroForFundingAttemptAndDispute(int $fundingAttemptId, string $providerDisputeId, UsageLedgerEntryType $entryType): string`; `distinctDisputeReferencesForFundingAttempt(int $fundingAttemptId): array`; `findCreditEntryForFundingAttempt(int $fundingAttemptId): ?BusinessUsageLedgerEntry` (retained, unchanged in purpose, from the original pass). |
-| 11 | `app/Repositories/Eloquent/EloquentBusinessUsageLedgerEntryRepository.php` | MODIFIED | Implements all four — `sumRefundedMicroForFundingAttempt()`/`sumDisputeMicroForFundingAttemptAndDispute()` via `SELECT COALESCE(SUM(gross_amount_micro), 0) ...` returned as a string (`DB::table()`, mirroring the margin-aggregate's own exact-string discipline, never `$this->query()`/Eloquent's own `integer`-cast attribute pipeline for these two, for the identical reason the margin aggregate itself avoids it). |
-| 12 | `app/Repositories/Contracts/PaymentProviderEventRepository.php` | MODIFIED | §4.11/§4.12 — `markProcessed()`/`markIgnored()` each gain one new trailing optional parameter, `array $attribution = []`; two new methods, `retryable(int $maxAttempts, int $limit): Collection`, `recentOutcomes(int $limit = 50): Collection`. |
-| 13 | `app/Repositories/Eloquent/EloquentPaymentProviderEventRepository.php` | MODIFIED | Implements the widened signatures and both new methods. |
-| 14 | `app/Library/Usage/UsageWalletManager.php` | MODIFIED | §4.4/§4.9/§4.10 — three public methods (renamed/re-scoped from the original pass's two): `applyProviderRefund(BusinessFundingAttempt $attempt, int $amountMicro, string $correlationKey, ?string $providerChargeReference): ?BusinessUsageLedgerEntry` (§4.10's own exact `Refund` row shape; returns `null`, mutates nothing, for `$amountMicro <= 0`); `applyDisputeWithdrawal(BusinessFundingAttempt $attempt, int $amountMicro, string $providerDisputeId, string $correlationKey, ?string $disputeReason): ?BusinessUsageLedgerEntry` (§4.10's own `DisputeChargeback` row shape; suspends billing per §4.9's own redundant-suspend guard; dispatches `BusinessWalletDebited`/`BusinessWalletDebtIncurred`); `reinstateDisputedFunds(BusinessUsageLedgerEntry $originalChargebackEntry, int $amountMicro, string $providerDisputeId, string $correlationKey): ?BusinessUsageLedgerEntry` (§4.4's own current-wallet-state formula; returns `null` for `$amountMicro <= 0`; dispatches `BusinessWalletCredited`/`BusinessWalletDebtCleared`). |
-| 15 | `app/Library/Usage/UsageBillingCheckoutManager.php` | MODIFIED | §4.1/§4.5/§4.6 — (a) `minorUnitsToMicro()`/`expectedMicroForMinorUnits()`, unchanged from the original pass's own design; (b) `confirmSucceeded()`/`finalizeFundingAttemptState()` each gain **two** new trailing optional parameters this round (`?string $resolvedProviderPaymentIntentReference = null, ?string $resolvedProviderChargeReference = null`), both threaded from the three existing call sites exactly as the original pass's single-parameter widening was; (c) the defensive assertion (§4.1) inside `finalizeFundingAttemptState()`; (d) three new public orchestration methods, `applyRefundOutcome(BusinessFundingAttempt $attempt, int $cumulativeAmountRefundedMicro, ?int $providerEventId): void`, `applyDisputeChargebackOutcome(BusinessFundingAttempt $attempt, string $providerDisputeId, array $withdrawalBalanceTransactions, ?int $providerEventId): void`, `applyDisputeReinstatementOutcome(BusinessFundingAttempt $attempt, string $providerDisputeId, array $reinstatementBalanceTransactions, ?int $providerEventId): void` — each locks the wallet row, computes the appropriate independent accumulator (§4.5), calls exactly one `UsageWalletManager` method per genuinely-new balance transaction (§4.3/§4.8's own per-transaction idempotency), then calls the new private `recomputeFundingAttemptState()` (§4.6) once, all inside one outer `DB::transaction()`. |
-| 16 | `app/Jobs/Usage/ProcessPaymentProviderEvent.php` | MODIFIED | §3/§4.1/§4.3/§4.12/§4.13 — `handle()`'s own `match` widened to recognize `charge.refunded`, `charge.dispute.funds_withdrawn`, `charge.dispute.funds_reinstated`, `charge.dispute.created`/`.updated`/`.closed`, and `refund.created`/`refund.updated`/`refund.failed`/`charge.refund.updated` — all **before** the existing metadata-based default. New private methods: `processChargeRefund()`, `processDisputeWithdrawal()`, `processDisputeReinstatement()`, `processDisputeAuditOnlyEvent()`, `processRefundObjectAuditOnlyEvent()` — each performs the dual-identifier resolution (§4.1), the ambiguity/no-match failure branches, currency verification, and (for the two mutating methods) calls exactly one `UsageBillingCheckoutManager` orchestration method; every terminal call (`markProcessed()`/`markIgnored()`) passes the new `$attribution` array (§4.12). |
-| 17 | `app/Console/Kernel.php` | MODIFIED | §4.11 — one new line, `$schedule->job(new RetryStuckPaymentProviderEvents())->everyFiveMinutes();`, placed alongside the existing `ReconcileProviderPendingState`/`PurgeExpiredWebhookPayloads` scheduling. |
-| 18 | `app/Http/Controllers/Admin/PaymentProviderEventController.php` | MODIFIED | §4.12 — `index()` gains one new view-data key, `recentOutcomes`. |
-| 19 | `resources/views/admin/usage-billing/provider-events/index.blade.php` | MODIFIED | §4.12 — one new `x-card`/`x-table` section; the existing exhausted-events table and disposition form are byte-for-byte unmodified. |
+| 1 | `database/migrations/2026_08_29_120001_add_provider_references_to_business_funding_attempts_table.php` | NEW | §3. |
+| 2 | `database/migrations/2026_08_29_120002_backfill_provider_payment_intent_reference_for_auto_recharge_attempts.php` | NEW | §17. |
+| 3 | `database/migrations/2026_08_29_120003_add_dispute_refund_aggregate_index_to_business_usage_ledger_entries_table.php` | NEW | Composite index `(funding_attempt_id, entry_type, provider_reference)` (§21). |
+| 4 | `database/migrations/2026_08_29_120004_add_normalized_outcome_columns_to_payment_provider_events_table.php` | NEW | The ten columns in §18. |
+| 5 | `database/migrations/2026_08_29_120005_add_scanner_and_recent_outcomes_indexes_to_payment_provider_events_table.php` | NEW | `(state, attempts)`, `(normalized_recorded_at)` (§18, §19). |
+| 6 | `app/Jobs/Usage/RetryStuckPaymentProviderEvents.php` | NEW | §19. |
+| 7 | `app/Jobs/Usage/SendChargebackDisputeNotification.php` | NEW | §11. |
+| 8 | `app/Notifications/Usage/ChargebackDisputeNotification.php` | NEW | §11. |
+| 9 | `app/Library/Usage/ProviderOutcomeResult.php` | NEW | §18. |
+| 10 | `app/Enums/Usage/BillingStatusTransitionSource.php` | MODIFIED | Adds one new case, `ProviderRefundMismatch = 'provider_refund_mismatch'` (§6, §11) — `DisputeWebhook`/`AdminAction` are unmodified. |
+| 11 | `app/Models/BusinessFundingAttempt.php` | MODIFIED | `$fillable` gains both new reference columns. |
+| 12 | `app/Models/PaymentProviderEvent.php` | MODIFIED | `$fillable` gains the ten new columns. |
+| 13 | `app/Repositories/Contracts/BusinessFundingAttemptRepository.php` | MODIFIED | `findByProviderPaymentIntentReference()`, `findByProviderChargeReference()` (§3). |
+| 14 | `app/Repositories/Eloquent/EloquentBusinessFundingAttemptRepository.php` | MODIFIED | Implements both. |
+| 15 | `app/Repositories/Contracts/BusinessUsageLedgerEntryRepository.php` | MODIFIED | `sumRefundedMicroForFundingAttempt()` (§6); `sumDisputeMicroForFundingAttemptAndDispute()` (§7); `hasOutstandingDisputeExposureForFundingAttempt()` (§21); `findCreditEntryForFundingAttempt()`, scoped to `paid_top_up`/`auto_recharge` only (§4). |
+| 16 | `app/Repositories/Eloquent/EloquentBusinessUsageLedgerEntryRepository.php` | MODIFIED | Implements all four. |
+| 17 | `app/Repositories/Contracts/PaymentProviderEventRepository.php` | MODIFIED | `markProcessed()`/`markIgnored()` gain `array $attribution = []`; `retryable(int $maxAttempts, int $receivedGraceMinutes, int $limit): Collection` (§19); `recentOutcomes(int $limit = 50): Collection` (§18). |
+| 18 | `app/Repositories/Eloquent/EloquentPaymentProviderEventRepository.php` | MODIFIED | Implements the widened signatures and both new methods. |
+| 19 | `app/Library/Usage/UsageWalletManager.php` | MODIFIED | `applyProviderRefund(BusinessFundingAttempt $attempt, int $providerRefundDelta, string $correlationKey, ?string $providerChargeReference, bool $walletBacked): ?BusinessUsageLedgerEntry` (§6, §9, §12 — never writes a non-zero `debt_delta_micro`; suspends billing with `ProviderRefundMismatch` only when `policyExcessMicro > 0`); `applyDisputeWithdrawal(...): ?BusinessUsageLedgerEntry` (§7, §9, §11, §12 — unchanged, still may create debt); `reinstateDisputedFunds(...): ?BusinessUsageLedgerEntry` (§8, §9, §12 — unchanged). |
+| 20 | `app/Library/Usage/UsageBillingCheckoutManager.php` | MODIFIED | `minorUnitsToMicro()`/`expectedMicroForMinorUnits()`; `confirmSucceeded()`/`finalizeFundingAttemptState()` widened with the two new trailing optional parameters and the defensive assertion (§3); `applyRefundOutcome()`, `applyDisputeChargebackOutcome()`, `applyDisputeReinstatementOutcome()`, each returning `ProviderOutcomeResult` (§18), each computing §6/§7/§8's own formulas, locking the wallet row, calling exactly one `UsageWalletManager` method, calling state recomputation (§13), all inside one outer `DB::transaction()`. |
+| 21 | `app/Jobs/Usage/ProcessPaymentProviderEvent.php` | MODIFIED | `handle()`'s own `match` widened per §2/§15/§16; dual-identifier resolution, currency/shape validation, exactly one `UsageBillingCheckoutManager` call for the two mutating families, terminal calls carrying `$attribution` from the returned `ProviderOutcomeResult`. |
+| 22 | `app/Console/Kernel.php` | MODIFIED | One new line, `$schedule->job(new RetryStuckPaymentProviderEvents())->everyFiveMinutes();`. |
+| 23 | `app/Http/Controllers/Admin/PaymentProviderEventController.php` | MODIFIED | `index()` gains `recentOutcomes`. |
+| 24 | `resources/views/admin/usage-billing/provider-events/index.blade.php` | MODIFIED | One new `x-card`/`x-table` section, including the policy-excess column. |
 
-**NOT_REQUIRED, unchanged from the original pass, plus one addition:**
+**NOT_REQUIRED, explicitly confirmed:**
 
-| Path | Reason |
+| Path/category | Reason |
 |---|---|
-| Every original-pass NOT_REQUIRED entry (admin controllers/views beyond item 18/19 above, `routes/public.php`, `AppServiceProvider.php`, any new PHP enum, any new exception class, any new `App\Events\Usage\*`/`App\Notifications\Usage\*` class, the gateway/DTO boundary, `ReconcileProviderPendingState.php`/`PurgeExpiredWebhookPayloads.php` bodies, `BusinessBillingReceipt.php`/`ensureFundingReceipt()`) | Unchanged reasoning — none of this round's corrections requires any of them. |
-| `config/usage_billing.php` | The new scanner's batch limit is a plain class constant (§4.11, matching `ReconcileProviderPendingState::STUCK_AFTER_MINUTES`'s own precedent), not a new config key. |
+| Any file under `app/Http/Controllers/Admin/**`/`resources/views/**` beyond items 23/24 | Existing surfaces are entry-type/state-value generic. |
+| `routes/public.php` | The webhook route is already event-type-agnostic. |
+| `app/Providers/AppServiceProvider.php` | Both widened repository contracts are already bound. |
+| Any brand-new PHP enum type | Only one new **case** on one existing enum (item 10) is introduced; no new enum class. |
+| Any new exception class | Every failure path is an existing `markFailed()` string-reason branch or the existing `UsageWalletNotFoundException`; bounding is by clamping, never throwing. |
+| `PaymentProviderGateway`/`StripePaymentProviderGateway`/`FakePaymentProviderGateway`/`CheckoutSessionResult`/`PaymentIntentResult` | The verified, signed webhook payload is trusted directly; no new gateway method, no new DTO field. |
+| `ReconcileProviderPendingState.php`, `PurgeExpiredWebhookPayloads.php` | Already event-type-agnostic. |
+| `BusinessBillingReceipt.php`, `ensureFundingReceipt()` | Never invoked by any refund/dispute code path. |
+| `BusinessUsageAddonPurchase`, `finalizeAddonPurchaseIfPending()`, `completeAddonPurchaseUnderLock()` | Never invoked by any refund/dispute code path (§4). |
+| `EvaluateBusinessAutoRecharge` (production behavior unmodified) | Never dispatched by any refund/dispute code path (§17). |
+| `config/usage_billing.php` | The scanner's batch limit/grace interval are plain class constants. |
 
 ---
 
-## 6. Exact test allow-list — recomputed mechanically, 8 new files, 80 methods, no existing test file modified
+## 23. Preserved invariants
 
-**No existing test file requires modification** — re-confirmed; the new columns/indexes remain additive and invisible to every existing assertion, and no existing test constructs any of the event fixtures this contract introduces.
+- `committed_spend_this_period_micro`/`reserved_spend_this_period_micro` are never touched by any method in §22 item 19.
+- `recharged_this_period_micro` is never decremented by `Refund`/`DisputeChargeback`/`CorrectionReversal`.
+- `business_usage_ledger_entries` remains append-only.
+- Outstanding-debt-denies-reservations remains centrally enforced by `reserve()`'s own unmodified check.
+- No raw query against a billing table outside its owning repository.
+- **Debt can never go negative** (`reinstateDisputedFunds()`, §8).
+- **`Refund` can never create or increase debt, under any circumstance — the binding policy this correction round adds** (§6, §12) — enforced both by construction (`debt_delta_micro` is a literal `0` in every branch of §6's own formula) and by a dedicated test asserting no `Refund` row this design ever writes can carry a non-zero `debt_delta_micro`.
+- `EvaluateBusinessAutoRecharge` is never dispatched, and no receipt is ever fabricated, by any code path this design authorizes.
 
-| # | Path | Methods |
+---
+
+## 24. Exact test allow-list
+
+**No existing test file requires modification** — re-confirmed by direct re-read: `PaymentProviderEventSchemaTest.php`'s three methods assert specific field values, never a closed column list.
+
+**11 new files, 138 methods.**
+
+| # | File | Methods |
 |---|---|---|
 | 1 | `tests/Feature/Usage/ProviderPaymentIdentifierResolutionTest.php` | 12 |
-| 2 | `tests/Feature/Usage/ProviderRefundOutcomeTest.php` | 14 |
-| 3 | `tests/Feature/Usage/ProviderDisputeOutcomeTest.php` | 22 |
-| 4 | `tests/Feature/Usage/UsageWalletManagerReversalTest.php` | 12 |
-| 5 | `tests/Feature/Usage/ProviderRefundDisputeSurfaceBoundaryTest.php` | 5 |
-| 6 | `tests/Feature/Usage/PaymentProviderEventRetryReclaimTest.php` | 7 |
-| 7 | `tests/Feature/Usage/PaymentProviderEventDurableAuditTest.php` | 6 |
-| 8 | `tests/Feature/Usage/ProviderRefundDisputeConcurrencyTest.php` | 2 |
+| 2 | `tests/Feature/Usage/ProviderRefundOutcomeTest.php` | 20 |
+| 3 | `tests/Feature/Usage/ProviderDisputeOutcomeTest.php` | 21 |
+| 4 | `tests/Feature/Usage/DisputeBalanceTransactionValidationTest.php` | 7 |
+| 5 | `tests/Feature/Usage/DirectDeliverableProviderOutcomeTest.php` | 11 |
+| 6 | `tests/Feature/Usage/UsageWalletManagerReversalTest.php` | 23 |
+| 7 | `tests/Feature/Usage/ProviderRefundDisputeSurfaceBoundaryTest.php` | 7 |
+| 8 | `tests/Feature/Usage/PaymentProviderEventRetryReclaimTest.php` | 12 |
+| 9 | `tests/Feature/Usage/PaymentProviderEventDurableAuditTest.php` | 10 |
+| 10 | `tests/Feature/Usage/ProviderRefundDisputeConcurrencyTest.php` | 3 |
+| 11 | `tests/Feature/Usage/SendChargebackDisputeNotificationTest.php` | 12 |
 
-**Total: 80 methods across 8 files.**
+**Total: 138 methods across 11 files.**
 
-### `ProviderPaymentIdentifierResolutionTest.php` (12) — proves §4.1
+### `ProviderPaymentIdentifierResolutionTest.php` (12) — proves §3
 
 1. `test_provider_payment_intent_reference_is_persisted_for_a_checkout_backed_success`
 2. `test_provider_charge_reference_is_persisted_for_a_checkout_backed_success`
@@ -318,29 +546,35 @@ Seven new, nullable columns: `business_id` (unsigned bigint, **no FK** — match
 11. `test_both_provider_reference_columns_enforce_uniqueness`
 12. `test_the_auto_recharge_backfill_migration_copies_the_existing_local_reference_with_no_provider_call`
 
-### `ProviderRefundOutcomeTest.php` (14) — proves §4.2, §4.5, §4.7, §4.10
+### `ProviderRefundOutcomeTest.php` (20) — proves §6, §12, §13, §17 (wallet-backed refunds)
 
-1. `test_a_full_refund_event_writes_a_refund_ledger_entry_and_recomputes_the_attempt_to_refunded`
-2. `test_a_partial_refund_event_writes_a_refund_ledger_entry_for_the_partial_amount_and_leaves_the_attempt_succeeded`
-3. `test_a_second_partial_refund_event_applies_only_the_incremental_delta_since_the_first`
-4. `test_an_out_of_order_replayed_refund_event_reporting_an_already_applied_cumulative_amount_produces_zero_additional_mutation`
-5. `test_a_refund_exceeding_available_balance_clears_available_balance_and_creates_debt`
-6. `test_a_refund_is_bounded_and_never_exceeds_the_original_funding_attempts_expected_amount`
-7. `test_a_refund_for_an_addon_purchase_with_direct_deliverable_fulfillment_produces_no_wallet_mutation_but_is_durably_audited`
-8. `test_a_refund_for_an_addon_purchase_with_wallet_credit_fulfillment_reverses_the_original_credit`
+1. `test_a_refund_within_available_balance_debits_available_only_and_creates_no_debt`
+2. `test_a_full_refund_after_partial_usage_consumption_removes_only_the_remaining_available_balance_creates_no_debt_records_policy_excess_and_suspends_billing`
+3. `test_a_refund_when_available_balance_is_zero_creates_no_debt_or_wallet_debit_event_but_records_the_outcome_and_policy_excess`
+4. `test_no_refund_ledger_row_can_ever_have_a_non_zero_debt_delta_micro`
+5. `test_a_second_partial_refund_event_applies_only_the_incremental_delta_since_the_first`
+6. `test_an_out_of_order_replayed_refund_event_reporting_an_already_applied_cumulative_amount_produces_zero_additional_mutation`
+7. `test_a_refund_is_bounded_and_never_exceeds_the_original_funding_attempts_expected_amount`
+8. `test_a_wallet_credit_addon_purchase_refund_follows_the_identical_available_balance_cap`
 9. `test_a_refund_event_missing_both_payment_intent_and_charge_fails_with_no_mutation`
 10. `test_a_refund_event_for_an_unresolvable_reference_fails_with_no_mutation`
 11. `test_a_refund_event_with_a_mismatched_currency_fails_with_no_mutation`
 12. `test_refund_progress_is_computed_solely_from_refund_entries_and_is_unaffected_by_a_dispute_on_the_same_attempt`
 13. `test_a_refund_never_affects_an_unrelated_businesss_wallet`
 14. `test_refund_reason_is_never_null_and_matches_the_deterministic_template`
+15. `test_consumed_usage_and_committed_spend_history_are_never_reversed_by_a_refund`
+16. `test_manual_credit_and_promotional_credit_entries_are_never_treated_as_refundable_provider_funding`
+17. `test_a_policy_excess_refund_event_is_marked_terminally_processed_rather_than_retried`
+18. `test_a_replayed_policy_excess_refund_event_creates_no_second_suspension_transition`
+19. `test_a_policy_excess_refund_never_dispatches_evaluate_business_auto_recharge_send_receipt_notification_or_the_dedicated_chargeback_notification`
+20. `test_a_full_refund_after_a_policy_excess_partial_still_recomputes_the_attempt_to_refunded_from_gross_progress`
 
-### `ProviderDisputeOutcomeTest.php` (22) — proves §4.3, §4.4, §4.6, §4.9
+### `ProviderDisputeOutcomeTest.php` (21) — proves §7, §8, §11, §13, §21 (unaffected by the refund policy; `DisputeChargeback` may still create debt)
 
 1. `test_a_funds_withdrawn_event_applies_the_signed_balance_transaction_amount_as_a_dispute_chargeback`
 2. `test_a_funds_withdrawn_event_uses_the_balance_transaction_amount_not_the_disputed_claim_amount`
 3. `test_a_dispute_exceeding_available_balance_clears_available_balance_and_creates_debt`
-4. `test_a_replayed_funds_withdrawn_event_reporting_an_already_applied_balance_transaction_produces_zero_additional_mutation`
+4. `test_a_replayed_funds_withdrawn_event_for_the_same_balance_transaction_produces_zero_additional_mutation`
 5. `test_a_funds_withdrawn_event_with_an_empty_balance_transactions_array_produces_no_mutation_and_is_durably_audited`
 6. `test_a_funds_reinstated_event_applies_the_signed_balance_transaction_amount_as_a_correction_reversal`
 7. `test_a_partial_reinstatement_clears_only_part_of_the_outstanding_dispute_exposure_and_leaves_the_attempt_disputed`
@@ -349,41 +583,77 @@ Seven new, nullable columns: `business_id` (unsigned bigint, **no FK** — match
 10. `test_a_reinstatement_is_bounded_to_the_actual_withdrawn_amount_for_that_specific_dispute`
 11. `test_a_duplicate_reinstatement_event_for_the_same_balance_transaction_produces_zero_additional_mutation`
 12. `test_a_reinstatement_dispatches_business_wallet_credited_and_or_debt_cleared_matching_the_current_state_based_split`
-13. `test_multiple_disputes_for_the_same_attempt_are_tracked_independently`
-14. `test_reinstating_one_of_two_disputes_leaves_the_attempt_disputed_while_the_other_remains_outstanding`
-15. `test_the_attempt_returns_to_refunded_after_the_final_outstanding_dispute_exposure_clears_on_a_fully_refunded_attempt`
-16. `test_a_lost_dispute_leaves_the_attempt_disputed_permanently_with_no_reversal`
-17. `test_a_dispute_created_event_is_durably_recorded_and_ignored_with_no_mutation`
-18. `test_a_dispute_updated_event_is_durably_recorded_and_ignored_with_no_mutation`
-19. `test_a_dispute_closed_event_is_durably_recorded_and_ignored_with_no_mutation_regardless_of_status`
-20. `test_a_dispute_event_for_an_unresolvable_reference_fails_with_no_mutation`
-21. `test_a_dispute_never_affects_an_unrelated_businesss_wallet`
-22. `test_a_second_dispute_while_billing_is_already_suspended_writes_no_redundant_suspended_transition`
+13. `test_many_dispute_references_for_the_same_attempt_with_one_still_outstanding_leaves_the_attempt_disputed`
+14. `test_all_disputes_for_the_attempt_cleared_falls_back_to_the_refund_progress_based_state`
+15. `test_a_lost_dispute_leaves_the_attempt_disputed_permanently_with_no_reversal`
+16. `test_a_dispute_created_event_is_durably_recorded_and_ignored_with_no_mutation`
+17. `test_a_dispute_updated_event_is_durably_recorded_and_ignored_with_no_mutation`
+18. `test_a_dispute_closed_event_is_durably_recorded_and_ignored_with_no_mutation_regardless_of_status`
+19. `test_a_dispute_event_for_an_unresolvable_reference_fails_with_no_mutation`
+20. `test_a_dispute_never_affects_an_unrelated_businesss_wallet`
+21. `test_a_second_dispute_while_billing_is_already_suspended_writes_no_redundant_suspended_transition`
 
-### `UsageWalletManagerReversalTest.php` (12) — proves §5 item 14
+### `DisputeBalanceTransactionValidationTest.php` (7) — proves §5, §8
 
-1. `test_apply_provider_refund_debits_available_balance_when_sufficient`
-2. `test_apply_provider_refund_creates_debt_when_available_balance_is_insufficient`
-3. `test_apply_provider_refund_returns_null_and_mutates_nothing_for_a_non_positive_amount`
-4. `test_apply_dispute_withdrawal_debits_available_balance_when_sufficient`
-5. `test_apply_dispute_withdrawal_creates_debt_when_available_balance_is_insufficient`
-6. `test_apply_dispute_withdrawal_dispatches_business_wallet_debited_and_or_debt_incurred_matching_the_split`
-7. `test_apply_dispute_withdrawal_suspends_billing_status`
-8. `test_apply_dispute_withdrawal_does_not_re_suspend_an_already_suspended_wallet`
-9. `test_reinstate_disputed_funds_clears_current_debt_before_crediting_available_balance`
-10. `test_reinstate_disputed_funds_never_produces_negative_debt_when_debt_was_already_cleared`
-11. `test_reinstate_disputed_funds_sets_reversed_entry_id_to_the_original_chargeback_entry`
-12. `test_reinstate_disputed_funds_dispatches_business_wallet_credited_and_or_debt_cleared_matching_current_state`
+1. `test_a_dispute_with_the_documented_single_withdrawal_transaction_is_processed`
+2. `test_a_dispute_carrying_the_documented_withdrawal_then_reinstatement_two_transaction_shape_processes_both_correctly`
+3. `test_more_than_two_balance_transactions_fails_closed_as_malformed`
+4. `test_two_balance_transactions_of_the_same_sign_fail_closed_as_malformed`
+5. `test_duplicate_balance_transaction_ids_in_the_array_fail_closed_as_malformed`
+6. `test_a_reinstatement_resolves_the_original_chargeback_via_the_withdrawal_transactions_own_correlation_key_and_sets_the_exact_reversed_entry_id`
+7. `test_a_reinstatement_with_no_matching_withdrawal_present_in_the_array_fails_closed_with_zero_mutation`
 
-### `ProviderRefundDisputeSurfaceBoundaryTest.php` (5) — proves §9
+### `DirectDeliverableProviderOutcomeTest.php` (11) — proves §4, §9, §17
+
+1. `test_a_partial_direct_deliverable_refund_leaves_the_attempt_succeeded_with_zero_wallet_deltas_and_a_recorded_outcome_row`
+2. `test_a_full_direct_deliverable_refund_transitions_the_attempt_to_refunded_with_zero_wallet_deltas`
+3. `test_a_replayed_direct_deliverable_refund_event_is_a_no_op`
+4. `test_a_direct_deliverable_dispute_withdrawal_writes_a_zero_delta_dispute_chargeback_and_suspends_billing`
+5. `test_a_direct_deliverable_dispute_reinstatement_writes_a_zero_delta_correction_reversal_and_never_credits_the_wallet`
+6. `test_zero_wallet_balance_events_are_ever_dispatched_for_any_direct_deliverable_outcome_row`
+7. `test_a_direct_deliverable_dispute_withdrawal_dispatches_the_chargeback_notification_despite_zero_wallet_deltas`
+8. `test_a_direct_deliverable_refund_is_never_classified_as_a_wallet_credit_over_refund`
+9. `test_clearing_the_final_direct_deliverable_dispute_exposure_returns_the_attempt_to_refunded_or_succeeded_per_refund_progress`
+10. `test_two_different_provider_event_ids_reporting_the_same_direct_deliverable_outcome_apply_it_exactly_once`
+11. `test_a_refunded_direct_deliverable_addon_purchase_remains_historically_completed`
+
+### `UsageWalletManagerReversalTest.php` (23) — proves §6, §7, §8, §9, §11, §17 at the manager layer
+
+1. `test_apply_provider_refund_debits_available_balance_only_when_sufficient`
+2. `test_apply_provider_refund_debits_only_the_remaining_available_balance_and_records_policy_excess_when_available_balance_is_insufficient`
+3. `test_apply_provider_refund_never_writes_a_non_zero_debt_delta_micro`
+4. `test_apply_provider_refund_returns_null_and_mutates_nothing_for_a_non_positive_amount`
+5. `test_apply_provider_refund_writes_a_zero_delta_row_when_not_wallet_backed`
+6. `test_apply_provider_refund_sets_the_low_balance_marker_when_the_debit_drops_the_balance_to_or_below_threshold`
+7. `test_apply_provider_refund_never_dispatches_evaluate_business_auto_recharge`
+8. `test_apply_provider_refund_suspends_billing_using_the_provider_refund_mismatch_source_only_when_policy_excess_exists`
+9. `test_apply_provider_refund_does_not_re_suspend_an_already_suspended_wallet_on_a_repeated_policy_excess_outcome`
+10. `test_apply_provider_refund_dispatches_business_wallet_debited_only_for_the_actual_debit_never_when_it_is_zero`
+11. `test_apply_dispute_withdrawal_debits_available_balance_when_sufficient`
+12. `test_apply_dispute_withdrawal_creates_debt_when_available_balance_is_insufficient`
+13. `test_apply_dispute_withdrawal_dispatches_business_wallet_debited_and_or_debt_incurred_matching_the_split`
+14. `test_apply_dispute_withdrawal_suspends_billing_status`
+15. `test_apply_dispute_withdrawal_does_not_re_suspend_an_already_suspended_wallet`
+16. `test_apply_dispute_withdrawal_suspends_billing_even_when_not_wallet_backed`
+17. `test_apply_dispute_withdrawal_never_dispatches_evaluate_business_auto_recharge`
+18. `test_apply_dispute_withdrawal_never_dispatches_send_receipt_notification_or_writes_a_receipt_row`
+19. `test_reinstate_disputed_funds_clears_current_debt_before_crediting_available_balance`
+20. `test_reinstate_disputed_funds_never_produces_negative_debt_when_debt_was_already_cleared`
+21. `test_reinstate_disputed_funds_dispatches_business_wallet_credited_and_or_debt_cleared_matching_current_state`
+22. `test_reinstate_disputed_funds_clears_the_low_balance_marker_on_recovery`
+23. `test_reinstate_disputed_funds_remains_zero_delta_and_never_credits_the_wallet_when_not_wallet_backed`
+
+### `ProviderRefundDisputeSurfaceBoundaryTest.php` (7) — proves §17, §22
 
 1. `test_reversal_and_dispute_manager_methods_are_never_called_from_a_controller`
 2. `test_process_payment_provider_event_never_calls_a_charge_originating_manager_method`
 3. `test_no_new_production_file_contains_a_raw_billing_table_query_outside_the_two_eloquent_repositories`
 4. `test_apply_outcome_orchestration_methods_are_never_called_outside_process_payment_provider_event`
 5. `test_no_new_admin_controller_action_or_route_is_introduced_beyond_the_widened_provider_events_index`
+6. `test_none_of_the_three_reversal_methods_ever_references_evaluate_business_auto_recharge`
+7. `test_none_of_the_three_reversal_methods_ever_references_send_receipt_notification_or_attach_funding_receipt`
 
-### `PaymentProviderEventRetryReclaimTest.php` (7) — proves §4.11
+### `PaymentProviderEventRetryReclaimTest.php` (12) — proves §19
 
 1. `test_a_failed_event_below_max_attempts_is_redispatched_by_the_scanner`
 2. `test_a_stale_processing_event_past_its_lease_is_reclaimed_by_the_scanner`
@@ -392,26 +662,49 @@ Seven new, nullable columns: `business_id` (unsigned bigint, **no FK** — match
 5. `test_processed_ignored_and_disposed_events_are_never_redispatched_by_the_scanner`
 6. `test_the_scanner_batch_is_bounded_by_its_own_limit`
 7. `test_the_scanner_performs_no_accounting_mutation_itself`
+8. `test_a_received_event_older_than_the_grace_interval_is_redispatched_by_the_scanner`
+9. `test_a_freshly_received_event_is_not_redispatched_before_the_grace_interval_elapses`
+10. `test_the_persistence_before_dispatch_failure_leaves_a_received_row_that_only_the_scanner_recovers`
+11. `test_a_redelivered_webhook_for_an_already_received_event_returns_200_without_a_second_row_and_the_original_remains_scanner_recoverable`
+12. `test_a_scanner_redispatch_racing_the_original_dispatch_for_the_same_received_event_applies_the_outcome_exactly_once`
 
-### `PaymentProviderEventDurableAuditTest.php` (6) — proves §4.12, §4.13
+### `PaymentProviderEventDurableAuditTest.php` (10) — proves §18
 
 1. `test_a_processed_refund_outcome_is_attributed_with_business_and_funding_attempt_identity`
 2. `test_an_ignored_dispute_created_event_is_attributed_with_normalized_status_and_reason`
-3. `test_a_direct_deliverable_addon_refund_is_durably_audited_despite_zero_wallet_mutation`
+3. `test_a_direct_deliverable_addon_refund_is_durably_audited_with_the_actual_applied_progress_despite_zero_wallet_mutation`
 4. `test_normalized_attribution_survives_payload_purge`
-5. `test_the_provider_events_admin_surface_lists_recent_normalized_outcomes_bounded_by_limit`
-6. `test_a_refund_object_event_is_recorded_as_audit_only_with_no_wallet_mutation`
+5. `test_the_provider_events_admin_surface_lists_recent_normalized_outcomes_ordered_by_normalized_recorded_at`
+6. `test_recent_outcomes_clamps_its_accepted_limit_to_the_locked_maximum_regardless_of_the_requested_value`
+7. `test_a_refund_object_event_is_recorded_as_audit_only_with_no_wallet_mutation`
+8. `test_a_partial_refunds_reported_amount_differs_from_its_applied_amount`
+9. `test_a_replayed_refund_records_a_reported_amount_with_an_applied_amount_of_zero`
+10. `test_the_administrator_audit_renders_reported_applied_and_policy_excess_amounts_exactly_for_a_policy_excess_refund`
 
-### `ProviderRefundDisputeConcurrencyTest.php` (2) — proves §4.8, using the established subprocess/causal-barrier convention
-
-Mirrors `ConcurrentTopUpConcurrencyTest.php`'s own exact infrastructure verbatim (`Symfony\Component\Process\Process`, a `WAITING`-handshake before a shared signal file releases both child processes, no `RefreshDatabase`, manual fixture teardown) — a replay test alone is not proof of concurrent processing; these two prove it with genuinely independent OS processes racing the identical row.
+### `ProviderRefundDisputeConcurrencyTest.php` (3) — proves §10, using the established subprocess/causal-barrier convention
 
 1. `test_two_different_provider_event_ids_reporting_the_same_cumulative_refund_amount_credit_the_wallet_exactly_once`
 2. `test_two_different_provider_event_ids_reporting_the_same_balance_transaction_apply_the_dispute_chargeback_exactly_once`
+3. `test_two_different_provider_event_ids_reporting_the_same_policy_excess_refund_apply_it_exactly_once_with_no_duplicate_suspension`
+
+### `SendChargebackDisputeNotificationTest.php` (12) — proves §11
+
+1. `test_dispatched_only_after_the_outer_transaction_commits`
+2. `test_dispatched_exactly_once_for_the_correlation_key_winner`
+3. `test_not_dispatched_for_a_replayed_withdrawal_event`
+4. `test_not_dispatched_for_the_correlation_key_loser_of_a_concurrent_write`
+5. `test_not_dispatched_when_the_outer_transaction_rolls_back`
+6. `test_dispatched_for_a_direct_deliverable_withdrawal_despite_zero_wallet_deltas`
+7. `test_not_dispatched_for_a_reinstatement`
+8. `test_not_dispatched_for_a_policy_excess_refund_outcome`
+9. `test_skips_when_no_billing_contact_is_configured`
+10. `test_skips_when_the_contact_has_opted_out`
+11. `test_skips_when_the_resolved_email_is_blank`
+12. `test_sends_with_the_exact_dispute_id_amount_and_currency_content`
 
 ---
 
-## 7. Schema/migration decisions — exact DDL, corrected and extended
+## 25. Schema/migration decisions — exact DDL
 
 **Migration 1:**
 
@@ -426,9 +719,15 @@ Schema::table('business_funding_attempts', function (Blueprint $table) {
 });
 ```
 
-**Migration 2** — unchanged from the original pass (AutoRecharge-only, pure local-data `UPDATE`, no provider call).
+**Migration 2:** the AutoRecharge-only, pure local-data backfill `UPDATE` (§17).
 
-**Migration 3** — unchanged from the original pass (index on `business_usage_ledger_entries.funding_attempt_id`).
+**Migration 3:**
+
+```php
+Schema::table('business_usage_ledger_entries', function (Blueprint $table) {
+    $table->index(['funding_attempt_id', 'entry_type', 'provider_reference'], 'ledger_funding_attempt_entry_type_provider_reference_index');
+});
+```
 
 **Migration 4:**
 
@@ -438,111 +737,113 @@ Schema::table('payment_provider_events', function (Blueprint $table) {
     $table->unsignedBigInteger('funding_attempt_id')->nullable()->after('business_id');
     $table->string('normalized_outcome', 32)->nullable()->after('funding_attempt_id');
     $table->string('normalized_status', 32)->nullable()->after('normalized_outcome');
-    $table->bigInteger('normalized_amount_micro')->nullable()->after('normalized_status');
-    $table->string('normalized_currency_code', 3)->nullable()->after('normalized_amount_micro');
+    $table->bigInteger('normalized_reported_amount_micro')->nullable()->after('normalized_status');
+    $table->bigInteger('normalized_applied_amount_micro')->nullable()->after('normalized_reported_amount_micro');
+    $table->bigInteger('normalized_policy_excess_micro')->nullable()->after('normalized_applied_amount_micro');
+    $table->string('normalized_currency_code', 3)->nullable()->after('normalized_policy_excess_micro');
     $table->string('normalized_reason', 64)->nullable()->after('normalized_currency_code');
+    $table->timestamp('normalized_recorded_at')->nullable()->after('normalized_reason');
 });
 ```
 
-No `FOREIGN KEY` on `business_id`/`funding_attempt_id` — matching this exact table's own established `disposed_by_user_id` precedent (nullable audit reference, deliberately no FK).
+No `FOREIGN KEY` on `business_id`/`funding_attempt_id`.
 
-No other schema/migration change is authorized or required by this contract.
+**Migration 5:**
 
----
+```php
+Schema::table('payment_provider_events', function (Blueprint $table) {
+    $table->index(['state', 'attempts'], 'payment_provider_events_state_attempts_index');
+    $table->index('normalized_recorded_at', 'payment_provider_events_normalized_recorded_at_index');
+});
+```
 
-## 8. Preserved invariants — re-verified against the corrected design
-
-Every invariant from the original pass's §8 (`committed_spend_this_period_micro` never touched; `recharged_this_period_micro` never decremented by `Refund`/`DisputeChargeback`/`CorrectionReversal`; `business_usage_ledger_entries` remains append-only; outstanding-debt-denies-reservations centrally enforced; no raw query outside an owning repository) is re-verified against the **corrected** write paths in §5 item 14 and holds identically — `applyProviderRefund()`/`applyDisputeWithdrawal()`/`reinstateDisputedFunds()` write only `available_balance_micro`/`debt_balance_micro`, exactly as their §4 predecessors did, and the new bounded SQL-aggregate reads (§5 item 10/11) are the only new raw-query-capable code, confined to the two already-authorized Eloquent repository implementations.
-
-**One invariant newly re-verified this round, specific to the correction:** debt can never go negative. `reinstateDisputedFunds()`'s own `debtCleared = min(reinstatementAmountMicro, max(0, wallet.debt_balance_micro))` makes this true by construction, independent of what the *original* `DisputeChargeback` entry's own stored deltas happened to be — proven by `UsageWalletManagerReversalTest::test_reinstate_disputed_funds_never_produces_negative_debt_when_debt_was_already_cleared`.
-
----
-
-## 9. Guarantee-by-guarantee mapping — corrected
-
-1. **A refund/dispute event resolves to exactly one Business, never ambiguously — or fails closed on a genuine conflict.** §4.1; proven by `ProviderPaymentIdentifierResolutionTest` methods 6–10.
-2. **Full, partial, and repeated partial refunds are each handled correctly, idempotently, and independent of any dispute on the same attempt.** §4.2, §4.5; proven by `ProviderRefundOutcomeTest` methods 1–4, 12.
-3. **Dispute mutation is keyed to the actual, signed balance transaction — never the claimed dispute amount or status alone.** §4.3; proven by `ProviderDisputeOutcomeTest` methods 1–2.
-4. **A reinstatement never produces negative debt and is bounded to the specific dispute's own actual withdrawn amount.** §4.4; proven by `ProviderDisputeOutcomeTest` methods 7–11, `UsageWalletManagerReversalTest` methods 9–10.
-5. **Funding-attempt state reflects every outstanding dispute, not just the most recently processed event.** §4.6; proven by `ProviderDisputeOutcomeTest` methods 13–16.
-6. **Duplicate webhook delivery and concurrent processing — including two different provider event ids reporting the identical outcome — can never apply the same financial effect twice.** §4.8; proven by `ProviderRefundOutcomeTest::test_an_out_of_order_replayed_refund_event_...`, `ProviderDisputeOutcomeTest::test_a_replayed_funds_withdrawn_event_...`, and — genuinely, not merely by replay — `ProviderRefundDisputeConcurrencyTest`'s two forced-race methods.
-7. **No fabricated successful-payment receipt is ever created for a refund/dispute.** §4.10 of the original pass, unchanged; enforced by construction.
-8. **Every outcome, mutating or not — including the entire `refund.*` object family — is durably recorded and remains Business-attributed and administrator-visible after payload purge.** §4.12, §4.13; proven by `PaymentProviderEventDurableAuditTest`.
-9. **A failed or stale event is actually retried/reclaimed, actually reaches exhaustion, and actually becomes administrator-visible — not merely claimed to.** §4.11; proven by `PaymentProviderEventRetryReclaimTest`.
-10. **No new admin surface beyond the one widened, reused read; no new customer surface; no origination of any provider-side action.** §4.14 of the original pass (unchanged) plus §4.12's own widening, which reuses rather than duplicates; proven by `ProviderRefundDisputeSurfaceBoundaryTest`.
-11. **Every wallet-mutating write is authority-correct, lock-ordered identically to every existing wallet-mutating write, and every mandatory-reason row is genuinely non-blank.** §4.8, §4.10, §5 item 14; proven by `UsageWalletManagerReversalTest`, `ProviderRefundOutcomeTest::test_refund_reason_is_never_null_...`.
+No other schema/migration change is authorized or required.
 
 ---
 
-## 10. Bounded reads — restated and extended
+## 26. Guarantee-by-guarantee mapping
 
-All six new `BusinessUsageLedgerEntryRepository`/`PaymentProviderEventRepository` reads (§5 items 10, 12) are either `LIMIT`-bounded (`retryable()`, `recentOutcomes()`) or scoped to a single `funding_attempt_id`/`(funding_attempt_id, provider_dispute_id)` pair and indexed (Migration 3) — none is a table scan, none requires pagination, and the two SQL-aggregate sums are computed entirely by MySQL as exact `DECIMAL`/`BIGINT` results returned as PHP strings, never by loading a row set for PHP-side reduction (corrected per blocker 5).
+1. **A refund/dispute event resolves to exactly one Business, never ambiguously.** §3; `ProviderPaymentIdentifierResolutionTest` methods 6–10.
+2. **A provider-confirmed Refund can never create or increase wallet debt; an externally-issued over-refund is capped, recorded, and flagged, never absorbed as debt or retried indefinitely.** §6, §12, §23; `ProviderRefundOutcomeTest` methods 1–4, 17–19; `UsageWalletManagerReversalTest` methods 1–3, 8–9.
+3. **`DisputeChargeback` may still create debt — unaffected by the refund policy.** §7, §9; `ProviderDisputeOutcomeTest` method 3; `UsageWalletManagerReversalTest` method 12.
+4. **Dispute mutation is keyed to the actual, signed, validated balance transaction — never the claimed amount/status, never a malformed shape.** §5, §7; `ProviderDisputeOutcomeTest` methods 1–2; `DisputeBalanceTransactionValidationTest` methods 1–5.
+5. **A reinstatement never produces negative debt, is bounded to the specific dispute's own withdrawn amount, and mechanically resolves its own lineage.** §8; `ProviderDisputeOutcomeTest` methods 7–11; `DisputeBalanceTransactionValidationTest` methods 6–7.
+6. **Every genuinely new outcome — wallet-backed or zero-delta — writes an outcome row, advances its accumulator, is audited, and drives state recomputation identically.** §4, §9; `DirectDeliverableProviderOutcomeTest` in full.
+7. **Funding-attempt state reflects every outstanding dispute and gross refund progress, computed by bounded queries.** §13, §21; `ProviderDisputeOutcomeTest` methods 13–15; `ProviderRefundOutcomeTest` method 20.
+8. **Duplicate delivery, a stranded `received` row, and genuine concurrency — including two different event ids reporting the identical outcome — never apply the same financial or state effect twice, and a stranded event is recovered.** §19, §20; `PaymentProviderEventRetryReclaimTest` in full; `ProviderRefundDisputeConcurrencyTest` in full.
+9. **No fabricated receipt, and no automatic auto-recharge origination, from any refund/dispute code path.** §17; `UsageWalletManagerReversalTest` methods 7, 17, 18, 23; `ProviderRefundDisputeSurfaceBoundaryTest` methods 6–7.
+10. **The low-balance marker participates correctly, and only, in wallet-backed mutations.** §9, §11; `UsageWalletManagerReversalTest` methods 6, 22.
+11. **Every outcome is durably recorded with unambiguous reported/applied/policy-excess amounts and remains administrator-visible after payload purge.** §18; `PaymentProviderEventDurableAuditTest` in full.
+12. **The dedicated chargeback notification dispatches exactly once, chargeback-only, never for any refund outcome.** §11; `SendChargebackDisputeNotificationTest` in full; `UsageWalletManagerReversalTest` method 10.
+13. **No new admin surface beyond the one widened read; no provider-side origination; no entitlement/deliverable rollback; `ManualCredit`/`PromotionalCredit` never refundable.** §4, §17; `ProviderRefundDisputeSurfaceBoundaryTest` in full; `ProviderRefundOutcomeTest` method 16; `DirectDeliverableProviderOutcomeTest` method 11.
+14. **Every wallet-mutating write is authority-correct, lock-ordered, and every mandatory-reason row is non-blank.** §20, §12; `UsageWalletManagerReversalTest`; `ProviderRefundOutcomeTest` method 14.
 
 ---
 
-## 11. Regression commands — for the future, separately authorized implementation phase
+## 27. Bounded reads
+
+Every new read is either `LIMIT`-bounded and index-supported (`retryable()`, `recentOutcomes()`) or scoped to `(funding_attempt_id[, provider_reference])` and supported by the single composite index. `hasOutstandingDisputeExposureForFundingAttempt()` replaces any PHP-side list with one SQL query bounded by `LIMIT 1`.
+
+---
+
+## 28. Regression commands
 
 1. `php artisan test tests/Feature/Usage/ProviderPaymentIdentifierResolutionTest.php`
 2. `php artisan test tests/Feature/Usage/ProviderRefundOutcomeTest.php`
 3. `php artisan test tests/Feature/Usage/ProviderDisputeOutcomeTest.php`
-4. `php artisan test tests/Feature/Usage/UsageWalletManagerReversalTest.php`
-5. `php artisan test tests/Feature/Usage/ProviderRefundDisputeSurfaceBoundaryTest.php`
-6. `php artisan test tests/Feature/Usage/PaymentProviderEventRetryReclaimTest.php`
-7. `php artisan test tests/Feature/Usage/PaymentProviderEventDurableAuditTest.php`
-8. `php artisan test tests/Feature/Usage/ProviderRefundDisputeConcurrencyTest.php`
-9. `php artisan test tests/Feature/Usage tests/Unit/Usage` (complete Usage-domain suite)
-10. One complete `php artisan test --stop-on-failure` run (full repository suite)
-11. `git diff --check`
+4. `php artisan test tests/Feature/Usage/DisputeBalanceTransactionValidationTest.php`
+5. `php artisan test tests/Feature/Usage/DirectDeliverableProviderOutcomeTest.php`
+6. `php artisan test tests/Feature/Usage/UsageWalletManagerReversalTest.php`
+7. `php artisan test tests/Feature/Usage/ProviderRefundDisputeSurfaceBoundaryTest.php`
+8. `php artisan test tests/Feature/Usage/PaymentProviderEventRetryReclaimTest.php`
+9. `php artisan test tests/Feature/Usage/PaymentProviderEventDurableAuditTest.php`
+10. `php artisan test tests/Feature/Usage/ProviderRefundDisputeConcurrencyTest.php`
+11. `php artisan test tests/Feature/Usage/SendChargebackDisputeNotificationTest.php`
+12. `php artisan test tests/Feature/Usage tests/Unit/Usage` (complete Usage-domain suite)
+13. One complete `php artisan test --stop-on-failure` run (full repository suite)
+14. `git diff --check`
 
-No command beyond these is authorized; no live-provider-hitting command is ever part of this suite (`FakePaymentProviderGateway` only, unchanged).
-
----
-
-## 12. Human decisions — three false-open items resolved and locked this round; exactly one genuine decision remains
-
-**Resolved and locked this round (no longer open):**
-
-1. ~~Should billing_status automatically resume when a dispute is won?~~ **Locked: no — administrator-only, unconditionally.** RFC §24's own authorization table reserves *"Set/clear `billing_status = 'suspended'`"* to the platform administrator with no automatic-resume row in either direction; this is not a judgment call this contract is entitled to leave open, and §4.9 above implements it as a hard design decision, not a default subject to override.
-2. ~~Should historical Checkout-backed `Succeeded` attempts be backfilled with a live provider call?~~ **Locked: no, explicitly excluded.** Governance authorizes no live Stripe action by this document or its implementation; any future backfill is its own, separately authorized remediation, not a variant of this one.
-3. ~~Should `refund.*`/`charge.refund.updated` events be ingested?~~ **Locked: yes, as normalized audit-only events, per §4.13 — mechanically required, not a preference.** `charge.refunded` remains the sole financial-mutation authority for refunds.
-
-**The one genuine, unresolvable-from-the-RFC-or-from-mechanics decision, kept open:**
-
-**Should a chargeback debit and/or billing-status suspension email the Business?**
-
-- **Recommended choice: yes.** `applyDisputeWithdrawal()` can both create debt and immediately suspend billing in the same transaction, with no other change in the Business's own product experience at that instant — silence at the moment of a debt-creating, service-suspending event risks the Business discovering the interruption only when their own usage is denied (RFC's own outstanding-debt-denies-reservations rule, unchanged), with no prior explanation. This is a materially different risk profile from an ordinary usage overage (which also does not notify, but never suspends billing outright) — the precedent this contract's original pass leaned on for a "no notification" default does not actually cover the suspension case.
-- **Alternative choice: no**, for strict consistency with every other existing debit path's own silence, deferring entirely to the administrator-visible audit trail (§4.12) and the existing dashboard for after-the-fact discovery.
-- **This document does not assume either answer.** Implementing either requires a small, additive extension to §5 item 14/16 (a new notification dispatch call from inside `applyDisputeWithdrawal()`, or from `ProcessPaymentProviderEvent`'s own `processDisputeWithdrawal()` after commit) — not a redesign of anything locked above. **Stopping here for the human decision.**
+No live-provider-hitting command is ever part of this suite.
 
 ---
 
-## 13. Coverage matrix — unchanged in shape from the original pass; every entry now points at the corrected section
+## 29. Coverage matrix
 
 | Question | Answered in |
 |---|---|
-| Which provider refund/dispute webhook/event types enter the system? | §3 |
-| How is each event authenticated, normalized, deduplicated, retained, disposed? | §4.8, §4.11, §4.13 (retry/reclaim now real, not merely claimed) |
-| How is the affected Business/attempt/charge/wallet/entry identified without cross-Business ambiguity? | §4.1 (two identifiers, explicit mismatch failure) |
-| Full/partial/repeated refunds; dispute created/updated/won/lost/reinstated | §4.2, §4.3 |
-| Which outcomes change wallet available balance or debt? | §4.3, §4.4, §4.7 |
-| Which exact ledger entry types are produced; row shapes | §4.10 |
-| How are amounts bounded? | §4.4, §4.5 (two independent accumulators) |
-| What database uniqueness/idempotency boundary applies? | §4.8 |
-| Insufficient available balance? | §4.4, §4.10 (debt formation, never negative) |
-| Receipts/evidence | §4.10 of the original pass, unchanged |
-| Domain events/jobs/notifications/audit records | §4.12, §12 (one open decision) |
-| Outcomes requiring no mutation but still requiring durable audit | §4.3, §4.12, §4.13 |
-| Retry/reconciliation/locking/transaction/crash-recovery boundaries | §4.8, §4.11 (now a real, allow-listed mechanism) |
-| Which existing admin surface is reused; is any new HTTP/admin action required? | §4.12 — widened, not duplicated |
-| What intentionally remains out of scope? | §4.14 of the original pass, unchanged |
-| Multi-dispute / funding-attempt state correctness | §4.6 |
+| Which provider refund/dispute webhook/event types enter the system? | §2 |
+| How is each event authenticated, normalized, deduplicated, retained, disposed? | §10, §19 |
+| How is the affected Business/attempt identified without ambiguity? | §3 |
+| Full/partial/repeated refunds; dispute created/updated/won/lost/reinstated | §6, §7, §15 |
+| Which outcomes change wallet available balance or debt? | §9 |
+| Can a Refund ever create debt? | §6, §23 — never |
+| Which exact ledger entry types are produced; row shapes | §12 |
+| How are amounts bounded? | §6, §7, §8 |
+| What idempotency boundary applies? | §10 |
+| Insufficient available balance on a refund vs. a dispute? | §6 (capped, never debt) vs. §7/§8 (may create/reverse debt) |
+| Receipts/evidence | §17 |
+| Domain events/jobs/notifications/audit records | §11, §18 |
+| Outcomes requiring no mutation but still requiring durable audit | §15, §16, §18 |
+| Retry/reconciliation/locking/transaction/crash-recovery boundaries | §19, §20 |
+| Which existing admin surface is reused? | §18 — widened, not duplicated |
+| What intentionally remains out of scope? | §17 |
+| Multi-dispute / funding-attempt state correctness | §13, §21 |
+| Direct-deliverable outcome persistence, idempotency, state | §4, §9 |
+| Dispute balance-transaction cardinality and reversal lineage | §5, §8 |
+| Low-balance marker / auto-recharge / receipt boundaries | §9, §11, §17 |
+| The chargeback/dispute notification | §11 |
+| Durable audit value semantics (reported/applied/policy-excess) | §18 |
+| ManualCredit/PromotionalCredit refund eligibility | §4, §17 |
+| Externally issued over-refund handling | §6 |
 
 ---
 
-## 14. Validation performed before commit
+## 30. Validation performed before commit
 
-- Full document read back for internal consistency — every cross-reference in §5–§13 resolves to a §4 finding actually stated above it; every blocker in the correction record above maps to a specific, named subsection.
-- Every production/test path recounted mechanically, one row at a time, with no repository pair collapsed into a single count: **19 production paths (5 new + 14 modified)**, **80 test methods across 8 new files**.
+- Full document read back for internal consistency — every cross-reference resolves to a section stated above it; no section depends on deleted content from any prior round.
+- Searched for `debtIncurred`, `debt_delta_micro`, "creates debt", "insufficient available", `applyProviderRefund`, `refund_exceeds_refundable_balance`, `normalized_policy_excess_micro`, `EvaluateBusinessAutoRecharge`, `promotional`, `complimentary` — every remaining `Refund`-context match is consistent with the binding no-debt policy (§6); every `DisputeChargeback`-context match correctly still permits debt formation (§7, §9); no statement anywhere claims a `Refund` row may carry non-zero `debt_delta_micro`.
+- Searched for `original pass`, `original-pass`, `distinctDisputeReferencesForFundingAttempt`, the prior two-branch-only `retryable()` description, the prior single `normalized_amount_micro` column name, and the prior 19/23-path or 80/123-method counts as live claims — none remain; every count in §22/§24 is freshly, mechanically stated.
+- Every production/test path recounted mechanically: **24 production paths (9 new + 15 modified)**, **138 test methods across 11 new files**.
 - `git diff --check` — clean.
 - `git diff --name-only origin/main...HEAD` — exactly this one file.
 - Confirmed no product, test, schema, config, route, or RFC-source file changed; `docs/automation/AI-AUTONOMY-STATE.json` untouched.
