@@ -4,6 +4,7 @@ namespace App\Repositories\Eloquent;
 
 use App\Models\BusinessFundingAttempt;
 use App\Repositories\Contracts\BusinessFundingAttemptRepository;
+use Illuminate\Support\Collection;
 
 class EloquentBusinessFundingAttemptRepository extends EloquentBaseRepository implements BusinessFundingAttemptRepository
 {
@@ -68,5 +69,14 @@ class EloquentBusinessFundingAttemptRepository extends EloquentBaseRepository im
         $attempt->save();
 
         return $attempt;
+    }
+
+    public function recentForBusiness(int $businessId, int $limit = 20): Collection
+    {
+        return $this->query()
+            ->where('business_id', $businessId)
+            ->orderByDesc('id')
+            ->limit($limit)
+            ->get();
     }
 }

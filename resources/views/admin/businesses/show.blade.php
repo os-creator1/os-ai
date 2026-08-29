@@ -12,6 +12,7 @@
                         @can('edit business')
                             <a href="{{ route('admin.businesses.edit', $business) }}" class="btn btn-primary btn-sm">Edit</a>
                         @endcan
+                        <a href="{{ route('admin.businesses.usage-billing.show', $business) }}" class="btn btn-outline-primary btn-sm">Usage Billing</a>
                     </div>
                     <div class="card-body">
                         @if (session('status'))

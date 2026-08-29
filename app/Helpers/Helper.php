@@ -899,6 +899,47 @@
                         'icon'   => 'grid',
                         'access' => 'general settings',
                     ],
+                    [
+                        // RFC-005 Admin Usage Billing Surface Contract §2.7 —
+                        // the first sidebar nav entry any RFC-00x admin-only
+                        // module has received. Read-only cross-links to the
+                        // two already-shipped Usage-domain admin surfaces
+                        // (provider-event disposition, additional-slot-
+                        // agreement administration); no route/controller/
+                        // mutation is duplicated for either.
+                        'url'     => '',
+                        'slug'    => '',
+                        'name'    => 'Usage Billing',
+                        'i18n'    => 'Usage Billing',
+                        'icon'    => 'credit-card',
+                        'access'  => 'access backend',
+                        'submenu' => [
+                            [
+                                'url'    => url(config('app.admin_path') . '/usage-billing/safety-limits'),
+                                'slug'   => config('app.admin_path') . '/usage-billing/safety-limits',
+                                'name'   => 'Safety Limits',
+                                'i18n'   => 'Safety Limits',
+                                'access' => 'access backend',
+                                'icon'   => 'shield',
+                            ],
+                            [
+                                'url'    => url(config('app.admin_path') . '/provider-events'),
+                                'slug'   => config('app.admin_path') . '/provider-events',
+                                'name'   => 'Provider Events',
+                                'i18n'   => 'Provider Events',
+                                'access' => 'access backend',
+                                'icon'   => 'alert-triangle',
+                            ],
+                            [
+                                'url'    => url(config('app.admin_path') . '/additional-business-slot-agreements'),
+                                'slug'   => config('app.admin_path') . '/additional-business-slot-agreements',
+                                'name'   => 'Additional Slot Agreements',
+                                'i18n'   => 'Additional Slot Agreements',
+                                'access' => 'access backend',
+                                'icon'   => 'layers',
+                            ],
+                        ],
+                    ],
                 ],
                 'customer' => [
                     [

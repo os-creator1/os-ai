@@ -20,6 +20,7 @@ class BusinessFundingAttemptTransition extends Model
         'source',
         'provider_event_id',
         'actor_user_id',
+        'reason',
         'created_at',
     ];
 

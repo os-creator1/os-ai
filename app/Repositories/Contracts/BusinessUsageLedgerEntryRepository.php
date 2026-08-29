@@ -3,6 +3,8 @@
 namespace App\Repositories\Contracts;
 
 use App\Models\BusinessUsageLedgerEntry;
+use Illuminate\Pagination\LengthAwarePaginator;
+use Illuminate\Support\Collection;
 
 /**
  * Append-only — no update()/delete() method exists on this contract.
@@ -39,4 +41,30 @@ interface BusinessUsageLedgerEntryRepository extends BaseRepository
      * type contributes, matching §13 exactly.
      */
     public function sumCommittedAmountForFeature(int $businessId, string $featureKey, string $periodKey): int;
+
+    /**
+     * RFC-005 Admin Usage Billing Surface Contract §2.4 — the admin
+     * dashboard's own bounded, filterable, paginated ledger read.
+     * $filters supports 'entry_type' (exact match) and 'from'/'to'
+     * (inclusive created_at date-range bounds).
+     */
+    public function forBusinessPaginated(int $businessId, int $perPage, array $filters = []): LengthAwarePaginator;
+
+    /**
+     * RFC-005 Admin Usage Billing Surface Contract §2.3 — the manual-
+     * credit idempotency lookup. A plain, unlocked read; the caller is
+     * responsible for its own wallet-row lock.
+     */
+    public function findByCorrelationKey(string $correlationKey): ?BusinessUsageLedgerEntry;
+
+    /**
+     * RFC-005 Admin Usage Billing Surface Contract §2.5 — the provider-
+     * cost/margin aggregate, one row per feature_key, computed entirely
+     * in SQL using exact DECIMAL arithmetic. retail_revenue_micro and
+     * provider_cost_micro are returned as exact integer-micro strings
+     * (never PHP int/float); margin_micro is derived from them via
+     * bcsub(), guaranteeing margin_micro === retail_revenue_micro -
+     * provider_cost_micro for every row.
+     */
+    public function marginAggregateForBusiness(int $businessId, string $periodKey): Collection;
 }

@@ -598,6 +598,32 @@
             'only' => ['index', 'show', 'edit', 'update'],
         ]);
         Route::patch('businesses/{business}/status', 'BusinessController@updateStatus')->name('businesses.status.update');
+
+        // RFC-005 Admin Usage Billing Surface Contract — remediation #5.
+        //
+        // Each route's own ->missing() callback fires when implicit
+        // {business} route-model binding fails to resolve a row, letting
+        // it abort(404) directly instead of letting the unresolved
+        // ModelNotFoundException reach the global exception Handler
+        // (which maps that exception to a 500 response outside the
+        // local environment, per its own pre-existing, unmodified
+        // behavior) — RFC §24 line 1078's "fail closed with a
+        // 404-shaped response" for an unrelated/nonexistent resource.
+        Route::prefix('businesses/{business}/usage-billing')->name('businesses.usage-billing.')->group(function () {
+            Route::get('/', 'UsageBillingController@show')->name('show')
+                ->missing(fn () => abort(404));
+            Route::post('credit', 'UsageBillingController@issueManualCredit')->name('credit')
+                ->missing(fn () => abort(404));
+            Route::post('suspend', 'UsageBillingController@suspendBilling')->name('suspend')
+                ->missing(fn () => abort(404));
+            Route::post('resume', 'UsageBillingController@resumeBilling')->name('resume')
+                ->missing(fn () => abort(404));
+            Route::post('funding-attempts/{attempt}/retry', 'UsageBillingController@retryFundingAttempt')
+                ->name('funding-attempts.retry')->whereNumber('attempt')
+                ->missing(fn () => abort(404));
+        });
+        Route::get('usage-billing/safety-limits', 'UsageBillingController@safetyLimits')->name('usage-billing.safety-limits.index');
+        Route::post('usage-billing/safety-limits', 'UsageBillingController@setSafetyLimit')->name('usage-billing.safety-limits.update');
     });
     Route::post('ai-settings-toggle', 'SettingsController@toggleAiSettings')->name('settings.ai-settings.toggle');
 
