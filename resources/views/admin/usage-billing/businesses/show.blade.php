@@ -117,9 +117,9 @@
                             @foreach ($marginAggregate as $row)
                                 <tr>
                                     <td>{{ $row->feature_key }}</td>
-                                    <td class="text-numeric">{{ $row->retail_revenue_micro }}</td>
-                                    <td class="text-numeric">{{ $row->provider_cost_micro }}</td>
-                                    <td class="text-numeric">{{ $row->margin_micro }}</td>
+                                    <td class="text-numeric">{{ $row->retail_revenue_display }}</td>
+                                    <td class="text-numeric">{{ $row->provider_cost_display }}</td>
+                                    <td class="text-numeric">{{ $row->margin_display }}</td>
                                 </tr>
                             @endforeach
                         </x-table>

@@ -56,6 +56,14 @@ class EloquentBusinessUsageLedgerEntryRepository extends EloquentBaseRepository 
         return (-$usageChargeReservedDelta) + ((-$overageAvailableDelta) + $overageDebtDelta);
     }
 
+    /**
+     * `$filters['from']`/`$filters['to']` are expected to already be
+     * normalized, plain `created_at`-comparable timestamp strings (the
+     * controller's own `normalizeDateBoundary()` produces these) — an
+     * inclusive start-of-day `from` and an *exclusive* start-of-the-
+     * next-day `to`, so the entire named final calendar day is covered
+     * without a `whereDate()` wrapper defeating the `created_at` index.
+     */
     public function forBusinessPaginated(int $businessId, int $perPage, array $filters = []): LengthAwarePaginator
     {
         $query = $this->query()
@@ -71,7 +79,7 @@ class EloquentBusinessUsageLedgerEntryRepository extends EloquentBaseRepository 
         }
 
         if (! empty($filters['to'])) {
-            $query->where('created_at', '<=', $filters['to']);
+            $query->where('created_at', '<', $filters['to']);
         }
 
         return $query->paginate($perPage);

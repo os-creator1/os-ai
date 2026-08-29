@@ -32,6 +32,7 @@ use App\Repositories\Contracts\PlatformFeatureUsageSafetyLimitRepository;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Str;
 
@@ -67,6 +68,15 @@ class UsageBillingController extends AdminBaseController
     {
         $periodKey = (string) $request->query('period', now()->format('Y-m'));
 
+        $marginAggregate = $this->ledgerRepository->marginAggregateForBusiness((int) $business->id, $periodKey)
+            ->map(function ($row) {
+                $row->retail_revenue_display = $this->formatMicroDisplay((string) $row->retail_revenue_micro);
+                $row->provider_cost_display = $this->formatMicroDisplay((string) $row->provider_cost_micro);
+                $row->margin_display = $this->formatMicroDisplay((string) $row->margin_micro);
+
+                return $row;
+            });
+
         return view('admin.usage-billing.businesses.show', [
             'business' => $business,
             'wallet' => $this->walletRepository->findByBusinessId((int) $business->id),
@@ -76,11 +86,11 @@ class UsageBillingController extends AdminBaseController
                 25,
                 [
                     'entry_type' => $request->query('entry_type'),
-                    'from' => $request->query('from'),
-                    'to' => $request->query('to'),
+                    'from' => $this->normalizeDateBoundary($request->query('from'), false),
+                    'to' => $this->normalizeDateBoundary($request->query('to'), true),
                 ],
             )->appends($request->query()),
-            'marginAggregate' => $this->ledgerRepository->marginAggregateForBusiness((int) $business->id, $periodKey),
+            'marginAggregate' => $marginAggregate,
             'periodKey' => $periodKey,
             'recentFundingAttempts' => $this->fundingAttemptRepository->recentForBusiness((int) $business->id),
             'billingStatusHistory' => $this->billingStatusTransitionRepository->recentForBusiness((int) $business->id),
@@ -206,6 +216,72 @@ class UsageBillingController extends AdminBaseController
         return redirect()
             ->route('admin.usage-billing.safety-limits.index')
             ->with('flash_success', 'Platform feature-usage safety limit set.');
+    }
+
+    /**
+     * RFC-005 Admin Usage Billing Surface Contract §2.4 — the ledger
+     * date-range filter's own inclusive-bound normalization. A `from`
+     * value becomes that calendar day's own start-of-day timestamp
+     * (`>=`, inclusive); a `to` value becomes the *next* calendar day's
+     * start-of-day timestamp, used by the repository as an exclusive
+     * (`<`) upper bound — together these cover the entire named final
+     * day, index-friendly against the plain `created_at` column, with
+     * no `whereDate()` wrapping. Malformed input is treated as "no
+     * boundary" rather than surfacing a validation error, matching the
+     * filter's own optional, GET-query-string nature (no FormRequest is
+     * introduced for a read-only filter).
+     */
+    private function normalizeDateBoundary(?string $value, bool $exclusiveNextDay): ?string
+    {
+        if ($value === null || trim($value) === '') {
+            return null;
+        }
+
+        try {
+            $date = Carbon::parse($value)->startOfDay();
+        } catch (\Throwable) {
+            return null;
+        }
+
+        if ($exclusiveNextDay) {
+            $date = $date->addDay();
+        }
+
+        return $date->toDateTimeString();
+    }
+
+    /**
+     * RFC-005 Admin Usage Billing Surface Contract §2.5's exceptional
+     * post-review correction — the locked controller-private display
+     * formatter. Accepts a signed/unsigned integer-micro string (as
+     * `marginAggregateForBusiness()` always returns) and renders it as
+     * a fixed six-decimal display string using only sign handling,
+     * string normalization, and string slicing — never a PHP `int` or
+     * `float` cast, and never `number_format()`, either of which would
+     * silently lose precision for a value beyond PHP's signed 64-bit
+     * range (identical failure mode to the repository's own prior
+     * `(int)` cast, corrected there for the same reason).
+     */
+    private function formatMicroDisplay(string $micro): string
+    {
+        $negative = str_starts_with($micro, '-');
+        $digits = $negative ? substr($micro, 1) : $micro;
+        $digits = ltrim($digits, '0');
+
+        if ($digits === '') {
+            $digits = '0';
+        }
+
+        $digits = str_pad($digits, 7, '0', STR_PAD_LEFT);
+
+        $wholePart = ltrim(substr($digits, 0, -6), '0');
+        if ($wholePart === '') {
+            $wholePart = '0';
+        }
+
+        $fractionalPart = substr($digits, -6);
+
+        return ($negative ? '-' : '') . $wholePart . '.' . $fractionalPart;
     }
 
     /**

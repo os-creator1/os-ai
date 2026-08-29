@@ -223,10 +223,35 @@ class AdminUsageBillingControllerTest extends TestCase
         $this->get(route('admin.businesses.usage-billing.show', $business))->assertOk();
     }
 
+    /**
+     * Also proves UsageBillingController's own private string-safe
+     * margin-display formatter (§2.5's exceptional post-review
+     * correction) renders values exceeding PHP_INT_MAX exactly, for
+     * both a positive aggregate (provider cost) and a negative one
+     * (margin) — never through a PHP int/float cast or number_format().
+     */
     public function test_the_dashboard_shows_wallet_balance_debt_and_configured_limits(): void
     {
         $business = $this->businessWithWallet();
         $this->setWalletBalances($business, 7_000_000, 2_000_000);
+        $periodKey = now()->format('Y-m');
+
+        $this->seedLedgerRow($business, [
+            'entry_type' => UsageLedgerEntryType::UsageCharge->value, 'feature_key' => 'single_max_cost',
+            'period_key' => $periodKey, 'quantity' => 1, 'gross_amount_micro' => 30,
+            'provider_cost_micro' => '18446744073709551615',
+        ]);
+        $this->seedLedgerRow($business, [
+            'entry_type' => UsageLedgerEntryType::UsageCharge->value, 'feature_key' => 'double_max_cost',
+            'period_key' => $periodKey, 'quantity' => 1, 'gross_amount_micro' => 20,
+            'provider_cost_micro' => '18446744073709551615',
+        ]);
+        $this->seedLedgerRow($business, [
+            'entry_type' => UsageLedgerEntryType::UsageCharge->value, 'feature_key' => 'double_max_cost',
+            'period_key' => $periodKey, 'quantity' => 1, 'gross_amount_micro' => 20,
+            'provider_cost_micro' => '18446744073709551615',
+        ]);
+
         $this->actingAsAdmin();
 
         $response = $this->get(route('admin.businesses.usage-billing.show', $business));
@@ -234,6 +259,9 @@ class AdminUsageBillingControllerTest extends TestCase
         $response->assertOk();
         $response->assertSee('7000000');
         $response->assertSee('2000000');
+        $response->assertSee('0.000030');
+        $response->assertSee('18446744073709.551615');
+        $response->assertSee('-36893488147419.103190');
     }
 
     public function test_the_ledger_listing_is_paginated(): void
@@ -250,41 +278,84 @@ class AdminUsageBillingControllerTest extends TestCase
         $response->assertViewHas('ledgerEntries', fn ($paginator) => $paginator->count() === 25 && $paginator->total() === 30);
     }
 
+    /**
+     * RFC-005 Admin Usage Billing Surface Contract §2.4 — `from`/`to`
+     * are inclusive `created_at` date-range bounds. Seeds an entry
+     * before the range, one exactly at its start, one late on its
+     * final day, one after the range, and one of a different entry
+     * type inside the range — submitting entry_type/from/to together
+     * must return exactly the two correctly-typed in-range boundary
+     * entries, proving the final day is not truncated to midnight.
+     */
     public function test_the_ledger_listing_can_be_filtered_by_entry_type_and_date_range(): void
     {
         $business = $this->businessWithWallet();
-        $this->seedLedgerRow($business, ['entry_type' => UsageLedgerEntryType::UsageCharge->value]);
-        $this->seedLedgerRow($business, ['entry_type' => UsageLedgerEntryType::ManualCredit->value]);
+
+        $this->seedLedgerRow($business, [
+            'entry_type' => UsageLedgerEntryType::ManualCredit->value,
+            'created_at' => '2026-01-09 23:59:59',
+            'correlation_key' => 'before-range:'.Str::uuid(),
+        ]);
+        $this->seedLedgerRow($business, [
+            'entry_type' => UsageLedgerEntryType::ManualCredit->value,
+            'created_at' => '2026-01-10 00:00:00',
+            'correlation_key' => 'at-start:'.Str::uuid(),
+        ]);
+        $this->seedLedgerRow($business, [
+            'entry_type' => UsageLedgerEntryType::ManualCredit->value,
+            'created_at' => '2026-01-12 23:59:59',
+            'correlation_key' => 'late-final-day:'.Str::uuid(),
+        ]);
+        $this->seedLedgerRow($business, [
+            'entry_type' => UsageLedgerEntryType::ManualCredit->value,
+            'created_at' => '2026-01-13 00:00:00',
+            'correlation_key' => 'after-range:'.Str::uuid(),
+        ]);
+        $this->seedLedgerRow($business, [
+            'entry_type' => UsageLedgerEntryType::UsageCharge->value,
+            'created_at' => '2026-01-11 12:00:00',
+            'correlation_key' => 'different-type-in-range:'.Str::uuid(),
+        ]);
+
+        $atStartId = DB::table('business_usage_ledger_entries')->where('correlation_key', 'like', 'at-start:%')->value('id');
+        $lateFinalDayId = DB::table('business_usage_ledger_entries')->where('correlation_key', 'like', 'late-final-day:%')->value('id');
+
         $this->actingAsAdmin();
 
-        $response = $this->get(route('admin.businesses.usage-billing.show', [$business, 'entry_type' => 'manual_credit']));
+        $response = $this->get(route('admin.businesses.usage-billing.show', [
+            $business, 'entry_type' => 'manual_credit', 'from' => '2026-01-10', 'to' => '2026-01-12',
+        ]));
 
         $response->assertOk();
-        $response->assertViewHas('ledgerEntries', function ($paginator) {
-            return $paginator->count() === 1
-                && $paginator->first()->entry_type === UsageLedgerEntryType::ManualCredit;
+        $response->assertViewHas('ledgerEntries', function ($paginator) use ($atStartId, $lateFinalDayId) {
+            $ids = collect($paginator->items())->pluck('id')->sort()->values()->all();
+
+            return $ids === collect([$atStartId, $lateFinalDayId])->sort()->values()->all();
         });
     }
 
     /**
-     * An unmatched implicit {business} route-model-binding throws
-     * Illuminate\Database\Eloquent\ModelNotFoundException before the
-     * request ever reaches UsageBillingController::show() — proving no
-     * manager or repository call is ever attempted for it. This app's
-     * own Handler::render() (app/Exceptions/Handler.php, unmodified by
-     * this contract) maps that exception to the 500 errors.500 view
-     * outside the local environment, identical to every other admin
-     * controller's own implicit Business/Workspace binding — not a
-     * behavior this contract introduces or is authorized to change.
+     * RFC §24 line 1078's "fail closed with a 404-shaped response,
+     * never a 403" for an unrelated/nonexistent resource — each of the
+     * five Business-scoped routes attaches its own ->missing() callback
+     * (routes/admin.php) that aborts(404) the moment implicit
+     * {business} route-model binding fails to resolve a row, before the
+     * request ever reaches the corresponding controller action — no
+     * manager or repository call is ever attempted for any of them.
      */
     public function test_an_unknown_business_id_returns_not_found_before_any_manager_call(): void
     {
         $this->actingAsAdmin();
 
-        $response = $this->get(route('admin.businesses.usage-billing.show', 999999));
+        $this->get(route('admin.businesses.usage-billing.show', 999999))->assertNotFound();
+        $this->post(route('admin.businesses.usage-billing.credit', 999999), $this->manualCreditPayload())->assertNotFound();
+        $this->post(route('admin.businesses.usage-billing.suspend', 999999), ['reason' => 'Fixture.'])->assertNotFound();
+        $this->post(route('admin.businesses.usage-billing.resume', 999999), ['reason' => 'Fixture.'])->assertNotFound();
+        $this->post(route('admin.businesses.usage-billing.funding-attempts.retry', [999999, 1]), ['reason' => 'Fixture.'])->assertNotFound();
 
-        $response->assertStatus(500);
-        $this->assertInstanceOf(\Illuminate\Database\Eloquent\ModelNotFoundException::class, $response->exception);
+        $this->assertSame(0, DB::table('business_usage_ledger_entries')->count());
+        $this->assertSame(0, DB::table('business_usage_wallet_billing_status_transitions')->count());
+        $this->assertSame(0, DB::table('business_funding_attempt_transitions')->count());
     }
 
     // --- issueManualCredit() ----------------------------------------------
