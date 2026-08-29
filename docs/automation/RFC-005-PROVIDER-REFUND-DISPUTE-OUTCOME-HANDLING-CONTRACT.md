@@ -31,6 +31,13 @@ Four blockers and one advisory, independently reproduced against current `main`,
 
 Also corrected: the §19/§22 grace-interval contradiction (one accurate statement, §19); the malformed `"...are ever dispatched"` test name (§24); every stale count.
 
+### Second exceptional post-review correction (this pass)
+
+Still **not** Correction Round 3 — the ordinary counters remain **2 of 2 consumed, 0 remaining**. Two linked defects in §19's own three-branch retry design, independently reproduced against current `main`, corrected this pass:
+
+6. **Fixed concatenation order could starve two retry classes.** `$received->concat($failed)->concat($staleProcessing)->take($limit)` discarded `$failed`/`$staleProcessing` entirely whenever `$received` alone already filled `$limit` — a sustained received backlog could starve the other two classes indefinitely. **Corrected:** a fair, deterministic round-robin interleave across the three independently fetched branches replaces fixed concatenation as the actual fairness mechanism (§19).
+7. **`ORDER BY id` alone did not match any of the three composite indexes.** Each index places a range/filter column ahead of `id` — ordering by `id` alone after that is not the index's own native order, so the prior claim that these reads were fully index-supported was false. **Corrected:** each branch is now ordered by its own index's exact column sequence — `received_at, id`; `attempts, id`; `attempts, lease_expires_at, id` (§19).
+
 ---
 
 ## 1. Required reading, confirmed by direct re-read this pass
@@ -420,35 +427,110 @@ final readonly class ProviderOutcomeResult
 
 ---
 
-## 19. Retry/reclaim — three separately-indexed branch queries, not one unsupported `OR`
+## 19. Retry/reclaim — three separately-indexed branch queries, fairly interleaved, each ordered to match its own index
 
 **Corrected: a single `(state, attempts)` index cannot support a three-branch `OR` query that also filters on `received_at` and `lease_expires_at` — a `LIMIT` clause alone does not make that query bounded, it only bounds the *result*, not the *work MySQL performs to find it*.** The prior design's own claim that `retryable()` was "operationally index-bounded" on that one index was false.
 
-**Locked — the repository read is split into three individually indexed, individually limited branch queries, merged and deduplicated under one hard overall batch limit:**
+**Two further, linked defects in the first three-branch design, found on review and corrected here:**
+
+1. **Fixed concatenation order could starve two branches.** `$received->concat($failed)->concat($staleProcessing)->take($limit)` discards `$failed`/`$staleProcessing` entirely whenever `$received` alone already returns `$limit` rows — under a sustained received backlog, those two classes could go unretried/unreclaimed indefinitely. Corrected below to a fair, deterministic round-robin interleave that is the actual fairness mechanism, never concatenation order.
+2. **`ORDER BY id` alone did not match any of the three composite indexes.** Each index places a range/filter column ahead of `id` — `(state, received_at, id)`, `(state, attempts, id)`, `(state, attempts, lease_expires_at, id)`. Ordering by `id` alone after a range predicate on the preceding column is not the index's own native order, so the prior claim that these reads were fully index-supported was false. Corrected below: each branch is ordered by its own index's exact column sequence.
+
+### Clamp
+
+`retryable()`'s accepted `$limit` is clamped to a positive locked maximum before any query executes:
+
+```
+$limit = max(1, min($limit, self::MAX_RETRYABLE_LIMIT));   // MAX_RETRYABLE_LIMIT = 200, a plain class constant on EloquentPaymentProviderEventRepository, matching the scanner's own BATCH_LIMIT
+```
+
+### Per-branch queries — each ordered to match its own supporting index exactly; `WHERE` clauses unchanged from the prior pass
 
 ```php
 public function retryable(int $maxAttempts, int $receivedGraceMinutes, int $limit): Collection
 {
+    $limit = max(1, min($limit, self::MAX_RETRYABLE_LIMIT));
+
     $received = DB::table('payment_provider_events')
         ->where('state', 'received')
         ->where('received_at', '<', now()->subMinutes($receivedGraceMinutes))
-        ->orderBy('id')->limit($limit)->get();
+        ->orderBy('received_at')->orderBy('id')
+        ->limit($limit)->get();
 
     $failed = DB::table('payment_provider_events')
         ->where('state', 'failed')
         ->where('attempts', '<', $maxAttempts)
-        ->orderBy('id')->limit($limit)->get();
+        ->orderBy('attempts')->orderBy('id')
+        ->limit($limit)->get();
 
     $staleProcessing = DB::table('payment_provider_events')
         ->where('state', 'processing')
         ->where('attempts', '<', $maxAttempts)
         ->where('lease_expires_at', '<', now())
-        ->orderBy('id')->limit($limit)->get();
+        ->orderBy('attempts')->orderBy('lease_expires_at')->orderBy('id')
+        ->limit($limit)->get();
 
-    return $received->concat($failed)->concat($staleProcessing)
-        ->unique('id')->take($limit)->values();
+    return $this->interleaveRetryBranches([$received, $failed, $staleProcessing], $limit);
 }
 ```
+
+| Branch | Query order | Supporting index |
+|---|---|---|
+| Received recovery | `ORDER BY received_at ASC, id ASC` | `(state, received_at, id)` |
+| Failed recovery | `ORDER BY attempts ASC, id ASC` | `(state, attempts, id)` |
+| Stale-processing recovery | `ORDER BY attempts ASC, lease_expires_at ASC, id ASC` | `(state, attempts, lease_expires_at, id)` |
+
+Each branch's own equality prefix on `state` plus this exact `ORDER BY` sequence is fully satisfied by its declared index — MySQL never needs a filesort for any of the three branch reads. **No claim anywhere in this document states or implies that `ORDER BY id` alone is supported by any of these composite indexes** — every ordering clause names its full, index-matching column sequence.
+
+### Fair interleaving merge — the actual fairness mechanism, not concatenation order
+
+**States are mutually exclusive by construction** (`received`/`failed`/`processing` never overlap for the same row), so no row can appear in more than one branch's result — deduplication remains a defensive, non-load-bearing safeguard, never the fairness mechanism itself. Fairness is provided by an explicit round-robin interleave across the three already-fetched, already-ordered branch collections:
+
+```php
+private function interleaveRetryBranches(array $branches, int $limit): Collection
+{
+    $branches = array_map(fn ($branch) => $branch->values(), $branches);
+    $cursors = array_fill(0, count($branches), 0);
+    $selected = collect();
+    $seen = [];
+
+    while ($selected->count() < $limit) {
+        $madeProgress = false;
+
+        foreach ($branches as $i => $branch) {
+            if ($selected->count() >= $limit) {
+                break;
+            }
+            if ($cursors[$i] >= $branch->count()) {
+                continue;
+            }
+
+            $row = $branch[$cursors[$i]];
+            $cursors[$i]++;
+            $madeProgress = true;
+
+            if (! isset($seen[$row->id])) {
+                $seen[$row->id] = true;
+                $selected->push($row);
+            }
+        }
+
+        if (! $madeProgress) {
+            break;
+        }
+    }
+
+    return $selected->values();
+}
+```
+
+One candidate is taken from received, then failed, then stale-processing, repeating, until either the overall limit is reached or every branch is exhausted. **A branch with any remaining candidate is offered a slot in every round it still has one** — it can only ever be skipped once its own already-fetched (index-ordered, limit-bounded) result set is exhausted, never because a different branch's own result set is larger. No branch is ever permanently preferred by construction: the fixed per-round iteration order (received, failed, stale-processing) has no effect on cross-round fairness, since every branch with remaining rows gets exactly one slot per round regardless of its position in that order.
+
+### Exact bounds, locked
+
+- **Per-branch database-read bound:** each of the three branch queries is individually `LIMIT $limit`-bounded and fully served by its own declared index — no branch ever reads more than `$limit` rows.
+- **Total database-read bound for one `retryable()` call: at most `3 × $limit` rows** — one bounded, indexed read per branch; never a single unbounded or cross-branch scan.
+- **Dispatch bound: exactly `$limit`** — identical to the scanner's own `BATCH_LIMIT` when the scanner calls `retryable(..., self::BATCH_LIMIT)`. The interleave loop's own `while ($selected->count() < $limit)` guard enforces this exactly; it returns fewer than `$limit` only when all three branches are exhausted first, never more.
 
 **Three new indexes, each derived directly from the branch that uses it (Migration 5):**
 
@@ -456,9 +538,7 @@ public function retryable(int $maxAttempts, int $receivedGraceMinutes, int $limi
 - **Failed-recovery branch:** `(state, attempts, id)` — equality on `state`, range on `attempts`, ordered by `id`.
 - **Stale-processing-recovery branch:** `(state, attempts, lease_expires_at, id)` — equality on `state`, the `attempts` range narrows the scan first (the leading, most selective range condition available), `lease_expires_at` is then filtered against the resulting rows (a genuinely small subset in a healthy system — `processing`-state rows below the attempt ceiling are never the bulk of the table), `id` for ordering.
 
-**Each branch query is itself `LIMIT`-bounded** before the three results are combined, deduplicated (a row cannot match more than one branch, since `state` is exclusive across them, so `unique('id')` is a defensive no-op, not load-bearing), and truncated to the overall `$limit` — the batch this correction's own scanner job processes per tick is bounded by construction, not merely by an unsupported `LIMIT` on an unsupported scan.
-
-- **`RetryStuckPaymentProviderEvents`**, `everyFiveMinutes()` (matching the existing `webhook_event.lease_minutes` config value, reused as the received-row grace interval — **restated once, accurately, replacing the prior contradiction between this section and the NOT_REQUIRED table:** the scanner's own batch limit (`self::BATCH_LIMIT = 200`) is a plain class constant; the grace interval is **not** a class constant and **not** a new config key — it is the existing `usage_billing.webhook_event.lease_minutes` value, read exactly as the existing claim algorithm already reads it). Performs the three bounded reads above and zero-or-more `dispatch()` calls — no accounting mutation inside the scanner.
+- **`RetryStuckPaymentProviderEvents`**, `everyFiveMinutes()` (matching the existing `webhook_event.lease_minutes` config value, reused as the received-row grace interval — **restated once, accurately, replacing the prior contradiction between this section and the NOT_REQUIRED table:** the scanner's own batch limit (`self::BATCH_LIMIT = 200`) is a plain class constant; the grace interval is **not** a class constant and **not** a new config key — it is the existing `usage_billing.webhook_event.lease_minutes` value, read exactly as the existing claim algorithm already reads it). Performs the three bounded, index-ordered reads above, interleaves them fairly, and issues zero-or-more `dispatch()` calls — no accounting mutation inside the scanner.
 - **Concurrency-safe with no new code in `ProcessPaymentProviderEvent`** — the claim statement's own atomicity is unchanged and remains the sole authority.
 - **`processed`/`ignored`/`disposed` events are never redispatched** — none matches any of the three branches.
 
@@ -540,8 +620,8 @@ min(
 | 20 | `app/Repositories/Eloquent/EloquentBusinessFundingAttemptRepository.php` | MODIFIED | Implements both. |
 | 21 | `app/Repositories/Contracts/BusinessUsageLedgerEntryRepository.php` | MODIFIED | `sumRefundedMicroForFundingAttempt()`, `sumDisputeMicroForFundingAttemptAndDispute()`, `hasOutstandingDisputeExposureForFundingAttempt()`, `findCreditEntryForFundingAttempt()` — unchanged method set from Correction Round 2. |
 | 22 | `app/Repositories/Eloquent/EloquentBusinessUsageLedgerEntryRepository.php` | MODIFIED | Implements all four. |
-| 23 | `app/Repositories/Contracts/PaymentProviderEventRepository.php` | MODIFIED | `markProcessed()`/`markIgnored()` gain `array $attribution = []`; `retryable(int $maxAttempts, int $receivedGraceMinutes, int $limit): Collection` (§19, corrected three-branch shape); `recentOutcomes(int $limit = 50): Collection` (§18, clamped both sides). |
-| 24 | `app/Repositories/Eloquent/EloquentPaymentProviderEventRepository.php` | MODIFIED | Implements `retryable()`'s three-branch-query-and-merge shape (§19) and the corrected `recentOutcomes()`. |
+| 23 | `app/Repositories/Contracts/PaymentProviderEventRepository.php` | MODIFIED | `markProcessed()`/`markIgnored()` gain `array $attribution = []`; `retryable(int $maxAttempts, int $receivedGraceMinutes, int $limit): Collection` (§19, corrected three-branch, index-ordered, fairly-interleaved shape); `recentOutcomes(int $limit = 50): Collection` (§18, clamped both sides). |
+| 24 | `app/Repositories/Eloquent/EloquentPaymentProviderEventRepository.php` | MODIFIED | Implements `retryable()`'s three index-ordered branch queries, the `MAX_RETRYABLE_LIMIT` clamp, and the private `interleaveRetryBranches()` round-robin fairness merge (§19); implements the corrected `recentOutcomes()`. |
 | 25 | `app/Library/Usage/UsageWalletManager.php` | MODIFIED | **Five existing methods gain the `refundable_paid_available_micro` bookkeeping in §6:** `reserve()` (the `$paidAttributable` deduction and the reservation's own `paid_attributable_amount_micro` snapshot); `commit()` (the committed/unused/overage paid-portion formulas); `release()` (the full-restore formula); `creditFromFunding()` (the `+= $remainder` addition); `issueManualCredit()` (explicitly unmodified in this respect — confirmed, not merely assumed). **Three reversal methods, corrected:** `applyProviderRefund()` (the corrected `refundHeadroomMicro`/`providerRefundDelta` formulas, §6, never a non-zero `debt_delta_micro`, the `ProviderRefundMismatch` suspension); `applyDisputeWithdrawal()` (the `$chargebackPaidPortion` reduction, §8, unchanged debt-creation behavior); `reinstateDisputedFunds()` (the `$reinstatePaidPortion` restoration, §9). |
 | 26 | `app/Library/Usage/UsageBillingCheckoutManager.php` | MODIFIED | `minorUnitsToMicro()`/`expectedMicroForMinorUnits()`; `confirmSucceeded()`/`finalizeFundingAttemptState()` widened with the two reference parameters and the defensive assertion (§3); `applyRefundOutcome()`, `applyDisputeChargebackOutcome()`, `applyDisputeReinstatementOutcome()`, each returning the corrected `ProviderOutcomeResult` (§18), computing the corrected `max(0, ...)`-clamped delta (§6), locking the wallet row, calling exactly one `UsageWalletManager` method, calling state recomputation, all inside one outer `DB::transaction()`. |
 | 27 | `app/Jobs/Usage/ProcessPaymentProviderEvent.php` | MODIFIED | `handle()`'s own `match` per §2/§16/§17; dual-identifier resolution, currency/shape validation, terminal calls carrying `$attribution` built directly from the returned `ProviderOutcomeResult`'s five fields. |
@@ -582,7 +662,7 @@ min(
 
 **No existing test file requires modification.**
 
-**12 new files, 157 methods.**
+**12 new files, 166 methods.**
 
 | # | File | Methods |
 |---|---|---|
@@ -593,13 +673,13 @@ min(
 | 5 | `tests/Feature/Usage/DirectDeliverableProviderOutcomeTest.php` | 11 |
 | 6 | `tests/Feature/Usage/UsageWalletManagerReversalTest.php` | 23 |
 | 7 | `tests/Feature/Usage/ProviderRefundDisputeSurfaceBoundaryTest.php` | 7 |
-| 8 | `tests/Feature/Usage/PaymentProviderEventRetryReclaimTest.php` | 14 |
+| 8 | `tests/Feature/Usage/PaymentProviderEventRetryReclaimTest.php` | 23 |
 | 9 | `tests/Feature/Usage/PaymentProviderEventDurableAuditTest.php` | 12 |
 | 10 | `tests/Feature/Usage/ProviderRefundDisputeConcurrencyTest.php` | 3 |
 | 11 | `tests/Feature/Usage/SendChargebackDisputeNotificationTest.php` | 12 |
 | 12 | `tests/Feature/Usage/RefundablePaidAvailableAccountingTest.php` | 14 |
 
-**Total: 157 methods across 12 files.**
+**Total: 166 methods across 12 files.**
 
 ### `ProviderPaymentIdentifierResolutionTest.php` (12) — unchanged from Correction Round 2, proves §3
 
@@ -724,22 +804,31 @@ min(
 6. `test_none_of_the_three_reversal_methods_ever_references_evaluate_business_auto_recharge`
 7. `test_none_of_the_three_reversal_methods_ever_references_send_receipt_notification_or_attach_funding_receipt`
 
-### `PaymentProviderEventRetryReclaimTest.php` (14) — proves §19; +2 methods this pass for index-presence and sparse/large-table behavior (Blocker 4)
+### `PaymentProviderEventRetryReclaimTest.php` (23) — proves §19; +2 methods in the prior pass for index-presence and sparse/large-table behavior (Blocker 4); +9 methods this pass for the fair-interleave/index-ordering correction (Defects 1–2), methods 6/13/14 renamed/strengthened in place
 
 1. `test_a_failed_event_below_max_attempts_is_redispatched_by_the_scanner`
 2. `test_a_stale_processing_event_past_its_lease_is_reclaimed_by_the_scanner`
 3. `test_an_event_at_max_attempts_is_never_redispatched_by_the_scanner`
 4. `test_an_exhausted_event_becomes_administrator_visible_in_the_existing_exhausted_events_queue`
 5. `test_processed_ignored_and_disposed_events_are_never_redispatched_by_the_scanner`
-6. `test_the_scanner_batch_is_bounded_by_its_own_limit_across_all_three_branches_combined`
+6. `test_the_scanner_batch_is_bounded_by_its_own_limit_across_the_fairly_interleaved_branches`
 7. `test_the_scanner_performs_no_accounting_mutation_itself`
 8. `test_a_received_event_older_than_the_grace_interval_is_redispatched_by_the_scanner`
 9. `test_a_freshly_received_event_is_not_redispatched_before_the_grace_interval_elapses`
 10. `test_the_persistence_before_dispatch_failure_leaves_a_received_row_that_only_the_scanner_recovers`
 11. `test_a_redelivered_webhook_for_an_already_received_event_returns_200_without_a_second_row_and_the_original_remains_scanner_recoverable`
 12. `test_a_scanner_redispatch_racing_the_original_dispatch_for_the_same_received_event_applies_the_outcome_exactly_once`
-13. `test_each_of_the_three_retry_branch_queries_is_supported_by_its_own_dedicated_index`
-14. `test_the_scanner_remains_bounded_when_the_table_contains_a_large_number_of_terminal_rows_alongside_sparse_matching_candidates`
+13. `test_each_of_the_three_retry_branch_queries_is_supported_by_its_own_dedicated_index_and_ordered_to_match_it`
+14. `test_the_scanner_remains_bounded_and_correctly_index_ordered_when_the_table_contains_a_large_number_of_terminal_rows_alongside_sparse_matching_candidates`
+15. `test_when_all_three_branches_have_at_least_batch_limit_candidates_the_selected_batch_contains_all_three_states_and_never_exceeds_batch_limit`
+16. `test_a_sustained_received_backlog_exceeding_the_limit_never_starves_the_failed_or_stale_processing_branches`
+17. `test_interleaving_selects_from_both_populated_branches_when_only_received_and_failed_have_candidates`
+18. `test_interleaving_selects_from_both_populated_branches_when_only_received_and_stale_processing_have_candidates`
+19. `test_interleaving_selects_from_both_populated_branches_when_only_failed_and_stale_processing_have_candidates`
+20. `test_only_the_received_branch_populated_returns_exactly_its_own_candidates_up_to_the_limit`
+21. `test_only_the_failed_branch_populated_returns_exactly_its_own_candidates_up_to_the_limit`
+22. `test_only_the_stale_processing_branch_populated_returns_exactly_its_own_candidates_up_to_the_limit`
+23. `test_retryables_accepted_limit_is_clamped_to_the_locked_maximum_regardless_of_the_requested_value`
 
 ### `PaymentProviderEventDurableAuditTest.php` (12) — proves §18; +2 methods this pass, methods renamed/split for the four-field audit semantics (Blocker 3)
 
@@ -884,7 +973,7 @@ No `FOREIGN KEY` on `business_id`/`funding_attempt_id` (Migration 4). No other s
 6. **A reinstatement never produces negative debt, is bounded to the specific dispute's own withdrawn amount, and mechanically resolves its own lineage.** §9; `ProviderDisputeOutcomeTest` methods 7–11; `DisputeBalanceTransactionValidationTest` methods 6–7.
 7. **Every genuinely new outcome — wallet-backed or zero-delta — writes an outcome row, advances its accumulator, is audited, and drives state recomputation identically.** §4, §10; `DirectDeliverableProviderOutcomeTest` in full.
 8. **Funding-attempt state reflects every outstanding dispute and gross refund progress.** §13, §20; `ProviderDisputeOutcomeTest` methods 13–15; `ProviderRefundOutcomeTest` method 21.
-9. **Duplicate delivery, a stranded `received` row, and genuine concurrency never apply the same financial, refundable-paid, or state effect twice, and a stranded event is actually recovered by a genuinely index-bounded scanner.** §19, §26; `PaymentProviderEventRetryReclaimTest` in full; `ProviderRefundDisputeConcurrencyTest` in full; `RefundablePaidAvailableAccountingTest` method 13.
+9. **Duplicate delivery, a stranded `received` row, and genuine concurrency never apply the same financial, refundable-paid, or state effect twice; a stranded event is actually recovered by a genuinely index-ordered scanner; and no retry-eligible state class can be starved by another, regardless of relative backlog size.** §19, §26; `PaymentProviderEventRetryReclaimTest` in full (methods 13–14 for index-ordering, 15–23 for fair-interleave/no-starvation); `ProviderRefundDisputeConcurrencyTest` in full; `RefundablePaidAvailableAccountingTest` method 13.
 10. **No fabricated receipt, and no automatic auto-recharge origination, from any refund/dispute code path.** §17; `UsageWalletManagerReversalTest` methods 7, 17, 18, 23; `ProviderRefundDisputeSurfaceBoundaryTest` methods 6–7.
 11. **The low-balance marker participates correctly, and only, in wallet-backed mutations.** §10; `UsageWalletManagerReversalTest` methods 6, 22.
 12. **Every outcome is durably recorded with four unambiguous, distinctly meaningful amount fields, remaining administrator-visible after payload purge.** §18; `PaymentProviderEventDurableAuditTest` in full.
@@ -896,7 +985,7 @@ No `FOREIGN KEY` on `business_id`/`funding_attempt_id` (Migration 4). No other s
 
 ## 28. Bounded reads
 
-Every new read is either genuinely `LIMIT`-and-index-bounded (`retryable()`'s own three branch queries, each individually indexed and individually limited, §19; `recentOutcomes()`, `(normalized_recorded_at, id)`) or scoped to `(funding_attempt_id[, provider_reference])` and supported by the composite index (§20). No claim of "bounded" work stands on a `LIMIT` clause alone without a supporting index for every predicate that clause's own query actually filters on.
+Every new read is either genuinely `LIMIT`-and-index-bounded (`retryable()`'s own three branch queries, each individually indexed, individually limited, and ordered to match its own index's exact column sequence — total read bound `3 × $limit`, dispatch bound exactly `$limit` after fair interleaving, §19; `recentOutcomes()`, `(normalized_recorded_at, id)`) or scoped to `(funding_attempt_id[, provider_reference])` and supported by the composite index (§20). No claim of "bounded" work stands on a `LIMIT` clause alone without a supporting index for every predicate — and every `ORDER BY` clause — that query actually uses.
 
 ---
 
@@ -963,7 +1052,16 @@ No live-provider-hitting command is ever part of this suite.
 - Searched for the prior 24-path/11-file/138-method counts — no occurrence remains as a live claim.
 - Searched for `"...are ever dispatched"` — corrected to `"...are never dispatched"` (§24, `DirectDeliverableProviderOutcomeTest` method 6).
 - Confirmed every new wallet/reservation/ledger provenance field (`refundable_paid_available_micro`, `paid_attributable_amount_micro`, `refundable_paid_delta_micro`) and every mutation site that writes it (`reserve()`, `commit()`, `release()`, `creditFromFunding()`, `issueManualCredit()` — explicitly unmodified — `applyProviderRefund()`, `applyDisputeWithdrawal()`, `reinstateDisputedFunds()`) is named in §22 item 25 and tested in `RefundablePaidAvailableAccountingTest`.
-- Every production/test path recounted mechanically: **30 production paths (12 new + 18 modified)**, **157 test methods across 12 new files**.
+
+**Second exceptional post-review correction (this pass) — additional validation:**
+
+- Searched for `concat($failed)` and `concat($staleProcessing)` — no occurrence remains; `retryable()` now returns `$this->interleaveRetryBranches(...)`, a round-robin merge, never a fixed concatenation (§19).
+- Searched every branch-level `orderBy('id')` for a missing preceding indexed ordering field — none remains; each branch now states its full, index-matching `ORDER BY` sequence (`received_at, id`; `attempts, id`; `attempts, lease_expires_at, id`), and no remaining claim anywhere in the document states or implies `ORDER BY id` alone is index-supported.
+- Confirmed the per-branch database-read bound (`$limit` per branch, `3 × $limit` total) and the dispatch bound (exactly `$limit`, matching the scanner's `BATCH_LIMIT`) are both explicitly stated in §19 and §28.
+- Confirmed `retryable()`'s accepted `$limit` is clamped (`max(1, min($limit, self::MAX_RETRYABLE_LIMIT))`) before any query executes (§19), and that this clamp is independently tested (`PaymentProviderEventRetryReclaimTest` method 23).
+- Confirmed production/test path membership is unchanged from the prior pass except where mechanically required: no new production file — items 23–24 in §22 are updated in description only (`retryable()`'s existing contract/implementation now carries the corrected query/interleave shape; no new method signature, no new file); the test allow-list gains 9 methods, all within the existing `PaymentProviderEventRetryReclaimTest.php` file (14 → 23), with no new test file.
+- Every production/test path recounted mechanically: **30 production paths (12 new + 18 modified) — unchanged from the prior pass**, **166 test methods across 12 files (157 → 166, +9, all within `PaymentProviderEventRetryReclaimTest.php`)**.
 - `git diff --check` — clean.
 - `git diff --name-only origin/main...HEAD` — exactly this one file.
 - Confirmed no product, test, schema, config, route, or RFC-source file changed; `docs/automation/AI-AUTONOMY-STATE.json` untouched.
+- Confirmed the now-approved financial design (§6–§18: `refundable_paid_available_micro`/paid-first allocation, reservation paid attribution, no-refund-debt, promotional/manual-credit non-refundability, direct-deliverable behavior, the four audit amount fields, chargeback notification policy, transaction/locking design) is untouched by this pass — every edit in this correction is confined to §19 and its dependent references in §22, §24, §26, §28, and this section.
