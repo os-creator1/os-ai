@@ -38,6 +38,12 @@ Still **not** Correction Round 3 — the ordinary counters remain **2 of 2 consu
 6. **Fixed concatenation order could starve two retry classes.** `$received->concat($failed)->concat($staleProcessing)->take($limit)` discarded `$failed`/`$staleProcessing` entirely whenever `$received` alone already filled `$limit` — a sustained received backlog could starve the other two classes indefinitely. **Corrected:** a fair, deterministic round-robin interleave across the three independently fetched branches replaces fixed concatenation as the actual fairness mechanism (§19).
 7. **`ORDER BY id` alone did not match any of the three composite indexes.** Each index places a range/filter column ahead of `id` — ordering by `id` alone after that is not the index's own native order, so the prior claim that these reads were fully index-supported was false. **Corrected:** each branch is now ordered by its own index's exact column sequence — `received_at, id`; `attempts, id`; `attempts, lease_expires_at, id` (§19).
 
+### Third exceptional post-review correction (this pass)
+
+Still **not** Correction Round 3 — the ordinary counters remain **2 of 2 consumed, 0 remaining**. One further, confirmed-remaining blocker in §19's own stale-processing query, independently reproduced against current `main`, corrected this pass:
+
+8. **The stale-processing query was still not genuinely work-bounded.** After the equality prefix on `state`, `attempts < $maxAttempts` was the only predicate MySQL could use to navigate the B-tree range scan for that query — `lease_expires_at < now()` could not also be used as a navigable range in the same access and was instead applied as a residual filter while scanning the entire `attempts` range in index order. A large population of non-expired `processing` rows at a low `attempts` value could therefore force an arbitrarily large scan before an expired row at a higher `attempts` value was ever reached; `LIMIT` bounds returned rows, never examined rows, and "a genuinely small subset in a healthy system" was an unproven assumption, not a mechanical bound. **Corrected:** the stale-processing branch is now queried once per eligible attempt bucket (`attempts = $attempt`, for each `$attempt` from `0` to `$maxAttempts − 1`), turning the second predicate into a genuine equality and leaving `lease_expires_at < now()` as the query's own single, index-navigable range — fully sargable against the unchanged `(state, attempts, lease_expires_at, id)` index. The `$maxAttempts` per-bucket results are merged by the same round-robin interleave helper used across state classes, applied at a second, inner level, before that fair `staleProcessing` collection re-enters the unchanged outer three-class interleave. The total database-read bound is corrected from `3 × $limit` to `(2 + $maxAttempts) × $limit` — `$maxAttempts` being the existing, already-configured `usage_billing.webhook_event.max_attempts` value, not a new or invented ceiling.
+
 ---
 
 ## 1. Required reading, confirmed by direct re-read this pass
@@ -427,29 +433,34 @@ final readonly class ProviderOutcomeResult
 
 ---
 
-## 19. Retry/reclaim — three separately-indexed branch queries, fairly interleaved, each ordered to match its own index
+## 19. Retry/reclaim — index-supported branch queries, one per eligible processing-attempt bucket, fairly interleaved at two levels
 
 **Corrected: a single `(state, attempts)` index cannot support a three-branch `OR` query that also filters on `received_at` and `lease_expires_at` — a `LIMIT` clause alone does not make that query bounded, it only bounds the *result*, not the *work MySQL performs to find it*.** The prior design's own claim that `retryable()` was "operationally index-bounded" on that one index was false.
 
-**Two further, linked defects in the first three-branch design, found on review and corrected here:**
+**Three linked defects have now been found and corrected across this section's revisions:**
 
-1. **Fixed concatenation order could starve two branches.** `$received->concat($failed)->concat($staleProcessing)->take($limit)` discards `$failed`/`$staleProcessing` entirely whenever `$received` alone already returns `$limit` rows — under a sustained received backlog, those two classes could go unretried/unreclaimed indefinitely. Corrected below to a fair, deterministic round-robin interleave that is the actual fairness mechanism, never concatenation order.
-2. **`ORDER BY id` alone did not match any of the three composite indexes.** Each index places a range/filter column ahead of `id` — `(state, received_at, id)`, `(state, attempts, id)`, `(state, attempts, lease_expires_at, id)`. Ordering by `id` alone after a range predicate on the preceding column is not the index's own native order, so the prior claim that these reads were fully index-supported was false. Corrected below: each branch is ordered by its own index's exact column sequence.
+1. **Fixed concatenation order could starve two branches.** `$received->concat($failed)->concat($staleProcessing)->take($limit)` discards `$failed`/`$staleProcessing` entirely whenever `$received` alone already returns `$limit` rows. **Corrected** to a fair, deterministic round-robin interleave that is the actual fairness mechanism, never concatenation order.
+2. **`ORDER BY id` alone did not match any of the three composite indexes.** Each index places a range/filter column ahead of `id`. **Corrected**: every branch orders by its own index's exact column sequence.
+3. **The stale-processing branch's own query was still not genuinely work-bounded — confirmed and corrected this pass.** `WHERE state = 'processing' AND attempts < $maxAttempts AND lease_expires_at < now()`, ordered `attempts, lease_expires_at, id`, against index `(state, attempts, lease_expires_at, id)`: after the equality prefix on `state`, `attempts < $maxAttempts` is the *only* predicate MySQL can use to navigate the B-tree range scan — `lease_expires_at < now()` cannot also be used as a navigable range boundary in that same access, so it is applied as a residual filter *while scanning every row in the `attempts` range, in `(attempts, lease_expires_at, id)` order*. A large population of non-expired `processing` rows at a low `attempts` value therefore forces MySQL to examine all of them — failing the `lease_expires_at` filter one by one — before it ever reaches a genuinely expired row sitting at a higher `attempts` value later in that same scan order. `LIMIT` bounds only what is *returned*, never what is *examined*; "a genuinely small subset in a healthy system" was an assumption, not a mechanical bound, and is withdrawn. **Corrected below**, by converting the `attempts` range into one equality query per eligible attempt value, so every remaining predicate is a genuine, single, index-navigable range.
 
 ### Clamp
 
-`retryable()`'s accepted `$limit` is clamped to a positive locked maximum before any query executes:
+`retryable()`'s accepted `$limit` is clamped to a positive locked maximum before any query executes; its accepted `$maxAttempts` is clamped to a non-negative integer:
 
 ```
 $limit = max(1, min($limit, self::MAX_RETRYABLE_LIMIT));   // MAX_RETRYABLE_LIMIT = 200, a plain class constant on EloquentPaymentProviderEventRepository, matching the scanner's own BATCH_LIMIT
+$maxAttempts = max(0, $maxAttempts);
 ```
 
-### Per-branch queries — each ordered to match its own supporting index exactly; `WHERE` clauses unchanged from the prior pass
+**No new, invented configuration ceiling is required or introduced.** `$maxAttempts` is not new to this design — it is the exact, already-existing `usage_billing.webhook_event.max_attempts` config value (default `5`, `USAGE_BILLING_WEBHOOK_MAX_ATTEMPTS`-overridable), already read as a plain `(int)` and already the sole authority governing retry eligibility everywhere else in this codebase: `ProcessPaymentProviderEvent::handle()`'s own `claim()` call, `PaymentProviderEventController`'s `exhausted()`/disposition calls, and the `attempts < $maxAttempts` predicate already present in both the `failed` branch above and the prior stale-processing query. The set of eligible `processing`-state attempt values is exactly the integers `0` through `$maxAttempts − 1` — a finite set whose size is `$maxAttempts` itself, mechanically bounded by the identical, already-trusted operational parameter this codebase already relies on, not a newly invented assumption. No safe finite ceiling was missing from current code — this value already is one.
+
+### Per-branch queries — the stale-processing branch queried once per eligible attempt bucket, each fully sargable
 
 ```php
 public function retryable(int $maxAttempts, int $receivedGraceMinutes, int $limit): Collection
 {
     $limit = max(1, min($limit, self::MAX_RETRYABLE_LIMIT));
+    $maxAttempts = max(0, $maxAttempts);
 
     $received = DB::table('payment_provider_events')
         ->where('state', 'received')
@@ -463,28 +474,36 @@ public function retryable(int $maxAttempts, int $receivedGraceMinutes, int $limi
         ->orderBy('attempts')->orderBy('id')
         ->limit($limit)->get();
 
-    $staleProcessing = DB::table('payment_provider_events')
-        ->where('state', 'processing')
-        ->where('attempts', '<', $maxAttempts)
-        ->where('lease_expires_at', '<', now())
-        ->orderBy('attempts')->orderBy('lease_expires_at')->orderBy('id')
-        ->limit($limit)->get();
+    $staleProcessingBuckets = [];
+
+    for ($attempt = 0; $attempt < $maxAttempts; $attempt++) {
+        $staleProcessingBuckets[] = DB::table('payment_provider_events')
+            ->where('state', 'processing')
+            ->where('attempts', $attempt)
+            ->where('lease_expires_at', '<', now())
+            ->orderBy('lease_expires_at')->orderBy('id')
+            ->limit($limit)->get();
+    }
+
+    $staleProcessing = $this->interleaveRetryBranches($staleProcessingBuckets, $limit);
 
     return $this->interleaveRetryBranches([$received, $failed, $staleProcessing], $limit);
 }
 ```
 
-| Branch | Query order | Supporting index |
-|---|---|---|
-| Received recovery | `ORDER BY received_at ASC, id ASC` | `(state, received_at, id)` |
-| Failed recovery | `ORDER BY attempts ASC, id ASC` | `(state, attempts, id)` |
-| Stale-processing recovery | `ORDER BY attempts ASC, lease_expires_at ASC, id ASC` | `(state, attempts, lease_expires_at, id)` |
+| Branch | Query order | Supporting index | Predicate shape |
+|---|---|---|---|
+| Received recovery | `ORDER BY received_at ASC, id ASC` | `(state, received_at, id)` | Equality (`state`) + one range (`received_at`) |
+| Failed recovery | `ORDER BY attempts ASC, id ASC` | `(state, attempts, id)` | Equality (`state`) + one range (`attempts`) |
+| Stale-processing recovery, **one query per eligible `attempts` value `0..$maxAttempts-1`** | `ORDER BY lease_expires_at ASC, id ASC` | `(state, attempts, lease_expires_at, id)` | Equality (`state`, `attempts`) + one range (`lease_expires_at`) |
 
-Each branch's own equality prefix on `state` plus this exact `ORDER BY` sequence is fully satisfied by its declared index — MySQL never needs a filesort for any of the three branch reads. **No claim anywhere in this document states or implies that `ORDER BY id` alone is supported by any of these composite indexes** — every ordering clause names its full, index-matching column sequence.
+Every branch query now has **exactly one** range predicate, positioned immediately after its index's equality prefix — the standard, fully sargable "equality-prefix-plus-one-trailing-range" shape. For the stale-processing branch specifically: `state` and `attempts` are both bound to single, exact values, so `lease_expires_at < now()` is the *only* remaining predicate, and it is now genuinely index-navigable — MySQL seeks directly to the qualifying range within that one `(state, attempts)` group instead of scanning every row across the full `attempts < $maxAttempts` range first. **No claim anywhere in this document states or implies that a query with two unresolved range/filter predicates after its index's equality prefix is fully index-bounded** — every remaining query in this section has exactly one.
 
-### Fair interleaving merge — the actual fairness mechanism, not concatenation order
+### Two-level fair interleaving merge — attempt buckets first, then state classes
 
-**States are mutually exclusive by construction** (`received`/`failed`/`processing` never overlap for the same row), so no row can appear in more than one branch's result — deduplication remains a defensive, non-load-bearing safeguard, never the fairness mechanism itself. Fairness is provided by an explicit round-robin interleave across the three already-fetched, already-ordered branch collections:
+**Level 1 — across attempt buckets, within stale-processing.** The `$maxAttempts` per-bucket collections (each already index-ordered and `LIMIT $limit`-bounded) are merged by the identical round-robin `interleaveRetryBranches()` helper (below), capped at `$limit`, producing one fair `$staleProcessing` collection. A row cannot appear in two different attempt-bucket results simultaneously — an event has exactly one `attempts` value at any instant — so deduplication here, too, is defensive, never load-bearing.
+
+**Level 2 — across state classes.** `[$received, $failed, $staleProcessing]` are merged by the same helper, capped at `$limit`, exactly as the prior pass locked. `received`/`failed`/`processing` remain mutually exclusive by `state`, so this level's deduplication is likewise defensive only.
 
 ```php
 private function interleaveRetryBranches(array $branches, int $limit): Collection
@@ -524,23 +543,26 @@ private function interleaveRetryBranches(array $branches, int $limit): Collectio
 }
 ```
 
-One candidate is taken from received, then failed, then stale-processing, repeating, until either the overall limit is reached or every branch is exhausted. **A branch with any remaining candidate is offered a slot in every round it still has one** — it can only ever be skipped once its own already-fetched (index-ordered, limit-bounded) result set is exhausted, never because a different branch's own result set is larger. No branch is ever permanently preferred by construction: the fixed per-round iteration order (received, failed, stale-processing) has no effect on cross-round fairness, since every branch with remaining rows gets exactly one slot per round regardless of its position in that order.
+The same generic helper serves both levels unmodified — no second implementation is introduced. At Level 1, one candidate is taken from attempt-bucket `0`, then `1`, then `2`, … up to `$maxAttempts − 1`, repeating; a saturated low-`attempts` bucket can never starve a sparsely populated higher-`attempts` bucket, since every bucket with a remaining candidate is offered exactly one slot per round regardless of how large another bucket's own result set is. At Level 2, the identical guarantee applies across `received`/`failed`/`staleProcessing`, unchanged from the prior pass. No branch or bucket is ever permanently preferred by construction at either level.
 
-### Exact bounds, locked
+### Exact bounds, locked — corrected this pass
 
-- **Per-branch database-read bound:** each of the three branch queries is individually `LIMIT $limit`-bounded and fully served by its own declared index — no branch ever reads more than `$limit` rows.
-- **Total database-read bound for one `retryable()` call: at most `3 × $limit` rows** — one bounded, indexed read per branch; never a single unbounded or cross-branch scan.
-- **Dispatch bound: exactly `$limit`** — identical to the scanner's own `BATCH_LIMIT` when the scanner calls `retryable(..., self::BATCH_LIMIT)`. The interleave loop's own `while ($selected->count() < $limit)` guard enforces this exactly; it returns fewer than `$limit` only when all three branches are exhausted first, never more.
+The prior "three queries, `3 × $limit` total" bound no longer holds, since the stale-processing branch is now `$maxAttempts` separate queries, not one.
 
-**Three new indexes, each derived directly from the branch that uses it (Migration 5):**
+- **Per-query database-read bound:** every individual query — the one `received` query, the one `failed` query, and each of the `$maxAttempts` stale-processing bucket queries — is independently `LIMIT $limit`-bounded and fully served by its own declared index, with exactly one navigable range predicate. No single query ever reads more than `$limit` rows.
+- **Total database-read bound for one `retryable()` call: `(2 + $maxAttempts) × $limit` rows** — one bounded, indexed read for `received`, one for `failed`, and one per eligible stale-processing attempt bucket (`$maxAttempts` of them), each individually bounded. `$maxAttempts` is the existing, already-configured, operator-set `usage_billing.webhook_event.max_attempts` value (default `5` ⇒ default total bound `7 × $limit`) — a small, finite, pre-existing operational parameter, never attacker- or request-controlled, and never larger than the retry ceiling every event in the system is already subject to.
+- **Dispatch bound: exactly `$limit`**, unchanged — identical to the scanner's own `BATCH_LIMIT` when the scanner calls `retryable(..., self::BATCH_LIMIT)`. Both interleave levels' own `while ($selected->count() < $limit)` guard enforce this exactly; either level returns fewer than `$limit` only when its own inputs are exhausted first, never more.
+- **Degenerate case:** if `$maxAttempts` is configured to `0` or a negative value, the `for` loop issues zero stale-processing queries and `$staleProcessing` is empty — safe, and consistent with the identical `attempts < $maxAttempts` predicate already matching zero rows elsewhere in the codebase under the same configuration.
 
-- **Received-recovery branch:** `(state, received_at, id)` — an equality prefix on `state`, a range on `received_at`, `id` for deterministic ordering within the matched range.
-- **Failed-recovery branch:** `(state, attempts, id)` — equality on `state`, range on `attempts`, ordered by `id`.
-- **Stale-processing-recovery branch:** `(state, attempts, lease_expires_at, id)` — equality on `state`, the `attempts` range narrows the scan first (the leading, most selective range condition available), `lease_expires_at` is then filtered against the resulting rows (a genuinely small subset in a healthy system — `processing`-state rows below the attempt ceiling are never the bulk of the table), `id` for ordering.
+**Three indexes, unchanged in DDL from the prior pass, each still derived directly from the branch that uses it (Migration 5, §25 — no schema change required by this pass):**
 
-- **`RetryStuckPaymentProviderEvents`**, `everyFiveMinutes()` (matching the existing `webhook_event.lease_minutes` config value, reused as the received-row grace interval — **restated once, accurately, replacing the prior contradiction between this section and the NOT_REQUIRED table:** the scanner's own batch limit (`self::BATCH_LIMIT = 200`) is a plain class constant; the grace interval is **not** a class constant and **not** a new config key — it is the existing `usage_billing.webhook_event.lease_minutes` value, read exactly as the existing claim algorithm already reads it). Performs the three bounded, index-ordered reads above, interleaves them fairly, and issues zero-or-more `dispatch()` calls — no accounting mutation inside the scanner.
+- **Received-recovery branch:** `(state, received_at, id)`.
+- **Failed-recovery branch:** `(state, attempts, id)`.
+- **Stale-processing-recovery branch:** `(state, attempts, lease_expires_at, id)` — now used with an equality predicate on `attempts` (one query per value) rather than a range, which is exactly what lets the trailing `lease_expires_at` predicate become genuinely index-navigable. The index's own column order was already correct; only the query shape using it was wrong.
+
+- **`RetryStuckPaymentProviderEvents`**, `everyFiveMinutes()` (matching the existing `webhook_event.lease_minutes` config value, reused as the received-row grace interval — the scanner's own batch limit (`self::BATCH_LIMIT = 200`) is a plain class constant; the grace interval is **not** a class constant and **not** a new config key — it is the existing `usage_billing.webhook_event.lease_minutes` value, read exactly as the existing claim algorithm already reads it). Performs the `(2 + $maxAttempts)` bounded, index-ordered reads above, interleaves them fairly at both levels, and issues zero-or-more `dispatch()` calls — no accounting mutation inside the scanner.
 - **Concurrency-safe with no new code in `ProcessPaymentProviderEvent`** — the claim statement's own atomicity is unchanged and remains the sole authority.
-- **`processed`/`ignored`/`disposed` events are never redispatched** — none matches any of the three branches.
+- **`processed`/`ignored`/`disposed` events are never redispatched** — none matches any state-class branch or attempt bucket.
 
 ---
 
@@ -620,8 +642,8 @@ min(
 | 20 | `app/Repositories/Eloquent/EloquentBusinessFundingAttemptRepository.php` | MODIFIED | Implements both. |
 | 21 | `app/Repositories/Contracts/BusinessUsageLedgerEntryRepository.php` | MODIFIED | `sumRefundedMicroForFundingAttempt()`, `sumDisputeMicroForFundingAttemptAndDispute()`, `hasOutstandingDisputeExposureForFundingAttempt()`, `findCreditEntryForFundingAttempt()` — unchanged method set from Correction Round 2. |
 | 22 | `app/Repositories/Eloquent/EloquentBusinessUsageLedgerEntryRepository.php` | MODIFIED | Implements all four. |
-| 23 | `app/Repositories/Contracts/PaymentProviderEventRepository.php` | MODIFIED | `markProcessed()`/`markIgnored()` gain `array $attribution = []`; `retryable(int $maxAttempts, int $receivedGraceMinutes, int $limit): Collection` (§19, corrected three-branch, index-ordered, fairly-interleaved shape); `recentOutcomes(int $limit = 50): Collection` (§18, clamped both sides). |
-| 24 | `app/Repositories/Eloquent/EloquentPaymentProviderEventRepository.php` | MODIFIED | Implements `retryable()`'s three index-ordered branch queries, the `MAX_RETRYABLE_LIMIT` clamp, and the private `interleaveRetryBranches()` round-robin fairness merge (§19); implements the corrected `recentOutcomes()`. |
+| 23 | `app/Repositories/Contracts/PaymentProviderEventRepository.php` | MODIFIED | `markProcessed()`/`markIgnored()` gain `array $attribution = []`; `retryable(int $maxAttempts, int $receivedGraceMinutes, int $limit): Collection` (§19, corrected shape: one `received` query, one `failed` query, one query per eligible stale-processing attempt bucket, two-level fairly interleaved); `recentOutcomes(int $limit = 50): Collection` (§18, clamped both sides). |
+| 24 | `app/Repositories/Eloquent/EloquentPaymentProviderEventRepository.php` | MODIFIED | Implements `retryable()`'s index-ordered `received`/`failed` queries, the per-attempt-bucket stale-processing queries (`0..$maxAttempts-1`, each a single equality-plus-one-range, index-sargable query), the `MAX_RETRYABLE_LIMIT`/`$maxAttempts` clamps, and the single private `interleaveRetryBranches()` round-robin fairness helper reused at both the attempt-bucket level and the state-class level (§19); implements the corrected `recentOutcomes()`. |
 | 25 | `app/Library/Usage/UsageWalletManager.php` | MODIFIED | **Five existing methods gain the `refundable_paid_available_micro` bookkeeping in §6:** `reserve()` (the `$paidAttributable` deduction and the reservation's own `paid_attributable_amount_micro` snapshot); `commit()` (the committed/unused/overage paid-portion formulas); `release()` (the full-restore formula); `creditFromFunding()` (the `+= $remainder` addition); `issueManualCredit()` (explicitly unmodified in this respect — confirmed, not merely assumed). **Three reversal methods, corrected:** `applyProviderRefund()` (the corrected `refundHeadroomMicro`/`providerRefundDelta` formulas, §6, never a non-zero `debt_delta_micro`, the `ProviderRefundMismatch` suspension); `applyDisputeWithdrawal()` (the `$chargebackPaidPortion` reduction, §8, unchanged debt-creation behavior); `reinstateDisputedFunds()` (the `$reinstatePaidPortion` restoration, §9). |
 | 26 | `app/Library/Usage/UsageBillingCheckoutManager.php` | MODIFIED | `minorUnitsToMicro()`/`expectedMicroForMinorUnits()`; `confirmSucceeded()`/`finalizeFundingAttemptState()` widened with the two reference parameters and the defensive assertion (§3); `applyRefundOutcome()`, `applyDisputeChargebackOutcome()`, `applyDisputeReinstatementOutcome()`, each returning the corrected `ProviderOutcomeResult` (§18), computing the corrected `max(0, ...)`-clamped delta (§6), locking the wallet row, calling exactly one `UsageWalletManager` method, calling state recomputation, all inside one outer `DB::transaction()`. |
 | 27 | `app/Jobs/Usage/ProcessPaymentProviderEvent.php` | MODIFIED | `handle()`'s own `match` per §2/§16/§17; dual-identifier resolution, currency/shape validation, terminal calls carrying `$attribution` built directly from the returned `ProviderOutcomeResult`'s five fields. |
@@ -662,7 +684,7 @@ min(
 
 **No existing test file requires modification.**
 
-**12 new files, 166 methods.**
+**12 new files, 172 methods.**
 
 | # | File | Methods |
 |---|---|---|
@@ -673,13 +695,13 @@ min(
 | 5 | `tests/Feature/Usage/DirectDeliverableProviderOutcomeTest.php` | 11 |
 | 6 | `tests/Feature/Usage/UsageWalletManagerReversalTest.php` | 23 |
 | 7 | `tests/Feature/Usage/ProviderRefundDisputeSurfaceBoundaryTest.php` | 7 |
-| 8 | `tests/Feature/Usage/PaymentProviderEventRetryReclaimTest.php` | 23 |
+| 8 | `tests/Feature/Usage/PaymentProviderEventRetryReclaimTest.php` | 29 |
 | 9 | `tests/Feature/Usage/PaymentProviderEventDurableAuditTest.php` | 12 |
 | 10 | `tests/Feature/Usage/ProviderRefundDisputeConcurrencyTest.php` | 3 |
 | 11 | `tests/Feature/Usage/SendChargebackDisputeNotificationTest.php` | 12 |
 | 12 | `tests/Feature/Usage/RefundablePaidAvailableAccountingTest.php` | 14 |
 
-**Total: 166 methods across 12 files.**
+**Total: 172 methods across 12 files.**
 
 ### `ProviderPaymentIdentifierResolutionTest.php` (12) — unchanged from Correction Round 2, proves §3
 
@@ -804,7 +826,7 @@ min(
 6. `test_none_of_the_three_reversal_methods_ever_references_evaluate_business_auto_recharge`
 7. `test_none_of_the_three_reversal_methods_ever_references_send_receipt_notification_or_attach_funding_receipt`
 
-### `PaymentProviderEventRetryReclaimTest.php` (23) — proves §19; +2 methods in the prior pass for index-presence and sparse/large-table behavior (Blocker 4); +9 methods this pass for the fair-interleave/index-ordering correction (Defects 1–2), methods 6/13/14 renamed/strengthened in place
+### `PaymentProviderEventRetryReclaimTest.php` (29) — proves §19; +2 methods in the first exceptional pass for index-presence and sparse/large-table behavior (Blocker 4); +9 methods in the second pass for the fair-interleave/index-ordering correction (Defects 1–2); +6 methods this pass for the per-attempt-bucket stale-processing correction, method 13 strengthened in place
 
 1. `test_a_failed_event_below_max_attempts_is_redispatched_by_the_scanner`
 2. `test_a_stale_processing_event_past_its_lease_is_reclaimed_by_the_scanner`
@@ -818,7 +840,7 @@ min(
 10. `test_the_persistence_before_dispatch_failure_leaves_a_received_row_that_only_the_scanner_recovers`
 11. `test_a_redelivered_webhook_for_an_already_received_event_returns_200_without_a_second_row_and_the_original_remains_scanner_recoverable`
 12. `test_a_scanner_redispatch_racing_the_original_dispatch_for_the_same_received_event_applies_the_outcome_exactly_once`
-13. `test_each_of_the_three_retry_branch_queries_is_supported_by_its_own_dedicated_index_and_ordered_to_match_it`
+13. `test_each_retry_query_including_every_stale_processing_attempt_bucket_query_is_supported_by_its_own_dedicated_index_and_ordered_to_match_it`
 14. `test_the_scanner_remains_bounded_and_correctly_index_ordered_when_the_table_contains_a_large_number_of_terminal_rows_alongside_sparse_matching_candidates`
 15. `test_when_all_three_branches_have_at_least_batch_limit_candidates_the_selected_batch_contains_all_three_states_and_never_exceeds_batch_limit`
 16. `test_a_sustained_received_backlog_exceeding_the_limit_never_starves_the_failed_or_stale_processing_branches`
@@ -829,6 +851,12 @@ min(
 21. `test_only_the_failed_branch_populated_returns_exactly_its_own_candidates_up_to_the_limit`
 22. `test_only_the_stale_processing_branch_populated_returns_exactly_its_own_candidates_up_to_the_limit`
 23. `test_retryables_accepted_limit_is_clamped_to_the_locked_maximum_regardless_of_the_requested_value`
+24. `test_a_large_number_of_non_expired_processing_rows_at_a_lower_attempt_count_never_blocks_recovery_of_an_expired_row_at_a_higher_attempt_count`
+25. `test_stale_processing_candidates_are_fairly_interleaved_across_attempt_buckets_when_every_eligible_bucket_has_at_least_limit_candidates`
+26. `test_a_saturated_lower_attempt_bucket_never_starves_a_sparsely_populated_higher_attempt_bucket`
+27. `test_outer_state_class_fairness_across_received_failed_and_stale_processing_remains_intact_after_the_two_level_stale_processing_merge`
+28. `test_the_number_of_stale_processing_bucket_queries_never_exceeds_the_configured_max_attempts_value`
+29. `test_a_non_positive_configured_max_attempts_value_issues_zero_stale_processing_bucket_queries_and_mutates_nothing`
 
 ### `PaymentProviderEventDurableAuditTest.php` (12) — proves §18; +2 methods this pass, methods renamed/split for the four-field audit semantics (Blocker 3)
 
@@ -973,7 +1001,7 @@ No `FOREIGN KEY` on `business_id`/`funding_attempt_id` (Migration 4). No other s
 6. **A reinstatement never produces negative debt, is bounded to the specific dispute's own withdrawn amount, and mechanically resolves its own lineage.** §9; `ProviderDisputeOutcomeTest` methods 7–11; `DisputeBalanceTransactionValidationTest` methods 6–7.
 7. **Every genuinely new outcome — wallet-backed or zero-delta — writes an outcome row, advances its accumulator, is audited, and drives state recomputation identically.** §4, §10; `DirectDeliverableProviderOutcomeTest` in full.
 8. **Funding-attempt state reflects every outstanding dispute and gross refund progress.** §13, §20; `ProviderDisputeOutcomeTest` methods 13–15; `ProviderRefundOutcomeTest` method 21.
-9. **Duplicate delivery, a stranded `received` row, and genuine concurrency never apply the same financial, refundable-paid, or state effect twice; a stranded event is actually recovered by a genuinely index-ordered scanner; and no retry-eligible state class can be starved by another, regardless of relative backlog size.** §19, §26; `PaymentProviderEventRetryReclaimTest` in full (methods 13–14 for index-ordering, 15–23 for fair-interleave/no-starvation); `ProviderRefundDisputeConcurrencyTest` in full; `RefundablePaidAvailableAccountingTest` method 13.
+9. **Duplicate delivery, a stranded `received` row, and genuine concurrency never apply the same financial, refundable-paid, or state effect twice; a stranded event is actually recovered by a genuinely work-bounded, index-navigable scanner; and no retry-eligible state class or processing-attempt bucket can be starved by another, regardless of relative backlog size.** §19, §26; `PaymentProviderEventRetryReclaimTest` in full (methods 13–14 for index-ordering, 15–23 for state-class fair-interleave/no-starvation, 24–29 for the per-attempt-bucket correction and its own bucket-level fairness/no-starvation/bound guarantees); `ProviderRefundDisputeConcurrencyTest` in full; `RefundablePaidAvailableAccountingTest` method 13.
 10. **No fabricated receipt, and no automatic auto-recharge origination, from any refund/dispute code path.** §17; `UsageWalletManagerReversalTest` methods 7, 17, 18, 23; `ProviderRefundDisputeSurfaceBoundaryTest` methods 6–7.
 11. **The low-balance marker participates correctly, and only, in wallet-backed mutations.** §10; `UsageWalletManagerReversalTest` methods 6, 22.
 12. **Every outcome is durably recorded with four unambiguous, distinctly meaningful amount fields, remaining administrator-visible after payload purge.** §18; `PaymentProviderEventDurableAuditTest` in full.
@@ -985,7 +1013,7 @@ No `FOREIGN KEY` on `business_id`/`funding_attempt_id` (Migration 4). No other s
 
 ## 28. Bounded reads
 
-Every new read is either genuinely `LIMIT`-and-index-bounded (`retryable()`'s own three branch queries, each individually indexed, individually limited, and ordered to match its own index's exact column sequence — total read bound `3 × $limit`, dispatch bound exactly `$limit` after fair interleaving, §19; `recentOutcomes()`, `(normalized_recorded_at, id)`) or scoped to `(funding_attempt_id[, provider_reference])` and supported by the composite index (§20). No claim of "bounded" work stands on a `LIMIT` clause alone without a supporting index for every predicate — and every `ORDER BY` clause — that query actually uses.
+Every new read is either genuinely `LIMIT`-and-index-bounded (`retryable()`'s own queries — one `received`, one `failed`, and one per eligible stale-processing attempt bucket, each individually indexed, individually limited, carrying exactly one navigable range predicate after its index's equality prefix, and ordered to match its own index's exact column sequence — total read bound `(2 + $maxAttempts) × $limit`, dispatch bound exactly `$limit` after two-level fair interleaving, §19; `recentOutcomes()`, `(normalized_recorded_at, id)`) or scoped to `(funding_attempt_id[, provider_reference])` and supported by the composite index (§20). No claim of "bounded" work stands on a `LIMIT` clause alone without a supporting index for every predicate — and every `ORDER BY` clause — that query actually uses, and no query in this document carries more than one unresolved range/filter predicate after its index's equality prefix.
 
 ---
 
@@ -1065,3 +1093,18 @@ No live-provider-hitting command is ever part of this suite.
 - `git diff --name-only origin/main...HEAD` — exactly this one file.
 - Confirmed no product, test, schema, config, route, or RFC-source file changed; `docs/automation/AI-AUTONOMY-STATE.json` untouched.
 - Confirmed the now-approved financial design (§6–§18: `refundable_paid_available_micro`/paid-first allocation, reservation paid attribution, no-refund-debt, promotional/manual-credit non-refundability, direct-deliverable behavior, the four audit amount fields, chargeback notification policy, transaction/locking design) is untouched by this pass — every edit in this correction is confined to §19 and its dependent references in §22, §24, §26, §28, and this section.
+
+**Third exceptional post-review correction (this pass) — additional validation:**
+
+- Re-derived the stale-processing query directly from current, already-existing production code, not invented: confirmed `usage_billing.webhook_event.max_attempts` (default `5`, `USAGE_BILLING_WEBHOOK_MAX_ATTEMPTS`-overridable) in `config/usage_billing.php`, and confirmed it is already read as a plain `(int)` and used as `$maxAttempts` in `App\Jobs\Usage\ProcessPaymentProviderEvent::handle()` and twice in `App\Http\Controllers\Admin\PaymentProviderEventController`; confirmed the `attempts` column's existing eligibility semantics (`attempts < $maxAttempts`) directly from `EloquentPaymentProviderEventRepository::claim()`/`exhausted()`. No new or invented configuration ceiling was required — `$maxAttempts` itself is the safe, finite, already-existing bound this correction needed; no blocker is reported.
+- Searched for any remaining query in §19 carrying two unresolved range/filter predicates after its index's equality prefix — none remains; the stale-processing branch's single `attempts < $maxAttempts AND lease_expires_at < now()` query is fully replaced by `$maxAttempts` per-bucket queries, each with exactly one range predicate (`lease_expires_at < now()`) after an equality prefix on `state` and `attempts`.
+- Searched for `attempts`, `'<'`, `$maxAttempts` co-occurring in a stale-processing/`processing`-state query context — the only remaining `attempts < $maxAttempts` range predicate is in the `failed` branch, which has no second range/filter predicate after it and was never defective.
+- Searched for "genuinely small subset in a healthy system" and any other claim that scan cost for the stale-processing branch is bounded without a supporting single-range predicate — the phrase is removed; §19 explicitly states this assumption is withdrawn.
+- Searched for the prior `3 × $limit` total-read-bound claim — no occurrence remains as a live claim; every reference now states `(2 + $maxAttempts) × $limit`.
+- Confirmed the two-level interleave reuses the single existing `interleaveRetryBranches()` helper unmodified at both levels — no second merge implementation, no new production method beyond the corrected `retryable()` body itself; §22 items 23–24 updated in description only, no new production file.
+- Confirmed §25's migration DDL requires no change — the same three indexes, unmodified, support both the withdrawn and the corrected query shapes; only the query's own predicate/ordering shape changed, never the index definitions.
+- Every production/test path recounted mechanically: **30 production paths (12 new + 18 modified) — unchanged**, **172 test methods across 12 files (166 → 172, +6, all within `PaymentProviderEventRetryReclaimTest.php`, now 29 methods)**.
+- `git diff --check` — clean.
+- `git diff --name-only origin/main...HEAD` — exactly this one file.
+- Confirmed no product, test, schema, config, route, or RFC-source file changed; `docs/automation/AI-AUTONOMY-STATE.json` untouched.
+- Confirmed the approved financial design (§6–§18) remains untouched by this pass, and that dispute accounting and chargeback notification policy (§8–§11) are likewise untouched — every edit in this correction is confined to §19 and its dependent references in §22, §24, §26, §28, and this section.
