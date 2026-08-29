@@ -66,6 +66,23 @@ Still **not** Correction Round 3 — the ordinary counters remain **2 of 2 consu
 
 ---
 
+## Exceptional post-merge implementation correction
+
+**This is not Correction Round 3.** This contract's own ordinary correction-round budget is unchanged by this pass: `maximum_correction_rounds: 2`, **2 of 2 consumed, 0 remaining** (Governance, above) — exactly as it stood at merge. This pass uses the same, separate exceptional-correction mechanism already established and used six times earlier in this same contract's own pre-merge drafting phase (the six "exceptional post-review correction" passes, above): it exists precisely for a narrowly-scoped, independently-confirmed defect surfaced *after* the ordinary correction-round budget is exhausted, and it does not consume, reset, or otherwise touch that counter. The distinguishing feature of *this* instance is that both defects below were discovered only during a genuine, faithful implementation attempt against real code and a real, non-faked `ultimatesms_testing` database, running the full existing Usage test suite — something no purely textual or single-method mechanical review of this contract, however careful, could have caught by design, since each is a defect in the *interaction* between this contract's own locked design and pre-existing test fixtures this contract's design never touches.
+
+Two independently reproduced defects in §24's own "No existing test file requires modification" claim, corrected this pass:
+
+14. **§22 item 14's required `ProviderRefundMismatch` enum case breaks a pre-existing, non-allow-listed test's own exhaustive case-count assertion.** `tests/Unit/Usage/UsageBillingEnumsTest.php::test_billing_status_transition_source_has_exactly_two_cases` asserts `BillingStatusTransitionSource::cases()` is exactly `['dispute_webhook', 'admin_action']` — a correct statement of the enum's shape at merge, made false the instant §22 item 14's own required third case is added, which this contract's design does not make optional. **Corrected:** this one file, and this one method, is added to §24's own allow-list below with the single, narrowly required change — the expected case list becomes `['dispute_webhook', 'admin_action', 'provider_refund_mismatch']`, and the method is renamed `test_billing_status_transition_source_has_exactly_three_cases` to match this same file's own sibling naming convention (`test_usage_limit_type_has_exactly_three_cases`, `test_payer_type_has_exactly_three_cases`, both already named for their own actual case count, both untouched). No other assertion, method, or file content changes.
+15. **§3's own required, independently-`UNIQUE`-when-populated `provider_payment_intent_reference`/`provider_charge_reference` columns break three pre-existing, non-allow-listed test methods across two files, each of which reuses one hardcoded literal fake provider reference string across multiple, distinct funding attempts — harmless before this contract, since no uniqueness was ever enforced on these columns, and mechanically broken the instant §22 item 1 (this contract's own required migration) is applied.** Independently reproduced, isolated, deterministic — not timing-dependent or flaky — against a real `ultimatesms_testing` database:
+    - `tests/Feature/Usage/ReconcileProviderPendingStateTest.php`'s own private `registerVerifiedCheckoutOutcome(BusinessFundingAttempt $attempt)` helper hardcodes the literal `'ch_fake_reconcile'` (and a corresponding receipt-URL literal) regardless of which `$attempt` it is called for; `test_a_stale_collection_member_resolved_before_its_turn_is_skipped_via_the_fresh_eligibility_recheck` calls it for three distinct funding attempts, and `test_a_true_duplicate_credit_race_is_caught_by_the_jobs_own_exception_boundary_and_reconciliation_continues_to_later_attempts` calls it for multiple distinct attempts likewise; the second and later calls now throw `Illuminate\Database\UniqueConstraintViolationException` (`Duplicate entry 'ch_fake_reconcile' for key 'business_funding_attempts.bfa_provider_charge_reference_unique'`) instead of completing.
+    - `tests/Feature/Usage/ConcurrentTopUpConcurrencyTest.php`'s own private `confirmRunnerScript()` — one single child-process script template, unparameterized on attempt identity, shared by every caller — hardcodes the literal `'ch_fake_child_confirm'`/`'pi_fake_child_confirm'`; `test_two_concurrent_confirmations_for_the_same_business_each_credit_exactly_once` runs this identical script against two distinct funding attempts in two separate, genuinely concurrent OS processes, and the second process's own confirmation now throws the identical unique-constraint violation on its own charge-reference write, so it never reaches its own `fwrite(STDOUT, "DONE\n")` — the test's own `assertStringContainsString('DONE', $processTwo->getOutput())` then fails. This contract's design does not affect, and this pass does not touch, `test_two_genuinely_concurrent_processes_confirming_the_same_attempt_produce_exactly_one_ledger_credit_and_transition` — that method runs the identical script against one single shared attempt id in both processes, so both processes already, correctly, resolve to the same reference value; the pre-existing, unmodified `confirmSucceeded()`/`finalizeFundingAttemptState()` locking already governs that case and is untouched by this correction.
+
+    **Corrected:** both helpers are added to §24's own allow-list below with the single, narrowly required fixture change — deriving each fake charge/payment-intent reference from the specific funding attempt identity already in scope (`$attempt->id` in `registerVerifiedCheckoutOutcome()`; `$attemptId`, already read from `$argv[1]`, in `confirmRunnerScript()`) instead of one fixed literal — so two distinct attempts observed by the same test run never collide. No assertion, expected value, timing, process-handshake mechanism, or any other test behavior changes; every currently passing assertion in either file continues to pass unchanged. Of the 8 total methods in `ReconcileProviderPendingStateTest.php` and the 4 total methods in `ConcurrentTopUpConcurrencyTest.php`, **zero test-method bodies change** — only the one shared private helper in each file changes.
+
+**§24's own claim is corrected: "No existing test file requires modification" is false as merged.** Exactly three pre-existing, non-allow-listed test files require the narrow, mechanically forced changes above — one renamed method and its own updated assertion in the first file, and one shared private helper's own literal values in each of the other two — and no others. This correction authorizes only exactly those three files' own narrow changes, recorded in §24 below. It does not authorize any other edit to any other existing test, any relaxation of the `UNIQUE` constraint itself, any change to the enum design, or any change to any production file already locked in §22, which is entirely unchanged by this correction.
+
+---
+
 ## 1. Required reading, confirmed by direct re-read this pass
 
 Everything read for Correction Rounds 1/2 remains re-confirmed. **Newly, directly re-read this pass, specifically to derive the four blockers' corrections:** `app/Library/Usage/UsageWalletManager.php`'s own `reserve()` (lines 285–530: the `available_balance_micro < reservedAmountMicro` admission check, the `Reservation` ledger insert, the wallet `UPDATE`), `commit()` (lines 533–760: the `chargedPortion = min($finalAmountMicro, $reservedAmountMicro)` committed-charge shape, the `$overage`/`$overageFromAvailable`/`$overageToDebt` split, the `$unused = $reservedAmountMicro - $finalAmountMicro` unused-release shape, all three confirmed to be exactly reusable as the basis for a parallel paid-attributable calculation with zero change to any existing column or formula), `release()` (lines 774–862: the full-reservation-amount restore shape); `app/Repositories/Contracts/PaymentProviderEventRepository.php`/its Eloquent implementation (confirmed no index exists on `state`/`attempts`/`received_at`/`lease_expires_at`/`normalized_recorded_at` beyond what Correction Round 2 itself proposed); `app/Jobs/Usage/SendLowBalanceNotification.php` (re-confirmed `$tries = 1`, `ShouldQueueAfterCommit`, and that this codebase has never once claimed "exactly-once external delivery" for any notification it sends — only "at most one dispatch decision").
@@ -779,27 +796,34 @@ min(
 
 ## 24. Exact test allow-list
 
-**No existing test file requires modification.**
+**Corrected by the exceptional post-merge implementation correction, above: "No existing test file requires modification" was false as merged. 16 files, 208 methods — 13 new files (193 methods, unchanged from merge) plus 3 pre-existing files (15 methods, added by this correction, of which exactly 1 method's own body changes; the other 14 are allow-listed only because they share a file with the one shared helper or one renamed method that changes).**
 
-**13 new files, 193 methods.**
+| # | File | Methods | Status |
+|---|---|---|---|
+| 1 | `tests/Feature/Usage/ProviderPaymentIdentifierResolutionTest.php` | 12 | NEW, unchanged from merge |
+| 2 | `tests/Feature/Usage/ProviderRefundOutcomeTest.php` | 21 | NEW, unchanged from merge |
+| 3 | `tests/Feature/Usage/ProviderDisputeOutcomeTest.php` | 21 | NEW, unchanged from merge |
+| 4 | `tests/Feature/Usage/DisputeBalanceTransactionValidationTest.php` | 7 | NEW, unchanged from merge |
+| 5 | `tests/Feature/Usage/DirectDeliverableProviderOutcomeTest.php` | 11 | NEW, unchanged from merge |
+| 6 | `tests/Feature/Usage/UsageWalletManagerReversalTest.php` | 23 | NEW, unchanged from merge |
+| 7 | `tests/Feature/Usage/ProviderRefundDisputeSurfaceBoundaryTest.php` | 7 | NEW, unchanged from merge |
+| 8 | `tests/Feature/Usage/PaymentProviderEventRetryReclaimTest.php` | 44 | NEW, unchanged from merge |
+| 9 | `tests/Feature/Usage/PaymentProviderEventDurableAuditTest.php` | 12 | NEW, unchanged from merge |
+| 10 | `tests/Feature/Usage/ProviderRefundDisputeConcurrencyTest.php` | 3 | NEW, unchanged from merge |
+| 11 | `tests/Feature/Usage/SendChargebackDisputeNotificationTest.php` | 12 | NEW, unchanged from merge |
+| 12 | `tests/Feature/Usage/RefundablePaidAvailableAccountingTest.php` | 14 | NEW, unchanged from merge |
+| 13 | `tests/Unit/Usage/PaymentProviderEventRetryPolicyTest.php` | 6 | NEW, unchanged from merge |
+| 14 | `tests/Unit/Usage/UsageBillingEnumsTest.php` | 3 | EXISTING — added by this correction; 1 method renamed/reasserted (§ above) |
+| 15 | `tests/Feature/Usage/ReconcileProviderPendingStateTest.php` | 8 | EXISTING — added by this correction; 0 test methods change, shared private helper changes (§ above) |
+| 16 | `tests/Feature/Usage/ConcurrentTopUpConcurrencyTest.php` | 4 | EXISTING — added by this correction; 0 test methods change, shared private helper changes (§ above) |
 
-| # | File | Methods |
-|---|---|---|
-| 1 | `tests/Feature/Usage/ProviderPaymentIdentifierResolutionTest.php` | 12 |
-| 2 | `tests/Feature/Usage/ProviderRefundOutcomeTest.php` | 21 |
-| 3 | `tests/Feature/Usage/ProviderDisputeOutcomeTest.php` | 21 |
-| 4 | `tests/Feature/Usage/DisputeBalanceTransactionValidationTest.php` | 7 |
-| 5 | `tests/Feature/Usage/DirectDeliverableProviderOutcomeTest.php` | 11 |
-| 6 | `tests/Feature/Usage/UsageWalletManagerReversalTest.php` | 23 |
-| 7 | `tests/Feature/Usage/ProviderRefundDisputeSurfaceBoundaryTest.php` | 7 |
-| 8 | `tests/Feature/Usage/PaymentProviderEventRetryReclaimTest.php` | 44 |
-| 9 | `tests/Feature/Usage/PaymentProviderEventDurableAuditTest.php` | 12 |
-| 10 | `tests/Feature/Usage/ProviderRefundDisputeConcurrencyTest.php` | 3 |
-| 11 | `tests/Feature/Usage/SendChargebackDisputeNotificationTest.php` | 12 |
-| 12 | `tests/Feature/Usage/RefundablePaidAvailableAccountingTest.php` | 14 |
-| 13 | `tests/Unit/Usage/PaymentProviderEventRetryPolicyTest.php` | 6 |
+**Total: 208 methods across 16 files — 193 methods across the 13 NEW files (unchanged from merge), plus 15 methods across the 3 EXISTING files this correction adds (of which exactly 1 changes).**
 
-**Total: 193 methods across 13 files.**
+### Existing test files added by the exceptional post-merge implementation correction
+
+- `tests/Unit/Usage/UsageBillingEnumsTest.php` (3 total methods; exactly 1 changes) — `test_billing_status_transition_source_has_exactly_two_cases` is renamed `test_billing_status_transition_source_has_exactly_three_cases`, and its own expected case array becomes `['dispute_webhook', 'admin_action', 'provider_refund_mismatch']`. `test_usage_limit_type_has_exactly_three_cases` and `test_payer_type_has_exactly_three_cases` are untouched.
+- `tests/Feature/Usage/ReconcileProviderPendingStateTest.php` (8 total methods; 0 test-method bodies change) — the shared private `registerVerifiedCheckoutOutcome(BusinessFundingAttempt $attempt)` helper's hardcoded `'ch_fake_reconcile'` literal (and its corresponding receipt-URL literal) become derived from `$attempt->id`, so distinct attempts observed within one test run never collide. No test method's own assertions, structure, or coverage change.
+- `tests/Feature/Usage/ConcurrentTopUpConcurrencyTest.php` (4 total methods; 0 test-method bodies change) — the shared private `confirmRunnerScript()`'s hardcoded `'ch_fake_child_confirm'`/`'pi_fake_child_confirm'` literals become derived from the script's own `$attemptId` (already read from `$argv[1]`), so two distinct attempts confirmed by two genuinely concurrent processes in the same test never collide. `test_two_genuinely_concurrent_processes_confirming_the_same_attempt_produce_exactly_one_ledger_credit_and_transition`, which passes one identical attempt id to both processes, is unaffected by construction. No test method's own assertions, structure, or coverage change.
 
 ### `ProviderPaymentIdentifierResolutionTest.php` (12) — unchanged from Correction Round 2, proves §3
 
