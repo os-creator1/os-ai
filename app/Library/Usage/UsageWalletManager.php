@@ -422,6 +422,14 @@ class UsageWalletManager
 
             $reservedAt = Carbon::now();
 
+            // RFC-005 Remediation #6 §6 — paid-first consumption: the
+            // paid-attributable share of this reservation is removed from
+            // the wallet's refundable_paid_available_micro counter now,
+            // and durably snapshotted on the reservation row itself —
+            // commit()/release() later consume or restore exactly this
+            // stored value, never re-derived.
+            $paidAttributable = min($reservedAmountMicro, max(0, $wallet->refundable_paid_available_micro));
+
             // RFC-005 Milestone 5 §3.8/§6 widening: idempotencyKey carries
             // a real database UNIQUE constraint
             // (business_usage_reservations_idempotency_key_unique). Two
@@ -440,6 +448,7 @@ class UsageWalletManager
                 'period_key' => $wallet->spend_period_key,
                 'status' => UsageReservationStatus::Pending->value,
                 'reserved_amount_micro' => $reservedAmountMicro,
+                'paid_attributable_amount_micro' => $paidAttributable,
                 'estimated_quantity' => $quantity,
                 'rate_id' => $rate->id,
                 'rate_version' => $rate->version,
@@ -459,6 +468,7 @@ class UsageWalletManager
                 'available_delta_micro' => -$reservedAmountMicro,
                 'reserved_delta_micro' => $reservedAmountMicro,
                 'debt_delta_micro' => 0,
+                'refundable_paid_delta_micro' => -$paidAttributable,
                 'currency_id' => $wallet->currency_id,
                 'feature_key' => $reservation->feature_key,
                 'meter_key' => $reservation->meter_key,
@@ -483,6 +493,7 @@ class UsageWalletManager
 
             $this->walletRepository->update($wallet, array_merge([
                 'available_balance_micro' => $newAvailableBalanceMicro,
+                'refundable_paid_available_micro' => $wallet->refundable_paid_available_micro - $paidAttributable,
                 'reserved_balance_micro' => $wallet->reserved_balance_micro + $reservedAmountMicro,
                 'reserved_spend_this_period_micro' => $wallet->reserved_spend_this_period_micro + $reservedAmountMicro,
             ], $this->lowBalanceMarkerUpdate($wallet, $newAvailableBalanceMicro, $shouldDispatchLowBalanceNotification)));
@@ -597,7 +608,14 @@ class UsageWalletManager
             $lowBalanceFragment = [];
 
             $chargedPortion = min($finalAmountMicro, $reservedAmountMicro);
+            $paidAttributableMicro = (int) $reservation->paid_attributable_amount_micro;
+            $refundablePaidDelta = 0;
 
+            // RFC-005 Remediation #6 §6 — the committed portion's own
+            // paid-attributable share was already removed from
+            // refundable_paid_available_micro at reserve() time;
+            // committing it merely converts a reservation into a
+            // permanent charge and requires no further counter mutation.
             $this->ledgerRepository->create([
                 'business_id' => $reservation->business_id,
                 'wallet_id' => $wallet->id,
@@ -605,6 +623,7 @@ class UsageWalletManager
                 'available_delta_micro' => 0,
                 'reserved_delta_micro' => -$chargedPortion,
                 'debt_delta_micro' => 0,
+                'refundable_paid_delta_micro' => 0,
                 'currency_id' => $wallet->currency_id,
                 'feature_key' => $reservation->feature_key,
                 'meter_key' => $reservation->meter_key,
@@ -628,6 +647,13 @@ class UsageWalletManager
                 $overageFromAvailable = min($overage, max(0, $wallet->available_balance_micro));
                 $overageToDebt = $overage - $overageFromAvailable;
 
+                // RFC-005 Remediation #6 §6 — overage was never
+                // pre-reserved, so its paid-attributable portion draws
+                // directly against the wallet's current counter, not the
+                // reservation's own snapshot.
+                $overagePaidPortion = min($overageFromAvailable, max(0, $wallet->refundable_paid_available_micro));
+                $refundablePaidDelta -= $overagePaidPortion;
+
                 $overageLedgerEntry = $this->ledgerRepository->create([
                     'business_id' => $reservation->business_id,
                     'wallet_id' => $wallet->id,
@@ -635,6 +661,7 @@ class UsageWalletManager
                     'available_delta_micro' => -$overageFromAvailable,
                     'reserved_delta_micro' => 0,
                     'debt_delta_micro' => $overageToDebt,
+                    'refundable_paid_delta_micro' => -$overagePaidPortion,
                     'currency_id' => $wallet->currency_id,
                     'feature_key' => $reservation->feature_key,
                     'meter_key' => $reservation->meter_key,
@@ -667,6 +694,13 @@ class UsageWalletManager
                 $hadUnusedRelease = true;
                 $unused = $reservedAmountMicro - $finalAmountMicro;
 
+                // RFC-005 Remediation #6 §6 — actual final usage consumes
+                // the reservation's own paid-attributable snapshot first,
+                // identically to the reservation's original paid-first
+                // allocation: exact, no proportional/fractional math.
+                $unusedPaidPortion = $paidAttributableMicro - min($finalAmountMicro, $paidAttributableMicro);
+                $refundablePaidDelta += $unusedPaidPortion;
+
                 $this->ledgerRepository->create([
                     'business_id' => $reservation->business_id,
                     'wallet_id' => $wallet->id,
@@ -674,6 +708,7 @@ class UsageWalletManager
                     'available_delta_micro' => $unused,
                     'reserved_delta_micro' => -$unused,
                     'debt_delta_micro' => 0,
+                    'refundable_paid_delta_micro' => $unusedPaidPortion,
                     'currency_id' => $wallet->currency_id,
                     'feature_key' => $reservation->feature_key,
                     'meter_key' => $reservation->meter_key,
@@ -702,6 +737,7 @@ class UsageWalletManager
 
             $walletUpdate = [
                 'available_balance_micro' => $wallet->available_balance_micro + $availableDelta,
+                'refundable_paid_available_micro' => $wallet->refundable_paid_available_micro + $refundablePaidDelta,
                 'reserved_balance_micro' => $wallet->reserved_balance_micro + $reservedDelta,
                 'debt_balance_micro' => $wallet->debt_balance_micro + $debtDelta,
             ];
@@ -809,6 +845,7 @@ class UsageWalletManager
 
             $releasedAt = Carbon::now();
             $amount = (int) $reservation->reserved_amount_micro;
+            $paidAttributableMicro = (int) $reservation->paid_attributable_amount_micro;
             $resultingStatus = $releasedAt->gte($reservation->expires_at)
                 ? UsageReservationStatus::Expired
                 : UsageReservationStatus::Released;
@@ -820,6 +857,7 @@ class UsageWalletManager
                 'available_delta_micro' => $amount,
                 'reserved_delta_micro' => -$amount,
                 'debt_delta_micro' => 0,
+                'refundable_paid_delta_micro' => $paidAttributableMicro,
                 'currency_id' => $wallet->currency_id,
                 'feature_key' => $reservation->feature_key,
                 'meter_key' => $reservation->meter_key,
@@ -836,6 +874,7 @@ class UsageWalletManager
 
             $walletUpdate = [
                 'available_balance_micro' => $wallet->available_balance_micro + $amount,
+                'refundable_paid_available_micro' => $wallet->refundable_paid_available_micro + $paidAttributableMicro,
                 'reserved_balance_micro' => $wallet->reserved_balance_micro - $amount,
             ];
 
@@ -910,6 +949,7 @@ class UsageWalletManager
                 'available_delta_micro' => $remainder,
                 'reserved_delta_micro' => 0,
                 'debt_delta_micro' => -$debtCleared,
+                'refundable_paid_delta_micro' => $remainder,
                 'currency_id' => $wallet->currency_id,
                 'funding_attempt_id' => $fundingAttemptId,
                 'correlation_key' => $correlationKey,
@@ -918,6 +958,7 @@ class UsageWalletManager
 
             $walletUpdate = [
                 'available_balance_micro' => $wallet->available_balance_micro + $remainder,
+                'refundable_paid_available_micro' => $wallet->refundable_paid_available_micro + $remainder,
                 'debt_balance_micro' => $wallet->debt_balance_micro - $debtCleared,
             ];
 
@@ -1430,6 +1471,372 @@ class UsageWalletManager
 
             return $ledgerEntry;
         });
+    }
+
+    /**
+     * RFC-005 Remediation #6 §6/§10/§12/§13 — applies one provider-
+     * confirmed cumulative refund delta (already computed and clamped to
+     * non-negative by the caller, per §6's own out-of-order fix). Never
+     * self-idempotent on correlation_key — the caller is expected to have
+     * already derived $providerRefundDelta from the corrected
+     * max(0, bcsub(...)) formula, which is itself already 0 for any exact
+     * replay or out-of-order-lower report; a genuine concurrent race for
+     * the identical cumulative amount is resolved by the ledger's own
+     * correlation_key UNIQUE constraint, which the caller must catch.
+     *
+     * Returns null and mutates nothing for a non-positive delta. Never
+     * writes a non-zero debt_delta_micro. Caps the wallet debit at
+     * min(available_balance_micro, refundable_paid_available_micro) when
+     * $walletBacked; a zero-delta (direct_deliverable) outcome writes an
+     * audit-only row and touches no balance column.
+     */
+    public function applyProviderRefund(
+        int $businessId,
+        bool $walletBacked,
+        int $fundingAttemptId,
+        int $providerRefundDelta,
+        string $boundedProviderCumulative,
+        string $providerChargeReference,
+    ): ?BusinessUsageLedgerEntry {
+        if ($providerRefundDelta <= 0) {
+            return null;
+        }
+
+        $shouldDispatchLowBalanceNotification = false;
+
+        $ledgerEntry = DB::transaction(function () use (
+            $businessId,
+            $walletBacked,
+            $fundingAttemptId,
+            $providerRefundDelta,
+            $boundedProviderCumulative,
+            $providerChargeReference,
+            &$shouldDispatchLowBalanceNotification,
+        ) {
+            $wallet = $this->walletRepository->findForUpdateByBusinessId($businessId);
+
+            if ($wallet === null) {
+                throw new UsageWalletNotFoundException($businessId);
+            }
+
+            $walletDebitMicro = 0;
+
+            if ($walletBacked) {
+                $refundHeadroomMicro = min(max(0, $wallet->available_balance_micro), max(0, $wallet->refundable_paid_available_micro));
+                $walletDebitMicro = min($providerRefundDelta, $refundHeadroomMicro);
+            }
+
+            $ledgerEntry = $this->ledgerRepository->create([
+                'business_id' => $businessId,
+                'wallet_id' => $wallet->id,
+                'funding_attempt_id' => $fundingAttemptId,
+                'entry_type' => UsageLedgerEntryType::Refund->value,
+                'available_delta_micro' => $walletBacked ? -$walletDebitMicro : 0,
+                'reserved_delta_micro' => 0,
+                'debt_delta_micro' => 0,
+                'refundable_paid_delta_micro' => $walletBacked ? -$walletDebitMicro : 0,
+                'gross_amount_micro' => $providerRefundDelta,
+                'currency_id' => $wallet->currency_id,
+                'correlation_key' => 'refund:'.$fundingAttemptId.':'.$boundedProviderCumulative,
+                'provider_reference' => $providerChargeReference,
+                'actor_user_id' => null,
+                'reason' => "Provider-confirmed refund of {$providerRefundDelta} micro-units against charge {$providerChargeReference}.",
+                'reversed_entry_id' => null,
+                'created_at' => Carbon::now(),
+            ]);
+
+            if (! $walletBacked) {
+                return $ledgerEntry;
+            }
+
+            $newAvailableBalanceMicro = $wallet->available_balance_micro - $walletDebitMicro;
+
+            $walletUpdate = [
+                'available_balance_micro' => $newAvailableBalanceMicro,
+                'refundable_paid_available_micro' => $wallet->refundable_paid_available_micro - $walletDebitMicro,
+            ];
+
+            $lowBalanceFragment = $walletDebitMicro > 0
+                ? $this->lowBalanceMarkerUpdate($wallet, $newAvailableBalanceMicro, $shouldDispatchLowBalanceNotification)
+                : [];
+
+            // RFC-005 Remediation #6 §6 — a cumulative refund that could
+            // not be fully honored as a cash refund suspends billing,
+            // guarded against a redundant transition row, exactly as
+            // dispute-driven suspension is guarded.
+            $policyExcessMicro = $providerRefundDelta - $walletDebitMicro;
+            $suspending = $policyExcessMicro > 0 && $wallet->billing_status !== WalletBillingStatus::Suspended;
+
+            if ($suspending) {
+                $fromStatus = $wallet->billing_status;
+
+                $this->billingStatusTransitionRepository->create([
+                    'wallet_id' => $wallet->id,
+                    'business_id' => $businessId,
+                    'from_status' => $fromStatus->value,
+                    'to_status' => WalletBillingStatus::Suspended->value,
+                    'source' => BillingStatusTransitionSource::ProviderRefundMismatch->value,
+                    'actor_user_id' => null,
+                    'reason' => "Provider-confirmed refund exceeds refundable balance by {$policyExcessMicro} micro-units.",
+                    'created_at' => Carbon::now(),
+                ]);
+
+                $walletUpdate['billing_status'] = WalletBillingStatus::Suspended->value;
+            }
+
+            $this->walletRepository->update($wallet, array_merge($walletUpdate, $lowBalanceFragment));
+
+            if ($suspending) {
+                BusinessWalletBillingStatusChanged::dispatch($businessId, $fromStatus->value, WalletBillingStatus::Suspended->value);
+            }
+
+            if ($walletDebitMicro > 0) {
+                \App\Events\Usage\BusinessWalletDebited::dispatch($businessId, (int) $wallet->id, (int) $ledgerEntry->id, $walletDebitMicro);
+            }
+
+            return $ledgerEntry;
+        });
+
+        if ($shouldDispatchLowBalanceNotification) {
+            \App\Jobs\Usage\SendLowBalanceNotification::dispatch($businessId)->afterCommit();
+        }
+
+        return $ledgerEntry;
+    }
+
+    /**
+     * RFC-005 Remediation #6 §8/§10/§12 — applies one provider-confirmed
+     * dispute-withdrawal balance-transaction amount (already validated and
+     * signed by the caller). May create debt — unaffected by the refund
+     * policy's own no-debt guarantee. Billing suspension is unconditional
+     * (a risk-control decision, never conditional on wallet-credit
+     * fulfillment), guarded against a redundant transition row. Never
+     * self-idempotent on correlation_key — a genuine concurrent race for
+     * the identical balance transaction is resolved by the ledger's own
+     * correlation_key UNIQUE constraint, which the caller must catch.
+     */
+    public function applyDisputeWithdrawal(
+        int $businessId,
+        bool $walletBacked,
+        int $fundingAttemptId,
+        int $amountMicro,
+        string $providerDisputeId,
+        string $balanceTransactionId,
+    ): ?BusinessUsageLedgerEntry {
+        if ($amountMicro <= 0) {
+            return null;
+        }
+
+        $shouldDispatchLowBalanceNotification = false;
+
+        $ledgerEntry = DB::transaction(function () use (
+            $businessId,
+            $walletBacked,
+            $fundingAttemptId,
+            $amountMicro,
+            $providerDisputeId,
+            $balanceTransactionId,
+            &$shouldDispatchLowBalanceNotification,
+        ) {
+            $wallet = $this->walletRepository->findForUpdateByBusinessId($businessId);
+
+            if ($wallet === null) {
+                throw new UsageWalletNotFoundException($businessId);
+            }
+
+            $chargebackFromAvailable = 0;
+            $chargebackToDebt = 0;
+            $chargebackPaidPortion = 0;
+
+            if ($walletBacked) {
+                $chargebackFromAvailable = min($amountMicro, max(0, $wallet->available_balance_micro));
+                $chargebackToDebt = $amountMicro - $chargebackFromAvailable;
+                $chargebackPaidPortion = min($chargebackFromAvailable, max(0, $wallet->refundable_paid_available_micro));
+            }
+
+            $ledgerEntry = $this->ledgerRepository->create([
+                'business_id' => $businessId,
+                'wallet_id' => $wallet->id,
+                'funding_attempt_id' => $fundingAttemptId,
+                'entry_type' => UsageLedgerEntryType::DisputeChargeback->value,
+                'available_delta_micro' => $walletBacked ? -$chargebackFromAvailable : 0,
+                'reserved_delta_micro' => 0,
+                'debt_delta_micro' => $walletBacked ? $chargebackToDebt : 0,
+                'refundable_paid_delta_micro' => $walletBacked ? -$chargebackPaidPortion : 0,
+                'gross_amount_micro' => $amountMicro,
+                'currency_id' => $wallet->currency_id,
+                'correlation_key' => 'dispute_chargeback:'.$fundingAttemptId.':'.$balanceTransactionId,
+                'provider_reference' => $providerDisputeId,
+                'actor_user_id' => null,
+                'reason' => "Provider-confirmed dispute withdrawal of {$amountMicro} micro-units for dispute {$providerDisputeId}.",
+                'reversed_entry_id' => null,
+                'created_at' => Carbon::now(),
+            ]);
+
+            $walletUpdate = [];
+
+            if ($walletBacked) {
+                $walletUpdate['available_balance_micro'] = $wallet->available_balance_micro - $chargebackFromAvailable;
+                $walletUpdate['refundable_paid_available_micro'] = $wallet->refundable_paid_available_micro - $chargebackPaidPortion;
+                $walletUpdate['debt_balance_micro'] = $wallet->debt_balance_micro + $chargebackToDebt;
+            }
+
+            $fromStatus = $wallet->billing_status;
+            $suspending = $fromStatus !== WalletBillingStatus::Suspended;
+
+            if ($suspending) {
+                $this->billingStatusTransitionRepository->create([
+                    'wallet_id' => $wallet->id,
+                    'business_id' => $businessId,
+                    'from_status' => $fromStatus->value,
+                    'to_status' => WalletBillingStatus::Suspended->value,
+                    'source' => BillingStatusTransitionSource::DisputeWebhook->value,
+                    'actor_user_id' => null,
+                    'reason' => "Provider-confirmed dispute {$providerDisputeId} withdrew {$amountMicro} micro-units.",
+                    'created_at' => Carbon::now(),
+                ]);
+
+                $walletUpdate['billing_status'] = WalletBillingStatus::Suspended->value;
+            }
+
+            $lowBalanceFragment = ($walletBacked && $chargebackFromAvailable > 0)
+                ? $this->lowBalanceMarkerUpdate($wallet, $wallet->available_balance_micro - $chargebackFromAvailable, $shouldDispatchLowBalanceNotification)
+                : [];
+
+            if ($walletUpdate !== [] || $lowBalanceFragment !== []) {
+                $this->walletRepository->update($wallet, array_merge($walletUpdate, $lowBalanceFragment));
+            }
+
+            if ($suspending) {
+                BusinessWalletBillingStatusChanged::dispatch($businessId, $fromStatus->value, WalletBillingStatus::Suspended->value);
+            }
+
+            if ($walletBacked && $chargebackFromAvailable > 0) {
+                \App\Events\Usage\BusinessWalletDebited::dispatch($businessId, (int) $wallet->id, (int) $ledgerEntry->id, $chargebackFromAvailable);
+            }
+
+            if ($walletBacked && $chargebackToDebt > 0) {
+                \App\Events\Usage\BusinessWalletDebtIncurred::dispatch($businessId, (int) $wallet->id, (int) $ledgerEntry->id, $chargebackToDebt);
+            }
+
+            return $ledgerEntry;
+        });
+
+        if ($shouldDispatchLowBalanceNotification) {
+            \App\Jobs\Usage\SendLowBalanceNotification::dispatch($businessId)->afterCommit();
+        }
+
+        return $ledgerEntry;
+    }
+
+    /**
+     * RFC-005 Remediation #6 §9/§10/§12 — applies one provider-confirmed
+     * dispute-reinstatement amount, already bounded by the caller to the
+     * specific dispute's own actual withdrawn-minus-reinstated amount.
+     * Never a negation of the original chargeback's own stored deltas.
+     * Clears current debt before crediting any remainder to available
+     * balance; never produces negative debt.
+     * $originalChargebackPaidPortionRemoved (already resolved by the
+     * caller via the original chargeback's own signed
+     * refundable_paid_delta_micro) bounds how much of the remainder may
+     * restore refundable_paid_available_micro — debt-clearing never does.
+     */
+    public function reinstateDisputedFunds(
+        int $businessId,
+        bool $walletBacked,
+        int $fundingAttemptId,
+        int $reinstatementAmountMicro,
+        int $originalChargebackPaidPortionRemoved,
+        ?int $originalChargebackEntryId,
+        string $providerDisputeId,
+        string $balanceTransactionId,
+    ): ?BusinessUsageLedgerEntry {
+        if ($reinstatementAmountMicro <= 0) {
+            return null;
+        }
+
+        $shouldDispatchLowBalanceNotification = false;
+
+        $ledgerEntry = DB::transaction(function () use (
+            $businessId,
+            $walletBacked,
+            $fundingAttemptId,
+            $reinstatementAmountMicro,
+            $originalChargebackPaidPortionRemoved,
+            $originalChargebackEntryId,
+            $providerDisputeId,
+            $balanceTransactionId,
+            &$shouldDispatchLowBalanceNotification,
+        ) {
+            $wallet = $this->walletRepository->findForUpdateByBusinessId($businessId);
+
+            if ($wallet === null) {
+                throw new UsageWalletNotFoundException($businessId);
+            }
+
+            $debtCleared = 0;
+            $remainder = 0;
+            $reinstatePaidPortion = 0;
+
+            if ($walletBacked) {
+                $debtCleared = min($reinstatementAmountMicro, max(0, $wallet->debt_balance_micro));
+                $remainder = $reinstatementAmountMicro - $debtCleared;
+                $reinstatePaidPortion = min($remainder, max(0, $originalChargebackPaidPortionRemoved));
+            }
+
+            $ledgerEntry = $this->ledgerRepository->create([
+                'business_id' => $businessId,
+                'wallet_id' => $wallet->id,
+                'funding_attempt_id' => $fundingAttemptId,
+                'entry_type' => UsageLedgerEntryType::CorrectionReversal->value,
+                'available_delta_micro' => $walletBacked ? $remainder : 0,
+                'reserved_delta_micro' => 0,
+                'debt_delta_micro' => $walletBacked ? -$debtCleared : 0,
+                'refundable_paid_delta_micro' => $walletBacked ? $reinstatePaidPortion : 0,
+                'gross_amount_micro' => $reinstatementAmountMicro,
+                'currency_id' => $wallet->currency_id,
+                'correlation_key' => 'dispute_reversal:'.$fundingAttemptId.':'.$balanceTransactionId,
+                'provider_reference' => $providerDisputeId,
+                'actor_user_id' => null,
+                'reason' => "Provider-confirmed dispute reinstatement of {$reinstatementAmountMicro} micro-units for dispute {$providerDisputeId}.",
+                'reversed_entry_id' => $originalChargebackEntryId,
+                'created_at' => Carbon::now(),
+            ]);
+
+            if (! $walletBacked) {
+                return $ledgerEntry;
+            }
+
+            $newAvailableBalanceMicro = $wallet->available_balance_micro + $remainder;
+
+            $walletUpdate = [
+                'available_balance_micro' => $newAvailableBalanceMicro,
+                'refundable_paid_available_micro' => $wallet->refundable_paid_available_micro + $reinstatePaidPortion,
+                'debt_balance_micro' => $wallet->debt_balance_micro - $debtCleared,
+            ];
+
+            $lowBalanceFragment = $remainder > 0
+                ? $this->lowBalanceMarkerUpdate($wallet, $newAvailableBalanceMicro, $shouldDispatchLowBalanceNotification)
+                : [];
+
+            $this->walletRepository->update($wallet, array_merge($walletUpdate, $lowBalanceFragment));
+
+            if ($remainder > 0) {
+                \App\Events\Usage\BusinessWalletCredited::dispatch($businessId, (int) $wallet->id, (int) $ledgerEntry->id, $remainder);
+            }
+
+            if ($debtCleared > 0) {
+                \App\Events\Usage\BusinessWalletDebtCleared::dispatch($businessId, (int) $wallet->id, (int) $ledgerEntry->id, $debtCleared);
+            }
+
+            return $ledgerEntry;
+        });
+
+        if ($shouldDispatchLowBalanceNotification) {
+            \App\Jobs\Usage\SendLowBalanceNotification::dispatch($businessId)->afterCommit();
+        }
+
+        return $ledgerEntry;
     }
 
     /**

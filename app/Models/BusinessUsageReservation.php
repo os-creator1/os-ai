@@ -21,6 +21,7 @@ class BusinessUsageReservation extends Model
         'period_key',
         'status',
         'reserved_amount_micro',
+        'paid_attributable_amount_micro',
         'estimated_quantity',
         'rate_id',
         'rate_version',
@@ -40,6 +41,7 @@ class BusinessUsageReservation extends Model
     protected $casts = [
         'status' => UsageReservationStatus::class,
         'reserved_amount_micro' => 'integer',
+        'paid_attributable_amount_micro' => 'integer',
         'estimated_quantity' => 'decimal:6',
         'rate_version' => 'integer',
         'retail_rate_micro' => 'integer',

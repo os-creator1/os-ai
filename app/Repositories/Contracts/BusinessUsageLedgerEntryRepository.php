@@ -67,4 +67,39 @@ interface BusinessUsageLedgerEntryRepository extends BaseRepository
      * provider_cost_micro for every row.
      */
     public function marginAggregateForBusiness(int $businessId, string $periodKey): Collection;
+
+    /**
+     * RFC-005 Remediation #6 §7/§13/§15 — the gross, provider-confirmed
+     * refund progress for one funding attempt, computed entirely in SQL
+     * as an exact decimal string (never PHP-collection-reduced). Sums
+     * only Refund rows; unaffected by any dispute activity on the same
+     * attempt.
+     */
+    public function sumRefundedMicroForFundingAttempt(int $fundingAttemptId): string;
+
+    /**
+     * RFC-005 Remediation #6 §8/§9/§15 — per-dispute bounding, independent
+     * of the refund accumulator and of any other dispute on the same
+     * attempt: sums gross_amount_micro for one funding attempt, one
+     * specific dispute's own provider_reference, and one entry type
+     * ('dispute_chargeback' for withdrawn, 'correction_reversal' for
+     * reinstated).
+     */
+    public function sumDisputeMicroForFundingAttemptAndDispute(int $fundingAttemptId, string $providerDisputeId, string $entryType): string;
+
+    /**
+     * RFC-005 Remediation #6 §13/§20 — one bounded scalar query: true when
+     * any dispute (grouped by its own provider_reference) has strictly
+     * more withdrawn than reinstated for this funding attempt.
+     */
+    public function hasOutstandingDisputeExposureForFundingAttempt(int $fundingAttemptId): bool;
+
+    /**
+     * RFC-005 Remediation #6 §4/§15 — the original wallet-crediting entry
+     * for a funding attempt, scoped exclusively to entry_type IN
+     * ('paid_top_up', 'auto_recharge'). ManualCredit/PromotionalCredit are
+     * never eligible — excluded by construction, never merely filtered
+     * out after the fact.
+     */
+    public function findCreditEntryForFundingAttempt(int $fundingAttemptId): ?BusinessUsageLedgerEntry;
 }

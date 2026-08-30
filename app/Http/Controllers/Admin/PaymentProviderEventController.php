@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Requests\Admin\DispositionPaymentProviderEventRequest;
+use App\Library\Usage\PaymentProviderEventRetryPolicy;
 use App\Repositories\Contracts\PaymentProviderEventRepository;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\RedirectResponse;
@@ -24,17 +25,18 @@ class PaymentProviderEventController extends AdminBaseController
 
     public function index(): View
     {
-        $maxAttempts = (int) config('usage_billing.webhook_event.max_attempts');
+        $maxAttempts = PaymentProviderEventRetryPolicy::normalizedMaxAttempts();
 
         return view('admin.usage-billing.provider-events.index', [
             'events' => $this->eventRepository->exhausted($maxAttempts),
+            'recentOutcomes' => $this->eventRepository->recentOutcomes(),
             'breadcrumbs' => $this->breadcrumbs(),
         ]);
     }
 
     public function dispose(DispositionPaymentProviderEventRequest $request, int $event): RedirectResponse
     {
-        $maxAttempts = (int) config('usage_billing.webhook_event.max_attempts');
+        $maxAttempts = PaymentProviderEventRetryPolicy::normalizedMaxAttempts();
 
         $disposed = $this->eventRepository->dispose(
             $event,

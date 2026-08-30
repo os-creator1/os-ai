@@ -37,6 +37,17 @@ class PaymentProviderEvent extends Model
         'disposed_at',
         'disposed_by_user_id',
         'disposition_note',
+        'business_id',
+        'funding_attempt_id',
+        'normalized_outcome',
+        'normalized_status',
+        'normalized_reported_amount_micro',
+        'normalized_outcome_delta_micro',
+        'normalized_wallet_delta_micro',
+        'normalized_policy_excess_micro',
+        'normalized_currency_code',
+        'normalized_reason',
+        'normalized_recorded_at',
     ];
 
     protected $casts = [
@@ -51,5 +62,6 @@ class PaymentProviderEvent extends Model
         'completed_at' => 'datetime',
         'disposed_at' => 'datetime',
         'payload_purged_at' => 'datetime',
+        'normalized_recorded_at' => 'datetime',
     ];
 }

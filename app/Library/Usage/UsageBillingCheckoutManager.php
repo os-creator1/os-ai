@@ -49,6 +49,7 @@ use App\Repositories\Contracts\BusinessPaymentInstrumentRepository;
 use App\Repositories\Contracts\BusinessUsageAddonCatalogRepository;
 use App\Repositories\Contracts\BusinessUsageAddonPurchaseRepository;
 use App\Repositories\Contracts\BusinessUsageAddonPurchaseTransitionRepository;
+use App\Repositories\Contracts\BusinessUsageLedgerEntryRepository;
 use App\Repositories\Contracts\BusinessUsageWalletRepository;
 use App\Repositories\Contracts\PaymentProviderCustomerRepository;
 use Illuminate\Database\UniqueConstraintViolationException;
@@ -138,6 +139,7 @@ class UsageBillingCheckoutManager
         private readonly BusinessUsageAddonPurchaseTransitionRepository $addonPurchaseTransitionRepository,
         private readonly EntitlementManager $entitlementManager,
         private readonly PaymentInstrumentManager $paymentInstrumentManager,
+        private readonly BusinessUsageLedgerEntryRepository $ledgerRepository,
     ) {
     }
 
@@ -384,7 +386,7 @@ class UsageBillingCheckoutManager
         $this->recordTransition($attempt, FundingAttemptState::Created, $newState, TransitionSource::SyncResponse, null, null);
 
         if ($paymentIntent->status === 'succeeded') {
-            $this->confirmSucceeded($attempt, TransitionSource::SyncResponse, null);
+            $this->confirmSucceeded($attempt, TransitionSource::SyncResponse, null, null, null, null, $paymentIntent->providerPaymentIntentId, $paymentIntent->receiptChargeId);
 
             return new FundingAttemptResult($attempt->id, FundingAttemptState::Succeeded, null);
         }
@@ -499,7 +501,7 @@ class UsageBillingCheckoutManager
                 return new FundingAttemptResult($attempt->id, $attempt->state, null);
             }
 
-            $this->confirmSucceeded($attempt, TransitionSource::SyncResponse, null, null, $this->resolveVerifiedPaymentMethodDisplay($attempt, $session));
+            $this->confirmSucceeded($attempt, TransitionSource::SyncResponse, null, null, $this->resolveVerifiedPaymentMethodDisplay($attempt, $session), null, $session->providerPaymentIntentId, $session->receiptChargeId);
 
             return new FundingAttemptResult($attempt->id, FundingAttemptState::Succeeded, null);
         }
@@ -507,7 +509,7 @@ class UsageBillingCheckoutManager
         $paymentIntent = $this->gateway->retrievePaymentIntent($attempt->provider_session_or_intent_reference);
 
         if ($paymentIntent->status === 'succeeded') {
-            $this->confirmSucceeded($attempt, TransitionSource::SyncResponse, null);
+            $this->confirmSucceeded($attempt, TransitionSource::SyncResponse, null, null, null, null, $attempt->provider_session_or_intent_reference, $paymentIntent->receiptChargeId);
 
             return new FundingAttemptResult($attempt->id, FundingAttemptState::Succeeded, null);
         }
@@ -557,12 +559,16 @@ class UsageBillingCheckoutManager
                 return;
             }
 
-            $this->confirmSucceeded($attempt, TransitionSource::WebhookEvent, $event->id, null, $this->resolveVerifiedPaymentMethodDisplay($attempt, $session));
+            $this->confirmSucceeded($attempt, TransitionSource::WebhookEvent, $event->id, null, $this->resolveVerifiedPaymentMethodDisplay($attempt, $session), null, $session->providerPaymentIntentId, $session->receiptChargeId);
 
             return;
         }
 
-        $this->confirmSucceeded($attempt, TransitionSource::WebhookEvent, $event->id);
+        // RFC-005 Remediation #6 §3 — AutoRecharge via the ordinary
+        // webhook path: provider_session_or_intent_reference already IS
+        // the PaymentIntent reference; no charge reference is available
+        // without an additional provider call this path never makes.
+        $this->confirmSucceeded($attempt, TransitionSource::WebhookEvent, $event->id, null, null, null, $attempt->provider_session_or_intent_reference, null);
     }
 
     public function markAttemptFailedFromWebhook(BusinessFundingAttempt $attempt, string $reason, PaymentProviderEvent $event): void
@@ -572,6 +578,269 @@ class UsageBillingCheckoutManager
         }
 
         $this->markFailed($attempt, $reason, TransitionSource::WebhookEvent, $event->id);
+    }
+
+    /**
+     * RFC-005 Remediation #6 §6/§10/§13/§18/§26 — applies one
+     * charge.refunded event's own cumulative refund report. $walletBacked
+     * is resolved once via findCreditEntryForFundingAttempt(); the
+     * out-of-order/replay-safe delta is computed here via the corrected,
+     * unconditional max(0, bcsub(...)) clamp, never native subtraction. A
+     * concurrent/replayed caller computing the identical bounded
+     * cumulative loses the ledger's own correlation_key race and is
+     * treated as a no-op replay, mirroring confirmSucceeded()'s own
+     * established UniqueConstraintViolationException precedent.
+     */
+    public function applyRefundOutcome(BusinessFundingAttempt $attempt, int $providerCumulativeRefundMinorUnits, string $providerChargeReference): ProviderOutcomeResult
+    {
+        $expectedAmountMicro = (int) $attempt->expected_amount_micro;
+        $providerCumulativeRefundMicro = $this->expectedMicroForMinorUnits($providerCumulativeRefundMinorUnits, $attempt);
+        $boundedProviderCumulative = min($providerCumulativeRefundMicro, $expectedAmountMicro);
+
+        $alreadyRecordedRefundGrossMicro = (int) $this->ledgerRepository->sumRefundedMicroForFundingAttempt((int) $attempt->id);
+        $providerRefundDelta = (int) bcsub((string) $boundedProviderCumulative, (string) max(0, $alreadyRecordedRefundGrossMicro), 0);
+        $providerRefundDelta = max(0, $providerRefundDelta);
+
+        if ($providerRefundDelta <= 0) {
+            return new ProviderOutcomeResult(
+                'refund_already_applied',
+                $boundedProviderCumulative,
+                0,
+                0,
+                0,
+                null,
+                $attempt->state,
+            );
+        }
+
+        $walletBacked = $this->ledgerRepository->findCreditEntryForFundingAttempt((int) $attempt->id) !== null;
+
+        try {
+            [$ledgerEntry, $resultingState] = DB::transaction(function () use ($attempt, $walletBacked, $providerRefundDelta, $boundedProviderCumulative, $providerChargeReference) {
+                $ledgerEntry = $this->walletManager->applyProviderRefund(
+                    (int) $attempt->business_id,
+                    $walletBacked,
+                    (int) $attempt->id,
+                    $providerRefundDelta,
+                    (string) $boundedProviderCumulative,
+                    $providerChargeReference,
+                );
+
+                $resultingState = $this->recomputeFundingAttemptState($attempt);
+
+                return [$ledgerEntry, $resultingState];
+            });
+        } catch (UniqueConstraintViolationException) {
+            $freshAttempt = $this->attemptRepository->findById((int) $attempt->id);
+
+            return new ProviderOutcomeResult(
+                'refund_already_applied',
+                $boundedProviderCumulative,
+                0,
+                0,
+                0,
+                null,
+                $freshAttempt?->state ?? $attempt->state,
+            );
+        }
+
+        $walletDeltaMicro = $walletBacked ? abs((int) $ledgerEntry->available_delta_micro) : 0;
+        $policyExcessMicro = $walletBacked ? ($providerRefundDelta - $walletDeltaMicro) : 0;
+        $normalizedOutcome = $policyExcessMicro > 0 ? 'refund_exceeds_refundable_balance' : 'refund_applied';
+
+        return new ProviderOutcomeResult(
+            $normalizedOutcome,
+            $boundedProviderCumulative,
+            $providerRefundDelta,
+            $walletDeltaMicro,
+            $policyExcessMicro,
+            (int) $ledgerEntry->id,
+            $resultingState,
+        );
+    }
+
+    /**
+     * RFC-005 Remediation #6 §8/§10/§13/§18/§26 — applies one
+     * charge.dispute.funds_withdrawn event's own signed balance-
+     * transaction amount. Never self-idempotent on correlation_key — a
+     * replay of the identical balance transaction loses the ledger's own
+     * correlation_key race.
+     */
+    public function applyDisputeChargebackOutcome(BusinessFundingAttempt $attempt, int $balanceTransactionAmountMinorUnits, string $providerDisputeId, string $balanceTransactionId): ProviderOutcomeResult
+    {
+        $balanceTransactionAmountMicro = $this->expectedMicroForMinorUnits($balanceTransactionAmountMinorUnits, $attempt);
+        $walletBacked = $this->ledgerRepository->findCreditEntryForFundingAttempt((int) $attempt->id) !== null;
+
+        try {
+            [$ledgerEntry, $resultingState] = DB::transaction(function () use ($attempt, $walletBacked, $balanceTransactionAmountMicro, $providerDisputeId, $balanceTransactionId) {
+                $ledgerEntry = $this->walletManager->applyDisputeWithdrawal(
+                    (int) $attempt->business_id,
+                    $walletBacked,
+                    (int) $attempt->id,
+                    $balanceTransactionAmountMicro,
+                    $providerDisputeId,
+                    $balanceTransactionId,
+                );
+
+                $resultingState = $this->recomputeFundingAttemptState($attempt);
+
+                return [$ledgerEntry, $resultingState];
+            });
+        } catch (UniqueConstraintViolationException) {
+            $freshAttempt = $this->attemptRepository->findById((int) $attempt->id);
+
+            return new ProviderOutcomeResult(
+                'dispute_chargeback_replayed',
+                $balanceTransactionAmountMicro,
+                0,
+                0,
+                0,
+                null,
+                $freshAttempt?->state ?? $attempt->state,
+            );
+        }
+
+        $walletDeltaMicro = $walletBacked
+            ? abs((int) $ledgerEntry->available_delta_micro) + abs((int) $ledgerEntry->debt_delta_micro)
+            : 0;
+
+        return new ProviderOutcomeResult(
+            'dispute_chargeback_applied',
+            $balanceTransactionAmountMicro,
+            $balanceTransactionAmountMicro,
+            $walletDeltaMicro,
+            0,
+            (int) $ledgerEntry->id,
+            $resultingState,
+        );
+    }
+
+    /**
+     * RFC-005 Remediation #6 §9/§10/§13/§18/§26 — applies one
+     * charge.dispute.funds_reinstated event. Resolves the exact original
+     * DisputeChargeback row via the withdrawal balance transaction's own
+     * deterministic correlation key (never guessed) and bounds the
+     * reinstatement to that specific dispute's own actual withdrawn-
+     * minus-reinstated amount. Returns null (missing/ambiguous lineage)
+     * when no matching original chargeback can be resolved — the caller
+     * fails the event closed.
+     */
+    public function applyDisputeReinstatementOutcome(
+        BusinessFundingAttempt $attempt,
+        int $reportedBalanceTransactionAmountMinorUnits,
+        string $providerDisputeId,
+        string $reinstatementBalanceTransactionId,
+        string $withdrawalBalanceTransactionId,
+    ): ?ProviderOutcomeResult {
+        $originalChargebackEntry = $this->ledgerRepository->findByCorrelationKey(
+            'dispute_chargeback:'.$attempt->id.':'.$withdrawalBalanceTransactionId,
+        );
+
+        if ($originalChargebackEntry === null) {
+            return null;
+        }
+
+        $reportedAmountMicro = $this->expectedMicroForMinorUnits($reportedBalanceTransactionAmountMinorUnits, $attempt);
+
+        $withdrawn = (int) $this->ledgerRepository->sumDisputeMicroForFundingAttemptAndDispute((int) $attempt->id, $providerDisputeId, UsageLedgerEntryType::DisputeChargeback->value);
+        $reinstated = (int) $this->ledgerRepository->sumDisputeMicroForFundingAttemptAndDispute((int) $attempt->id, $providerDisputeId, UsageLedgerEntryType::CorrectionReversal->value);
+        $reinstatementAmountMicro = max(0, min($reportedAmountMicro, $withdrawn - $reinstated));
+
+        if ($reinstatementAmountMicro <= 0) {
+            return new ProviderOutcomeResult(
+                'dispute_reinstatement_replayed',
+                $reportedAmountMicro,
+                0,
+                0,
+                0,
+                null,
+                $attempt->state,
+            );
+        }
+
+        $walletBacked = $this->ledgerRepository->findCreditEntryForFundingAttempt((int) $attempt->id) !== null;
+        $originalChargebackPaidPortionRemoved = abs((int) ($originalChargebackEntry->refundable_paid_delta_micro ?? 0));
+
+        try {
+            [$ledgerEntry, $resultingState] = DB::transaction(function () use (
+                $attempt,
+                $walletBacked,
+                $reinstatementAmountMicro,
+                $originalChargebackPaidPortionRemoved,
+                $originalChargebackEntry,
+                $providerDisputeId,
+                $reinstatementBalanceTransactionId,
+            ) {
+                $ledgerEntry = $this->walletManager->reinstateDisputedFunds(
+                    (int) $attempt->business_id,
+                    $walletBacked,
+                    (int) $attempt->id,
+                    $reinstatementAmountMicro,
+                    $originalChargebackPaidPortionRemoved,
+                    (int) $originalChargebackEntry->id,
+                    $providerDisputeId,
+                    $reinstatementBalanceTransactionId,
+                );
+
+                $resultingState = $this->recomputeFundingAttemptState($attempt);
+
+                return [$ledgerEntry, $resultingState];
+            });
+        } catch (UniqueConstraintViolationException) {
+            $freshAttempt = $this->attemptRepository->findById((int) $attempt->id);
+
+            return new ProviderOutcomeResult(
+                'dispute_reinstatement_replayed',
+                $reportedAmountMicro,
+                0,
+                0,
+                0,
+                null,
+                $freshAttempt?->state ?? $attempt->state,
+            );
+        }
+
+        $walletDeltaMicro = $walletBacked
+            ? (int) $ledgerEntry->available_delta_micro + abs((int) $ledgerEntry->debt_delta_micro)
+            : 0;
+
+        return new ProviderOutcomeResult(
+            'dispute_reinstatement_applied',
+            $reportedAmountMicro,
+            $reinstatementAmountMicro,
+            $walletDeltaMicro,
+            0,
+            (int) $ledgerEntry->id,
+            $resultingState,
+        );
+    }
+
+    /**
+     * RFC-005 Remediation #6 §13 — recomputed from every outstanding
+     * outcome, under lock. The write (and its own append-only transition
+     * row) is skipped when the recomputed state already equals the
+     * currently-persisted one.
+     */
+    private function recomputeFundingAttemptState(BusinessFundingAttempt $attempt): FundingAttemptState
+    {
+        $locked = $this->attemptRepository->findForUpdateById((int) $attempt->id);
+
+        $refunded = $this->ledgerRepository->sumRefundedMicroForFundingAttempt((int) $attempt->id);
+        $anyDisputeOutstanding = $this->ledgerRepository->hasOutstandingDisputeExposureForFundingAttempt((int) $attempt->id);
+
+        $state = match (true) {
+            $anyDisputeOutstanding => FundingAttemptState::Disputed,
+            bccomp($refunded, (string) $locked->expected_amount_micro, 0) >= 0 => FundingAttemptState::Refunded,
+            default => FundingAttemptState::Succeeded,
+        };
+
+        if ($locked->state !== $state) {
+            $fromState = $locked->state;
+            $this->attemptRepository->update($locked, ['state' => $state->value]);
+            $this->recordTransition($locked, $fromState, $state, TransitionSource::WebhookEvent, null, null);
+        }
+
+        return $state;
     }
 
     /**
@@ -611,7 +880,7 @@ class UsageBillingCheckoutManager
             $session = $this->gateway->retrieveCheckoutSession($attempt->provider_session_or_intent_reference);
 
             if ($this->fundingAttemptCheckoutVerified($attempt, $session)) {
-                $this->confirmSucceeded($attempt, TransitionSource::AdminAction, null, $actorUserId, $this->resolveVerifiedPaymentMethodDisplay($attempt, $session), $normalizedReason);
+                $this->confirmSucceeded($attempt, TransitionSource::AdminAction, null, $actorUserId, $this->resolveVerifiedPaymentMethodDisplay($attempt, $session), $normalizedReason, $session->providerPaymentIntentId, $session->receiptChargeId);
 
                 return new FundingAttemptResult($attempt->id, FundingAttemptState::Succeeded, null);
             }
@@ -622,7 +891,7 @@ class UsageBillingCheckoutManager
         $paymentIntent = $this->gateway->retrievePaymentIntent($attempt->provider_session_or_intent_reference);
 
         if ($paymentIntent->status === 'succeeded') {
-            $this->confirmSucceeded($attempt, TransitionSource::AdminAction, null, $actorUserId, null, $normalizedReason);
+            $this->confirmSucceeded($attempt, TransitionSource::AdminAction, null, $actorUserId, null, $normalizedReason, $attempt->provider_session_or_intent_reference, $paymentIntent->receiptChargeId);
 
             return new FundingAttemptResult($attempt->id, FundingAttemptState::Succeeded, null);
         }
@@ -664,9 +933,9 @@ class UsageBillingCheckoutManager
      * inside creditFromFunding()'s own nested transaction) could fire
      * before the attempt's own state ever reached Succeeded.
      */
-    private function confirmSucceeded(BusinessFundingAttempt $attempt, TransitionSource $source, ?int $providerEventId, ?int $actorUserId = null, ?string $verifiedPaymentMethodDisplay = null, ?string $reason = null): void
+    private function confirmSucceeded(BusinessFundingAttempt $attempt, TransitionSource $source, ?int $providerEventId, ?int $actorUserId = null, ?string $verifiedPaymentMethodDisplay = null, ?string $reason = null, ?string $providerPaymentIntentReference = null, ?string $providerChargeReference = null): void
     {
-        $didFinalize = DB::transaction(function () use ($attempt, $source, $providerEventId, $actorUserId, $verifiedPaymentMethodDisplay, $reason) {
+        $didFinalize = DB::transaction(function () use ($attempt, $source, $providerEventId, $actorUserId, $verifiedPaymentMethodDisplay, $reason, $providerPaymentIntentReference, $providerChargeReference) {
             if ($attempt->purpose === FundingAttemptPurpose::AddonPurchase) {
                 $this->finalizeAddonPurchaseIfPending($attempt, $source, $providerEventId);
             } else {
@@ -691,7 +960,7 @@ class UsageBillingCheckoutManager
                 }
             }
 
-            return $this->finalizeFundingAttemptState($attempt, $source, $providerEventId, $actorUserId, $verifiedPaymentMethodDisplay, $reason);
+            return $this->finalizeFundingAttemptState($attempt, $source, $providerEventId, $actorUserId, $verifiedPaymentMethodDisplay, $reason, $providerPaymentIntentReference, $providerChargeReference);
         });
 
         // RFC-005 Job/Event Dispatch Completion Correction Contract §7.1 —
@@ -718,9 +987,9 @@ class UsageBillingCheckoutManager
      * when its own finalization call happens to run relative to another
      * caller's.
      */
-    private function finalizeFundingAttemptState(BusinessFundingAttempt $attempt, TransitionSource $source, ?int $providerEventId, ?int $actorUserId, ?string $verifiedPaymentMethodDisplay, ?string $reason = null): bool
+    private function finalizeFundingAttemptState(BusinessFundingAttempt $attempt, TransitionSource $source, ?int $providerEventId, ?int $actorUserId, ?string $verifiedPaymentMethodDisplay, ?string $reason = null, ?string $providerPaymentIntentReference = null, ?string $providerChargeReference = null): bool
     {
-        return DB::transaction(function () use ($attempt, $source, $providerEventId, $actorUserId, $verifiedPaymentMethodDisplay, $reason) {
+        return DB::transaction(function () use ($attempt, $source, $providerEventId, $actorUserId, $verifiedPaymentMethodDisplay, $reason, $providerPaymentIntentReference, $providerChargeReference) {
             $locked = $this->attemptRepository->findForUpdateById((int) $attempt->id);
 
             if ($locked === null || $locked->state === FundingAttemptState::Succeeded) {
@@ -731,6 +1000,18 @@ class UsageBillingCheckoutManager
 
             if ($verifiedPaymentMethodDisplay !== null) {
                 $updateAttributes['payment_method_display_snapshot'] = $verifiedPaymentMethodDisplay;
+            }
+
+            // RFC-005 Remediation #6 §3 — defensive assertion: never write
+            // an empty string into either independently-unique reference
+            // column, which could otherwise collide with another attempt
+            // that also carries a blank value for the same column.
+            if (! blank($providerPaymentIntentReference)) {
+                $updateAttributes['provider_payment_intent_reference'] = $providerPaymentIntentReference;
+            }
+
+            if (! blank($providerChargeReference)) {
+                $updateAttributes['provider_charge_reference'] = $providerChargeReference;
             }
 
             $fromState = $locked->state;
@@ -905,6 +1186,40 @@ class UsageBillingCheckoutManager
     public function expectedCurrencyCodeFor(BusinessFundingAttempt $attempt): string
     {
         return (string) DB::table('currencies')->where('id', $attempt->expected_currency_id)->value('code');
+    }
+
+    /**
+     * RFC-005 Remediation #6 §14 — inverts microToMinorUnits()'s own
+     * exact bcmath exponent table. Used to convert a provider-reported
+     * minor-units amount (a refund/dispute balance transaction) into
+     * micro-units for wallet accounting — never the reverse direction
+     * microToMinorUnits() itself already serves.
+     */
+    public function minorUnitsToMicro(int $minorUnits, string $currencyCode): int
+    {
+        $exponent = match (true) {
+            in_array($currencyCode, self::ZERO_DECIMAL_CURRENCIES, true) => 0,
+            in_array($currencyCode, self::THREE_DECIMAL_CURRENCIES, true) => 3,
+            in_array($currencyCode, self::TWO_DECIMAL_CURRENCIES, true) => 2,
+            default => throw new ProviderInvalidRequestException("Unsupported currency code for minor-unit conversion: {$currencyCode}"),
+        };
+
+        $multiplier = bcpow('10', (string) (6 - $exponent));
+
+        return (int) bcmul((string) $minorUnits, $multiplier, 0);
+    }
+
+    /**
+     * RFC-005 Remediation #6 §14 — the attempt-scoped convenience
+     * wrapper, mirroring expectedMinorUnitsFor()'s own shape exactly but
+     * inverted: converts an arbitrary provider-reported minor-units
+     * amount (never necessarily the attempt's own original
+     * expected_amount_micro) into micro-units using this attempt's own
+     * frozen settlement currency.
+     */
+    public function expectedMicroForMinorUnits(int $minorUnits, BusinessFundingAttempt $attempt): int
+    {
+        return $this->minorUnitsToMicro($minorUnits, $this->expectedCurrencyCodeFor($attempt));
     }
 
     private function markFailed(BusinessFundingAttempt $attempt, string $reason, TransitionSource $source, ?int $providerEventId): void

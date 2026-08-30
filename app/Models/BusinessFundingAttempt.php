@@ -27,6 +27,8 @@ class BusinessFundingAttempt extends Model
         'expected_amount_micro',
         'local_idempotency_key',
         'provider_session_or_intent_reference',
+        'provider_payment_intent_reference',
+        'provider_charge_reference',
         'state',
         'failure_reason',
     ];

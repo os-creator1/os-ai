@@ -11,4 +11,11 @@ enum BillingStatusTransitionSource: string
 {
     case DisputeWebhook = 'dispute_webhook';
     case AdminAction = 'admin_action';
+
+    /**
+     * RFC-005 Remediation #6 §6 — a provider-confirmed cumulative refund
+     * exceeding what could be honored as a cash refund (policyExcessMicro
+     * > 0). Never repurposes DisputeWebhook/AdminAction.
+     */
+    case ProviderRefundMismatch = 'provider_refund_mismatch';
 }

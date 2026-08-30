@@ -45,6 +45,33 @@
                     @endif
                 </x-card>
             </div>
+
+            <div class="col-12">
+                <x-card title="Recent Normalized Provider Outcomes">
+                    @if ($recentOutcomes->isEmpty())
+                        <x-empty-state icon="inbox" title="No normalized outcomes recorded yet." />
+                    @else
+                        <x-table :headers="['ID', 'Business', 'Funding attempt', 'Outcome', 'Status', 'Currency', 'Reported', 'Outcome delta', 'Wallet delta', 'Policy excess', 'Reason', 'Recorded']">
+                            @foreach ($recentOutcomes as $outcome)
+                                <tr>
+                                    <td class="text-numeric">{{ $outcome->id }}</td>
+                                    <td class="text-numeric">{{ $outcome->business_id ?? '—' }}</td>
+                                    <td class="text-numeric">{{ $outcome->funding_attempt_id ?? '—' }}</td>
+                                    <td><x-badge variant="info">{{ $outcome->normalized_outcome }}</x-badge></td>
+                                    <td>{{ $outcome->normalized_status ?? '—' }}</td>
+                                    <td>{{ $outcome->normalized_currency_code ?? '—' }}</td>
+                                    <td class="text-numeric">{{ $outcome->normalized_reported_amount_micro ?? '—' }}</td>
+                                    <td class="text-numeric">{{ $outcome->normalized_outcome_delta_micro ?? '—' }}</td>
+                                    <td class="text-numeric">{{ $outcome->normalized_wallet_delta_micro ?? '—' }}</td>
+                                    <td class="text-numeric">{{ $outcome->normalized_policy_excess_micro ?? '—' }}</td>
+                                    <td class="text-caption">{{ $outcome->normalized_reason ?? '—' }}</td>
+                                    <td class="text-caption">{{ $outcome->normalized_recorded_at?->format('Y-m-d H:i') ?? '—' }}</td>
+                                </tr>
+                            @endforeach
+                        </x-table>
+                    @endif
+                </x-card>
+            </div>
         </div>
     </section>
 @endsection

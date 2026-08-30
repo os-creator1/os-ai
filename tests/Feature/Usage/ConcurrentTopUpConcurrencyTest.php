@@ -266,10 +266,10 @@ $fake->registerCheckoutSessionResult(new App\Library\Usage\CheckoutSessionResult
     $manager->expectedMinorUnitsFor($attempt),
     $manager->expectedCurrencyCodeFor($attempt),
     $attempt->provider_customer_external_id_snapshot,
-    'pi_fake_child_confirm',
+    'pi_fake_child_confirm_'.$attemptId,
     $paymentMethodId,
-    'https://fake.stripe.test/receipts/ch_fake_child_confirm',
-    'ch_fake_child_confirm',
+    'https://fake.stripe.test/receipts/ch_fake_child_confirm_'.$attemptId,
+    'ch_fake_child_confirm_'.$attemptId,
 ));
 
 $manager->confirmAttemptFromReturn($attempt);

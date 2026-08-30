@@ -28,10 +28,10 @@ class UsageBillingEnumsTest extends TestCase
         );
     }
 
-    public function test_billing_status_transition_source_has_exactly_two_cases(): void
+    public function test_billing_status_transition_source_has_exactly_three_cases(): void
     {
         $this->assertSame(
-            ['dispute_webhook', 'admin_action'],
+            ['dispute_webhook', 'admin_action', 'provider_refund_mismatch'],
             array_map(fn (BillingStatusTransitionSource $case) => $case->value, BillingStatusTransitionSource::cases()),
         );
     }
