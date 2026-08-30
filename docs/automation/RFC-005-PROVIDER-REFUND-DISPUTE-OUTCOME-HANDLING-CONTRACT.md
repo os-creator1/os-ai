@@ -104,6 +104,147 @@ Two independently reproduced defects in §24's own "No existing test file requir
 
 ---
 
+## Third exceptional post-merge implementation correction
+
+**This is not Correction Round 3.** This contract's own ordinary correction-round budget is unchanged by this pass: `maximum_correction_rounds: 2`, **2 of 2 consumed, 0 remaining** (Governance, above) — exactly as it stood at merge, and exactly as the first and second exceptional post-merge implementation corrections (above) left it. This pass uses the identical, separate exceptional-correction mechanism, exercised a third time for two further, independent defects confirmed during the same genuine implementation attempt, neither of which reopens or touches anything the first two corrections already resolved.
+
+### 17. A different-cumulative refund race can inflate the recorded outcome beyond the provider's own reported total
+
+**The defect, exact and reproduced.** `UsageBillingCheckoutManager::applyRefundOutcome()` computes `providerRefundDelta` — by reading `sumRefundedMicroForFundingAttempt()` and subtracting it from the bounded provider cumulative — **before** opening the `DB::transaction()` that locks the wallet (via `UsageWalletManager::applyProviderRefund()`'s own `findForUpdateByBusinessId()`). §11's own idempotency layer only ever protects a *single* cumulative value's own correlation key (`'refund:'.$attempt->id.':'.$boundedProviderCumulative`) — it was never designed to, and cannot, serialize two *different* cumulative values reporting against the same attempt. The exact failing interleaving, independently confirmed:
+
+- Process A reads `sumRefundedMicroForFundingAttempt() = 0` and computes `providerRefundDelta = 60` from a reported cumulative of 60.
+- Process B reads `sumRefundedMicroForFundingAttempt() = 0` (A has not yet written anything) and computes `providerRefundDelta = 100` from a reported cumulative of 100.
+- A now locks the wallet, writes its own `Refund` row (`correlation_key = 'refund:'.attemptId.':60'`, `gross_amount_micro = 60`), and commits.
+- B now obtains the lock (A already released it), writes its own, **distinct** `Refund` row (`correlation_key = 'refund:'.attemptId.':100'`, `gross_amount_micro = 100`) — no unique-constraint collision occurs, because the two correlation keys are genuinely different — and commits.
+- `sumRefundedMicroForFundingAttempt()` now sums to **160**, even though the provider's own most recent, authoritative report was a cumulative of **100** — the wallet may be debited for more than the provider ever actually refunded, and §13's own state recomputation observes an inflated, false gross-refund figure.
+
+The existing `ProviderRefundDisputeConcurrencyTest::test_two_different_provider_event_ids_reporting_the_same_cumulative_refund_amount_debit_the_wallet_exactly_once` cannot catch this: both of its racing processes report the **identical** cumulative value, so they share one correlation key, and §11's own idempotency layer — correctly, for that scenario — makes the second writer's insert collide and no-op. That test proves the identical-cumulative case is safe; it was never a proof that different-cumulative reports are also serialized, and this correction confirms they were not.
+
+**Corrected — the binding decision: the wallet row is locked first, in one transaction, and the aggregate read, delta computation, headroom computation, outcome write, and state recomputation all happen while holding that lock.** This is the sole serialization point this correction adds — no new lock, no new table, no new column. Locked shape:
+
+```php
+public function applyRefundOutcome(BusinessFundingAttempt $attempt, int $providerCumulativeRefundMinorUnits, string $providerChargeReference): ProviderOutcomeResult
+{
+    $expectedAmountMicro = (int) $attempt->expected_amount_micro;
+    $providerCumulativeRefundMicro = $this->expectedMicroForMinorUnits($providerCumulativeRefundMinorUnits, $attempt);
+    $boundedProviderCumulative = min($providerCumulativeRefundMicro, $expectedAmountMicro);
+    $walletBacked = $this->ledgerRepository->findCreditEntryForFundingAttempt((int) $attempt->id) !== null;
+
+    try {
+        [$ledgerEntry, $resultingState, $providerRefundDelta] = DB::transaction(function () use ($attempt, $walletBacked, $boundedProviderCumulative, $providerChargeReference) {
+            // Locked first — the sole serialization point for this entire
+            // method. Every concurrent caller for this same wallet, whatever
+            // cumulative value it reports, must wait here before it may read
+            // the aggregate below.
+            $this->walletRepository->findForUpdateByBusinessId((int) $attempt->business_id);
+
+            // Only now, under lock, is the aggregate read — guaranteed to
+            // already reflect any refund a concurrent caller committed,
+            // since that caller could only have committed after releasing
+            // this identical lock.
+            $alreadyRecordedRefundGrossMicro = (int) $this->ledgerRepository->sumRefundedMicroForFundingAttempt((int) $attempt->id);
+            $providerRefundDelta = max(0, (int) bcsub((string) $boundedProviderCumulative, (string) max(0, $alreadyRecordedRefundGrossMicro), 0));
+
+            if ($providerRefundDelta <= 0) {
+                return [null, $attempt->state, 0];
+            }
+
+            $ledgerEntry = $this->walletManager->applyProviderRefund(
+                (int) $attempt->business_id, $walletBacked, (int) $attempt->id,
+                $providerRefundDelta, (string) $boundedProviderCumulative, $providerChargeReference,
+            );
+            $resultingState = $this->recomputeFundingAttemptState($attempt);
+
+            return [$ledgerEntry, $resultingState, $providerRefundDelta];
+        });
+    } catch (UniqueConstraintViolationException) {
+        $freshAttempt = $this->attemptRepository->findById((int) $attempt->id);
+
+        return new ProviderOutcomeResult('refund_already_applied', $boundedProviderCumulative, 0, 0, 0, null, $freshAttempt?->state ?? $attempt->state);
+    }
+
+    if ($providerRefundDelta <= 0) {
+        return new ProviderOutcomeResult('refund_already_applied', $boundedProviderCumulative, 0, 0, 0, null, $resultingState);
+    }
+
+    $walletDeltaMicro = $walletBacked ? abs((int) $ledgerEntry->available_delta_micro) : 0;
+    $policyExcessMicro = $walletBacked ? ($providerRefundDelta - $walletDeltaMicro) : 0;
+    $normalizedOutcome = $policyExcessMicro > 0 ? 'refund_exceeds_refundable_balance' : 'refund_applied';
+
+    return new ProviderOutcomeResult($normalizedOutcome, $boundedProviderCumulative, $providerRefundDelta, $walletDeltaMicro, $policyExcessMicro, (int) $ledgerEntry->id, $resultingState);
+}
+```
+
+**Mechanically why this closes the race:** `UsageWalletManager::applyProviderRefund()`'s own `findForUpdateByBusinessId()` call, reached moments later inside the identical outer transaction, re-acquires a row lock this same transaction already holds — InnoDB grants this immediately, to the same transaction, without blocking or deadlocking; it is not a second, independent lock acquisition. The only genuinely contested lock is the first one, taken before the aggregate read. Process A and Process B from the failing interleaving above now serialize at that first lock: whichever commits first makes its own write visible to the aggregate read the other performs only after obtaining the lock A just released — the second caller's own `sumRefundedMicroForFundingAttempt()` read is now guaranteed to already include the first caller's committed row. Re-run against the exact interleaving above: A commits `providerRefundDelta = 60` first; B, now reading under lock, sees `alreadyRecordedRefundGrossMicro = 60` and correctly computes `providerRefundDelta = max(0, 100 - 60) = 40` — total recorded gross reaches exactly the provider's own reported cumulative of **100**, never 160.
+
+**This applies identically to wallet-backed and `direct_deliverable` outcomes** — `$walletBacked` is resolved (unchanged) before the transaction opens and is read, not recomputed, inside it; the lock is acquired unconditionally in both cases, since `direct_deliverable`'s own zero-wallet-delta outcome (§10) still requires the identical aggregate-consistency guarantee this correction adds — a `direct_deliverable` attempt racing two different cumulative reports is exactly as vulnerable to the same defect, and this correction closes it for both without a wallet-backed/zero-delta branch in the locking logic itself.
+
+**Every existing guarantee is preserved, unchanged in substance:**
+- **Refund never creates debt** — `debt_delta_micro` is still a literal `0` in every branch of §6's own formula; nothing about this correction touches that formula.
+- **Used/manual/promotional credit remains non-refundable** — the refund headroom formula (§6) is computed inside `UsageWalletManager::applyProviderRefund()`, unchanged; only *when* the aggregate is read and the delta is computed moved earlier into the lock, never the formula itself.
+- **Out-of-order lower cumulative amounts remain no-ops** — the identical `max(0, bcsub(...))` clamp (§6) still produces `0` for a cumulative at or below what is already recorded; the only change is that this comparison now happens against a guaranteed-current aggregate, closing the specific gap where "current" previously meant "current as of before the lock."
+- **Exact audit attribution is preserved** — `markProcessedWithAttribution()`'s own five-field `ProviderOutcomeResult` contract, and every one of §18's four distinct amount fields, are computed identically from the same `$providerRefundDelta`/`$ledgerEntry`, only now derived from a race-safe delta.
+- **Rollback and after-commit behavior are preserved** — the outer `DB::transaction()` still wraps the identical operations (aggregate read now included), and the `UniqueConstraintViolationException` catch still exists for the ordinary exact-cumulative replay/loser case; a rollback still discards the entire critical section, aggregate read included, exactly as the funding-confirmation concurrency correction's own precedent (elsewhere in this codebase) already established for an analogous outer-transaction-first pattern.
+
+**Explicitly out of scope for this correction:** `UsageBillingCheckoutManager::applyDisputeReinstatementOutcome()` reads its own `withdrawn`/`reinstated` aggregate via `sumDisputeMicroForFundingAttemptAndDispute()` before `UsageWalletManager::reinstateDisputedFunds()`'s own separate lock, a structurally similar shape to the defect above. This correction does **not** confirm, reproduce, or authorize a fix for reinstatement — only the refund race, independently confirmed above, is in scope. `applyDisputeChargebackOutcome()` is unaffected by construction: it computes its own amount directly from one balance transaction's own reported figure, never from a pre-lock cumulative aggregate read.
+
+### 18. Two audit-only handlers discard the ambiguity signal §3 requires uniformly
+
+**The defect, exact and reproduced.** §3 locks one uniform resolution rule for every refund/dispute event this design processes: both references resolve to different attempts → `markFailed('cross_reference_ambiguity')`, zero mutation; neither resolves → `markFailed('no_matching_local_record')`, zero mutation; exactly one resolves → use it. `ProcessPaymentProviderEvent::processDisputeLifecycleAuditOnly()` (`charge.dispute.created`/`.updated`/`.closed`) and `processRefundObjectAuditOnly()` (`refund.created`/`refund.updated`/`refund.failed`/`charge.refund.updated`) both call `resolveFundingAttemptByDualReference()` but destructure only `[$attempt]`, silently discarding the second, `$ambiguous` element of its `array{0: ?BusinessFundingAttempt, 1: bool}` return shape. Two concrete failure modes follow, both independently confirmed:
+
+- **Cross-business ambiguity is silently swallowed.** An audit-only event whose `payment_intent` and `charge` resolve to two different attempts — exactly the shape §3 requires `markFailed('cross_reference_ambiguity')` for — instead falls through with `$attempt = null` (the un-destructured ambiguous case never sets `$attempt` to either candidate) and is recorded via `markIgnoredDisputeAuditOnly()`/its refund-object equivalent as an ordinary, unattributed audit row — the exact ambiguity §3 exists to surface is never raised, never routed to the exhausted-event queue, and never distinguishable in the audit trail from a mundane, genuinely-unresolvable event.
+- **A genuinely unresolvable reference is recorded as audit-only forever, never administrator-visible as exhausted.** When neither reference resolves, both handlers currently record `business_id => null`, `funding_attempt_id => null`, `normalized_outcome => dispute_audit_only`/`refund_object_audit_only`, and mark the event `ignored` — permanently. Because `ignored` is a terminal state distinct from `failed`, such an event never becomes eligible for `exhausted()`/`dispose()` (§19/administrator queue) and is never revisited by anything. This directly contradicts §3's own locked rule, which was written to apply to every refund/dispute event this design processes, not only the mutating ones.
+
+**Corrected — apply §3 uniformly, with no audit-only exception:**
+
+```php
+private function processDisputeLifecycleAuditOnly($event, array $decoded, BusinessFundingAttemptRepository $attemptRepository, UsageBillingCheckoutManager $checkoutManager, PaymentProviderEventRepository $eventRepository): void
+{
+    $object = $decoded['data']['object'] ?? [];
+
+    [$attempt, $ambiguous] = $this->resolveFundingAttemptByDualReference($object['payment_intent'] ?? null, $object['charge'] ?? null, $attemptRepository);
+
+    if ($ambiguous) {
+        $eventRepository->markFailed($event->id, 'cross_reference_ambiguity');
+
+        return;
+    }
+
+    if ($attempt === null) {
+        $eventRepository->markFailed($event->id, 'no_matching_local_record');
+
+        return;
+    }
+
+    $this->markIgnoredDisputeAuditOnly($eventRepository, $event, $attempt, $checkoutManager, $object);
+}
+```
+
+`processRefundObjectAuditOnly()` is corrected identically in shape — both destructure `[$attempt, $ambiguous]`, both check `$ambiguous` then `$attempt === null` before ever calling their own terminal-audit helper, and neither helper (`markIgnoredDisputeAuditOnly()`, and the equivalent inline block inside `processRefundObjectAuditOnly()`) is ever reached, or ever needs its own `?BusinessFundingAttempt $attempt` parameter to accept `null`, once this correction lands — **only an unambiguous, resolved attempt may ever be marked ignored/audit-only with Business attribution**, exactly as §3 already required for the mutating event types.
+
+**This is a correction to this contract's own prior design, not merely an implementation bug.** §17's own original text ("a resolution failure here is itself just audit-only too — these event types never drive mutation, so there is nothing to fail closed against") reasoned only about *mutation* — correctly, since these event types never mutate a balance regardless of resolution — but never addressed the separate, independent value of **administrator visibility**: a truly unresolvable or ambiguous audit-only event left silently `ignored` forever has no owner and is never surfaced, while the identical event marked `failed` becomes visible in the existing, unmodified `exhausted()`/`dispose()` administrator queue once its attempt count crosses the normalized ceiling (§19) — strictly better operational hygiene, at zero mutation cost either way. §17 is corrected accordingly: audit-only event types still never mutate a balance, but an unresolvable or ambiguous reference for *any* refund/dispute event type — mutating or audit-only — now uniformly fails closed per §3, with zero exception.
+
+### Test coverage authorized by this pass — recalculated counts
+
+**+1 method, `tests/Feature/Usage/ProviderRefundDisputeConcurrencyTest.php`, proving the corrected different-cumulative locking order under a genuine OS-level race, using the file's own established subprocess/causal-barrier convention (unchanged mechanism, a third racing scenario):**
+
+4. `test_two_different_provider_event_ids_reporting_different_cumulative_refund_amounts_never_exceed_the_true_provider_cumulative` — races cumulative 60 against cumulative 100 for the same attempt/charge reference. Asserts: total `Refund` gross across both resulting rows equals exactly 100, never 160; total wallet debit is bounded by `min(100, refundable_paid_available_micro, available_balance_micro)`, never double-counted; `refundable_paid_available_micro` reflects exactly one 100-unit debit, not two independent debits; the sum of both rows' own `normalized_outcome_delta_micro`-equivalent gross deltas is exactly 100 (60 + 40, or 100 + 0, depending on commit order — never 60 + 100); no false `refund_exceeds_refundable_balance`/policy-excess suspension occurs when 100 is genuinely within the wallet's own available/refundable-paid balance; the funding attempt's own final recomputed state (§13) reflects gross-refunded 100 against `expected_amount_micro`, correctly `Refunded` only if 100 meets or exceeds that expected amount, `Succeeded` otherwise. The existing method 1 (identical-cumulative race) is retained, unmodified, proving the still-valid, separate idempotency-layer guarantee.
+
+**+4 methods, `tests/Feature/Usage/PaymentProviderEventDurableAuditTest.php`, proving §3's uniform resolution rule now applies to both audit-only event families:**
+
+13. `test_a_dispute_lifecycle_event_whose_references_resolve_to_different_attempts_fails_closed_with_zero_mutation` — a `charge.dispute.updated` event whose `payment_intent` and `charge` resolve to two distinct, real attempts belonging to different businesses is marked `failed` with `cross_reference_ambiguity`, `business_id`/`funding_attempt_id` remain `null`, and neither business's wallet is touched.
+14. `test_a_dispute_lifecycle_event_resolving_by_neither_reference_fails_closed_with_zero_mutation` — a `charge.dispute.closed` event whose `payment_intent` and `charge` resolve to no local attempt at all is marked `failed` with `no_matching_local_record`, not `ignored`, and becomes exhausted-queue-eligible once its own attempts reach the normalized ceiling (§19), exactly like any other unresolvable event.
+15. `test_a_refund_object_event_whose_references_resolve_to_different_attempts_fails_closed_with_zero_mutation` — a `refund.updated` event with cross-business-ambiguous references is marked `failed` with `cross_reference_ambiguity`, zero mutation.
+16. `test_a_refund_object_event_resolving_by_neither_reference_fails_closed_with_zero_mutation` — a `refund.created` event resolving to no local attempt is marked `failed` with `no_matching_local_record`, not `ignored`.
+
+This file's own existing methods 2 and 7 (`test_an_ignored_dispute_created_event_is_attributed_with_normalized_status_and_reason`, `test_a_refund_object_event_is_recorded_as_audit_only_with_no_wallet_mutation`) are retained, unmodified — both already exercise the single-unambiguous-attempt happy path this correction's own `$attempt === null`/`$ambiguous` checks fall through to unchanged.
+
+**Recalculated totals:** §22's production allow-list is unchanged — 31 paths; the two corrected private methods and the one corrected public method all live inside three already-allow-listed files (`app/Library/Usage/UsageBillingCheckoutManager.php`, `app/Jobs/Usage/ProcessPaymentProviderEvent.php`), no new production file. §24's test allow-list gains 5 methods across the same 16 files — `PaymentProviderEventDurableAuditTest.php` becomes 16 methods (12 → 16), `ProviderRefundDisputeConcurrencyTest.php` becomes 4 methods (3 → 4) — for a new locked total of **213 methods across 16 files** (208 + 5).
+
+**Scope, explicit:** this correction authorizes exactly two production clarifications — the locking-order correction in `UsageBillingCheckoutManager::applyRefundOutcome()`, and the ambiguity-handling correction in `ProcessPaymentProviderEvent::processDisputeLifecycleAuditOnly()`/`processRefundObjectAuditOnly()` — and exactly five new test methods, none of which is a new file. It does not authorize any change to `applyDisputeChargebackOutcome()`, `applyDisputeReinstatementOutcome()`, the enum design, the unique-reference-column design, the `normalized_outcome` width, or anything the first two exceptional post-merge implementation corrections already resolved. This correction is **authoring only** — it does not itself modify any implementation, production, migration, or test file; applying it is separately authorized future implementation work, exactly as every prior correction's own production/test changes were.
+
+---
+
 ## 1. Required reading, confirmed by direct re-read this pass
 
 Everything read for Correction Rounds 1/2 remains re-confirmed. **Newly, directly re-read this pass, specifically to derive the four blockers' corrections:** `app/Library/Usage/UsageWalletManager.php`'s own `reserve()` (lines 285–530: the `available_balance_micro < reservedAmountMicro` admission check, the `Reservation` ledger insert, the wallet `UPDATE`), `commit()` (lines 533–760: the `chargedPortion = min($finalAmountMicro, $reservedAmountMicro)` committed-charge shape, the `$overage`/`$overageFromAvailable`/`$overageToDebt` split, the `$unused = $reservedAmountMicro - $finalAmountMicro` unused-release shape, all three confirmed to be exactly reusable as the basis for a parallel paid-attributable calculation with zero change to any existing column or formula), `release()` (lines 774–862: the full-reservation-amount restore shape); `app/Repositories/Contracts/PaymentProviderEventRepository.php`/its Eloquent implementation (confirmed no index exists on `state`/`attempts`/`received_at`/`lease_expires_at`/`normalized_recorded_at` beyond what Correction Round 2 itself proposed); `app/Jobs/Usage/SendLowBalanceNotification.php` (re-confirmed `$tries = 1`, `ShouldQueueAfterCommit`, and that this codebase has never once claimed "exactly-once external delivery" for any notification it sends — only "at most one dispatch decision").
@@ -817,7 +958,7 @@ min(
 
 ## 24. Exact test allow-list
 
-**Corrected by the exceptional post-merge implementation correction, above: "No existing test file requires modification" was false as merged. 16 files, 208 methods — 13 new files (193 methods, unchanged from merge) plus 3 pre-existing files (15 methods, added by this correction, of which exactly 1 method's own body changes; the other 14 are allow-listed only because they share a file with the one shared helper or one renamed method that changes).**
+**Corrected by the exceptional post-merge implementation corrections, above: "No existing test file requires modification" was false as merged. 16 files, 213 methods — 13 new files (198 methods: 193 unchanged from merge plus 5 methods added by the third exceptional post-merge implementation correction, below) plus 3 pre-existing files (15 methods, added by the first correction, of which exactly 1 method's own body changes; the other 14 are allow-listed only because they share a file with the one shared helper or one renamed method that changes).**
 
 | # | File | Methods | Status |
 |---|---|---|---|
@@ -829,16 +970,16 @@ min(
 | 6 | `tests/Feature/Usage/UsageWalletManagerReversalTest.php` | 23 | NEW, unchanged from merge |
 | 7 | `tests/Feature/Usage/ProviderRefundDisputeSurfaceBoundaryTest.php` | 7 | NEW, unchanged from merge |
 | 8 | `tests/Feature/Usage/PaymentProviderEventRetryReclaimTest.php` | 44 | NEW, unchanged from merge |
-| 9 | `tests/Feature/Usage/PaymentProviderEventDurableAuditTest.php` | 12 | NEW, unchanged from merge |
-| 10 | `tests/Feature/Usage/ProviderRefundDisputeConcurrencyTest.php` | 3 | NEW, unchanged from merge |
+| 9 | `tests/Feature/Usage/PaymentProviderEventDurableAuditTest.php` | 16 | NEW at merge (12); **+4 methods, third exceptional post-merge implementation correction** |
+| 10 | `tests/Feature/Usage/ProviderRefundDisputeConcurrencyTest.php` | 4 | NEW at merge (3); **+1 method, third exceptional post-merge implementation correction** |
 | 11 | `tests/Feature/Usage/SendChargebackDisputeNotificationTest.php` | 12 | NEW, unchanged from merge |
 | 12 | `tests/Feature/Usage/RefundablePaidAvailableAccountingTest.php` | 14 | NEW, unchanged from merge |
 | 13 | `tests/Unit/Usage/PaymentProviderEventRetryPolicyTest.php` | 6 | NEW, unchanged from merge |
-| 14 | `tests/Unit/Usage/UsageBillingEnumsTest.php` | 3 | EXISTING — added by this correction; 1 method renamed/reasserted (§ above) |
-| 15 | `tests/Feature/Usage/ReconcileProviderPendingStateTest.php` | 8 | EXISTING — added by this correction; 0 test methods change, shared private helper changes (§ above) |
-| 16 | `tests/Feature/Usage/ConcurrentTopUpConcurrencyTest.php` | 4 | EXISTING — added by this correction; 0 test methods change, shared private helper changes (§ above) |
+| 14 | `tests/Unit/Usage/UsageBillingEnumsTest.php` | 3 | EXISTING — added by the first correction; 1 method renamed/reasserted (§ above) |
+| 15 | `tests/Feature/Usage/ReconcileProviderPendingStateTest.php` | 8 | EXISTING — added by the first correction; 0 test methods change, shared private helper changes (§ above) |
+| 16 | `tests/Feature/Usage/ConcurrentTopUpConcurrencyTest.php` | 4 | EXISTING — added by the first correction; 0 test methods change, shared private helper changes (§ above) |
 
-**Total: 208 methods across 16 files — 193 methods across the 13 NEW files (unchanged from merge), plus 15 methods across the 3 EXISTING files this correction adds (of which exactly 1 changes).**
+**Total: 213 methods across 16 files — 198 methods across the 13 NEW files (193 unchanged from merge, +5 from the third exceptional post-merge implementation correction), plus 15 methods across the 3 EXISTING files the first correction added (of which exactly 1 changes).**
 
 ### Existing test files added by the exceptional post-merge implementation correction
 
@@ -1016,7 +1157,7 @@ min(
 43. `test_a_requested_limit_of_one_is_valid_at_max_attempts_zero_since_only_the_received_branch_is_active`
 44. `test_the_received_only_path_at_max_attempts_zero_executes_exactly_one_query`
 
-### `PaymentProviderEventDurableAuditTest.php` (12) — proves §18; +2 methods this pass, methods renamed/split for the four-field audit semantics (Blocker 3)
+### `PaymentProviderEventDurableAuditTest.php` (16) — proves §18; +2 methods in an earlier pass, methods renamed/split for the four-field audit semantics (Blocker 3); **+4 methods, third exceptional post-merge implementation correction, proving §3's uniform resolution rule for both audit-only event families**
 
 1. `test_a_processed_refund_outcome_is_attributed_with_business_and_funding_attempt_identity`
 2. `test_an_ignored_dispute_created_event_is_attributed_with_normalized_status_and_reason`
@@ -1025,17 +1166,22 @@ min(
 5. `test_the_provider_events_admin_surface_lists_recent_normalized_outcomes_ordered_by_normalized_recorded_at_then_id`
 6. `test_recent_outcomes_clamps_its_accepted_limit_to_the_locked_maximum_and_minimum_regardless_of_the_requested_value`
 7. `test_a_refund_object_event_is_recorded_as_audit_only_with_no_wallet_mutation`
-8. `test_the_administrator_audit_renders_reported_outcome_delta_wallet_delta_and_policy_excess_amounts_exactly_for_a_policy_excess_refund` — **strengthened by the second exceptional post-merge implementation correction** to additionally assert the persisted `normalized_outcome` column reads back as the complete, untruncated `refund_exceeds_refundable_balance` (33 characters, fitting the widened `string(64)` column). An assertion added to this existing method — not a new method; this file's own count (12) is unchanged.
+8. `test_the_administrator_audit_renders_reported_outcome_delta_wallet_delta_and_policy_excess_amounts_exactly_for_a_policy_excess_refund` — **strengthened by the second exceptional post-merge implementation correction** to additionally assert the persisted `normalized_outcome` column reads back as the complete, untruncated `refund_exceeds_refundable_balance` (33 characters, fitting the widened `string(64)` column). An assertion added to this existing method — not a new method.
 9. `test_a_compliant_partial_refund_records_reported_100_outcome_delta_40_and_wallet_delta_40`
 10. `test_a_replayed_refund_records_reported_100_with_outcome_delta_0_and_wallet_delta_0`
 11. `test_a_direct_deliverable_refund_records_reported_100_outcome_delta_100_and_wallet_delta_0`
 12. `test_a_policy_excess_refund_records_reported_100_outcome_delta_100_wallet_delta_60_and_policy_excess_40`
+13. `test_a_dispute_lifecycle_event_whose_references_resolve_to_different_attempts_fails_closed_with_zero_mutation` — **new, third exceptional post-merge implementation correction** (§18 above)
+14. `test_a_dispute_lifecycle_event_resolving_by_neither_reference_fails_closed_with_zero_mutation` — **new, third exceptional post-merge implementation correction** (§18 above)
+15. `test_a_refund_object_event_whose_references_resolve_to_different_attempts_fails_closed_with_zero_mutation` — **new, third exceptional post-merge implementation correction** (§18 above)
+16. `test_a_refund_object_event_resolving_by_neither_reference_fails_closed_with_zero_mutation` — **new, third exceptional post-merge implementation correction** (§18 above)
 
-### `ProviderRefundDisputeConcurrencyTest.php` (3) — unchanged, proves §11, using the established subprocess/causal-barrier convention
+### `ProviderRefundDisputeConcurrencyTest.php` (4) — proves §11, using the established subprocess/causal-barrier convention; **+1 method, third exceptional post-merge implementation correction, proving the corrected different-cumulative locking order (§17 above)**
 
 1. `test_two_different_provider_event_ids_reporting_the_same_cumulative_refund_amount_debit_the_wallet_exactly_once`
 2. `test_two_different_provider_event_ids_reporting_the_same_balance_transaction_apply_the_dispute_chargeback_exactly_once`
 3. `test_two_different_provider_event_ids_reporting_the_same_policy_excess_refund_apply_it_exactly_once_with_no_duplicate_suspension`
+4. `test_two_different_provider_event_ids_reporting_different_cumulative_refund_amounts_never_exceed_the_true_provider_cumulative` — **new, third exceptional post-merge implementation correction** (§17 above)
 
 ### `SendChargebackDisputeNotificationTest.php` (12) — proves §11; every method retains its own coverage, renamed this pass for the honest at-most-one/best-effort guarantee (advisory)
 
