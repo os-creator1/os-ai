@@ -49,17 +49,19 @@ Inspected directly, this pass, against `origin/main` at `6627e1abad1c49456ef5d2c
 
 **The nine post-M5 remediations — independently re-confirmed this pass via `git show --no-patch --format='%H %P'` against every cited SHA below, not assumed from any prior document's prose:**
 
-| # | Remediation | Contract PR(s) | Implementation PR | Closure PR | Final implementation merge SHA |
-|---|---|---|---|---|---|
-| 1 | Reservation Admission Correction | #134 (merge `208c3da`) | #135 (`agent/rfc-005-reservation-admission-correction`) | — | `311bf0bf08cd4bf6c0939aec0cdf45962c4bb9de` |
-| 2 | Funding Provider-Flow Correction | #136 (merge `a23e501`) | #137 (`agent/rfc-005-funding-provider-flow-correction`) | — | `1eba17ae4112a1e5e832627d44c185a0ee3f56ca` |
-| 3 | Receipt Boundary Correction | #138 (merge `bd3d289`) | #139 (`agent/rfc-005-receipt-boundary-correction`) | — | `ae0aba36057360eb1149ef980beeb90f9d2d250f` |
-| 4 | Job/Event Dispatch Completion Correction | #140 (merge `d50979e`) | #141 (`agent/rfc-005-job-event-dispatch-completion-correction`) | — | `6a0456b5606113eca8f9b3dce12af7d97d0fae38` |
-| 5 | Reconciliation-Race Correction | #142 (merge `1d733a2`) | #143 (`agent/rfc-005-reconciliation-race-correction`) | — | `ccee46b6197dfd70980091cae97ecb283a52aed7` |
-| 6 | Funding Confirmation Concurrency Correction | #144 (merge `70ceedb`) + exceptional correction #145 (merge `f08d185`) | #146 (`agent/rfc-005-funding-confirmation-concurrency-correction`) | — | `376fda52ecf449bbb622d2dd0ec40f4411587cc5` |
-| 7 | Admin Usage Billing Surface | #147 (merge `92cb208`) | #148 (`agent/rfc-005-admin-usage-billing-surface`) | — | `a8d2a0f9c03f8295262a9ec7b36374b4b0437294` |
-| 8 | Provider Refund/Dispute Outcome Handling | #149→#150→#151→#152→#154 (contract corrected in place across 2 ordinary + several exceptional correction rounds) | #153 (`agent/rfc-005-provider-refund-dispute-outcome-handling`) | **#155**, merge `2ada6872ed2689361100c98f1ff38ca7843f6f89` | `ea88967af83897bcdf207f05e34c21e2177bcaba` |
-| 9 | RFC-005 §35 Test-Coverage Completion | #156 (merge `cad1b2811d866ef5fadd04b8727eddc60c6ab32f`), authorization #157 (merge `5658ed57aa18ae0b2cca20ca01e06b04d308a5f9`), branch-correction #158 (merge `1115e899bff527ede087363de7fa43914afc9f61`), clean-target-binding #160 (merge `b1ad5e92ede7de147cb3283038479f7df26a87e7`) | #159 (`agent/rfc-005-test-coverage-completion-v2`), final head `d44f919814ddce9caed126f3e93081469d20ad5b` | **#162**, merge `6627e1abad1c49456ef5d2cafc0a1bfd9891b24e` | `c0f3f3a19fecb13e1a72390f26033c0c9873a4c3` |
+| # | Remediation | Contract PR(s) | Dedicated authorization PR | Implementation PR | Closure PR | Final implementation merge SHA |
+|---|---|---|---|---|---|---|
+| 1 | Reservation Admission Correction | #134 (merge `208c3da`) | none | #135 (`agent/rfc-005-reservation-admission-correction`) | — | `311bf0bf08cd4bf6c0939aec0cdf45962c4bb9de` |
+| 2 | Funding Provider-Flow Correction | #136 (merge `a23e501`) | none | #137 (`agent/rfc-005-funding-provider-flow-correction`) | — | `1eba17ae4112a1e5e832627d44c185a0ee3f56ca` |
+| 3 | Receipt Boundary Correction | #138 (merge `bd3d289`) | none | #139 (`agent/rfc-005-receipt-boundary-correction`) | — | `ae0aba36057360eb1149ef980beeb90f9d2d250f` |
+| 4 | Job/Event Dispatch Completion Correction | #140 (merge `d50979e`) | none | #141 (`agent/rfc-005-job-event-dispatch-completion-correction`) | — | `6a0456b5606113eca8f9b3dce12af7d97d0fae38` |
+| 5 | Reconciliation-Race Correction | #142 (merge `1d733a2`) | none | #143 (`agent/rfc-005-reconciliation-race-correction`) | — | `ccee46b6197dfd70980091cae97ecb283a52aed7` |
+| 6 | Funding Confirmation Concurrency Correction | #144 (merge `70ceedb`) + exceptional correction #145 (merge `f08d185`) | none | #146 (`agent/rfc-005-funding-confirmation-concurrency-correction`) | — | `376fda52ecf449bbb622d2dd0ec40f4411587cc5` |
+| 7 | Admin Usage Billing Surface | #147 (merge `92cb208`) | none | #148 (`agent/rfc-005-admin-usage-billing-surface`) | — | `a8d2a0f9c03f8295262a9ec7b36374b4b0437294` |
+| 8 | Provider Refund/Dispute Outcome Handling | #149→#150→#151→#152 (contract corrected in place across 2 ordinary + several exceptional correction rounds) | **#154**, head `e6792e625215e823a77425a0283e44dc37cbcd3a`, merge `f10cc6922de3525f7f1118880f3c6212de4d99d6` — independently re-confirmed this pass via `git show`: pinned PR #153's exact implementation target and set `implementation_authorized: true` | #153 (`agent/rfc-005-provider-refund-dispute-outcome-handling`) | **#155**, merge `2ada6872ed2689361100c98f1ff38ca7843f6f89` | `ea88967af83897bcdf207f05e34c21e2177bcaba` |
+| 9 | RFC-005 §35 Test-Coverage Completion | #156 (merge `cad1b2811d866ef5fadd04b8727eddc60c6ab32f`) | **#157**, merge `5658ed57aa18ae0b2cca20ca01e06b04d308a5f9`, plus two subsequent branch-hygiene correction PRs — #158 (merge `1115e899bff527ede087363de7fa43914afc9f61`) and clean-target-binding #160 (merge `b1ad5e92ede7de147cb3283038479f7df26a87e7`) — required after an accidental temporary path was created and deleted on the originally authorized branch; those two corrections were caused by that branch incident, not by the existence of the authorization PR itself | #159 (`agent/rfc-005-test-coverage-completion-v2`), final head `d44f919814ddce9caed126f3e93081469d20ad5b` | **#162**, merge `6627e1abad1c49456ef5d2cafc0a1bfd9891b24e` | `c0f3f3a19fecb13e1a72390f26033c0c9873a4c3` |
+
+**Corrected classification, mechanically re-verified this pass via direct `git show` against every PR above (superseding this document's own prior draft, which incorrectly stated Remediation 8 used no separate authorization PR):** Remediations 1 through 7 used no dedicated implementation-authorization PR — a contract merges, a human gives the go-ahead informally, and a fresh implementation branch is opened and merged directly. **Remediation 8 used a dedicated authorization PR, #154**, whose own branch name (`chore/rfc-005-provider-refund-dispute-outcome-implementation-authorization`) states its purpose explicitly, confirmed by direct inspection to pin PR #153's exact branch/starting head and flip `implementation_authorized: true` before any of PR #152's authorized implementation corrections were applied. **Remediation 9 also used a dedicated authorization PR, #157.** So the correct count is **7 of 9 remediations used no dedicated authorization PR, while the two most recent, largest remediations (8 and 9) both used one.** Remediation 9's own two branch-hygiene correction PRs (#158, #160) were caused by an accidental temporary path created and deleted on its originally authorized branch — a hygiene incident, not a consequence of having an authorization PR at all; Remediation 8's own authorization PR (#154) produced no such incident and no correction PRs of any kind.
 
 (Remediation numbering above follows each document's own self-declared sequence position, exactly as its own governance text states — items 5 and 6 in the table are drafted and merged in a different order than their own contract text numbers them, a pre-existing naming quirk in the source documents this contract does not attempt to renumber or repair.)
 
@@ -106,7 +108,13 @@ Confirmed by direct inspection this pass, all six domains non-empty on current `
 
 This is exactly RFC-004 M4's own five domains (Entitlement, Workspace, Business, Opportunity, full suite) with RFC-005's own Usage domain prepended as the sixth — the identical mechanical progression RFC-004 M4 itself used against RFC-003 M6's four, unchanged in shape since the superseded contract. **§6 below locks these six commands; the file/method counts above are current-state evidence for the eventual M6 implementer to re-confirm, not a promise this contract itself re-verifies at implementation time.**
 
-**Mechanical-count caveat, disclosed rather than silently rounded away:** a repository-wide `grep -rc "public function test_" tests/ --include="*.php"` returns **3517**, while the most recently recorded actual `php artisan test --stop-on-failure` run (Remediation #7's own closure evidence, `RFC-005-TEST-COVERAGE-COMPLETION-CLOSURE.md`) reported **3514 passed**. The 3-method gap was not fully root-caused this pass (no abstract base test class or non-test helper file matching the naming convention was found to explain it); it is small, pre-existing, and not attributable to any change this contract makes. **The eventual M6 conformance document must record the actual `php artisan test` output, never a static grep count, as its own §37 evidence** — this discrepancy is exactly why.
+**The 3517-versus-3514 discrepancy, mechanically resolved this pass — not left as an unexplained residue.** A repository-wide `grep -c "public function test_"` across every `*Test.php` file (the exact suffix `phpunit.xml` itself uses for test discovery, `<directory suffix="Test.php">`) returns **3517** declared methods, across 295 files. The most recently recorded actual `php artisan test --stop-on-failure` run (Remediation 9's own closure evidence) reported **3514 passed**. Re-run this pass via `php artisan test --list-tests` against current `main` and cross-checked method-by-method, method-per-class, against the same 295-file grep inventory, the gap is fully and exactly explained by three independent, verified mechanisms — no residue remains:
+
+1. **57 declared methods, across 6 files, are excluded from execution entirely** by `phpunit.xml`'s own `<groups><exclude>` block (`historical-m1a`, `workspace-pre-enforcement`, `workspace-enforcement`), matched against each file's own class-level `#[Group(...)]` attribute — confirmed directly via `php artisan test --list-tests`, which lists zero methods for any of these six classes: `BackfillWorkspacesCommandTest` (9, `#[Group('historical-m1a')]`), `WorkspaceBackfillMigrationTest` (6, `historical-m1a`), `WorkspaceBackfillV1ConcurrencyTest` (2, `historical-m1a`), `WorkspaceBackfillV1Test` (24, `historical-m1a`), `WorkspaceEnforcementMigrationTest` (13, `workspace-enforcement`), `WorkspaceManagerPreEnforcementTest` (3, `workspace-pre-enforcement`). These are deliberately excluded, pre-existing historical/pre-enforcement regression fixtures, openly declared, not a hidden gap.
+2. **Exactly one executed, discovered test method uses PHPUnit's own bare `test`-prefix convention without an underscore**, which grep's `public function test_` pattern (requiring a literal underscore) structurally cannot match: `tests/Unit/ExampleTest.php::testBasicTest()` — Laravel's own unmodified default scaffold test, confirmed present in the actual `--list-tests` output, contributing exactly 1 executed case grep never counted.
+3. **Ordinary `#[DataProvider]` fan-out** on a number of the remaining, correctly-counted, non-excluded `test_`-prefixed methods causes each such method to execute as more than one case — for example `PlatformThemePresetAuthorizationTest::test_guest_cannot_access_protected_routes` alone executes as 2 cases (`#0`, `#1`), confirmed directly in `--list-tests`' own output. This is the ordinary, expected reason a "number of declared methods" and a "number of executed cases" are different metrics in any PHPUnit suite that uses data providers at all — not a defect or an omission.
+
+**The exact reconciling arithmetic, mechanically verified:** 3517 (declared `test_`-prefixed methods) − 57 (excluded by the three named groups, 0 cases each) = 3460 declared, executing `test_`-prefixed methods. Those 3460, once every data provider's own fan-out is applied, execute as exactly 3513 cases. 3513 + 1 (`testBasicTest()`, mechanism 2, which was never part of the 3517 base to begin with, since it lacks the underscore grep requires) = **3514 — exactly matching the authoritative `php artisan test` run, with zero unexplained residue.** No genuinely mysterious or unaccounted-for method exists; the apparent near-equality of 3517 and 3514 is coincidental — a 57-method exclusion very nearly offset by ordinary data-provider fan-out plus one naming-convention outlier, not a literal "three specific methods" gap. **The eventual M6 conformance document must record the actual `php artisan test` output as its own §37 evidence — a static grep count is supporting inventory only, never authoritative, exactly because of the three independent mechanisms shown above.**
 
 ### Open §39 items and the pilot, re-confirmed directly against current code (not resolved by this contract)
 
@@ -128,15 +136,16 @@ Before human merge of this contract PR: **PROPOSED — NOT AUTHORIZED UNTIL HUMA
 
 After this exact one-file contract PR is human-reviewed and merged: manual RFC-005 Milestone 6 release-readiness work is directly authorized under this document. **No separate implementation-authorization PR is required.**
 
-**This choice is re-derived this pass, explicitly, against both possible current precedents — not inherited blindly from the superseded contract's own identical conclusion:**
+**This choice is re-derived this pass, explicitly and mechanically, against the corrected remediation-authorization history in the table above — not inherited blindly from the superseded contract's own identical conclusion, and not from an earlier, incorrect draft of this same section:**
 
-- **Remediation 9 (Test-Coverage-Completion) used a genuinely separate, dedicated implementation-authorization PR** (#157) — the heaviest governance pattern seen anywhere in RFC-005's post-M5 history — and that choice directly produced two extra hygiene-correction PRs (#158, #160) to fix an implementation-branch incident before the real implementation PR (#159) could even begin. That overhead was a cost of the heavy pattern, not a benefit of it.
-- **Remediation 8 (Provider Refund/Dispute Outcome Handling) used no separate authorization PR at all** — its contract's own final correction pass directly authorized completion of an already-open implementation PR.
-- **Seven of the nine post-M5 remediations (1 through 7, by the numbering in the table above) used no separate authorization PR** — contract merges, a human gives the go-ahead, a fresh implementation branch is opened and merged. This is the dominant, most-repeated convention in RFC-005's own governance history.
+- **Remediations 1 through 7 (of 9) used no dedicated implementation-authorization PR** — a contract merges, a human gives the go-ahead informally, and a fresh implementation branch is opened and merged directly. This is the dominant convention across most of RFC-005's own post-M5 governance history.
+- **Remediation 8 (Provider Refund/Dispute Outcome Handling) used a dedicated authorization PR, #154**, independently re-confirmed this pass (head `e6792e625215e823a77425a0283e44dc37cbcd3a`, merge `f10cc6922de3525f7f1118880f3c6212de4d99d6`), which pinned implementation PR #153's exact branch/starting head and set `implementation_authorized: true` before any of PR #152's authorized corrections were applied. This produced no branch-hygiene incident and no correction PRs of any kind.
+- **Remediation 9 (Test-Coverage-Completion) also used a dedicated authorization PR, #157** (merge `5658ed57aa18ae0b2cca20ca01e06b04d308a5f9`). Its own two subsequent correction PRs (#158, #160) were caused by an accidental temporary path created and deleted on the originally authorized implementation branch — a branch-hygiene incident distinct from, and not caused by, the authorization PR's own existence. Remediation 8's own authorization PR shows a dedicated authorization step does not inherently produce that kind of incident.
+- **The correct count is therefore 7 of 9 remediations used no dedicated authorization PR, while the two most recent, largest remediations (8 and 9) both used one.** Read plainly, RFC-005's own governance history shows no single, uniform convention on this question — it has used both patterns, with the two most recent, most substantial remediations both choosing the heavier one.
 - **The superseded M6 contract itself already locked "no separate authorization PR"** for M6 specifically (its own §1: *"Do not introduce a target-marker PR, an inert implementation PR, a separate authorization PR"*), citing RFC-003 M6's and RFC-004 M4's own identical, successful precedent for exactly this kind of terminal, two-file, conformance-and-deployment-only milestone.
-- **The structural reason Remediation 9 needed a heavier pattern does not apply to M6.** That remediation locked an exact, narrow method-count/file-count contract against a long-lived implementation branch across a branch-hygiene incident requiring precise SHA re-pinning. M6's own release-readiness work is a single, bounded, two-new-file documentation PR created fresh, once, directly from post-merge `main` — there is no pre-existing branch to re-pin, no method-count lock to enforce across a correction round, and no history of hygiene incidents on any of the three prior terminal-milestone contracts (M6 itself, RFC-003 M6, RFC-004 M4) that would justify the extra ceremony.
+- **The structural reason Remediations 8 and 9 chose a dedicated authorization PR does not apply to M6.** Both of those remediations locked an exact, narrow production/test method-count-and-file-count contract against a long-lived implementation branch, where pinning the exact authorized starting SHA in a separate, reviewable document had real value (and, for Remediation 9, additional value in precisely re-pinning a *replacement* branch after its own hygiene incident). M6's own release-readiness work is a single, bounded, two-new-file documentation PR, containing zero product/schema/test changes, created fresh, once, directly from post-merge `main` — there is no pre-existing branch to re-pin, no production method-count lock to enforce across a correction round, and no history of hygiene incidents on any of the three prior terminal-milestone contracts (M6 itself, RFC-003 M6, RFC-004 M4) that would justify the extra step.
 
-**Conclusion: M6 uses the simplified, no-separate-authorization pattern — the same pattern seven of nine remediations and both directly-analogous terminal-milestone precedents (RFC-003 M6, RFC-004 M4) already use.** Milestone 6 follows the same workflow those two established:
+**Conclusion: M6 uses the simplified, no-dedicated-authorization-PR pattern — the pattern seven of nine remediations and both directly-analogous terminal-milestone precedents (RFC-003 M6, RFC-004 M4) already use, and one this contract's own two-document, zero-product-change scope does not need the heavier pattern to protect.** Milestone 6 follows the same workflow those two established:
 
 ```
 this M6 contract PR → human merge →
@@ -144,10 +153,13 @@ one M6 release-readiness branch/PR (conformance + deployment guide) →
 human regression/conformance review → human merge →
 post-merge exact-tag-candidate regression →
 separate, explicit human tag authorization →
-annotated tag
+annotated tag creation and verification →
+one final governance-only RFC-005 closure/state PR (§10)
 ```
 
-Do **not** introduce a target-marker PR, an inert implementation PR, a separate authorization PR, or any `AI-AUTONOMY-STATE.json` churn at any point in this sequence.
+Do **not** introduce a target-marker PR, an inert implementation PR, a separate implementation-authorization PR, or any `AI-AUTONOMY-STATE.json` churn at any point before the final closure/state PR named in §10 — that closure PR is the one and only point in this entire sequence where `AI-AUTONOMY-STATE.json` is touched, and it happens only after the tag is created and verified, never before.
+
+**This contract's own eventual human merge is manual authority only — it is not, and cannot become, automatic authorization.** `docs/automation/AI-AUTONOMY-STATE.json` remains, throughout this entire sequence, in its current idle, non-authorizing state (`implementation_authorized: false`, `active_pull_request: null`) — this contract does not flip it, and nothing in this document causes any automation to start M6 work. Every step above (the release-readiness branch, its PR, the tag-candidate regression, the tag itself, and the final closure PR) requires its own explicit human action; none is triggered by this contract's merge alone.
 
 Locked:
 
@@ -377,19 +389,32 @@ If verification fails on any point, Milestone 6 is not complete.
 
 ---
 
-## 10. M6 completion semantics
+## 10. M6 completion semantics and the final governance closure PR
 
-Milestone 6 — and RFC-005 as a whole — becomes **COMPLETE** only after:
+**The annotated tag remains the immutable RFC-005 release marker.** It is created and verified once, per §9, and is never re-created, re-pointed, or superseded by anything that follows. The final closure PR required below is **not a second release gate** — it performs no regression, blocks nothing, and cannot be a precondition of anything §6–§9 already gate. Its only purpose is to record completion and restore `docs/automation/AI-AUTONOMY-STATE.json` to a truthful idle state, since the repository's own authoritative governance state must not be left permanently reading `remediation_7_closed_pending_m6_contract_reaudit` after RFC-005 is actually done.
 
-- this M6 contract is merged
-- the M6 conformance/deployment PR is merged
-- all required human regression gates (§6, §8) pass
-- every §37 acceptance condition is satisfied
-- explicit human tag authorization occurs
-- the annotated tag is created and pushed
-- the annotated tag is verified against the exact intended commit (§9)
+Milestone 6 — and RFC-005 as a whole — becomes **COMPLETE** only after every one of these, in order:
 
-The verified annotated tag itself is the immutable RFC-005 release marker. **Do not require another redundant post-tag closure PR by default** — the tag, once verified, is the completion record.
+1. this M6 contract is merged
+2. a fresh, manual `agent/rfc-005-m6` branch is created from post-merge `main` (§2)
+3. the two-document M6 release-readiness PR is opened and merged (§3–§7)
+4. all required human regression gates (§6, §8) pass
+5. every §37 acceptance condition is satisfied
+6. the post-merge exact-tag-candidate regression (§8) passes
+7. explicit, separate human tag authorization occurs, and the annotated tag is created and pushed (§9)
+8. the annotated tag is verified against the exact intended commit (§9)
+9. **one final, governance-only RFC-005 closure/state pull request is drafted and human-merged**, per its own exact requirements below
+
+**Step 9 — the final closure PR — exact requirements:**
+
+- Creates exactly one new closure document (e.g. `docs/automation/RFC-005-CLOSURE.md` or `docs/automation/RFC-005-M6-CLOSURE.md` — the exact filename is the future closure author's own choice, following the naming convention `RFC-005-PROVIDER-REFUND-DISPUTE-OUTCOME-HANDLING-CLOSURE.md` and `RFC-005-TEST-COVERAGE-COMPLETION-CLOSURE.md` already established), recording: the M6 release-readiness PR number and its exact final head/merge SHAs, the exact tag-candidate SHA captured in §8, the verified annotated tag's own name/SHA/annotation (§9's own verification output), and a summary of every gate that passed.
+- May append one concise completion record to `docs/automation/RFC-005-M6-CONFORMANCE.md` where appropriate (mirroring how prior remediation contracts each received a concise closure record appended in place) — it must not rewrite or restate that document's own conformance rows.
+- Updates `docs/automation/AI-AUTONOMY-STATE.json` to an idle, non-authorizing state reflecting RFC-005's own completion: `active_pull_request: null`, `head_branch: "none"`, `implementation_authorized: false`, a `status` value indicating RFC-005 is complete (e.g. `"rfc_005_complete_tagged"`), `next_candidate: null` (or a future RFC's own name, only if a human has separately, explicitly selected one — never invented by this closure PR itself), and `completed_pull_request`/`completed_product_head_sha`/`completed_merge_commit_sha` updated to the M6 release-readiness PR's own final evidence.
+- Authorizes no next RFC, no design module, and no further work of any kind beyond recording completion.
+- Contains **zero** product, test, schema, config, or route changes — governance documents and `AI-AUTONOMY-STATE.json` only, exactly like every prior remediation's own closure PR.
+- Is merged by a human, same as every other step in this sequence.
+
+**M6 itself still uses no dedicated implementation-authorization PR (§1) — this final closure PR is a distinct, later, one-time governance action, required only once, after the tag exists and is verified, never before it and never in place of it.** `AI-AUTONOMY-STATE.json` is touched exactly once in this entire sequence: by this final closure PR, and by nothing before it.
 
 M6 completion must **not** automatically:
 
@@ -403,8 +428,9 @@ M6 completion must **not** automatically:
 - change `advance_automatically`, `start_automatically_after_contract_merge`, or `require_exact_scope`
 - enable Codex-required completion or an automatic model handoff
 - enable automatic merge or automatic tagging
+- treat the final closure PR (step 9 above) as itself a release gate, or as authorization for any product/test/schema/config/route change
 
-**No automatic next-RFC start.** Any RFC beyond RFC-005 remains separately designed and separately authorized work. Any next project selection remains a separate, explicit human decision, made after RFC-005's tag is verified, not implied by it.
+**No automatic next-RFC start.** Any RFC beyond RFC-005 remains separately designed and separately authorized work. Any next project selection remains a separate, explicit human decision, made after RFC-005's tag is verified and its closure PR merged, not implied by either.
 
 ---
 
@@ -434,3 +460,4 @@ Do not modify `docs/automation/AI-AUTONOMY-STATE.json`. Do not create a target m
 - `start_automatically_after_contract_merge` remains `false`.
 - `require_exact_scope` remains `true`.
 - `maximum_correction_rounds` remains `2`.
+- No modification of `docs/automation/AI-AUTONOMY-STATE.json` at any point in this sequence except the one final governance-only closure PR (§10), performed only after the tag is created and verified — this contract's own merge does not touch it, does not flip `implementation_authorized`, and authorizes no automation to act on it.
