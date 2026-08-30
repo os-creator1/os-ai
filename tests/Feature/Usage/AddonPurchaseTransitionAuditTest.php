@@ -5,6 +5,7 @@ namespace Tests\Feature\Usage;
 use App\Enums\Usage\AddonPurchaseStatus;
 use App\Enums\Usage\FundingAttemptState;
 use App\Enums\Usage\PayerType;
+use App\Enums\Usage\TransitionSource;
 use App\Events\Usage\BusinessFundingAttemptSucceeded;
 use App\Library\Usage\BillingProfileManager;
 use App\Library\Usage\CheckoutSessionResult;
@@ -317,6 +318,9 @@ class AddonPurchaseTransitionAuditTest extends TestCase
 
         $purchase = app(BusinessUsageAddonPurchaseRepository::class)->findById($result->addonPurchaseId);
         $this->assertSame(AddonPurchaseStatus::Completed, $purchase->status);
+
+        $transitions = app(BusinessUsageAddonPurchaseTransitionRepository::class)->forPurchase((int) $purchase->id);
+        $this->assertSame(TransitionSource::WebhookEvent, $transitions->last()->source);
     }
 
     public function test_initiate_addon_purchase_creates_a_checkout_session_and_returns_a_hosted_redirect_url(): void
@@ -370,6 +374,9 @@ class AddonPurchaseTransitionAuditTest extends TestCase
         $manager->confirmAttemptFromReturn($attempt);
 
         Queue::assertPushed(SendReceiptNotification::class, 1);
+
+        $transitions = app(BusinessUsageAddonPurchaseTransitionRepository::class)->forPurchase((int) $result->addonPurchaseId);
+        $this->assertSame(TransitionSource::SyncResponse, $transitions->last()->source);
     }
 
     /**

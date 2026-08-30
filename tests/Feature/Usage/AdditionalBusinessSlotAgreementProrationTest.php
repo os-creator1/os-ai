@@ -8,6 +8,7 @@ use App\Library\Usage\Contracts\PaymentProviderGateway;
 use App\Library\Usage\FakePaymentProviderGateway;
 use App\Library\Usage\PaymentMethodResult;
 use App\Library\Usage\UsageBillingCheckoutManager;
+use App\Library\Usage\UsageWalletManager;
 use App\Models\Currency;
 use App\Models\User;
 use App\Models\Workspace;
@@ -16,6 +17,7 @@ use App\Repositories\Contracts\AdditionalBusinessSlotRenewalChargeRepository;
 use App\Repositories\Contracts\PaymentProviderCustomerRepository;
 use App\Repositories\Contracts\WorkspacePlanCatalogRepository;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Tests\TestCase;
@@ -44,8 +46,17 @@ class AdditionalBusinessSlotAgreementProrationTest extends TestCase
         app()->instance(PaymentProviderGateway::class, $this->gateway);
     }
 
+    protected function tearDown(): void
+    {
+        Carbon::setTestNow();
+
+        parent::tearDown();
+    }
+
     public function test_mid_period_increase_freezes_its_exact_positive_allocation_delta_independent_of_amount(): void
     {
+        Carbon::setTestNow(Carbon::parse('2026-05-15 12:00:00', 'UTC'));
+
         $owner = User::create([
             'first_name' => 'Fixture', 'last_name' => 'Owner', 'email' => 'owner'.uniqid().'@example.test',
             'status' => true, 'is_admin' => false, 'is_customer' => true, 'active_portal' => 'customer',
@@ -89,6 +100,21 @@ class AdditionalBusinessSlotAgreementProrationTest extends TestCase
         // a genuinely mid-period, less-than-a-full-month proration must
         // charge strictly less than that.
         $this->assertLessThan(10_000_000, $charge->amount_micro_snapshot);
+
+        // Independent, exact-second recomputation of the same formula
+        // UsageBillingCheckoutManager::requestSlotAgreementIncrease() uses
+        // (never merely asserting a loose bound, which cannot distinguish
+        // a correct implementation from an off-by-formula regression that
+        // still happens to land strictly between 0 and the full price).
+        $periodEndForRecomputation = Carbon::instance($periodEnd)->toImmutable();
+        $periodStartForRecomputation = $periodEndForRecomputation->subMonthNoOverflow();
+        $now = Carbon::now()->toImmutable();
+        $remainingSeconds = max(0, $periodEndForRecomputation->getTimestamp() - $now->getTimestamp());
+        $totalSeconds = max(1, $periodEndForRecomputation->getTimestamp() - $periodStartForRecomputation->getTimestamp());
+        $fullAmount = '10000000'; // 1 slot at $20.00 x 0.5000 ratio, confirmed above as the unprorated full amount.
+        $expectedProratedAmount = (int) UsageWalletManager::bcRoundHalfUp(bcmul($fullAmount, (string) $remainingSeconds, 0), (string) $totalSeconds);
+
+        $this->assertSame($expectedProratedAmount, $charge->amount_micro_snapshot);
     }
 
     public function test_decreasing_target_allocation_never_retroactively_refunds_the_current_period(): void

@@ -7,6 +7,7 @@ use App\Enums\Usage\FundingAttemptState;
 use App\Enums\Usage\PayerType;
 use App\Exceptions\Usage\FundingAttemptNotResumableException;
 use App\Exceptions\Usage\UnauthorizedPayerAssignmentException;
+use App\Exceptions\Usage\UnauthorizedUsageBillingManagementException;
 use App\Library\Entitlement\EntitlementManager;
 use App\Library\Usage\BillingProfileManager;
 use App\Library\Usage\Contracts\PaymentProviderGateway;
@@ -289,6 +290,45 @@ class FundingAttemptPayerConsentTest extends TestCase
         // correction introduces no new origination authority.
         $this->expectException(UnauthorizedPayerAssignmentException::class);
         app(UsageBillingCheckoutManager::class)->initiateTopUp($business, (int) $admin->id, 1_000_000);
+    }
+
+    public function test_platform_administrator_cannot_enable_auto_recharge_under_any_payer_type(): void
+    {
+        [$customer, $business] = $this->businessWithAttachedInstrument();
+
+        $admin = User::create([
+            'first_name' => 'Admin', 'last_name' => 'User', 'email' => 'admin' . uniqid() . '@example.test',
+            'status' => true, 'is_admin' => true, 'is_customer' => false, 'active_portal' => 'admin',
+        ]);
+
+        // Payer type: Workspace — businessWithAttachedInstrument()'s own
+        // default. The admin is neither the workspace owner nor the
+        // business's own customer, so must be denied before any state
+        // mutation — never bypassed by an admin-role special case.
+        $deniedUnderWorkspace = false;
+        try {
+            app(UsageWalletManager::class)->configureAutoRecharge($business, true, '2000000', '3000000', null, (int) $admin->id);
+        } catch (UnauthorizedUsageBillingManagementException $e) {
+            $deniedUnderWorkspace = true;
+        }
+        $this->assertTrue($deniedUnderWorkspace, 'Expected denial under PayerType::Workspace.');
+        $walletAfterWorkspaceAttempt = app(\App\Repositories\Contracts\BusinessUsageWalletRepository::class)->findByBusinessId((int) $business->id);
+        $this->assertFalse((bool) $walletAfterWorkspaceAttempt->auto_recharge_enabled);
+
+        // Payer type: Business (direct) — switch the payer, then confirm
+        // the identical denial under this payer_type too, exactly as the
+        // requirement's own "under any payer_type" wording demands.
+        app(BillingProfileManager::class)->changePayer($business, PayerType::Business, (int) $customer->user_id, 'Switch to direct payer.');
+
+        $deniedUnderBusiness = false;
+        try {
+            app(UsageWalletManager::class)->configureAutoRecharge($business, true, '2000000', '3000000', null, (int) $admin->id);
+        } catch (UnauthorizedUsageBillingManagementException $e) {
+            $deniedUnderBusiness = true;
+        }
+        $this->assertTrue($deniedUnderBusiness, 'Expected denial under PayerType::Business.');
+        $walletAfterBusinessAttempt = app(\App\Repositories\Contracts\BusinessUsageWalletRepository::class)->findByBusinessId((int) $business->id);
+        $this->assertFalse((bool) $walletAfterBusinessAttempt->auto_recharge_enabled);
     }
 
     public function test_completing_a_top_up_never_enables_auto_recharge(): void

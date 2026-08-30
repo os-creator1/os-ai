@@ -3,6 +3,7 @@
 namespace Tests\Feature\Usage;
 
 use App\Models\PaymentProviderEvent;
+use App\Repositories\Contracts\PaymentProviderEventRepository;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
@@ -94,5 +95,51 @@ class PaymentProviderEventSchemaTest extends TestCase
         $this->assertSame('evt_purge_test', $fresh->provider_event_id);
         $this->assertSame(hash('sha256', 'sensitive-payload'), $fresh->payload_hash);
         $this->assertSame('Resolved manually.', $fresh->disposition_note);
+    }
+
+    private function createProcessingEvent(): int
+    {
+        return DB::table('payment_provider_events')->insertGetId([
+            'provider' => 'stripe',
+            'provider_event_id' => 'evt_'.uniqid(),
+            'event_type' => 'payment_intent.succeeded',
+            'provider_object_id' => 'pi_x',
+            'payload_hash' => hash('sha256', 'x'),
+            'state' => 'processing',
+            'attempts' => 1,
+            'received_at' => now(),
+            'processing_started_at' => now(),
+            'lease_expires_at' => now()->addMinutes(5),
+        ]);
+    }
+
+    public function test_marking_processed_sets_completed_at_never_processed_at_and_clears_the_lease(): void
+    {
+        $this->assertNotContains('processed_at', DB::getSchemaBuilder()->getColumnListing('payment_provider_events'));
+
+        $id = $this->createProcessingEvent();
+        $repository = app(PaymentProviderEventRepository::class);
+
+        $repository->markProcessed($id);
+
+        $event = $repository->findById($id);
+        $this->assertSame('processed', $event->state->value);
+        $this->assertNotNull($event->completed_at);
+        $this->assertNull($event->lease_expires_at);
+    }
+
+    public function test_marking_ignored_sets_completed_at_never_processed_at_and_clears_the_lease(): void
+    {
+        $this->assertNotContains('processed_at', DB::getSchemaBuilder()->getColumnListing('payment_provider_events'));
+
+        $id = $this->createProcessingEvent();
+        $repository = app(PaymentProviderEventRepository::class);
+
+        $repository->markIgnored($id);
+
+        $event = $repository->findById($id);
+        $this->assertSame('ignored', $event->state->value);
+        $this->assertNotNull($event->completed_at);
+        $this->assertNull($event->lease_expires_at);
     }
 }

@@ -4,22 +4,30 @@ namespace Tests\Feature\Usage;
 
 use App\Enums\Entitlement\WorkspacePlanTier;
 use App\Enums\Usage\FundingAttemptState;
+use App\Enums\Usage\PayerType;
 use App\Enums\Usage\SlotAgreementState;
 use App\Library\Entitlement\EntitlementManager;
+use App\Library\Usage\BillingProfileManager;
 use App\Library\Usage\Contracts\PaymentProviderGateway;
 use App\Library\Usage\FakePaymentProviderGateway;
+use App\Library\Usage\PaymentInstrumentManager;
 use App\Library\Usage\PaymentMethodResult;
 use App\Library\Usage\UsageBillingCheckoutManager;
+use App\Library\Usage\UsageWalletManager;
 use App\Models\Currency;
 use App\Models\PaymentProviderEvent;
 use App\Models\User;
 use App\Models\Workspace;
 use App\Repositories\Contracts\AdditionalBusinessSlotAgreementRepository;
 use App\Repositories\Contracts\AdditionalBusinessSlotRenewalChargeRepository;
+use App\Repositories\Contracts\BusinessFundingAttemptRepository;
+use App\Repositories\Contracts\BusinessRepository;
+use App\Repositories\Contracts\BusinessUsageWalletRepository;
 use App\Repositories\Contracts\PaymentProviderCustomerRepository;
 use App\Repositories\Contracts\WorkspacePlanCatalogRepository;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Tests\Feature\Business\Concerns\CreatesBusinessTestData;
 use Tests\TestCase;
 
 /**
@@ -37,6 +45,7 @@ use Tests\TestCase;
 class WebhookSlotAgreementSubjectRoutingTest extends TestCase
 {
     use RefreshDatabase;
+    use CreatesBusinessTestData;
 
     private FakePaymentProviderGateway $gateway;
 
@@ -202,5 +211,96 @@ class WebhookSlotAgreementSubjectRoutingTest extends TestCase
 
         $refreshedCharge = app(AdditionalBusinessSlotRenewalChargeRepository::class)->findById($charge->id);
         $this->assertSame(FundingAttemptState::Failed, $refreshedCharge->state);
+    }
+
+    /**
+     * RFC-005 Remediation #6 §3/§19 — a provider_session_or_intent_reference
+     * value is asserted unique within each of business_funding_attempts and
+     * additional_business_slot_renewal_charges independently; resolution
+     * loads exactly the one local record named by the event's metadata
+     * hint, never via the shared, identical event_type alone.
+     */
+    private function pendingAutoRechargeAttempt(Workspace $workspace, User $owner): array
+    {
+        $customer = $this->createCustomer();
+        $business = app(BusinessRepository::class)->createForCustomerInWorkspace($customer, $workspace, $this->businessAttributes());
+        app(UsageWalletManager::class)->initializeWalletForNewBusiness($business->id);
+        app(BillingProfileManager::class)->changePayer($business, PayerType::Workspace, $owner->id, 'Test.');
+
+        $instrumentManager = app(PaymentInstrumentManager::class);
+        $setupIntent = $instrumentManager->createSetupIntent($business, $owner->id);
+        $providerCustomer = app(PaymentProviderCustomerRepository::class)->findActiveByWorkspaceId((int) $workspace->id);
+        $this->gateway->registerPaymentMethod(new PaymentMethodResult(
+            'pm_fake_'.substr($setupIntent->providerSetupIntentId, strlen('seti_fake_')),
+            $providerCustomer->provider_customer_id,
+            'card', 'visa', '4242', 12, 2030,
+        ));
+        $instrumentManager->confirmSetupIntentAndAttach($business, $owner->id, $setupIntent->providerSetupIntentId);
+
+        $this->gateway->paymentIntentOutcomes = ['*' => 'requires_action'];
+        $result = app(UsageBillingCheckoutManager::class)->initiateAutoRecharge($business, 5_000_000);
+        $attempt = app(BusinessFundingAttemptRepository::class)->findById($result->fundingAttemptId);
+
+        return [$business, $attempt];
+    }
+
+    public function test_two_events_sharing_the_identical_generic_event_type_resolve_to_their_own_distinct_records_via_the_metadata_hint(): void
+    {
+        [$workspace, $owner, $agreement] = $this->checkoutPendingAgreement();
+        [$business, $attempt] = $this->pendingAutoRechargeAttempt($workspace, $owner);
+
+        // A pending slot renewal charge — also a payment_intent.succeeded-
+        // shaped event, sharing the identical generic event_type with the
+        // funding attempt's own webhook below.
+        $providerCustomer = app(PaymentProviderCustomerRepository::class)->findActiveByWorkspaceId((int) $workspace->id);
+        $this->gateway->registerPaymentMethod(new PaymentMethodResult('pm_fake_initial', $providerCustomer->provider_customer_id, 'card', 'visa', '4242', 12, 2030));
+        $this->gateway->checkoutSessionOutcomes[$agreement->local_idempotency_key] = ['providerPaymentMethodId' => 'pm_fake_initial'];
+        app(UsageBillingCheckoutManager::class)->confirmSlotAgreementFromReturn($agreement);
+        $agreement = app(AdditionalBusinessSlotAgreementRepository::class)->findById((int) $agreement->id);
+
+        DB::table('additional_business_slot_agreements')->where('id', $agreement->id)->update(['next_renewal_at' => now()->subMinute()]);
+        $agreement = app(AdditionalBusinessSlotAgreementRepository::class)->findById((int) $agreement->id);
+
+        $this->gateway->paymentIntentOutcomes['*'] = 'requires_action';
+        app(UsageBillingCheckoutManager::class)->createScheduledRenewalCharge($agreement);
+        $charge = DB::table('additional_business_slot_renewal_charges')->where('agreement_id', $agreement->id)->first();
+
+        $walletBefore = app(BusinessUsageWalletRepository::class)->findByBusinessId((int) $business->id);
+
+        // Post the funding attempt's own payment_intent.succeeded webhook.
+        $this->postWebhook('payment_intent.succeeded', [
+            'id' => $attempt->provider_session_or_intent_reference,
+            'metadata' => ['app_subject_kind' => 'funding_attempt', 'app_subject_id' => (string) $attempt->id, 'app_operation_id' => $attempt->local_idempotency_key],
+            'amount' => 500, 'currency' => 'usd', 'customer' => $attempt->provider_customer_external_id_snapshot,
+        ]);
+
+        // Post the slot renewal charge's own payment_intent.succeeded
+        // webhook — the identical generic event_type, a genuinely distinct
+        // local record.
+        $chargeMinorUnits = (int) bcdiv((string) $charge->amount_micro_snapshot, '10000', 0);
+        $this->postWebhook('payment_intent.succeeded', [
+            'id' => $charge->provider_session_or_intent_reference,
+            'metadata' => ['app_subject_kind' => 'slot_renewal_charge', 'app_subject_id' => (string) $charge->id, 'app_operation_id' => $charge->local_idempotency_key],
+            'amount' => $chargeMinorUnits, 'currency' => 'usd', 'customer' => $charge->provider_customer_external_id_snapshot,
+        ]);
+
+        // Each event resolved to, and mutated, only its own named record —
+        // never via the shared event_type alone, which would risk
+        // cross-resolving the two identically-typed events.
+        $freshAttempt = app(BusinessFundingAttemptRepository::class)->findById($attempt->id);
+        $this->assertSame(FundingAttemptState::Succeeded, $freshAttempt->state);
+        $walletAfter = app(BusinessUsageWalletRepository::class)->findByBusinessId((int) $business->id);
+        $this->assertSame(
+            (string) ((int) $walletBefore->available_balance_micro + 5_000_000),
+            (string) $walletAfter->available_balance_micro,
+        );
+
+        $freshCharge = app(AdditionalBusinessSlotRenewalChargeRepository::class)->findById($charge->id);
+        $this->assertSame(FundingAttemptState::Succeeded, $freshCharge->state);
+
+        // The slot agreement itself (a distinct record from its own
+        // renewal charge) was not touched by the funding-attempt webhook.
+        $refreshedAgreement = app(AdditionalBusinessSlotAgreementRepository::class)->findById((int) $agreement->id);
+        $this->assertSame(SlotAgreementState::Completed, $refreshedAgreement->state);
     }
 }

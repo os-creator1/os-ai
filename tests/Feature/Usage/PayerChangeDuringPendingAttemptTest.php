@@ -128,4 +128,46 @@ class PayerChangeDuringPendingAttemptTest extends TestCase
         $this->expectException(UnauthorizedPayerAssignmentException::class);
         app(UsageBillingCheckoutManager::class)->initiateTopUp($business, $ownerCustomer->user_id, 1_000_000);
     }
+
+    public function test_updating_the_billing_contact_never_rewrites_a_funding_attempts_frozen_snapshot(): void
+    {
+        $ownerCustomer = $this->createCustomer();
+        $workspace = $this->entitledWorkspace($ownerCustomer->user);
+        $directOwner = $this->createCustomer();
+        $business = app(BusinessRepository::class)->createForCustomerInWorkspace($directOwner, $workspace, $this->businessAttributes());
+        app(UsageWalletManager::class)->initializeWalletForNewBusiness($business->id);
+        app(BillingProfileManager::class)->changePayer($business, PayerType::Workspace, $ownerCustomer->user_id, 'Test.');
+        app(PaymentInstrumentManager::class)->resolveProviderCustomer($business, $ownerCustomer->user_id);
+
+        app(BillingProfileManager::class)->updateBillingContact(
+            $business, null, 'Original Contact', 'original@example.test', true, $ownerCustomer->user_id,
+        );
+
+        $checkoutManager = app(UsageBillingCheckoutManager::class);
+        $result = $checkoutManager->initiateTopUp($business, $ownerCustomer->user_id, 5_000_000);
+        $attempt = app(BusinessFundingAttemptRepository::class)->findById($result->fundingAttemptId);
+
+        $this->assertSame('Original Contact', $attempt->billing_contact_name_snapshot);
+        $this->assertSame('original@example.test', $attempt->billing_contact_email_snapshot);
+
+        // The billing contact changes after the funding attempt was
+        // created — its own frozen snapshot columns must never be
+        // re-derived from the current contact, on read or on a later
+        // write.
+        app(BillingProfileManager::class)->updateBillingContact(
+            $business, null, 'Changed Contact', 'changed@example.test', true, $ownerCustomer->user_id,
+        );
+
+        $freshAttempt = app(BusinessFundingAttemptRepository::class)->findById($attempt->id);
+        $this->assertSame(
+            'Original Contact',
+            $freshAttempt->billing_contact_name_snapshot,
+            'The funding attempt\'s own frozen snapshot must not retroactively change.',
+        );
+        $this->assertSame(
+            'original@example.test',
+            $freshAttempt->billing_contact_email_snapshot,
+            'The funding attempt\'s own frozen snapshot must not retroactively change.',
+        );
+    }
 }

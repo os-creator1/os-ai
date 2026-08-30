@@ -115,6 +115,15 @@ class AdditionalBusinessSlotRenewalChargeSchemaTest extends TestCase
         $this->assertSame(2, DB::table('additional_business_slot_renewal_charges')->find($id)->allocation_delta);
     }
 
+    public function test_provider_session_or_intent_reference_is_unique_when_populated(): void
+    {
+        $ref = 'pi_'.uniqid();
+        DB::table('additional_business_slot_renewal_charges')->insert($this->baseAttributes(['provider_session_or_intent_reference' => $ref]));
+
+        $this->expectException(QueryException::class);
+        DB::table('additional_business_slot_renewal_charges')->insert($this->baseAttributes(['provider_session_or_intent_reference' => $ref]));
+    }
+
     public function test_agreement_id_restricts_deletion_while_referenced(): void
     {
         DB::table('additional_business_slot_renewal_charges')->insert($this->baseAttributes());

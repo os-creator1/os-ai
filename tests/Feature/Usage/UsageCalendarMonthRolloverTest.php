@@ -180,6 +180,33 @@ class UsageCalendarMonthRolloverTest extends TestCase
         $this->assertSame('2026-04-01 04:00:00', Carbon::parse($wallet->spend_period_end_utc)->format('Y-m-d H:i:s'));
     }
 
+    public function test_dst_fall_back_boundary_in_business_timezone(): void
+    {
+        // America/New_York falls back on 2026-11-01 (02:00 EDT becomes
+        // 01:00 EST — the local 1-2am hour occurs twice).
+        Carbon::setTestNow(Carbon::parse('2026-11-15 12:00:00', 'UTC'));
+
+        $business = $this->business('America/New_York');
+        app(UsageWalletManager::class)->initializeWalletForNewBusiness($business->id);
+        $this->activateRate();
+        $this->forceRollover($business);
+
+        $wallet = DB::table('business_usage_wallets')->where('business_id', $business->id)->first();
+
+        $this->assertSame('2026-11', $wallet->spend_period_key);
+
+        // Local November 1 00:00 America/New_York is still EDT (UTC-4) —
+        // the fall-back transition itself does not occur until 02:00 local
+        // that same day (06:00 UTC) — genuine timezone-aware construction,
+        // never a fixed-duration approximation that would apply the
+        // post-transition EST offset (UTC-5) retroactively to this instant.
+        $this->assertSame('2026-11-01 04:00:00', Carbon::parse($wallet->spend_period_start_utc)->format('Y-m-d H:i:s'));
+
+        // Local December 1 00:00 America/New_York is EST (UTC-5), since the
+        // fall-back transition has already passed by then.
+        $this->assertSame('2026-12-01 05:00:00', Carbon::parse($wallet->spend_period_end_utc)->format('Y-m-d H:i:s'));
+    }
+
     public function test_multi_month_dormancy_lands_in_current_month_in_one_step(): void
     {
         Carbon::setTestNow(Carbon::parse('2026-01-15 12:00:00', 'UTC'));

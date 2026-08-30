@@ -330,4 +330,38 @@ class UsageWalletManagerReversalTest extends TestCase
         $this->assertSame(0, (int) $ledgerEntry->debt_delta_micro);
         $this->assertSame(0, (int) $this->wallet($business->id)->available_balance_micro);
     }
+
+    // --- committed_spend_this_period_micro / recharged_this_period_micro are never touched by any reversal method ---
+
+    public function test_a_provider_refund_never_decrements_committed_spend_this_period_micro(): void
+    {
+        $business = $this->fundedBusiness(5_000_000);
+        $this->seedWallet($business->id, ['committed_spend_this_period_micro' => 4_000_000]);
+
+        app(UsageWalletManager::class)->applyProviderRefund((int) $business->id, true, 1, 2_000_000, '2000000', 'ch_fake_committed_1');
+
+        $this->assertSame(4_000_000, (int) $this->wallet($business->id)->committed_spend_this_period_micro);
+    }
+
+    public function test_a_dispute_chargeback_never_decrements_committed_spend_this_period_micro(): void
+    {
+        $business = $this->fundedBusiness(5_000_000);
+        $this->seedWallet($business->id, ['committed_spend_this_period_micro' => 4_000_000]);
+
+        app(UsageWalletManager::class)->applyDisputeWithdrawal((int) $business->id, true, 1, 2_000_000, 'dp_fake_committed_1', 'txn_committed_1');
+
+        $this->assertSame(4_000_000, (int) $this->wallet($business->id)->committed_spend_this_period_micro);
+    }
+
+    public function test_recharge_cap_configuration_is_never_reopened_by_a_reversal_entry(): void
+    {
+        $business = $this->fundedBusiness(5_000_000);
+        $this->seedWallet($business->id, ['recharged_this_period_micro' => 9_000_000]);
+
+        app(UsageWalletManager::class)->applyProviderRefund((int) $business->id, true, 1, 1_000_000, '1000000', 'ch_fake_recharge_1');
+        $this->assertSame(9_000_000, (int) $this->wallet($business->id)->recharged_this_period_micro);
+
+        app(UsageWalletManager::class)->applyDisputeWithdrawal((int) $business->id, true, 1, 1_000_000, 'dp_fake_recharge_1', 'txn_recharge_1');
+        $this->assertSame(9_000_000, (int) $this->wallet($business->id)->recharged_this_period_micro);
+    }
 }
