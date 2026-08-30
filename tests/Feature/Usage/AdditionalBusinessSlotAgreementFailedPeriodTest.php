@@ -18,6 +18,8 @@ use App\Repositories\Contracts\AdditionalBusinessSlotRenewalChargeRepository;
 use App\Repositories\Contracts\PaymentProviderCustomerRepository;
 use App\Repositories\Contracts\WorkspacePlanCatalogRepository;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Tests\TestCase;
 
 /**
@@ -43,6 +45,13 @@ class AdditionalBusinessSlotAgreementFailedPeriodTest extends TestCase
         $this->currencyId = Currency::create(['name' => 'US Dollar', 'code' => 'USD', 'format' => '$', 'status' => true])->id;
         $this->gateway = new FakePaymentProviderGateway();
         app()->instance(PaymentProviderGateway::class, $this->gateway);
+    }
+
+    protected function tearDown(): void
+    {
+        Carbon::setTestNow();
+
+        parent::tearDown();
     }
 
     private function entitledWorkspaceWithLapsingCharge(): array
@@ -159,6 +168,8 @@ class AdditionalBusinessSlotAgreementFailedPeriodTest extends TestCase
 
     public function test_ordinal_4_is_reachable_only_through_explicit_post_lapse_recovery(): void
     {
+        Carbon::setTestNow(Carbon::now());
+
         [$workspace, $owner, , $agreement, $charge] = $this->entitledWorkspaceWithLapsingCharge();
         $manager = app(UsageBillingCheckoutManager::class);
         $this->gateway->confirmPaymentIntentOutcomes['*'] = 'declined';
@@ -167,6 +178,14 @@ class AdditionalBusinessSlotAgreementFailedPeriodTest extends TestCase
         $charge = app(AdditionalBusinessSlotRenewalChargeRepository::class)->findById($charge->id);
         $manager->retrySlotRenewalAsOwner($charge, $owner->id);
         $charge = app(AdditionalBusinessSlotRenewalChargeRepository::class)->findById($charge->id);
+
+        // A meaningful gap passes before recovery — long enough that
+        // "forward from the recovery moment" and "retroactively from the
+        // original, stale period_end" produce clearly different results,
+        // closing the gap a sub-second real-clock test run would
+        // otherwise leave ambiguous.
+        Carbon::setTestNow(Carbon::now()->addDays(10));
+        $recoveryMoment = Carbon::now();
 
         // Now lapsed — an explicit owner retry succeeds and clears lapse.
         $this->gateway->confirmPaymentIntentOutcomes['*'] = 'succeeded';
@@ -177,6 +196,19 @@ class AdditionalBusinessSlotAgreementFailedPeriodTest extends TestCase
         $this->assertNotNull($agreement->payment_lapsed_cleared_at);
         $this->assertNotNull($agreement->next_renewal_at);
 
+        // The recovered next_renewal_at must be computed forward from the
+        // recovery moment (now + 1 month) — never retroactively reusing
+        // the original, stale charge's own period_end.
+        $expectedNextRenewalAt = $recoveryMoment->copy()->addMonthNoOverflow();
+        $this->assertSame(
+            $expectedNextRenewalAt->toDateTimeString(),
+            Carbon::parse($agreement->next_renewal_at)->toDateTimeString(),
+        );
+        $this->assertNotSame(
+            Carbon::parse($charge->period_end)->toDateTimeString(),
+            Carbon::parse($agreement->next_renewal_at)->toDateTimeString(),
+        );
+
         // The gateway's own confirmPaymentIntent() idempotency key is a
         // sha256 digest — independently recompute the exact expected
         // ordinal-4 key (M4 contract §23) and assert equality, since the
@@ -184,5 +216,63 @@ class AdditionalBusinessSlotAgreementFailedPeriodTest extends TestCase
         $expectedOrdinal4Key = hash('sha256', $charge->local_idempotency_key.':attempt:4');
         $lastCall = end($this->gateway->confirmPaymentIntentCalls);
         $this->assertSame($expectedOrdinal4Key, $lastCall['idempotencyKey']);
+    }
+
+    public function test_no_scheduled_renewal_row_is_created_for_a_later_period_while_the_current_periods_renewal_is_still_being_retried(): void
+    {
+        [, , , $agreement, $charge] = $this->entitledWorkspaceWithLapsingCharge();
+        $manager = app(UsageBillingCheckoutManager::class);
+
+        // The still-due agreement's own next_renewal_at is unchanged by
+        // the first charge's creation/webhook-failure above (only a
+        // successful completion or lapse-recovery ever advances it) —
+        // simulate a second scheduler pass (InitiateSlotAgreementRenewal's
+        // own findDueForRenewal() query would still surface this
+        // agreement) picking it up again while the current period's
+        // charge is still outstanding (Failed, pre-lapse).
+        $manager->createScheduledRenewalCharge($agreement);
+
+        $totalScheduledRenewalCharges = DB::table('additional_business_slot_renewal_charges')
+            ->where('agreement_id', $agreement->id)
+            ->where('charge_kind', 'scheduled_renewal')
+            ->count();
+        $this->assertSame(1, $totalScheduledRenewalCharges);
+    }
+
+    public function test_recovery_after_a_multi_period_lapse_creates_no_charge_for_any_skipped_period(): void
+    {
+        Carbon::setTestNow(Carbon::now());
+
+        [, $owner, , $agreement, $charge] = $this->entitledWorkspaceWithLapsingCharge();
+        $manager = app(UsageBillingCheckoutManager::class);
+        $this->gateway->confirmPaymentIntentOutcomes['*'] = 'declined';
+
+        $manager->retrySlotRenewalAsOwner($charge, $owner->id);
+        $charge = app(AdditionalBusinessSlotRenewalChargeRepository::class)->findById($charge->id);
+        $manager->retrySlotRenewalAsOwner($charge, $owner->id);
+        $charge = app(AdditionalBusinessSlotRenewalChargeRepository::class)->findById($charge->id);
+
+        $agreementAfterLapse = app(AdditionalBusinessSlotAgreementRepository::class)->findById((int) $agreement->id);
+        $this->assertTrue((bool) $agreementAfterLapse->payment_lapsed);
+
+        // Two full calendar periods elapse while lapsed.
+        Carbon::setTestNow(Carbon::now()->addMonths(2));
+
+        // Recovery succeeds.
+        $this->gateway->confirmPaymentIntentOutcomes['*'] = 'succeeded';
+        $manager->retrySlotRenewalAsOwner($charge, $owner->id);
+
+        $recoveredAgreement = app(AdditionalBusinessSlotAgreementRepository::class)->findById((int) $agreement->id);
+        $this->assertFalse((bool) $recoveredAgreement->payment_lapsed);
+
+        // Never one row per skipped period — the entire pre-lapse and
+        // post-recovery lifecycle is exactly one scheduled_renewal row,
+        // retried in place (applyScheduledRenewalSuccess() only advances
+        // the agreement's own next_renewal_at; it never creates a new
+        // renewal-charge row).
+        $totalCharges = DB::table('additional_business_slot_renewal_charges')
+            ->where('agreement_id', $agreement->id)
+            ->count();
+        $this->assertSame(1, $totalCharges);
     }
 }

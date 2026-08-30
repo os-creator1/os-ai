@@ -6,6 +6,7 @@ use App\Enums\Entitlement\WorkspacePlanTier;
 use App\Enums\Usage\BillingStatusTransitionSource;
 use App\Enums\Usage\WalletBillingStatus;
 use App\Library\Entitlement\EntitlementManager;
+use App\Library\Usage\UsageBillingPresenter;
 use App\Library\Usage\UsageWalletManager;
 use App\Models\AppConfig;
 use App\Models\Currency;
@@ -13,8 +14,11 @@ use App\Models\Customer;
 use App\Models\User;
 use App\Models\Workspace;
 use App\Repositories\Contracts\BusinessRepository;
+use App\Repositories\Contracts\UsageMeterRepository;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Tests\Feature\Business\Concerns\CreatesBusinessTestData;
 use Tests\Feature\Workspace\Concerns\CreatesWorkspaceTestData;
 use Tests\TestCase;
@@ -148,5 +152,78 @@ class UsageBillingDashboardViewDataTest extends TestCase
         $this->get(route('customer.workspaces.businesses.usage-billing.show', [$workspace->uid, $business->uid]))
             ->assertOk()
             ->assertSee('No spend cap configured');
+    }
+
+    public function test_the_customer_dashboard_view_model_never_exposes_provider_cost_or_margin_fields(): void
+    {
+        $customer = $this->actingAsHttpCustomer();
+        $workspace = $this->entitledWorkspace($customer->user);
+        $business = app(BusinessRepository::class)->createForCustomerInWorkspace($customer, $workspace, $this->businessAttributes());
+        $manager = app(UsageWalletManager::class);
+        $manager->initializeWalletForNewBusiness($business->id);
+
+        // Real ledger activity with a genuine, non-zero provider_cost_micro
+        // — RFC-005 Amendment 1 Slice 2 CUTOVER §2's locked fixture
+        // sequence: a genuine, disposable UsageMeter must exist before
+        // setActiveRate() creates/activates a rate for it.
+        $actorId = User::create([
+            'first_name' => 'Test', 'last_name' => 'Actor', 'email' => 'actor' . uniqid() . '@example.test',
+            'status' => true, 'is_admin' => true, 'is_customer' => false, 'active_portal' => 'admin',
+        ])->id;
+        $currencyId = Currency::query()->first()->id;
+        app(UsageMeterRepository::class)->create([
+            'meter_key' => 'crm', 'feature_key' => 'crm', 'business_id' => null,
+            'currency_id' => $currencyId, 'description' => 'Fixture meter.', 'updated_by_user_id' => $actorId,
+        ]);
+        $manager->setActiveRate('crm', '1000000', '500000', 'per message', $currencyId, $actorId, 'Fixture.');
+        $manager->activateMetering('crm', $actorId, 'Fixture.');
+        DB::table('business_usage_wallets')->where('business_id', $business->id)->update(['available_balance_micro' => 5_000_000]);
+        $reservation = $manager->reserve($business, 'crm', (string) Str::uuid(), '2');
+        $manager->commit($reservation->reservationId, '2');
+
+        // Confirm the fixture genuinely carries a non-zero provider cost —
+        // otherwise this test would pass vacuously.
+        $ledgerRow = DB::table('business_usage_ledger_entries')->where('business_id', $business->id)->where('entry_type', 'usage_charge')->first();
+        $this->assertGreaterThan(0, (int) $ledgerRow->provider_cost_micro);
+
+        $viewModel = app(UsageBillingPresenter::class)->buildDashboardViewModel($business);
+
+        $this->assertNoProviderCostOrMarginField($viewModel);
+    }
+
+    /**
+     * Recursively walks the given value — an object's public properties,
+     * a Paginator's items, or an array's keys/values — asserting no key
+     * or property name anywhere contains "provider_cost" or "margin".
+     */
+    private function assertNoProviderCostOrMarginField(mixed $value, string $path = 'viewModel'): void
+    {
+        if ($value instanceof LengthAwarePaginator) {
+            foreach ($value->items() as $index => $item) {
+                $this->assertNoProviderCostOrMarginField($item, "{$path}.items[{$index}]");
+            }
+
+            return;
+        }
+
+        if (is_object($value)) {
+            foreach (get_object_vars($value) as $key => $nested) {
+                $this->assertStringNotContainsStringIgnoringCase('provider_cost', (string) $key, "Forbidden key found at {$path}.{$key}");
+                $this->assertStringNotContainsStringIgnoringCase('margin', (string) $key, "Forbidden key found at {$path}.{$key}");
+                $this->assertNoProviderCostOrMarginField($nested, "{$path}.{$key}");
+            }
+
+            return;
+        }
+
+        if (is_array($value)) {
+            foreach ($value as $key => $nested) {
+                if (is_string($key)) {
+                    $this->assertStringNotContainsStringIgnoringCase('provider_cost', $key, "Forbidden key found at {$path}.{$key}");
+                    $this->assertStringNotContainsStringIgnoringCase('margin', $key, "Forbidden key found at {$path}.{$key}");
+                }
+                $this->assertNoProviderCostOrMarginField($nested, "{$path}.{$key}");
+            }
+        }
     }
 }

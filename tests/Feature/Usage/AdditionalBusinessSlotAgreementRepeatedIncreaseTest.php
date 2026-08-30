@@ -122,6 +122,11 @@ class AdditionalBusinessSlotAgreementRepeatedIncreaseTest extends TestCase
         // current 1 -> target 3 (delta 2); then locked target 3 -> 4 (delta 1).
         $this->assertSame(2, $firstCharge->allocation_delta);
         $this->assertSame(1, $secondCharge->allocation_delta);
+
+        // The two distinct change_operation_ids must derive two distinct
+        // local_idempotency_key values — never treated as duplicates of
+        // each other.
+        $this->assertNotSame($firstCharge->local_idempotency_key, $secondCharge->local_idempotency_key);
     }
 
     public function test_a_non_increasing_target_is_rejected(): void

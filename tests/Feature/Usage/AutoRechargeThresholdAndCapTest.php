@@ -19,8 +19,10 @@ use App\Models\Workspace;
 use App\Repositories\Contracts\BusinessRepository;
 use App\Repositories\Contracts\BusinessUsageWalletRepository;
 use App\Repositories\Contracts\PaymentProviderCustomerRepository;
+use App\Repositories\Contracts\UsageMeterRepository;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Tests\Feature\Business\Concerns\CreatesBusinessTestData;
 use Tests\TestCase;
 
@@ -140,5 +142,46 @@ class AutoRechargeThresholdAndCapTest extends TestCase
         $wallet = app(BusinessUsageWalletRepository::class)->findByBusinessId((int) $business->id);
         $this->assertSame('4000000', (string) $wallet->available_balance_micro);
         $this->assertSame('5000000', (string) $wallet->recharged_this_period_micro);
+    }
+
+    public function test_a_real_reservation_below_threshold_triggers_auto_recharge_end_to_end(): void
+    {
+        [, $business] = $this->businessWithAutoRechargeConfigured('2000000', '3000000', null);
+
+        // Activate a real, disposable metered feature so a genuine
+        // UsageWalletManager::reserve() call — never a direct
+        // EvaluateBusinessAutoRecharge::dispatch() — is what triggers the
+        // recharge, mirroring NoAutoRechargeDispatchAtM1Test's own
+        // established fixture sequence (RFC-005 Amendment 1 Slice 2
+        // CUTOVER §2's locked meter/rate/metering activation order).
+        $actorId = User::create([
+            'first_name' => 'Test', 'last_name' => 'Actor', 'email' => 'actor' . uniqid() . '@example.test',
+            'status' => true, 'is_admin' => true, 'is_customer' => false, 'active_portal' => 'admin',
+        ])->id;
+        $currencyId = Currency::query()->first()->id;
+        app(UsageMeterRepository::class)->create([
+            'meter_key' => 'crm', 'feature_key' => 'crm', 'business_id' => null,
+            'currency_id' => $currencyId, 'description' => 'Fixture meter.', 'updated_by_user_id' => $actorId,
+        ]);
+        app(UsageWalletManager::class)->setActiveRate('crm', '1000000', '500000', 'per message', $currencyId, $actorId, 'Fixture.');
+        app(UsageWalletManager::class)->activateMetering('crm', $actorId, 'Fixture.');
+
+        // Seeded so the reservation's own 1,000,000 debit lands the wallet
+        // strictly below the configured 2,000,000 threshold (2,500,000 -
+        // 1,000,000 = 1,500,000).
+        DB::table('business_usage_wallets')->where('business_id', $business->id)
+            ->update(['available_balance_micro' => '2500000']);
+
+        $result = app(UsageWalletManager::class)->reserve($business, 'crm', (string) Str::uuid(), '1');
+        $this->assertTrue($result->granted);
+
+        $wallet = app(BusinessUsageWalletRepository::class)->findByBusinessId((int) $business->id);
+
+        // 2,500,000 - 1,000,000 (reservation) + 3,000,000 (auto-recharge,
+        // triggered inline by this single reserve() call, QUEUE_CONNECTION=sync)
+        // = 4,500,000 — a direct, traceable result of the reservation
+        // itself, never a manually-invoked job.
+        $this->assertSame('4500000', (string) $wallet->available_balance_micro);
+        $this->assertSame('3000000', (string) $wallet->recharged_this_period_micro);
     }
 }
