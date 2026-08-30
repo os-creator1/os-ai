@@ -727,14 +727,34 @@ class ProcessPaymentProviderEvent extends Base
     }
 
     /**
-     * RFC-005 Remediation #6 §16/§18 — charge.dispute.created/.updated/
-     * .closed, durably recorded and marked ignored, zero mutation.
+     * RFC-005 Remediation #6 §3/§16/§18, corrected by the third exceptional
+     * post-merge implementation correction (§18 of the correction record)
+     * — charge.dispute.created/.updated/.closed, durably recorded and
+     * marked ignored, zero mutation, but only for a uniquely resolved
+     * attempt. §3's resolution rule now applies uniformly: conflicting
+     * references fail closed with cross_reference_ambiguity; neither
+     * reference resolving fails closed with no_matching_local_record —
+     * both administrator-visible via the existing failed-event
+     * exhausted/dispose queue, never silently swallowed into an
+     * unattributed, permanently ignored audit row.
      */
     private function processDisputeLifecycleAuditOnly($event, array $decoded, BusinessFundingAttemptRepository $attemptRepository, UsageBillingCheckoutManager $checkoutManager, PaymentProviderEventRepository $eventRepository): void
     {
         $object = $decoded['data']['object'] ?? [];
 
-        [$attempt] = $this->resolveFundingAttemptByDualReference($object['payment_intent'] ?? null, $object['charge'] ?? null, $attemptRepository);
+        [$attempt, $ambiguous] = $this->resolveFundingAttemptByDualReference($object['payment_intent'] ?? null, $object['charge'] ?? null, $attemptRepository);
+
+        if ($ambiguous) {
+            $eventRepository->markFailed($event->id, 'cross_reference_ambiguity');
+
+            return;
+        }
+
+        if ($attempt === null) {
+            $eventRepository->markFailed($event->id, 'no_matching_local_record');
+
+            return;
+        }
 
         $this->markIgnoredDisputeAuditOnly($eventRepository, $event, $attempt, $checkoutManager, $object);
     }
@@ -769,17 +789,36 @@ class ProcessPaymentProviderEvent extends Base
     }
 
     /**
-     * RFC-005 Remediation #6 §17/§18 — refund.created/refund.updated/
-     * refund.failed/charge.refund.updated, durably recorded and marked
-     * ignored, zero mutation. A resolution failure here is itself just
-     * audit-only too — these event types never drive mutation, so there
-     * is nothing to fail closed against.
+     * RFC-005 Remediation #6 §3/§17/§18, corrected by the third exceptional
+     * post-merge implementation correction (§18 of the correction record)
+     * — refund.created/refund.updated/refund.failed/charge.refund.updated,
+     * durably recorded and marked ignored, zero mutation, but only for a
+     * uniquely resolved attempt. These event types never drive mutation
+     * regardless of resolution, but §3's own resolution rule still applies
+     * uniformly for administrator-visibility reasons: conflicting
+     * references fail closed with cross_reference_ambiguity; neither
+     * reference resolving fails closed with no_matching_local_record —
+     * both administrator-visible via the existing failed-event
+     * exhausted/dispose queue, never silently swallowed into an
+     * unattributed, permanently ignored audit row.
      */
     private function processRefundObjectAuditOnly($event, array $decoded, BusinessFundingAttemptRepository $attemptRepository, UsageBillingCheckoutManager $checkoutManager, PaymentProviderEventRepository $eventRepository): void
     {
         $object = $decoded['data']['object'] ?? [];
 
-        [$attempt] = $this->resolveFundingAttemptByDualReference($object['payment_intent'] ?? null, $object['charge'] ?? null, $attemptRepository);
+        [$attempt, $ambiguous] = $this->resolveFundingAttemptByDualReference($object['payment_intent'] ?? null, $object['charge'] ?? null, $attemptRepository);
+
+        if ($ambiguous) {
+            $eventRepository->markFailed($event->id, 'cross_reference_ambiguity');
+
+            return;
+        }
+
+        if ($attempt === null) {
+            $eventRepository->markFailed($event->id, 'no_matching_local_record');
+
+            return;
+        }
 
         $reportedAmountMicro = 0;
 

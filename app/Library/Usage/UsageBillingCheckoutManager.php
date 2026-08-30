@@ -581,42 +581,70 @@ class UsageBillingCheckoutManager
     }
 
     /**
-     * RFC-005 Remediation #6 §6/§10/§13/§18/§26 — applies one
-     * charge.refunded event's own cumulative refund report. $walletBacked
-     * is resolved once via findCreditEntryForFundingAttempt(); the
-     * out-of-order/replay-safe delta is computed here via the corrected,
-     * unconditional max(0, bcsub(...)) clamp, never native subtraction. A
-     * concurrent/replayed caller computing the identical bounded
-     * cumulative loses the ledger's own correlation_key race and is
-     * treated as a no-op replay, mirroring confirmSucceeded()'s own
-     * established UniqueConstraintViolationException precedent.
+     * RFC-005 Remediation #6 §6/§10/§13/§17/§18/§26, corrected by the third
+     * exceptional post-merge implementation correction (§17/§18 of the
+     * correction record) — applies one charge.refunded event's own
+     * cumulative refund report. The wallet row is locked first, in one
+     * transaction; only then are the refund aggregate read, the
+     * out-of-order/replay-safe delta computed via the corrected,
+     * unconditional max(0, bcsub(...)) clamp (never native subtraction),
+     * the refund headroom computed, the outcome row written, and the
+     * funding-attempt state recomputed — closing the different-cumulative
+     * race where two events reporting different cumulative totals could
+     * each read a stale aggregate before either commits. $walletBacked is
+     * resolved once, before the transaction opens, and is read — not
+     * recomputed — inside it, identically for wallet-backed and
+     * direct_deliverable outcomes. A concurrent/replayed caller computing
+     * the identical bounded cumulative loses the ledger's own
+     * correlation_key race and is treated as a no-op replay, mirroring
+     * confirmSucceeded()'s own established UniqueConstraintViolationException
+     * precedent.
      */
     public function applyRefundOutcome(BusinessFundingAttempt $attempt, int $providerCumulativeRefundMinorUnits, string $providerChargeReference): ProviderOutcomeResult
     {
         $expectedAmountMicro = (int) $attempt->expected_amount_micro;
         $providerCumulativeRefundMicro = $this->expectedMicroForMinorUnits($providerCumulativeRefundMinorUnits, $attempt);
         $boundedProviderCumulative = min($providerCumulativeRefundMicro, $expectedAmountMicro);
-
-        $alreadyRecordedRefundGrossMicro = (int) $this->ledgerRepository->sumRefundedMicroForFundingAttempt((int) $attempt->id);
-        $providerRefundDelta = (int) bcsub((string) $boundedProviderCumulative, (string) max(0, $alreadyRecordedRefundGrossMicro), 0);
-        $providerRefundDelta = max(0, $providerRefundDelta);
-
-        if ($providerRefundDelta <= 0) {
-            return new ProviderOutcomeResult(
-                'refund_already_applied',
-                $boundedProviderCumulative,
-                0,
-                0,
-                0,
-                null,
-                $attempt->state,
-            );
-        }
-
         $walletBacked = $this->ledgerRepository->findCreditEntryForFundingAttempt((int) $attempt->id) !== null;
 
         try {
-            [$ledgerEntry, $resultingState] = DB::transaction(function () use ($attempt, $walletBacked, $providerRefundDelta, $boundedProviderCumulative, $providerChargeReference) {
+            [$ledgerEntry, $resultingState, $providerRefundDelta] = DB::transaction(function () use ($attempt, $walletBacked, $boundedProviderCumulative, $providerChargeReference) {
+                // Locked first — the sole serialization point for this
+                // entire method. Every concurrent caller for this same
+                // wallet, whatever cumulative value it reports, must wait
+                // here before it may read the aggregate below.
+                $this->walletRepository->findForUpdateByBusinessId((int) $attempt->business_id);
+
+                // Only now, under lock, is the aggregate read — guaranteed
+                // to already reflect any refund a concurrent caller
+                // committed, since that caller could only have committed
+                // after releasing this identical lock.
+                $alreadyRecordedRefundGrossMicro = (int) $this->ledgerRepository->sumRefundedMicroForFundingAttempt((int) $attempt->id);
+                $providerRefundDelta = max(0, (int) bcsub((string) $boundedProviderCumulative, (string) max(0, $alreadyRecordedRefundGrossMicro), 0));
+
+                if ($providerRefundDelta <= 0) {
+                    // Never $attempt->state — that is the event-loaded
+                    // model's own stale, pre-lock snapshot. A concurrent
+                    // winner may have already committed a full refund and
+                    // moved the attempt to Refunded while this caller was
+                    // waiting for the wallet lock above;
+                    // recomputeFundingAttemptState() re-locks the attempt
+                    // row (the established wallet-then-attempt lock order,
+                    // the identical order the non-zero-delta branch below
+                    // already uses) and returns the one authoritative,
+                    // current state.
+                    $resultingState = $this->recomputeFundingAttemptState($attempt);
+
+                    return [null, $resultingState, 0];
+                }
+
+                // UsageWalletManager::applyProviderRefund()'s own
+                // findForUpdateByBusinessId() call, reached moments later
+                // inside this identical outer transaction, re-acquires a
+                // row lock this same transaction already holds — InnoDB
+                // grants this immediately, to the same transaction, without
+                // blocking or deadlocking; it is not a second, independent
+                // lock acquisition, so leaving it in place here is safe.
                 $ledgerEntry = $this->walletManager->applyProviderRefund(
                     (int) $attempt->business_id,
                     $walletBacked,
@@ -628,7 +656,7 @@ class UsageBillingCheckoutManager
 
                 $resultingState = $this->recomputeFundingAttemptState($attempt);
 
-                return [$ledgerEntry, $resultingState];
+                return [$ledgerEntry, $resultingState, $providerRefundDelta];
             });
         } catch (UniqueConstraintViolationException) {
             $freshAttempt = $this->attemptRepository->findById((int) $attempt->id);
@@ -641,6 +669,18 @@ class UsageBillingCheckoutManager
                 0,
                 null,
                 $freshAttempt?->state ?? $attempt->state,
+            );
+        }
+
+        if ($providerRefundDelta <= 0) {
+            return new ProviderOutcomeResult(
+                'refund_already_applied',
+                $boundedProviderCumulative,
+                0,
+                0,
+                0,
+                null,
+                $resultingState,
             );
         }
 

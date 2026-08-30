@@ -334,4 +334,110 @@ class PaymentProviderEventDurableAuditTest extends TestCase
         $this->assertSame(600_000, (int) $fresh->normalized_wallet_delta_micro);
         $this->assertSame(400_000, (int) $fresh->normalized_policy_excess_micro);
     }
+
+    /**
+     * RFC-005 Remediation #6 §3/§16/§17/§18, third exceptional post-merge
+     * implementation correction — both audit-only handlers now apply §3's
+     * resolution rule uniformly: conflicting references fail closed with
+     * cross_reference_ambiguity, and neither reference resolving fails
+     * closed with no_matching_local_record, exactly as the mutating event
+     * types already required. Only a uniquely resolved attempt may be
+     * marked ignored/audit-only.
+     */
+    private function disputeLifecycleEvent(string $eventType, ?string $paymentIntent, ?string $charge): PaymentProviderEvent
+    {
+        $disputeId = 'dp_fake_'.uniqid();
+
+        return PaymentProviderEvent::create([
+            'provider' => 'stripe', 'provider_event_id' => 'evt_'.uniqid(), 'event_type' => $eventType,
+            'provider_object_id' => $disputeId,
+            'payload_encrypted' => json_encode(['data' => ['object' => [
+                'id' => $disputeId, 'charge' => $charge, 'payment_intent' => $paymentIntent, 'currency' => 'usd',
+                'status' => 'warning_needs_response', 'balance_transactions' => [],
+            ]]]),
+            'payload_hash' => hash('sha256', uniqid()), 'state' => 'received', 'attempts' => 0, 'received_at' => now(),
+        ]);
+    }
+
+    private function refundObjectEvent(string $eventType, ?string $paymentIntent, ?string $charge): PaymentProviderEvent
+    {
+        $refundId = 're_fake_'.uniqid();
+
+        return PaymentProviderEvent::create([
+            'provider' => 'stripe', 'provider_event_id' => 'evt_'.uniqid(), 'event_type' => $eventType,
+            'provider_object_id' => $refundId,
+            'payload_encrypted' => json_encode(['data' => ['object' => [
+                'id' => $refundId, 'charge' => $charge, 'payment_intent' => $paymentIntent, 'amount' => 100, 'currency' => 'usd', 'status' => 'succeeded',
+            ]]]),
+            'payload_hash' => hash('sha256', uniqid()), 'state' => 'received', 'attempts' => 0, 'received_at' => now(),
+        ]);
+    }
+
+    public function test_a_dispute_lifecycle_event_whose_references_resolve_to_different_attempts_fails_closed_with_zero_mutation(): void
+    {
+        [$customerA, $businessA] = $this->businessWithProviderCustomer();
+        $attemptA = $this->topUpAttempt($businessA, $customerA->user_id, 5_000_000, 'ch_fake_dla');
+        [$customerB, $businessB] = $this->businessWithProviderCustomer();
+        $attemptB = $this->topUpAttempt($businessB, $customerB->user_id, 5_000_000, 'ch_fake_dlb');
+
+        $event = $this->disputeLifecycleEvent(
+            'charge.dispute.updated',
+            $attemptA->provider_payment_intent_reference,
+            $attemptB->provider_charge_reference,
+        );
+
+        $fresh = $this->process($event);
+
+        $this->assertSame('failed', $fresh->state->value);
+        $this->assertSame('cross_reference_ambiguity', $fresh->last_error);
+        $this->assertNull($fresh->business_id);
+        $this->assertNull($fresh->funding_attempt_id);
+        $this->assertSame(5_000_000, (int) DB::table('business_usage_wallets')->where('business_id', $businessA->id)->value('available_balance_micro'));
+        $this->assertSame(5_000_000, (int) DB::table('business_usage_wallets')->where('business_id', $businessB->id)->value('available_balance_micro'));
+    }
+
+    public function test_a_dispute_lifecycle_event_resolving_by_neither_reference_fails_closed_with_zero_mutation(): void
+    {
+        $event = $this->disputeLifecycleEvent('charge.dispute.closed', 'pi_fake_nowhere_'.uniqid(), 'ch_fake_nowhere_'.uniqid());
+
+        $fresh = $this->process($event);
+
+        $this->assertSame('failed', $fresh->state->value);
+        $this->assertSame('no_matching_local_record', $fresh->last_error);
+        $this->assertNotSame('ignored', $fresh->state->value);
+    }
+
+    public function test_a_refund_object_event_whose_references_resolve_to_different_attempts_fails_closed_with_zero_mutation(): void
+    {
+        [$customerA, $businessA] = $this->businessWithProviderCustomer();
+        $attemptA = $this->topUpAttempt($businessA, $customerA->user_id, 5_000_000, 'ch_fake_roa');
+        [$customerB, $businessB] = $this->businessWithProviderCustomer();
+        $attemptB = $this->topUpAttempt($businessB, $customerB->user_id, 5_000_000, 'ch_fake_rob');
+
+        $event = $this->refundObjectEvent(
+            'refund.updated',
+            $attemptA->provider_payment_intent_reference,
+            $attemptB->provider_charge_reference,
+        );
+
+        $fresh = $this->process($event);
+
+        $this->assertSame('failed', $fresh->state->value);
+        $this->assertSame('cross_reference_ambiguity', $fresh->last_error);
+        $this->assertNull($fresh->business_id);
+        $this->assertNull($fresh->funding_attempt_id);
+        $this->assertSame(5_000_000, (int) DB::table('business_usage_wallets')->where('business_id', $businessA->id)->value('available_balance_micro'));
+        $this->assertSame(5_000_000, (int) DB::table('business_usage_wallets')->where('business_id', $businessB->id)->value('available_balance_micro'));
+    }
+
+    public function test_a_refund_object_event_resolving_by_neither_reference_fails_closed_with_zero_mutation(): void
+    {
+        $event = $this->refundObjectEvent('refund.created', 'pi_fake_nowhere_'.uniqid(), 'ch_fake_nowhere_'.uniqid());
+
+        $fresh = $this->process($event);
+
+        $this->assertSame('failed', $fresh->state->value);
+        $this->assertSame('no_matching_local_record', $fresh->last_error);
+        $this->assertNotSame('ignored', $fresh->state->value);
+    }
 }
