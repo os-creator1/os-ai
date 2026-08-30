@@ -83,6 +83,27 @@ Two independently reproduced defects in §24's own "No existing test file requir
 
 ---
 
+## Second exceptional post-merge implementation correction
+
+**This is not Correction Round 3.** This contract's own ordinary correction-round budget is unchanged by this pass: `maximum_correction_rounds: 2`, **2 of 2 consumed, 0 remaining** (Governance, above) — exactly as it stood at merge, and exactly as the first exceptional post-merge implementation correction (above) left it. This pass uses the identical, separate exceptional-correction mechanism, exercised a second time for a second, independent defect surfaced during the same genuine, faithful implementation attempt against real code and a real, non-faked `ultimatesms_testing` database — not a re-opening of the first correction's own two defects, both of which remain correctly resolved and untouched by this pass.
+
+**16. §18's own locked `normalized_outcome` column width (`string(32)`) is too narrow for §6's own locked, verbatim-required value.** §6's "Externally issued over-refund" branch requires recording exactly `normalized_outcome = refund_exceeds_refundable_balance` — **33 characters**. §18 locks `normalized_outcome` as `string(32)` — a MySQL `VARCHAR(32)` column. Writing the required 33-character value into a 32-character column does not raise an error under this codebase's own current, non-strict-truncation database configuration; it silently truncates to `refund_exceeds_refundable_balanc` (32 characters, the trailing `e` lost) — independently reproduced, deterministic, confirmed against a real `ultimatesms_testing` database via `SendChargebackDisputeNotificationTest`'s own policy-excess-refund fixture. **A silently truncated value in a durable, administrator-visible audit column is unacceptable data corruption, not a cosmetic defect** — it is the exact value an administrator reads to understand why a refund was only partially honored, and a truncated string is not simply "close enough."
+
+**Corrected — the binding decision: widen the column, never shorten or truncate the required value.** `payment_provider_events.normalized_outcome` is widened from `string(32)` to **`string(64)`**, everywhere this document specifies it:
+
+- §18's own prose locks `normalized_outcome` as `string(64)` (corrected from `string(32)`, restated below). `normalized_status` is **unaffected — it remains `string(32)`**, exactly as merged; only `normalized_outcome` widens. `normalized_reason` is **unaffected — it remains `string(64)`**, exactly as merged; it was never the narrow column and needs no change.
+- §25's own exact, locked Migration 4 DDL (restated below) changes its `normalized_outcome` line from `$table->string('normalized_outcome', 32)->nullable()->after('funding_attempt_id');` to `$table->string('normalized_outcome', 64)->nullable()->after('funding_attempt_id');` — the single-line width change that closes this defect. No other line of Migration 4 changes.
+
+**The exact required value itself is unchanged and is never shortened:** `refund_exceeds_refundable_balance` (33 characters) is, and remains, the one and only correct `normalized_outcome` value for §6's over-refund branch — it now fits the widened column exactly, with 31 characters of headroom to spare, and must round-trip through the database byte-for-byte, unchanged, on both write and read.
+
+**The already-selected replay identifiers, explicitly authorized:** during implementation, two further `normalized_outcome` values this contract's own design requires but never spelled out verbatim — the idempotent-replay outcome for a dispute chargeback, and for a dispute reinstatement — were named `dispute_chargeback_replayed` (27 characters) and `dispute_reinstatement_replayed` (30 characters), mirroring this document's own existing `refund_already_applied` replay-naming convention (§18's worked-example table). Both already fit the original `string(32)` column without truncation and continue to fit the widened `string(64)` column with substantial headroom; both are hereby explicitly authorized as this contract's own locked vocabulary for those two outcomes, alongside the pre-existing `refund_already_applied`, `refund_applied`, `dispute_chargeback_applied`, `dispute_reinstatement_applied`, `dispute_audit_only`, `refund_object_audit_only`.
+
+**Test strengthening authorized, not a new method:** `tests/Feature/Usage/PaymentProviderEventDurableAuditTest.php`'s own existing method 8, `test_the_administrator_audit_renders_reported_outcome_delta_wallet_delta_and_policy_excess_amounts_exactly_for_a_policy_excess_refund` (§24), is strengthened to additionally assert that the persisted `normalized_outcome` column reads back as the complete, exact, untruncated string `refund_exceeds_refundable_balance` — closing the specific gap this defect exposed (the method's own prior assertions covered only the four amount fields, never the outcome string itself). This is an assertion added to an existing method, not a new method — §24's own locked file/method count (12 methods in this file, 208 methods total across 16 files) is **unchanged by this pass**. This correction does not authorize applying this test change — that is implementation work, authorized separately, exactly as the first exceptional post-merge implementation correction's own three test-file changes were.
+
+**Scope, explicit:** this correction changes exactly one thing — `normalized_outcome`'s own column width, in §18's prose and §25's DDL — and authorizes exactly one test-assertion strengthening to an already-allow-listed, already-existing method. It does not change `normalized_status`, `normalized_reason`, any other column, any other migration, any production file's own logic, the enum design, the unique-reference-column design, or anything the first exceptional post-merge implementation correction already resolved. §22's production allow-list remains 31 paths; §24's test allow-list remains 16 paths, 208 methods.
+
+---
+
 ## 1. Required reading, confirmed by direct re-read this pass
 
 Everything read for Correction Rounds 1/2 remains re-confirmed. **Newly, directly re-read this pass, specifically to derive the four blockers' corrections:** `app/Library/Usage/UsageWalletManager.php`'s own `reserve()` (lines 285–530: the `available_balance_micro < reservedAmountMicro` admission check, the `Reservation` ledger insert, the wallet `UPDATE`), `commit()` (lines 533–760: the `chargedPortion = min($finalAmountMicro, $reservedAmountMicro)` committed-charge shape, the `$overage`/`$overageFromAvailable`/`$overageToDebt` split, the `$unused = $reservedAmountMicro - $finalAmountMicro` unused-release shape, all three confirmed to be exactly reusable as the basis for a parallel paid-attributable calculation with zero change to any existing column or formula), `release()` (lines 774–862: the full-reservation-amount restore shape); `app/Repositories/Contracts/PaymentProviderEventRepository.php`/its Eloquent implementation (confirmed no index exists on `state`/`attempts`/`received_at`/`lease_expires_at`/`normalized_recorded_at` beyond what Correction Round 2 itself proposed); `app/Jobs/Usage/SendLowBalanceNotification.php` (re-confirmed `$tries = 1`, `ShouldQueueAfterCommit`, and that this codebase has never once claimed "exactly-once external delivery" for any notification it sends — only "at most one dispatch decision").
@@ -425,7 +446,7 @@ This design never:
 
 ## 18. Durable, administrator-visible, Business-attributed audit records — four distinct amount fields, unambiguous
 
-`PaymentProviderEventController::index()` today renders only `exhausted()` rows. **Locked — widen the existing `payment_provider_events` table, never a new table.** Eleven new, nullable columns: `business_id` (no FK), `funding_attempt_id` (no FK), `normalized_outcome` (`string(32)`), `normalized_status` (`string(32)`), **`normalized_reported_amount_micro`**, **`normalized_outcome_delta_micro`**, **`normalized_wallet_delta_micro`**, **`normalized_policy_excess_micro`** (each bigint), `normalized_currency_code` (`string(3)`), `normalized_reason` (`string(64)`), `normalized_recorded_at` (timestamp).
+`PaymentProviderEventController::index()` today renders only `exhausted()` rows. **Locked — widen the existing `payment_provider_events` table, never a new table.** Eleven new, nullable columns: `business_id` (no FK), `funding_attempt_id` (no FK), `normalized_outcome` (**`string(64)`** — corrected by the second exceptional post-merge implementation correction, above; was `string(32)` at merge), `normalized_status` (`string(32)`, unchanged), **`normalized_reported_amount_micro`**, **`normalized_outcome_delta_micro`**, **`normalized_wallet_delta_micro`**, **`normalized_policy_excess_micro`** (each bigint), `normalized_currency_code` (`string(3)`), `normalized_reason` (`string(64)`), `normalized_recorded_at` (timestamp).
 
 **Corrected this pass — the prior single ambiguous pair (`reported`/`applied`) could not simultaneously represent three different quantities. Four fields, each with one, unambiguous meaning:**
 
@@ -1004,7 +1025,7 @@ min(
 5. `test_the_provider_events_admin_surface_lists_recent_normalized_outcomes_ordered_by_normalized_recorded_at_then_id`
 6. `test_recent_outcomes_clamps_its_accepted_limit_to_the_locked_maximum_and_minimum_regardless_of_the_requested_value`
 7. `test_a_refund_object_event_is_recorded_as_audit_only_with_no_wallet_mutation`
-8. `test_the_administrator_audit_renders_reported_outcome_delta_wallet_delta_and_policy_excess_amounts_exactly_for_a_policy_excess_refund`
+8. `test_the_administrator_audit_renders_reported_outcome_delta_wallet_delta_and_policy_excess_amounts_exactly_for_a_policy_excess_refund` — **strengthened by the second exceptional post-merge implementation correction** to additionally assert the persisted `normalized_outcome` column reads back as the complete, untruncated `refund_exceeds_refundable_balance` (33 characters, fitting the widened `string(64)` column). An assertion added to this existing method — not a new method; this file's own count (12) is unchanged.
 9. `test_a_compliant_partial_refund_records_reported_100_outcome_delta_40_and_wallet_delta_40`
 10. `test_a_replayed_refund_records_reported_100_with_outcome_delta_0_and_wallet_delta_0`
 11. `test_a_direct_deliverable_refund_records_reported_100_outcome_delta_100_and_wallet_delta_0`
@@ -1069,13 +1090,13 @@ Method 6 asserts cross-consumer agreement directly: for a stubbed `usage_billing
 
 **Migrations 1–3:** unchanged from Correction Round 2 (§3, §20).
 
-**Migration 4 (corrected — four distinct amount columns, not two):**
+**Migration 4 (corrected — four distinct amount columns, not two; `normalized_outcome` widened to `string(64)` by the second exceptional post-merge implementation correction, above, so that `refund_exceeds_refundable_balance` round-trips without truncation):**
 
 ```php
 Schema::table('payment_provider_events', function (Blueprint $table) {
     $table->unsignedBigInteger('business_id')->nullable()->after('provider_object_id');
     $table->unsignedBigInteger('funding_attempt_id')->nullable()->after('business_id');
-    $table->string('normalized_outcome', 32)->nullable()->after('funding_attempt_id');
+    $table->string('normalized_outcome', 64)->nullable()->after('funding_attempt_id');
     $table->string('normalized_status', 32)->nullable()->after('normalized_outcome');
     $table->bigInteger('normalized_reported_amount_micro')->nullable()->after('normalized_status');
     $table->bigInteger('normalized_outcome_delta_micro')->nullable()->after('normalized_reported_amount_micro');
