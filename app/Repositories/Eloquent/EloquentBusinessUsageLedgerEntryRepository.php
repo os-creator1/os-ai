@@ -120,4 +120,47 @@ class EloquentBusinessUsageLedgerEntryRepository extends EloquentBaseRepository 
                 return $row;
             });
     }
+
+    public function sumRefundedMicroForFundingAttempt(int $fundingAttemptId): string
+    {
+        return (string) DB::table('business_usage_ledger_entries')
+            ->where('funding_attempt_id', $fundingAttemptId)
+            ->where('entry_type', UsageLedgerEntryType::Refund->value)
+            ->selectRaw('COALESCE(SUM(gross_amount_micro), 0) AS total')
+            ->value('total');
+    }
+
+    public function sumDisputeMicroForFundingAttemptAndDispute(int $fundingAttemptId, string $providerDisputeId, string $entryType): string
+    {
+        return (string) DB::table('business_usage_ledger_entries')
+            ->where('funding_attempt_id', $fundingAttemptId)
+            ->where('provider_reference', $providerDisputeId)
+            ->where('entry_type', $entryType)
+            ->selectRaw('COALESCE(SUM(gross_amount_micro), 0) AS total')
+            ->value('total');
+    }
+
+    public function hasOutstandingDisputeExposureForFundingAttempt(int $fundingAttemptId): bool
+    {
+        return DB::table('business_usage_ledger_entries')
+            ->select('provider_reference')
+            ->where('funding_attempt_id', $fundingAttemptId)
+            ->whereIn('entry_type', [UsageLedgerEntryType::DisputeChargeback->value, UsageLedgerEntryType::CorrectionReversal->value])
+            ->whereNotNull('provider_reference')
+            ->groupBy('provider_reference')
+            ->havingRaw(
+                "SUM(CASE WHEN entry_type = ? THEN gross_amount_micro ELSE 0 END) > ".
+                "SUM(CASE WHEN entry_type = ? THEN gross_amount_micro ELSE 0 END)",
+                [UsageLedgerEntryType::DisputeChargeback->value, UsageLedgerEntryType::CorrectionReversal->value],
+            )
+            ->limit(1)->get()->isNotEmpty();
+    }
+
+    public function findCreditEntryForFundingAttempt(int $fundingAttemptId): ?BusinessUsageLedgerEntry
+    {
+        return $this->query()
+            ->where('funding_attempt_id', $fundingAttemptId)
+            ->whereIn('entry_type', [UsageLedgerEntryType::PaidTopUp->value, UsageLedgerEntryType::AutoRecharge->value])
+            ->first();
+    }
 }

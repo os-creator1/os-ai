@@ -16,6 +16,18 @@ interface BusinessFundingAttemptRepository extends BaseRepository
     public function findByProviderReference(string $reference): ?BusinessFundingAttempt;
 
     /**
+     * RFC-005 Remediation #6 §3 — resolves by the independently-unique
+     * provider_payment_intent_reference column.
+     */
+    public function findByProviderPaymentIntentReference(string $reference): ?BusinessFundingAttempt;
+
+    /**
+     * RFC-005 Remediation #6 §3 — resolves by the independently-unique
+     * provider_charge_reference column.
+     */
+    public function findByProviderChargeReference(string $reference): ?BusinessFundingAttempt;
+
+    /**
      * The most recent outstanding (not yet terminal) attempt for a Business
      * and purpose, used by auto-recharge's own outstanding-attempt
      * idempotency check (M3 contract §15).

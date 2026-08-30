@@ -14,6 +14,7 @@ class BusinessUsageWallet extends Model
         'business_id',
         'currency_id',
         'available_balance_micro',
+        'refundable_paid_available_micro',
         'reserved_balance_micro',
         'debt_balance_micro',
         'monthly_spend_cap_micro',
@@ -37,6 +38,7 @@ class BusinessUsageWallet extends Model
 
     protected $casts = [
         'available_balance_micro' => 'integer',
+        'refundable_paid_available_micro' => 'integer',
         'reserved_balance_micro' => 'integer',
         'debt_balance_micro' => 'integer',
         'monthly_spend_cap_micro' => 'integer',

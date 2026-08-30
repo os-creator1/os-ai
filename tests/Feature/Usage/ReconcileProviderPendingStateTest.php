@@ -106,8 +106,8 @@ class ReconcileProviderPendingStateTest extends TestCase
             $attempt->provider_customer_external_id_snapshot,
             'pi_fake_reconcile_'.uniqid(),
             $paymentMethodId,
-            'https://fake.stripe.test/receipts/ch_fake_reconcile',
-            'ch_fake_reconcile',
+            'https://fake.stripe.test/receipts/ch_fake_reconcile_'.$attempt->id,
+            'ch_fake_reconcile_'.$attempt->id,
         ));
     }
 

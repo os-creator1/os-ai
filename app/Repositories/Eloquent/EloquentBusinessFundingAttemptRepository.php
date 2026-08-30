@@ -35,6 +35,16 @@ class EloquentBusinessFundingAttemptRepository extends EloquentBaseRepository im
         return $this->query()->where('provider_session_or_intent_reference', $reference)->first();
     }
 
+    public function findByProviderPaymentIntentReference(string $reference): ?BusinessFundingAttempt
+    {
+        return $this->query()->where('provider_payment_intent_reference', $reference)->first();
+    }
+
+    public function findByProviderChargeReference(string $reference): ?BusinessFundingAttempt
+    {
+        return $this->query()->where('provider_charge_reference', $reference)->first();
+    }
+
     public function findOutstandingForBusiness(int $businessId, string $purpose): ?BusinessFundingAttempt
     {
         // M3 contract §15/§16 — a locking read, not a plain consistent
