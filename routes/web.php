@@ -11,11 +11,14 @@
     use App\Http\Controllers\Admin\HotLeadController;
     use App\Http\Controllers\Admin\AiAnalyticsController;
 
-Route::get('/admin/ai-analytics', [AiAnalyticsController::class, 'index']);
+Route::get('/admin/ai-analytics', [AiAnalyticsController::class, 'index'])
+    ->middleware(['auth', 'can:access_backend', 'ValidProduct', 'twofactor']);
 
 
-Route::get('/admin/hot-leads', [HotLeadController::class, 'index']);
-Route::post('/admin/hot-leads/mark-called', [HotLeadController::class, 'markCalled']);
+Route::get('/admin/hot-leads', [HotLeadController::class, 'index'])
+    ->middleware(['auth', 'can:access_backend', 'ValidProduct', 'twofactor']);
+Route::post('/admin/hot-leads/mark-called', [HotLeadController::class, 'markCalled'])
+    ->middleware(['auth', 'can:access_backend', 'ValidProduct', 'twofactor']);
 
 
 
@@ -63,7 +66,8 @@ Route::post('/inbound/telnyx', [DLRController::class, 'inboundTelnyx']);
     
     
     Route::post('/admin/ai-analytics/book/{id}', [\App\Http\Controllers\Admin\AiAnalyticsController::class, 'markBooked'])
-    ->name('admin.ai.booked');
+    ->name('admin.ai.booked')
+    ->middleware(['auth', 'can:access_backend', 'ValidProduct', 'twofactor']);
 
 
 
@@ -77,8 +81,10 @@ Route::post('/inbound/telnyx', [DLRController::class, 'inboundTelnyx']);
     //new
 use App\Http\Controllers\Admin\AiSettingsController;
 
-Route::get('/admin/ai-brain',[AiSettingsController::class,'index']);
-Route::post('/admin/ai-brain',[AiSettingsController::class,'save']);
+Route::get('/admin/ai-brain',[AiSettingsController::class,'index'])
+    ->middleware(['auth', 'can:access backend', 'ValidProduct', 'twofactor']);
+Route::post('/admin/ai-brain',[AiSettingsController::class,'save'])
+    ->middleware(['auth', 'can:access backend', 'ValidProduct', 'twofactor']);
 
 Route::post('/telnyx/webhook', [DLRController::class, 'inboundTelnyx']);
 
