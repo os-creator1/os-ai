@@ -1,270 +1,258 @@
 # Design System — Milestone 2, Slice 5 Contract: Contacts & CRM
 
-**This document is fully self-contained.** No section below requires consulting an earlier commit, the Milestone 1 contract, the Milestone 2 contract, or any other slice contract to understand Slice 5's complete rules — every requirement, architecture decision, and path is restated here in full.
+**This document is fully self-contained.** No section below requires consulting an earlier commit to understand Slice 5's complete rules — every requirement, architecture decision, and path is restated here in full.
 
-**Status: contract only. No implementation has occurred under this document. Merging this contract does NOT authorize implementation. In addition, per §7 below, Slice 5 implementation cannot be authorized AT ALL until a separate, dedicated CRM tenant-isolation security remediation is drafted, human-reviewed, human-merged, and its own implementation human-merged.**
+**Status: contract only. No implementation has occurred under this document. Merging this contract does NOT authorize implementation. Slice 5 implementation cannot be authorized AT ALL until a separate, dedicated CRM tenant-isolation security remediation is drafted, human-reviewed, human-merged, and its own implementation human-merged (§7).**
 
-**Correction Round 1** withdrew an invalid JS-extraction authorization for `contactGroups/show.blade.php`, corrected the icon audit to distinguish static Blade markup from runtime JavaScript calls, moved `<x-pagination>` to a non-adoption, sharpened the security-remediation prerequisite (admin Blacklists' global model must survive; both stored-XSS-shaped findings must be resolved), and reduced the future allowlist to 32 paths.
+**Correction Round 1** withdrew an invalid JS-extraction authorization, corrected the icon audit's static-vs-runtime distinction, moved `<x-pagination>` to non-adoption, and sharpened the security-remediation prerequisite.
 
-**Correction Round 2 (this pass, final — `maximum_correction_rounds: 2`).** Independent review confirmed Round 1's fixes were correct but found §5's component-adoption claims were still over-broad and, in several places, factually wrong against the actual current component source and the actual current Slice-5 markup. This round mechanically re-audits every proposed adoption and corrects: (A) the false "every page has one card" claim — `_form_fields.blade.php` has zero cards, `_contacts.blade.php` has four (three KPI-shaped stat cards plus one table card), neither forced into `<x-card>`; (B) the false "no `btn-success`/`btn-info`/`btn-warning`" claim, and the unstated fact that `<x-button variant="secondary">` emits *outline* `btn-outline-secondary` (not solid `btn-secondary`) while `variant="danger"` emits *solid* `btn-danger` (not the `btn-outline-danger` actually used in this slice) — real button-class usage is now mechanically enumerated, separating genuine static Blade markup from SweetAlert2 JS-string `customClass` configuration, which is not Blade-adoptable at all; (C) the over-broad input/select claim, replaced with an exact, conservative, mechanically-verified safe subset; (D) the false "direct fit" claim for `_contacts.blade.php`'s export modal, whose `<form>` spans the entire `.modal-content` region including an auto-rendered header `<x-dialog>` cannot represent — moved to non-adoption; (E) the incorrect `running → accent` badge mapping, which loses the existing `info`-vs-`accent` visual distinction the component's enum cannot express — the whole status badge stays native; (F) the unverified table-adoption claim, corrected to exclude every DataTables-shell/plugin-coupled table and the two special-header-class admin history tables, keeping only the three genuinely plain native-paginator tables. No conclusion outside these six is reopened.
+**Correction Round 2** mechanically re-audited every §5 component-adoption claim against the actual component source and the actual Slice-5 markup, correcting false/over-broad claims for cards, buttons, dialog, badge, input/select, and table.
+
+**Post-Round Consistency Exception (this pass).** `maximum_correction_rounds: 2`, `correction_round: 2`, and `correction_round_is_final: true` are unchanged — **this is not Correction Round 3.** The human has explicitly approved one narrowly-bounded, docs-only exception to reconcile five clerical/mechanical contradictions discovered during final review, none of which reopen the contract's architecture or grant any implementation authority: (A) §5.3's header said "7 total" while enumerating 11 controls, and `business_id` was described both as adopted and as an unresolved "judgment call" — the count is corrected to 11 (7 select + 4 input) and `business_id`'s adoption is mechanically confirmed and locked, no discretion left open; (B) wording that could be read as freezing native-retained markup "byte-identical" is corrected to make explicit that a native-retention decision freezes only the structural/semantic shell, never an in-scope static `data-feather` child icon, which still migrates to `<x-ds-icon>` per Category 1; (C) the button audit is re-run classifying every genuine `btn-primary`/`btn-outline-primary`/`btn-outline-secondary` occurrence by actual HTML tag, revealing 15 of the 21 `btn-outline-primary` occurrences are `<label>` elements pairing with `btn-check` radio inputs — `<x-button>` cannot represent a `<label>` and these are corrected to native retention; (D) direct source inspection found `admin/opportunities/index.blade.php` and `admin/opportunities/runs/index.blade.php` both use `<thead class="table-primary">`, the same incompatibility already used to non-adopt two other tables — both are corrected from "adopted" to native retention, leaving exactly one `<x-table>` adoption in the entire slice; (E) the single "No opportunities are available right now." node was ambiguously eligible for both `<x-alert>` and `<x-empty-state>` — corrected to lock it as `<x-empty-state>` only, with `<x-alert>` reserved for the four genuine, structurally distinct flash/validation-error alerts on the two Opportunity `show.blade.php` pages. No other conclusion is reopened.
 
 ---
 
 ## 0. Governance
 
-- Drafted on branch `chore/design-system-m2-slice5-contacts-crm-contract`, in an isolated linked worktree, based on `origin/main` at `437f12a51b8d036db055ba6ddafd89ab2ec9199a` — confirmed exactly via `git fetch origin --tags && git rev-parse origin/main` at the start of this final correction round. This SHA is the Design System M2 Slice 3 (Dashboards) implementation-correction merge (PR #174).
-- **Correction Round 2 of a maximum of 2 (`maximum_correction_rounds: 2`) — this is the final allowed correction round for this contract.**
-- **Slice 4 (Reports & Analytics) is deliberately, explicitly skipped by human choice.** This contract does not touch, contract, or authorize anything under `customer/Reports/**` or `admin/Reports/**`.
-- Slice 5 is the rollout-map group named **"Contacts & CRM"**, historically listed as **30 files** — not trusted; §3.1 mechanically re-derives the current tree. The re-derived count matches (30 files), independently re-confirmed, not copied.
+- Drafted on branch `chore/design-system-m2-slice5-contacts-crm-contract`, based on `origin/main` at `437f12a51b8d036db055ba6ddafd89ab2ec9199a` — confirmed exactly via `git fetch origin --tags && git rev-parse origin/main` at the start of this pass.
+- `maximum_correction_rounds: 2`
+- `correction_round: 2`
+- `correction_round_is_final: true`
+- `post_round_docs_consistency_exception: human_approved` — a one-time, human-approved, docs-only consistency amendment applied after Correction Round 2 completed, reconciling the five clerical/mechanical contradictions named above. It is **not** a third correction round, does not reopen any architectural decision, and grants no implementation or remediation authority beyond what Round 2 already established.
+- **Slice 4 (Reports & Analytics) is deliberately, explicitly skipped by human choice.**
+- Slice 5 is the rollout-map group "Contacts & CRM," historically listed as 30 files — independently re-derived and confirmed (§3.1), not trusted from that figure alone.
 - `advance_automatically: false`. `start_automatically_after_contract_merge: false`.
-- Any path required during Slice 5 implementation but absent from §9's own numbered allowlist is a stop-and-report condition. The stop threshold is the **33rd** path (32 allowlisted + 1) — unchanged from Round 1; this round adds zero new paths.
-- This contract authorizes **only** drafting/correcting this one document. It does not authorize Reports & Analytics (Slice 4), ChatBox/Conversations (Slice 6), or any other slice/initiative, and makes zero change to `docs/automation/AI-AUTONOMY-STATE.json`.
+- Stop threshold for Slice 5 implementation: the **33rd** path (32 allowlisted + 1) — unchanged.
+- This contract authorizes only drafting/correcting this one document. It does not authorize any other slice or initiative and makes zero change to `docs/automation/AI-AUTONOMY-STATE.json`.
 - **This contract does not fix, and is not authorized to fix, the severe pre-existing cross-tenant authorization gap documented in §3.8.** A separate, dedicated CRM tenant-isolation security-remediation contract must be drafted, human-reviewed, and merged, and its own implementation must be human-merged, before Slice 5 implementation may be authorized (§7).
 
 ---
 
 ## 1. Mandatory preflight — verified
 
-1. `git fetch origin --tags` — `origin/main` confirmed at exactly `437f12a51b8d036db055ba6ddafd89ab2ec9199a`, unchanged since this contract's original drafting pass and Round 1.
-2. Starting branch HEAD for this correction round confirmed at exactly `b90c5cd6dfe9128808bd43e20715277413b85453` (Round 1's own commit), working tree clean before any edit.
+1. `git fetch origin --tags` — `origin/main` confirmed at exactly `437f12a51b8d036db055ba6ddafd89ab2ec9199a`, unchanged since original drafting.
+2. Starting branch HEAD for this pass confirmed at exactly `7ee291456b8932c3e06f589f05971e345369daf4` (Correction Round 2's own commit), working tree clean before any edit.
 3. Read in full before drafting: `CLAUDE.md`, `AGENTS.md`, `docs/automation/DESIGN-SYSTEM-CONTRACT.md`, `docs/automation/DESIGN-SYSTEM-M2-CONTRACT.md`, `docs/automation/DESIGN-SYSTEM-M2-SLICE-3-CONTRACT.md`.
-4. This round additionally, directly re-read: `resources/views/components/{card,button,dialog,badge,input,select,table,tooltip,empty-state,ds-icon}.blade.php` in full, and mechanically re-audited every proposed §5 adoption against the actual current markup of every affected Slice-5 view via direct `grep`/`sed` inspection — not assumed from the Round-1 document's own prose. Specifically confirmed: `_form_fields.blade.php` has zero `.card` wrappers and its inputs use bracketed dynamic names (`fields[__index__][label]`) nested inside `.input-group` structures; `_contacts.blade.php` has four `.card` wrappers (three KPI stat cards, one table card) and its `#exportContactModal`'s `<form>` opens immediately inside `.modal-content`, spanning `.modal-header`/`.modal-body`/`.modal-footer` as one unit; of 44 total `btn-primary` occurrences across the slice, exactly 20 are inside SweetAlert2 `confirmButton:`/`cancelButton:` JS-string `customClass` configuration, not static Blade markup (same for 20 of 22 `btn-outline-danger` occurrences); `_import_history.blade.php`'s status badge is a 4-way nested ternary (`done→bg-success`, `failed→bg-danger`, `running→bg-info`, else→`bg-secondary`) with a genuine `info` state `<x-badge>`'s `neutral|accent|success|warning|danger` enum cannot represent without loss.
+4. This pass additionally, directly re-verified via `grep`/`sed` against live source: every genuine (non-JS-string) occurrence of `btn-primary`, `btn-outline-primary`, and `btn-outline-secondary` across all 29 Slice-5 views, classified by actual enclosing HTML tag; `admin/opportunities/index.blade.php`'s and `admin/opportunities/runs/index.blade.php`'s `<thead>` markup; `admin/opportunities/index.blade.php`'s `business_id` input's complete markup and a repository-wide search for any JS/CSS selector depending on it; the exact empty-state/flash-alert/table-`@empty`-row nodes across all six Opportunity views.
 
 ---
 
 ## 2. This contract's own exact file scope
 
-This branch changes **exactly one file**: `docs/automation/DESIGN-SYSTEM-M2-SLICE-5-CONTRACT.md` (this document). No `resources/`, `app/`, `database/`, `routes/`, or `docs/automation/AI-AUTONOMY-STATE.json` file is touched by drafting or correcting this contract.
+This branch changes **exactly one file**: `docs/automation/DESIGN-SYSTEM-M2-SLICE-5-CONTRACT.md`. No `resources/`, `app/`, `database/`, `routes/`, `tests/`, `config/`, package manifest, or `docs/automation/AI-AUTONOMY-STATE.json` file is touched.
 
 ---
 
 ## 3. Mandatory repository audit — findings
 
-Unchanged from Round 1 except where this round's own re-verification (§1 item 4) is cited. §§3.1–3.3, 3.7–3.10 carry zero substantive change this round; reproduced in full below for self-containment, with §3.4–§3.6 unchanged from Round 1 (icon/decomposition corrections already stand) and a new §3.11 added for this round's component-markup findings.
+Unchanged from Correction Round 2 except §3.11, extended this pass with the five mechanical re-audits behind the consistency exception.
 
-### 3.1 Current file inventory — mechanically re-derived, unchanged this round
+### 3.1 Current file inventory — unchanged
 
-**`resources/views/customer/Contacts/` — 8 files, 1,290 lines:** `create.blade.php` (209), `import.blade.php` (48), `import/mapping.blade.php` (154), `import_file.blade.php` (147), `paste_text.blade.php` (166), `show.blade.php` (209), `subscribe_form.blade.php` (252), `unsubscribe_form.blade.php` (105).
+30 files, 6,607 lines, across the six owned directories (`customer/Contacts` 8, `customer/contactGroups` 12, `customer/Blacklists` 2, `customer/opportunities` 2, `admin/opportunities` 4, `admin/Blacklists` 2). `_segments.blade.php` (0 bytes) confirmed dead, excluded.
 
-**`resources/views/customer/contactGroups/` — 12 files, 3,262 lines:** `_contacts.blade.php` (228), `_fields.blade.php` (182), `_form_fields.blade.php` (76), `_import_history.blade.php` (60), `_message.blade.php` (105), `_opt_in_keywords.blade.php` (39), `_opt_out_keywords.blade.php` (39), `_segments.blade.php` (**0 — dead stub, §3.6**), `_settings.blade.php` (172), `create.blade.php` (137), `index.blade.php` (651), `show.blade.php` (1,573).
+### 3.2 Component library — unchanged from Round 2, with one clarifying restatement
 
-**`resources/views/customer/Blacklists/` — 2 files, 513 lines.** **`resources/views/customer/opportunities/` — 2 files, 457 lines.** **`resources/views/admin/opportunities/` — 4 files, 580 lines.** **`resources/views/admin/Blacklists/` — 2 files, 505 lines.**
+19 components in `resources/views/components/`. Restated for this pass's own findings: `<x-button>` cannot render a `<label>` element — it always renders `<button>` or `<a>` (§3.11). `<x-table>`'s `<thead>` rendering has no mechanism for a `<thead>`-level class such as `table-primary` (§3.11, already established for two other tables in Round 2, now found to apply to two more).
 
-**Total: 30 files, 6,607 lines.**
+### 3.3 Color/token audit — unchanged
 
-### 3.2 Current Design System component library — re-verified directly this round (§1 item 4)
+Zero hardcoded literals anywhere in the 30 files.
 
-19 components in `resources/views/components/`. Exact prop APIs re-confirmed this round for every component named in a §5 decision:
+### 3.4 Icon audit — unchanged, with the native-retention interaction clarified (Exception B)
 
-- **`<x-card :title :padded>`** — optional `.card-header` (title + actions slot), body always wrapped in a `div` (`.card-body` unless `padded=false`), optional `.card-footer`. No support for multiple independent stat/KPI sub-cards inside one wrapper, and no support for a page with zero cards (it is opt-in per usage, not a page-level requirement).
-- **`<x-button :variant :size :type :href :icon :disabled>`** — `variant` ∈ `primary|secondary|outline|ghost|danger`, mapping to `btn-primary`, **`btn-outline-secondary`** (not solid `btn-secondary`), `btn-outline-primary`, `btn-flat-secondary`, and **`btn-danger`** (solid, not `btn-outline-danger`) respectively. No `success`/`warning`/`info` variant of any kind.
-- **`<x-dialog :id :title :size>`** — `sm|md|lg`, always adds `modal-dialog-centered`; if `title` is supplied, auto-renders a `.modal-header` (with its own auto-generated `btn-close`) **outside** any slot the caller controls; body is the default slot, footer is a separate named slot. **The component owns the header/body/footer DOM structure itself — a caller cannot wrap all three in one enclosing `<form>` element through the component's own API**, since the header is rendered by the component before the caller's slot content, not inside it.
-- **`<x-badge :variant>`** — `variant` ∈ `neutral|accent|success|warning|danger`. **No `info` variant.**
-- **`<x-input :label :name :type :help :error>`** / **`<x-select :label :name :options :selected :help>`** — both always wrap output in a fresh `<div class="ds-field mb-3">`, always set `id="{{ $name }}"`, and render their own `<label>` when a `label` prop is passed. Neither supports a `name` containing PHP-array bracket syntax being paired with a caller-supplied `id` that differs from it, nor a control that must remain a direct child of a `.input-group`/`.form-check` wrapper the surrounding markup owns.
-- **`<x-table :headers>`** — wraps a `<table>` in `.table-responsive`; `<thead>` (if `headers` is non-empty) renders one `<th class="text-label text-uppercase text-muted">` per array entry, with **no mechanism to apply a per-column class (e.g., a DataTables `colvis`-exclusion class) or a `<thead>`-level class (e.g., `table-primary`)**; `<tbody>` is always the caller's own slot content, unaffected either way.
-- **`<x-tooltip :text :placement>`** — wraps slot content in a `<span data-bs-toggle="tooltip" data-bs-placement="..." title="...">`. Unchanged, still a clean structural match for this slice's one tooltip trigger (§3.11).
-- **`<x-pagination :paginator>`**, **`<x-ds-icon>`**, **`<x-alert>`**, **`<x-empty-state>`** — unchanged from Round 1's own findings.
+**Category 1 — static Blade `data-feather="..."`: 79 total occurrences, 30 distinct names — the sole Slice-5 migration target.** **Category 2 — runtime `feather.icons[...].toSvg(...)` JS calls: 11 occurrences, 6 distinct names, across 4 files — explicitly preserved.** **Category 3 — controller-generated dynamic `data-feather` markup: `ContactsController.php` lines 155-156 — outside Slice-5 view scope.**
 
-### 3.3 Color/token audit — unchanged this round
+**Clarified this pass, binding:** a "native retention" decision anywhere in §5 (for a card, button, dialog, badge, table, or any other structural element) freezes only that element's own structural/semantic shell — its tag, role, Bootstrap variant classes, form ownership, input type/name/value semantics, IDs, `data-*` hooks, plugin selectors/classes, and route/method/CSRF/payload behavior. **It does not freeze an otherwise-in-scope Category-1 static `data-feather` child node.** A `<i data-feather="name">` inside a natively-retained element (e.g., a native `btn-success` link, a native `btn-outline-warning` reset button, the native export modal, the native `_import_history.blade.php` badge row, or a native DataTables-shell table) still migrates to its verified `<x-ds-icon>` equivalent exactly as it would inside an adopted element — the native-retention decision and the icon-migration decision are independent, evaluated separately, per node. Concretely: `_contacts.blade.php`'s natively-retained `btn-success`/`btn-info`/solid-`btn-secondary` links keep their exact classes but their `data-feather="plus-circle"`/`"file-text"`/`"x"` children still migrate; `Blacklists/create.blade.php`'s natively-retained `btn-outline-warning` reset button keeps its class but its `data-feather="refresh-cw"` child still migrates; the natively-retained export modal keeps its exact form/header/footer structure but its `data-feather="info"`/`"check-square"`/`"download"`/`"x"` children still migrate; the natively-retained `_import_history.blade.php` badge expression is untouched by icon migration (it contains no icon itself), but unrelated static icons elsewhere in that same partial (`data-feather="download"` on the two download-link/disabled-span elements) still migrate.
 
-Zero hardcoded hex/`rgb()`/`rgba()`/`hsl()` literals, zero `font-family` declarations, anywhere in the 30 files. Zero new SCSS required.
+### 3.5 DataTables / Select2 / Flatpickr / SweetAlert2 / Dropzone / modal / tabs audit — unchanged
 
-### 3.4 Icon audit — unchanged this round (Round 1's Correction B stands)
+Unchanged from Round 2.
 
-**Category 1 — static Blade `data-feather="..."` (the genuine migration target): 79 total occurrences, 30 distinct names.** **Category 2 — runtime `feather.icons[...].toSvg(...)` JS calls, explicitly preserved: 11 occurrences, 6 distinct names (`copy`, `edit`, `message-square`, `plus-circle`, `send`, `trash`), across 4 files** (`contactGroups/index.blade.php` ×5, `contactGroups/show.blade.php` ×4, `customer/Blacklists/index.blade.php` ×1, `admin/Blacklists/index.blade.php` ×1). **Category 3 — controller-generated dynamic `data-feather` markup, outside Slice-5 view scope: `ContactsController.php` lines 155-156.** `<x-ds-icon>` structurally cannot execute inside JavaScript (confirmed again this round, §3.2); no client-side Lucide package exists; the Feather browser runtime remains loaded for Categories 2 and 3, mirroring the established Slice 2 precedent.
+### 3.6 `contactGroups/show.blade.php` decomposition — unchanged
 
-### 3.5 DataTables / Select2 / Flatpickr / SweetAlert2 / Dropzone / modal / tabs audit — unchanged this round
+No JS extraction, no new file. Inline script stays in place.
 
-Unchanged from Round 1: 4 server-side + 2 client-side DataTables instances, Select2 in 6 contexts, Flatpickr in 3, SweetAlert2 with 11 flows on `contactGroups/show.blade.php` alone (plus 5 on `contactGroups/index.blade.php`, 2 on each `Blacklists/index.blade.php`), Dropzone in 1 file, one genuine Bootstrap modal (`_contacts.blade.php`'s `#exportContactModal` — its exact `<form>`-spans-everything structure is detailed in §3.11 below and drives §5's Correction D), nav-pills tabs in 2 locations, one tooltip trigger.
+### 3.7 Public form determination — unchanged
 
-### 3.6 `contactGroups/show.blade.php` — decomposition decision — unchanged this round (Round 1's Correction A stands)
+`subscribe_form.blade.php`/`unsubscribe_form.blade.php` stay on `fullLayoutMaster`.
 
-No JS extraction, no new JS file, no new Blade partial. The existing 9-partial tab decomposition is sufficient. The inline `page-script` block (≈1,313 of 1,573 lines) remains in place, unrelocated, saturated with Blade-evaluated constructs a static `resources/js/scripts/**` file cannot execute. `_segments.blade.php` (0 bytes) remains excluded, not modified.
+### 3.8 Authorization / tenant-isolation audit — unchanged
 
-### 3.7 Public form determination — unchanged this round
+Full findings and both Correction-D/E prerequisite refinements from Round 1 stand unchanged.
 
-`subscribe_form.blade.php`/`unsubscribe_form.blade.php` remain on `fullLayoutMaster`, unwrapped in dashboard chrome.
+### 3.9 Opportunity-surface preservation — unchanged
 
-### 3.8 Authorization / tenant-isolation audit — unchanged this round (Round 1's Corrections D and E stand)
+37 `tests/Feature/Opportunity/` files, 10 `tests/Unit/Opportunity/` files, re-run unmodified.
 
-Confirmed defects in customer Contacts/ContactGroups (unscoped single-record/batch mutation) and customer Blacklists (unscoped `destroy()`/`batchAction()`, shared with the admin controller's own equivalent actions). Admin Blacklists' global list/search/export visibility is intentional, not itself a defect — the future remediation must preserve it while closing the customer-originated exploit path through the shared unscoped repository code (Correction D), and must explicitly resolve, not merely note, both stored-XSS-shaped findings (Correction E): the `contactGroups/show.blade.php` SweetAlert2 `{!! !!}`→`html` pattern, and the admin Blacklists raw-HTML `displayName()` pattern. Opportunities remains the correctly-scoped contrast case, needing no remediation. Zero existing test coverage for Contacts/ContactGroups/Blacklists anywhere.
+### 3.10 Form/mutation preservation — unchanged
 
-### 3.9 Opportunity-surface preservation — unchanged this round
+### 3.11 Component-markup compatibility audit — extended this pass
 
-37 files under `tests/Feature/Opportunity/`, 10 under `tests/Unit/Opportunity/` — re-run unmodified, no new authorization tests re-derived for this already-proven surface.
+**Exception A — `business_id` input, mechanically resolved.** `admin/opportunities/index.blade.php` lines 46-47: `<input type="number" name="business_id" min="1" class="form-control" placeholder="Business ID" value="{{ $filters['business_id'] }}">` — no `id` attribute, no `.input-group` nesting, no Select2/Flatpickr/plugin class. A repository-wide search of `resources/js/**` and the view itself for any selector referencing `business_id` (by `id`, `name`, or class) found **zero matches** — no JS or CSS depends on this field's current DOM shape. **Locked decision: adopted.** No discretion is left open.
 
-### 3.10 Form/mutation preservation — unchanged this round
+**Exception C — button-class occurrences re-classified by actual HTML tag, mechanically enumerated.**
 
-Every form's exact `action`/method/CSRF/field-name set preserved byte-for-byte, per Round 1's own detailed accounting.
+| Class | Genuine (non-JS-string) occurrences | `<button>`/`<a>` (tag-compatible) | `<label>` (tag-incompatible) |
+|---|---|---|---|
+| `btn-primary` | 24 | 24 | 0 |
+| `btn-outline-primary` | 21 | 6 (5 `<button>`, 1 `<a>`) | **15** (5× `Contacts/paste_text.blade.php`, 5× `Blacklists/create.blade.php` customer, 5× `Blacklists/create.blade.php` admin — all `<label class="btn btn-outline-primary" for="...">` paired with a `btn-check` radio input) |
+| `btn-outline-secondary` | 8 | 8 (6 `<a>`, 2 `<button>`) | 0 |
 
-### 3.11 Component-markup compatibility audit — new this round, drives §5's six corrections
+The 15 `<label>` occurrences are Bootstrap's own radio-button-group pattern (`<input type="radio" class="btn-check">` + `<label class="btn btn-outline-primary" for="...">`) — `<x-button>` cannot render a `<label>` element or preserve the `for`/`btn-check` pairing; replacing one would break the control group's semantics and JS-free toggle behavior. **These 15 remain native `<label>` markup.**
 
-Direct, mechanical evidence gathered this round (§1 item 4), organized by the six corrected components:
+**Exception D — table-adoption set, mechanically corrected.** Direct source confirms `admin/opportunities/index.blade.php` line 56 and `admin/opportunities/runs/index.blade.php` line 37 both use `<thead class="table-primary">` — the identical incompatibility Round 2 already used to non-adopt `admin/opportunities/show.blade.php`'s two history tables. `customer/opportunities/index.blade.php` (line 49) uses a plain, classless `<thead>`. **Of the three views Round 2 claimed as `<x-table>` adoptions, only one is genuinely compatible.**
 
-**Cards.** Per-file `.card` wrapper counts, confirmed by direct grep across all 29 modified views: `_form_fields.blade.php` — **0**. `_contacts.blade.php` — **4** (three KPI-shaped stat/count cards at the top of the file, plus one separate card wrapping the DataTables table). `Contacts/import.blade.php`, `subscribe_form.blade.php`, `unsubscribe_form.blade.php`, `contactGroups/show.blade.php` — **0 at the top level** (each is a tab-shell/panel-only file; any cards belonging to their content live inside the partials/layout they include or extend, not in the file itself). Every other file in the 29 has exactly **1** card. The claim "every page's single outer `.card` wrapper" is therefore false for at least these five files.
-
-**Buttons.** Mechanical `grep` of every `btn-*` class across all 29 files, cross-referenced against whether each occurrence is real static Blade markup or a SweetAlert2 `customClass` JS-string: `btn-primary` — 44 total, **20 inside `confirmButton:`/`cancelButton:` JS strings, 24 genuine static Blade markup**. `btn-outline-danger` — 22 total, **20 inside JS strings** (`cancelButton: 'btn btn-outline-danger ms-1'`, appearing once per SweetAlert2 flow), **only 2 genuine static occurrences** (`customer/opportunities/show.blade.php`'s and `admin/opportunities/show.blade.php`'s "Dismiss opportunity" submit buttons). `btn-outline-primary` (21, genuine), `btn-outline-secondary` (8, genuine) — both real static Blade markup, no JS-string presence found. `btn-secondary` (solid, not outline) — 3 genuine static occurrences (`_contacts.blade.php`'s Import link and its export-modal close button, `_import_history.blade.php`'s disabled `<span>`). `btn-success` — 7 genuine static occurrences (4 "Add New" links, 2 "add keyword" links, 1 "Confirm and start" submit button). `btn-info` — 3 genuine static occurrences (3 "Export" links). `btn-outline-warning` — 2 genuine static occurrences (2 "Reset" buttons on the Blacklists create forms). `btn-relief-{primary,success,info,warning,danger}` — 5 occurrences, all on `<span>` elements in `_fields.blade.php` (field-type pickers driving `data-*`-attribute JS behavior, not `<button>`/`<a>` tags at all).
-
-**Dialog.** `_contacts.blade.php`'s `#exportContactModal`: `<div class="modal-dialog modal-lg" role="document"><div class="modal-content"><form method="post" action="...">` — the `<form>` element opens immediately inside `.modal-content` and closes only after `.modal-footer`, meaning it wraps the header, body, and footer as a single submittable unit. The modal also uses plain `modal-lg`, never `modal-dialog-centered`.
-
-**Badge.** `_import_history.blade.php` line 25: `class="badge {{ $job->status == 'done' ? 'bg-success' : ($job->status == 'failed' ? 'bg-danger' : ($job->status == 'running' ? 'bg-info' : 'bg-secondary')) }}"` — four distinct visual states, one of which (`running` → `bg-info`) has no representable `<x-badge>` variant.
-
-**Input/select.** `_form_fields.blade.php` (and, by the same repeatable-row pattern, `_fields.blade.php`): every field name uses PHP-array bracket syntax (`fields[__index__][label]`, `fields[__index__][uid]`, etc.), several inputs are direct children of a `.input-group` alongside a sibling `.input-group-text`, several are `type="hidden"` or `type="checkbox"` inside `.form-check.form-switch` wrappers — none of this is representable by `<x-input>`'s single labeled-field-in-its-own-`ds-field`-div API. By contrast, `Blacklists/create.blade.php`'s `reason` field, `admin/opportunities/index.blade.php`'s `business_id` field, `customer/opportunities/show.blade.php`'s `value` field, and the `status`/`freshness`/`worker_key` filter selects (customer + admin index pages) plus the `duration` selects (both opportunity show pages) are each a standalone, non-plugin, non-bracketed-name, non-`.input-group`-nested control with a flat option list where applicable — genuinely safe adoption candidates.
-
-**Table.** The four DataTables-shell tables (`contactGroups/index.blade.php`, `contactGroups/show.blade.php`, `Blacklists/index.blade.php` ×2) rely on per-column classes/behavior `<x-table>`'s flat-string-only `headers` array cannot express (the `colvis`-extension column-visibility toggle on `show.blade.php`, the checkbox-selection column, the responsive-control column). `admin/opportunities/show.blade.php`'s two plain history tables use `<thead class="table-primary">`, a `<thead>`-level class `<x-table>` does not support. The three native-paginator tables (`customer/opportunities/index.blade.php`, `admin/opportunities/index.blade.php`, `admin/opportunities/runs/index.blade.php`) have plain-text-only headers (including blank entries for control/link columns, which a flat string array can represent as empty strings) with no plugin coupling — genuinely safe.
+**Exception E — empty-state/alert node audit, mechanically resolved.** Across the six Opportunity views: `customer/opportunities/index.blade.php` line 42-44 — exactly one `@if ($opportunities->isEmpty())` block-level `<div class="alert alert-secondary mb-0">No opportunities are available right now.</div>` node. `customer/opportunities/show.blade.php` lines 15-20 — two genuine flash/validation nodes (`session('status') === 'success'` → `alert-success`; validation-errors → `alert-danger`). `admin/opportunities/show.blade.php` lines 23-30 — two genuine flash/validation nodes (dynamic `alert-{{ success ? success : danger }}`; validation-errors → `alert-danger`). `admin/opportunities/index.blade.php` line 82, `admin/opportunities/show.blade.php` lines 213/265, `admin/opportunities/runs/index.blade.php` line 59, `admin/opportunities/runs/show.blade.php` line 118 — each a table-cell `@empty` row (`<td colspan="...">No ... found.</td>`), never block-level. **Exactly one node in the entire slice is eligible for `<x-empty-state>`; exactly four nodes (all flash/validation, never the empty-result node) are eligible for `<x-alert>`; zero table-cell `@empty` rows are eligible for either component**, since every table containing one is itself natively retained (§5.4).
 
 ---
 
 ## 4. Locked Slice 5 scope
 
-- The 30 files inventoried in §3.1, **minus** `_segments.blade.php` — **29 existing Blade views**.
-- **No new production file of any kind.**
-- Three new, mechanically-derived test files (§8).
-- No controller, route, middleware, FormRequest, model, or migration file. No `app/`, `database/`, or `routes/` path of any kind.
-- No other path.
+29 existing Blade views (30 minus `_segments.blade.php`). No new production file of any kind. Three new test files (§8). No `app/`, `database/`, `routes/` path of any kind.
 
 ---
 
 ## 5. Component adoption
 
-**Final standard, restated:** use a canonical component only where its actual, current, read API is DOM- and behavior-compatible with the existing surface it would replace. Otherwise retain native Bootstrap markup — it is already runtime-token-compliant via `_runtime-bindings.scss`, so a non-adoption is never an incomplete migration, it is a deliberate, correct decision. Three categories are distinguished explicitly below: **component adoption**, **deliberate native token-bound retention**, and **third-party/plugin retention**.
+**Standard:** use a canonical component only where its actual, current, read API is DOM- and behavior-compatible with the existing surface. Otherwise retain native Bootstrap markup — already runtime-token-compliant. A native-retention decision freezes the structural/semantic shell only, never an in-scope static icon child (§3.4).
 
-### 5.1 Cards — corrected (Correction A)
+### 5.1 Cards — unchanged from Round 2
 
-**Adopted:** the single `.card` wrapper present in 23 of the 29 files (every file with exactly one card per §3.11) adopts `<x-card>` cleanly.
+Adopted: the single `.card` wrapper in 23 of 29 files, plus `_contacts.blade.php`'s table card. Not adopted: `_contacts.blade.php`'s 3 KPI cards; `_form_fields.blade.php` (no card exists); `Contacts/import.blade.php`, `subscribe_form.blade.php`, `unsubscribe_form.blade.php`, `contactGroups/show.blade.php` (no top-level card exists in these files).
+
+### 5.2 Buttons — corrected this pass (Exception C)
+
+**Adopted, exact final subset (38 total):**
+- `variant="primary"` — **24** genuine static `btn-primary` occurrences, all on `<button>`/`<a>` tags.
+- `variant="outline"` — **6** genuine static `btn-outline-primary` occurrences that are actual `<button>`/`<a>` tags (`_contacts.blade.php`'s "Columns" dropdown toggle; `customer/opportunities/index.blade.php`'s per-row "View" link; `customer/opportunities/show.blade.php`'s "Request approval"/"Reopen opportunity"/"Retry" submit buttons; `admin/opportunities/show.blade.php`'s "Reopen opportunity" submit button).
+- `variant="secondary"` — **8** genuine static `btn-outline-secondary` occurrences, all `<button>`/`<a>` tags.
+
 **Not adopted — deliberate native retention:**
-- `_form_fields.blade.php` — has no card at all; not a card-adoption surface of any kind.
-- `_contacts.blade.php`'s three KPI-shaped stat/count cards — structurally analogous to the dashboard stat-card pattern Slice 3 deliberately left native (title/count in a non-`<x-card>`-header shape); **not forced into `<x-card>` merely to raise adoption count.** Its fourth card (the table wrapper) **is** adopted, since it is a plain single-card-around-a-table shape matching every other adopted instance.
-- `Contacts/import.blade.php`, `subscribe_form.blade.php`, `unsubscribe_form.blade.php`, `contactGroups/show.blade.php` — no top-level card exists in these files; not card-adoption surfaces.
+- **15 `<label class="btn btn-outline-primary">` radio-group controls** (§3.11) — `<x-button>` cannot render a `<label>` or preserve the `btn-check`/`for` pairing.
+- Solid `btn-secondary` (3), `btn-success` (7), `btn-info` (3), `btn-outline-warning` (2), `btn-relief-*` (5, on `<span>`s) — no matching variant or tag, unchanged from Round 2.
+- The 2 genuine static `btn-outline-danger` occurrences ("Dismiss opportunity" buttons) — the component's `danger` variant emits solid `btn-danger`, a visual mismatch, unchanged from Round 2.
+- The 20 `btn-primary`-in-`confirmButton` and 20 `btn-outline-danger`-in-`cancelButton` SweetAlert2 JS-string occurrences — not Blade markup, not component-adoption-relevant, unchanged from Round 2.
 
-### 5.2 Buttons — corrected (Correction B)
+Every natively-retained button above keeps its exact class/tag, but any static `data-feather` icon child it contains still migrates to `<x-ds-icon>` (§3.4). `<x-button>` itself is not modified.
 
-**Adopted, exact subset:** `variant="primary"` for the 24 genuine static `btn-primary` occurrences; `variant="outline"` for the 21 genuine `btn-outline-primary` occurrences; `variant="secondary"` for the 8 genuine `btn-outline-secondary` occurrences (confirmed: the component's `secondary` variant emits `btn-outline-secondary`, an exact match for this specific class, not for solid `btn-secondary`).
-**Not adopted — deliberate native retention, with the exact reason:**
-- Solid `btn-secondary` (3 occurrences) — no `<x-button>` variant emits a solid secondary button; the component's own `secondary` variant is outline-only.
-- `btn-success` (7), `btn-info` (3), `btn-outline-warning` (2) — no matching variant exists in the component's enum at all.
-- `btn-outline-danger`, genuine static occurrences only (2, the two "Dismiss opportunity" buttons) — the component's `danger` variant emits **solid** `btn-danger`, not outline; adopting it would change the button's visual weight/semantics, not merely restyle it.
-- `btn-relief-*` (5, on `<span>` elements) — the component always renders a real `<button>` or `<a>` tag; these are non-button `<span>` widgets driving JS click-delegation via `data-*` attributes, an incompatible tag/semantics change.
-**Not component-adoption-relevant at all:** the 20 `btn-primary`-in-`confirmButton` and 20 `btn-outline-danger`-in-`cancelButton` SweetAlert2 JS-string occurrences — these are JavaScript configuration values, not Blade markup, exactly analogous in kind to §3.4's Category 2 icon findings; they are untouched by this slice regardless of any Blade component decision. `<x-button>` itself is not extended or modified.
+### 5.3 Input / Select — corrected this pass (Exception A)
 
-### 5.3 Input / Select — corrected (Correction C)
+**Adopted, exact subset: 11 controls total — 7 `<x-select>` + 4 `<x-input>`.**
+- `<x-select>` (7): customer Opportunity `status`/`freshness` filters (2), admin Opportunity `status`/`freshness`/`worker_key` filters (3), `duration` selects on both Opportunity `show.blade.php` pages (2).
+- `<x-input>` (4): `Blacklists/create.blade.php`'s `reason` field (customer + admin, 2), `customer/opportunities/show.blade.php`'s `value` field (1), and **`admin/opportunities/index.blade.php`'s `business_id` field (1) — mechanically confirmed compatible and locked as adopted, no open discretion** (§3.11's Exception A: no `id`, no `.input-group` nesting, no JS/CSS selector dependency found anywhere in the repository).
 
-**Adopted, exact safe subset (7 total):** `<x-select>` for the customer/admin Opportunity `status`/`freshness` filters (2 + 2) and admin's additional `worker_key` filter (1), plus the `duration` select on both Opportunity `show.blade.php` pages (2) — all standalone, flat-option-list, non-plugin, non-bracketed-name selects. `<x-input>` for `Blacklists/create.blade.php`'s `reason` field (customer + admin, 2), `admin/opportunities/index.blade.php`'s `business_id` field (1), and `customer/opportunities/show.blade.php`'s `value` field (1) — 4 standalone, non-plugin, non-`.input-group`-nested inputs. Where the existing markup pairs the control with a separate, external `<label for="...">` element, implementation replaces that native label+control pair as one unit with the component's own `:label` prop — never rendering both.
-**Not adopted — deliberate native retention:** every dynamic per-field control in `Contacts/create.blade.php`/`show.blade.php` (Flatpickr-managed, variable control type per `ContactGroupFields::getControlNameByType()`); every bracketed-array-name field in `_fields.blade.php`/`_form_fields.blade.php` (`fields[__index__][...]`, several nested in `.input-group`/`.form-check.form-switch`); every Select2-controlled select (§3.5); the `Contacts/paste_text.blade.php` recipients textarea and delimiter radio group (no textarea/radio-group component exists, unchanged from the original audit); the `admin/opportunities/index.blade.php` filter dropdowns already covered above are adopted, but its `business_id` sibling filter fields with no direct label association remain a judgment call resolved at implementation time only if `<x-input>`'s auto-`id`/label behavior is confirmed not to collide with any existing JS selector targeting the current markup — named here as a narrow, implementation-time confirmation, not a blanket claim.
+Where the existing markup pairs a control with a separate external `<label for="...">`, implementation replaces that native label+control pair as one unit with the component's own `:label` prop, never rendering both.
 
-### 5.4 Table — corrected (Correction F)
+**Not adopted — deliberate native retention:** every dynamic per-field control in `Contacts/create.blade.php`/`show.blade.php`; every bracketed-array-name field in `_fields.blade.php`/`_form_fields.blade.php`; every Select2-controlled select; the `paste_text.blade.php` recipients textarea and delimiter radio group (radio labels covered by §5.2). `<x-input>`/`<x-select>` are not modified.
 
-**Adopted:** the three native-paginator tables — `customer/opportunities/index.blade.php`, `admin/opportunities/index.blade.php`, `admin/opportunities/runs/index.blade.php` — whose headers are plain text (including blank entries for control/link columns, representable as empty strings in the `headers` array) with zero plugin coupling.
+### 5.4 Table — corrected this pass (Exception D)
+
+**Adopted: exactly one table — `customer/opportunities/index.blade.php`.** Plain, classless `<thead>`, zero plugin coupling.
+
 **Not adopted — deliberate native retention:**
-- The four DataTables-shell tables (`contactGroups/index.blade.php`, `contactGroups/show.blade.php`, `Blacklists/index.blade.php` ×2) — their checkbox-selection column, responsive-control column, and (on `show.blade.php`) `colvis`-extension column-visibility toggling all depend on per-column classes/attributes `<x-table>`'s flat-string-only `headers` API cannot express. Kept as native `<table class="table datatables-basic">` markup, already token-bound.
-- `admin/opportunities/show.blade.php`'s two history tables (transition history, execution history) — both use `<thead class="table-primary">`, a `<thead>`-level class the component does not support. Kept native.
-`<x-table>` itself is not modified.
+- `admin/opportunities/index.blade.php` and `admin/opportunities/runs/index.blade.php` — **corrected this pass**: both use `<thead class="table-primary">`, a `<thead>`-level class `<x-table>` cannot emit, mechanically identical to the incompatibility already used for the next two items.
+- `admin/opportunities/show.blade.php`'s two history tables — same `table-primary` incompatibility, unchanged from Round 2.
+- The four DataTables-shell tables (`contactGroups/index.blade.php`, `contactGroups/show.blade.php`, `Blacklists/index.blade.php` ×2) — plugin-column-class incompatibility, unchanged from Round 2.
 
-### 5.5 Dialog — corrected (Correction D)
+Every natively-retained table keeps its exact `<thead>`/column structure, but any static `data-feather` icon inside its surrounding page markup (outside the table itself) still migrates per §3.4. `<x-table>` is not modified.
 
-**Not adopted.** `_contacts.blade.php`'s `#exportContactModal` is moved to explicit non-adoption: its `<form>` spans the entire `.modal-content` region (header through footer) as one submittable unit, while `<x-dialog>` auto-renders its own header outside any slot the caller controls, with no API for a form element to wrap across the component's own header/body/footer boundary. The modal additionally uses plain `modal-lg`, never the component's always-applied `modal-dialog-centered`. Adopting the component would require restructuring form ownership or accepting a visible centering/structure change — outside a presentation-only slice's authority. **The existing Bootstrap modal markup is preserved exactly, already token-bound via `_runtime-bindings.scss`.** `<x-dialog>` itself is not modified. Since dialog is non-adopted, no `ds-dialog` marker-class assertion is required by §8's component-adoption test for this surface.
+### 5.5 Dialog — unchanged from Round 2
 
-### 5.6 Badge — corrected (Correction E)
+Not adopted. `_contacts.blade.php`'s `#exportContactModal` keeps its exact native Bootstrap modal/form structure (its `<form>` spans header through footer, which `<x-dialog>`'s auto-rendered-header API cannot represent). Its static `data-feather` children (`info`, `check-square`, `download`, `x`) still migrate per §3.4. `<x-dialog>` is not modified.
 
-**Not adopted for `_import_history.blade.php`'s status pill.** The existing 4-way state (`done`/`failed`/`running`/other) requires a genuine `info` visual distinct from `accent` (which carries brand-primary styling, a different meaning), and `<x-badge>`'s enum has no `info` variant — mapping `running` to `accent` would be a real semantic change, not a preservation. **The entire nested-ternary badge expression remains native Bootstrap markup, already token-bound.** `<x-badge>` is not extended and no `variant="info"` is invented.
-**Adopted, unchanged from the original audit:** the Opportunity status/freshness badges (`customer/opportunities/index.blade.php`/`show.blade.php`) — their existing `bg-light-primary`/`bg-light-success`/`bg-light-warning` states map exactly, without loss, to `accent`/`success`/`warning`.
+### 5.6 Badge — unchanged from Round 2
 
-### 5.7 Unchanged adoptions from Round 1
+Not adopted for `_import_history.blade.php`'s 4-way status pill (`bg-info`'s `running` state has no `<x-badge>` equivalent). Adopted, unchanged: the Opportunity status/freshness badges (`accent`/`success`/`warning`, exact matches).
 
-- **`<x-alert>`** — Opportunity empty-state and flash/validation-error alerts (flat icon+slot layout matches).
-- **`<x-empty-state>`** — Opportunity empty-message blocks (plain block-level, not table-cell-nested). DataTables' own `sZeroRecords` strings are untouched (runtime JS, not static Blade markup).
-- **`<x-tooltip>`** — `_contacts.blade.php`'s single tooltip trigger, confirmed this round as still a clean structural match (§3.2).
-- **`<x-ds-icon>`** — the 79 Category-1 static `data-feather` occurrences only (§3.4); Category 2/3 explicitly untouched.
-- **`<x-pagination>`** — **not adopted anywhere** (Round 1's Correction C, unchanged); the three native-paginator pages keep their existing `->links()` calls exactly.
-- **`<x-tabs>`, native `<textarea>`, native `<input type="file">`/Dropzone, Select2/Flatpickr-rendered controls, `<x-menu>`** — all non-adopted, unchanged reasoning from Round 1.
+### 5.7 Alert / Empty-State — corrected this pass (Exception E)
 
-No component is forced anywhere its real, read API does not match the existing markup's shape or behavior. §8's `ContactsCrmComponentAdoptionTest` asserts presence **only** for the exact adoptions locked in §5.1–5.4 and §5.7's Alert/Empty-State/Tooltip/Icon items — never for a non-adopted surface, and never requiring any intentionally-retained native Bootstrap markup to disappear.
+**Adopted, `<x-empty-state>`: exactly one node** — `customer/opportunities/index.blade.php`'s "No opportunities are available right now." block. **This node is not also treated as an `<x-alert>` candidate** — a single node receives exactly one component decision.
+
+**Adopted, `<x-alert>`: exactly four nodes**, all genuine flash/validation-error alerts, structurally distinct from the empty-result node above: `customer/opportunities/show.blade.php`'s session-success and validation-error alerts (2); `admin/opportunities/show.blade.php`'s session-status and validation-error alerts (2).
+
+**Not adopted:** every table-cell `@empty` row across the six Opportunity views (`admin/opportunities/index.blade.php`, `admin/opportunities/show.blade.php` ×2, `admin/opportunities/runs/index.blade.php`, `admin/opportunities/runs/show.blade.php`) — each lives inside a table that is itself natively retained (§5.4), so its row stays native table markup, never restructured into a block-level `<x-empty-state>`.
+
+### 5.8 Icon and other unchanged adoptions from Round 1/2
+
+`<x-ds-icon>` for all 79 Category-1 static occurrences (§3.4, with the native-retention interaction clarified this pass). `<x-tooltip>` for `_contacts.blade.php`'s one trigger. `<x-pagination>` not adopted anywhere. `<x-tabs>`, native `<textarea>`, native file input/Dropzone, Select2/Flatpickr controls, `<x-menu>` — all non-adopted, unchanged.
+
+No component is forced anywhere its real API does not match. §8's component-adoption test asserts presence **only** for the exact final sets in §5.1–§5.4 and §5.6–§5.8.
 
 ---
 
 ## 6. Preserve all behavior
 
-Unchanged in substance from Round 1, restated in full: no controller, route, request, middleware, authorization rule, cache key, or query's actual filtering/scoping logic changes for styling convenience. Route/controller/security behavior is read-only to this implementation until §7's prerequisite is satisfied. Slice 5 must preserve exactly: every route/method/middleware stack on the post-remediation baseline; every controller/repository's exact data-building/mutation logic per that baseline; every AJAX endpoint, form action/method, SweetAlert2 payload shape, and DataTables configuration named in §3.5/§3.10; `contactGroups/show.blade.php`'s inline script in place (§3.6); the Feather browser runtime intact for every Category 2/3 call site (§3.4); the existing `$collection->appends(...)->links()` calls unmodified (§5.7); every element `id`/`name`/`data-*` attribute; every `@can`/`@canany` gate; every localization key already present; the exact subscribe/unsubscribe form behavior; the dead `_segments.blade.php` pane, untouched. **New this round:** every native Bootstrap card/button/badge/dialog/table markup explicitly named as "not adopted" in §5 is preserved in its exact current DOM shape — a non-adoption decision is itself a preserve-behavior requirement, not merely the absence of one.
+Unchanged in substance from Round 2: no controller/route/request/middleware/authorization/cache/query logic changes for styling; route/controller/security behavior read-only until §7's prerequisite is satisfied; every AJAX endpoint, form action/method, SweetAlert2 payload, DataTables configuration, element `id`/`name`/`data-*` attribute, `@can`/`@canany` gate, localization key, and the dead `_segments.blade.php` pane preserved exactly. Every native Bootstrap card/button/badge/dialog/table markup named "not adopted" in §5 is preserved in its exact current **structural/semantic** shape (§3.4's Exception-B clarification) — **this specifically does not mean its static Category-1 icon children are frozen too; those still migrate to `<x-ds-icon>` per §3.4 regardless of whether their containing element is adopted or natively retained.**
 
 ---
 
 ## 7. The authorization gap — mandatory pre-Slice-5-implementation prerequisite
 
-Unchanged from Round 1. §3.8 contains the full audit evidence. The security defect remains outside this contract's own implementation allowlist (§9). A separate, dedicated CRM tenant-isolation security-remediation contract must be drafted, human-reviewed, and human-merged, and its own implementation must likewise be human-merged, **before** Slice 5 implementation may be authorized.
-
-**Correction D (Round 1, unchanged):** the remediation must scope every customer single-record/batch Contacts/ContactGroups/Blacklists action to the authenticated customer's own ownership boundary, and must **not** convert admin Blacklists' intentionally global list/search/export visibility into customer-style tenant restriction — it must instead preserve that global model while independently closing the customer-originated exploit path through the currently-shared unscoped repository code.
-
-**Correction E (Round 1, unchanged):** the remediation must explicitly audit and resolve the disposition of both stored-XSS-shaped findings (§3.8) — mechanically concluding non-exploitability or remediating directly — never leaving either unexamined by the time Slice 5 implementation is authorized.
-
-**Correction F (Round 1, refined this round for internal consistency — Correction G of this round).** Once the remediation's implementation is merged, Slice 5's own future implementation authorization must pin: (1) the exact CRM security-remediation implementation merge SHA; (2) the exact then-current `origin/main` SHA Slice 5 implementation is based on; (3) the exact focused security test file(s)/command(s) the remediation introduces. Slice 5 implementation must then: leave those security test files completely unchanged; run them **before** Slice 5's own three new focused tests (§8), requiring zero failures; preserve the remediation's customer tenant-isolation behavior and its intentional admin global-access model exactly. **The no-diff requirement is scoped precisely, refined this round to avoid an internally impossible rule:**
-- Every remediation-changed path **outside** Slice 5's own 29-view allowlist (routes, controllers, repositories, requests, policies, and any other non-Blade-view production path) must remain byte-clean (`git diff <post-remediation-base>...HEAD` empty) relative to the authorized post-remediation base throughout Slice 5 implementation — this is the actual, checkable no-diff boundary.
-- If the remediation legitimately modified one of Slice 5's own 29 Blade views to resolve an XSS finding (§3.8, Correction E), that view remains eligible to receive its already-authorized §9 presentation changes — **the rule is not, and must not be read as, "that view's diff from the post-remediation base must be empty,"** since the entire purpose of Slice 5 is to modify exactly these 29 views. Instead: the remediation's own security-relevant encoding/escaping change inside that view must be preserved exactly (verified by the remediation's own pinned test(s), re-run per above, plus, where the remediation's own test coverage does not already directly assert the specific escaping behavior inside that view, a targeted addition to `ContactsCrmExistingBehaviorPreservedTest` proving the same encoding/escaping survives the presentation restyle).
-- If the remediation adds an entirely new view path outside the current 29-item allowlist that Slice 5 would need to touch, or otherwise changes which 29 views constitute the correct presentation surface, Slice 5 implementation must STOP and re-audit (§15) — unchanged from Round 1.
-
-**This contract does not, and cannot, hard-code a remediation merge SHA that does not yet exist.**
+Unchanged from Round 1/2. The security defect remains outside this contract's own implementation allowlist. A separate, dedicated CRM tenant-isolation security-remediation contract must be drafted, human-reviewed, and human-merged, and its own implementation must likewise be human-merged, **before** Slice 5 implementation may be authorized. The remediation must scope every customer single-record/batch Contacts/ContactGroups/Blacklists action to the authenticated customer's own ownership boundary, must **not** narrow admin Blacklists' intentionally global visibility, and must explicitly resolve (not merely note) both stored-XSS-shaped findings (§3.8). Once merged, Slice 5's own future implementation authorization must pin the exact remediation merge SHA, the exact then-current `origin/main` SHA, and the remediation's own focused security test file(s), which run first, unchanged, with zero failures, before Slice 5's own three tests. The no-diff requirement applies to every remediation-changed path **outside** the 29-view allowlist; a remediation-changed view that is also one of the 29 remains eligible for its already-authorized presentation changes, with the remediation's own security-relevant behavior verified as preserved rather than requiring an empty diff. **This contract does not, and cannot, hard-code a remediation merge SHA that does not yet exist.**
 
 ---
 
 ## 8. Test contract (Slice 5)
 
-Three new files under `tests/Feature/DesignSystem/` (unchanged count from Round 1). No existing test file requires modification.
+Three new files under `tests/Feature/DesignSystem/`, unchanged count.
 
-1. **`tests/Feature/DesignSystem/ContactsCrmDesignSystemContentTest.php`** — zero remaining Category-1 static `data-feather="..."` attributes in the 29 modified files; genuine `<x-ds-icon>`-equivalent markup present per migrated file; MUST NOT require zero `feather.icons[...]` calls or any Feather-runtime change; MUST NOT require any `ContactsController.php` change. Zero hardcoded color/font-family literals introduced. Every DataTables `ajax.url`/Select2/Flatpickr selector and SweetAlert2 route target still present verbatim, including inside `contactGroups/show.blade.php`'s unrelocated script. The three `->links()` calls still present, unreplaced. **Corrected this round:** every native-retained surface named in §5 (the KPI stat cards, the `btn-success`/`btn-info`/`btn-outline-warning`/solid-`btn-secondary`/`btn-relief-*` buttons, the export modal's Bootstrap markup, the `_import_history` status badge, the four DataTables-shell tables, the two admin history tables, the bracketed-name dynamic field inputs) is asserted **present and unchanged**, never asserted absent.
-2. **`tests/Feature/DesignSystem/ContactsCrmComponentAdoptionTest.php`** — **corrected this round: asserts presence only for the exact final adoption set locked in §5** — `<x-card>` on the 23 single-card files plus `_contacts.blade.php`'s table card (24 total card-marker assertions, explicitly excluding its 3 KPI cards and the 5 zero/non-top-level-card files); `<x-button>` only for the exact primary/outline/secondary-outline static occurrences named in §5.2; `<x-select>`/`<x-input>` only for the exact 7+4 controls named in §5.3; `<x-table>` only for the 3 native-paginator tables; `<x-alert>`, `<x-empty-state>`, `<x-tooltip>` per §5.7; `<x-ds-icon>` per Category 1. **Never asserts `ds-dialog` or a `running`-state `<x-badge>` marker**, since both are non-adopted.
-3. **`tests/Feature/DesignSystem/ContactsCrmExistingBehaviorPreservedTest.php`** — unchanged scope from Round 1 (the 15-surface behavior-preservation matrix, §10), plus, per §7's refined Correction F/G, a targeted assertion of the remediation's own encoding/escaping behavior surviving the restyle wherever the remediation modified one of Slice 5's own 29 views and its own test coverage does not already directly assert that inside the view.
+1. **`ContactsCrmDesignSystemContentTest.php`** — zero remaining Category-1 static `data-feather` in the 29 files; genuine `<x-ds-icon>` markup present per migrated file, **including inside every natively-retained element named in §5** (§3.4's Exception-B clarification: native retention never exempts an in-scope icon child); MUST NOT require zero `feather.icons[...]` calls or any Feather-runtime/controller change. Zero hardcoded literals introduced. Every native-retained surface named in §5 (KPI cards, `btn-success`/`btn-info`/`btn-outline-warning`/solid-`btn-secondary`/`btn-relief-*`/`btn-outline-danger`-genuine/**the 15 label-based radio controls**, the export modal, the `_import_history` badge, all six natively-retained tables **including `admin/opportunities/index.blade.php` and `admin/opportunities/runs/index.blade.php`**, the bracketed-name dynamic inputs) is asserted present and structurally unchanged — never asserted absent, and never asserted to have lost its icon children.
+2. **`ContactsCrmComponentAdoptionTest.php`** — asserts presence only for the exact final adoption set: `<x-card>` (24 markers: 23 single-card files + `_contacts.blade.php`'s table card); `<x-button>` (38 markers: 24 primary + 6 outline + 8 secondary); `<x-select>`/`<x-input>` (11 markers: 7 + 4, including `business_id`); `<x-table>` (**1 marker only** — `customer/opportunities/index.blade.php`); `<x-dialog>`/`running`-state `<x-badge>` — never asserted (both non-adopted); `<x-alert>` (**4 markers**); `<x-empty-state>` (**1 marker**, and never also an `<x-alert>` marker on that same node); `<x-tooltip>`, `<x-ds-icon>` per §3.4.
+3. **`ContactsCrmExistingBehaviorPreservedTest.php`** — unchanged scope (§10), plus the remediation-encoding-preservation assertion per §7 where applicable.
 
-**Ordering requirement (§7):** the security-remediation's own pinned test file(s) run first, zero failures required, before any of the three files above.
+**Ordering**: the security-remediation's own pinned test file(s) run first, zero failures required, before these three.
 
-**Regression baseline**: full existing suite re-run at Slice 5's own final head, 3 new files passing, zero regression in any pre-existing test (most directly the 37 `tests/Feature/Opportunity/` files), exact count reported. This contract itself does not run that suite.
+**Regression baseline**: full existing suite, 3 new files passing, zero regression, exact count reported. This contract does not run that suite.
 
 ---
 
 ## 9. Exact implementation allowlist (Slice 5)
 
-**Closed, numbered, path-level, exactly 32 unique sequential entries — unchanged count from Round 1; this round adds zero paths and removes none, only correcting the per-item component-adoption annotations. Stop threshold: 33rd path.**
+**Exactly 32 unique sequential entries — unchanged count. This pass corrects only the per-item component-adoption annotations for items 24, 26, 28 and adds none, removes none. Stop threshold: 33rd path.**
 
-### Contacts views (8 modified)
+### Contacts views (8)
 
 1. `resources/views/customer/Contacts/create.blade.php`
-2. `resources/views/customer/Contacts/import.blade.php` — no top-level card (§5.1); no icon/component change beyond nav-pill polish.
+2. `resources/views/customer/Contacts/import.blade.php`
 3. `resources/views/customer/Contacts/import/mapping.blade.php`
 4. `resources/views/customer/Contacts/import_file.blade.php`
-5. `resources/views/customer/Contacts/paste_text.blade.php`
+5. `resources/views/customer/Contacts/paste_text.blade.php` — its 5 `<label class="btn btn-outline-primary">` delimiter-radio controls are not adopted (§5.2, Exception C).
 6. `resources/views/customer/Contacts/show.blade.php`
-7. `resources/views/customer/Contacts/subscribe_form.blade.php` — no top-level card (§5.1); remains on `fullLayoutMaster` (§3.7).
-8. `resources/views/customer/Contacts/unsubscribe_form.blade.php` — same constraints as item 7.
+7. `resources/views/customer/Contacts/subscribe_form.blade.php`
+8. `resources/views/customer/Contacts/unsubscribe_form.blade.php`
 
-### contactGroups views (11 modified — `_segments.blade.php` excluded, §3.6)
+### contactGroups views (11 — `_segments.blade.php` excluded)
 
-9. `resources/views/customer/contactGroups/_contacts.blade.php` — **corrected this round**: adopts `<x-card>` for its table card only, not its 3 KPI cards (§5.1); adopts `<x-tooltip>`; does **not** adopt `<x-dialog>` for `#exportContactModal` (§5.5, native retained); button adoption limited to the exact static primary/outline occurrences it contains (§5.2).
-10. `resources/views/customer/contactGroups/_fields.blade.php` — no `<x-input>`/`<x-select>` adoption (bracketed dynamic names, §5.3).
-11. `resources/views/customer/contactGroups/_form_fields.blade.php` — no `<x-card>` (§5.1: zero cards exist); no `<x-input>`/`<x-select>` adoption (§5.3).
-12. `resources/views/customer/contactGroups/_import_history.blade.php` — **corrected this round**: does **not** adopt `<x-badge>` for the status pill (§5.6, native retained).
+9. `resources/views/customer/contactGroups/_contacts.blade.php` — adopts `<x-card>` (table card only), `<x-tooltip>`; does not adopt `<x-dialog>`; its "Columns" dropdown-toggle button adopts `<x-button variant="outline">`.
+10. `resources/views/customer/contactGroups/_fields.blade.php`
+11. `resources/views/customer/contactGroups/_form_fields.blade.php` — no card exists (§5.1); no input/select adoption.
+12. `resources/views/customer/contactGroups/_import_history.blade.php` — status badge not adopted; its `data-feather="download"` icons still migrate.
 13. `resources/views/customer/contactGroups/_message.blade.php`
-14. `resources/views/customer/contactGroups/_opt_in_keywords.blade.php` — its `btn-success` "Add New" link is not adopted (§5.2).
-15. `resources/views/customer/contactGroups/_opt_out_keywords.blade.php` — same constraint as item 14.
+14. `resources/views/customer/contactGroups/_opt_in_keywords.blade.php`
+15. `resources/views/customer/contactGroups/_opt_out_keywords.blade.php`
 16. `resources/views/customer/contactGroups/_settings.blade.php`
 17. `resources/views/customer/contactGroups/create.blade.php`
-18. `resources/views/customer/contactGroups/index.blade.php` — **corrected this round**: does **not** adopt `<x-table>` (DataTables-shell, §5.4, native retained); its `btn-success`/`btn-info` links are not adopted (§5.2); its 5 JS `feather.icons[...]` calls (including the SweetAlert `copy` occurrence) remain unchanged (§3.4).
-19. `resources/views/customer/contactGroups/show.blade.php` — inline script not extracted (§3.6); does **not** adopt `<x-table>` (§5.4); its 4 JS `feather.icons[...]` calls remain unchanged.
+18. `resources/views/customer/contactGroups/index.blade.php` — does not adopt `<x-table>`; 5 JS `feather.icons[...]` calls unchanged.
+19. `resources/views/customer/contactGroups/show.blade.php` — inline script not extracted; does not adopt `<x-table>`; 4 JS `feather.icons[...]` calls unchanged.
 
-### Blacklists views (4 modified)
+### Blacklists views (4)
 
-20. `resources/views/customer/Blacklists/create.blade.php` — adopts `<x-input>` for the `reason` field (§5.3); its `btn-outline-warning` Reset button is not adopted (§5.2).
-21. `resources/views/customer/Blacklists/index.blade.php` — **corrected this round**: does **not** adopt `<x-table>` (§5.4); its `btn-success` link is not adopted; 1 JS `feather.icons[...]` call unchanged.
-22. `resources/views/admin/Blacklists/create.blade.php` — same constraints as item 20.
-23. `resources/views/admin/Blacklists/index.blade.php` — **corrected this round**: does **not** adopt `<x-table>` (§5.4); its `btn-success`/`btn-info` links are not adopted; 1 JS `feather.icons[...]` call unchanged.
+20. `resources/views/customer/Blacklists/create.blade.php` — adopts `<x-input>` for `reason`; its 5 `<label class="btn btn-outline-primary">` delimiter-radio controls are not adopted.
+21. `resources/views/customer/Blacklists/index.blade.php` — does not adopt `<x-table>`; 1 JS `feather.icons[...]` call unchanged.
+22. `resources/views/admin/Blacklists/create.blade.php` — same as item 20.
+23. `resources/views/admin/Blacklists/index.blade.php` — does not adopt `<x-table>`; 1 JS `feather.icons[...]` call unchanged.
 
-### Opportunities views (6 modified)
+### Opportunities views (6)
 
-24. `resources/views/customer/opportunities/index.blade.php` — adopts `<x-table>` (§5.4) and `<x-select>` for its 2 filters (§5.3); does not adopt `<x-pagination>` (§5.7).
-25. `resources/views/customer/opportunities/show.blade.php` — adopts `<x-select>` for `duration` and `<x-input>` for `value` (§5.3); its `btn-success`/`btn-outline-danger` static buttons are not adopted (§5.2).
-26. `resources/views/admin/opportunities/index.blade.php` — adopts `<x-table>` and `<x-select>` for its 3 filters plus `<x-input>` for `business_id` (§5.3); does not adopt `<x-pagination>`.
-27. `resources/views/admin/opportunities/show.blade.php` — adopts `<x-select>` for `duration`; its `btn-outline-danger` static button is not adopted; its two history tables do **not** adopt `<x-table>` (§5.4, `table-primary` `<thead>` class unsupported).
-28. `resources/views/admin/opportunities/runs/index.blade.php` — adopts `<x-table>`; does not adopt `<x-pagination>`.
-29. `resources/views/admin/opportunities/runs/show.blade.php`
+24. `resources/views/customer/opportunities/index.blade.php` — adopts `<x-table>` (the only table adoption in the entire slice), `<x-select>` (2 filters), `<x-empty-state>` (1 node, not also `<x-alert>`); does not adopt `<x-pagination>`; its "Apply Filters" button adopts `variant="primary"`, "Clear Filters" adopts `variant="secondary"`, per-row "View" link adopts `variant="outline"`.
+25. `resources/views/customer/opportunities/show.blade.php` — adopts `<x-select>` (`duration`), `<x-input>` (`value`), `<x-alert>` (2 nodes); its `btn-primary`/`btn-outline-primary`(×3)/`btn-outline-secondary` buttons adopt; its `btn-success`/`btn-outline-danger` buttons do not.
+26. `resources/views/admin/opportunities/index.blade.php` — **corrected this pass: does NOT adopt `<x-table>`** (`table-primary` `<thead>`, §5.4/Exception D); adopts `<x-select>` (3 filters) and `<x-input>` (`business_id`, **firmly locked adopted, §5.3/Exception A**); its "Filter" button adopts `variant="primary"`.
+27. `resources/views/admin/opportunities/show.blade.php` — adopts `<x-select>` (`duration`), `<x-alert>` (2 nodes); its `btn-outline-primary`/`btn-outline-secondary`(×3) buttons adopt, its `btn-outline-danger` button does not; its two history tables do not adopt `<x-table>`.
+28. `resources/views/admin/opportunities/runs/index.blade.php` — **corrected this pass: does NOT adopt `<x-table>`** (`table-primary` `<thead>`, §5.4/Exception D); its "Back to opportunities" link adopts `variant="secondary"`.
+29. `resources/views/admin/opportunities/runs/show.blade.php` — its "Back to runs" link adopts `variant="secondary"`; table was never proposed for adoption.
 
-### New focused tests (3 new)
+### New focused tests (3)
 
 30. `tests/Feature/DesignSystem/ContactsCrmDesignSystemContentTest.php`
 31. `tests/Feature/DesignSystem/ContactsCrmComponentAdoptionTest.php`
@@ -276,19 +264,19 @@ Three new files under `tests/Feature/DesignSystem/` (unchanged count from Round 
 
 ## 10. Behavior-preservation matrix
 
-Unchanged from Round 1 in its 15-surface shape; the "Critical DOM/JS contract" column now additionally reflects this round's corrected component decisions (native card/button/badge/dialog/table retention named explicitly per surface in §9's own item annotations above, not repeated a third time here to avoid drift between two descriptions of the same fact).
+Unchanged 15-surface shape from Round 1; the "Critical DOM/JS contract" column now reflects this pass's corrected table/button/empty-state annotations, stated per-item in §9 above rather than restated a third time here.
 
 ---
 
 ## 11. Responsiveness review
 
-Unchanged from Round 1: existing Bootstrap breakpoints only, no new breakpoint system. Every DataTables-backed table's Responsive extension must be confirmed still functioning through this round's now-corrected **native-retention** decision for those exact tables (§5.4) — since they are no longer being wrapped in `<x-table>` at all, the Responsive extension's existing configuration is entirely undisturbed by this slice, an even lower-risk position than the original claim.
+Unchanged. The correction in §5.4 (two more tables now natively retained) further lowers risk — the DataTables/native-table Responsive behavior for those two pages is now entirely undisturbed by this slice.
 
 ---
 
 ## 12. Forbidden scope
 
-Unchanged from Round 1: no product-behavior change; no `app/`/`database/`/`routes/` change of any kind, including the tenant-isolation fix (§7's exclusive scope); no narrowing of admin Blacklists' global visibility (§7's Correction D); no Slice 4/6/Campaigns/billing work; no new token/JS/CSS framework, no client-side icon library (§3.4), no new Blade→JS hydration seam (§3.6); no `AI-AUTONOMY-STATE.json` change; no automatic advancement. **New this round:** no extension or modification of `<x-card>`, `<x-button>`, `<x-dialog>`, `<x-badge>`, `<x-input>`, `<x-select>`, or `<x-table>` themselves — every non-adoption in §5 is resolved by retaining native markup, never by changing the shared component to fit.
+Unchanged from Round 2: no product/route/controller/schema change; no narrowing of admin Blacklists' global visibility; no Slice 4/6/other-initiative work; no new token/JS/CSS framework or client-side icon library; no `AI-AUTONOMY-STATE.json` change; no automatic advancement; no extension or modification of `<x-card>`, `<x-button>`, `<x-dialog>`, `<x-badge>`, `<x-input>`, `<x-select>`, `<x-table>`, `<x-alert>`, or `<x-empty-state>` themselves.
 
 ---
 
@@ -298,6 +286,7 @@ Unchanged from Round 1: no product-behavior change; no `app/`/`database/`/`route
 maximum_correction_rounds: 2
 correction_round: 2
 correction_round_is_final: true
+post_round_docs_consistency_exception: human_approved
 advance_automatically: false
 start_automatically_after_contract_merge: false
 implementation_requires_separate_human_authorization: true
@@ -309,84 +298,86 @@ merge_authority: human_only
 
 ## 14. Mechanical searches (Slice 5, run at implementation time)
 
-1. `grep -rniE "anthropic|claude"` across every path in §9 → zero matches (the contract's own references to `CLAUDE.md` and this search pattern are not violations).
-2. `grep -c "data-feather"` across §9 items 1-29 (static Blade attributes only) → zero.
-3. `grep -c "feather\.icons\["` across §9 items 18, 19, 21, 23 → unchanged from §3.4's count (5, 4, 1, 1 respectively, 11 total).
-4. `grep -rnoE "#[0-9A-Fa-f]{3,8}"` across §9 items 1-29 → zero genuine color literals.
-5. `git diff --stat -- app database routes` compared against §9 → **must be completely empty**.
-6. `grep -c "resources/js/scripts/pages/contact-group-show.js"` anywhere in the changed-path set → zero.
-7. `grep -n "@include" resources/views/customer/contactGroups/show.blade.php` → exactly the 8 live partials, `_segments` still commented-out.
-8. `grep -c "links()" resources/views/customer/opportunities/index.blade.php resources/views/admin/opportunities/index.blade.php resources/views/admin/opportunities/runs/index.blade.php` → present, unchanged, on all three.
-9. **New this round:** `grep -c "ds-card"` in `resources/views/customer/contactGroups/_form_fields.blade.php` → zero (§5.1: no card exists to adopt). `grep -c "ds-card"` in `resources/views/customer/contactGroups/_contacts.blade.php` → exactly 1 (the table card only, not the 3 KPI cards).
-10. **New this round:** `grep -c "ds-dialog"` in `resources/views/customer/contactGroups/_contacts.blade.php` → zero (§5.5: not adopted).
-11. **New this round:** `grep -n "bg-info"` in `resources/views/customer/contactGroups/_import_history.blade.php` → still present (§5.6: native badge retained, not migrated to `<x-badge>`).
-12. **New this round:** `grep -c "ds-table"` across §9 items 18, 19, 21, 23, 27's two history tables → zero for all six (§5.4: none adopted); present for items 24, 26, 28 only.
-13. Every one of the 30 distinct static icon names in §3.4's Category 1 individually confirmed against `vendor/technikermathe/blade-lucide-icons/resources/svg/{name}.svg` before use — never guessed, with `check-square` given explicit extra scrutiny.
-14. `git diff --stat` against Slice 5's own authorized post-remediation baseline, scoped exactly per §7's refined no-diff rule: **every remediation-changed path outside the 29-item §9 view allowlist** (routes/controllers/repositories/requests/policies/etc.) → must be completely empty; a remediation-changed path that **is** inside the 29-item allowlist is expected to carry Slice 5's own additional presentation diff on top of the remediation's own change, and is not subject to this empty-diff check.
-15. The security-remediation's own pinned test file(s) run and pass with zero failures **before** §9 items 30-32 run.
-16. Final changed-path set equals §9's exact, sequential 1-32 allowlist.
-17. `php artisan test` full-suite pass count compared against the pre-Slice-5 baseline, reported exactly.
+1. `grep -rniE "anthropic|claude"` across §9 → zero matches.
+2. `grep -c "data-feather"` across §9 items 1-29 (static) → zero.
+3. `grep -c "feather\.icons\["` across §9 items 18, 19, 21, 23 → unchanged (5, 4, 1, 1; 11 total).
+4. `grep -rnoE "#[0-9A-Fa-f]{3,8}"` across §9 items 1-29 → zero.
+5. `git diff --stat -- app database routes` → empty.
+6. `grep -c "resources/js/scripts/pages/contact-group-show.js"` → zero.
+7. `grep -n "@include"` on `contactGroups/show.blade.php` → the 8 live partials, `_segments` still commented-out.
+8. `grep -c "links()"` on the three former native-paginator candidates → present on all three (none replaced by `<x-pagination>`).
+9. `grep -c "ds-card"` in `_form_fields.blade.php` → zero; in `_contacts.blade.php` → exactly 1.
+10. `grep -c "ds-dialog"` in `_contacts.blade.php` → zero.
+11. `grep -n "bg-info"` in `_import_history.blade.php` → still present.
+12. **Corrected this pass:** `grep -c "ds-table"` across §9 items 18, 19, 21, 23, 26, 27's two history tables, 28 → zero for all eight; present in item 24 only (exactly one `<x-table>` adoption in the entire slice).
+13. **New this pass:** `grep -c '<label class="btn btn-outline-primary"'` across §9 items 5, 20, 22 → unchanged, present (15 total across the three files) — confirming these were not converted to `<x-button>`.
+14. **New this pass:** `grep -n 'name="business_id"'` in item 26 → present inside an `<x-input>`-rendered markup, not native `<input>`.
+15. **New this pass:** `grep -c "ds-empty-state"` in item 24 → exactly 1; `grep -c "ds-alert"` in item 24 → zero (the empty-result node is never also an alert marker).
+16. Every one of the 30 distinct static icon names confirmed against the pinned Lucide package's `.svg` files before use.
+17. `git diff --stat` against the post-remediation baseline, scoped per §7's no-diff rule.
+18. The security-remediation's own pinned tests run and pass before §9 items 30-32.
+19. Final changed-path set equals §9's exact 1-32 allowlist.
+20. `php artisan test` full-suite pass count compared against the pre-Slice-5 baseline, reported exactly.
 
 ---
 
 ## 15. Stop conditions
 
-Unchanged from Round 1, plus, this round:
+Unchanged from Round 2, plus, this pass:
 
-- **Slice 5 implementation must not begin at all unless §7's full prerequisite is satisfied** (remediation merged, SHA pinned, admin Blacklists global model preserved, both XSS findings resolved).
-- If the post-remediation tree changes which 29 views are correct, or requires a path beyond §9's 32-item allowlist, STOP and re-audit.
-- Any path beyond §9's 32-item allowlist — the **33rd** path.
+- Slice 5 implementation must not begin unless §7's full prerequisite is satisfied.
+- Any path beyond §9's 32-item allowlist — the 33rd path.
 - Any change to `app/`, `database/`, or `routes/` for any reason, including narrowing admin Blacklists' global model.
-- Any of the 30 flagged static icon names lacks a confirmed Lucide equivalent.
+- Any of the 30 flagged icon names lacks a confirmed Lucide equivalent.
 - Any existing test fails for a reason not fixable within this slice's own allowlist.
-- Any route/controller logic, `@can`/`@canany` gate, AJAX/form target, or CSRF handling changes as a side effect of restyling.
+- Any route/controller logic, gate, AJAX/form target, or CSRF handling changes as a side effect of restyling.
 - `contactGroups/show.blade.php`'s inline script is relocated or its Blade-evaluated expressions altered beyond the markup it targets.
 - Any `feather.icons[...]` call or the Feather runtime is removed or altered.
-- `<x-pagination>` is adopted anywhere the existing `->links()` behavior would be replaced.
-- **New this round:** `<x-card>` is adopted for any of `_contacts.blade.php`'s 3 KPI cards, or for `_form_fields.blade.php` (which has none).
-- **New this round:** `<x-button variant="secondary">` or `variant="danger"` is used to represent solid `btn-secondary` or outline `btn-outline-danger` markup — a visual-semantics change the component's own emitted classes do not support.
-- **New this round:** `<x-dialog>` is adopted for `_contacts.blade.php`'s `#exportContactModal` without first resolving its form-spans-header/footer structural incompatibility (§5.5) through a separately-authorized change — not authorized by this contract.
-- **New this round:** `<x-badge variant="accent">` (or any other variant) is used to represent the `_import_history.blade.php` `running`/`bg-info` state.
-- **New this round:** `<x-table>` is adopted for any of the four DataTables-shell tables or the two `table-primary`-headed admin history tables.
-- **New this round:** any shared component (`card`, `button`, `dialog`, `badge`, `input`, `select`, `table`) is extended or modified to make a non-adopted surface fit.
+- `<x-pagination>` is adopted anywhere `->links()` would be replaced.
+- `<x-card>` is adopted for any of `_contacts.blade.php`'s 3 KPI cards, or for `_form_fields.blade.php`.
+- `<x-button variant="secondary">`/`variant="danger"` is used to represent solid `btn-secondary`/outline `btn-outline-danger` markup.
+- **New this pass:** `<x-button>` is used to replace any of the 15 `<label class="btn btn-outline-primary">` radio-group controls.
+- `<x-dialog>` is adopted for `_contacts.blade.php`'s export modal without a separately-authorized structural change.
+- `<x-badge>` is used to represent the `_import_history.blade.php` `running`/`bg-info` state.
+- **New this pass:** `<x-table>` is adopted for `admin/opportunities/index.blade.php`, `admin/opportunities/runs/index.blade.php`, or either of `admin/opportunities/show.blade.php`'s history tables, or for any DataTables-shell table.
+- **New this pass:** the `customer/opportunities/index.blade.php` empty-result node is rendered with both `<x-empty-state>` and `<x-alert>` markers simultaneously, or `<x-alert>`/`<x-empty-state>` is applied to any table-cell `@empty` row.
+- **New this pass:** any static Category-1 `data-feather` icon inside a natively-retained element is left unmigrated on the theory that its container's native-retention status exempts it (§3.4's Exception-B clarification is binding).
+- Any shared component (`card`, `button`, `dialog`, `badge`, `input`, `select`, `table`, `alert`, `empty-state`) is extended or modified to make a non-adopted surface fit.
 - Any Anthropic/Claude name, logo, wordmark, or proprietary asset is found necessary to reference.
-- A genuine business-logic change is found necessary to make any of the 29 views render or behave correctly.
+- A genuine business-logic change is found necessary.
 
 ---
 
 ## 16. Contract self-audit
 
-1. Full current inventory mechanically re-derived, unchanged and re-confirmed. ✓
-2. Sequential numbering, no duplicates, stop threshold = 33 (32 + 1), unchanged this round. ✓
-3. Zero new production paths (unchanged from Round 1's own correction). ✓
-4. No invented test, permission, route, component API, or token — this round specifically corrects six prior over-broad or false component-adoption claims against direct, mechanical re-inspection of both the component source and the actual Slice-5 markup (§3.11, §5.1–§5.6). ✓
-5. Public vs. authenticated forms correctly distinguished, unchanged. ✓
-6. Security defect treated as a hard blocker (§7), sharpened in Round 1 and refined this round only for internal consistency of the no-diff rule (§7's Correction G) — no substantive narrowing of the prerequisite. ✓
-7. Icon audit distinction (Round 1) stands unchanged. ✓
-8. `contactGroups/show.blade.php` decomposition decision (Round 1) stands unchanged. ✓
-9. **Component adoption/non-adoption decisions are now exact and mechanically verified for cards, buttons, dialog, badge, input/select, and table — no generic "every X adopts" statement remains anywhere in §5.** ✓
-10. `docs/automation/AI-AUTONOMY-STATE.json` untouched. ✓
-11. Slice 4 and Slice 6 untouched and explicitly out of scope. ✓
-12. No implementation authorization granted anywhere. ✓
-13. This document remains the only file changed on this branch. ✓
-14. **This is Correction Round 2 of a maximum of 2 — the final allowed correction round for this contract.** ✓
+1. Full inventory unchanged and re-confirmed. ✓
+2. Sequential numbering, no duplicates, stop threshold = 33, unchanged. ✓
+3. Zero new production paths. ✓
+4. All six component-adoption defects raised in this pass are corrected with mechanical evidence (§3.11, §5.2–§5.4, §5.7), not asserted. ✓
+5. Public/authenticated form distinction, security blocker, icon audit, decomposition decision — all unchanged and re-confirmed. ✓
+6. **No generic "every X adopts" statement remains anywhere in §5; every adoption is an exact, enumerated set with its own mechanical evidence.** ✓
+7. `AI-AUTONOMY-STATE.json` untouched. ✓
+8. Slice 4/6 untouched, explicitly out of scope. ✓
+9. No implementation authorization granted. ✓
+10. This document remains the only file changed on this branch. ✓
+11. **`correction_round: 2` and `correction_round_is_final: true` are unchanged — this pass is a labeled, human-approved, docs-only consistency exception, not a third correction round, and does not imply any further round is available.** ✓
 
 ---
 
 ## 17. Verification and publication
 
-1. §9's numbered items counted mechanically, confirmed equal to exactly 32, sequential, no gap, no repeat.
-2. Every path in §9 checked for uniqueness.
-3. Mechanical search confirming zero stale binding claims remain: "every page's single outer .card", any universal-adoption phrasing for buttons/inputs/selects, "no btn-success"/"no btn-info"/"no btn-warning", `<x-dialog>` framed as a direct fit, `running → accent`, universal `<x-table>` adoption without a compatibility caveat, any `<x-pagination>` adoption, any JS-extraction or JS-Feather-migration requirement, any 34-path/35-path reference, and any security no-diff wording that would prohibit a legitimate presentation change to an already-remediated in-scope Blade view — all confirmed absent from this corrected document.
+1. §9's numbered items counted mechanically, confirmed exactly 32, sequential, no gap, no repeat.
+2. Every path checked for uniqueness.
+3. Mechanical search confirming zero live contradictions remain: "(7 total)" as the combined input/select count, `business_id` described as a judgment call, native retention wording that would forbid icon migration, all `btn-outline-primary` occurrences assumed compatible, `<label>` controls required to become `<x-button>`, `admin/opportunities/index.blade.php`/`runs/index.blade.php` required to adopt `<x-table>`, "three native-paginator tables adopt," `ds-table` expected on items 26/28, the same Opportunity empty-result node required to be both `<x-alert>` and `<x-empty-state>`, any 34/35-path reference, any JS-extraction/JS-Feather-migration requirement, any `<x-pagination>` adoption — all confirmed absent.
 4. `git diff --check` — clean.
-5. `git diff --name-only origin/main...HEAD` — exactly one path: `docs/automation/DESIGN-SYSTEM-M2-SLICE-5-CONTRACT.md`.
+5. `git diff --name-only origin/main...HEAD` — exactly one path.
 6. `git status --short` — clean after commit.
 7. Stage individually, never `git add -A`/`.`.
-8. Commit message: `docs: finalize Slice 5 component boundaries`.
+8. Commit message: `docs: reconcile final Slice 5 contract invariants`.
 9. Push to `origin chore/design-system-m2-slice5-contacts-crm-contract` — normal push, never forced.
-10. Do not open/merge a PR if `gh` is unavailable; return the exact GitHub comparison URL.
-11. **Do not merge. Do not begin Slice 5 implementation. Do not begin the CRM security remediation. Do not begin Slice 4, Slice 6, or any other slice/initiative.** No test is run for this docs-only change.
+10. PR #175 already exists — do not open another, do not merge it.
+11. **Do not merge. Do not begin Slice 5 implementation. Do not begin the CRM security remediation. Do not begin any other slice/initiative.**
 
 ---
 
-*End of Design System M2 Slice 5 Contract, Correction Round 2 (final). Implementation requires a separate, explicit human instruction. This contract's own merge does not start or resume it. Slice 5 implementation is blocked until the separate CRM tenant-isolation security remediation named in §7 is complete — contracted, human-merged, implemented, and human-merged, with the admin Blacklists global model preserved and both stored-XSS-shaped findings resolved — and its exact merge SHA is pinned in Slice 5's own later, separate implementation authorization.*
+*End of Design System M2 Slice 5 Contract, Correction Round 2 + human-approved post-round docs-only consistency exception. Implementation requires a separate, explicit human instruction. Slice 5 implementation is blocked until the separate CRM tenant-isolation security remediation named in §7 is complete and its exact merge SHA is pinned in Slice 5's own later, separate implementation authorization.*
