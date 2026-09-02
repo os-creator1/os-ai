@@ -92,4 +92,57 @@ class WebhookEventDispositionAndPurgeTest extends TestCase
         $this->assertNotNull($event->payload_encrypted);
         $this->assertNull($event->payload_purged_at);
     }
+
+    public function test_unset_retention_never_purges_any_terminal_event(): void
+    {
+        $processedId = $this->createEvent(['state' => 'processed', 'completed_at' => now()->subDays(100)]);
+        $ignoredId = $this->createEvent(['state' => 'ignored', 'completed_at' => now()->subDays(100)]);
+        $disposedId = $this->createEvent(['state' => 'disposed', 'attempts' => 5, 'disposed_at' => now()->subDays(100), 'disposed_by_user_id' => 1, 'disposition_note' => 'Resolved.']);
+
+        // No config override — exercises the real, unset production default.
+        (new PurgeExpiredWebhookPayloads())->handle(app(PaymentProviderEventRepository::class));
+
+        $repository = app(PaymentProviderEventRepository::class);
+        foreach ([$processedId, $ignoredId, $disposedId] as $id) {
+            $event = $repository->findById($id);
+            $this->assertNotNull($event->payload_encrypted);
+            $this->assertNull($event->payload_purged_at);
+        }
+    }
+
+    public function test_zero_retention_never_purges(): void
+    {
+        $disposedId = $this->createEvent(['state' => 'disposed', 'attempts' => 5, 'disposed_at' => now()->subDays(100), 'disposed_by_user_id' => 1, 'disposition_note' => 'Resolved.']);
+
+        config(['usage_billing.webhook_event.retention_days' => 0]);
+        (new PurgeExpiredWebhookPayloads())->handle(app(PaymentProviderEventRepository::class));
+
+        $event = app(PaymentProviderEventRepository::class)->findById($disposedId);
+        $this->assertNotNull($event->payload_encrypted);
+        $this->assertNull($event->payload_purged_at);
+    }
+
+    public function test_negative_retention_never_purges(): void
+    {
+        $disposedId = $this->createEvent(['state' => 'disposed', 'attempts' => 5, 'disposed_at' => now()->subDays(100), 'disposed_by_user_id' => 1, 'disposition_note' => 'Resolved.']);
+
+        config(['usage_billing.webhook_event.retention_days' => '-5']);
+        (new PurgeExpiredWebhookPayloads())->handle(app(PaymentProviderEventRepository::class));
+
+        $event = app(PaymentProviderEventRepository::class)->findById($disposedId);
+        $this->assertNotNull($event->payload_encrypted);
+        $this->assertNull($event->payload_purged_at);
+    }
+
+    public function test_malformed_retention_never_purges(): void
+    {
+        $disposedId = $this->createEvent(['state' => 'disposed', 'attempts' => 5, 'disposed_at' => now()->subDays(100), 'disposed_by_user_id' => 1, 'disposition_note' => 'Resolved.']);
+
+        config(['usage_billing.webhook_event.retention_days' => 'thirty']);
+        (new PurgeExpiredWebhookPayloads())->handle(app(PaymentProviderEventRepository::class));
+
+        $event = app(PaymentProviderEventRepository::class)->findById($disposedId);
+        $this->assertNotNull($event->payload_encrypted);
+        $this->assertNull($event->payload_purged_at);
+    }
 }
