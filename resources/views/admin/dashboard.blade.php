@@ -42,7 +42,7 @@
                     <div class="card card-user-timeline">
                         <div class="card-header">
                             <div class="d-flex align-items-center">
-                                <i data-feather="list" class="user-timeline-title-icon"></i>
+                                <x-ds-icon name="list" class="user-timeline-title-icon" />
                                 <h4 class="card-title text-uppercase text-success">{{ __('locale.labels.getting_started') }}</h4>
                             </div>
                         </div>
@@ -54,9 +54,9 @@
                                     <li class="timeline-item">
                                         <span class="timeline-point @if($serverCounts->active != 0)  timeline-point-success @else  timeline-point-danger @endif">
                                            @if($serverCounts->active != 0)
-                                                <i data-feather="check-circle"></i>
+                                                <x-ds-icon name="check-circle" />
                                             @else
-                                                <i data-feather="x-circle"></i>
+                                                <x-ds-icon name="x-circle" />
                                             @endif
                                         </span>
                                         <div class="timeline-event">
@@ -78,9 +78,9 @@
                                     <li class="timeline-item">
                                         <span class="timeline-point @if($planCounts->active != 0)  timeline-point-success @else  timeline-point-danger @endif">
                                            @if($planCounts->active != 0)
-                                                <i data-feather="check-circle"></i>
+                                                <x-ds-icon name="check-circle" />
                                             @else
-                                                <i data-feather="x-circle"></i>
+                                                <x-ds-icon name="x-circle" />
                                             @endif
                                         </span>
                                         <div class="timeline-event">
@@ -101,9 +101,9 @@
                                     <li class="timeline-item">
                                         <span class="timeline-point @if($customerCounts->active != 0)  timeline-point-success @else  timeline-point-danger @endif">
                                            @if($customerCounts->active != 0)
-                                                <i data-feather="check-circle"></i>
+                                                <x-ds-icon name="check-circle" />
                                             @else
-                                                <i data-feather="x-circle"></i>
+                                                <x-ds-icon name="x-circle" />
                                             @endif
                                         </span>
 
@@ -125,9 +125,9 @@
                                     <li class="timeline-item">
                                         <span class="timeline-point @if($subscriptionCounts->active != 0)  timeline-point-success @else  timeline-point-danger @endif">
                                            @if($subscriptionCounts->active != 0)
-                                                <i data-feather="check-circle"></i>
+                                                <x-ds-icon name="check-circle" />
                                             @else
-                                                <i data-feather="x-circle"></i>
+                                                <x-ds-icon name="x-circle" />
                                             @endif
                                         </span>
 
@@ -148,7 +148,7 @@
 
                                     <li class="timeline-item">
                                         <span class="timeline-point timeline-point-info">
-                                               <i data-feather="check-circle"></i>
+                                               <x-ds-icon name="check-circle" />
                                         </span>
 
                                         <div class="timeline-event">
@@ -164,7 +164,7 @@
 
                                     <li class="timeline-item">
                                         <span class="timeline-point timeline-point-info">
-                                               <i data-feather="check-circle"></i>
+                                               <x-ds-icon name="check-circle" />
                                         </span>
 
                                         <div class="timeline-event">
@@ -203,7 +203,7 @@
                         <a href="{{ route('admin.customers.index') }}">
                             <div class="avatar bg-light-primary p-50 m-0">
                                 <div class="avatar-content">
-                                    <i data-feather="users" class="font-medium-5"></i>
+                                    <x-ds-icon name="users" class="font-medium-5" />
                                 </div>
                             </div>
                         </a>
@@ -224,7 +224,7 @@
                         <a href="{{ route('admin.plans.index') }}">
                             <div class="avatar bg-light-success p-50 m-0">
                                 <div class="avatar-content">
-                                    <i data-feather="credit-card" class="font-medium-5"></i>
+                                    <x-ds-icon name="credit-card" class="font-medium-5" />
                                 </div>
                             </div>
                         </a>
@@ -244,7 +244,7 @@
                         <a href="{{ route('admin.reports.all') }}">
                             <div class="avatar bg-light-danger p-50 m-0">
                                 <div class="avatar-content">
-                                    <i data-feather="message-square" class="font-medium-5"></i>
+                                    <x-ds-icon name="message-square" class="font-medium-5" />
                                 </div>
                             </div>
                         </a>
@@ -264,7 +264,7 @@
                         <a href="{{ route('admin.reports.campaigns') }}">
                             <div class="avatar bg-light-info p-50 m-0">
                                 <div class="avatar-content">
-                                    <i data-feather="send" class="font-medium-5"></i>
+                                    <x-ds-icon name="send" class="font-medium-5" />
                                 </div>
                             </div>
                         </a>
@@ -289,7 +289,7 @@
                         <a href="{{ route('admin.subscriptions.index') }}">
                             <div class="avatar bg-light-success p-50 m-0">
                                 <div class="avatar-content">
-                                    <i data-feather="credit-card" class="font-medium-5"></i>
+                                    <x-ds-icon name="credit-card" class="font-medium-5" />
                                 </div>
                             </div>
                         </a>
@@ -309,7 +309,7 @@
                         <a href="{{ route('admin.announcements.index') }}">
                             <div class="avatar bg-light-warning p-50 m-0">
                                 <div class="avatar-content">
-                                    <i data-feather="tv" class="font-medium-5"></i>
+                                    <x-ds-icon name="tv" class="font-medium-5" />
                                 </div>
                             </div>
                         </a>
@@ -330,7 +330,7 @@
                         <a href="{{ route('admin.invoices.index') }}">
                             <div class="avatar bg-light-primary p-50 m-0">
                                 <div class="avatar-content">
-                                    <i data-feather="shopping-cart" class="font-medium-5"></i>
+                                    <x-ds-icon name="shopping-cart" class="font-medium-5" />
                                 </div>
                             </div>
                         </a>
@@ -349,7 +349,7 @@
                         <a href="{{ route('admin.sending-servers.index') }}">
                             <div class="avatar bg-light-primary p-50 m-0">
                                 <div class="avatar-content">
-                                    <i data-feather="send" class="font-medium-5"></i>
+                                    <x-ds-icon name="send" class="font-medium-5" />
                                 </div>
                             </div>
                         </a>
@@ -410,19 +410,8 @@
                         <h4 class="mb-0">{{ __('locale.labels.recent_sender_id_requests') }}</h4>
                     </div>
                     <div class="card-content">
-                        <div class="table-responsive mt-1">
-                            <table class="table table-hover-animation mb-0">
-                                <thead>
-                                <tr>
-                                    <th style="width: 15%">{{ __('locale.labels.sender_id') }}</th>
-                                    <th>{{ __('locale.labels.name') }}</th>
-                                    <th>{{ __('locale.menu.Customer') }}</th>
-                                    <th>{{ __('locale.plans.price') }}</th>
-                                    <th>{{ __('locale.plans.validity') }}</th>
-                                </tr>
-                                </thead>
-                                <tbody>
-
+                        <div class="mt-1">
+                            <x-table :headers="[__('locale.labels.sender_id'), __('locale.labels.name'), __('locale.menu.Customer'), __('locale.plans.price'), __('locale.plans.validity')]">
                                 @foreach($sender_ids as $senderid)
                                     <tr>
                                         <td>
@@ -436,8 +425,7 @@
                                         <td>{{ $senderid->displayFrequencyTime() }}</td>
                                     </tr>
                                 @endforeach
-                                </tbody>
-                            </table>
+                            </x-table>
                         </div>
                     </div>
                 </div>
@@ -796,11 +784,14 @@
             stroke: {
                 width: 5
             },
-            colors: [PlatformTheme.primary(), '#EA5455'],
+            colors: [PlatformTheme.primary(), PlatformTheme.color('color-chart-negative')],
             fill: {
                 type: 'gradient',
                 gradient: {
-                    gradientToColors: ['#9c8cfc', '#f29292']
+                    gradientToColors: [
+                        PlatformTheme.color('color-chart-6'),
+                        PlatformTheme.color('color-status-danger-border')
+                    ]
                 }
             }
         }

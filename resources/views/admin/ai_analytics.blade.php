@@ -9,29 +9,27 @@
     <h1 class="mb-3">AI SMS Analytics</h1>
 
     @if(!$campaignFilterEnabled)
-        <div class="alert alert-warning">
+        <x-alert variant="warning">
             Campaign filtering is disabled (no campaign_id column found).
-        </div>
+        </x-alert>
     @endif
 
     <!-- Campaign Filter -->
     <form method="GET" class="mb-4">
-        <select name="campaign_id" class="form-control w-auto" onchange="this.form.submit()">
-            <option value="">All Campaigns</option>
-            @foreach($campaigns as $camp)
-                <option value="{{ $camp->id }}" {{ $campaignId == $camp->id ? 'selected' : '' }}>
-                    {{ $camp->name }}
-                </option>
-            @endforeach
-        </select>
+        @php
+            $campaignOptions = ['' => 'All Campaigns'];
+            foreach ($campaigns as $camp) {
+                $campaignOptions[$camp->id] = $camp->name;
+            }
+        @endphp
+        <x-select name="campaign_id" :options="$campaignOptions" :selected="$campaignId" class="w-auto" onchange="this.form.submit()" />
     </form>
 
     <!-- Stage Cards -->
     <div class="row">
     @foreach([1,2,3,4,5,6,99] as $s)
             <div class="col-md mb-2">
-                <div class="card text-center">
-                    <div class="card-body">
+                <x-card class="text-center">
                         <h3>{{ $stageCounts[$s] ?? 0 }}</h3>
                         <p class="mb-0">
                             @if($s == 99)
@@ -42,8 +40,7 @@
     Stage {{ $s }}
 @endif
                         </p>
-                    </div>
-                </div>
+                </x-card>
             </div>
         @endforeach
     </div>
@@ -51,19 +48,11 @@
     <!-- Recent Boxes -->
     <h4 class="mt-4">Recent Conversations</h4>
 
-    <div class="table-responsive">
-        <table class="table table-bordered">
-            <thead>
-                <tr>
-                    <th>ID</th>
-                    <th>Phone</th>
-                    <th>Stage</th>
-                   <th>Updated</th>
-<th>Action</th>
-                </tr>
-            </thead>
-            <tbody>
-                @forelse($recentBoxes as $box)
+    @if($recentBoxes->isEmpty())
+        <x-empty-state title="No data found" />
+    @else
+        <x-table :headers="['ID', 'Phone', 'Stage', 'Updated', 'Action']">
+                @foreach($recentBoxes as $box)
                     <tr>
                         <td>{{ $box->id }}</td>
                         <td>{{ $box->to }}</td>
@@ -88,20 +77,13 @@
             </button>
         </form>
     @else
-        <span class="badge badge-success">Booked</span>
+        <x-badge variant="success">Booked</x-badge>
     @endif
 </td>
                     </tr>
-                @empty
-                    <tr>
-                        <td colspan="4" class="text-center">
-                            No data found
-                        </td>
-                    </tr>
-                @endforelse
-            </tbody>
-        </table>
-    </div>
+                @endforeach
+        </x-table>
+    @endif
 
 </div>
 
