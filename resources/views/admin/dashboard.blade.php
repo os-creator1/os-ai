@@ -784,17 +784,14 @@
             stroke: {
                 width: 5
             },
-            colors: [PlatformTheme.primary(), PlatformTheme.color('--color-chart-negative', '#EA5455')],
+            colors: [PlatformTheme.primary(), PlatformTheme.color('color-chart-negative')],
             fill: {
                 type: 'gradient',
                 gradient: {
-                    // #9c8cfc / #f29292 intentionally left as-is: no existing custom
-                    // property in resources/scss/base/tokens/_colors.scss represents
-                    // either shade (this palette contains no purple hue at all — see
-                    // the Slice 3 implementation's own STOP finding, contract §5
-                    // item 1 / §11), and inventing a new token/token file is not
-                    // authorized by this slice's own 9-path allowlist.
-                    gradientToColors: ['#9c8cfc', '#f29292']
+                    gradientToColors: [
+                        PlatformTheme.color('color-chart-6'),
+                        PlatformTheme.color('color-status-danger-border')
+                    ]
                 }
             }
         }

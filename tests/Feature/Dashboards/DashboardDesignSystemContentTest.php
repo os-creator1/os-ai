@@ -16,16 +16,23 @@ use Tests\TestCase;
  * literals), HTTP/render assertions for actual layout behavior
  * (ai-settings' new layout chrome). No full-page snapshots.
  *
- * The #9c8cfc/#f29292 gradient-pair literals in admin/dashboard.blade.php
- * are a confirmed, reported STOP finding (contract §5 item 1/§11): no
- * existing custom property in resources/scss/base/tokens/_colors.scss
- * represents either shade (this repository's entire palette is warm
- * red/terracotta — zero purple hue anywhere), and inventing a new token is
- * not authorized. This test asserts the #EA5455 literal is gone (replaced
- * by PlatformTheme.color('--color-chart-negative', '#EA5455') in both
- * dashboard files) and does not assert #9c8cfc/#f29292 are absent, since
- * asserting that would misrepresent the honestly-reported, contract-
- * anticipated partial completion as full compliance.
+ * Corrected, Implementation Correction Round 1 — the original version of
+ * this test wrongly accepted two defects as acceptable: (1)
+ * resources/js/core/theme-tokens.js's own cssVar(name, fallback) prepends
+ * "--" to `name` itself, so a caller passing a leading `--` (as this
+ * implementation originally did) reads a malformed, never-matching custom
+ * property name and always falls through to its hardcoded fallback — not
+ * genuinely runtime-token-reactive despite appearances; (2) the original
+ * "no purple hue anywhere in the palette" STOP-finding claim was false —
+ * resources/scss/base/tokens/_colors.scss's own `--color-chart-6`
+ * (#B07AA1) is a real, existing, chart-specific purple/mauve token, and
+ * `--color-status-danger-border` (#F7C1C2) is a real, existing light-red
+ * danger-family token — both suitable existing replacements for the
+ * legacy #9c8cfc/#f29292 gradient endpoints, requiring no new token. This
+ * test now proves all four legacy literals are fully gone from both
+ * dashboard files, that every PlatformTheme.color() call uses the correct
+ * no-leading-dash name form, and that the exact required token calls are
+ * present.
  */
 class DashboardDesignSystemContentTest extends TestCase
 {
@@ -70,27 +77,44 @@ class DashboardDesignSystemContentTest extends TestCase
     }
 
     /**
-     * #EA5455 legitimately still appears once, as the documented fallback
-     * argument inside PlatformTheme.color('--color-chart-negative',
-     * '#EA5455') — the exact pattern the contract requires (§5 item 1).
-     * What must be gone is the OLD, un-tokenized bare-literal form,
-     * `PlatformTheme.primary(), "#EA5455"`/`'#EA5455'` directly inside the
-     * colors array with no PlatformTheme.color() wrapper.
+     * Corrected, Implementation Correction Round 1 — all four legacy
+     * literals (#EA5455, #9c8cfc, #f29292, #7367F0) must be completely
+     * absent from both dashboard files. No fallback-argument exception:
+     * theme-tokens.js's own `--color-chart-negative` custom property is
+     * guaranteed by the merged token architecture, so no hex fallback is
+     * needed or authorized inside these views.
      */
-    public function test_customer_dashboard_has_zero_untokenized_ea5455_literal(): void
+    public function test_customer_dashboard_has_zero_legacy_color_literals(): void
     {
         $source = file_get_contents(resource_path('views/customer/dashboard.blade.php'));
 
-        $this->assertStringNotContainsString('PlatformTheme.primary(), "#EA5455"]', $source);
-        $this->assertStringContainsString("PlatformTheme.color('--color-chart-negative', '#EA5455')", $source);
+        foreach (['#EA5455', '#9c8cfc', '#f29292', '#7367F0'] as $literal) {
+            $this->assertStringNotContainsString($literal, $source, "Expected {$literal} to be fully absent from customer/dashboard.blade.php.");
+        }
     }
 
-    public function test_admin_dashboard_has_zero_untokenized_ea5455_literal(): void
+    public function test_admin_dashboard_has_zero_legacy_color_literals(): void
     {
         $source = file_get_contents(resource_path('views/admin/dashboard.blade.php'));
 
-        $this->assertStringNotContainsString("PlatformTheme.primary(), '#EA5455']", $source);
-        $this->assertStringContainsString("PlatformTheme.color('--color-chart-negative', '#EA5455')", $source);
+        foreach (['#EA5455', '#9c8cfc', '#f29292', '#7367F0'] as $literal) {
+            $this->assertStringNotContainsString($literal, $source, "Expected {$literal} to be fully absent from admin/dashboard.blade.php.");
+        }
+    }
+
+    /**
+     * theme-tokens.js's own cssVar(name, fallback) prepends "--" to `name`
+     * itself — a caller passing a leading `--` reads a malformed,
+     * never-matching custom property name. Neither dashboard file may
+     * call PlatformTheme.color() with a leading `--`.
+     */
+    public function test_neither_dashboard_file_uses_the_incorrect_leading_dash_call_form(): void
+    {
+        $customerSource = file_get_contents(resource_path('views/customer/dashboard.blade.php'));
+        $adminSource = file_get_contents(resource_path('views/admin/dashboard.blade.php'));
+
+        $this->assertStringNotContainsString("PlatformTheme.color('--", $customerSource);
+        $this->assertStringNotContainsString("PlatformTheme.color('--", $adminSource);
     }
 
     public function test_platform_theme_remains_used_in_both_dashboard_chart_files(): void
@@ -98,9 +122,10 @@ class DashboardDesignSystemContentTest extends TestCase
         $customerSource = file_get_contents(resource_path('views/customer/dashboard.blade.php'));
         $adminSource = file_get_contents(resource_path('views/admin/dashboard.blade.php'));
 
-        $this->assertStringContainsString('PlatformTheme', $customerSource);
-        $this->assertStringContainsString('PlatformTheme', $adminSource);
-        $this->assertStringContainsString("PlatformTheme.color('--color-chart-negative', '#EA5455')", $adminSource);
+        $this->assertStringContainsString("PlatformTheme.color('color-chart-negative')", $customerSource);
+        $this->assertStringContainsString("PlatformTheme.color('color-chart-negative')", $adminSource);
+        $this->assertStringContainsString("PlatformTheme.color('color-chart-6')", $adminSource);
+        $this->assertStringContainsString("PlatformTheme.color('color-status-danger-border')", $adminSource);
     }
 
     public function test_ai_settings_renders_through_shared_layout_chrome(): void

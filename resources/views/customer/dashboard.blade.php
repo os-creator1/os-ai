@@ -696,7 +696,7 @@
           stroke: {
             width: 4
           },
-          colors: [PlatformTheme.primary(), PlatformTheme.color('--color-chart-negative', '#EA5455')]
+          colors: [PlatformTheme.primary(), PlatformTheme.color('color-chart-negative')]
         };
 
         let smsHistoryChart = new ApexCharts(
