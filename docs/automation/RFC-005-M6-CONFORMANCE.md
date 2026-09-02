@@ -67,7 +67,7 @@ Test evidence: `tests/Feature/Usage/UsageWalletManagerCommittedSpendFormulaTest.
 
 **PASS.** `2026_08_22_120001_create_usage_meters_table.php` (Slice 1 EXPAND). `2026_08_22_120002` adds `UNIQUE(meter_key, version)` to rates. `2026_08_24_120001_tighten_and_contract_business_usage_rates_table.php` (Slice 3 CONTRACT) drops `feature_key` entirely, tightens `meter_key` to `NOT NULL`, rebuilds six composite FKs against `business_usage_rates(meter_key, id)`. `UsageWalletManager::reserve()` reads live authority exclusively from `UsageMeterRepository`/`UsageMeter.active_rate_id`, never `PlatformFeatureUsageClassification` directly.
 
-Test evidence: `tests/Feature/Usage/UsageMeterSchemaTest.php::test_repository_update_cannot_mutate_immutable_fields`, `::test_active_rate_composite_fk_rejects_rate_belonging_to_a_different_meter`; `tests/Feature/Usage/UsageMeterTransitionSchemaTest.php` (8 methods); `tests/Feature/Usage/UsageMeterBackfillPreflightTest.php` (8 methods, forward/rollback preflight).
+Test evidence: `tests/Feature/Usage/UsageMeterSchemaTest.php::test_repository_update_cannot_mutate_immutable_fields`, `::test_active_rate_composite_fk_rejects_rate_belonging_to_a_different_meter`; `tests/Feature/Usage/UsageMeterTransitionSchemaTest.php` (8 methods); `tests/Feature/Usage/UsageMeterBackfillPreflightTest.php` (7 methods, forward/rollback preflight).
 
 ### Rate catalog, versioning, activation, rate-snapshot immutability, direct-FK `active_rate_id` (§11, superseding activation-history-query design)
 
