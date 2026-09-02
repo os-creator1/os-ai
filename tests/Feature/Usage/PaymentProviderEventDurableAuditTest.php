@@ -201,6 +201,7 @@ class PaymentProviderEventDurableAuditTest extends TestCase
         DB::table('payment_provider_events')->where('id', $fresh->id)->update([
             'completed_at' => now()->subDays(400),
         ]);
+        config(['usage_billing.webhook_event.retention_days' => 30]);
         app(PurgeExpiredWebhookPayloads::class)->handle(app(PaymentProviderEventRepository::class));
 
         $afterPurge = PaymentProviderEvent::find($fresh->id);
