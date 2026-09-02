@@ -25,8 +25,8 @@
                             <div class="d-flex align-items-center">
                                 <h4 class="card-title">{{ __('locale.menu.Announcements') }}</h4>
                             </div>
-                            <a href="#" class="mark_read h5 text-muted text-uppercase"><i data-feather="x-circle"
-                                                                                          class="font-medium-3 cursor-pointer"></i> {{ __('locale.buttons.close') }}
+                            <a href="#" class="mark_read h5 text-muted text-uppercase"><x-ds-icon name="x-circle"
+                                                                                          class="font-medium-3 cursor-pointer" /> {{ __('locale.buttons.close') }}
                             </a>
                         </div>
                         <hr class="my-0">
@@ -66,7 +66,7 @@
                         <div class="card-header d-flex justify-content-between align-items-center">
                             <h4 class="card-title mb-0">{{ __('locale.sub_accounts.manage_account') }}</h4>
                             <a href="#" class="mark_read h5 text-muted text-uppercase">
-                                <i data-feather="x-circle" class="font-medium-3 cursor-pointer"></i>
+                                <x-ds-icon name="x-circle" class="font-medium-3 cursor-pointer" />
                                 {{ __('locale.buttons.close') }}
                             </a>
                         </div>
@@ -98,8 +98,8 @@
                             @can('sms_quick_send')
                                 <div class="col-lg-4 col-sm-6 col-6 pb-1">
                                     <a href="{{ route('customer.sms.quick_send') }}"
-                                       class="btn btn-sm btn-warning text-nowrap"><i
-                                                data-feather="send"></i>
+                                       class="btn btn-sm btn-warning text-nowrap"><x-ds-icon
+                                                name="send" />
 
                                         <span>{{__('locale.menu.Quick Send')}}</span>
                                     </a>
@@ -109,8 +109,8 @@
                             @can('sms_campaign_builder')
                                 <div class="col-lg-4 col-sm-6 col-6 pb-1">
                                     <a href="{{ route('customer.sms.campaign_builder') }}"
-                                       class="btn btn-sm btn-success text-nowrap"><i
-                                                data-feather="server"></i>
+                                       class="btn btn-sm btn-success text-nowrap"><x-ds-icon
+                                                name="server" />
 
                                         <span>{{__('locale.menu.Campaign Builder')}}</span></a>
                                 </div>
@@ -119,8 +119,8 @@
                             @can('view_contact_group')
                                 <div class="col-lg-4 col-sm-6 col-6 pb-1">
                                     <a href="{{ route('customer.contacts.index') }}"
-                                       class="btn btn-sm btn-info text-nowrap"><i
-                                                data-feather="user"></i>
+                                       class="btn btn-sm btn-info text-nowrap"><x-ds-icon
+                                                name="user" />
                                         <span>{{__('locale.contacts.contact_groups')}}</span>
                                     </a>
                                 </div>
@@ -153,12 +153,12 @@
                         @endif
 
                         <div class="d-flex justify-content-between">
-                            <a href="{{ route('customer.subscriptions.index') }}" class="btn btn-sm btn-primary me-1"><i
-                                        data-feather="info"></i> {{ __('locale.labels.more_info') }}</a>
+                            <a href="{{ route('customer.subscriptions.index') }}" class="btn btn-sm btn-primary me-1"><x-ds-icon
+                                        name="info" /> {{ __('locale.labels.more_info') }}</a>
                             @if (isset(Auth::user()->customer) && Auth::user()->customer->activeSubscription())
                                 <a href="{{ route('customer.subscriptions.change_plan', auth()->user()->customer->subscription->uid) }}"
-                                   class="btn btn-sm btn-info"><i
-                                            data-feather="credit-card"></i> {{ __('locale.labels.packages') }}</a>
+                                   class="btn btn-sm btn-info"><x-ds-icon
+                                            name="credit-card" /> {{ __('locale.labels.packages') }}</a>
                             @endif
                         </div>
                     </div>
@@ -204,7 +204,7 @@
                                     </div>
                                 </div>
                             @empty
-                                <p class="text-muted mb-0">No opportunities are available right now.</p>
+                                <x-empty-state title="No opportunities are available right now." />
                             @endforelse
                         </div>
                     </div>
@@ -233,7 +233,7 @@
                         <a href="{{route('customer.reports.campaigns')}}">
                             <div class="avatar bg-light-info p-50 m-0">
                                 <div class="avatar-content">
-                                    <i data-feather="pie-chart" class="text-info font-medium-5"></i>
+                                    <x-ds-icon name="pie-chart" class="text-info font-medium-5" />
                                 </div>
                             </div>
                         </a>
@@ -254,7 +254,7 @@
                         <a href="{{route('customer.reports.all')}}">
                             <div class="avatar bg-light-success p-50 m-0">
                                 <div class="avatar-content">
-                                    <i data-feather="phone-outgoing" class="text-success font-medium-5"></i>
+                                    <x-ds-icon name="phone-outgoing" class="text-success font-medium-5" />
                                 </div>
                             </div>
                         </a>
@@ -275,7 +275,7 @@
                         <a href="{{route('customer.reports.all')}}">
                             <div class="avatar bg-light-danger p-50 m-0">
                                 <div class="avatar-content">
-                                    <i data-feather="x-square" class="text-danger font-medium-5"></i>
+                                    <x-ds-icon name="x-square" class="text-danger font-medium-5" />
                                 </div>
                             </div>
                         </a>
@@ -293,7 +293,7 @@
                         <a href="{{ route('customer.templates.index') }}">
                             <div class="avatar bg-light-warning p-50 m-0">
                                 <div class="avatar-content">
-                                    <i data-feather="inbox" class="text-warning font-medium-5"></i>
+                                    <x-ds-icon name="inbox" class="text-warning font-medium-5" />
                                 </div>
                             </div>
                         </a>
@@ -322,7 +322,7 @@
                         <a href="{{ route('customer.contacts.index') }}">
                             <div class="avatar bg-light-primary p-50 m-0">
                                 <div class="avatar-content">
-                                    <i data-feather="users" class="text-primary font-medium-5"></i>
+                                    <x-ds-icon name="users" class="text-primary font-medium-5" />
                                 </div>
                             </div>
                         </a>
@@ -347,7 +347,7 @@
                         <a href="{{ route('customer.contacts.index') }}">
                             <div class="avatar bg-light-success p-50 m-0">
                                 <div class="avatar-content">
-                                    <i data-feather="user" class="text-success font-medium-5"></i>
+                                    <x-ds-icon name="user" class="text-success font-medium-5" />
                                 </div>
                             </div>
                         </a>
@@ -367,7 +367,7 @@
                         <a href="{{ route('customer.subscriptions.index') }}">
                             <div class="avatar bg-light-info p-50 m-0">
                                 <div class="avatar-content">
-                                    <i data-feather="shopping-cart" class="text-info font-medium-5"></i>
+                                    <x-ds-icon name="shopping-cart" class="text-info font-medium-5" />
                                 </div>
                             </div>
                         </a>
@@ -385,7 +385,7 @@
                         <a href="{{ route('customer.blacklists.index') }}">
                             <div class="avatar bg-light-danger p-50 m-0">
                                 <div class="avatar-content">
-                                    <i data-feather="user-x" class="text-danger font-medium-5"></i>
+                                    <x-ds-icon name="user-x" class="text-danger font-medium-5" />
                                 </div>
                             </div>
                         </a>
@@ -696,7 +696,7 @@
           stroke: {
             width: 4
           },
-          colors: [PlatformTheme.primary(), "#EA5455"]
+          colors: [PlatformTheme.primary(), PlatformTheme.color('--color-chart-negative', '#EA5455')]
         };
 
         let smsHistoryChart = new ApexCharts(
