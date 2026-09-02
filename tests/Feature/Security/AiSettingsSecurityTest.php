@@ -14,19 +14,32 @@ use Tests\TestCase;
 /**
  * Dashboard Security Remediation Contract §14 item 3 — AiSettingsController.
  *
- * The ai_settings table has no migration anywhere in this repository
- * (confirmed by exhaustive search across all 213 tracked migrations and
- * the absence of any .sql/install schema file) and does not exist in the
- * disposable ultimatesms_testing database even fully migrated.
- * Assertions that need it are skipped with markTestSkipped() naming the
- * exact missing table, never fabricated or silently passed. The
- * guest/unauthorized-actor route/gate-boundary assertions never reach
- * that table and always run for real.
+ * §14.1 (Correction Round 2) — the ai_settings table has no migration
+ * anywhere in this repository (confirmed by exhaustive search across all
+ * 213 tracked migrations and the absence of any .sql/install schema
+ * file) and does not exist in a freshly, fully migrated
+ * ultimatesms_testing database. Rather than skip the assertions that
+ * depend on it, this file creates it itself, test-only, via a separate
+ * named DB connection (`security_test_ddl`, pointing at the identical
+ * `mysql` config) so the DDL never touches the default connection's
+ * RefreshDatabase-managed transaction — with only the system_prompt/
+ * model columns AiSettingsController::index()/save() already read and
+ * write, plus the technically-necessary auto-increment primary key. If
+ * the table already exists, it is used as-is and never replaced.
  */
 class AiSettingsSecurityTest extends TestCase
 {
     use RefreshDatabase;
     use CreatesBusinessTestData;
+
+    /**
+     * Whether this test class itself created the ai_settings table this
+     * run, so the process-shutdown cleanup drops it only if so. Static
+     * and ensured exactly once per run — see ensureEphemeralAiSettingsTable().
+     */
+    private static bool $createdAiSettingsTable = false;
+
+    private static bool $ephemeralSchemaEnsured = false;
 
     /**
      * EloquentAccountRepository::hasPermission() unconditionally grants
@@ -44,6 +57,8 @@ class AiSettingsSecurityTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+
+        $this->ensureEphemeralAiSettingsTable();
 
         User::create([
             'first_name' => 'Placeholder',
@@ -107,7 +122,6 @@ class AiSettingsSecurityTest extends TestCase
 
     public function test_authorized_admin_with_manage_ai_settings_can_get(): void
     {
-        $this->skipUnlessAiSettingsTableExists();
         $this->seedAiSettingsRow();
 
         $this->actingAsAdmin(['access backend', 'manage ai_settings']);
@@ -119,7 +133,6 @@ class AiSettingsSecurityTest extends TestCase
 
     public function test_authorized_admin_can_post_update_and_columns_actually_change(): void
     {
-        $this->skipUnlessAiSettingsTableExists();
         $this->seedAiSettingsRow();
 
         $this->actingAsAdmin(['access backend', 'manage ai_settings']);
@@ -137,7 +150,6 @@ class AiSettingsSecurityTest extends TestCase
 
     public function test_missing_system_prompt_rejected_without_mutation(): void
     {
-        $this->skipUnlessAiSettingsTableExists();
         $this->seedAiSettingsRow('Original prompt', 'gpt-3.5');
 
         $this->actingAsAdmin(['access backend', 'manage ai_settings']);
@@ -152,7 +164,6 @@ class AiSettingsSecurityTest extends TestCase
 
     public function test_missing_model_rejected_without_mutation(): void
     {
-        $this->skipUnlessAiSettingsTableExists();
         $this->seedAiSettingsRow('Original prompt', 'gpt-3.5');
 
         $this->actingAsAdmin(['access backend', 'manage ai_settings']);
@@ -167,6 +178,8 @@ class AiSettingsSecurityTest extends TestCase
 
     private function actingAsAdmin(array $permissions): User
     {
+        $this->ensureRequiredAppConfigRowsExist();
+
         $admin = User::create([
             'first_name' => 'Test',
             'last_name' => 'Admin',
@@ -191,13 +204,68 @@ class AiSettingsSecurityTest extends TestCase
         ]);
     }
 
-    private function skipUnlessAiSettingsTableExists(): void
+    /**
+     * §14.1 — test-only ephemeral schema fixture. Runs on a separate named
+     * connection so its DDL (which MySQL always auto-commits) never
+     * interacts with the default connection's RefreshDatabase transaction.
+     */
+    private function ephemeralSchema(): \Illuminate\Database\Schema\Builder
     {
-        if (! Schema::hasTable('ai_settings')) {
-            $this->markTestSkipped(
-                'ai_settings has no migration anywhere in this repository and does not exist in ultimatesms_testing — cannot exercise AiSettingsController against real data without fabricating schema.'
-            );
+        config(['database.connections.security_test_ddl' => config('database.connections.mysql')]);
+
+        return Schema::connection('security_test_ddl');
+    }
+
+    /**
+     * Creates only the system_prompt/model columns AiSettingsController's
+     * own existing, unmodified index()/save() already read and write
+     * (plus the technically-necessary auto-increment id), and only when
+     * the table is genuinely absent, once for the whole class run. If it
+     * already exists, it is used as-is — never replaced or redefined. No
+     * tenant-ownership column is added, matching §3.4's audited
+     * global-row model. Cleanup runs once, at true PHP process shutdown,
+     * via a raw PDO connection captured while the app is still available
+     * (register_shutdown_function callbacks cannot rely on Laravel's
+     * container still being alive) — repeated per-test DDL was measured
+     * to make the suite hang under this environment's MySQL/Windows I/O.
+     */
+    private function ensureEphemeralAiSettingsTable(): void
+    {
+        if (self::$ephemeralSchemaEnsured) {
+            return;
         }
+
+        self::$ephemeralSchemaEnsured = true;
+
+        $schema = $this->ephemeralSchema();
+
+        if ($schema->hasTable('ai_settings')) {
+            return;
+        }
+
+        $schema->create('ai_settings', function ($table) {
+            $table->id();
+            $table->text('system_prompt')->nullable();
+            $table->string('model')->nullable();
+        });
+
+        self::$createdAiSettingsTable = true;
+
+        $dsn = 'mysql:host=' . config('database.connections.mysql.host')
+            . ';port=' . config('database.connections.mysql.port')
+            . ';dbname=' . config('database.connections.mysql.database')
+            . ';charset=' . config('database.connections.mysql.charset', 'utf8mb4');
+        $username = config('database.connections.mysql.username');
+        $password = config('database.connections.mysql.password');
+
+        register_shutdown_function(function () use ($dsn, $username, $password) {
+            try {
+                $pdo = new \PDO($dsn, $username, $password, [\PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION]);
+                $pdo->exec('DROP TABLE IF EXISTS `ai_settings`');
+            } catch (\Throwable $e) {
+                // Best-effort cleanup at process shutdown; nothing further can be reported here.
+            }
+        });
     }
 
     private function ensureRequiredAppConfigRowsExist(): void

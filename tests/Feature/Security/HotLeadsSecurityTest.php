@@ -14,22 +14,43 @@ use Tests\TestCase;
 /**
  * Dashboard Security Remediation Contract §14 item 1 — HotLeadController.
  *
- * Tenant-isolation and mutation-boundary assertions below require the
- * chat_boxes.ai_stage/called/website_sent_at columns HotLeadController
- * reads/writes. Those columns have no migration anywhere in this
- * repository (confirmed by exhaustive content grep across all 213
- * tracked migrations) and are therefore absent from the disposable
- * ultimatesms_testing database even fully migrated. Each assertion that
- * needs them checks column existence first and calls
- * markTestSkipped() with the exact missing column when absent, rather
- * than fabricating schema or silently passing/failing for an unrelated
- * reason. The route/gate-boundary assertions do not depend on these
- * columns and always run for real.
+ * §14.1 (Correction Round 2) — chat_boxes.ai_stage/called/website_sent_at
+ * have no migration anywhere in this repository (confirmed by exhaustive
+ * content grep across all 213 tracked migrations) and are therefore
+ * absent from a freshly, fully migrated ultimatesms_testing database.
+ * Rather than skip the assertions that depend on them, this file adds
+ * them itself, test-only, via a separate named DB connection
+ * (`security_test_ddl`, pointing at the identical `mysql` config) so the
+ * DDL never touches the default connection's RefreshDatabase-managed
+ * transaction. Each column is added only if absent (once for the whole
+ * class run) and dropped again at true process shutdown only if this
+ * run added it — an already-existing column is always left untouched.
+ * chat_boxes.user_id (the one column this
+ * remediation's own tenant-scoping logic actually depends on) is real,
+ * migrated schema and is never touched here.
  */
 class HotLeadsSecurityTest extends TestCase
 {
     use RefreshDatabase;
     use CreatesBusinessTestData;
+
+    /**
+     * Columns this test class itself added to chat_boxes this run, so the
+     * process-shutdown cleanup drops only what it created. Static and
+     * ensured exactly once per run (not once per test method) — repeated
+     * ALTER TABLE calls across every test method were measured to make
+     * the suite hang under this environment's MySQL/Windows I/O, so the
+     * ephemeral schema is created once, reused by every test method in
+     * this class, and dropped once, at true PHP process shutdown, via a
+     * raw PDO connection captured while the app is still available
+     * (register_shutdown_function callbacks cannot rely on Laravel's
+     * container still being alive).
+     *
+     * @var string[]
+     */
+    private static array $addedChatBoxColumns = [];
+
+    private static bool $ephemeralSchemaEnsured = false;
 
     /**
      * EloquentAccountRepository::hasPermission() unconditionally grants
@@ -48,6 +69,8 @@ class HotLeadsSecurityTest extends TestCase
     {
         parent::setUp();
 
+        $this->ensureEphemeralChatBoxColumns();
+
         User::create([
             'first_name' => 'Placeholder',
             'last_name' => 'SuperAdmin',
@@ -58,6 +81,7 @@ class HotLeadsSecurityTest extends TestCase
             'active_portal' => 'admin',
         ]);
     }
+
 
     /**
      * This app's own Handler.php maps both AuthenticationException and
@@ -100,8 +124,6 @@ class HotLeadsSecurityTest extends TestCase
 
     public function test_customer_with_chat_box_sees_only_own_leads_tenant_a_data_present_tenant_b_absent(): void
     {
-        $this->skipUnlessHotLeadColumnsExist();
-
         [$tenantA, $tenantB] = $this->twoTenantCustomers();
 
         $leadA = $this->seedHotLead($tenantA->user_id, '+15550000001');
@@ -118,8 +140,6 @@ class HotLeadsSecurityTest extends TestCase
 
     public function test_mark_called_cross_tenant_real_id_returns_404_and_leaves_row_unchanged(): void
     {
-        $this->skipUnlessHotLeadColumnsExist();
-
         [$tenantA, $tenantB] = $this->twoTenantCustomers();
         $leadB = $this->seedHotLead($tenantB->user_id, '+15550000003');
 
@@ -133,8 +153,6 @@ class HotLeadsSecurityTest extends TestCase
 
     public function test_mark_called_nonexistent_id_returns_404_with_the_same_response_shape_as_cross_tenant(): void
     {
-        $this->skipUnlessHotLeadColumnsExist();
-
         [$tenantA, $tenantB] = $this->twoTenantCustomers();
         $leadB = $this->seedHotLead($tenantB->user_id, '+15550000004');
 
@@ -154,8 +172,6 @@ class HotLeadsSecurityTest extends TestCase
 
     public function test_mark_called_own_row_succeeds_and_sets_called(): void
     {
-        $this->skipUnlessHotLeadColumnsExist();
-
         [$tenantA] = $this->twoTenantCustomers();
         $leadA = $this->seedHotLead($tenantA->user_id, '+15550000005');
 
@@ -225,15 +241,76 @@ class HotLeadsSecurityTest extends TestCase
         return DB::table('chat_boxes')->where('id', $id)->first();
     }
 
-    private function skipUnlessHotLeadColumnsExist(): void
+    /**
+     * §14.1 — test-only ephemeral schema fixture. Runs on a separate named
+     * connection so its DDL (which MySQL always auto-commits) never
+     * interacts with the default connection's RefreshDatabase transaction.
+     * Adds only the specific legacy chat_boxes columns HotLeadController
+     * actually reads/writes, and only when genuinely absent; shape is
+     * inferred solely from that controller's own existing usage
+     * (index(): where('ai_stage', 4), where('called', 0),
+     * orderByDesc('website_sent_at'); markCalled(): update(['called' => 1])).
+     * chat_boxes.user_id is real, migrated schema and is never touched.
+     */
+    private function ephemeralSchema(): \Illuminate\Database\Schema\Builder
     {
-        foreach (['ai_stage', 'called', 'website_sent_at'] as $column) {
-            if (! Schema::hasColumn('chat_boxes', $column)) {
-                $this->markTestSkipped(
-                    "chat_boxes.$column has no migration anywhere in this repository and does not exist in ultimatesms_testing — cannot exercise HotLeadController against real data without fabricating schema."
-                );
+        config(['database.connections.security_test_ddl' => config('database.connections.mysql')]);
+
+        return Schema::connection('security_test_ddl');
+    }
+
+    private function ensureEphemeralChatBoxColumns(): void
+    {
+        if (self::$ephemeralSchemaEnsured) {
+            return;
+        }
+
+        self::$ephemeralSchemaEnsured = true;
+
+        $schema = $this->ephemeralSchema();
+
+        $columns = [
+            'ai_stage' => fn ($table) => $table->unsignedTinyInteger('ai_stage')->default(0),
+            'called' => fn ($table) => $table->boolean('called')->default(false),
+            'website_sent_at' => fn ($table) => $table->timestamp('website_sent_at')->nullable(),
+        ];
+
+        foreach ($columns as $column => $definer) {
+            if (! $schema->hasColumn('chat_boxes', $column)) {
+                $schema->table('chat_boxes', function ($table) use ($definer) {
+                    $definer($table);
+                });
+                self::$addedChatBoxColumns[] = $column;
             }
         }
+
+        if (self::$addedChatBoxColumns === []) {
+            return;
+        }
+
+        $columnsToDrop = self::$addedChatBoxColumns;
+        $dsn = 'mysql:host=' . config('database.connections.mysql.host')
+            . ';port=' . config('database.connections.mysql.port')
+            . ';dbname=' . config('database.connections.mysql.database')
+            . ';charset=' . config('database.connections.mysql.charset', 'utf8mb4');
+        $username = config('database.connections.mysql.username');
+        $password = config('database.connections.mysql.password');
+
+        register_shutdown_function(function () use ($dsn, $username, $password, $columnsToDrop) {
+            try {
+                $pdo = new \PDO($dsn, $username, $password, [\PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION]);
+                foreach ($columnsToDrop as $column) {
+                    $exists = $pdo->query(
+                        "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'chat_boxes' AND column_name = " . $pdo->quote($column)
+                    )->fetchColumn();
+                    if ($exists) {
+                        $pdo->exec('ALTER TABLE `chat_boxes` DROP COLUMN `' . $column . '`');
+                    }
+                }
+            } catch (\Throwable $e) {
+                // Best-effort cleanup at process shutdown; nothing further can be reported here.
+            }
+        });
     }
 
     private function ensureRequiredAppConfigRowsExist(): void
