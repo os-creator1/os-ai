@@ -1,6 +1,6 @@
 # RFC-005 Milestone 6 Closure
 
-**Status: COMPLETE — RFC-005 tagged and awaiting only this governance closure PR's human merge for repository-state bookkeeping.**
+**Status: READY FOR FINAL CLOSURE — RFC-005 is technically complete and tagged; RFC-005/M6 becomes governance-complete only when this closure PR is human-merged.**
 
 The immutable RFC-005 release marker — the annotated tag `rfc-005-business-usage-billing-and-wallets` — already exists, was created and pushed under separate explicit human authorization, and has been independently verified against the exact intended commit. **This closure PR does not alter it in any way.** Per `docs/automation/RFC-005-M6-CONTRACT.md` §10, this PR performs no regression, blocks nothing, and is not a second release gate — its only purpose is to record RFC-005's completion and restore `docs/automation/AI-AUTONOMY-STATE.json` to a truthful idle state, since that file must not be left permanently reading `remediation_7_closed_pending_m6_contract_reaudit` after RFC-005 is actually done.
 
