@@ -1,7 +1,6 @@
 <div class="row">
 
-    <div class="card">
-        <div class="card-body">
+    <x-card>
             <div class="col-md-6 col-12">
                 <form class="form form-vertical" action="{{ route('customer.contacts.message', $contact->uid) }}"
                       method="post">
@@ -51,9 +50,9 @@
                                 </div>
                             </div>
                             <div class="col-md-2 col-sm-12">
-                                <button type="button" class="btn btn-primary"
+                                <x-button type="button"
                                         id="btn-copy">{{__('locale.buttons.copy')}}!
-                                </button>
+                                </x-button>
                             </div>
                         </div>
                     </div>
@@ -93,13 +92,10 @@
 
                     <div class="row mt-2">
                         <div class="col-12">
-                            <button type="submit" class="btn btn-primary mb-1">
-                                <i data-feather="save"></i> {{__('locale.buttons.save')}}
-                            </button>
+                            <x-button type="submit" icon="save" class="mb-1">{{__('locale.buttons.save')}}</x-button>
                         </div>
                     </div>
                 </form>
             </div>
-        </div>
-    </div>
+    </x-card>
 </div>

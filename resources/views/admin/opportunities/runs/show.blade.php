@@ -6,17 +6,13 @@
     <section id="admin-opportunity-run-show">
         <div class="row">
             <div class="col-12 mb-1">
-                <a href="{{ route('admin.opportunities.runs.index', ['business_id' => $run->business_id]) }}" class="btn btn-outline-secondary btn-sm">
+                <x-button variant="secondary" size="sm" :href="route('admin.opportunities.runs.index', ['business_id' => $run->business_id])">
                     &larr; Back to runs
-                </a>
+                </x-button>
             </div>
 
             <div class="col-12">
-                <div class="card">
-                    <div class="card-header">
-                        <h4 class="card-title">Opportunity run #{{ $run->id }}</h4>
-                    </div>
-                    <div class="card-body">
+                <x-card :title="'Opportunity run #' . $run->id">
                         <h5>Run</h5>
                         <div class="row mb-2">
                             <div class="col-md-3">
@@ -123,8 +119,7 @@
                                 </tbody>
                             </table>
                         </div>
-                    </div>
-                </div>
+                </x-card>
             </div>
         </div>
     </section>

@@ -8,12 +8,7 @@
     <section id="basic-vertical-layouts">
         <div class="row match-height">
             <div class="col-md-6 col-12">
-                <div class="card">
-                    <div class="card-header">
-                        <h4 class="card-title">{{ __('locale.blacklist.add_new_blacklist') }}</h4>
-                    </div>
-                    <div class="card-content">
-                        <div class="card-body">
+                <x-card :title="__('locale.blacklist.add_new_blacklist')">
 
                             <p>{!!  __('locale.description.blacklist') !!} {{config('app.name')}}</p>
 
@@ -60,30 +55,24 @@
 
                                     </div>
                                     <div class="col-12">
-                                        <div class="mb-1">
-                                            <label for="reason" class="form-label">{{ __('locale.labels.reason') }}</label>
-                                            <input type="text" id="reason"
-                                                   class="form-control @error('reason') is-invalid @enderror"
-                                                   value="{{ old('reason')}}"
-                                                   name="reason">
-                                            @error('reason')
-                                            <p><small class="text-danger">{{ $message }}</small></p>
-                                            @enderror
-                                        </div>
+                                        <x-input
+                                            name="reason"
+                                            :label="__('locale.labels.reason')"
+                                            value="{{ old('reason') }}"
+                                            :error="$errors->first('reason')"
+                                        />
                                     </div>
 
 
                                     <div class="col-12">
-                                        <button type="submit" class="btn btn-primary me-1 mb-1"><i data-feather="save"></i> {{ __('locale.buttons.save') }}</button>
-                                        <button type="reset" class="btn btn-outline-warning mb-1"><i data-feather="refresh-cw"></i> {{ __('locale.buttons.reset') }}</button>
+                                        <x-button type="submit" icon="save" class="me-1 mb-1">{{ __('locale.buttons.save') }}</x-button>
+                                        <button type="reset" class="btn btn-outline-warning mb-1"><x-ds-icon name="refresh-cw" /> {{ __('locale.buttons.reset') }}</button>
                                     </div>
 
                                 </div>
 
                             </form>
-                        </div>
-                    </div>
-                </div>
+                </x-card>
             </div>
         </div>
     </section>

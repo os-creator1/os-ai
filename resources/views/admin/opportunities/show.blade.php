@@ -6,34 +6,30 @@
     <section id="admin-opportunities-show">
         <div class="row">
             <div class="col-12 mb-1">
-                <a href="{{ route('admin.opportunities.index') }}" class="btn btn-outline-secondary btn-sm">
+                <x-button variant="secondary" size="sm" :href="route('admin.opportunities.index')">
                     &larr; Back to opportunities
-                </a>
-                <a href="{{ route('admin.opportunities.runs.index', ['business_id' => $opportunity->business_id]) }}" class="btn btn-outline-secondary btn-sm">
+                </x-button>
+                <x-button variant="secondary" size="sm" :href="route('admin.opportunities.runs.index', ['business_id' => $opportunity->business_id])">
                     View producer runs for this business
-                </a>
+                </x-button>
             </div>
 
             <div class="col-12">
-                <div class="card">
-                    <div class="card-header">
-                        <h4 class="card-title">Opportunity #{{ $opportunity->id }}</h4>
-                    </div>
-                    <div class="card-body">
+                <x-card :title="'Opportunity #' . $opportunity->id">
                         @if (session('status'))
-                            <div class="alert alert-{{ session('status') === 'success' ? 'success' : 'danger' }}">
+                            <x-alert :variant="session('status') === 'success' ? 'success' : 'danger'">
                                 {{ session('message') }}
-                            </div>
+                            </x-alert>
                         @endif
 
                         @if ($errors->any())
-                            <div class="alert alert-danger">
+                            <x-alert variant="danger">
                                 <ul class="mb-0">
                                     @foreach ($errors->all() as $error)
                                         <li>{{ $error }}</li>
                                     @endforeach
                                 </ul>
-                            </div>
+                            </x-alert>
                         @endif
 
                         <h5>Opportunity</h5>
@@ -155,14 +151,16 @@
 
                                 <form method="POST" action="{{ route('admin.opportunities.snooze', $opportunity->id) }}" class="mb-2">
                                     @csrf
-                                    <label class="form-label" for="duration">Snooze for</label>
-                                    <div class="d-flex flex-wrap gap-1">
-                                        <select class="form-control" style="max-width: 200px;" id="duration" name="duration">
-                                            <option value="1_day" @selected(old('duration') === '1_day')>1 day</option>
-                                            <option value="3_days" @selected(old('duration') === '3_days')>3 days</option>
-                                            <option value="1_week" @selected(old('duration') === '1_week')>1 week</option>
-                                        </select>
-                                        <button type="submit" class="btn btn-outline-secondary">Snooze opportunity</button>
+                                    <div class="d-flex flex-wrap gap-1 align-items-end">
+                                        <div style="max-width: 200px;">
+                                            <x-select
+                                                name="duration"
+                                                label="Snooze for"
+                                                :options="['1_day' => '1 day', '3_days' => '3 days', '1_week' => '1 week']"
+                                                :selected="old('duration')"
+                                            />
+                                        </div>
+                                        <x-button variant="secondary" type="submit">Snooze opportunity</x-button>
                                     </div>
                                 </form>
 
@@ -178,7 +176,7 @@
 
                                 <form method="POST" action="{{ route('admin.opportunities.reopen', $opportunity->id) }}" class="mb-2">
                                     @csrf
-                                    <button type="submit" class="btn btn-outline-primary">Reopen opportunity</button>
+                                    <x-button variant="outline">Reopen opportunity</x-button>
                                 </form>
                             @endif
                         @endcan
@@ -270,8 +268,7 @@
                                 </tbody>
                             </table>
                         </div>
-                    </div>
-                </div>
+                </x-card>
             </div>
         </div>
     </section>

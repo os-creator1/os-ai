@@ -9,14 +9,14 @@
 @endsection
 
 <div class="col-md-8 col-12">
-    <div class="card">
-        <div class="card-body import-file">
+    <x-card>
+        <div class="import-file">
 
             <div class="mb-1 mt-2">
                 <p class="text-uppercase">{{ __('locale.labels.sample_file') }}</p>
-                <a href="{{route('sample.file')}}" class="btn btn-primary fw-bold text-uppercase">
-                    <i data-feather="file-text"></i> {{ __('locale.labels.download_sample_file') }}
-                </a>
+                <x-button :href="route('sample.file')" icon="file-text" class="fw-bold text-uppercase">
+                    {{ __('locale.labels.download_sample_file') }}
+                </x-button>
 
             </div>
 
@@ -32,7 +32,7 @@
                 <div class="dz-message">{{ __('locale.filezone.click_here_to_upload') }}</div>
             </form>
         </div>
-    </div>
+    </x-card>
 </div>
 
 @section('vendor-script')

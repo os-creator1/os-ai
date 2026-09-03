@@ -3,12 +3,8 @@
     <div class="row match-height">
         <div class="col-12">
 
-            <div class="card">
-                <div class="card-header">
-                    <h4 class="card-title"></h4>
-                </div>
-                <div class="card-content">
-                    <div class="card-body import-file">
+            <x-card>
+                    <div class="import-file">
                         <form class="form form-vertical import-contacts" method="post">
                             @csrf
                             <div class="row">
@@ -41,17 +37,14 @@
                                 <div class="col-12">
 
 
-                                    <a href="javascript:"
-                                       class="btn btn-primary mt-2 mx-2 mb-1 run">
-                                        <i data-feather="save"></i> {{__('locale.buttons.import')}}
-                                    </a>
+                                    <x-button type="button" icon="save" class="mt-2 mx-2 mb-1 run">
+                                        {{__('locale.buttons.import')}}
+                                    </x-button>
                                 </div>
                             </div>
                         </form>
                     </div>
-
-                </div>
-            </div>
+            </x-card>
         </div>
 
 

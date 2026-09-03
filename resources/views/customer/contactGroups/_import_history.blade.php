@@ -1,6 +1,6 @@
 <div class="row">
     <div class="col-12">
-        <div class="card">
+        <x-card :padded="false">
             <table class="table mb-0">
                 <thead class="thead-primary">
                 <tr>
@@ -32,15 +32,14 @@
                             <td>{{ strtoupper($progress['message']) }}</td>
                             <td>
                                 @if($job->status == 'done' && $progress['failed'] > 0)
-                                    <a href="{{ route('customer.contacts.download_failed', ['contact' => $contact->uid , 'job_id' => $job->id]) }}"
-                                       class="btn btn-primary btn-sm" data-bs-toggle="tooltip" data-bs-placement="top"
+                                    <x-button :href="route('customer.contacts.download_failed', ['contact' => $contact->uid , 'job_id' => $job->id])"
+                                       size="sm" icon="download" data-bs-toggle="tooltip" data-bs-placement="top"
                                        title="Download Failed Records">
-                                        <i data-feather="download"></i>
-                                    </a>
+                                    </x-button>
                                 @else
                                     <span class="btn btn-secondary btn-sm disabled" data-bs-toggle="tooltip"
                                           data-bs-placement="top" title="No failed records to download">
-                                            <i data-feather="download"></i>
+                                            <x-ds-icon name="download" />
                                         </span>
                                 @endif
                             </td>
@@ -55,6 +54,6 @@
                 @endif
                 </tbody>
             </table>
-        </div>
+        </x-card>
     </div>
 </div>

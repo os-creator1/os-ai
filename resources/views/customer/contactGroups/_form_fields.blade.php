@@ -25,8 +25,8 @@
                            value='1'
                     />
                     <label class="form-check-label" for="required_[__index__]">
-                        <span class="switch-icon-left"><i data-feather="check"></i></span>
-                        <span class="switch-icon-right"><i data-feather="x"></i></span>
+                        <span class="switch-icon-left"><x-ds-icon name="check" /></span>
+                        <span class="switch-icon-right"><x-ds-icon name="x" /></span>
                     </label>
                 </div>
             </td>
@@ -40,8 +40,8 @@
                            checked
                     />
                     <label class="form-check-label" for="visible_[__index__]">
-                        <span class="switch-icon-left"><i data-feather="check"></i></span>
-                        <span class="switch-icon-right"><i data-feather="x"></i></span>
+                        <span class="switch-icon-left"><x-ds-icon name="check" /></span>
+                        <span class="switch-icon-right"><x-ds-icon name="x" /></span>
                     </label>
                 </div>
             </td>
@@ -62,14 +62,14 @@
                            name="fields[__index__][default_value]"
                     />
                     @if($type == 'date' || $type == 'datetime')
-                        <span class="input-group-text"><i data-feather="clock"></i> </span>
+                        <span class="input-group-text"><x-ds-icon name="clock" /> </span>
                     @endif
                 </div>
             </td>
             <td>
                 <span class="remove-not-saved-field text-danger cursor-pointer" data-bs-toggle="tooltip"
                       data-bs-placement="top" title="{{ __('locale.buttons.delete') }}">
-                        <i data-feather="trash-2" class="feather-20"></i></span>
+                        <x-ds-icon name="trash-2" class="feather-20" /></span>
             </td>
         </tr>
     </table>

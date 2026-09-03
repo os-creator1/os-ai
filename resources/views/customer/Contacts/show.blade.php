@@ -19,12 +19,7 @@
         <div class="row match-height">
             <div class="col-md-6 col-12">
 
-                <div class="card">
-                    <div class="card-header">
-                        <h4 class="card-title">{{ __('locale.contacts.update_contact') }}</h4>
-                    </div>
-                    <div class="card-content">
-                        <div class="card-body">
+                <x-card :title="__('locale.contacts.update_contact')">
                             <form class="form form-vertical"
                                   action="{{ route('customer.contact.update', ['contact' => $contact->uid , 'contact_id' => $subscriber->uid]) }}"
                                   method="post">
@@ -153,16 +148,11 @@
 
                                 <div class="row">
                                     <div class="col-12">
-                                        <button type="submit" class="btn btn-primary mb-1">
-                                            <i data-feather="save"></i> {{__('locale.buttons.save')}}
-                                        </button>
+                                        <x-button type="submit" icon="save" class="mb-1">{{__('locale.buttons.save')}}</x-button>
                                     </div>
                                 </div>
                             </form>
-                        </div>
-
-                    </div>
-                </div>
+                </x-card>
             </div>
 
 

@@ -1,7 +1,6 @@
 <div class="row">
 
-    <div class="card">
-        <div class="card-body">
+    <x-card>
             <div class="col-md-7 col-12 settings">
                 <form class="form form-vertical" action="{{ route('customer.contacts.update', $contact->uid) }}" method="post">
                     {{ method_field('PUT') }}
@@ -159,14 +158,11 @@
 
                     <div class="row mt-2">
                         <div class="col-12">
-                            <button type="submit" class="btn btn-primary mb-1">
-                                <i data-feather="save"></i> {{__('locale.buttons.save')}}
-                            </button>
+                            <x-button type="submit" icon="save" class="mb-1">{{__('locale.buttons.save')}}</x-button>
                         </div>
                     </div>
                 </form>
             </div>
-        </div>
-    </div>
+    </x-card>
 
 </div>

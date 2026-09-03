@@ -6,48 +6,44 @@
     <section id="opportunities-show">
         <div class="row">
             <div class="col-12 mb-1">
-                <a href="{{ route('customer.opportunities.index') }}" class="btn btn-outline-secondary btn-sm">
+                <x-button variant="secondary" size="sm" :href="route('customer.opportunities.index')">
                     &larr; Back to opportunities
-                </a>
+                </x-button>
             </div>
 
             <div class="col-12">
                 @if (session('status') === 'success')
-                    <div class="alert alert-success">{{ session('message') }}</div>
+                    <x-alert variant="success">{{ session('message') }}</x-alert>
                 @endif
 
                 @if ($errors->any())
-                    <div class="alert alert-danger">
+                    <x-alert variant="danger">
                         <ul class="mb-0">
                             @foreach ($errors->all() as $error)
                                 <li>{{ $error }}</li>
                             @endforeach
                         </ul>
-                    </div>
+                    </x-alert>
                 @endif
 
-                <div class="card">
-                    <div class="card-header">
-                        <h4 class="card-title">{{ $opportunity->title }}</h4>
-                    </div>
-                    <div class="card-body">
+                <x-card :title="$opportunity->title">
                         <p>{{ $opportunity->summary }}</p>
 
                         <div class="row mb-2">
                             <div class="col-md-3">
                                 <strong>Status</strong>
                                 <div>
-                                    <span class="badge bg-light-primary">
+                                    <x-badge variant="accent">
                                         {{ ucwords(str_replace('_', ' ', $opportunity->status->value)) }}
-                                    </span>
+                                    </x-badge>
                                 </div>
                             </div>
                             <div class="col-md-3">
                                 <strong>Freshness</strong>
                                 <div>
-                                    <span class="badge {{ $opportunity->freshness->value === 'current' ? 'bg-light-success' : 'bg-light-warning' }}">
+                                    <x-badge :variant="$opportunity->freshness->value === 'current' ? 'success' : 'warning'">
                                         {{ ucfirst($opportunity->freshness->value) }}
-                                    </span>
+                                    </x-badge>
                                 </div>
                             </div>
                             <div class="col-md-3">
@@ -115,18 +111,17 @@
 
                             <form method="POST" action="{{ route('customer.opportunities.configure-action', $opportunity->id) }}" class="mb-2">
                                 @csrf
-                                <label class="form-label" for="value">Phone number</label>
-                                <div class="d-flex flex-wrap gap-1">
-                                    <input
-                                        type="text"
-                                        class="form-control"
-                                        style="max-width: 260px;"
-                                        id="value"
-                                        name="value"
-                                        maxlength="50"
-                                        value="{{ old('value', $configuredValue) }}"
-                                    >
-                                    <button type="submit" class="btn btn-primary">Save phone number</button>
+                                <div class="d-flex flex-wrap gap-1 align-items-end">
+                                    <div style="max-width: 260px;">
+                                        <x-input
+                                            type="text"
+                                            name="value"
+                                            label="Phone number"
+                                            maxlength="50"
+                                            value="{{ old('value', $configuredValue) }}"
+                                        />
+                                    </div>
+                                    <x-button type="submit">Save phone number</x-button>
                                 </div>
                             </form>
                         @endif
@@ -134,7 +129,7 @@
                         @if ($opportunity->status->value === 'open' && $configuredValue !== null)
                             <form method="POST" action="{{ route('customer.opportunities.request-approval', $opportunity->id) }}" class="mb-2">
                                 @csrf
-                                <button type="submit" class="btn btn-outline-primary">Request approval</button>
+                                <x-button variant="outline">Request approval</x-button>
                             </form>
                         @endif
 
@@ -151,14 +146,16 @@
 
                             <form method="POST" action="{{ route('customer.opportunities.snooze', $opportunity->id) }}" class="mb-2">
                                 @csrf
-                                <label class="form-label" for="duration">Snooze for</label>
-                                <div class="d-flex flex-wrap gap-1">
-                                    <select class="form-control" style="max-width: 200px;" id="duration" name="duration">
-                                        <option value="1_day" @selected(old('duration') === '1_day')>1 day</option>
-                                        <option value="3_days" @selected(old('duration') === '3_days')>3 days</option>
-                                        <option value="1_week" @selected(old('duration') === '1_week')>1 week</option>
-                                    </select>
-                                    <button type="submit" class="btn btn-outline-secondary">Snooze opportunity</button>
+                                <div class="d-flex flex-wrap gap-1 align-items-end">
+                                    <div style="max-width: 200px;">
+                                        <x-select
+                                            name="duration"
+                                            label="Snooze for"
+                                            :options="['1_day' => '1 day', '3_days' => '3 days', '1_week' => '1 week']"
+                                            :selected="old('duration')"
+                                        />
+                                    </div>
+                                    <x-button variant="secondary" type="submit">Snooze opportunity</x-button>
                                 </div>
                             </form>
 
@@ -174,7 +171,7 @@
 
                             <form method="POST" action="{{ route('customer.opportunities.reopen', $opportunity->id) }}" class="mb-2">
                                 @csrf
-                                <button type="submit" class="btn btn-outline-primary">Reopen opportunity</button>
+                                <x-button variant="outline">Reopen opportunity</x-button>
                             </form>
                         @endif
 
@@ -353,11 +350,10 @@
                             <form method="POST" action="{{ route('customer.opportunities.retry', $opportunity->id) }}" class="mt-2">
                                 @csrf
                                 <p class="text-muted small mb-1">This will attempt the action again.</p>
-                                <button type="submit" class="btn btn-outline-primary">Retry</button>
+                                <x-button variant="outline">Retry</x-button>
                             </form>
                         @endif
-                    </div>
-                </div>
+                </x-card>
             </div>
         </div>
     </section>
