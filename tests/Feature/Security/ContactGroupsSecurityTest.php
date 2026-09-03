@@ -206,6 +206,8 @@ class ContactGroupsSecurityTest extends TestCase
         [$tenantA] = $this->twoTenantCustomers();
         $group = $this->createGroup($tenantA, 'API Bound Group');
 
+        $this->authenticateAsCustomer($tenantA, ['update_contact_group']);
+
         $request = new \App\Http\Requests\Contacts\UpdateContactGroup();
         $request->setUserResolver(fn () => $tenantA->user);
         $request->merge(['name' => 'Renamed Via API Shape']);
@@ -215,10 +217,17 @@ class ContactGroupsSecurityTest extends TestCase
         $route->setParameter('contact', $group);
         $request->setRouteResolver(fn () => $route);
 
-        $rules = $request->rules();
+        $this->assertTrue($request->authorize(), 'An actor/session holding update_contact_group must authorize this request.');
 
+        $rules = $request->rules();
         $this->assertArrayHasKey('name', $rules);
-        $this->assertTrue($request->authorize() === false || $request->authorize() === true);
+
+        $messages = $request->messages();
+        $this->assertArrayHasKey('name.unique', $messages);
+        $this->assertSame(
+            __('locale.contacts.contact_group_available', ['name' => 'Renamed Via API Shape']),
+            $messages['name.unique']
+        );
     }
 
     // -----------------------------------------------------------------

@@ -2063,7 +2063,11 @@
             if (is_null($contactGroupIds))
                 return response()->json('No contact groups selected', 404);
 
-            $total = Contacts::whereIn('group_id', $contactGroupIds)->where('status', Contacts::STATUS_SUBSCRIBE)->count();
+            $ownedGroupIds = ContactGroups::where('customer_id', Auth::id())
+                ->whereIn('id', $contactGroupIds)
+                ->pluck('id');
+
+            $total = Contacts::whereIn('group_id', $ownedGroupIds)->where('status', Contacts::STATUS_SUBSCRIBE)->count();
 
             if ($total)
                 return $total;

@@ -268,6 +268,57 @@ class ContactsSecurityTest extends TestCase
         $response->assertStatus(401);
     }
 
+    /**
+     * CRM Security count isolation correction. The campaign builder's own
+     * page script submits numeric ContactGroups.id values (not uid) as
+     * contact_group_ids to this endpoint. Before the correction, the query
+     * counting subscribed Contacts had no customer_id boundary, letting any
+     * actor holding view_contact submit a foreign tenant's numeric group id
+     * and learn that tenant's subscribed-contact count. Own+foreign and
+     * own+nonexistent must both silently collapse to the own-only count,
+     * and foreign-only/nonexistent-only must be exactly indistinguishable.
+     */
+    public function test_count_contacts_tenant_isolation(): void
+    {
+        [$tenantA, $tenantB] = $this->twoTenantCustomers();
+
+        $groupA = $this->createGroup($tenantA, 'Tenant A Group');
+        $groupB = $this->createGroup($tenantB, 'Tenant B Group');
+
+        $this->createContact($tenantA->user_id, $groupA->id, '15550001001');
+        $this->createContact($tenantA->user_id, $groupA->id, '15550001002');
+        $this->createContact($tenantB->user_id, $groupB->id, '15550002001');
+
+        $nonexistentGroupId = ContactGroups::max('id') + 1000;
+
+        $this->authenticateAsCustomer($tenantA, ['view_contact']);
+
+        $ownOnlyResponse = $this->post(route('customer.contacts.count_contact'), ['contact_group_ids' => [$groupA->id]]);
+        $ownOnlyResponse->assertOk();
+        $this->assertSame('2', $ownOnlyResponse->getContent());
+
+        $ownForeignResponse = $this->post(route('customer.contacts.count_contact'), ['contact_group_ids' => [$groupA->id, $groupB->id]]);
+        $ownForeignResponse->assertOk();
+        $this->assertSame($ownOnlyResponse->getContent(), $ownForeignResponse->getContent());
+
+        $ownNonexistentResponse = $this->post(route('customer.contacts.count_contact'), ['contact_group_ids' => [$groupA->id, $nonexistentGroupId]]);
+        $ownNonexistentResponse->assertOk();
+        $this->assertSame($ownOnlyResponse->getContent(), $ownNonexistentResponse->getContent());
+
+        $foreignOnlyResponse = $this->post(route('customer.contacts.count_contact'), ['contact_group_ids' => [$groupB->id]]);
+        $foreignOnlyResponse->assertOk();
+        $this->assertSame('0', $foreignOnlyResponse->getContent());
+
+        $nonexistentOnlyResponse = $this->post(route('customer.contacts.count_contact'), ['contact_group_ids' => [$nonexistentGroupId]]);
+        $nonexistentOnlyResponse->assertOk();
+        $this->assertSame('0', $nonexistentOnlyResponse->getContent());
+
+        $this->assertSame($foreignOnlyResponse->getStatusCode(), $nonexistentOnlyResponse->getStatusCode());
+        $this->assertSame($foreignOnlyResponse->getContent(), $nonexistentOnlyResponse->getContent());
+
+        $this->assertSame(1, DB::table('contacts')->where('group_id', $groupB->id)->where('status', 'subscribe')->count());
+    }
+
     public function test_download_failed_contacts_denies_actor_missing_permission(): void
     {
         [$tenantA] = $this->twoTenantCustomers();
