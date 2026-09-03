@@ -1,5 +1,5 @@
 @foreach($chat_box as $chat)
-   <li data-id="{{$chat->id}}" data-box-id="{{$chat->id}}">
+   <li data-id="{{$chat->uid}}" data-box-id="{{$chat->id}}">
         <span class="avatar">
             <img src="{{asset('images/profile/profile.jpg')}}" height="36" width="54" alt="Avatar"/>
         </span>

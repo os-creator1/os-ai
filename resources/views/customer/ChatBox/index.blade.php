@@ -341,23 +341,12 @@ $("#media_image").val("");
               }
 
 
+              // Append the hidden chat_id input, then render messages
+              chatHistory.append(details);
+
               // Loop through messages and render them
               cwData.forEach((sms) => {
-                let media_url = "";
-                if (sms.media_url !== null) {
-                  let fileType = isImageOrVideo(sms.media_url);
-                  if (fileType === "video") {
-                    media_url = `<p><video src="${sms.media_url}" controls>Your browser does not support the video tag.</video></p>`;
-                  } else if (fileType === "audio") {
-                    media_url = `<p><audio src="${sms.media_url}" controls>Your browser does not support the audio element.</audio></p>`;
-                  } else {
-                    media_url = `<p><img src="${sms.media_url}" alt="media" /></p>`;
-                  }
-                }
-
-                let message = sms.message ? `<p>${sms.message}</p>` : "";
-
-                const chatHtml = `
+                const $chat = $(`
                 <div class="chat ${sms.direction === "incoming" ? "chat-left" : ""}">
                     <div class="chat-avatar">
                         <span class="avatar box-shadow-1 cursor-pointer">
@@ -365,19 +354,24 @@ $("#media_image").val("");
                         </span>
                     </div>
                     <div class="chat-body">
-                        <div class="chat-content">
-                            ${media_url}
-                            ${message}
-                            <p class="chat-time text-muted mt-1">${sms.created_at}</p>
-                        </div>
+                        <div class="chat-content"></div>
                     </div>
-                </div>`;
+                </div>`);
 
-                details += chatHtml;
+                const $content = $chat.find(".chat-content");
+
+                if (sms.media_url !== null) {
+                  $content.append(safeTypedMediaParagraph(sms.media_url, "media"));
+                }
+
+                if (sms.message) {
+                  $content.append(safeMessageParagraph(sms.message));
+                }
+
+                $content.append(`<p class="chat-time text-muted mt-1">${sms.created_at}</p>`);
+
+                chatHistory.append($chat);
               });
-
-              // Append the chat messages to the chat history
-              chatHistory.append(details);
               chatContainer.animate({ scrollTop: chatContainer[0].scrollHeight }, 400);  // Scroll to bottom of chat after loading
 
               // Show the active chat area
@@ -415,6 +409,24 @@ $("#media_image").val("");
           return "image";
         }
         return "unknown";
+      }
+
+      function safeMessageParagraph(value) {
+        return $("<p></p>").text(value);
+      }
+
+      function safeTypedMediaParagraph(url, imgAlt) {
+        const type = isImageOrVideo(url);
+        let $media;
+        if (type === "video") {
+          $media = $("<video controls>Your browser does not support the video tag.</video>");
+        } else if (type === "audio") {
+          $media = $("<audio controls>Your browser does not support the audio element.</audio>");
+        } else {
+          $media = $("<img>").attr("alt", imgAlt);
+        }
+        $media.attr("src", url);
+        return $("<p></p>").append($media);
       }
 
 
@@ -493,23 +505,31 @@ $("#media_image").val("");
               });
 
               let chatHistory = $(".chat_history");
-              let html = "<div class=\"chat\">" +
-                "<div class=\"chat-avatar\">" +
-                "<span class=\"avatar box-shadow-1 cursor-pointer\">" +
-                '<img src="{{ asset('images/profile/profile.jpg') }}" alt="avatar" height="36" width="36"/>' +
-                "</span>" +
-                "</div>" +
-                "<div class=\"chat-body\">" +
-                "<div class=\"chat-content\">" +
-                "<p>" + messageValue + "</p>";
+              const $chat = $(`<div class="chat">
+                <div class="chat-avatar">
+                  <span class="avatar box-shadow-1 cursor-pointer">
+                    <img src="{{ asset('images/profile/profile.jpg') }}" alt="avatar" height="36" width="36"/>
+                  </span>
+                </div>
+                <div class="chat-body">
+                  <div class="chat-content"></div>
+                </div>
+              </div>`);
+
+              const $content = $chat.find(".chat-content");
+
+              $content.append(safeMessageParagraph(messageValue));
 
               // if media image exists, show it in chat
               if (response.media_url) {
-                html += "<p><img src=\"" + response.media_url + "\" alt=\"media\" style=\"max-width:200px; max-height:200px;\" /></p>";
+                const $img = $("<img>")
+                  .attr("src", response.media_url)
+                  .attr("alt", "media")
+                  .attr("style", "max-width:200px; max-height:200px;");
+                $content.append($("<p></p>").append($img));
               }
 
-              html += "</div></div></div>";
-              chatHistory.append(html);
+              chatHistory.append($chat);
               message.val("");
               $("#media_image").val(""); // reset file input
               $(".user-chats").scrollTop(chatHistory.height());
@@ -812,58 +832,44 @@ $("#media_image").val("");
             $(".notification_count", $contact).html(response.notification);
 
           const sms = response.data;
-            let media_url = "";
-            let message = "";
 
-            if (sms.media_url !== null) {
-              let fileType = isImageOrVideo(sms.media_url);
-              if (fileType === "video") {
-                media_url = `<p><video src="${sms.media_url}" controls>Your browser does not support the video tag. <video/></p>`;
-              } else if (fileType === "audio") {
-                media_url = `<p><audio src="${sms.media_url}" controls>Your browser does not support the audio element. </audio></p>`;
-              } else {
-                media_url = `<p><img src="${sms.media_url}" alt=""/></p>`;
-              }
-            }
-
-            if (sms.message !== null) {
-              message = `<p>${sms.message}</p>`;
-            }
-
-            if (sms.direction === "incoming") {
-              details += `<div class="chat chat-left">
+            const $chat = sms.direction === "incoming"
+              ? $(`<div class="chat chat-left">
                         <div class="chat-avatar">
                           <a class="avatar m-0" href="#">
                             <img src="{{asset('images/profile/profile.jpg')}}" alt="avatar" height="40" width="40"/>
                           </a>
                         </div>
                         <div class="chat-body">
-                          <div class="chat-content">
-                            ${media_url}
-                            ${message}
-                            <p class="chat-time text-muted mt-1">${sms.created_at}</p>
-                          </div>
+                          <div class="chat-content"></div>
                         </div>
-                      </div>`;
-            } else {
-              details += `<div class="chat">
+                      </div>`)
+              : $(`<div class="chat">
                         <div class="chat-avatar">
                           <a class="avatar m-0" href="#">
                             <img src="{{  route('user.avatar', Auth::user()->uid) }}" alt="avatar" height="40" width="40"/>
                           </a>
                         </div>
                         <div class="chat-body">
-                          <div class="chat-content">
-                          ${media_url}
-                          ${message}
-                          <p class="chat-time text-muted mt-1">${sms.created_at}</p>
+                          <div class="chat-content"></div>
                           </div>
-                          </div>
-                          </div>`;
+                          </div>`);
+
+            const $content = $chat.find(".chat-content");
+
+            if (sms.media_url !== null) {
+              $content.append(safeTypedMediaParagraph(sms.media_url, ""));
             }
+
+            if (sms.message !== null) {
+              $content.append(safeMessageParagraph(sms.message));
+            }
+
+            $content.append(`<p class="chat-time text-muted mt-1">${sms.created_at}</p>`);
 
             if (chat_id === activeChatID) {
               chatHistory.append(details);
+              chatHistory.append($chat);
               chatContainer.animate({ scrollTop: chatContainer[0].scrollHeight }, 0);
             } else {
               $counter.html(response.notification);
