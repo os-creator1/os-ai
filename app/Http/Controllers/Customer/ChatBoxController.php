@@ -46,6 +46,18 @@
         }
 
         /**
+         * Resolve a ChatBox owned by the authenticated customer, by its
+         * canonical external identifier (uid). A foreign box (real uid,
+         * different user_id) and a nonexistent uid both resolve to null,
+         * collapsing to the same caller-side denial — no separate
+         * existence probe, no route-model-binding assumption.
+         */
+        private function resolveOwnedChatBox(string $uid): ?ChatBox
+        {
+            return ChatBox::where('uid', $uid)->where('user_id', Auth::id())->first();
+        }
+
+        /**
          * get all chat box
          *
          * @throws AuthorizationException
@@ -335,10 +347,14 @@
 
         /**
          * get chat messages
+         *
+         * @throws AuthorizationException
          */
-        public function messages($id)
+        public function messages(string $uid): JsonResponse
 {
-    $box = \DB::table('chat_boxes')->where('id', $id)->first();
+    $this->authorize('chat_box');
+
+    $box = $this->resolveOwnedChatBox($uid);
 
     if (!$box) {
         return response()->json([
@@ -349,7 +365,7 @@
     }
 
     $messages = \DB::table('chat_box_messages')
-        ->where('box_id', $id)
+        ->where('box_id', $box->id)
         ->orderBy('created_at', 'asc')
         ->get();
 
@@ -362,9 +378,22 @@
 
         /**
          * get chat messages
+         *
+         * @throws AuthorizationException
          */
-        public function messagesWithNotification(ChatBox $box): JsonResponse
+        public function messagesWithNotification(string $uid): JsonResponse
         {
+            $this->authorize('chat_box');
+
+            $box = $this->resolveOwnedChatBox($uid);
+
+            if (!$box) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Chat box not found.',
+                ], 404);
+            }
+
             $data = ChatBoxMessage::where('box_id', $box->id)->select('message', 'direction', 'media_url', 'box_id', 'created_at')->latest()->first()->toJson();
 
 
@@ -383,9 +412,11 @@
          * @throws AuthorizationException
          * @throws NumberParseException
          */
-public function reply($id, Campaigns $campaign, Request $request): JsonResponse
+public function reply(string $uid, Campaigns $campaign, Request $request): JsonResponse
 {
-  $box = ChatBox::find($id);
+  $this->authorize('chat_box');
+
+  $box = $this->resolveOwnedChatBox($uid);
 
 if (!$box) {
     return response()->json([
@@ -399,8 +430,6 @@ if (!$box) {
                     'message' => 'Sorry! This option is not available in demo mode',
                 ]);
             }
-
-            $this->authorize('chat_box');
 
             if (empty($request->message)) {
                 return response()->json([
@@ -582,9 +611,22 @@ if (!$box) {
 
         /**
          * delete chatbox messages
+         *
+         * @throws AuthorizationException
          */
-        public function delete(ChatBox $box): JsonResponse
+        public function delete(string $uid): JsonResponse
         {
+            $this->authorize('chat_box');
+
+            $box = $this->resolveOwnedChatBox($uid);
+
+            if (!$box) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Chat box not found.',
+                ], 404);
+            }
+
             $messages = ChatBoxMessage::where('box_id', $box->id)->delete();
             if ($messages) {
                 $box->delete();
@@ -603,9 +645,22 @@ if (!$box) {
 
         /**
          * add to blacklist
+         *
+         * @throws AuthorizationException
          */
-        public function block(ChatBox $box): JsonResponse
+        public function block(string $uid): JsonResponse
         {
+            $this->authorize('chat_box');
+
+            $box = $this->resolveOwnedChatBox($uid);
+
+            if (!$box) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Chat box not found.',
+                ], 404);
+            }
+
             $status = Blacklists::create([
                 'user_id' => auth()->user()->id,
                 'number'  => $box->to,
@@ -614,7 +669,7 @@ if (!$box) {
 
             if ($status) {
 
-                $contact = Contacts::where('phone', $box->to)->first();
+                $contact = Contacts::where('phone', $box->to)->where('customer_id', Auth::id())->first();
                 $contact?->update([
                     'status' => 'unsubscribe',
                 ]);
@@ -633,9 +688,12 @@ if (!$box) {
 
         /**
          * @throws Throwable
+         * @throws AuthorizationException
          */
         public function loadChatUsers(Request $request)
         {
+            $this->authorize('chat_box');
+
             $filter = $request->get('filter', 'recents');
             $search = $request->get('search', '');
             $page   = $request->get('page', 1);
@@ -678,9 +736,22 @@ if (!$box) {
 
         /**
          * add to blacklist
+         *
+         * @throws AuthorizationException
          */
-        public function pin(ChatBox $box): JsonResponse
+        public function pin(string $uid): JsonResponse
         {
+            $this->authorize('chat_box');
+
+            $box = $this->resolveOwnedChatBox($uid);
+
+            if (!$box) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Chat box not found.',
+                ], 404);
+            }
+
             $box->update([
                 'pinned' => ! $box->pinned,
             ]);

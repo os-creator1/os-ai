@@ -1280,7 +1280,7 @@ class ConversationsPlainSmsMeteringTest extends TestCase
             'reply_by_customer' => true,
         ]);
 
-        $response = $this->postJson(route('customer.chatbox.reply', $box->id), [
+        $response = $this->postJson(route('customer.chatbox.reply', $box->uid), [
             'message' => 'Hello, no token supplied.',
         ]);
 
@@ -1299,7 +1299,7 @@ class ConversationsPlainSmsMeteringTest extends TestCase
             'reply_by_customer' => true,
         ]);
 
-        $response = $this->postJson(route('customer.chatbox.reply', $box->id), [
+        $response = $this->postJson(route('customer.chatbox.reply', $box->uid), [
             'message' => 'Hello, invalid token supplied.',
             'idempotency_token' => 'not-a-real-uuid',
         ]);
@@ -1331,7 +1331,7 @@ class ConversationsPlainSmsMeteringTest extends TestCase
             'sending_server_id' => $fixture['sendingServer']->id, 'reply_by_customer' => true,
         ]);
 
-        $response = $this->postJson(route('customer.chatbox.reply', $box->id), [
+        $response = $this->postJson(route('customer.chatbox.reply', $box->uid), [
             'message' => 'A valid, real reply.',
             'idempotency_token' => (string) \Illuminate\Support\Str::uuid(),
         ]);
