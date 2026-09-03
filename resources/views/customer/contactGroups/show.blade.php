@@ -916,7 +916,7 @@
             $(".bulk-copy").on("click", function (e) {
                 e.preventDefault();
 
-                let array = {!! $contact_groups !!}, options;
+                let array = {!! \Illuminate\Support\Js::from($contact_groups) !!}, options;
                 $.each(array, function (key, value) {
                     options = `${options}<option value="${value.uid}">${value.name}</option>`;
                 });
@@ -1006,7 +1006,7 @@
             $(".bulk-move").on("click", function (e) {
                 e.preventDefault();
 
-                let array = {!! $contact_groups !!}, options;
+                let array = {!! \Illuminate\Support\Js::from($contact_groups) !!}, options;
                 $.each(array, function (key, value) {
                     options = `${options}<option value="${value.uid}">${value.name}</option>`;
                 });
@@ -1173,7 +1173,7 @@
             $(".add_opt_in_keyword").on("click", function (e) {
                 e.preventDefault();
 
-                let remainOptinKeywords = {!! $remain_opt_in_keywords !!}, options;
+                let remainOptinKeywords = {!! \Illuminate\Support\Js::from($remain_opt_in_keywords) !!}, options;
                 $.each(remainOptinKeywords, function (key, value) {
                     options = `${options}<option value="${value.keyword_name}">${value.keyword_name}</option>`;
                 });
@@ -1247,7 +1247,7 @@
             $(".add_opt_out_keyword").on("click", function (e) {
                 e.preventDefault();
 
-                let remainOptOutKeywords = {!! $remain_opt_out_keywords !!}, options;
+                let remainOptOutKeywords = {!! \Illuminate\Support\Js::from($remain_opt_out_keywords) !!}, options;
                 $.each(remainOptOutKeywords, function (key, value) {
                     options = `${options}<option value="${value.keyword_name}">${value.keyword_name}</option>`;
                 });

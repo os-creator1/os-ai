@@ -65,6 +65,24 @@
         }
 
         /**
+         * Resolve a ContactGroups row owned by the authenticated customer, or abort(404).
+         *
+         * @param  string  $uid
+         *
+         * @return ContactGroups
+         */
+        private function resolveOwnedContactGroup(string $uid): ContactGroups
+        {
+            $contact = ContactGroups::where('uid', $uid)
+                ->where('customer_id', Auth::id())
+                ->first();
+
+            abort_unless($contact, 404);
+
+            return $contact;
+        }
+
+        /**
          * view all contact list
          *
          * @throws AuthorizationException
@@ -246,8 +264,10 @@
          *
          * @throws AuthorizationException
          */
-        public function show(ContactGroups $contact): View|Factory|Application
+        public function show(string $contact): View|Factory|Application
         {
+            $contact = $this->resolveOwnedContactGroup($contact);
+
             $this->authorize('view_contact_group');
 
             $breadcrumbs = [
@@ -290,8 +310,10 @@
          *
          * @throws AuthorizationException
          */
-        public function activeToggle(ContactGroups $contact): JsonResponse
+        public function activeToggle(string $contact): JsonResponse
         {
+            $contact = $this->resolveOwnedContactGroup($contact);
+
             if (config('app.stage') == 'demo') {
                 return response()->json([
                     'status'  => 'error',
@@ -329,8 +351,9 @@
          *
          * @throws AuthorizationException
          */
-        public function copy(ContactGroups $contact, Request $request): JsonResponse
+        public function copy(string $contact, Request $request): JsonResponse
         {
+            $contact = $this->resolveOwnedContactGroup($contact);
 
             if (config('app.stage') == 'demo') {
                 return response()->json([
@@ -445,8 +468,9 @@
         /**
          * update contact group settings
          */
-        public function update(ContactGroups $contact, UpdateContactGroup $request): RedirectResponse
+        public function update(string $contact, UpdateContactGroup $request): RedirectResponse
         {
+            $contact = $this->resolveOwnedContactGroup($contact);
 
             if (config('app.stage') == 'demo') {
                 return redirect()->route('customer.contacts.index')->with([
@@ -469,8 +493,10 @@
          *
          * @throws AuthorizationException
          */
-        public function destroy(ContactGroups $contact): JsonResponse
+        public function destroy(string $contact): JsonResponse
         {
+            $contact = $this->resolveOwnedContactGroup($contact);
+
             if (config('app.stage') == 'demo') {
                 return response()->json([
                     'status'  => 'error',
@@ -511,7 +537,9 @@
                 case 'destroy':
                     $this->authorize('delete_contact_group');
 
-                    $this->contactGroups->batchDestroy($ids);
+                    $ownedIds = ContactGroups::where('customer_id', Auth::id())->whereIn('uid', $ids)->pluck('uid')->all();
+
+                    $this->contactGroups->batchDestroy($ownedIds);
 
                     return response()->json([
                         'status'  => 'success',
@@ -521,7 +549,9 @@
                 case 'enable':
                     $this->authorize('update_contact_group');
 
-                    $this->contactGroups->batchActive($ids);
+                    $ownedIds = ContactGroups::where('customer_id', Auth::id())->whereIn('uid', $ids)->pluck('uid')->all();
+
+                    $this->contactGroups->batchActive($ownedIds);
 
                     return response()->json([
                         'status'  => 'success',
@@ -532,7 +562,9 @@
 
                     $this->authorize('update_contact_group');
 
-                    $this->contactGroups->batchDisable($ids);
+                    $ownedIds = ContactGroups::where('customer_id', Auth::id())->whereIn('uid', $ids)->pluck('uid')->all();
+
+                    $this->contactGroups->batchDisable($ownedIds);
 
                     return response()->json([
                         'status'  => 'success',
@@ -554,8 +586,9 @@
          * @throws AuthorizationException
          */
         #[NoReturn]
-        public function searchContact(ContactGroups $contact, Request $request): void
+        public function searchContact(string $contact, Request $request): void
         {
+            $contact = $this->resolveOwnedContactGroup($contact);
 
             $this->authorize('view_contact');
 
@@ -656,8 +689,10 @@
          *
          * @throws AuthorizationException
          */
-        public function createContact(ContactGroups $contact): View|Factory|RedirectResponse|Application
+        public function createContact(string $contact): View|Factory|RedirectResponse|Application
         {
+            $contact = $this->resolveOwnedContactGroup($contact);
+
             $this->authorize('create_contact');
 
             $subscriber_per_list_max = Contacts::where('group_id', $contact->id)->count();
@@ -690,8 +725,10 @@
          * store new contact
          * @throws Throwable
          */
-        public function storeContact(ContactGroups $contact, Request $request)
+        public function storeContact(string $contact, Request $request)
         {
+            $contact = $this->resolveOwnedContactGroup($contact);
+
             if (config('app.stage') == 'demo') {
                 return redirect()->route('customer.contacts.show', $contact->uid)->withInput(['tab' => 'contact'])->with([
                     'status'  => 'error',
@@ -719,8 +756,9 @@
          *
          * @throws AuthorizationException
          */
-        public function updateContactStatus(ContactGroups $contact, Request $request): JsonResponse
+        public function updateContactStatus(string $contact, Request $request): JsonResponse
         {
+            $contact = $this->resolveOwnedContactGroup($contact);
 
             if (config('app.stage') == 'demo') {
                 return response()->json([
@@ -761,8 +799,9 @@
          *
          * @throws AuthorizationException
          */
-        public function deleteContact(ContactGroups $contact, Request $request): JsonResponse
+        public function deleteContact(string $contact, Request $request): JsonResponse
         {
+            $contact = $this->resolveOwnedContactGroup($contact);
 
             if (config('app.stage') == 'demo') {
                 return response()->json([
@@ -795,8 +834,9 @@
          *
          * @throws AuthorizationException
          */
-        public function editContact(ContactGroups $contact, Request $request): View|Factory|RedirectResponse|Application
+        public function editContact(string $contact, Request $request): View|Factory|RedirectResponse|Application
         {
+            $contact = $this->resolveOwnedContactGroup($contact);
 
             $this->authorize('update_contact');
 
@@ -838,8 +878,10 @@
         /**
          * update single contact information
          */
-        public function updateContact(ContactGroups $contact, Request $request): RedirectResponse
+        public function updateContact(string $contact, Request $request): RedirectResponse
         {
+            $contact = $this->resolveOwnedContactGroup($contact);
+
             if (config('app.stage') == 'demo') {
                 return redirect()->route('customer.contacts.show', $contact->uid)->with([
                     'status'  => 'error',
@@ -877,8 +919,9 @@
          *
          * @throws AuthorizationException
          */
-        public function importContact(ContactGroups $contact): View|Factory|Application
+        public function importContact(string $contact): View|Factory|Application
         {
+            $contact = $this->resolveOwnedContactGroup($contact);
 
             $this->authorize('view_contact_group');
 
@@ -897,8 +940,10 @@
         /**
          * working with import contacts
          */
-        public function storeImportContact(ContactGroups $contact, ImportContact $request): View|Factory|RedirectResponse|Application
+        public function storeImportContact(string $contact, ImportContact $request): View|Factory|RedirectResponse|Application
         {
+            $contact = $this->resolveOwnedContactGroup($contact);
+
             if (isset($request->recipients) && $request->recipients != null) {
 
                 if (config('app.stage') == 'demo') {
@@ -992,8 +1037,11 @@
         /**
          * import process data
          */
-        public function importProcessData(ContactGroups $contact, Request $request): RedirectResponse
+        public function importProcessData(string $contact, Request $request): RedirectResponse
         {
+            $contact = $this->resolveOwnedContactGroup($contact);
+
+            $this->authorize('create_contact');
 
             if (config('app.stage') == 'demo') {
                 return redirect()->route('customer.contact.import', $contact->uid)->withInput(['tab' => 'import_file'])->with([
@@ -1070,8 +1118,9 @@
          *
          * @throws AuthorizationException
          */
-        public function batchActionContact(ContactGroups $contact, Request $request): JsonResponse
+        public function batchActionContact(string $contact, Request $request): JsonResponse
         {
+            $contact = $this->resolveOwnedContactGroup($contact);
 
             if (config('app.stage') == 'demo') {
                 return response()->json([
@@ -1122,7 +1171,7 @@
                     $this->authorize('update_contact');
 
                     $target_group = $request->get('target_group');
-                    $group        = ContactGroups::where('uid', $target_group)->first();
+                    $group        = ContactGroups::where('uid', $target_group)->where('customer_id', Auth::id())->first();
 
                     if ( ! $group) {
                         return response()->json([
@@ -1148,7 +1197,7 @@
                     $this->authorize('update_contact');
 
                     $target_group = $request->get('target_group');
-                    $group        = ContactGroups::where('uid', $target_group)->first();
+                    $group        = ContactGroups::where('uid', $target_group)->where('customer_id', Auth::id())->first();
 
                     if ( ! $group) {
                         return response()->json([
@@ -1270,8 +1319,10 @@
         /**
          * @throws AuthorizationException
          */
-        public function exportContact(ContactGroups $contact, Request $request): BinaryFileResponse|RedirectResponse
+        public function exportContact(string $contact, Request $request): BinaryFileResponse|RedirectResponse
         {
+            $contact = $this->resolveOwnedContactGroup($contact);
+
             if (config('app.stage') == 'demo') {
                 return redirect()->route('customer.contacts.show', $contact->uid)->with([
                     'status'  => 'error',
@@ -1369,19 +1420,34 @@
         /**
          * return sms form data
          */
-        public function getMessageForm(ContactGroups $contact, Request $request): JsonResponse
+        public function getMessageForm(string $contact, Request $request): JsonResponse
         {
+            $contact = $this->resolveOwnedContactGroup($contact);
+
+            $this->authorize('update_contact_group');
+
+            $sms_form = $request->input('sms_form');
+
+            if ( ! in_array($sms_form, ['signup_sms', 'welcome_sms', 'unsubscribe_sms'], true)) {
+                return response()->json([
+                    'status'  => 'error',
+                    'message' => __('locale.exceptions.invalid_action'),
+                ]);
+            }
+
             return response()->json([
                 'status'  => 'success',
-                'message' => $contact->{$request->input('sms_form')},
+                'message' => $contact->{$sms_form},
             ]);
         }
 
         /**
          * update contact groups message
          */
-        public function message(ContactGroups $contact, UpdateContactGroupMessage $request): RedirectResponse
+        public function message(string $contact, UpdateContactGroupMessage $request): RedirectResponse
         {
+            $contact = $this->resolveOwnedContactGroup($contact);
+
             if (config('app.stage') == 'demo') {
                 return redirect()->route('customer.contacts.show', $contact->uid)->with([
                     'status'  => 'error',
@@ -1389,7 +1455,16 @@
                 ]);
             }
 
-            $contact->{$request->input('message_form')} = $request->input('message');
+            $message_form = $request->input('message_form');
+
+            if ( ! in_array($message_form, ['signup_sms', 'welcome_sms', 'unsubscribe_sms'], true)) {
+                return redirect()->route('customer.contacts.show', $contact->uid)->with([
+                    'status'  => 'error',
+                    'message' => __('locale.exceptions.invalid_action'),
+                ]);
+            }
+
+            $contact->{$message_form} = $request->input('message');
             $contact->save();
 
             return redirect()->route('customer.contacts.show', $contact->uid)->withInput(['tab' => 'message'])->with([
@@ -1401,8 +1476,11 @@
         /**
          * add opt in keyword
          */
-        public function optInKeyword(ContactGroups $contact, Request $request): JsonResponse
+        public function optInKeyword(string $contact, Request $request): JsonResponse
         {
+            $contact = $this->resolveOwnedContactGroup($contact);
+
+            $this->authorize('update_contact_group');
 
             if (config('app.stage') == 'demo') {
                 return response()->json([
@@ -1448,8 +1526,11 @@
         /**
          * add opt in keyword
          */
-        public function optOutKeyword(ContactGroups $contact, Request $request): JsonResponse
+        public function optOutKeyword(string $contact, Request $request): JsonResponse
         {
+            $contact = $this->resolveOwnedContactGroup($contact);
+
+            $this->authorize('update_contact_group');
 
             if (config('app.stage') == 'demo') {
                 return response()->json([
@@ -1497,8 +1578,11 @@
         /**
          * delete opt in keyword
          */
-        public function deleteOptInKeyword(ContactGroups $contact, Request $request): JsonResponse
+        public function deleteOptInKeyword(string $contact, Request $request): JsonResponse
         {
+            $contact = $this->resolveOwnedContactGroup($contact);
+
+            $this->authorize('update_contact_group');
 
             if (config('app.stage') == 'demo') {
                 return response()->json([
@@ -1524,8 +1608,11 @@
         /**
          * delete opt out keyword
          */
-        public function deleteOptOutKeyword(ContactGroups $contact, Request $request): JsonResponse
+        public function deleteOptOutKeyword(string $contact, Request $request): JsonResponse
         {
+            $contact = $this->resolveOwnedContactGroup($contact);
+
+            $this->authorize('update_contact_group');
 
             if (config('app.stage') == 'demo') {
                 return response()->json([
@@ -1662,11 +1749,13 @@
         /**
          * Generates the function comment for the given function body.
          *
-         * @param ContactGroups $contact description
-         * @param Request       $request description
+         * @param string  $contact description
+         * @param Request $request description
          */
-        public function contactSampleField(ContactGroups $contact, Request $request)
+        public function contactSampleField(string $contact, Request $request)
         {
+            $contact = $this->resolveOwnedContactGroup($contact);
+
             if (config('app.stage') == 'demo') {
                 return redirect()->route('customer.contacts.index')->with([
                     'status'  => 'error',
@@ -1686,12 +1775,14 @@
         /**
          * Deletes a contact field.
          *
-         * @param ContactGroups      $contact The contact group.
-         * @param ContactGroupFields $field_id The field ID.
+         * @param string $contact The contact group uid.
+         * @param string $field_id The field uid.
          * @return JsonResponse
          */
-        public function deleteContactField(ContactGroups $contact, ContactGroupFields $field_id)
+        public function deleteContactField(string $contact, string $field_id)
         {
+            $contact = $this->resolveOwnedContactGroup($contact);
+
             if (config('app.stage') == 'demo') {
                 return response()->json([
                     'status'  => 'error',
@@ -1701,7 +1792,9 @@
 
             $this->authorize('view_contact');
 
-            $field = ContactGroupFields::where('contact_group_id', $contact->id)->find($field_id->id);
+            $field = ContactGroupFields::where('contact_group_id', $contact->id)->where('uid', $field_id)->first();
+
+            abort_unless($field, 404);
 
             if ($field->tag != 'PHONE') {
 
@@ -1721,8 +1814,9 @@
 
         }
 
-        public function storeContactField(ContactGroups $contact, Request $request)
+        public function storeContactField(string $contact, Request $request)
         {
+            $contact = $this->resolveOwnedContactGroup($contact);
 
             if (config('app.stage') == 'demo') {
                 return redirect()->route('customer.contacts.show', $contact->uid)->withInput(['tab' => 'fields'])->with([
@@ -1749,8 +1843,9 @@
 
         /*Version 3.9*/
 
-        public function pasteText(ContactGroups $contact, Request $request)
+        public function pasteText(string $contact, Request $request)
         {
+            $contact = $this->resolveOwnedContactGroup($contact);
 
             $this->authorize('view_contact');
 
@@ -1763,8 +1858,9 @@
         /**
          * @throws Exception
          */
-        public function storeImportFile(ContactGroups $contact, Request $request)
+        public function storeImportFile(string $contact, Request $request)
         {
+            $contact = $this->resolveOwnedContactGroup($contact);
 
             if (config('app.stage') == 'demo') {
                 return redirect()->route('customer.contacts.show', $contact->uid)->withInput(['tab' => 'fields'])->with([
@@ -1801,8 +1897,12 @@
         }
 
 
-        public function importMapping(ContactGroups $contact, Request $request)
+        public function importMapping(string $contact, Request $request)
         {
+            $contact = $this->resolveOwnedContactGroup($contact);
+
+            $this->authorize('view_contact');
+
             if (config('app.stage') == 'demo') {
                 return response()->json([
                     'status'  => 'error',
@@ -1834,8 +1934,11 @@
         }
 
 
-        public function importRun(ContactGroups $contact, Request $request)
+        public function importRun(string $contact, Request $request)
         {
+            $contact = $this->resolveOwnedContactGroup($contact);
+
+            $this->authorize('view_contact');
 
             if (config('app.stage') == 'demo') {
                 return response()->json([
@@ -1855,8 +1958,11 @@
         }
 
 
-        public function importValidate(ContactGroups $contact, Request $request)
+        public function importValidate(string $contact, Request $request)
         {
+            $contact = $this->resolveOwnedContactGroup($contact);
+
+            $this->authorize('view_contact');
 
             if (config('app.stage') == 'demo') {
                 return response()->json([
@@ -1950,12 +2056,18 @@
 
         public function countContacts(Request $request)
         {
+            $this->authorize('view_contact');
+
             $contactGroupIds = $request->input('contact_group_ids');
 
             if (is_null($contactGroupIds))
                 return response()->json('No contact groups selected', 404);
 
-            $total = Contacts::whereIn('group_id', $contactGroupIds)->where('status', Contacts::STATUS_SUBSCRIBE)->count();
+            $ownedGroupIds = ContactGroups::where('customer_id', Auth::id())
+                ->whereIn('id', $contactGroupIds)
+                ->pluck('id');
+
+            $total = Contacts::whereIn('group_id', $ownedGroupIds)->where('status', Contacts::STATUS_SUBSCRIBE)->count();
 
             if ($total)
                 return $total;
@@ -1966,12 +2078,16 @@
         /**
          * Downloads a CSV containing failed records for a given import job.
          *
-         * @param ContactGroups $contact
-         * @param int           $jobId
+         * @param string $contact
+         * @param int    $jobId
          * @return RedirectResponse|StreamedResponse
          */
-        public function downloadFailedContacts(ContactGroups $contact, int $jobId)
+        public function downloadFailedContacts(string $contact, int $jobId)
         {
+            $contact = $this->resolveOwnedContactGroup($contact);
+
+            $this->authorize('view_contact');
+
             // Check if any failed records exist first
             $exists = FailedContactImport::where('contact_group_id', $contact->id)
                 ->where('user_id', $contact->customer_id)
