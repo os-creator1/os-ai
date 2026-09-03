@@ -14,7 +14,7 @@
                     <li class="nav-item">
                         <a class="nav-link @if ($tab == 'import_file') active @endif"
                            href="{{ route('customer.contact.import', ['tab' => 'import_file', 'contact' => $contact->uid]) }}">
-                            <i data-feather="upload" class="font-medium-3 me-50"></i>
+                            <x-ds-icon name="upload" class="font-medium-3 me-50" />
                             <span class="fw-bold">{{__('locale.labels.import_file')}}</span>
                         </a>
                     </li>
@@ -23,7 +23,7 @@
                     <li class="nav-item">
                         <a class="nav-link {{ $tab == 'paste_text' ? 'active':null }}"
                            href="{{ route('customer.contact.paste-text', ['tab' => 'paste_text', 'contact' => $contact->uid]) }}">
-                            <i data-feather="file-text" class="font-medium-3 me-50"></i>
+                            <x-ds-icon name="file-text" class="font-medium-3 me-50" />
                             <span class="fw-bold">{{ __('locale.labels.paste_text') }}</span>
                         </a>
                     </li>
@@ -33,10 +33,7 @@
 
                 <div class="col-md-8 col-12">
 
-                    <div class="card mb-3">
-                        <div class="card-header"></div>
-                        <div class="card-content">
-                            <div class="card-body">
+                    <x-card class="mb-3">
 
                                 <form class="form form-vertical"
                                       action="{{ route('customer.contact.import', $contact->uid) }}" method="post">
@@ -90,16 +87,12 @@
 
                                     <div class="row">
                                         <div class="col-12">
-                                            <button type="submit" class="btn btn-primary mt-2 mb-1">
-                                                <i data-feather="save"></i> {{__('locale.buttons.save')}}
-                                            </button>
+                                            <x-button type="submit" icon="save" class="mt-2 mb-1">{{__('locale.buttons.save')}}</x-button>
                                         </div>
                                     </div>
 
                                 </form>
-                            </div>
-                        </div>
-                    </div>
+                    </x-card>
                 </div>
             </div>
         </div>

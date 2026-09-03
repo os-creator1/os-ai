@@ -49,7 +49,7 @@
                                role="tab"
                                aria-controls="contact"
                                aria-selected="true">
-                                <i data-feather="users"></i> {{ __('locale.contacts.contacts') }}
+                                <x-ds-icon name="users" /> {{ __('locale.contacts.contacts') }}
                             </a>
                         </li>
                     @endcan
@@ -63,7 +63,7 @@
                                role="tab"
                                aria-controls="settings"
                                aria-selected="true">
-                                <i data-feather="settings"></i> {{ __('locale.labels.settings') }}
+                                <x-ds-icon name="settings" /> {{ __('locale.labels.settings') }}
                             </a>
                         </li>
                     @endcan
@@ -81,7 +81,7 @@
                                role="tab"
                                aria-controls="message"
                                aria-selected="true">
-                                <i data-feather="message-circle"></i> {{ __('locale.labels.message') }}
+                                <x-ds-icon name="message-circle" /> {{ __('locale.labels.message') }}
                             </a>
                         </li>
 
@@ -95,7 +95,7 @@
                         {{--                               role="tab"--}}
                         {{--                               aria-controls="segments"--}}
                         {{--                               aria-selected="true">--}}
-                        {{--                                <i data-feather="server"></i> {{ __('locale.labels.segments') }}--}}
+                        {{--                                <x-ds-icon name="server" /> {{ __('locale.labels.segments') }}--}}
                         {{--                            </a>--}}
                         {{--                        </li>--}}
 
@@ -108,7 +108,7 @@
                                role="tab"
                                aria-controls="fields"
                                aria-selected="true">
-                                <i data-feather="edit-3"></i> {{ __('locale.labels.manage_fields') }}
+                                <x-ds-icon name="edit-3" /> {{ __('locale.labels.manage_fields') }}
                             </a>
                         </li>
                         {{--End Version 3.9--}}
@@ -117,7 +117,7 @@
                         <li class="nav-item dropdown">
 
                             <a class="nav-link dropdown-toggle" data-bs-toggle="dropdown" href="#" role="button"
-                               aria-expanded="false"><i data-feather="hash"></i> {{ __('locale.menu.Keywords') }}</a>
+                               aria-expanded="false"><x-ds-icon name="hash" /> {{ __('locale.menu.Keywords') }}</a>
                             <ul class="dropdown-menu">
                                 <li>
                                     <a class="nav-link dropdown-item {{ old('tab') == 'opt_in_keywords' ? 'active':null }}"
@@ -127,7 +127,7 @@
                                        role="tab"
                                        aria-controls="opt_in_keywords"
                                        aria-selected="true">
-                                        <i data-feather="user-check"></i> {{ __('locale.contacts.opt_in_keywords') }}
+                                        <x-ds-icon name="user-check" /> {{ __('locale.contacts.opt_in_keywords') }}
                                     </a></li>
 
                                 <li>
@@ -138,7 +138,7 @@
                                        role="tab"
                                        aria-controls="opt_out_keywords"
                                        aria-selected="true">
-                                        <i data-feather="user-minus"></i> {{ __('locale.contacts.opt_out_keywords') }}
+                                        <x-ds-icon name="user-minus" /> {{ __('locale.contacts.opt_out_keywords') }}
                                     </a></li>
                             </ul>
 
@@ -156,7 +156,7 @@
                                role="tab"
                                aria-controls="import-history"
                                aria-selected="true">
-                                <i data-feather="pie-chart"></i> {{ __('locale.contacts.import_history') }}
+                                <x-ds-icon name="pie-chart" /> {{ __('locale.contacts.import_history') }}
                             </a>
                         </li>
                     @endcan
@@ -1509,10 +1509,10 @@
 
         contactFields.on('change', function () {
             let selectedValues = contactFields.val();
-            selectAllButtons.html('<i data-feather="check-square"></i> {{__('locale.labels.select_all')}}');
+            selectAllButtons.html('<x-ds-icon name="check-square" /> {{__('locale.labels.select_all')}}');
 
             if (contactFields.find('option:selected').length === contactFields.find('option').length) {
-                selectAllButtons.html('<i data-feather="square"></i> {{__('locale.labels.unselect_all')}}');
+                selectAllButtons.html('<x-ds-icon name="square" /> {{__('locale.labels.unselect_all')}}');
             }
             feather.replace();
 
@@ -1532,7 +1532,7 @@
 
                 // uncheck 'include phone' checkbox
                 includePhone.prop('checked', false)
-                $(buttonElement).html('<i data-feather="check-square"></i> {{__('locale.labels.select_all')}}');
+                $(buttonElement).html('<x-ds-icon name="check-square" /> {{__('locale.labels.select_all')}}');
                 feather.replace();
             } else {
                 // Select all options
@@ -1543,7 +1543,7 @@
 
                 // check 'include phone' checkbox
                 includePhone.prop('checked', true)
-                $(buttonElement).html('<i data-feather="square"></i> {{__('locale.labels.unselect_all')}}');
+                $(buttonElement).html('<x-ds-icon name="square" /> {{__('locale.labels.unselect_all')}}');
                 feather.replace();
             }
             // Trigger change event to update Select2

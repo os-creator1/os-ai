@@ -1,14 +1,9 @@
 <div class="row" id="basic-table">
     <div class="col-12">
-        <div class="card">
-            <div class="card-header">
-                <h4 class="card-title">{{ __('locale.labels.manage_fields') }}</h4>
-            </div>
-            <div class="card-body">
+        <x-card :title="__('locale.labels.manage_fields')">
                 <p class="card-text">
                     Manage the fields available to your groups contacts.
                 </p>
-            </div>
 
             <form action="{{ route('customer.contact.store-contact-field', $contact->uid) }}"
                   method="post">
@@ -59,8 +54,8 @@
                                                    @if($item->tag == 'PHONE') disabled @endif
                                             />
                                             <label class="form-check-label" for="required_{{$item->uid}}">
-                                                <span class="switch-icon-left"><i data-feather="check"></i></span>
-                                                <span class="switch-icon-right"><i data-feather="x"></i></span>
+                                                <span class="switch-icon-left"><x-ds-icon name="check" /></span>
+                                                <span class="switch-icon-right"><x-ds-icon name="x" /></span>
                                             </label>
                                         </div>
                                     </td>
@@ -75,8 +70,8 @@
                                                    @if($item->tag == 'PHONE') disabled @endif
                                             />
                                             <label class="form-check-label" for="visible_{{$item->uid}}">
-                                                <span class="switch-icon-left"><i data-feather="check"></i></span>
-                                                <span class="switch-icon-right"><i data-feather="x"></i></span>
+                                                <span class="switch-icon-left"><x-ds-icon name="check" /></span>
+                                                <span class="switch-icon-right"><x-ds-icon name="x" /></span>
                                             </label>
                                         </div>
                                     </td>
@@ -100,7 +95,7 @@
                                                    value="{{ $item->default_value }}"
                                             />
                                             @if($item->type == 'date' || $item->type == 'datetime')
-                                                <span class="input-group-text"><i data-feather="clock"></i> </span>
+                                                <span class="input-group-text"><x-ds-icon name="clock" /> </span>
                                             @endif
                                         </div>
                                     </td>
@@ -110,8 +105,8 @@
                                             <span class="action-delete-fields text-danger cursor-pointer"
                                                   data-bs-toggle="tooltip" data-bs-placement="top"
                                                   title="{{ __('locale.buttons.delete') }}"
-                                                  data-field-id='{{ $item->uid }}'><i data-feather="trash-2"
-                                                                                      class="feather-20"></i></span>
+                                                  data-field-id='{{ $item->uid }}'><x-ds-icon name="trash-2"
+                                                                                      class="feather-20" /></span>
                                         @endif
                                     </td>
                                 </tr>
@@ -135,31 +130,31 @@
 
                     <span sample-url="{{ route('customer.contact.contact-sample-field', ['contact' => $contact->uid,"type" => "text" ]) }}"
                           class="btn btn-relief-primary me-1 add-custom-field-button" type_name="text">
-                        <i data-feather="type" class="me-25"></i>
+                        <x-ds-icon name="type" class="me-25" />
                         Text
                     </span>
 
                     <span sample-url="{{ route('customer.contact.contact-sample-field', ['contact' => $contact->uid,"type" => "number" ]) }}"
                           class="btn btn-relief-success me-1 add-custom-field-button" type_name="number">
-                        <i data-feather="hash" class="me-25"></i>
+                        <x-ds-icon name="hash" class="me-25" />
                         Number
                     </span>
 
                     <span sample-url="{{ route('customer.contact.contact-sample-field', ['contact' => $contact->uid,"type" => "date" ]) }}"
                           class="btn btn-relief-info me-1 add-custom-field-button" type_name="date">
-                        <i data-feather="calendar" class="me-25"></i>
+                        <x-ds-icon name="calendar" class="me-25" />
                         Date
                     </span>
 
                     <span sample-url="{{ route('customer.contact.contact-sample-field', ['contact' => $contact->uid,"type" => "datetime" ]) }}"
                           class="btn btn-relief-warning me-1 add-custom-field-button" type_name="datetime">
-                        <i data-feather="clock" class="me-25"></i>
+                        <x-ds-icon name="clock" class="me-25" />
                         Datetime
                     </span>
 
                     <span sample-url="{{ route('customer.contact.contact-sample-field', ['contact' => $contact->uid,"type" => "textarea" ]) }}"
                           class="btn btn-relief-danger me-1 add-custom-field-button" type_name="textarea">
-                        <i data-feather="file-text" class="me-25"></i>
+                        <x-ds-icon name="file-text" class="me-25" />
                         Textarea
                     </span>
                 </div>
@@ -168,15 +163,13 @@
                     <div class="row">
                         <div class="col-12">
 
-                            <button type="submit" class="btn btn-primary">
-                                <i data-feather="save"></i> {{__('locale.buttons.save_changes')}}
-                            </button>
+                            <x-button type="submit" icon="save">{{__('locale.buttons.save_changes')}}</x-button>
                         </div>
                     </div>
                 </div>
 
 
             </form>
-        </div>
+        </x-card>
     </div>
 </div>

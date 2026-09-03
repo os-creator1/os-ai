@@ -81,8 +81,7 @@
                             </fieldset>
                         @endif
 
-                        <button class="btn btn-primary w-100" type="submit"
-                                tabindex="3">{{ __('locale.labels.unsubscribe') }}</button>
+                        <x-button type="submit" class="w-100" tabindex="3">{{ __('locale.labels.unsubscribe') }}</x-button>
                     </form>
                 </div>
             </div>

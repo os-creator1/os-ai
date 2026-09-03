@@ -15,7 +15,7 @@
                     <li class="nav-item">
                         <a class="nav-link @if ($tab == 'import_file') active @endif"
                            href="{{ route('customer.contact.import', ['tab' => 'import_file', 'contact' => $contact->uid]) }}">
-                            <i data-feather="upload" class="font-medium-3 me-50"></i>
+                            <x-ds-icon name="upload" class="font-medium-3 me-50" />
                             <span class="fw-bold">{{__('locale.labels.import_file')}}</span>
                         </a>
                     </li>
@@ -23,7 +23,7 @@
                     <li class="nav-item">
                         <a class="nav-link {{ $tab == 'paste_text' ? 'active':null }}"
                            href="{{ route('customer.contact.paste-text', ['tab' => 'paste_text', 'contact' => $contact->uid]) }}">
-                            <i data-feather="file-text" class="font-medium-3 me-50"></i>
+                            <x-ds-icon name="file-text" class="font-medium-3 me-50" />
                             <span class="fw-bold">{{ __('locale.labels.paste_text') }}</span>
                         </a>
                     </li>

@@ -6,17 +6,13 @@
     <section id="admin-opportunity-runs-index">
         <div class="row">
             <div class="col-12 mb-1">
-                <a href="{{ route('admin.opportunities.index') }}" class="btn btn-outline-secondary btn-sm">
+                <x-button variant="secondary" size="sm" :href="route('admin.opportunities.index')">
                     &larr; Back to opportunities
-                </a>
+                </x-button>
             </div>
 
             <div class="col-12">
-                <div class="card">
-                    <div class="card-header">
-                        <h4 class="card-title">Opportunity runs</h4>
-                    </div>
-                    <div class="card-body">
+                <x-card title="Opportunity runs">
                         <div class="row mb-3">
                             <div class="col-md-4">
                                 <strong>Business ID</strong>
@@ -66,8 +62,7 @@
                         </div>
 
                         {{ $runs->appends(['business_id' => $business->id, 'per_page' => $perPage])->links() }}
-                    </div>
-                </div>
+                </x-card>
             </div>
         </div>
     </section>
