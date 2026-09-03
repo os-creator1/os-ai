@@ -4,12 +4,14 @@
 
 **Status: contract only. No implementation has occurred under this document. Merging this contract does NOT authorize implementation. Slice 6's own visual/componentization implementation remains blocked until this remediation is itself contracted, human-merged, implemented, and human-merged — per the Slice 6 contract's own §7.**
 
+**Correction Round 1** re-audits the exact current ChatBox client-side DOM and message-rendering behavior mechanically and corrects seven factual errors this round found in the original drafting pass: (A) the claim that the numeric `ChatBox` primary key "is never again placed in client-visible markup" was false — both list forms and the Echo listener retain `data-box-id="{{$chat->id}}"`/`e.data.id` as a non-authoritative DOM-correlation value distinct from the canonical `uid` action identifier, corrected in a new §3.11 and in §5.1; (B) the claim that all 3 message-rendering paths select media type via `isImageOrVideo()` was false — only the history-load and Echo-listener paths do; the optimistic-send path always renders `<img>` unconditionally, corrected in §3.8; (C) the original `buildChatBubble()` design silently discarded real, per-path structural differences (avatar wrapper markup/type/dimensions, `chat-time` presence, media `alt` text, the optimistic path's `200px` size constraint) that a universal reconstruction would have erased — every one of these exact differences is now documented precisely in §3.11; (D) the safe-rendering architecture is corrected from one universal bubble-reconstruction function to a narrower design that keeps each path's own existing outer structure and replaces only the two genuinely unsafe dynamic-value insertion points (message text, media `src`) via two small shared helpers, minimizing regression surface, in a rewritten §5.7/§5.8; (E) the test contract is corrected to match this narrower architecture, adding explicit preservation assertions for every structural fact named in (C), in a rewritten §7.2; (F) the permission-test wording claiming an actor "cannot distinguish permission denied from identifier denied" is corrected to state the actual, intentional property precisely — a `chat_box`-lacking actor always receives the same `403` regardless of identifier, because `authorize()` runs before any identifier is resolved, not because the two denial shapes are themselves indistinguishable from each other; (G) the allowlist is re-evaluated against corrections A–F and confirmed unchanged at exactly 5 paths, with `_sidebar.blade.php`'s exclusion now justified explicitly by (A)'s own distinction. No architectural conclusion from the original drafting pass — the canonical `uid` identifier, the `resolveOwnedChatBox()` resolver, the authorize-before-resolve ordering, the `block()`/`Contacts.customer_id` scope fix, the zero route/model changes, or the 3-line `ConversationsPlainSmsMeteringTest.php` update — is reopened beyond these seven corrections.
+
 ---
 
 ## 0. Governance
 
-- Drafted on branch `chore/design-system-m2-slice6-chatbox-security-contract`, in an isolated linked worktree, based on `origin/main` at `c5320611a65b9fd97a7287542d4de11dd96822e0` — confirmed exactly via `git fetch origin --tags && git rev-parse origin/main` before drafting began. This SHA is PR #180 ("Design System M2 Slice 6 — ChatBox / Conversations Contract", including its own Correction Round 1).
-- This is a **first drafting pass**. `maximum_correction_rounds: 2`, `correction_round: 0`, unconsumed.
+- Originally drafted on branch `chore/design-system-m2-slice6-chatbox-security-contract`, in an isolated linked worktree, based on `origin/main` at `c5320611a65b9fd97a7287542d4de11dd96822e0` — confirmed exactly via `git fetch origin --tags && git rev-parse origin/main` before the original drafting pass began, and remains `origin/main`'s exact value at this correction round as well, re-confirmed (§1). This SHA is PR #180 ("Design System M2 Slice 6 — ChatBox / Conversations Contract", including its own Correction Round 1).
+- **This is Correction Round 1 of a maximum of 2 (`maximum_correction_rounds: 2`) — one round remains available after this one.** Continued on the same existing branch, same worktree, no new branch created.
 - The merged `docs/automation/DESIGN-SYSTEM-M2-SLICE-6-CONTRACT.md` — including its Correction Round 1, §3.14 (chat identifier audit) and §7 (authorization gap) most directly — is binding context. Every finding it states is independently re-verified against current source in §3 below, not copied blindly; where this document's own re-audit found additional precision (the exact 3 pre-existing tests that hardcode `ChatBox.id` for `reply()`, the exact `quickSend(..., true)` source-count constraint, the exact `Contacts.customer_id` tenant column), it is stated explicitly.
 - This contract authorizes **only** drafting this one document. It does not authorize implementation of this remediation, Slice 6's own visual/componentization work, Slice 4, Slice 7a/Campaigns, or any other slice/initiative, and makes zero change to `docs/automation/AI-AUTONOMY-STATE.json`.
 - `docs_only: true`. `implementation_has_occurred: false`. `merge_authorizes_implementation: false`. `implementation_requires_separate_human_authorization: true`. `advance_automatically: false`. `start_automatically_after_contract_merge: false`. `merge_authority: human_only`.
@@ -24,6 +26,7 @@
 3. Read in full before drafting: `CLAUDE.md`, `AGENTS.md`, `docs/automation/DESIGN-SYSTEM-CONTRACT.md`, `docs/automation/DESIGN-SYSTEM-M2-CONTRACT.md`, `docs/automation/DESIGN-SYSTEM-M2-SLICE-6-CONTRACT.md` (516 lines, including Correction Round 1).
 4. Directly re-read, in full, at this drafting pass, independently of the Slice 6 contract's own prose: `app/Http/Controllers/Customer/ChatBoxController.php` (694 lines), `app/Models/ChatBox.php`, `app/Models/ChatBoxMessage.php`, `app/Models/Contacts.php`, `app/Library/Traits/HasUid.php`, `routes/customer.php`'s `chat-box` route group and its wrapping `RouteServiceProvider` middleware stack, `config/customer-permissions.php`'s `chat_box` entry, `resources/views/customer/ChatBox/index.blade.php`, `resources/views/customer/ChatBox/_sidebar.blade.php`, `resources/views/customer/ChatBox/partials/_chat_list.blade.php`, `resources/views/customer/ChatBox/new.blade.php`.
 5. Searched the full test suite for existing ChatBox coverage: `find tests -iname "*chatbox*"` returns **zero files** — no dedicated ChatBox test file of any kind exists today (confirmed, not assumed; mirrors the Contacts/ContactGroups/Blacklists "zero existing test coverage" finding the Slice 5 CRM security remediation made before this same engagement). A repository-wide content search (`grep -rl "ChatBox\|chat-box\|chatbox" tests/`) found ChatBox referenced in 7 unrelated Dashboard/Security test files plus, critically, two RFC-005 Milestone 5 billing/idempotency test files that directly exercise `ChatBox`/`chatbox.reply` — read in full at this pass (§3.9): `tests/Feature/Usage/ConversationsPlainSmsMeteringTest.php` (1,387 lines) and `tests/Feature/Usage/QuickSendNonConversationCallersUnaffectedTest.php` (306 lines). No `ChatBox` model factory exists in `database/factories/`.
+6. **Correction Round 1's own additional mechanical re-verification**: directly re-read, again, at this round — the exact `data-id`/`data-box-id` attribute pairs in `_sidebar.blade.php` (line 51) and `partials/_chat_list.blade.php` (line 2), and the Echo listener's `let box_id = e.data.id;` / `` $(`.media-list li[data-box-id=${box_id}]`) `` correlation lookup in `index.blade.php` (lines 799, 810) — to correct the original drafting pass's false "numeric id never appears in client-visible markup" claim (§3.11, §5.1). Also directly re-read, line-by-line, all 3 message-bubble construction sites in `index.blade.php` (history load ~lines 344–377, optimistic send ~lines 495–512, Echo listener ~lines 814–863) to correct the original drafting pass's false claim that all 3 select media type via `isImageOrVideo()`, and to document every per-path structural difference (avatar wrapper markup/type/dimensions, `chat-time` presence, media `alt` text, the optimistic path's inline `200px` size constraint) precisely (§3.8, §3.11).
 
 ---
 
@@ -110,9 +113,14 @@ Direct re-read of `index.blade.php`'s inline `<script>` block, current `main`, c
 
 All three interpolate message text into raw HTML with no escaping — re-confirmed exactly. This remediation is explicitly authorized (per the Slice 6 contract's own Correction F, §7.3) to change this logic.
 
-### 3.8 Finding 7 — `media_url` attribute safety, current shape re-confirmed
+### 3.8 Finding 7 — `media_url` attribute safety, current shape re-confirmed — corrected this round (Correction B)
 
-All 3 paths above also interpolate `sms.media_url`/`response.media_url` into `src="${...}"` template-literal/concatenated HTML attribute strings, for `<img>`/`<video>`/`<audio>` tags selected via the existing `isImageOrVideo(url)` helper (extension-based branching, unchanged by this remediation). No attribute-breakout exploit was proven, but none was proven absent either — server-generated paths from `Tool::uploadImage()` were not verified immune to containing a literal `"` character. This remediation resolves the question definitively via the mechanism locked in §5.7, rather than continuing to assume safety.
+**Corrected this round.** The original drafting pass claimed all 3 paths select `<img>`/`<video>`/`<audio>` via the existing `isImageOrVideo(url)` helper. That claim is false for one of the three, mechanically re-confirmed by direct line-by-line re-read (§1 item 6, §3.11):
+
+- **History load** and **Echo listener** both call `isImageOrVideo(sms.media_url)` and branch to `<video>`/`<audio>`/`<img>` accordingly, each wrapped in a `<p>`.
+- **Optimistic send** does **not** call `isImageOrVideo()` at all — it unconditionally renders `response.media_url` as `<img src="..." alt="media" style="max-width:200px; max-height:200px;">`, wrapped in a `<p>`, regardless of the actual uploaded file's type.
+
+All 3 paths interpolate their respective media URL into a `src="${...}"` template-literal/concatenated HTML attribute string — that part of the original finding stands, re-confirmed. No attribute-breakout exploit was proven, but none was proven absent either — server-generated paths from `Tool::uploadImage()` were not verified immune to containing a literal `"` character. This remediation resolves the question definitively via the mechanism locked in §5.8, rather than continuing to assume safety — applied to each path's own already-existing tag-selection logic (typed selection for history/Echo, unconditional `<img>` for optimistic-send), never changing *which* tag a path selects, only *how* the `src` value is safely assigned (§3.10).
 
 ### 3.9 RFC-005 Milestone 5 billing/idempotency preservation audit — read in full
 
@@ -126,7 +134,65 @@ All 3 paths above also interpolate `sms.media_url`/`response.media_url` into `sr
 
 ### 3.10 Non-blocking existing correctness issue — re-audited, not repaired
 
-The Slice 6 contract's own Correction I finding — optimistic attachment rendering always emits `<img>` while the `media_image` upload input and `reply()`'s own server-side validation (`'media_image' => '...|mimes:mp4,mov,ogg,qt,jpeg,png,jpg,gif,bmp,webp|...'`) both genuinely accept video — is re-confirmed by direct read, unchanged. **This remediation does not fix it.** §5.7's safe-media-construction mechanism is applied uniformly to whatever element type each of the 3 paths already selects (via the existing `isImageOrVideo()` branching in paths 1 and 3, and the existing unconditional `<img>` choice in path 2) — the *safety* of setting `src` changes; the *choice of tag* does not. Widening this remediation's scope to also fix the optimistic-send video-tag mismatch is explicitly out of scope here, named only for completeness (§0's own governance boundary).
+The Slice 6 contract's own Correction I finding — optimistic attachment rendering always emits `<img>` while the `media_image` upload input and `reply()`'s own server-side validation (`'media_image' => '...|mimes:mp4,mov,ogg,qt,jpeg,png,jpg,gif,bmp,webp|...'`) both genuinely accept video — is re-confirmed by direct read, unchanged. **This remediation does not fix it.** §5.8's safe-media-construction mechanism is applied uniformly to whatever element type each of the 3 paths already selects (typed selection via the existing `isImageOrVideo()` branching in the history-load and Echo-listener paths, §3.8; the existing unconditional `<img>` choice in the optimistic-send path) — the *safety* of setting `src` changes; the *choice of tag* does not, for any path. Widening this remediation's scope to also fix the optimistic-send video-tag mismatch is explicitly out of scope here, named only for completeness (§0's own governance boundary).
+
+### 3.11 Exact per-path bubble structure audit — new this round (Correction C), the basis for §5.7/§5.8's narrower architecture
+
+Direct, line-by-line re-read of all 3 message-bubble construction sites in `index.blade.php` (§1 item 6), documenting every structural fact a safe-rendering fix must preserve exactly, since the original drafting pass's single universal `buildChatBubble()` design would have silently discarded every one of them:
+
+**Path 1 — history load** (the `$.post('.../messages')`'s `.done()` handler, `cwData.forEach(...)`):
+```html
+<div class="chat ${incoming ? 'chat-left' : ''}">
+  <div class="chat-avatar">
+    <span class="avatar box-shadow-1 cursor-pointer">
+      <img src="{{ asset('images/profile/profile.jpg') }}" alt="avatar" height="36" width="36" />
+    </span>
+  </div>
+  <div class="chat-body"><div class="chat-content">
+    MEDIA (typed via isImageOrVideo, wrapped in <p>, img alt="media")
+    MESSAGE (wrapped in <p>)
+    <p class="chat-time text-muted mt-1">${sms.created_at}</p>
+  </div></div>
+</div>
+```
+Avatar: static profile image, `span.avatar.box-shadow-1.cursor-pointer` wrapper, `36×36`. Timestamp: **present**. Media: `isImageOrVideo()`-typed, `<p>`-wrapped, `<img>` branch uses `alt="media"`.
+
+**Path 2 — optimistic send** (`enter_chat()`'s AJAX success handler):
+```html
+<div class="chat">
+  <div class="chat-avatar">
+    <span class="avatar box-shadow-1 cursor-pointer">
+      <img src="{{ asset('images/profile/profile.jpg') }}" alt="avatar" height="36" width="36"/>
+    </span>
+  </div>
+  <div class="chat-body"><div class="chat-content">
+    MESSAGE (wrapped in <p>)
+    MEDIA — only if response.media_url — always <img>, alt="media",
+      style="max-width:200px; max-height:200px;", wrapped in <p>
+  </div></div>
+</div>
+```
+Avatar: identical static image / `span.avatar.box-shadow-1.cursor-pointer` / `36×36` wrapper as path 1. Timestamp: **absent** — no `.chat-time` element exists in this path today. Media: **never** calls `isImageOrVideo()`; always `<img>`; carries the exact inline `style="max-width:200px; max-height:200px;"` constraint found nowhere else; `<p>`-wrapped.
+
+**Path 3 — Echo listener** (`Echo.private("chat").listen("MessageReceived", ...)`):
+```html
+<div class="chat ${incoming ? 'chat-left' : ''}">
+  <div class="chat-avatar">
+    <a class="avatar m-0" href="#">
+      <img src="INCOMING: asset('images/profile/profile.jpg') | OUTGOING: route('user.avatar', Auth::user()->uid)"
+           alt="avatar" height="40" width="40"/>
+    </a>
+  </div>
+  <div class="chat-body"><div class="chat-content">
+    MEDIA (typed via isImageOrVideo, wrapped in <p>, img alt="")
+    MESSAGE (wrapped in <p>)
+    <p class="chat-time text-muted mt-1">${sms.created_at}</p>
+  </div></div>
+</div>
+```
+Avatar: **`a.avatar.m-0[href="#"]` wrapper, not `span`**, `40×40` — genuinely different markup/dimensions from paths 1 and 2, not a cosmetic variant. Incoming avatar is the same static profile image path 1 uses; outgoing avatar uses `route('user.avatar', Auth::user()->uid)` — this path is the only one of the three whose avatar `src` differs by message direction. Timestamp: **present**. Media: `isImageOrVideo()`-typed, `<p>`-wrapped, but its `<img>` branch uses `alt=""` (empty) — **not** `alt="media"` as path 1 uses; a genuine, pre-existing, minor cross-path inconsistency, preserved exactly rather than silently harmonized (§5.8's own helper takes the `alt` text as a parameter for exactly this reason).
+
+**Also preserved, both branches of path 3**: the `sms.direction === "incoming"` test drives both the outer `chat-left` class and which avatar `src` is used — the two concerns share one condition today and continue to. The `if (chat_id === activeChatID) { append to visible history } else { update the counter instead }` branch (line 865) that decides whether an Echo-pushed message renders into the currently-open conversation or only increments the unread badge is unrelated to message-content safety and is unchanged by this remediation.
 
 ---
 
@@ -144,9 +210,14 @@ The Slice 6 contract's own Correction I finding — optimistic attachment render
 
 ## 5. Locked security architecture — exact code semantics
 
-### 5.1 Canonical ChatBox external identifier
+### 5.1 Canonical ChatBox external identifier — corrected this round (Correction A)
 
-**`uid` (string), exclusively**, for every client-visible reference to a `ChatBox` record: list markup `data-id` attributes, the shared click handler's `chat_id` value, the hidden `.chat_id` field, and the `{box}` route segment consumed by all six single-record controller actions. The numeric primary key (`id`) remains internal database linkage only (foreign keys, `ChatBoxMessage.box_id`, etc.) and is never again placed in client-visible markup or accepted as a client-supplied identifier for ownership-scoped resolution.
+**Corrected this round.** The original drafting pass claimed the numeric `ChatBox` primary key "is never again placed in client-visible markup." That is false, mechanically re-confirmed (§1 item 6, §3.11): both `_sidebar.blade.php` (line 51) and `partials/_chat_list.blade.php` (line 2) carry a `data-box-id="{{$chat->id}}"` attribute alongside `data-id`, and `index.blade.php`'s Echo listener reads `let box_id = e.data.id;` (line 799) to locate the matching DOM row via `` $(`.media-list li[data-box-id=${box_id}]`) `` (line 810). This remediation corrects the architecture to distinguish two genuinely different values explicitly, rather than treating "identifier" as one undifferentiated concept:
+
+- **Canonical external action identifier — `ChatBox.uid` (string), exclusively.** Used for: the `data-id` attribute on every list `<li>` (§9 item 3 fixes the one place this is not yet true); the shared click handler's `chat_id` value and the hidden `.chat_id` field it populates; and the `{box}` route segment consumed by all six single-record controller actions (§5.2, §5.3). This is the only value ever accepted for ownership-scoped resolution.
+- **Non-authoritative DOM correlation value — `data-box-id`, `ChatBox.id` (numeric), retained.** Used **only** to let the Echo listener match a real-time-pushed event (whose payload already carries the numeric `id`, not `uid` — `e.data.id`) to an existing DOM row, so the correct conversation's unread counter can be updated without a full list reload. This value is **never** sent to, and **never** accepted by, any controller action — `resolveOwnedChatBox()` (§5.2) only ever queries by `uid`, so even if a `data-box-id` value were somehow submitted to a single-record route, it would fail owned-`uid` resolution exactly like any other non-`uid` string (§7.2, item B's own numeric-injection test covers this directly). `data-box-id` is not, and does not become, a security boundary — it is retained purely as an existing, already-correct client-side DOM-correlation mechanism this remediation has no reason to touch.
+
+`_sidebar.blade.php` is **not** added to §9's allowlist merely to remove `data-box-id` — no security requirement calls for its removal, and the Echo correlation mechanism it supports is independently correct today, unrelated to the ownership gap this remediation closes (§9's own "explicitly not included" list restates this exactly).
 
 ### 5.2 Ownership-resolution method
 
@@ -196,61 +267,61 @@ if (! $box) {
 
 `reply()`'s existing idempotency-token validation block (the `filled('idempotency_token')`/`Str::isUuid(...)` fail-closed 422 check), its spam-word check, sending-server resolution, sender-id verification, and its two `$this->campaigns->quickSend($campaign, $input, true)` call sites (one here, one in `sent()`) are **unchanged in logic, order relative to each other, and exact source text** — only the identifier-resolution and authorization-ordering step immediately preceding them changes. **Preserved as a direct consequence of §5.5's ordering**: a request against a foreign or nonexistent `ChatBox` is rejected by §5.3's denial response before `reply()` reaches the idempotency-token check, the spam check, or `quickSend()` — no foreign-thread send, billing reservation, or provider call can occur, closing the billing/spoofing vector named in the Slice 6 contract's own §7.1(b) finding structurally, not by adding a separate guard.
 
-### 5.7 Safe message-content rendering mechanism
+### 5.7 Safe message-content rendering mechanism — corrected this round (Correction D), narrower than the original design
 
-**Exact mechanism, no ambiguity left to implementation:** replace every raw-HTML template-literal/string-concatenation bubble construction in all 3 paths (§3.7) with DOM-construction using jQuery's `.text()` for message content and native/jQuery element creation (not string-built HTML) for the surrounding structure. Concretely, for each of the 3 paths:
+**Corrected this round.** The original drafting pass locked one universal `buildChatBubble()` function reconstructing each path's entire bubble from scratch — which, per §3.11's own per-path audit, would have silently erased real structural differences (path 3's `a.avatar.m-0`/`40×40` wrapper vs. paths 1–2's `span.avatar.box-shadow-1.cursor-pointer`/`36×36`; path 2's absent `chat-time`; the differing `img alt` text between paths 1 and 3; path 2's `200px` inline size constraint). **This is corrected to a narrower architecture: keep each path's own existing outer bubble markup exactly as it is today (§3.11), and replace only the two genuinely unsafe dynamic-value insertion points — message text and media `src` (§5.8) — via one small, shared, purpose-built helper for message text, used identically by all 3 paths:**
 
 ```js
-function buildChatBubble(sms, isIncoming) {
-  const $chat = $('<div class="chat"></div>');
-  if (isIncoming) $chat.addClass('chat-left');
-
-  const $avatarWrap = $('<div class="chat-avatar"></div>');
-  const $avatarImg = $('<img alt="avatar" height="36" width="36">');
-  $avatarImg.attr('src', /* existing avatar URL logic, unchanged per path */);
-  $avatarWrap.append($('<span class="avatar box-shadow-1 cursor-pointer"></span>').append($avatarImg));
-
-  const $body = $('<div class="chat-body"></div>');
-  const $content = $('<div class="chat-content"></div>');
-
-  if (sms.media_url) {
-    $content.append(buildMediaElement(sms.media_url)); // §5.8
+function appendSafeMessage($container, value) {
+  if (value !== null && value !== undefined && value !== '') {
+    $container.append($('<p></p>').text(value)); // .text() — never .html()/string concatenation
   }
-  if (sms.message) {
-    $content.append($('<p></p>').text(sms.message)); // .text() — never .html()/string concatenation
-  }
-  $content.append($('<p class="chat-time text-muted mt-1"></p>').text(sms.created_at));
-
-  $body.append($content);
-  $chat.append($avatarWrap, $body);
-  return $chat;
 }
 ```
 
-`buildChatBubble()` (or an equivalently-named single shared function, defined once in `index.blade.php`'s own existing inline `<script>` block — **not** a new external JS file, since this remediation does not introduce a new Blade→JS hydration seam beyond what already exists) replaces the per-path template-literal/concatenation logic in all 3 paths named in §3.7, parameterized only by the per-path differences already present today (which avatar URL to use, whether `isIncoming` applies at all for the optimistic-send path, which value is already known synchronously vs. arrived via AJAX/Echo). **This satisfies every one of the following, mechanically, by construction — never by convention or reviewer discipline:**
-- `sms.message` containing literal text such as `<script>alert(1)</script>` renders as visible text, because `.text()` sets the DOM `textContent` property, which the browser never parses as markup, regardless of content.
+Each of the 3 paths' own existing outer-structure construction (avatar wrapper, `chat-body`/`chat-content` divs, `chat-left`/direction handling, `chat-time` presence-or-absence exactly as §3.11 documents per path) is otherwise **unchanged** — none of that markup is built from attacker-influenced values today, so none of it needs to move off string/template-literal construction. Only the specific line(s) in each path that currently interpolate `sms.message`/`messageValue` directly into an HTML string are replaced with a call to `appendSafeMessage($contentContainer, value)`, where `$contentContainer` is a jQuery reference to that path's own `.chat-content` element (obtained via `.find('.chat-content')` on the freshly-constructed/appended bubble, or by building the bubble's static shell with an empty `<div class="chat-content"></div>` placeholder and appending the message into it immediately afterward — either is an equivalent, implementation-time mechanical choice; the requirement locked here is the *safety* and *structural-preservation* properties, not one exact loop-construction technique). Applied per path:
+- **History load**: replaces `` let message = sms.message ? `<p>${sms.message}</p>` : ""; `` (and its `${message}` interpolation into `chatHtml`) with `appendSafeMessage(...)`.
+- **Optimistic send**: replaces `"<p>" + messageValue + "</p>"` with `appendSafeMessage(...)`.
+- **Echo listener**: replaces `` message = `<p>${sms.message}</p>`; `` (both the incoming and outgoing branches share this line) with `appendSafeMessage(...)`.
+
+**This satisfies every one of the following, mechanically, by construction — never by convention or reviewer discipline:**
+- `sms.message`/`messageValue` containing literal text such as `<script>alert(1)</script>` renders as visible text, because `.text()` sets the DOM `textContent` property, which the browser never parses as markup, regardless of content.
 - `<img onerror=...>`-shaped text similarly displays as text.
 - Ordinary quotes, ampersands, angle brackets, Unicode, and newlines in legitimate SMS text remain fully readable, since `.text()` performs no character-level filtering — it only controls *how* the browser interprets the string (as text content, never as markup), not *which* characters are permitted.
-- `.chat-time`, `.chat-left`, avatar rendering, and append/scroll behavior are unchanged — only *how* the DOM nodes are built changes, not the resulting DOM structure, class names, or their consumers (§6).
+- `.chat-time` presence/absence, `.chat-left`, avatar markup/type/dimensions per path, and append/scroll/`activeChatID` behavior are all **structurally unchanged** — this is the direct, intended consequence of the narrower design, not merely a claim: nothing about how those elements are built changes at all, since only the message-text line is touched per path (§6, §3.11).
 
-**This does not require preserving the current 3-separate-copy structure.** Per the Slice 6 contract's own Correction F, this remediation may introduce this one shared helper in place of 2 or 3 of the original 3 sites, provided each call site still supplies its own path-specific values (avatar URL selection, `isIncoming` computation, whether the box is the currently-active conversation) unchanged from current behavior.
+### 5.8 Safe `media_url` attribute mechanism — corrected this round (Correction D), preserving each path's own existing type-selection behavior exactly
 
-### 5.8 Safe `media_url` attribute mechanism
+**Corrected this round.** Per §3.8's own correction, the history-load and Echo-listener paths already type-select via `isImageOrVideo()`; the optimistic-send path does not and never has. This remediation preserves that exact distinction — it does **not** introduce `isImageOrVideo()` typing into the optimistic-send path, and does **not** collapse the two shapes into one function that would.
 
-**Exact mechanism:** never concatenate a media URL into an HTML string. Construct the element via jQuery and assign the URL through the attribute API:
+**For history load and Echo listener** — one shared helper, since both already share the identical typed-selection/`<p>`-wrap shape (differing only in the `<img>` `alt` text, §3.11, taken as a parameter for exactly that reason):
 ```js
-function buildMediaElement(url) {
+function appendSafeTypedMedia($container, url, imgAlt) {
+  if (url === null || url === undefined) return;
   const type = isImageOrVideo(url); // existing helper, unchanged
+  let $media;
   if (type === 'video') {
-    return $('<video controls>Your browser does not support the video tag.</video>').attr('src', url);
+    $media = $('<video controls>Your browser does not support the video tag.</video>');
+  } else if (type === 'audio') {
+    $media = $('<audio controls>Your browser does not support the audio element.</audio>');
+  } else {
+    $media = $('<img>').attr('alt', imgAlt);
   }
-  if (type === 'audio') {
-    return $('<audio controls>Your browser does not support the audio element.</audio>').attr('src', url);
-  }
-  return $('<img alt="media">').attr('src', url);
+  $media.attr('src', url);
+  $container.append($('<p></p>').append($media));
 }
 ```
-`.attr('src', url)` assigns the string as an attribute *value*, never as HTML to be parsed — a `"` character (or any other character) inside `url` cannot break out of the attribute context, because no HTML string containing the URL is ever constructed or parsed. This preserves the existing `isImageOrVideo()`-driven image/video/audio branching exactly (§3.10) — only the construction mechanism changes, not which tag is chosen for which file type, and not the pre-existing optimistic-send-always-`<img>` inconsistency (§3.10, deliberately not repaired here).
+Called as `appendSafeTypedMedia($content, sms.media_url, 'media')` in the history-load path (preserving its existing `alt="media"`) and `appendSafeTypedMedia($content, sms.media_url, '')` in the Echo-listener path (preserving its existing `alt=""`) — the one pre-existing, minor cross-path `alt`-text inconsistency §3.11 identifies is carried forward exactly, not silently harmonized.
+
+**For optimistic send** — its own separate, image-only path, **not** routed through `appendSafeTypedMedia()`, preserving its exact current unconditional-`<img>` behavior and its `200px` size constraint:
+```js
+if (response.media_url) {
+  const $img = $('<img alt="media" style="max-width:200px; max-height:200px;">').attr('src', response.media_url);
+  $content.append($('<p></p>').append($img));
+}
+```
+
+In both mechanisms, `.attr('src', url)` assigns the string as an attribute *value*, never as HTML to be parsed — a `"` character (or any other character) inside `url` cannot break out of the attribute context, because no HTML string containing the URL is ever constructed or parsed. Neither mechanism changes *which* tag a path selects for a given file type, or the optimistic path's pre-existing always-`<img>` behavior (§3.10, deliberately not repaired here) — only *how* the `src` value is safely assigned.
 
 ### 5.9 Explicitly preserved behavior (unchanged by this remediation)
 
@@ -263,12 +334,14 @@ function buildMediaElement(url) {
 - `sent()` and `new()` — neither is named among the six single-record actions (§3.2); both already call `$this->authorize('chat_box')` and neither resolves a `ChatBox` by client-supplied identifier. Unchanged.
 - The exact 2 `->quickSend(..., true)` call sites' own source text (§3.9) — preserved verbatim, mechanically verified (§10 item 9).
 - `ChatBoxMessage::booted()`'s inbound-message mirroring into `cg_ai_conversations`/`cg_ai_messages` (an unrelated AI-copilot side effect, out of this remediation's scope entirely) — untouched.
+- **New this round (Correction A):** `data-box-id`/`ChatBox.id`'s role as the Echo listener's own non-authoritative DOM-correlation value (`e.data.id` → `` li[data-box-id=...] ``, §5.1) — untouched; not removed, not repurposed, not accepted by any controller action.
+- **New this round (Correction C/D):** every per-path structural fact §3.11 documents — path 3's `a.avatar.m-0[href="#"]`/`40×40` wrapper (genuinely distinct from paths 1–2's `span.avatar.box-shadow-1.cursor-pointer`/`36×36`); `chat-time`'s presence in paths 1 and 3 and its absence in path 2; the `img alt="media"` (path 1) vs. `alt=""` (path 3) difference; path 2's exact `style="max-width:200px; max-height:200px;"` constraint; the `sms.direction === "incoming"` condition driving both `chat-left` and (path 3 only) avatar-`src` selection; the `chat_id === activeChatID` branch (§3.11's own closing paragraph) — all preserved exactly, none touched by §5.7/§5.8's narrower fix.
 
 ---
 
 ## 6. Preserve all behavior
 
-Every item in §5.9, plus: no controller action's HTTP method, route name, or URL structure changes; no response field is renamed or removed from any of the six actions' *success* path (only the *denial* path is newly added or standardized, per §5.3); no `@can`/`@canany` Blade directive exists in the 4 ChatBox views to preserve (none does, confirmed by the Slice 6 contract's own audit, unaffected by this remediation which touches no Blade view's authorization-relevant markup); every localization key already present in `index.blade.php` remains present, since `buildChatBubble()`'s own static strings (`"Your browser does not support..."`) already exist verbatim in the current 3 paths and are only relocated, not reworded.
+Every item in §5.9, plus: no controller action's HTTP method, route name, or URL structure changes; no response field is renamed or removed from any of the six actions' *success* path (only the *denial* path is newly added or standardized, per §5.3); no `@can`/`@canany` Blade directive exists in the 4 ChatBox views to preserve (none does, confirmed by the Slice 6 contract's own audit, unaffected by this remediation which touches no Blade view's authorization-relevant markup); every localization key already present in `index.blade.php` remains present, since the two safe-rendering helpers' own static strings (`"Your browser does not support..."`) already exist verbatim in the current 3 paths and are only relocated, not reworded, per path, exactly where each path already uses them today (§5.7, §5.8).
 
 ---
 
@@ -286,14 +359,15 @@ Every item in §5.9, plus: no controller action's HTTP method, route name, or UR
 - A syntactically-plausible but nonexistent `uid` (e.g., a freshly-generated `uniqid()` string matching no row) is denied with the **identical** status code + body as the foreign case, for that same action.
 - Assert the foreign and nonexistent responses are byte-identical in status and JSON body (`assertSame($foreignResponse->status(), $nonexistentResponse->status())`, `assertSame($foreignResponse->getContent(), $nonexistentResponse->getContent())`) — the direct, mechanical proof of Finding 1's own requirement, not an inference from two separately-eyeballed assertions.
 
-**B. Identifier consistency:**
-- Render `customer.chatbox.index` (pinned list, when a pinned `ChatBox` exists) and assert the rendered `data-id` value equals the pinned chat's `uid`.
-- Call `loadChatUsers()` (the AJAX-loaded unpinned list) and assert the rendered fragment's `data-id` value equals the returned chat's `uid` — proving §5.1's fix, since this is the exact view §3.3 found sending numeric `id` today.
-- For `messages`, `reply`, `delete`, `block`, `pin`, and `messagesWithNotification`: assert each accepts the same real `uid` value consistently, and — the direct proof of Finding 2's own closure — assert that submitting the **numeric primary key** of a real, owned `ChatBox` (instead of its `uid`) to each of these six routes does **not** resolve that box (receives the same denial as a foreign/nonexistent `uid`), proving numeric-ID injection cannot bypass the canonical `uid` ownership boundary even for an actor's own real box.
+**B. Identifier consistency — corrected this round (Correction A):**
+- Render `customer.chatbox.index` (pinned list, when a pinned `ChatBox` exists) and assert the rendered `data-id` value equals the pinned chat's `uid` — already true today, asserted as a preservation check, not a fix.
+- Call `loadChatUsers()` (the AJAX-loaded unpinned list) and assert the rendered fragment's `data-id` value equals the returned chat's `uid` — the direct proof of §9 item 3's own fix, since this is the exact view §3.11 found sending numeric `id` today.
+- **New this round:** assert both list forms' `data-box-id` value continues to equal the chat's numeric `id` (§5.1) — proving the DOM-correlation value is deliberately retained, not collaterally removed by the `data-id` fix.
+- For `messages`, `reply`, `delete`, `block`, `pin`, and `messagesWithNotification`: assert each accepts the same real `uid` value consistently, and — the direct proof of Finding 2's own closure — assert that submitting the **numeric primary key** of a real, owned `ChatBox` (instead of its `uid`) to each of these six routes does **not** resolve that box (receives the same denial as a foreign/nonexistent `uid`), proving numeric-ID injection cannot bypass the canonical `uid` ownership boundary even for an actor's own real box. **New this round:** this same numeric-injection test is the direct proof that `data-box-id`'s retained numeric value could never be used as a substitute action identifier even if a client attempted it (§5.1) — one assertion serves both purposes.
 
-**C. Permission:**
+**C. Permission — corrected this round (Correction F):**
 - An actor authenticated as a customer explicitly lacking `chat_box` (permissions array excludes it) is denied (`403`, via `authorize()`'s standard `AuthorizationException` handling) for `messages`, `messagesWithNotification`, `delete`, `block`, `loadChatUsers`, and `pin` — the six currently missing the check (§3.5).
-- For `reply()` specifically: assert a `chat_box`-lacking actor is denied by permission alone even when supplying a **foreign** tenant's real `uid` — and assert the response is the standard `403` authorization denial, not the `404` ownership-denial shape (§5.3), proving the actor cannot distinguish "permission denied" from "identifier denied" and specifically cannot learn the foreign box's existence before authorization runs (§5.5's ordering, directly tested, not merely asserted in prose).
+- For `reply()` specifically: assert a `chat_box`-lacking actor is denied with the standard `403` authorization response for **both** a foreign tenant's real `uid` and a nonexistent `uid` — and assert these two `403` responses are themselves byte-identical to each other, proving the permission check alone (not identifier resolution) determines the outcome for such an actor. **Corrected claim, precisely stated (the original wording was logically imprecise):** the property being proven is not that the `403` (permission-denied) and `404` (ownership-denied, §5.3) shapes are indistinguishable from *each other* — they are intentionally different, by status code alone. The property is that a `chat_box`-lacking actor **always** receives the same `403`, for any identifier whatsoever, because `authorize()` (§5.5) runs and fails before `resolveOwnedChatBox()` is ever reached — so that actor's own responses carry no identifier-dependent information at all, regardless of how a *different*, permission-holding actor might be denied for the same identifier via the separate `404` path.
 
 **D. `block()` Contacts scoping:**
 - Create a `Contacts` row for tenant A and a separate `Contacts` row for tenant B, both with the identical `phone` value, both `status = 'subscribe'`.
@@ -302,12 +376,14 @@ Every item in §5.9, plus: no controller action's HTTP method, route name, or UR
 - Assert tenant B's `Contacts` row is byte/field-unchanged (`status` still `'subscribe'`, `updated_at` unchanged) — the direct mechanical proof of §5.4/Finding 5's own closure.
 - Assert the `Blacklists` row created by the same request is attributed to tenant A's own `user_id` — preserving the already-correct behavior (§5.9), tested alongside the fix rather than assumed unaffected.
 
-**E. XSS — honestly distinguished between HTTP/Blade tests and source/contract assertions (PHPUnit does not execute browser JS):**
-- **Deterministic source-level assertions** (the only mechanically honest way to prove the JS safety seam from PHPUnit): the compiled/served `index.blade.php` response (or its raw source, whichever is more direct) contains the `buildChatBubble`/`buildMediaElement` function definitions (§5.7/§5.8) using `.text(` and `.attr('src'` — and **contains zero remaining instances** of the specific unsafe patterns named in §3.7 (`` `<p>${sms.message}</p>` ``, `"<p>" + messageValue + "</p>"`, and any other raw-HTML-string message interpolation) — proven by asserting their exact literal absence via string/regex assertions against the response body, not by rendering and hoping.
-- **HTTP/Blade behavioral tests**, honestly scoped to what Laravel's test client can actually prove: that `index()` (with an active conversation/pinned chat present) renders `200` and its response body contains the safe-construction call sites named above; that no server-side output anywhere in the ChatBox response path (the Blade template itself, not the client-side JS it emits) ever echoes `sms.message`-equivalent content unescaped — since the actual vulnerable interpolation lives entirely in client-side JavaScript template literals that PHPUnit cannot execute, this test suite does **not** claim to prove the browser-rendered DOM is XSS-safe at runtime; it proves the unsafe source patterns are gone and the safe ones are present, which is the honest, achievable bar for a PHPUnit-only suite. This distinction is stated explicitly in the test file's own doc-comment, mirroring this section's own honesty requirement.
+**E. XSS — corrected this round (Correction E) to match §5.7's narrower architecture; honestly distinguished between HTTP/Blade tests and source/contract assertions (PHPUnit does not execute browser JS):**
+- **Deterministic source-level assertions** (the only mechanically honest way to prove the JS safety seam from PHPUnit): the served `index.blade.php` response contains the `appendSafeMessage()` helper (§5.7) using `.text(` — and **contains zero remaining instances** of the specific unsafe patterns named in §3.7 (`` `<p>${sms.message}</p>` ``, `"<p>" + messageValue + "</p>"`, and any other raw-HTML-string interpolation of `sms.message`/`messageValue`) — proven by asserting their exact literal absence via string/regex assertions against the response body, not by rendering and hoping. **Corrected this round:** does **not** require a `buildChatBubble()` function (removed per §5.7's narrower design) and does **not** require the outer bubble-construction code for any of the 3 paths to have changed shape at all.
+- **HTTP/Blade behavioral tests**, honestly scoped to what Laravel's test client can actually prove: that `index()` (with an active conversation/pinned chat present) renders `200` and its response body contains the `appendSafeMessage()` call site named above; that no server-side output anywhere in the ChatBox response path (the Blade template itself, not the client-side JS it emits) ever echoes `sms.message`-equivalent content unescaped — since the actual vulnerable interpolation lives entirely in client-side JavaScript template literals that PHPUnit cannot execute, this test suite does **not** claim to prove the browser-rendered DOM is XSS-safe at runtime; it proves the unsafe source patterns are gone and the safe ones are present, which is the honest, achievable bar for a PHPUnit-only suite. This distinction is stated explicitly in the test file's own doc-comment, mirroring this section's own honesty requirement.
+- **New this round (Correction C/D preservation proof, source-level):** the response still contains, per path, exactly the structural markers §3.11 documents — `span.avatar.box-shadow-1.cursor-pointer` in the history-load and optimistic-send paths' own source regions, `a.avatar.m-0` in the Echo-listener path's own source region, `class="chat-time` present in the history-load and Echo-listener regions and **absent** from the optimistic-send region, and `max-width:200px; max-height:200px;` present in the optimistic-send region only.
 
-**F. `media_url` attribute safety:**
-- Source-level assertion: the response contains `buildMediaElement`'s `.attr('src'` construction and contains zero remaining raw `src="${` /`src="` + string-concatenation patterns for `media_url`/`sms.media_url`/`response.media_url` in any of the 3 paths.
+**F. `media_url` attribute safety — corrected this round (Correction D) to match §5.8's two-mechanism split:**
+- Source-level assertion, history-load and Echo-listener: the response contains `appendSafeTypedMedia()`'s `.attr('src'` construction, its continued call to `isImageOrVideo(`, and zero remaining raw `` src="${ `` /string-concatenation `src="` patterns for `media_url`/`sms.media_url` in either path.
+- Source-level assertion, optimistic send: the response contains its own separate `.attr('src', response.media_url)` assignment, confirms it is **not** wrapped in an `isImageOrVideo()` call (preserving §3.8/§3.10's own documented asymmetry, not silently fixing it), and confirms the `style="max-width:200px; max-height:200px;"` constraint is still present on that specific `<img>`.
 
 **G. Existing billing/idempotency preservation:**
 - `tests/Feature/Usage/ConversationsPlainSmsMeteringTest.php`'s three `chatbox.reply`-calling tests (§3.9) are updated (their sole required change, §9) to call `route('customer.chatbox.reply', $box->uid)` and re-run, asserting their existing outcomes (`422` for missing/invalid token, the qualifying-chain success proof for a valid token) are unchanged.
@@ -345,13 +421,13 @@ Generated `public/`/`bootstrap/cache/` artifacts must be restored to their commi
 **Mechanically derived from §3–§8 above.**
 
 1. `app/Http/Controllers/Customer/ChatBoxController.php` — **required**: adds `resolveOwnedChatBox()` (§5.2); changes `messages`, `messagesWithNotification`, `reply`, `delete`, `block`, `pin` signatures from `ChatBox $box`/untyped `$id` to `string $uid` and inserts the authorize-then-resolve pattern (§5.3, §5.5); adds `->where('customer_id', Auth::id())` to `block()`'s `Contacts` query (§5.4); replaces `messages()`'s raw `\DB::table` calls with the Eloquent-based owned resolution (§5.3); adds `$this->authorize('chat_box')` as `loadChatUsers()`'s first statement (§5.5, §5.9). Preserves both `quickSend(..., true)` call sites' exact source text (§3.9, §5.9).
-2. `resources/views/customer/ChatBox/index.blade.php` — **required**: replaces the 3 unsafe message-construction sites (§3.7) with the shared `buildChatBubble()`/`buildMediaElement()` mechanism (§5.7, §5.8); no other change.
+2. `resources/views/customer/ChatBox/index.blade.php` — **required**: replaces only the unsafe message-text and media-`src` insertion points across the 3 paths (§3.7) with the `appendSafeMessage()` (§5.7) and `appendSafeTypedMedia()`/optimistic-inline (§5.8) mechanisms, preserving every other structural fact named in §3.11 exactly; no other change.
 3. `resources/views/customer/ChatBox/partials/_chat_list.blade.php` — **required**: changes `data-id="{{$chat->id}}"` to `data-id="{{$chat->uid}}"` (§5.1, §3.3) — the exact one-line fix closing the identifier split's client-side half; no other change.
 4. `tests/Feature/Security/ChatBoxSecurityTest.php` — **required, new file**: the dedicated focused security suite (§7).
 5. `tests/Feature/Usage/ConversationsPlainSmsMeteringTest.php` — **required, existing file, narrowly modified**: changes the 3 `route('customer.chatbox.reply', $box->id)` call sites (lines 1283, 1302, 1334 at this contract's own drafting-time head) to `route('customer.chatbox.reply', $box->uid)` (§3.9) — the sole existing-test modification this remediation's own identifier-contract change makes unavoidable; no other line in this file changes.
 
 **Explicitly not included, with exact reasons:**
-- `resources/views/customer/ChatBox/_sidebar.blade.php` — its pinned-list `data-id` already carries `uid` (§3.3); no change required.
+- `resources/views/customer/ChatBox/_sidebar.blade.php` — **corrected justification this round (Correction A/G):** its pinned-list `data-id` already carries `uid` (§3.11), and its `data-box-id` (numeric `id`) is the non-authoritative Echo-correlation value §5.1 explicitly authorizes retaining, not a defect to fix; no change required.
 - `resources/views/customer/ChatBox/new.blade.php` — resolves no `ChatBox` by client identifier at all (`sent()`/`new()` are not among the six single-record actions, §3.2); no change required.
 - `routes/customer.php` — implicit-binding removal is controlled by controller method signatures alone (§3.4); no route-file change required.
 - `app/Models/ChatBox.php`, `app/Library/Traits/HasUid.php`, `app/Models/Contacts.php` — already expose every column this remediation needs; audited, not modified (§3.4).
@@ -373,7 +449,7 @@ Any path beyond this 5-item allowlist required during future implementation is a
 5. `grep -n "authorize('chat_box')"` in `ChatBoxController.php` → exactly 10 occurrences (the 4 pre-existing plus the 6 newly added), one per action, each preceding its own `resolveOwnedChatBox()` call where applicable (§5.5).
 6. `grep -c "customer_id" ` scoped to `block()`'s own method body → at least 1 (the new `Contacts` predicate, §5.4).
 7. `grep -c "data-id=\"{{\\\$chat->id}}\""` in `partials/_chat_list.blade.php` → zero; `grep -c "data-id=\"{{\\\$chat->uid}}\""` → exactly 1 (§5.1, §9 item 3).
-8. `grep -c "buildChatBubble\|buildMediaElement"` in `index.blade.php` → both present; `grep -c "\`<p>\${sms.message}</p>\`"` and equivalent unsafe-pattern searches for all 3 originally-named sites (§3.7) → zero remaining.
+8. `grep -c "appendSafeMessage"` in `index.blade.php` → present, one definition, called from all 3 paths; `grep -c "appendSafeTypedMedia"` → present, called from the history-load and Echo-listener paths only (not the optimistic-send path, §5.8); `grep -c "\`<p>\${sms.message}</p>\`"` and equivalent unsafe-pattern searches for all 3 originally-named sites (§3.7) → zero remaining. **New this round (Correction C/D):** `grep -c "class=\"chat-time"` in `index.blade.php` → exactly 2 occurrences (history-load and Echo-listener paths only, §3.11); `grep -c "max-width:200px; max-height:200px;"` → exactly 1 (optimistic-send path only); `grep -c "a.avatar.m-0\|class=\"avatar m-0\""` → present, scoped to the Echo-listener path only; both `alt="media"` (history load) and `alt=""` (Echo listener, on its `<img>` branch) remain present and distinct.
 9. `preg_match_all('/->quickSend\([^)]*,\s*true\s*\)/', file_get_contents('app/Http/Controllers/Customer/ChatBoxController.php'))` → exactly **2** (§3.9, §5.9 — must remain unchanged from the pre-remediation baseline; this is `QuickSendNonConversationCallersUnaffectedTest.php`'s own existing, unmodified assertion, re-run, not a new search invented here).
 10. `git diff --stat -- routes database config` compared against this remediation's own base → completely empty (§3.4, §3.5, §4).
 11. `git diff --name-only` + `git ls-files --others --exclude-standard` → equals exactly §9's 5-item allowlist.
@@ -393,6 +469,8 @@ Any path beyond this 5-item allowlist required during future implementation is a
 - Any `media_url`/`sms.media_url`/`response.media_url` value is concatenated into an HTML string rather than assigned via `.attr('src', ...)` (§5.8).
 - `idempotency_token` requirement, generation, reservation behavior, `m5_token_action` classification, or provider-send semantics change for an *owned* `ChatBox`'s `reply()` in any way beyond the ordering described in §5.6.
 - The optimistic-send video-rendering inconsistency (§3.10) is fixed as a side effect of this remediation without separate, explicit authorization.
+- **New this round (Correction C/D):** any per-path structural fact named in §3.11 — avatar wrapper markup/type/dimensions, `chat-time` presence/absence, media `alt` text, the optimistic path's `200px` size constraint, the `isImageOrVideo()` usage split between paths — is collapsed, unified, or silently changed as a side effect of the message/media-safety fix.
+- **New this round (Correction A):** `data-box-id` is removed from either list view, or is accepted by `resolveOwnedChatBox()` or any controller action as an alternative to `uid`.
 - Any Slice 6 *visual*/componentization change (icon migration, `<x-button>`/`<x-card>`/`<x-tooltip>` adoption, hardcoded-color elimination) is made under cover of this security remediation.
 - Any Anthropic/Claude name, logo, wordmark, or proprietary asset is found necessary to reference.
 - A genuine architectural blocker is found that the 5-item allowlist cannot accommodate.
@@ -414,7 +492,8 @@ no_deployment: true
 slice_6_visual_status: blocked_until_security_implementation_human_merged
 no_automatic_advance_to_slice_7a_or_any_other_initiative: true
 maximum_correction_rounds: 2
-correction_round: 0
+correction_round: 1
+correction_round_is_final: false
 ```
 
 Merging this contract does **not** automatically start the security implementation. A separate, explicit human authorization is required.
@@ -439,20 +518,23 @@ Merging this contract does **not** automatically start the security implementati
 14. `docs/automation/AI-AUTONOMY-STATE.json` untouched. ✓
 15. This document remains the only file changed on this branch (§2). ✓
 16. No implementation authorization is granted anywhere in this document. ✓
+17. **Correction Round 1, this round.** Every one of the seven corrections (A–G) named in the Correction Round 1 summary paragraph is applied at its precise, mechanically-identified location — confirmed by a mechanical final sweep (direct `grep` for every stale phrase named in the correction instructions, run before this document was finalized): zero remaining "never again appears in client-visible markup" claim; zero remaining "all 3 media paths use `isImageOrVideo()`" claim; zero remaining reference to the optimistic path as `isImageOrVideo()`-typed; zero remaining universal-`buildChatBubble()` requirement outside the §3.11 explanatory text describing what the original design got wrong; zero remaining claim that the optimistic path gains `chat-time`; zero remaining description of the Echo-listener avatar as `span`/`36×36`; zero remaining omission of the optimistic `200px` constraint or either path's media `<p>` wrapper; zero remaining "403 vs. 404 indistinguishable" framing. ✓
+18. This round consumes exactly one of the two available correction rounds (`correction_round: 1`, `correction_round_is_final: false`, §12) — one round remains available if a further correction is required. ✓
+19. No architectural conclusion the original drafting pass reached outside the seven corrected items — the canonical `uid` identifier, `resolveOwnedChatBox()`, the authorize-before-resolve ordering, the `block()`/`Contacts.customer_id` scope fix, the zero route/model changes, the 3-line `ConversationsPlainSmsMeteringTest.php` update, the exact 5-item allowlist — is reopened, narrowed, or extended by this round. ✓
 
 ---
 
 ## 14. Verification and publication
 
 1. `git diff --check` — clean.
-2. `git status --short` — exactly `?? docs/automation/DESIGN-SYSTEM-M2-SLICE-6-CHATBOX-SECURITY-REMEDIATION-CONTRACT.md`.
-3. `git diff --name-only` — empty before staging (new file, untracked).
+2. `git status --short` — exactly ` M docs/automation/DESIGN-SYSTEM-M2-SLICE-6-CHATBOX-SECURITY-REMEDIATION-CONTRACT.md` before staging (a modification to the existing tracked file, not a new untracked file, since this round continues the existing branch rather than creating a new one).
+3. `git diff --name-only c5320611a65b9fd97a7287542d4de11dd96822e0...HEAD` — exactly one path: `docs/automation/DESIGN-SYSTEM-M2-SLICE-6-CHATBOX-SECURITY-REMEDIATION-CONTRACT.md`, aggregated across both the original drafting-pass commit and this round's own commit.
 4. Stage the one file by its exact path only (never `git add -A`/`.`).
-5. Commit exactly: `docs: define Slice 6 ChatBox security remediation`.
-6. Push to `origin chore/design-system-m2-slice6-chatbox-security-contract` — normal push, never forced.
-7. If `gh` is available, open a **draft** PR into `main`. If `gh` is unavailable, report the exact GitHub comparison URL instead.
+5. Commit exactly: `docs: correct ChatBox security rendering contract`.
+6. Push to the existing `origin chore/design-system-m2-slice6-chatbox-security-contract` branch — normal push, never forced, no new branch created.
+7. Do not open or merge a new implementation PR. If there is still no contract PR and `gh` is unavailable, return the same GitHub comparison URL as before.
 8. **Do not merge. Do not begin this remediation's implementation. Do not begin Slice 6's visual implementation. Do not begin Slice 4, Slice 7a/Campaigns, or any other slice/initiative.** No test is run for this docs-only change.
 
 ---
 
-*End of Design System M2 Slice 6 ChatBox Security Remediation Contract, first drafting pass. Implementation requires a separate, explicit human instruction. This contract's own merge does not start or resume it. Slice 6's own visual implementation remains blocked until this remediation's own implementation is human-merged and its exact merge SHA is pinned in Slice 6's later, separate implementation authorization.*
+*End of Design System M2 Slice 6 ChatBox Security Remediation Contract, Correction Round 1 of a maximum of 2. Implementation requires a separate, explicit human instruction. This contract's own merge does not start or resume it. Slice 6's own visual implementation remains blocked until this remediation's own implementation is human-merged and its exact merge SHA is pinned in Slice 6's later, separate implementation authorization.*
