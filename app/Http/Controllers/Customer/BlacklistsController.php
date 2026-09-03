@@ -32,6 +32,22 @@ class BlacklistsController extends CustomerBaseController
     }
 
     /**
+     * Resolve a Blacklists row owned by the authenticated customer, or abort(404).
+     *
+     * @param  string  $uid
+     *
+     * @return Blacklists
+     */
+    private function resolveOwnedBlacklist(string $uid): Blacklists
+    {
+        $blacklist = Blacklists::where('uid', $uid)->where('user_id', Auth::id())->first();
+
+        abort_unless($blacklist, 404);
+
+        return $blacklist;
+    }
+
+    /**
      * @return Application|Factory|View
      * @throws AuthorizationException
      */
@@ -176,14 +192,16 @@ class BlacklistsController extends CustomerBaseController
     }
 
     /**
-     * @param  Blacklists  $blacklist
+     * @param  string  $blacklist
      *
      * @return JsonResponse
      *
      * @throws AuthorizationException
      */
-    public function destroy(Blacklists $blacklist): JsonResponse
+    public function destroy(string $blacklist): JsonResponse
     {
+        $blacklist = $this->resolveOwnedBlacklist($blacklist);
+
         if (config('app.stage') == 'demo') {
             return response()->json([
                     'status'  => 'error',
@@ -227,7 +245,9 @@ class BlacklistsController extends CustomerBaseController
         if ($action == 'destroy') {
             $this->authorize('delete_blacklist');
 
-            $this->blacklists->batchDestroy($ids);
+            $ownedIds = Blacklists::where('user_id', Auth::id())->whereIn('uid', $ids)->pluck('uid')->all();
+
+            $this->blacklists->batchDestroy($ownedIds);
 
             return response()->json([
                     'status'  => 'success',

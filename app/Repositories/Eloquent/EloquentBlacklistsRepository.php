@@ -77,7 +77,11 @@
 
 
             // Get unique group IDs from the updated contacts
-            $groupIds = Contacts::whereIn('phone', $numbers)->pluck('group_id')->filter()->unique();
+            $groupIdsQuery = Contacts::whereIn('phone', $numbers);
+            if ( ! $user->is_admin) {
+                $groupIdsQuery->where('customer_id', $user->id);
+            }
+            $groupIds = $groupIdsQuery->pluck('group_id')->filter()->unique();
 
 // Update cache for each group
             ContactGroups::whereIn('id', $groupIds)->get()->each(function ($contactGroup) {
@@ -103,7 +107,13 @@
          */
         public function destroy(Blacklists $blacklists)
         {
-            $contact = Contacts::where('phone', $blacklists->number)->first();
+            $contactQuery = Contacts::where('phone', $blacklists->number);
+
+            if ( ! $blacklists->user->is_admin) {
+                $contactQuery->where('customer_id', $blacklists->user_id);
+            }
+
+            $contact = $contactQuery->first();
             $contact?->update([
                 'status' => 'subscribe',
             ]);

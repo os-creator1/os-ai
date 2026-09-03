@@ -107,12 +107,12 @@ class BlacklistsController extends AdminBaseController
                 }
 
                 if ($blacklist->user->is_admin) {
-                    $assign_to = $blacklist->user->displayName();
+                    $assign_to = e($blacklist->user->displayName());
                 } else {
 
                     $customer_profile = route('admin.customers.show', $blacklist->user->uid);
                     $customer_name = $blacklist->user->displayName();
-                    $assign_to = "<a href='$customer_profile' class='text-primary mr-1'>$customer_name</a>";
+                    $assign_to = "<a href='" . e($customer_profile) . "' class='text-primary mr-1'>" . e($customer_name) . "</a>";
                 }
 
                 $nestedData['responsive_id'] = '';

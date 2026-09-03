@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests\Contacts;
 
+use App\Models\ContactGroups;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
@@ -28,8 +29,23 @@ class UpdateContactGroup extends FormRequest
      */
     public function rules(): array
     {
-        $id          = $this->route('contact')->id;
-        $customer_id = auth()->user()->id;
+        $routeContact = $this->route('contact');
+
+        if ($routeContact instanceof ContactGroups) {
+            // API route (out of this contract's scope) — unchanged, model already bound.
+            $id = $routeContact->id;
+        } else {
+            // Web customer route, post-remediation — raw uid string; resolve the caller's own owned group.
+            $contact = ContactGroups::where('uid', $routeContact)
+                ->where('customer_id', $this->user()->id)
+                ->first();
+
+            abort_unless($contact, 404);
+
+            $id = $contact->id;
+        }
+
+        $customer_id = $this->user()->id;
         $name        = $this->name;
 
         return [
