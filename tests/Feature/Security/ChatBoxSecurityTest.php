@@ -195,20 +195,54 @@ class ChatBoxSecurityTest extends TestCase
         $this->assertSame(1, DB::table('chat_boxes')->where('id', $boxA->id)->where('pinned', true)->count());
     }
 
-    public function test_numeric_primary_key_cannot_resolve_a_chatbox_even_for_its_own_tenant(): void
+    /**
+     * resolveOwnedChatBox() matches only the uid column. uid is a uniqid()
+     * string, never the numeric primary key, and the resolver never falls
+     * back to id — so the box's own numeric id must resolve exactly like a
+     * wholly nonexistent identifier, even for its true owner. Proven
+     * directly against each of the six single-record actions individually
+     * (not inferred from the shared resolver's existence alone), since each
+     * action has its own distinct denial shape.
+     */
+    public function test_numeric_primary_key_cannot_resolve_a_chatbox_for_any_of_the_six_actions(): void
     {
         [$tenantA] = $this->twoTenantCustomers();
-        $boxA = $this->createChatBox($tenantA->user_id, 'AgentA', '15550001007');
+        $box = $this->createChatBox($tenantA->user_id, 'AgentA', '15550001007');
+        $numericId = (string) $box->id;
 
         $this->authenticateAsCustomer($tenantA, ['chat_box']);
 
-        // resolveOwnedChatBox() matches only the uid column. uid is a
-        // uniqid() string, never the numeric primary key, and the resolver
-        // never falls back to id — so the box's own numeric id must resolve
-        // exactly like a wholly nonexistent identifier, even for its true owner.
-        $numericIdResponse = $this->postJson(route('customer.chatbox.pin', (string) $boxA->id));
-        $numericIdResponse->assertStatus(404);
-        $this->assertSame(0, DB::table('chat_boxes')->where('id', $boxA->id)->where('pinned', true)->count());
+        // messages(): no explicit status is set on the denial branch — 200 with an error body.
+        $messagesResponse = $this->postJson(route('customer.chatbox.messages', $numericId));
+        $messagesResponse->assertOk();
+        $messagesResponse->assertJson(['status' => 'error', 'data' => [], 'pinned' => 0]);
+
+        // messagesWithNotification(): 404.
+        $notificationResponse = $this->postJson(route('customer.chatbox.notification', $numericId));
+        $notificationResponse->assertStatus(404);
+        $notificationResponse->assertJson(['status' => 'error', 'message' => 'Chat box not found.']);
+
+        // reply(): 404, denied before reaching any reservation/report/send side effect.
+        $replyResponse = $this->postJson(route('customer.chatbox.reply', $numericId), ['message' => 'hi']);
+        $replyResponse->assertStatus(404);
+        $replyResponse->assertJson(['status' => 'error', 'message' => 'Chat box not found. Refresh page.']);
+        $this->assertSame(0, DB::table('business_usage_reservations')->count());
+        $this->assertSame(0, DB::table('reports')->count());
+
+        // delete(): 404, box remains present.
+        $deleteResponse = $this->postJson(route('customer.chatbox.delete', $numericId));
+        $deleteResponse->assertStatus(404);
+        $this->assertSame(1, DB::table('chat_boxes')->where('id', $box->id)->count());
+
+        // block(): 404, no blacklist mutation.
+        $blockResponse = $this->postJson(route('customer.chatbox.block', $numericId));
+        $blockResponse->assertStatus(404);
+        $this->assertSame(0, DB::table('blacklists')->where('number', $box->to)->count());
+
+        // pin(): 404, pinned state unchanged.
+        $pinResponse = $this->postJson(route('customer.chatbox.pin', $numericId));
+        $pinResponse->assertStatus(404);
+        $this->assertSame(0, DB::table('chat_boxes')->where('id', $box->id)->where('pinned', true)->count());
     }
 
     // ===================================================================
@@ -367,6 +401,36 @@ class ChatBoxSecurityTest extends TestCase
         $this->assertStringNotContainsString('"<p>" + messageValue + "</p>"', $source);
     }
 
+    /**
+     * The above assertions read the raw .blade.php source directly.
+     * This test instead renders customer.chatbox.index over a real
+     * authenticated HTTP request and inspects the actual response body, so
+     * the safe-rendering seam is proven to survive real Blade compilation,
+     * not just exist in the source file. PHPUnit still cannot execute the
+     * client-side JavaScript this HTML ships — this remains a source-shape
+     * assertion against rendered output, not a browser-behavior proof.
+     */
+    public function test_rendered_index_response_contains_the_safe_seam_and_not_the_original_unsafe_patterns(): void
+    {
+        [$tenantA] = $this->twoTenantCustomers();
+        $this->authenticateAsCustomer($tenantA, ['chat_box']);
+
+        $response = $this->get(route('customer.chatbox.index'));
+        $response->assertOk();
+
+        $html = $response->getContent();
+
+        $this->assertStringContainsString('function safeMessageParagraph(value)', $html);
+        $this->assertStringContainsString('function safeTypedMediaParagraph(url, imgAlt)', $html);
+        $this->assertStringContainsString('$content.append(safeMessageParagraph(sms.message));', $html);
+        $this->assertStringContainsString('$content.append(safeMessageParagraph(messageValue));', $html);
+        $this->assertStringContainsString('$content.append(safeTypedMediaParagraph(sms.media_url, "media"));', $html);
+
+        $this->assertStringNotContainsString('${sms.message}', $html);
+        $this->assertStringNotContainsString('${sms.media_url}', $html);
+        $this->assertStringNotContainsString('"<p>" + messageValue + "</p>"', $html);
+    }
+
     // ===================================================================
     // F. Media source assertions
     // ===================================================================
@@ -441,21 +505,70 @@ class ChatBoxSecurityTest extends TestCase
         $this->assertSame(2, substr_count($source, 'height="40" width="40"'));
         $this->assertStringContainsString("route('user.avatar', Auth::user()->uid)", $source);
 
-        // "chat-time" (timestamp) appears exactly twice: once for history
-        // load, once for the Echo listener's shared post-branch content
-        // population (both incoming/outgoing branches share it after the
-        // direction-selecting ternary) — never for the optimistic path.
         $this->assertSame(2, substr_count($source, 'chat-time'));
-
-        // Direction/chat-left and activeChatID/unread-counter behavior preserved.
-        $this->assertStringContainsString('sms.direction === "incoming"', $source);
-        $this->assertStringContainsString('if (chat_id === activeChatID)', $source);
         $this->assertStringContainsString('$counter.html(response.notification);', $source);
         $this->assertStringContainsString('$counter.removeAttr("hidden");', $source);
 
         // Both broadcasting guards remain, unmodified, exactly twice each.
         $this->assertSame(2, substr_count($source, "@if(config('broadcasting.connections.pusher.app_id'))"));
         $this->assertSame(2, substr_count($source, '@endif'));
+
+        // ---- HISTORY region: the cwData.forEach(...) loop body ----
+        $historyStart = strpos($source, 'cwData.forEach((sms) => {');
+        $historyEnd = strpos($source, 'chatContainer.animate({ scrollTop: chatContainer[0].scrollHeight }, 400);', $historyStart);
+        $this->assertNotFalse($historyStart, 'History loop start anchor not found.');
+        $this->assertNotFalse($historyEnd, 'History loop end anchor not found.');
+        $historyRegion = substr($source, $historyStart, $historyEnd - $historyStart);
+
+        $historyMediaPos = strpos($historyRegion, 'safeTypedMediaParagraph(');
+        $historyMessagePos = strpos($historyRegion, 'safeMessageParagraph(');
+        $historyTimePos = strpos($historyRegion, 'chat-time');
+        $this->assertNotFalse($historyMediaPos);
+        $this->assertNotFalse($historyMessagePos);
+        $this->assertNotFalse($historyTimePos);
+        $this->assertTrue($historyMediaPos < $historyMessagePos, 'History: media must be appended before the message.');
+        $this->assertTrue($historyMessagePos < $historyTimePos, 'History: message must be appended before chat-time.');
+        $this->assertStringContainsString('if (sms.media_url !== null)', $historyRegion);
+        $this->assertStringContainsString('if (sms.message)', $historyRegion);
+
+        // ---- OPTIMISTIC region: enter_chat()'s success-branch bubble build ----
+        $optimisticStart = strpos($source, 'let chatHistory = $(".chat_history");');
+        $optimisticEnd = strpos($source, 'message.val("");', $optimisticStart);
+        $this->assertNotFalse($optimisticStart, 'Optimistic block start anchor not found.');
+        $this->assertNotFalse($optimisticEnd, 'Optimistic block end anchor not found.');
+        $optimisticRegion = substr($source, $optimisticStart, $optimisticEnd - $optimisticStart);
+
+        $optimisticMessagePos = strpos($optimisticRegion, 'safeMessageParagraph(messageValue)');
+        $optimisticMediaPos = strpos($optimisticRegion, '.attr("src", response.media_url)');
+        $this->assertNotFalse($optimisticMessagePos);
+        $this->assertNotFalse($optimisticMediaPos);
+        $this->assertTrue($optimisticMessagePos < $optimisticMediaPos, 'Optimistic: message must be appended before the optional media.');
+        $this->assertStringNotContainsString('chat-time', $optimisticRegion);
+        $this->assertStringContainsString('if (response.media_url) {', $optimisticRegion);
+        $this->assertStringNotContainsString('safeTypedMediaParagraph', $optimisticRegion);
+        $this->assertStringNotContainsString('isImageOrVideo', $optimisticRegion);
+
+        // ---- ECHO region: the MessageReceived listener's per-message bubble build ----
+        $echoStart = strpos($source, 'const sms = response.data;');
+        $echoEnd = strpos($source, '@endif', $echoStart);
+        $this->assertNotFalse($echoStart, 'Echo block start anchor not found.');
+        $this->assertNotFalse($echoEnd, 'Echo block end anchor not found.');
+        $echoRegion = substr($source, $echoStart, $echoEnd - $echoStart);
+
+        $echoMediaPos = strpos($echoRegion, 'safeTypedMediaParagraph(');
+        $echoMessagePos = strpos($echoRegion, 'safeMessageParagraph(');
+        $echoTimePos = strpos($echoRegion, 'chat-time');
+        $echoActiveChatPos = strpos($echoRegion, 'if (chat_id === activeChatID)');
+        $this->assertNotFalse($echoMediaPos);
+        $this->assertNotFalse($echoMessagePos);
+        $this->assertNotFalse($echoTimePos);
+        $this->assertNotFalse($echoActiveChatPos);
+        $this->assertTrue($echoMediaPos < $echoMessagePos, 'Echo: media must be appended before the message.');
+        $this->assertTrue($echoMessagePos < $echoTimePos, 'Echo: message must be appended before chat-time.');
+        $this->assertTrue($echoTimePos < $echoActiveChatPos, 'Echo: the activeChatID branch must run only after the bubble is fully constructed.');
+        $this->assertStringContainsString('if (sms.media_url !== null)', $echoRegion);
+        $this->assertStringContainsString('if (sms.message !== null)', $echoRegion);
+        $this->assertStringContainsString('sms.direction === "incoming"', $echoRegion);
     }
 
     // ===================================================================
@@ -532,11 +645,18 @@ class ChatBoxSecurityTest extends TestCase
         $this->assertMatchesRegularExpression('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', $data['data'][0]['created_at']);
 
         // Raw stdClass-from-query-builder rows expose every physical
-        // column, unlike a ->select(...)-limited Eloquent read.
+        // column, unlike a ->select(...)-limited Eloquent read — assert the
+        // complete raw chat_box_messages row shape.
         $this->assertArrayHasKey('id', $data['data'][0]);
+        $this->assertArrayHasKey('box_id', $data['data'][0]);
+        $this->assertArrayHasKey('message', $data['data'][0]);
+        $this->assertArrayHasKey('media_url', $data['data'][0]);
         $this->assertArrayHasKey('sms_type', $data['data'][0]);
-        $this->assertArrayHasKey('send_by', $data['data'][0]);
         $this->assertArrayHasKey('direction', $data['data'][0]);
+        $this->assertArrayHasKey('sending_server_id', $data['data'][0]);
+        $this->assertArrayHasKey('send_by', $data['data'][0]);
+        $this->assertArrayHasKey('created_at', $data['data'][0]);
+        $this->assertArrayHasKey('updated_at', $data['data'][0]);
     }
 
     // -----------------------------------------------------------------
