@@ -13,11 +13,21 @@ Correction Round 1" instead of containing the actual text) and which this
 repair corrects, per its own explicit "make the contract fully
 self-contained" requirement.
 
-**Status: contract only. No implementation has ever occurred under this
-document, across any drafting pass. Merging this repair does NOT
-authorize any implementation — each rollout slice (§9) requires its own
-separate, explicit authorization, exactly like every prior contract in
-this repository.**
+**Status (updated by the Post-Retention Roadmap Supersession, PR #185 +
+this document): Slice 1 (Foundation), Slice 2 (Authentication & Profile),
+Slice 3 (Dashboards), Slice 5 (Contacts & CRM/Opportunities), and Slice 6
+(ChatBox/Conversations) have each been implemented and human-merged under
+their own separate slice contracts — see §8.2 for the mechanically-verified
+record. Legacy Slice 4 (Reports) was deliberately skipped and is now
+permanently cancelled in its original SMS-reporting form. Legacy Slice 7a
+(Campaigns Quick Send) was never started and is now cancelled as an
+incremental-design slice. The remaining original Slices 7b through 21 in
+§8.1 below are historical baseline only — they no longer describe
+authorized future work; §8.4 is the current authoritative design roadmap.
+Merging this document does NOT itself authorize any further
+implementation — every remaining roadmap item (§8.4) still requires its
+own separate, explicit human authorization, exactly like every prior
+contract in this repository.**
 
 ---
 
@@ -45,15 +55,69 @@ this repository.**
 - Drafting this repair makes **zero** application changes. No
   `resources/`, `app/`, `database/`, or `routes/` file is touched by this
   branch — only this document.
-- Once merged, implementation of **Slice 1 only** (§9) may begin under a
-  separate, explicit authorization. Slices 2 onward (§8) remain a locked
-  rollout *map*, not yet allowlisted.
+- **(Historical, as originally written.)** Once merged, implementation of
+  **Slice 1 only** (§9) may begin under a separate, explicit
+  authorization. Slices 2 onward (§8) remain a locked rollout *map*, not
+  yet allowlisted. — **This statement is superseded; see below.**
 - `maximum_correction_rounds: 2` applies to this contract, unchanged.
   This repair does not consume a third round — it completes the second.
 - Any path required during Slice 1 implementation but absent from §9's
   own numbered allowlist is a stop-and-report condition — not a silent
   workaround. The stop threshold is the **68th** path (67 allowlisted
   + 1).
+
+### 0.1 Post-Retention Roadmap Supersession (current governance — supersedes §0's original bullets above regarding "Slices 2 onward")
+
+- This section is added by a later, separate, docs-only change: branch
+  `chore/design-system-m2-surviving-roadmap`, based on `origin/main` at
+  `16bedc8e28beb1413b8d76f6194cca2072d71dbe` (the merge of PR #185, "AI
+  Business OS — Product Surface Retention Audit," parents
+  `246d85bdeb4dab31d6fd0012d0dd9ddcf0a01237` and
+  `1f7426828e82f3fd23dfca97c3a06a03184fd7de`). It changes **only** this
+  file. It does not reopen, alter, or re-author any Slice 1 architecture
+  decision (§3-§7) — see §8's own preserved-architecture note.
+- Since the original drafting of this contract, Slices 1, 2, 3, 5, and 6
+  have each been implemented and human-merged under their own separate,
+  fully-specified slice contracts (§8.2). This section corrects every
+  place in this document that previously implied otherwise.
+- `docs/automation/PRODUCT-SURFACE-RETENTION-AUDIT.md`, human-merged as
+  PR #185, is now the **authoritative source** for which remaining
+  product surfaces in §8.1's original rollout map deserve continued
+  incremental redesign, a from-scratch rebuild, or eventual deletion. Its
+  findings are summarized and made binding as this document's current
+  roadmap in §8.3/§8.4; the audit document itself is not modified by this
+  change.
+- The old page-by-page rollout map (§8.1) is **no longer an active
+  future-work mandate**. It is retained as historical baseline inventory
+  only. The current authoritative future design roadmap is §8.4.
+- **This document's merge does not, by itself, authorize implementation
+  of any §8.4 roadmap item.** Each item still requires its own separate,
+  explicit human authorization and, where noted, its own future
+  RFC/contract — exactly the same discipline this contract has always
+  applied to Slice 2 onward.
+
+```
+product_surface_retention_audit_merged: true
+retention_audit_merge_pr: 185
+retention_audit_merge_sha: 16bedc8e28beb1413b8d76f6194cca2072d71dbe
+
+old_page_by_page_rollout_superseded: true
+old_remaining_m2_slice_map_active: false
+
+surviving_roadmap_groups: 8
+retained_existing_ui_groups: 3
+new_build_groups: 5
+
+legacy_slice_4_cancelled: true
+legacy_slice_7a_started: false
+legacy_slice_7a_cancelled: true
+
+implementation_authority: separate_human_authorization_required
+merge_authority: human_only
+advance_automatically: false
+no_force_push: true
+no_deployment: true
+```
 
 ---
 
@@ -102,7 +166,19 @@ lineage, including this repair:
 
 ## 3. Mandatory repository audit — findings
 
-### 3.1 Remaining rollout surface
+### 3.1 Historical baseline inventory at original M2 contract time
+
+**These figures describe the repository as it stood when this contract
+was originally drafted, before Slices 1-6 were implemented and before the
+Product Surface Retention Audit (PR #185) was conducted. They are
+preserved for historical/technical record — the counts below fed the
+runtime-bindings and chart-token architecture decisions in §6 and remain
+accurate as *that* evidence. They are no longer a statement that every
+one of these views is future redesign work owed to the product** — see
+`docs/automation/PRODUCT-SURFACE-RETENTION-AUDIT.md` (human-merged, PR
+#185) for the current, authoritative determination of which surfaces
+survive, and §8.1-§8.4 below for how that determination now supersedes
+this section's original rollout implications.
 
 - **374** total Blade view files under `resources/views/` (machine-
   verified: per-directory counts 147/127/32/7/7/9/10/16/3/1/15 across
@@ -939,42 +1015,225 @@ all, unlike the public active-font route, which by necessity is.
 
 ---
 
-## 8. Full rollout map (unchanged in module boundaries)
+## 8. Rollout map — historical baseline, completed work, and the current surviving roadmap
+
+**Preserved M2 architecture, unaffected by anything in this section:**
+the semantic token architecture, component library, runtime theme
+presets, theme lifecycle, color/font customization, chart token bridge,
+font-upload safety, accessibility/contrast requirements, the chat-
+background decision, the static-icon-migration principle, the
+hardcoded-color/font cleanup principle, component-adoption discipline,
+and the security-before-visual-remediation precedent (§3-§7, §9-§14) are
+**not reopened, altered, or redesigned** by this section. What changes
+below is only the **roadmap** — which product surfaces still receive
+future page-by-page design work, and in what shape.
+
+### 8.1 Original rollout map (historical baseline — module boundaries as originally drafted)
+
+**This table is retained for historical record and file-count/scope
+traceability only. It is no longer an active future-work mandate.** The
+module boundaries and file globs below are exactly as originally
+specified; they are superseded as a *roadmap* by §8.3/§8.4.
 
 | # | Slice | Scope (globs) | Files | Notes |
 |---|---|---|---|---|
-| **1** | **Foundation** (§9, this contract's own allowlist) | Theme presets + tokens (new), chart tokens (new), chat background fix, remaining shared-chrome icon migration (7 of 9 `panels/` files touched by icon migration; `panels/styles.blade.php` touched separately for runtime injection; `scripts.blade.php` stays untouched, same as Milestone 1), errors | 67 | **Implementation-ready this contract.** |
-| 2 | Authentication & Profile | `auth/**` (excl. `auth/payment/**`), `Installer/**` | 27 | |
-| 3 | Dashboards | `customer/dashboard.blade.php`, `admin/dashboard.blade.php`, `admin/hot_leads.blade.php`, `admin/ai_analytics.blade.php`, `admin/ai-settings.blade.php` | 5 | |
-| 4 | Reports & Analytics | `customer/Reports/**`, `admin/Reports/**` | 12 | Consumes Slice-1 chart tokens |
-| 5 | Contacts & CRM | `customer/{Contacts,contactGroups,Blacklists,opportunities}/**`, `admin/{opportunities,Blacklists}/**` | 30 | `contactGroups/show.blade.php` (1,573 lines) flagged for decomposition |
-| 6 | ChatBox / Conversations (full componentization) | `customer/ChatBox/**` | 4 | Beyond Slice 1's token-level background fix |
-| 7a | Campaigns — quick-send variants | `customer/Campaigns/*QuickSend.blade.php` | 6 | |
-| 7b | Campaigns — builders | `customer/Campaigns/*CampaignBuilder.blade.php` | 7 | Five near-duplicate per-channel copies |
-| 7c | Campaigns — overview/list/modals | remaining `customer/Campaigns/**` | 13 | |
-| 8 | Automations | `customer/Automations/**` | 6 | |
-| 9 | Templates | `customer/Templates/**`, `admin/{Templates,TemplateTags}/**` | 6 | |
-| 10 | Numbers/SenderID/Keywords/Compliance | `customer/{Numbers,SenderID,keywords}/**`, `admin/{PhoneNumbers,SenderID,BlockSenderID,keywords,SpamWord}/**` | 29 | |
-| 11a-d | Sending Servers (customer/admin × excl./create) | `{customer,admin}/SendingServer/**` | 13 | `create.blade.php` files (2,316 / 4,306 lines) each dedicated |
-| 12 | Billing, Payments & Accounts | `customer/{Accounts,Payments}/**`, `customer/business/edit.blade.php`, usage-billing payment partial, `auth/payment/**` | 30 | |
-| 13 | Sub-Accounts & Workspaces | `customer/{SubAccounts,workspaces}/**`, `admin/workspaces/**` | 7 | |
-| 14 | Onboarding | `customer/onboarding/**` | 9 | |
-| 15 | Developer/API Docs | `customer/Developers/**` | 22 | Mostly static |
-| 16 | Admin Tenant Management | `admin/{customer,businesses}/**` | 22 | |
-| 17 | Plans, Pricing & Catalog | `admin/{plans,workspace-plan-catalog,currency,taxes}/**` | 17 | |
-| 18 | Invoices & Subscriptions | `admin/{Invoices,subscriptions}/**` | 6 | |
-| 19 | Admin Users, Roles & Announcements | `admin/{Administrator,AdminRoles,Announcements}/**` | 8 | |
-| 20 | Plugins & legacy Theme Customizer | `admin/{Plugins,ThemeCustomizer}/**` | 3 | Legacy `ThemeCustomizerController` and the new theme presets are separate features; reconciliation is this slice's own open decision |
-| 21 | System Settings | `admin/settings/**` | 26 | `PaymentMethods/show.blade.php` (1,937 lines) flagged for dedicated handling |
-| — | Transactional email templates | `resources/views/emails/**`, `resources/views/vendor/mail/**` | 26 | **Out of scope for the entire rollout** |
+| **1** | **Foundation** (§9, this contract's own allowlist) | Theme presets + tokens (new), chart tokens (new), chat background fix, remaining shared-chrome icon migration (7 of 9 `panels/` files touched by icon migration; `panels/styles.blade.php` touched separately for runtime injection; `scripts.blade.php` stays untouched, same as Milestone 1), errors | 67 | **Implemented — see §8.2.** |
+| 2 | Authentication & Profile | `auth/**` (excl. `auth/payment/**`), `Installer/**` | 27 | **Implemented — see §8.2.** |
+| 3 | Dashboards | `customer/dashboard.blade.php`, `admin/dashboard.blade.php`, `admin/hot_leads.blade.php`, `admin/ai_analytics.blade.php`, `admin/ai-settings.blade.php` | 5 | **Implemented — see §8.2.** |
+| 4 | Reports & Analytics | `customer/Reports/**`, `admin/Reports/**` | 12 | Consumes Slice-1 chart tokens. **Deliberately skipped, now permanently cancelled in this form — see §8.3, replaced by B5.** |
+| 5 | Contacts & CRM | `customer/{Contacts,contactGroups,Blacklists,opportunities}/**`, `admin/{opportunities,Blacklists}/**` | 30 | `contactGroups/show.blade.php` (1,573 lines) flagged for decomposition. **Implemented — see §8.2.** |
+| 6 | ChatBox / Conversations (full componentization) | `customer/ChatBox/**` | 4 | Beyond Slice 1's token-level background fix. **Implemented — see §8.2.** |
+| 7a | Campaigns — quick-send variants | `customer/Campaigns/*QuickSend.blade.php` | 6 | **Never started; cancelled — see §8.3, replaced by B1.** |
+| 7b | Campaigns — builders | `customer/Campaigns/*CampaignBuilder.blade.php` | 7 | Five near-duplicate per-channel copies. **Cancelled — see §8.3, replaced by B1.** |
+| 7c | Campaigns — overview/list/modals | remaining `customer/Campaigns/**` | 13 | **Cancelled — see §8.3, replaced by B1.** |
+| 8 | Automations | `customer/Automations/**` | 6 | **Cancelled — see §8.3, replaced by B4.** |
+| 9 | Templates | `customer/Templates/**`, `admin/{Templates,TemplateTags}/**` | 6 | **Cancelled as standalone; capability folds into B1 — see §8.3.** |
+| 10 | Numbers/SenderID/Keywords/Compliance | `customer/{Numbers,SenderID,keywords}/**`, `admin/{PhoneNumbers,SenderID,BlockSenderID,keywords,SpamWord}/**` | 29 | **Cancelled/redirected into B2 — see §8.3.** |
+| 11a-d | Sending Servers (customer/admin × excl./create) | `{customer,admin}/SendingServer/**` | 13 | `create.blade.php` files (2,316 / 4,306 lines) each dedicated. **Cancelled; replaced by B2 — see §8.3.** |
+| 12 | Billing, Payments & Accounts | `customer/{Accounts,Payments}/**`, `customer/business/edit.blade.php`, usage-billing payment partial, `auth/payment/**` | 30 | **Cancelled/deferred DELETE, except `customer/business/edit.blade.php`, which moves to A2 — see §8.3.** |
+| 13 | Sub-Accounts & Workspaces | `customer/{SubAccounts,workspaces}/**`, `admin/workspaces/**` | 7 | **Split: Workspaces move to A2; Sub-Accounts are DELETE LATER after migration — see §8.3.** |
+| 14 | Onboarding | `customer/onboarding/**` | 9 | **Moves to A1 — see §8.4.** |
+| 15 | Developer/API Docs | `customer/Developers/**` | 22 | Mostly static. **Cancelled; DELETE/deprioritized — see §8.3.** |
+| 16 | Admin Tenant Management | `admin/{customer,businesses}/**` | 22 | **Split: `admin/businesses/**` (RFC-aligned) moves to A2; legacy `admin/customer/**` tenant CRUD cancelled — see §8.3.** |
+| 17 | Plans, Pricing & Catalog | `admin/{plans,workspace-plan-catalog,currency,taxes}/**` | 17 | **Plans cancelled/deferred with Slice 12/18; Currency/Tax generic infra redirected into B3 only where needed — see §8.3.** |
+| 18 | Invoices & Subscriptions | `admin/{Invoices,subscriptions}/**` | 6 | **Cancelled/deferred DELETE after RFC-005 live cutover — see §8.3.** |
+| 19 | Admin Users, Roles & Announcements | `admin/{Administrator,AdminRoles,Announcements}/**` | 8 | **Moves to A3 — see §8.4.** |
+| 20 | Plugins & legacy Theme Customizer | `admin/{Plugins,ThemeCustomizer}/**` | 3 | Legacy `ThemeCustomizerController` and the new theme presets are separate features. **Both resolved DELETE, no redesign — see §8.3.** |
+| 21 | System Settings | `admin/settings/**` | 26 | `PaymentMethods/show.blade.php` (1,937 lines) flagged for dedicated handling. **License/Updater portion DELETE; genuine settings redirected into B3 — see §8.3.** |
+| — | Transactional email templates | `resources/views/emails/**`, `resources/views/vendor/mail/**` | 26 | **Out of scope for the entire rollout. Unaffected by the retention audit.** |
 
-**Standing mandate for every slice from Slice 2 onward**: each slice's
-own implementation must eliminate that slice's own hardcoded colors and
-font-family declarations as it migrates — retokenizing any plugin-chrome
-override file (§6.11) actually exercised by its pages, converting any
-remaining `data-feather` icons, and confirming via its own mechanical
-search that zero hardcoded hex/font-family literals remain in its
-touched files.
+**Standing mandate, preserved unchanged for any slice that still performs
+incremental redesign of retained existing UI (§8.4 Category A only)**:
+that slice's own implementation must eliminate its own hardcoded colors
+and font-family declarations as it migrates — retokenizing any
+plugin-chrome override file (§6.11) actually exercised by its pages,
+converting any remaining `data-feather` icons, and confirming via its own
+mechanical search that zero hardcoded hex/font-family literals remain in
+its touched files. This mandate does not apply to Category B items,
+which are new builds, not migrations of existing hardcoded-color pages.
+
+### 8.2 Completed slices (mechanically verified)
+
+| Slice | Scope | Files | Verification |
+|---|---|---|---|
+| 1 | Foundation (tokens, component library, presets, chart tokens, chat-background fix, shared-chrome icon migration, errors) | 67 | `<x-card>`/`<x-button>`/`<x-ds-icon>` component markers confirmed present across auth/dashboard/CRM/ChatBox views. |
+| 2 | Authentication & Profile | 27 | `auth/login.blade.php` confirmed adopting design-system components. |
+| 3 | Dashboards | 5 | `customer/dashboard.blade.php` confirmed adopting design-system components. |
+| 5 | Contacts & CRM (incl. Opportunities) | 30 | `customer/Contacts/create.blade.php` confirmed adopting design-system components. |
+| 6 | ChatBox / Conversations | 4 | Merged as PR #184 (`agent/design-system-m2-slice6-chatbox-conversations` → `main` at `246d85bdeb4dab31d6fd0012d0dd9ddcf0a01237`). |
+
+**133 files** across Slices 1, 2, 3, 5, 6 are genuinely finished, human-merged, and are **not reopened, undone, or reclassified** by this document. Each was implemented and merged under its own separate, fully-specified slice contract (`DESIGN-SYSTEM-M2-SLICE-2-CONTRACT.md`, `-SLICE-3-CONTRACT.md`, `-SLICE-5-CONTRACT.md`, `-SLICE-6-CONTRACT.md`, plus their security-remediation contracts) — none of those documents are touched by this change.
+
+**Legacy Slice 4** (Reports & Analytics, 12 files): deliberately skipped during the original rollout, and now **permanently cancelled in its old SMS-reporting form** by the merged Product Surface Retention Audit (PR #185). Future analytics is a new product build (§8.4 item B5), not a resumption of old Slice 4's implementation.
+
+**Legacy Slice 7a** (Campaigns Quick Send, 6 files): **never started**, and is now **cancelled as an incremental-design slice** — replaced by B1 (§8.4), a from-scratch Outreach/Compose rebuild, not a redesign of the 6 existing quick-send views.
+
+### 8.3 Supersession / cancellation table — old rollout entries → current disposition
+
+| Old entry | Disposition |
+|---|---|
+| Slice 4 (Reports & Analytics, 12 files) | Cancelled in legacy form; replaced by **B5** (Business/Marketing Analytics). |
+| Slice 7a (Campaigns Quick Send, 6 files) | Cancelled; replaced by **B1** (Outreach/Compose). |
+| Slice 7b (Campaigns Builders, 7 files) | Cancelled; replaced by **B1**. |
+| Slice 7c (Campaigns overview/list/modals, 13 files) | Cancelled; replaced by **B1**. |
+| Slice 8 (Automations, 6 files) | Legacy UI redesign cancelled; replaced by **B4**. |
+| Slice 9 (Templates, 6 files) | Legacy standalone Templates redesign cancelled; capability folds into **B1**. |
+| Slice 10 (Numbers/SenderID/Keywords/Compliance, 29 files) | Legacy UI redesign cancelled/redirected into **B2** where capability survives. |
+| Slice 11a-d (Sending Servers, 13 files) | Legacy mega-form redesign cancelled; replaced by **B2**. |
+| Slice 12 (Billing/Payments/Accounts, 30 files) | Legacy redesign cancelled, deferred DELETE (RFC-005 live-cutover-gated) — **except** `customer/business/edit.blade.php`, which moves to **A2**. |
+| Slice 15 (Developer/API Docs, 22 files) | Legacy redesign cancelled — see §8.5, DELETE/deprioritized. |
+| Slice 16 (Admin Tenant Management, 22 files) | Legacy `admin/customer/**` portion cancelled; RFC-aligned `admin/businesses/**`/`admin/workspaces/**` moves to **A2**. |
+| Slice 17 (Plans/Pricing/Catalog, 17 files) | Legacy Plans stack cancelled/deferred per RFC-004/005 direction; generic surviving infra (Currency/Tax) belongs under **B3** only where actually needed. |
+| Slice 18 (Invoices/Subscriptions, 6 files) | Legacy redesign cancelled/deferred DELETE after RFC-005 live cutover. |
+| Slice 20 (Plugins & legacy Theme Customizer, 3 files) | **Plugins/Marketplace: DELETE**, no redesign. **Legacy Theme Customizer: DELETE**, no redesign — reconciliation with theme presets is resolved (no reconciliation; one fixed layout ships). |
+| Slice 21 (System Settings, 26 files) | Vendor-distribution portions (license/updater/installer/demo tooling) DELETE; genuine platform settings redirected to **B3**. |
+| Sub-Accounts (part of old Slice 13, 7 files split) | No incremental redesign; **DELETE LATER**, after a separately-contracted migration to Workspace membership. |
+| Legacy billing (Accounts/Payments/Plans/Subscriptions/Invoices, cross-slice) | No redesign; remains operational only until RFC-005 live charging is production-ready, then a separate migration/cutover and removal. |
+
+Do not execute any deletion from this table — every DELETE/DELETE LATER/cancelled row above is a recommendation carried forward from the human-merged Product Surface Retention Audit, not an action performed by this document.
+
+### 8.4 Surviving design roadmap — current authoritative future work (8 groups)
+
+These eight groups are the accepted future design roadmap. **Merging this
+document does not authorize implementation of any of them** — each still
+requires its own separate scope/contract and explicit human authorization.
+
+#### Category A — retained existing UI to finish (3 groups)
+
+**A1. Business Onboarding**
+Classification: **KEEP + REDESIGN**. Existing capability and workflow
+survive. Future task: incremental Design System redesign of the retained
+existing onboarding UI. Current audited scope: 9 existing views /
+approximately 347 lines (`customer/onboarding/**`, old Slice 14) per the
+merged audit. Not authorized for implementation by this document; requires
+its own future contract/human authorization.
+
+**A2. Workspace / Business**
+Classification: **KEEP + REDESIGN**. Includes the surviving Workspace/
+Business customer/admin surfaces (`customer/workspace{,s}/**`,
+`admin/workspaces/**`, `admin/workspace-plan-catalog/**`,
+`admin/businesses/**`, old Slice 13/16/17 partials) and the Business-
+profile carve-out, `customer/business/edit.blade.php` (moved out of old
+Slice 12). Legacy Sub-Accounts (`customer/SubAccounts/**`) are **not**
+part of this surviving UI roadmap — their disposition is **DELETE LATER**
+after a separately-contracted migration to Workspace membership; that
+migration/deletion is not performed here.
+
+**A3. Admin Users / Roles / Announcements**
+Classification: **KEEP + REDESIGN**. Existing platform-owner/admin
+capability (`admin/{Administrator,AdminRoles,Announcements}/**`, old
+Slice 19) survives. Incremental redesign later. No implementation
+authorization in this document.
+
+#### Category B — new product UI / rebuilds (5 groups)
+
+**B1. Outreach / Compose**
+Replaces old page-by-page Slice 7a, Slice 7b, Slice 7c, and legacy
+Templates (Slice 9). Do **not** redesign the inherited 26-file Campaign
+UI. Classification: **REBUILD FROM SCRATCH**. Backend reuse: **HIGH** —
+retain/reuse `EloquentCampaignRepository::quickSend()`,
+`::campaignBuilder()`, existing dispatch/provider infrastructure, and
+RFC-005-compatible send/metering primitives. Product decision: one
+consolidated Outreach/Compose experience. Initial user-facing channel
+scope: **SMS and MMS**. Architecture remains channel-extensible.
+WhatsApp is deferred to a future, separately-authorized product scope. No
+new current Outreach UI for Viber, OTP, or legacy Voice — their backend
+integrations are not deleted by this roadmap document.
+
+**B2. Simplified Provider / Channel Connection**
+Replaces page-by-page redesign of legacy Sending Server UI, relevant
+Numbers/SenderID UI, and related raw provider configuration surfaces (old
+Slices 10, 11a-d). Classification: **KEEP BACKEND, REBUILD UI**. Retain
+the reusable `SendingServer`/provider infrastructure. Do **not** redesign
+the inherited 39/56-provider mega-forms. Future product: a small, curated
+"connect messaging/provider/number" experience. Provider breadth follows
+actual AI Business OS product requirements, not the full inherited
+Ultimate SMS gateway catalog.
+
+**B3. Simplified Platform Settings**
+Classification: **KEEP BACKEND, REBUILD UI**. Consolidate genuine
+platform-owner settings (old Slice 21, minus vendor-distribution
+machinery) into a coherent new settings experience. Explicitly excludes
+from the surviving product: CodeGlen Plugins/Marketplace, legacy Theme
+Customizer, license/purchase-code UI, vendor updater, the
+Installer/self-hosted-product wizard, and demo/vendor-distribution
+tooling — those are deletion candidates, not redesign work. Retain only
+genuine AI Business OS platform configuration as appropriate, including
+Currency/Tax generic infra from old Slice 17 where actually needed.
+
+**B4. Automations / AI-assisted Sequences**
+Old Slice 8 legacy automation UI is **not** to be incrementally
+redesigned. Classification: **REBUILD FROM SCRATCH**. Future capability:
+AI Business OS automations / AI-assisted sequences. Dependency: should
+follow Outreach/Compose (B1) because it shares messaging/send primitives.
+The merged audit found existing backend/domain behavior insufficient for
+the target experience, so this is expected to require new backend
+architecture as well as new UI — not designed by this document; future
+work requires its own RFC/contract as appropriate.
+
+**B5. Business / Marketing Analytics**
+Old Slice 4 legacy Reports redesign is permanently cancelled.
+Classification: **REBUILD FROM SCRATCH**. Future analytics should be
+business-outcome shaped, not raw SMS-platform DLR reporting. Future
+concepts may include, subject to later contract: leads, opportunities,
+bookings/conversions, outreach effectiveness, marketing ROI, business
+performance. Dependency: CRM/Opportunities/Outreach should provide stable
+data sources first. Implementation details are not invented here.
+
+No additional roadmap groups are added beyond these 8 (3 Category A + 5
+Category B).
+
+### 8.5 Developer / API position
+
+Legacy raw-SMS Developer/API Docs (`customer/Developers/**`, old Slice
+15, 22 files) are **no longer a future Design System redesign slice**.
+Classification: **DELETE / DEPRIORITIZED LEGACY SURFACE**. If AI Business
+OS later offers a public API, it must receive a new product/RFC scope
+based on actual AI Business OS domains — the inherited per-channel API
+structure is not preserved as a future product requirement.
+
+### 8.6 Progress reporting — two indicators, never combined
+
+The old full 375-file legacy rollout map is **not** the correct current
+completion denominator. Historical counts are preserved above (§8.1) for
+traceability, but current progress is reported as two separate,
+non-combined indicators:
+
+**Indicator A — retained existing UI redesign:** approximately **80-85%
+complete** (133 of ~162 existing views in the KEEP + REDESIGN scope —
+§8.2's completed 133, against a remaining surviving-redesign set of
+Onboarding (A1, 9 files) + Workspace/Business (A2, ~11-12 files) + Admin
+Users/Roles/Announcements (A3, 8 files) ≈ 29 remaining). **This is not
+overall product design completion** — it measures only the narrow,
+already-decided-worth-keeping legacy-UI redesign scope.
+
+**Indicator B — new-build product UI:** major new modules remain **not
+started** — Outreach/Compose (B1), Provider/Channel Connection (B2),
+Simplified Settings (B3), Automations (B4), Business/Marketing Analytics
+(B5). No honest file-weighted completion percentage exists yet for these,
+since they are new builds, not incremental redesigns of existing files.
+
+**A and B are never combined into one fake overall percentage.**
 
 ---
 
