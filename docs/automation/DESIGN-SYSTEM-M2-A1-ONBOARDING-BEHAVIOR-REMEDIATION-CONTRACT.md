@@ -1,12 +1,13 @@
 # Design System M2 A1 — Onboarding Nonvisual Behavior Remediation Contract
 
 **Status: CONTRACT / AUDIT ONLY. No implementation has occurred under this
-document. This is Correction Round 1 of the remediation contract.
-Merging this contract does NOT authorize implementation — that requires
-its own separate, explicit human authorization, exactly like every prior
-contract in this repository. This contract is explicitly NONVISUAL: it
-does not touch, and does not authorize touching, any of the nine
-onboarding Blade views.**
+document. This is Correction Round 2 — FINAL. No further correction
+rounds remain (`maximum_correction_rounds: 2`). Merging this contract
+does NOT authorize implementation — that requires its own separate,
+explicit human authorization, exactly like every prior contract in this
+repository. This contract is explicitly NONVISUAL: it does not touch,
+and does not authorize touching, any of the nine onboarding Blade
+views.**
 
 ---
 
@@ -18,6 +19,7 @@ remediation_type: nonvisual_onboarding_behavior
 
 docs_only: true
 implementation_has_occurred: false
+contract_status: final_pending_human_merge
 
 blocking_prerequisite_count: 2
 
@@ -47,19 +49,21 @@ no_force_push: true
 no_deployment: true
 
 maximum_correction_rounds: 2
-correction_round: 1
-correction_round_is_final: false
+correction_round: 2
+correction_round_is_final: true
 ```
 
 **Base verification**: this correction is drafted on branch
 `chore/design-system-m2-a1-onboarding-behavior-remediation-contract`, in
-an isolated worktree, remaining on the same branch as the original draft.
-`origin/main` confirmed exactly `9e4127b8159741fb61f3dca8174d33d267b6c759`
-before this correction began — unchanged since the original draft (PR
+an isolated worktree, remaining on the same branch throughout both
+correction rounds. `origin/main` re-confirmed exactly
+`9e4127b8159741fb61f3dca8174d33d267b6c759` before this correction began
+— unchanged since the original draft and since Correction Round 1 (PR
 #188, "Design System M2 A1 — Business Onboarding Contract Final
 Correction," parents `b7eabccd0702723965023336dcc4f01d5389f42a` and
-`2d8b43e88747a6b16a22ef2a8c80496afd055a6b`). Pre-correction head:
-`d99ef6d3652edf967ebb6ef56e127229145b7f82`. This branch changes
+`2d8b43e88747a6b16a22ef2a8c80496afd055a6b`). Correction Round 1 head:
+`669ed457da88edc6269278ad7d6949c6f9d80af9`, re-verified exactly before
+this round began. This branch changes
 **exactly one path**: this document. No `resources/`, `app/`,
 `database/`, or `routes/` file is touched by drafting this correction —
 the two production source files cited below (`BusinessOnboardingController.php`,
@@ -81,8 +85,9 @@ Read in full (original draft, unchanged by this correction): `CLAUDE.md`,
 `app/Library/Business/OnboardingManager.php`,
 `app/Library/Business/BusinessManager.php`, `app/Exceptions/Handler.php`,
 `config/business.php`, `app/Library/Entitlement/EntitlementManager.php`,
-all six `App\Exceptions\Entitlement\*` classes reachable from
-`assertCanCreateAnotherBusiness()`, the existing entitlement-denial
+all five named `App\Exceptions\Entitlement\*` classes reachable from
+`assertCanCreateAnotherBusiness()` (plus its confirmed-unreachable bare
+`RuntimeException` default match arm, §8), the existing entitlement-denial
 handling in `WorkspaceController`/`Admin\WorkspaceEntitlementController`,
 the `opportunity.enabled` precedent, and every existing test file
 covering these paths.
@@ -223,15 +228,34 @@ class EnsureBusinessOnboardingIsEnabled
 }
 ```
 
-**Exact `Kernel.php` registration**: one new line in the existing
-`$routeMiddleware` array (`app/Http/Kernel.php:91-117`), immediately
-after the existing `'business.onboarding' => EnsureRequiredBusinessOnboardingIsComplete::class,`
-entry (`:116`), following the same alias-naming convention already
-established there:
+**Exact `Kernel.php` registration — Correction Round 2, import added.**
+`app/Http/Kernel.php` is namespace `App\Http` (`:3`) and explicitly
+imports every middleware class it references via its own alphabetically-
+sorted `use` block (`:5-38`), including the existing
+`use App\Http\Middleware\EnsureRequiredBusinessOnboardingIsComplete;`
+(`:11`) — confirmed by direct reading. The new middleware requires the
+identical treatment; an unqualified class reference with no import would
+not resolve. **Exact new `use` line**, placed immediately before the
+existing `EnsureRequiredBusinessOnboardingIsComplete` import to preserve
+the file's existing alphabetical ordering (`EnsureB...` sorts before
+`EnsureR...`):
+
+```php
+use App\Http\Middleware\EnsureBusinessOnboardingIsEnabled;
+use App\Http\Middleware\EnsureRequiredBusinessOnboardingIsComplete;
+```
+
+**Exact new `$routeMiddleware` array entry**, immediately after the
+existing `'business.onboarding' => EnsureRequiredBusinessOnboardingIsComplete::class,`
+entry (`:116`):
 
 ```php
 'business.onboarding.enabled' => EnsureBusinessOnboardingIsEnabled::class,
 ```
+
+This import and the alias entry are both part of the same already-
+allowlisted `app/Http/Kernel.php` path (§17 item 2) — locking the import
+does not add a path.
 
 **Exact `routes/customer.php` change** — one attribute added to the
 existing group definition (`:508`), no route added/removed/reordered:
@@ -429,34 +453,67 @@ public function handle(
 }
 ```
 
-**Exact insertion point**: a new check, immediately after the
-`Completed`/`Dismissed` terminal-state check and immediately before the
-`business_id === null` check:
+### 7.4 Correction Round 2 — the disabled-branch guard must be state-aware
+
+The Round 1 insertion (unconditional `markFailed()` for any same-version
+status other than `Completed`/`Dismissed`) is **too wide and is
+corrected**. `App\Enums\Business\OnboardingStatus` (verified directly)
+has seven cases: `NotStarted`, `Started`, `AnalysisPending`,
+`ResultsReady`, `Completed`, `Dismissed`, `Failed`. The Round 1 branch
+would also fire for `ResultsReady` and `Failed` — a duplicate/superseded-
+but-same-version job arriving after the analysis already reached
+`ResultsReady` would wrongly regress a **valid, already-computed
+result** back to `Failed` merely because the flag happened to be
+disabled by the time it ran; a same-version job arriving after the
+onboarding already reached `Failed` would wrongly dispatch a duplicate
+`InitialBusinessAnalysisFailed` event. The intended in-flight scenario
+this section addresses (§7.1-§7.2) is specifically the job still being
+genuinely pending — `AnalysisPending` — not any other status.
+
+**Exact, corrected insertion point**: a new state-aware check,
+immediately after the `Completed`/`Dismissed` terminal-state check and
+immediately before the `business_id === null` check:
 
 ```php
     if (! config('business.onboarding.enabled', false)) {
         // RFC-001-BUSINESS-CORE-DEPLOYMENT.md §8: an in-flight job encountering
-        // a disabled feature "safely no-ops or marks a safe failure" -- a safe
-        // failure is chosen here, not a no-op, so the customer is not left
-        // stuck in AnalysisPending indefinitely once the retry route is
-        // itself gated (§4) while the feature remains disabled.
-        $this->markFailed($onboarding, $onboardingRepository);
+        // a disabled feature "safely no-ops or marks a safe failure." Only a
+        // genuinely still-pending analysis is safe-failed here -- a job that
+        // arrives after the onboarding already reached ResultsReady or Failed
+        // must no-op, never regress a valid result or dispatch a duplicate
+        // failure event merely because the feature is now disabled.
+        if ($onboarding->status === OnboardingStatus::AnalysisPending) {
+            $this->markFailed($onboarding, $onboardingRepository);
+        }
 
         return;
     }
 ```
 
-**Preserved exactly, per §6's clarification**: `analysis_version` is
-preserved (guarded by `failAnalysis()`'s own existing version re-check
-under `lockForUpdate()`, unchanged); `business_id` is preserved
+**Exact locked behavior by status, while disabled**: `AnalysisPending` →
+safe-fail via the existing `markFailed()` (unchanged from §7.2's
+decision); `ResultsReady` → no-op, the valid result is preserved
+untouched; `Failed` → no-op, no duplicate `InitialBusinessAnalysisFailed`
+event; any other reachable non-pending status → no-op; `Completed`/
+`Dismissed` → still handled by the existing, earlier, unmodified no-op
+check above this new branch. This remains fully compliant with the
+RFC's own "safely no-ops or marks a safe failure" wording (§7.1) for
+every status, not only the pending one.
+
+**Preserved exactly, per §6's clarification, for the `AnalysisPending`
+safe-failure branch specifically**: `analysis_version` is preserved
+(guarded by `failAnalysis()`'s own existing version re-check under
+`lockForUpdate()`, unchanged); `business_id` is preserved
 (`markFailed()`/`failAnalysis()` never touch it); `completed_steps` is
 preserved (untouched by this branch); `current_step` remains `Analysis`
-through the existing `failAnalysis()` implementation (it does not
-advance `current_step`, matching every other `markFailed()` call site);
-`status` becomes `Failed`; `analysis_error` is set to the job's existing
-`SAFE_ERROR` constant, verbatim: `"We could not finish the analysis.
-Please retry."`; the existing `InitialBusinessAnalysisFailed` event
-dispatch follows `markFailed()`'s own established, unmodified logic.
+through the existing `failAnalysis()` implementation; `status` becomes
+`Failed`; `analysis_error` is set to the job's existing `SAFE_ERROR`
+constant, verbatim: `"We could not finish the analysis. Please retry."`;
+the existing `InitialBusinessAnalysisFailed` event dispatch follows
+`markFailed()`'s own established, unmodified logic. For the `ResultsReady`/
+`Failed`/other no-op branches, every field on the row — including
+`analysis_payload` — is provably untouched, since the new branch
+`return`s immediately without calling any repository method at all.
 
 **This adds `app/Jobs/Business/BuildInitialBusinessSnapshot.php` to the
 production implementation allowlist** (§17) — it is no longer excluded.
@@ -484,8 +541,9 @@ throws nothing and only ever returns one of the five known reasons or
 `\RuntimeException` directly; no legitimate shared parent to catch
 instead, and this contract does not invent one. **Confirmed
 anonymization**: all five messages carry only a numeric Workspace ID,
-nothing else. **Confirmed via `Handler.php`**: none of the six is
-special-cased; HTML → generic framework 500 today (the actual defect);
+nothing else. **Confirmed via `Handler.php`**: none of the five named
+classes, nor the confirmed-unreachable default `RuntimeException` arm,
+is special-cased; HTML → generic framework 500 today (the actual defect);
 JSON → the repository-wide `wantsJson()` 200-status envelope, which
 today leaks the raw message (including the Workspace ID) — corrected by
 §9, since the new catch intercepts the exception before it ever reaches
@@ -562,9 +620,32 @@ placed alongside the existing `catch (InvalidArgumentException)` clause,
 using the identical named-route/`withInput()`/`withErrors(['onboarding'
 => ...])` shape already established there.
 
-**Exact caught type** (unchanged): a union catch of the five named
-`App\Exceptions\Entitlement\*` classes from §8 — never a bare
-`\RuntimeException`, never a new shared interface.
+**Exact required imports — Correction Round 2, locked.**
+`BusinessOnboardingController.php` currently imports none of the five
+capacity exception classes (confirmed by direct reading of its existing
+`use` block). The exact repository convention already exists —
+`app/Http/Controllers/Customer/Workspace/WorkspaceController.php` (§9.1's
+own precedent) imports the identical five classes, in this exact
+alphabetical order, confirmed by direct reading:
+
+```php
+use App\Exceptions\Entitlement\BusinessSlotAllocationRequiredException;
+use App\Exceptions\Entitlement\BusinessSlotLimitExceededException;
+use App\Exceptions\Entitlement\InactiveWorkspacePlanException;
+use App\Exceptions\Entitlement\SuspendedWorkspacePlanException;
+use App\Exceptions\Entitlement\WorkspacePlanUnassignedException;
+```
+
+`BusinessOnboardingController.php` must add the identical five imports,
+matching this already-established repository convention exactly. These
+imports are part of the same already-allowlisted controller path (§17
+item 5) — locking them does not add a path.
+
+**Exact caught type** (unchanged): a union catch of exactly the five
+named `App\Exceptions\Entitlement\*` classes above — never a bare
+`\RuntimeException`, never a new shared interface, never
+`AuthorizationException`, and never the confirmed-unreachable default
+`RuntimeException` match arm (§8).
 
 **State-preservation guarantees** (unchanged, all already true today by
 virtue of the existing transaction wrapping `applyIdentity()`'s CREATE
@@ -617,10 +698,26 @@ literal string — ✓.
 Reconfirmed, unchanged in substance, updated only where the corrected
 architecture (§4, §7, §9) changes *which* file enforces a guarantee:
 
-- **Authentication**: unaffected — the new middleware (§4.2) runs after
-  the route group's own `auth` middleware, inheriting the same ordering
-  as every other guard in the group; a guest is redirected to login
-  before ever reaching the new gate.
+- **Authentication — Correction Round 2, corrected.** The original
+  claim here ("a guest is redirected to login before ever reaching the
+  new gate") was inaccurate for this application. Verified directly
+  against `tests/Feature/Business/BusinessOnboardingHttpTest.php::test_guest_cannot_access_onboarding`,
+  whose own comment confirms the actual, existing, intentional behavior:
+  `app/Exceptions/Handler.php::render()` explicitly renders
+  `AuthenticationException` as a **401** response (`errors.401` view)
+  whenever `config('app.env') !== 'local'`, overriding the auth
+  middleware's own login-redirect fallback — this is existing,
+  app-wide behavior for every `routes/customer.php` route, not specific
+  to onboarding, and is locked with `assertUnauthorized()` in the
+  existing test, unchanged by this remediation. The middleware-ordering
+  fact that matters remains true and is unaffected: the route group's
+  inherited `auth` middleware runs before the new
+  `business.onboarding.enabled` middleware (§4.2), so an unauthenticated
+  request never reaches the new gate at all — it is rejected by `auth`
+  first, exactly as today. **This remediation does not change
+  authentication semantics**, and the existing guest test is not
+  rewritten to expect a login redirect — it correctly keeps asserting
+  `assertUnauthorized()`.
 - **Onboarding/Business ownership, Workspace association, RFC-004
   capacity enforcement, transaction/locking**: entirely untouched — this
   correction still only adds a route middleware, a `saveStep()` catch
@@ -679,6 +776,35 @@ Unchanged core finding, expanded scope per the corrected architecture.
   (`tests/Feature/Business/BusinessOnboardingHttpTest.php:358-365`) —
   still the one stale test from the original inventory; must be
   rewritten to assert `assertNotFound()` (§15).
+
+**Second stale test, identified by Correction Round 2**:
+`test_dashboard_is_not_redirected_when_onboarding_config_key_is_missing`.
+**Verified directly**: `config/business.php` already declares the
+`enabled` key with `env('BUSINESS_ONBOARDING_ENABLED', false)` (confirmed
+by direct reading — the key is not, in fact, missing from the shipped
+config file; this test's existing name/intent is to simulate the key
+being absent from the *runtime* config array regardless). Once
+Correction Round 1's file-level `setUp()` sets
+`config(['business.onboarding.enabled' => true])` (§15), this test would
+silently stop testing what its name claims unless it explicitly removes
+the runtime nested key before running. **Locked correction**: the test
+body must explicitly unset the runtime `enabled` key rather than merely
+setting it to `false` (setting it to `false` would make it identical to,
+and redundant with, the disabled-flag test above it), using a
+repository-safe pattern equivalent to:
+
+```php
+$onboardingConfig = config('business.onboarding');
+unset($onboardingConfig['enabled']);
+config(['business.onboarding' => $onboardingConfig]);
+```
+
+so that `config('business.onboarding.enabled', false)` genuinely
+resolves through its fallback default rather than a still-present
+`false` value, then preserves its existing assertion,
+`$this->get(route('user.home'))->assertOk();` — its purpose becomes
+genuinely what its name says: a missing key safely behaves as disabled,
+not merely an `enabled=false` duplicate of the adjacent test.
 
 **Newly identified by this correction — not a stale assertion, but a
 missing test-fixture precondition**: `BusinessOnboardingHttpTest.php`'s
@@ -778,17 +904,37 @@ explicit under the new `setUp()` baseline):
 - Normal wizard step persistence unchanged for all 5 steps.
 - Analysis dispatch remains functional.
 
-**QUEUED ANALYSIS** (`BuildInitialBusinessSnapshotJobTest.php`):
+**QUEUED ANALYSIS** (`BuildInitialBusinessSnapshotJobTest.php`, expanded
+by Correction Round 2 to cover all three reachable disabled-state
+branches from the corrected, state-aware guard, §7.4):
 
-- **Corrected outcome**: job dispatched while enabled, flag flipped to
-  `false` before the job runs — assert: `status == Failed`; `current_step
-  == Analysis` (unchanged); `analysis_payload` remains `null`;
-  `analysis_error` equals the exact existing literal `"We could not
-  finish the analysis. Please retry."`; no `InitialBusinessAnalysisCompleted`
-  event dispatched; `InitialBusinessAnalysisFailed` dispatched, following
+- **DISABLED + `AnalysisPending`** (the original in-flight scenario):
+  job dispatched while enabled, flag flipped to `false` before the job
+  runs — assert: `status == Failed`; `current_step == Analysis`
+  (unchanged); `analysis_payload` remains `null`; `analysis_error`
+  equals the exact existing literal `"We could not finish the analysis.
+  Please retry."`; no `InitialBusinessAnalysisCompleted` event
+  dispatched; `InitialBusinessAnalysisFailed` dispatched, following
   `markFailed()`'s existing semantics; `analysis_version` unchanged; no
   `Business` mutation. **Do not test that the disabled job becomes
   `ResultsReady`** — that was the original draft's incorrect expectation.
+- **DISABLED + already `ResultsReady`** (new, Correction Round 2):
+  prepare a same-version onboarding already at `ResultsReady` with a
+  valid, populated `analysis_payload`; set `enabled=false`; execute the
+  same job — assert: `status` remains `ResultsReady`; `current_step`
+  remains `Results`; `analysis_payload` is byte-for-byte unchanged from
+  what was prepared; no `InitialBusinessAnalysisFailed` event dispatched;
+  no `InitialBusinessAnalysisCompleted` event dispatched by this no-op
+  execution (proving a disabled flag cannot regress a valid result).
+- **DISABLED + already `Failed`** (new, Correction Round 2): prepare a
+  same-version onboarding already at `Failed`; set `enabled=false`;
+  execute the same job — assert: `status` remains `Failed`; no duplicate
+  `InitialBusinessAnalysisFailed` event is dispatched by this execution
+  (proving no double-failure event on a redundant run).
+
+All three remain in the same already-allowlisted
+`tests/Feature/Business/BuildInitialBusinessSnapshotJobTest.php` path
+(§17 item 7) — no new test path is added.
 
 **CAPACITY DENIAL** (`BusinessOnboardingHttpTest.php`, new — corrected to
 cover all five, not two representative types):
@@ -864,34 +1010,46 @@ implementation's baseline** (§19), unchanged from the original draft.
 
 ## 17. Exact future implementation allowlist and stop threshold
 
-**Correction Round 1 — revised from 3 paths to 7, reflecting the
-corrected architecture (§4, §7, §9-§10).**
+**Unchanged count from Correction Round 1: 7 paths.** Correction Round
+2 adds required imports (§4.2, §9.2) and refines the job's guard logic
+(§7.4) and test bodies (§13, §15) — all strictly *within* these same 7
+already-listed paths. No path is added or removed by Correction Round 2.
 
 **Production (5 paths):**
 1. `app/Http/Middleware/EnsureBusinessOnboardingIsEnabled.php` — new file
    (§4.2).
-2. `app/Http/Kernel.php` — one new `$routeMiddleware` alias line (§4.2).
+2. `app/Http/Kernel.php` — one new `use App\Http\Middleware\EnsureBusinessOnboardingIsEnabled;`
+   import line, alphabetically placed immediately before the existing
+   `EnsureRequiredBusinessOnboardingIsComplete` import, plus one new
+   `$routeMiddleware` alias line (§4.2, corrected in Round 2 to lock the
+   import explicitly).
 3. `routes/customer.php` — one `->middleware('business.onboarding.enabled')`
    attribute added to the existing onboarding route group definition
    (§4.2); the 11 routes inside the group are otherwise byte-identical.
 4. `app/Jobs/Business/BuildInitialBusinessSnapshot.php` — one new
-   disabled-flag check inside `handle()`, calling the job's existing
-   `markFailed()` (§7.3).
+   state-aware disabled-flag check inside `handle()`, safe-failing only
+   when `status === AnalysisPending`, calling the job's existing
+   `markFailed()` (§7.4, corrected in Round 2 from Round 1's
+   unconditional version).
 5. `app/Http/Controllers/Customer/BusinessOnboardingController.php` —
-   add the five-exception union catch clause and `CAPACITY_DENIAL_MESSAGE`
-   constant to `saveStep()` (§9.2/§10). **The original draft's
-   `ensureOnboardingEnabled()` controller method and its 11 per-action
-   call sites are removed from this allowlist entirely** (§4.1) —
-   replaced by the route middleware above.
+   add the five required `App\Exceptions\Entitlement\*` imports
+   (§9.2, corrected in Round 2 to lock them explicitly), the
+   five-exception union catch clause, and the private
+   `CAPACITY_DENIAL_MESSAGE` constant to `saveStep()` (§9.2/§10). The
+   original draft's `ensureOnboardingEnabled()` controller method and
+   its 11 per-action call sites remain removed (§4.1) — replaced by the
+   route middleware above.
 
 **Tests (2 paths):**
 6. `tests/Feature/Business/BusinessOnboardingHttpTest.php` — enabled
-   baseline `setUp()`; corrected stale test; full master-switch-off
+   baseline `setUp()`; the two corrected stale tests (§13, including the
+   Round-2-added missing-config-key correction); full master-switch-off
    matrix including FormRequest-precedence proof; full five-exception
    capacity-denial matrix; security tests (§15).
 7. `tests/Feature/Business/BuildInitialBusinessSnapshotJobTest.php` —
-   enabled baseline `setUp()`; corrected disabled-queued-job
-   safe-failure test (§7.3/§15).
+   enabled baseline `setUp()`; the three disabled-state job tests
+   (`AnalysisPending` safe-failure, `ResultsReady` no-op, `Failed`
+   no-op — §7.4/§15, expanded in Round 2 from Round 1's single test).
 
 **Total: exactly 7 paths.**
 
@@ -967,26 +1125,50 @@ Re-verified against the corrected evidence:
 
 - Exactly one changed path this correction: this document. ✓
 - `origin/main` re-verified exactly `9e4127b8159741fb61f3dca8174d33d267b6c759`,
-  unchanged since the original draft. ✓
-- Pre-correction head verified exactly `d99ef6d3652edf967ebb6ef56e127229145b7f82`. ✓
-- `correction_round: 1` recorded (§0). ✓
+  unchanged since the original draft and since Correction Round 1. ✓
+- Correction Round 1 head verified exactly `669ed457da88edc6269278ad7d6949c6f9d80af9`. ✓
+- `correction_round: 2`, `correction_round_is_final: true`,
+  `contract_status: final_pending_human_merge` recorded (§0). ✓
 - Controller-body guard defect identified and corrected — replaced with
-  route middleware (§4). ✓
+  route middleware (§4, Round 1, unchanged by Round 2). ✓
 - Exact local disabled response locked for browser and JSON, no
-  `Handler.php` dependency (§5). ✓
+  `Handler.php` dependency (§5, Round 1, unchanged by Round 2). ✓
 - Queued-job decision corrected against the RFC's exact, re-quoted text
-  — safe failure, not normal completion (§7). ✓
-- `BuildInitialBusinessSnapshot.php` added to the production allowlist (§17). ✓
+  — safe failure, not normal completion (§7.1-§7.2, Round 1, unchanged
+  by Round 2). ✓
+- Disabled-job guard made state-aware — safe-fails only `AnalysisPending`,
+  no-ops for `ResultsReady`/`Failed`/other statuses (§7.4, new in Round 2). ✓
+- `BuildInitialBusinessSnapshot.php` remains in the production allowlist (§17). ✓
 - Capacity-denial redirect target corrected to the named-route form,
-  verified against the real existing `saveStep()` code (§9.2). ✓
-- Safe capacity message corrected to avoid implying transience (§10). ✓
-- Capacity-denial test coverage expanded to all five exception families,
-  not two representative ones (§15). ✓
+  verified against the real existing `saveStep()` code (§9.2, Round 1,
+  unchanged by Round 2). ✓
+- Kernel.php middleware import explicitly locked, placed per the file's
+  existing alphabetical convention (§4.2, new in Round 2). ✓
+- BusinessOnboardingController's five capacity-exception imports
+  explicitly locked, matching the verified existing `WorkspaceController`
+  convention exactly (§9.2, new in Round 2). ✓
+- Guest/authentication claim corrected to the verified actual behavior
+  (HTTP 401 via `Handler`'s existing `AuthenticationException` branch,
+  not a login redirect) (§11, new in Round 2). ✓
+- Second stale test identified and corrected — the missing-config-key
+  test now explicitly unsets the runtime key rather than duplicating the
+  adjacent disabled-flag test (§13, new in Round 2). ✓
+- Safe capacity message corrected to avoid implying transience (§10,
+  Round 1, unchanged by Round 2). ✓
+- Capacity-denial test coverage covers all five exception families,
+  not two representative ones (§15, Round 1, unchanged by Round 2). ✓
 - Private constant confirmed to remain private; every test reference
-  corrected to assert the literal string (§10, §15). ✓
+  asserts the literal string (§10, §15, Round 1, unchanged by Round 2). ✓
 - Both test files' enabled-baseline `setUp()` fixtures locked (§13, §15). ✓
-- Exact implementation allowlist locked at 7 paths, 8th-path stop
-  threshold (§17). ✓
+- Job test plan expanded to all three reachable disabled-state branches
+  — `AnalysisPending` safe-failure, `ResultsReady` no-op, `Failed` no-op
+  (§15, new in Round 2). ✓
+- Exception-inventory wording corrected throughout to "five named classes
+  plus one confirmed-unreachable default arm," never "six named classes"
+  (§1, §8, new in Round 2). ✓
+- Exact implementation allowlist confirmed still bounded at 7 paths, 8th-
+  path stop threshold — the Round 2 corrections all land within the same
+  7 paths, none add or remove one (§17). ✓
 - Zero onboarding Blade paths, zero Design System visual paths in the
   allowlist. ✓
 - A1 visual implementation remains blocked; this contract's own merge
@@ -995,35 +1177,94 @@ Re-verified against the corrected evidence:
 - `docs/automation/DESIGN-SYSTEM-M2-CONTRACT.md` untouched. ✓
 - `docs/automation/DESIGN-SYSTEM-M2-A1-BUSINESS-ONBOARDING-CONTRACT.md`
   untouched. ✓
+- `docs/automation/PRODUCT-SURFACE-RETENTION-AUDIT.md` untouched. ✓
 - All four RFC-001/RFC-004 documents untouched — no amendment performed. ✓
-- **Stale-claim sweep performed mechanically**: zero live claims that a
-  job dispatched before disablement completes normally while disabled;
-  zero live claims that disabled jobs transition to `ResultsReady`; zero
-  live claims that `BuildInitialBusinessSnapshot.php` is excluded from
-  the production allowlist; zero live claims that RFC-001 only governs
-  new dispatches (§7.1 explicitly quotes and applies the in-flight-job
-  sentence); zero live claims that a controller first-line guard executes
-  before FormRequest validation (§4.1 explicitly documents why it does
-  not); zero live claims that controller-only guarding fully hides
-  disabled onboarding routes; zero live claims that
-  `redirect()->to($resolvedStepValue)` is the capacity-denial redirect
-  (§9.2 corrected to the named-route form); zero live claims that
-  capacity coverage of only two representative exception families is
-  sufficient (§15 covers all five); zero live claims that tests may
-  access a private `CAPACITY_DENIAL_MESSAGE` constant (§10, §15 assert
-  the literal string); zero live claims that "try again in a moment" is
-  the locked capacity-denial message (§10 replaced it); zero live claims
-  that the implementation allowlist total is 3 or that the stop
-  threshold is the 4th path (§17 now locks 7 and the 8th). ✓
+- **Final stale-claim sweep performed mechanically**: zero live claims
+  that Kernel.php needs only the alias line and no class import (§4.2
+  now locks both); zero live claims that the five capacity exception
+  classes need no imports in the onboarding controller (§9.2 now locks
+  them); zero live claims that guests are redirected to login by current
+  onboarding HTTP behavior (§11 corrected to HTTP 401, verified against
+  the real existing test); zero live claims that the "config key
+  missing" test can remain untouched after the file-level `enabled=true`
+  `setUp()` (§13 now locks its correction); zero live claims that
+  current `config/business.php` actually lacks the `enabled` key (§13
+  confirms it exists, default `false`); zero live claims that a disabled
+  same-version `ResultsReady` job should be marked `Failed` (§7.4 locks
+  a no-op instead); zero live claims that a disabled already-`Failed`
+  job should dispatch another failure event (§7.4 locks a no-op); zero
+  live claims that there are six named `App\Exceptions\Entitlement`
+  capacity classes (§1, §8 corrected to five named plus one confirmed-
+  unreachable default arm); zero live claims that the implementation
+  allowlist differs from 7 or that the stop threshold differs from the
+  8th path (§17); zero live claims that A1 visual work is unblocked (§0,
+  §19 lock it blocked). ✓
 
 `git diff --check` run against the staged file before commit — reported
 in the final chat report.
 
 ---
 
+## 22. Correction Round 2 (final) — summary
+
+Executed on the same branch as Correction Round 1, against Round 1's own
+head `669ed457da88edc6269278ad7d6949c6f9d80af9`, `origin/main` re-verified
+unchanged at `9e4127b8159741fb61f3dca8174d33d267b6c759`. Outcomes:
+
+1. **Kernel.php import explicitly locked** (§4.2) — the new middleware's
+   `use` statement, alphabetically placed, alongside the existing alias
+   entry; both remain within the same already-allowlisted `Kernel.php`
+   path.
+2. **Controller exception imports explicitly locked** (§9.2) — the five
+   `App\Exceptions\Entitlement\*` imports, matching the verified,
+   already-existing `WorkspaceController` convention exactly; within the
+   same already-allowlisted controller path.
+3. **Guest/authentication claim corrected** (§11) — verified against the
+   real existing test and `Handler.php`: unauthenticated onboarding
+   requests receive HTTP 401 (existing, app-wide, unchanged behavior),
+   not a login redirect; the existing guest test's `assertUnauthorized()`
+   is not rewritten.
+4. **Second stale test identified and corrected** (§13) — the
+   missing-config-key test must now explicitly unset the runtime
+   `business.onboarding.enabled` key (verified present in
+   `config/business.php` by default) rather than silently duplicating
+   the adjacent explicit-`false` test once the file-level `enabled=true`
+   baseline is introduced.
+5. **Disabled-job guard corrected to be state-aware** (§7.4) — verified
+   `OnboardingStatus`'s seven cases directly; the Round 1 guard's
+   unconditional `markFailed()` for "any status but Completed/Dismissed"
+   would have wrongly regressed a valid `ResultsReady` result to
+   `Failed`, or dispatched a duplicate failure event for an
+   already-`Failed` onboarding, on a disabled, same-version, redundant
+   job execution. Corrected to safe-fail only when `status ===
+   AnalysisPending`; `ResultsReady`/`Failed`/other statuses no-op.
+6. **Job test plan expanded** (§15) — from one disabled-job test to
+   three, covering all three reachable disabled-state branches from the
+   corrected guard.
+7. **Exception-inventory wording corrected** (§1, §8) — "five named
+   `App\Exceptions\Entitlement` classes plus one confirmed-unreachable
+   default `RuntimeException` arm," never described as six named
+   classes.
+8. **Preserved unchanged, per instruction, all now-correct Round 1
+   architecture**: the route-middleware master-switch design; the
+   404-for-both-browser-and-JSON disabled response with `Handler.php`
+   untouched; `EnsureRequiredBusinessOnboardingIsComplete.php` and
+   `EloquentAccountRepository.php` untouched; the job's safe-failure
+   (not normal-completion) decision and its reuse of the existing
+   `markFailed()`/`SAFE_ERROR` mechanism; `saveStep()` as the
+   capacity-denial seam; the exact five named exception classes; the
+   named-route redirect; `withInput()`/`withErrors(['onboarding' =>
+   ...])`; the private, fixed, non-transient-implying safe message; and
+   the 7-path/8th-threshold implementation allowlist.
+9. **Aggregate diff against `origin/main` remains exactly one path**:
+   this document. No application, test, route, RFC, or other automation
+   governance file was modified.
+
+---
+
 *End of Design System M2 A1 — Onboarding Nonvisual Behavior Remediation
-Contract, Correction Round 1. Docs/audit only. No implementation has
-occurred. Implementation requires its own separate, explicit human
-authorization. A1 visual implementation remains blocked until this
-remediation is implemented and human-merged. A2, A3, B1, and every other
-roadmap group remain unstarted.*
+Contract, Correction Round 2, FINAL. No further correction rounds remain.
+Docs/audit only. No implementation has occurred. Implementation requires
+its own separate, explicit human authorization. A1 visual implementation
+remains blocked until this remediation is implemented and human-merged.
+A2, A3, B1, and every other roadmap group remain unstarted.*
