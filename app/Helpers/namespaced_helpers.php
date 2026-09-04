@@ -13,61 +13,6 @@
     use Monolog\Logger;
     use SimpleXMLElement;
     use Throwable;
-    use Illuminate\Support\Facades\Schema;
-    use Illuminate\Support\Facades\DB;
-
-    /**
-     * @throws Exception
-     */
-    function generatePublicPath($absPath, $withHost = false)
-    {
-        if (empty(trim($absPath))) {
-            throw new Exception('Empty path');
-        }
-
-        $excludeBase = base_path();
-        $pos         = strpos($absPath, $excludeBase); // Expect pos to be exactly 0
-
-        if ($pos === false) {
-            throw new Exception(sprintf("File '%s' cannot be made public, only files under storage/ folder can", $absPath));
-        }
-
-        if ($pos != 0) {
-            throw new Exception(sprintf("Invalid path '%s', cannot make it public", $absPath));
-        }
-
-        $relativePath = substr($absPath, strlen($excludeBase) + 1);
-
-        $dirname        = dirname($relativePath);
-        $basename       = basename($relativePath);
-        $encodedDirname = StringHelper::base64UrlEncode($dirname);
-
-        // If Laravel is under a subdirectory
-        $subdirectory = getAppSubdirectory();
-
-        if (empty($subdirectory) || $withHost) {
-            $url = route('admin.plugins.asset', ['dirname' => $encodedDirname, 'basename' => rawurlencode($basename)], $withHost);
-        } else {
-            // Make sure the $subdirectory has a leading slash ('/')
-            $subdirectory = Helper::join_paths('/', $subdirectory);
-            $url          = Helper::join_paths($subdirectory, route('admin.plugins.asset', ['dirname' => $encodedDirname, 'basename' => $basename], $withHost));
-        }
-
-        return $url;
-    }
-
-    function getAppSubdirectory()
-    {
-        $path = parse_url(config('app.url'), PHP_URL_PATH);
-
-        if (is_null($path)) {
-            return null;
-        }
-
-        $path = trim($path, '/');
-
-        return empty($path) ? null : $path;
-    }
 
 // Get application host with {scheme}://{host}:{port} (without subdirectory)
     /**
@@ -316,23 +261,4 @@
 
         // Execute task
         $task();
-    }
-
-    if ( ! function_exists('is_plugin_active')) {
-        function is_plugin_active(string $pluginName): bool
-        {
-            try {
-                if (Schema::hasTable('plugins')) {
-                    return DB::table('plugins')
-                        ->where('name', $pluginName)
-                        ->where('status', 'active') // adjust if your table uses status column
-                        ->exists();
-                }
-            } catch (Throwable) {
-                return false;
-            }
-
-
-            return false;
-        }
     }

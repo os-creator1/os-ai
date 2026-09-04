@@ -740,7 +740,7 @@
                         'name'    => 'Settings',
                         'i18n'    => 'Settings',
                         'icon'    => 'settings',
-                        'access'  => 'general settings|view languages|view payment_gateways|view email_templates|manage update_application|manage maintenance_mode|manage ai_settings',
+                        'access'  => 'general settings|view languages|view payment_gateways|view email_templates|manage maintenance_mode|manage ai_settings',
                         'submenu' => [
                             [
                                 'url'    => url(config('app.admin_path') . '/settings'),
@@ -814,14 +814,6 @@
                                 'access' => 'manage maintenance_mode',
                                 'icon'   => 'alert-triangle',
                             ],
-                            [
-                                'url'    => url(config('app.admin_path') . '/update-application'),
-                                'slug'   => config('app.admin_path') . '/update-application',
-                                'name'   => 'Update Application',
-                                'i18n'   => 'Update Application',
-                                'access' => 'manage update_application',
-                                'icon'   => 'upload',
-                            ],
                         ],
                     ],
                     [
@@ -859,45 +851,12 @@
                     ],
 
                     [
-                        'url'     => '',
-                        'name'    => 'Plugins',
-                        'i18n'    => 'Plugins',
-                        'icon'    => 'package',
-                        'access'  => 'view plugins|install plugins|update plugins|delete plugins',
-                        'submenu' => [
-                            [
-                                'url'    => url(config('app.admin_path') . '/install-plugin'),
-                                'slug'   => config('app.admin_path') . '/install-plugin',
-                                'name'   => 'Add Plugin',
-                                'i18n'   => 'Add Plugin',
-                                'access' => 'install plugins',
-                                'icon'   => 'plus-square',
-                            ],
-                            [
-                                'url'    => url(config('app.admin_path') . '/plugins'),
-                                'slug'   => config('app.admin_path') . '/plugins',
-                                'name'   => 'All Plugins',
-                                'i18n'   => 'All Plugins',
-                                'access' => 'view plugins',
-                                'icon'   => 'package',
-                            ],
-                        ],
-                    ],
-                    [
                         'url'    => url(config('app.admin_path') . '/invoices'),
                         'slug'   => config('app.admin_path') . '/invoices',
                         'name'   => 'Invoices',
                         'i18n'   => 'Invoices',
                         'access' => 'view invoices',
                         'icon'   => 'shopping-cart',
-                    ],
-                    [
-                        'url'    => url(config('app.admin_path') . '/customizer'),
-                        'slug'   => config('app.admin_path') . '/customizer',
-                        'name'   => 'Theme Customizer',
-                        'i18n'   => 'Theme Customizer',
-                        'icon'   => 'grid',
-                        'access' => 'general settings',
                     ],
                     [
                         // RFC-005 Admin Usage Billing Surface Contract §2.7 —
@@ -1799,65 +1758,6 @@
             return in_array(strtoupper($currency), $zeroDecimalCurrencies)
                 ? (int) $price
                 : (int) round($price * 100);
-        }
-
-        /**
-         * @throws Exception
-         */
-        public static function generatePublicPath($absPath, $withHost = false)
-        {
-            // Notice: $relativePath must be relative to storage/ folder
-            // then $relativePath should be "app/sub/example.png"
-
-            if (empty(trim($absPath))) {
-                throw new Exception('Empty path');
-            }
-
-            $excludeBase = storage_path();
-            $pos         = strpos($absPath, $excludeBase); // Expect pos to be exactly 0
-
-            if ($pos === false) {
-                throw new Exception(sprintf("File '%s' cannot be made public, only files under storage/ folder can", $absPath));
-            }
-
-            if ($pos != 0) {
-                throw new Exception(sprintf("Invalid path '%s', cannot make it public", $absPath));
-            }
-
-            // Do not use string replace, as path parts may occur more than once
-            // For example: abc/xyz/abc/xyz...
-            $relativePath = substr($absPath, strlen($excludeBase) + 1);
-
-            $dirname        = dirname($relativePath);
-            $basename       = basename($relativePath);
-            $encodedDirname = StringHelper::base64UrlEncode($dirname);
-
-            // If Laravel is under a subdirectory
-            $subdirectory = getAppSubdirectory();
-
-            if (empty($subdirectory) || $withHost) {
-
-                $dirname = StringHelper::base64UrlDecode($dirname);
-                $absPath = storage_path(self::join_paths($dirname, $basename));
-
-                if (File::exists($absPath)) {
-                    $mimetype = Tool::getFileType($absPath);
-
-                    return response()->file($absPath, [
-                        'Content-Type'   => $mimetype,
-                        'Content-Length' => filesize($absPath),
-                    ]);
-                } else {
-                    abort(404);
-                }
-
-            } else {
-                // Make sure the $subdirectory has a leading slash ('/')
-                $subdirectory = self::join_paths('/', $subdirectory);
-                $url          = self::join_paths($subdirectory, route('admin.plugins.asset', ['dirname' => $encodedDirname, 'basename' => $basename], $withHost));
-            }
-
-            return $url;
         }
 
     }

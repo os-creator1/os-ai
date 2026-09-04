@@ -11,10 +11,10 @@ use Tests\TestCase;
 
 /**
  * Design System M2 Platform Branding contract §10/§9 item 3. HTTP-level:
- * login, register, verify, Installer::welcome, and every errors/* view
- * render 200, contain no literal "Ultimate SMS"/"Codeglen" string, and
- * never render an <img> tag with an empty src attribute for the
- * logo/favicon/illustration components.
+ * login, register, verify, and every errors/* view render 200, contain
+ * no literal "Ultimate SMS"/"Codeglen" string, and never render an
+ * <img> tag with an empty src attribute for the logo/favicon/
+ * illustration components.
  */
 class BrandingComponentRenderTest extends TestCase
 {
@@ -70,28 +70,6 @@ class BrandingComponentRenderTest extends TestCase
 
         $response->assertOk();
         $this->assertCleanBrandingHtml($response->getContent());
-    }
-
-    public function test_installer_welcome_renders_clean(): void
-    {
-        $installedMarker = storage_path('installed');
-        $backupMarker = $installedMarker . '.branding-test-backup';
-        $markerExisted = file_exists($installedMarker);
-
-        if ($markerExisted) {
-            rename($installedMarker, $backupMarker);
-        }
-
-        try {
-            $response = $this->get(route('Installer::welcome'));
-
-            $response->assertOk();
-            $this->assertCleanBrandingHtml($response->getContent());
-        } finally {
-            if ($markerExisted && file_exists($backupMarker)) {
-                rename($backupMarker, $installedMarker);
-            }
-        }
     }
 
     public function test_every_error_view_renders_clean(): void

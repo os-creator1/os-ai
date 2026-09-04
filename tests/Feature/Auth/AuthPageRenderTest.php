@@ -105,9 +105,4 @@ class AuthPageRenderTest extends TestCase
             ->assertSee($user->displayName());
     }
 
-    public function test_installer_welcome_route_exists_and_is_named_correctly(): void
-    {
-        $this->assertTrue(\Illuminate\Support\Facades\Route::has('Installer::welcome'));
-        $this->assertTrue(\Illuminate\Support\Facades\Route::has('Updater::welcome'));
-    }
 }

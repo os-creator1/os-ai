@@ -6,7 +6,6 @@
     use App\Library\HookManager;
     use App\Models\Admin;
     use App\Models\Customer;
-    use App\Models\Plugins;
     use App\Models\User;
     use App\Repositories\Contracts\AccountRepository;
     use App\Repositories\Contracts\AnnouncementsRepository;
@@ -31,7 +30,6 @@
     use App\Repositories\Contracts\OpportunityTransitionRepository;
     use App\Repositories\Contracts\PhoneNumberRepository;
     use App\Repositories\Contracts\PlanRepository;
-    use App\Repositories\Contracts\PluginsRepository;
     use App\Repositories\Contracts\RoleRepository;
     use App\Repositories\Contracts\SenderIDRepository;
     use App\Repositories\Contracts\SendingServerRepository;
@@ -69,7 +67,6 @@
     use App\Repositories\Eloquent\EloquentOpportunityTransitionRepository;
     use App\Repositories\Eloquent\EloquentPhoneNumberRepository;
     use App\Repositories\Eloquent\EloquentPlanRepository;
-    use App\Repositories\Eloquent\EloquentPluginsRepository;
     use App\Repositories\Eloquent\EloquentRoleRepository;
     use App\Repositories\Eloquent\EloquentSenderIDRepository;
     use App\Repositories\Eloquent\EloquentSendingServerRepository;
@@ -135,7 +132,6 @@
                 AnnouncementsRepository::class  => EloquentAnnouncementsRepository::class,
                 BlockSenderIDdRepository::class => EloquentBlockSenderIDRepository::class,
                 SubAccountRepository::class     => EloquentSubAccountRepository::class,
-                PluginsRepository::class        => EloquentPluginsRepository::class,
                 BusinessRepository::class       => EloquentBusinessRepository::class,
                 BusinessLocationRepository::class => EloquentBusinessLocationRepository::class,
                 BusinessServiceRepository::class  => EloquentBusinessServiceRepository::class,
@@ -238,15 +234,6 @@
 
                 return $this;
             });
-
-            /**
-             * Load plugins safely (prevents broken plugin from killing app)
-             */
-            try {
-                Plugins::autoloadWithoutDbQuery();
-            } catch (Throwable $e) {
-                logger()->error('Plugin system boot failure: ' . $e->getMessage());
-            }
 
             // Custom notification channel
             Notification::extend('sms', fn() => new SMSChannel());
