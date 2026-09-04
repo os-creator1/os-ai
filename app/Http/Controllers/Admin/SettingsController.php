@@ -3,7 +3,6 @@
     namespace App\Http\Controllers\Admin;
 
     use App\Helpers\Helper;
-    use App\Http\Requests\LicenseRequest;
     use App\Http\Requests\Settings\AuthenticationRequest;
     use App\Http\Requests\Settings\DefaultCustomerPermission;
     use App\Http\Requests\Settings\DLTRequest;
@@ -14,7 +13,6 @@
     use App\Http\Requests\Settings\PusherRequest;
     use App\Http\Requests\Settings\SystemEmailRequest;
     use App\Library\Tool;
-    use App\Library\Unzipper;
     use App\Models\AppConfig;
     use App\Models\Customer;
     use App\Models\Language;
@@ -35,7 +33,6 @@
     use Illuminate\Support\Facades\File;
     use Illuminate\Support\Facades\Notification;
     use Illuminate\View\View;
-    use Symfony\Component\Console\Output\BufferedOutput;
 
     class SettingsController extends AdminBaseController
     {
@@ -376,61 +373,6 @@
         }
 
         /**
-         * @param LicenseRequest $request
-         *
-         * @return RedirectResponse
-         */
-        public function license(LicenseRequest $request): RedirectResponse
-        {
-            if (config('app.stage') == 'demo') {
-                return redirect()->route('admin.settings.general')->with([
-                    'status'  => 'error',
-                    'message' => 'Sorry! This option is not available in demo mode',
-                ]);
-            }
-
-
-            $purchase_code    = $request->input('license');
-            $get_verification = 'https://ultimatesms.codeglen.com/envato/?purchase_code=' . $purchase_code;
-
-            $ch = curl_init();
-            curl_setopt($ch, CURLOPT_URL, $get_verification);
-            curl_setopt($ch, CURLOPT_HTTPGET, 1);
-            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-            curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
-            $data = curl_exec($ch);
-            curl_close($ch);
-
-            $get_data = json_decode($data, true);
-
-            if (is_array($get_data) && array_key_exists('status', $get_data)) {
-                if ($get_data['status'] == 'success') {
-                    AppConfig::where('setting', 'license')->update(['value' => $purchase_code]);
-                    AppConfig::where('setting', 'license_type')->update(['value' => $get_data['license_type']]);
-                    AppConfig::where('setting', 'valid_domain')->update(['value' => 'yes']);
-
-                    return redirect()->route('admin.settings.general')->withInput(['tab' => 'license'])->with([
-                        'status'  => 'success',
-                        'message' => 'License updated successfully',
-                    ]);
-
-                }
-
-                return redirect()->route('admin.settings.general')->withInput(['tab' => 'license'])->with([
-                    'status'  => 'error',
-                    'message' => 'Invalid license key',
-                ]);
-            }
-
-            return redirect()->route('admin.settings.general')->withInput(['tab' => 'license'])->with([
-                'status'  => 'error',
-                'message' => __('locale.exceptions.something_went_wrong'),
-            ]);
-
-        }
-
-        /**
          * manage maintenance mode
          *
          * @return Application|Factory|View
@@ -450,188 +392,6 @@
 //
 //        return view('admin.settings.system_settings', compact('breadcrumbs'));
 //    }
-
-        /**
-         * check update
-         *
-         * @return Application|Factory|\Illuminate\Contracts\View\View
-         */
-        public function updateApplication(): \Illuminate\Contracts\View\View|Factory|Application
-        {
-            $breadcrumbs = [
-                ['link' => url(config('app.admin_path') . "/dashboard"), 'name' => __('locale.menu.Dashboard')],
-                ['link' => url(config('app.admin_path') . "/dashboard"), 'name' => __('locale.menu.Settings')],
-                ['name' => __('locale.menu.All Settings')],
-            ];
-
-
-            return view('admin.settings.UpdateApplication.index', compact('breadcrumbs'));
-
-        }
-
-        /**
-         * @return RedirectResponse
-         */
-        public function checkAvailableUpdate(): RedirectResponse
-        {
-
-            if (config('app.stage') == 'demo') {
-                return redirect()->route('admin.settings.update_application')->with([
-                    'status'  => 'error',
-                    'message' => 'Sorry! This option is not available in demo mode',
-                ]);
-            }
-
-
-            $app_version      = config('app.version');
-            $get_verification = 'https://ultimatesms.codeglen.com/version/';
-
-
-            $ch = curl_init();
-            curl_setopt($ch, CURLOPT_URL, $get_verification);
-            curl_setopt($ch, CURLOPT_HTTPGET, 1);
-            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-            curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
-            $data = curl_exec($ch);
-            curl_close($ch);
-
-            if ($app_version == $data) {
-                return redirect()->route('admin.settings.update_application')->with([
-                    'status'  => 'success',
-                    'message' => 'You are using latest version',
-                ]);
-            }
-
-            return redirect()->route('admin.settings.update_application')->with([
-                'update_required' => true,
-                'version'         => $data,
-            ]);
-
-        }
-
-
-        /**
-         * Post Update Request
-         *
-         * @param Request        $request
-         * @param BufferedOutput $outputLog
-         *
-         * @return JsonResponse
-         */
-        public function postUpdateApplication(Request $request, BufferedOutput $outputLog): JsonResponse
-        {
-            if (config('app.stage') == 'demo') {
-                return response()->json([
-                    'status'  => 'error',
-                    'message' => 'Sorry! This option is not available in demo mode',
-                ]);
-            }
-
-
-            $get_version = 'https://ultimatesms.codeglen.com/version/php-version.php';
-
-
-            $ch = curl_init();
-            curl_setopt($ch, CURLOPT_URL, $get_version);
-            curl_setopt($ch, CURLOPT_HTTPGET, 1);
-            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-            curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
-            $required_version = curl_exec($ch);
-            curl_close($ch);
-
-            if (phpversion() < $required_version) {
-                return response()->json([
-                    'status'  => 'error',
-                    'message' => "Sorry! You will need to upgrade your PHP to version $required_version to update to the latest version.",
-                ]);
-            }
-
-            $purchase_code = $request->input('purchase_code');
-            $domain_name   = config('app.url');
-            $input         = trim($domain_name, '/');
-            $urlParts      = parse_url($input);
-            $domain_name   = preg_replace('/^www\./', '', $urlParts['host']);
-
-            $post_data = [
-                'purchase_code' => $purchase_code,
-                'domain'        => $domain_name,
-            ];
-
-
-            $ch = curl_init();
-            curl_setopt($ch, CURLOPT_URL, 'https://ultimatesms.codeglen.com/verify/');
-            curl_setopt($ch, CURLOPT_POST, 1);
-            curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($post_data));
-            curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-            curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-            curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
-            $data = curl_exec($ch);
-            curl_close($ch);
-
-            $get_data = json_decode($data, true);
-
-            if (is_array($get_data) && array_key_exists('status', $get_data)) {
-                if ($get_data['status'] == 'success') {
-                    $get_response = Unzipper::extractZipArchive($request->file('update_file'), base_path());
-
-                    if (isset($get_response->getData()->status)) {
-
-                        if ($get_response->getData()->status == 'success') {
-                            try {
-
-                                $app_path = base_path() . '/bootstrap/cache/';
-                                if (File::isDirectory($app_path)) {
-                                    File::cleanDirectory($app_path);
-                                }
-
-                                Artisan::call('optimize:clear');
-                                Artisan::call('migrate', ['--force' => true], $outputLog);
-
-                                /*Update Seeder for new version*/
-                                Tool::versionSeeder(config('app.version'));
-
-                                AppConfig::setEnv('APP_VERSION', $request->input('version'));
-
-                                return response()->json([
-                                    'status'  => 'success',
-                                    'message' => 'You have successfully updated your application.',
-                                ]);
-                            } catch (Exception $e) {
-
-                                return response()->json([
-                                    'status'  => 'error',
-                                    'message' => $e->getMessage(),
-                                ]);
-
-                            }
-                        }
-
-                        return response()->json([
-                            'message' => $get_response->getData()->message,
-                            'status'  => 'error',
-                        ]);
-
-                    }
-
-                    return response()->json([
-                        'message' => __('locale.exceptions.something_went_wrong'),
-                        'status'  => 'error',
-                    ]);
-                }
-
-                return response()->json([
-                    'message' => $get_data['msg'],
-                    'status'  => 'error',
-                ]);
-            }
-
-            return response()->json([
-                'message' => 'Invalid request',
-                'status'  => 'error',
-            ]);
-        }
 
         /*Version 3.4*/
 

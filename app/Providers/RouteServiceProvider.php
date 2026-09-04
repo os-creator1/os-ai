@@ -78,14 +78,6 @@
                 ->namespace($this->namespace . '\Customer')
                 ->as('customer.')
                 ->group(base_path('routes/customer.php'));
-
-            /*Version 3.14 Only For Plugin*/
-            Route::middleware(['web', 'auth', 'can:access backend', 'ValidProduct', 'twofactor'])
-                ->namespace($this->namespace . '\Admin')
-                ->prefix(config('app.admin_path'))
-                ->as('admin.')
-                ->group(base_path('routes/plugin.php'));
-
         }
 
         /**

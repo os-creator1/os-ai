@@ -12,15 +12,12 @@
     use App\Console\Commands\CleanUpJobMonitors;
     use App\Console\Commands\ClearCampaign;
     use App\Console\Commands\DiafaanDLR;
-    use App\Console\Commands\InitPlugin;
     use App\Console\Commands\RunAutomation;
     use App\Console\Commands\RunEveryTenSeconds;
     use App\Console\Commands\SendRecurringCampaign;
     use App\Console\Commands\SendScheduleAPIMessage;
     use App\Console\Commands\SMPPDLRReports;
-    use App\Console\Commands\UpdateDemo;
     use App\Console\Commands\UpdateImartGroupDLR;
-    use App\Console\Commands\uSupportDemo;
     use App\Console\Commands\VisionUpInboundMessage;
     use App\Console\Commands\WarmDashboardCache;
     use App\Jobs\Usage\ExpireStaleUsageReservations;
@@ -47,7 +44,6 @@
             CheckSenderID::class,
             CheckUserPreferences::class,
             SendRecurringCampaign::class,
-            UpdateDemo::class,
             VisionUpInboundMessage::class,
             UpdateImartGroupDLR::class,
             CheckSessionWhatSender::class,
@@ -56,11 +52,9 @@
             RunAutomation::class,
             SMPPDLRReports::class,
             RunEveryTenSeconds::class,
-            InitPlugin::class,
             CleanDatabase::class,
             DiafaanDLR::class,
             CleanUpJobMonitors::class,
-            uSupportDemo::class,
             WarmDashboardCache::class,
         ];
 
@@ -72,60 +66,55 @@
          */
         protected function schedule(Schedule $schedule)
         {
-            if (config('app.stage') == 'demo') {
-                $schedule->command('demo:update')->daily();
-            } else {
+            if ( ! file_exists(storage_path('cronJobAvailable'))) {
 
-                if ( ! file_exists(storage_path('cronJobAvailable'))) {
+                $installedCronFile = storage_path('cronJobAvailable');
+                file_put_contents($installedCronFile, date('Y/m/d h:i:sa'));
 
-                    $installedCronFile = storage_path('cronJobAvailable');
-                    file_put_contents($installedCronFile, date('Y/m/d h:i:sa'));
-
-                }
-
-                $schedule->command('queue:work --queue=automation,default,batch --timeout=120 --tries=1 --max-time=180 --stop-when-empty')->everyMinute();
-
-                $schedule->command('campaign:recurring')->everyMinute();
-                $schedule->command('campaign:scheduled')->everyMinute();
-                $schedule->command('sms:schedule-api-message')->everyMinute();
-                $schedule->command('subscription:check')->hourly();
-                //   $schedule->command('imartgroup:dlr')->hourly();
-                $schedule->command('dashboard:warm')->hourly();
-                $schedule->command('keywords:check')->daily();
-                $schedule->command('numbers:check')->daily();
-                $schedule->command('senderid:check')->daily();
-                $schedule->command('user:preferences')->daily()->between('10:00', '18:00');
-                $schedule->command('automation:run')->everyFiveMinutes();
-                $schedule->command('app:clean-database')->monthly();
-                // $schedule->command('jobs:cleanup-monitors')->everyThirtyMinutes();
-
-                // Registered unconditionally (RFC-002 §33) — the command
-                // itself owns opportunity.enabled no-op behavior, not the
-                // scheduler.
-                $schedule->command('opportunity:sweep-expired-snoozes')
-                    ->cron('*/' . $this->opportunitySnoozeSweepCronMinutes() . ' * * * *');
-
-                // RFC-005 Milestone 3 (Correction Round 1, item 110) —
-                // without these, both jobs are permanently unreachable
-                // (unlike ProcessPaymentProviderEvent/EvaluateBusinessAutoRecharge,
-                // neither is dispatched by any event/controller/manager).
-                $schedule->job(new PurgeExpiredWebhookPayloads())->hourly();
-                $schedule->job(new ReconcileProviderPendingState())->everyFiveMinutes();
-                $schedule->job(new RetryStuckPaymentProviderEvents())->everyFiveMinutes();
-
-                // M4 contract §22 — locked exact intervals, not an
-                // implementation-time choice.
-                $schedule->job(new InitiateSlotAgreementRenewal())->everyFiveMinutes();
-                $schedule->job(new FinalizeSlotAgreementCancellation())->everyFiveMinutes();
-                $schedule->job(new ReconcileSlotAgreementAllocation())->hourly();
-
-                // RFC-005 Job/Event Dispatch Completion Correction Contract
-                // §3 — human-authorized cadence; without this the job is
-                // built (M1) but permanently unreachable. release() is
-                // idempotent/row-locked, so cadence affects only latency,
-                // never domain semantics.
-                $schedule->job(new ExpireStaleUsageReservations())->everyFiveMinutes();
             }
+
+            $schedule->command('queue:work --queue=automation,default,batch --timeout=120 --tries=1 --max-time=180 --stop-when-empty')->everyMinute();
+
+            $schedule->command('campaign:recurring')->everyMinute();
+            $schedule->command('campaign:scheduled')->everyMinute();
+            $schedule->command('sms:schedule-api-message')->everyMinute();
+            $schedule->command('subscription:check')->hourly();
+            //   $schedule->command('imartgroup:dlr')->hourly();
+            $schedule->command('dashboard:warm')->hourly();
+            $schedule->command('keywords:check')->daily();
+            $schedule->command('numbers:check')->daily();
+            $schedule->command('senderid:check')->daily();
+            $schedule->command('user:preferences')->daily()->between('10:00', '18:00');
+            $schedule->command('automation:run')->everyFiveMinutes();
+            $schedule->command('app:clean-database')->monthly();
+            // $schedule->command('jobs:cleanup-monitors')->everyThirtyMinutes();
+
+            // Registered unconditionally (RFC-002 §33) — the command
+            // itself owns opportunity.enabled no-op behavior, not the
+            // scheduler.
+            $schedule->command('opportunity:sweep-expired-snoozes')
+                ->cron('*/' . $this->opportunitySnoozeSweepCronMinutes() . ' * * * *');
+
+            // RFC-005 Milestone 3 (Correction Round 1, item 110) —
+            // without these, both jobs are permanently unreachable
+            // (unlike ProcessPaymentProviderEvent/EvaluateBusinessAutoRecharge,
+            // neither is dispatched by any event/controller/manager).
+            $schedule->job(new PurgeExpiredWebhookPayloads())->hourly();
+            $schedule->job(new ReconcileProviderPendingState())->everyFiveMinutes();
+            $schedule->job(new RetryStuckPaymentProviderEvents())->everyFiveMinutes();
+
+            // M4 contract §22 — locked exact intervals, not an
+            // implementation-time choice.
+            $schedule->job(new InitiateSlotAgreementRenewal())->everyFiveMinutes();
+            $schedule->job(new FinalizeSlotAgreementCancellation())->everyFiveMinutes();
+            $schedule->job(new ReconcileSlotAgreementAllocation())->hourly();
+
+            // RFC-005 Job/Event Dispatch Completion Correction Contract
+            // §3 — human-authorized cadence; without this the job is
+            // built (M1) but permanently unreachable. release() is
+            // idempotent/row-locked, so cadence affects only latency,
+            // never domain semantics.
+            $schedule->job(new ExpireStaleUsageReservations())->everyFiveMinutes();
         }
 
         /**

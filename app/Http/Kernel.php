@@ -3,8 +3,6 @@
     namespace App\Http;
 
     use App\Http\Middleware\Authenticate;
-    use App\Http\Middleware\canInstall;
-    use App\Http\Middleware\canUpdate;
     use App\Http\Middleware\CheckForMaintenanceMode;
     use App\Http\Middleware\CheckPasswordChanged;
     use App\Http\Middleware\EncryptCookies;
@@ -112,8 +110,6 @@
             'ValidProduct'      => RedirectIfNotValid::class,
             'twofactor'         => TwoFactor::class,
             'json.response'     => ForceJsonResponse::class,
-            'install'           => canInstall::class,
-            'update'            => canUpdate::class,
             'customer.sub_only' => SubAccountRestriction::class,
             'business.onboarding' => EnsureRequiredBusinessOnboardingIsComplete::class,
             'business.onboarding.enabled' => EnsureBusinessOnboardingIsEnabled::class,

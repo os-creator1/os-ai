@@ -6,7 +6,7 @@ use Tests\TestCase;
 
 /**
  * Design System M2 Slice 2 contract §5/§8 items 6, 7. Mechanical proof,
- * run directly against the 26 rendered Slice 2 view SOURCE files (not
+ * run directly against the 24 rendered Slice 2 view SOURCE files (not
  * rendered HTML -- `<x-ds-icon>` compiles away into an inline `<svg>`,
  * so only the Blade source itself can prove the seam was actually
  * adopted): zero remaining static `data-feather="..."` markup, zero
@@ -16,6 +16,13 @@ use Tests\TestCase;
  * `feather.icons['trash'].toSvg(...)` call, which this test's regex is
  * deliberately scoped to exclude by matching only the static HTML
  * attribute convention.
+ *
+ * The original 26-file scope included the legacy first-run Installer's
+ * two Slice 2 views (`Installer/welcome.blade.php`,
+ * `Installer/update/welcome.blade.php`); both were removed by the Safe
+ * Legacy / Dead-Surface Deletion Sweep (2026-09) along with the rest of
+ * the vendor-distribution Installer/Updater machinery, dropping the
+ * scope to 24.
  */
 class AuthDesignSystemContentTest extends TestCase
 {
@@ -44,8 +51,6 @@ class AuthDesignSystemContentTest extends TestCase
         'resources/views/auth/profile/_announcements.blade.php',
         'resources/views/auth/profile/_update_two_factor_auth.blade.php',
         'resources/views/auth/profile/_view_announcement.blade.php',
-        'resources/views/Installer/welcome.blade.php',
-        'resources/views/Installer/update/welcome.blade.php',
     ];
 
     public function test_no_slice_2_view_contains_a_static_data_feather_attribute(): void
@@ -94,8 +99,6 @@ class AuthDesignSystemContentTest extends TestCase
             'resources/views/auth/register.blade.php',
             'resources/views/auth/profile/index.blade.php',
             'resources/views/auth/profile/_information.blade.php',
-            'resources/views/Installer/welcome.blade.php',
-            'resources/views/Installer/update/welcome.blade.php',
         ];
 
         foreach ($migratedViews as $view) {
@@ -105,22 +108,6 @@ class AuthDesignSystemContentTest extends TestCase
                 '<x-ds-icon',
                 $source,
                 "{$view} was expected to adopt the canonical <x-ds-icon> seam but does not."
-            );
-        }
-    }
-
-    public function test_installer_welcome_views_no_longer_contain_a_page_specific_inline_style_block(): void
-    {
-        foreach ([
-            'resources/views/Installer/welcome.blade.php',
-            'resources/views/Installer/update/welcome.blade.php',
-        ] as $view) {
-            $source = file_get_contents(base_path($view));
-
-            $this->assertStringNotContainsString(
-                '<style>',
-                $source,
-                "{$view} still contains the duplicated inline <style> block the contract requires removing via <x-table> adoption."
             );
         }
     }

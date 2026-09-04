@@ -8,8 +8,15 @@ use Tests\TestCase;
  * Design System M2 Platform Branding contract §9 item 6. Mechanical
  * source-level test, mirroring AuthDesignSystemContentTest's own
  * established pattern from Slice 2: zero remaining "Ultimate SMS"/
- * "Codeglen" literal strings across every one of this contract's own 41
+ * "Codeglen" literal strings across every one of this contract's own
  * production files (§11 items 1-41).
+ *
+ * Originally 41 files. The Safe Legacy / Dead-Surface Deletion Sweep
+ * (2026-09) removed the legacy first-run Installer's 3 views
+ * (`Installer/welcome.blade.php`, `Installer/update/welcome.blade.php`,
+ * `Installer/update/overview.blade.php`) along with the rest of the
+ * vendor-distribution Installer/Updater/license machinery, dropping the
+ * tracked scope to 38.
  */
 class BrandingDesignSystemContentTest extends TestCase
 {
@@ -53,7 +60,7 @@ class BrandingDesignSystemContentTest extends TestCase
         'resources/views/errors/429.blade.php',
         'resources/views/errors/500.blade.php',
         'resources/views/errors/503.blade.php',
-        // Auth/Installer adoption (11)
+        // Auth adoption (8)
         'resources/views/auth/login.blade.php',
         'resources/views/auth/register.blade.php',
         'resources/views/auth/verify.blade.php',
@@ -62,15 +69,12 @@ class BrandingDesignSystemContentTest extends TestCase
         'resources/views/auth/passwords/email.blade.php',
         'resources/views/auth/passwords/reset.blade.php',
         'resources/views/auth/subAccount/acceptInvitation.blade.php',
-        'resources/views/Installer/welcome.blade.php',
-        'resources/views/Installer/update/welcome.blade.php',
-        'resources/views/Installer/update/overview.blade.php',
     ];
 
-    public function test_exactly_41_production_files_are_tracked(): void
+    public function test_exactly_38_production_files_are_tracked(): void
     {
-        $this->assertCount(41, self::PRODUCTION_FILES);
-        $this->assertCount(41, array_unique(self::PRODUCTION_FILES), 'No duplicate path.');
+        $this->assertCount(38, self::PRODUCTION_FILES);
+        $this->assertCount(38, array_unique(self::PRODUCTION_FILES), 'No duplicate path.');
     }
 
     public function test_every_production_file_exists(): void
@@ -88,16 +92,16 @@ class BrandingDesignSystemContentTest extends TestCase
      *  - 'maintenance_secret_path': a maintenance-mode bypass secret in
      *    config/app.php, coincidentally the literal string "codeglen";
      *    changing a secret path is a real behavior change, not branding.
-     *  - 'ultimatesms.codeglen.com': the application's own real,
-     *    functional license-verification/update-check API endpoint in
-     *    SettingsController.php; rewriting it would break license
-     *    verification and update checking, exactly the same
-     *    out-of-scope reasoning as the contract's own _license.blade.php
-     *    exclusion (§3.7/§8) -- not a rendered branding string at all.
+     *
+     * The former 'ultimatesms.codeglen.com' exclusion (the license-
+     * verification/update-check API endpoint previously in
+     * SettingsController.php) was removed by the Safe Legacy /
+     * Dead-Surface Deletion Sweep (2026-09) along with the rest of the
+     * vendor license/updater machinery -- SettingsController.php no
+     * longer contains that string at all, so no exclusion is needed.
      */
     private const KNOWN_NON_BRANDING_LINE_MARKERS = [
         'maintenance_secret_path',
-        'ultimatesms.codeglen.com',
     ];
 
     public function test_zero_legacy_branding_strings_across_every_production_file(): void
@@ -150,14 +154,5 @@ class BrandingDesignSystemContentTest extends TestCase
         $this->assertMatchesRegularExpression("/return 'jpg';/", $rule);
         $this->assertMatchesRegularExpression("/return 'webp';/", $rule);
         $this->assertDoesNotMatchRegularExpression("/return 'svg';/", $rule);
-    }
-
-    public function test_deferred_files_are_deliberately_untouched_by_this_contract(): void
-    {
-        // §3.7/§8: named, deferred exclusions -- confirmed present and
-        // still carrying the legacy strings this contract's own audit
-        // found, proving they were not silently swept up by mistake.
-        $license = file_get_contents(base_path('resources/views/admin/settings/AllSettings/_license.blade.php'));
-        $this->assertStringContainsStringIgnoringCase('Ultimate SMS', $license);
     }
 }

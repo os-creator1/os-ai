@@ -385,7 +385,6 @@
     Route::post('settings/permissions', 'SettingsController@permissions')->name('settings.permissions');
     Route::post('settings/notifications', 'SettingsController@notifications')->name('settings.notifications');
     Route::post('settings/pusher', 'SettingsController@pusher')->name('settings.pusher');
-    Route::post('settings/license', 'SettingsController@license')->name('settings.license');
 
     /*Version 3.5*/
     Route::post('settings/dlt', 'SettingsController@dlt')->name('settings.dlt');
@@ -426,11 +425,6 @@
     Route::resource('email-templates', 'EmailTemplateController', [
         'only' => ['index', 'update'],
     ]);
-
-//update application
-    Route::get('update-application', 'SettingsController@updateApplication')->name('settings.update_application');
-    Route::post('update-application', 'SettingsController@postUpdateApplication');
-    Route::get('check-available-update', 'SettingsController@checkAvailableUpdate')->name('settings.check_update');
 
     Route::post('invoices/search', 'InvoiceController@search')->name('invoices.search');
     Route::get('invoices/{invoice}/view', 'InvoiceController@view')->name('invoices.view');
@@ -477,17 +471,6 @@
         Route::post('/{uid}/dlr', 'ReportsController@dlrReports');
 
     });
-
-    /*
-    |--------------------------------------------------------------------------
-    | Theme Customizer
-    |--------------------------------------------------------------------------
-    |
-    |
-    |
-    */
-    Route::get('customizer', 'ThemeCustomizerController@index')->name('theme.customizer');
-    Route::post('customizer', 'ThemeCustomizerController@postCustomizer');
 
     /*
     |--------------------------------------------------------------------------

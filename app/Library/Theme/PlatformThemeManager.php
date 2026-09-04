@@ -39,13 +39,13 @@ class PlatformThemeManager
      * produce visually identical output.
      *
      * Design System M2 Slice 2 contract §7 Part A: also fails safe when
-     * `platform_theme_presets` does not exist yet — the Installer's very
-     * first page renders before migrations run. The check is inside this
-     * cache closure (not outside it) so it only ever runs while the
-     * cache is genuinely cold, never on every request. §7 Part B
-     * (`invalidateCache()`, called from `InstallerController::database()`
-     * once migrations/seeding finish) is what stops this pre-database
-     * `null` from outliving the install.
+     * `platform_theme_presets` does not exist yet — a genuinely fresh
+     * install (before migrations run) hits this path. The check is
+     * inside this cache closure (not outside it) so it only ever runs
+     * while the cache is genuinely cold, never on every request. §7
+     * Part B (`invalidateCache()`) is what stops this pre-database
+     * `null` from outliving a fresh install once migrations/seeding
+     * finish.
      */
     public function currentStyleBlock(): ?string
     {
@@ -90,13 +90,12 @@ class PlatformThemeManager
     }
 
     /**
-     * Design System M2 Slice 2 contract §7 Part B: made public so
-     * `InstallerController::database()` can force a cache miss on the
-     * very next render once migrations/seeding complete, closing the
-     * window where the pre-database `null` from `currentStyleBlock()`
-     * (§7 Part A) would otherwise be cached forever. `DB::afterCommit`
-     * still applies — with no active transaction (the Installer's own
-     * call site) Laravel runs the callback immediately; from within
+     * Design System M2 Slice 2 contract §7 Part B: made public so a
+     * fresh install's migration/seeding step can force a cache miss on
+     * the very next render, closing the window where the pre-database
+     * `null` from `currentStyleBlock()` (§7 Part A) would otherwise be
+     * cached forever. `DB::afterCommit` still applies — with no active
+     * transaction Laravel runs the callback immediately; from within
      * `activate()`'s transaction it still defers correctly.
      */
     public function invalidateCache(): void

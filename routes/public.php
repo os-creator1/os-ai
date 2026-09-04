@@ -164,50 +164,6 @@
     Route::get('privacy-policy', 'PublicController@privacyPolicy')->name('privacy-policy');
 
     /*
-    |--------------------------------------------------------------------------
-    | installer file
-    |--------------------------------------------------------------------------
-    |
-    |
-    |
-    */
-
-    Route::group(['prefix' => 'install', 'as' => 'Installer::', 'middleware' => ['web', 'install']], function () {
-        Route::get('/', [
-            'as'   => 'welcome',
-            'uses' => 'InstallerController@welcome',
-        ]);
-
-
-        Route::post('environment/database', [
-            'as'   => 'environmentDatabase',
-            'uses' => 'InstallerController@saveDatabase',
-        ]);
-
-
-        Route::post('database', [
-            'as'   => 'database',
-            'uses' => 'InstallerController@database',
-        ]);
-
-    });
-
-    Route::group(['prefix' => 'update', 'as' => 'Updater::', 'middleware' => 'web'], function () {
-
-        Route::group(['middleware' => 'update'], function () {
-            Route::get('/', [
-                'as'   => 'welcome',
-                'uses' => 'UpdateController@welcome',
-            ]);
-
-            Route::post('/', [
-                'as'   => 'verify_product',
-                'uses' => 'UpdateController@verifyProduct',
-            ]);
-        });
-    });
-
-    /*
      * Platform theme active font (Design System Milestone 2)
      *
      * docs/automation/DESIGN-SYSTEM-M2-CONTRACT.md §9 item 31. Resolves

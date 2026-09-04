@@ -127,18 +127,6 @@
 {{--                                    </li>--}}
 {{--                                @endcan--}}
 
-                                {{-- License --}}
-                                @if(config('app.stage') != 'demo')
-                                    @can('view purchase_code')
-                                        <li class="nav-item {{ old('tab') == 'license' ? 'active':null }}">
-                                            <a class="nav-link" id="license-tab-justified" data-bs-toggle="tab"
-                                               href="#license" role="tab"
-                                               aria-controls="license" aria-selected="true"><i data-feather="file-text"
-                                                                                               class="primary"></i> {{ __('locale.labels.license') }}
-                                            </a>
-                                        </li>
-                                    @endcan
-                                @endif
 
 
                             </ul>
@@ -223,15 +211,6 @@
 
 {{--                                @endcan--}}
 
-                                @if(config('app.stage') != 'demo')
-                                    {{-- License --}}
-                                    @can('view purchase_code')
-                                        <div class="tab-pane {{ old('tab') == 'license' ? 'active':null }}" id="license"
-                                             role="tabpanel" aria-labelledby="license-tab-justified">
-                                            @include('admin.settings.AllSettings._license')
-                                        </div>
-                                    @endcan
-                                @endif
                             </div>
                         </div>
                     </div>
