@@ -505,7 +505,7 @@
     |--------------------------------------------------------------------------
     */
 
-    Route::prefix('onboarding')->name('onboarding.')->group(function () {
+    Route::prefix('onboarding')->name('onboarding.')->middleware('business.onboarding.enabled')->group(function () {
         Route::get('/{step?}', 'BusinessOnboardingController@show')->name('show');
         Route::post('/goals', 'BusinessOnboardingController@storeGoals')->name('goals.store');
         Route::post('/business', 'BusinessOnboardingController@storeBusiness')->name('business.store');

@@ -4,13 +4,18 @@ namespace Tests\Feature\Business;
 
 use App\Enums\Business\OnboardingStatus;
 use App\Enums\Business\OnboardingStep;
+use App\Enums\Entitlement\WorkspacePlanAssignmentStatus;
+use App\Enums\Entitlement\WorkspacePlanTier;
 use App\Jobs\Business\BuildInitialBusinessSnapshot;
 use App\Library\Business\InitialBusinessSnapshotBuilder;
 use App\Library\Business\OnboardingManager;
+use App\Library\Entitlement\EntitlementManager;
 use App\Models\AppConfig;
 use App\Models\Business;
 use App\Models\Customer;
 use App\Models\CustomerOnboarding;
+use App\Models\User;
+use App\Models\Workspace;
 use App\Repositories\Contracts\BusinessLocationRepository;
 use App\Repositories\Contracts\BusinessRepository;
 use App\Repositories\Contracts\BusinessServiceRepository;
@@ -24,6 +29,22 @@ class BusinessOnboardingHttpTest extends TestCase
 {
     use RefreshDatabase;
     use CreatesBusinessTestData;
+
+    /**
+     * Design System M2 A1 onboarding behavior remediation: the onboarding
+     * route group is now gated by the business.onboarding.enabled master
+     * switch (app/Http/Middleware/EnsureBusinessOnboardingIsEnabled.php).
+     * Every existing test in this file exercises the enabled ("master
+     * switch on") path and must do so explicitly rather than accidentally
+     * relying on the previously-ungated routes -- disabled-state tests
+     * override this baseline explicitly within their own method.
+     */
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        config(['business.onboarding.enabled' => true]);
+    }
 
     public function test_authenticated_customer_can_access_onboarding(): void
     {
@@ -330,11 +351,21 @@ class BusinessOnboardingHttpTest extends TestCase
     }
 
     /**
-     * A missing config/business.php key (Milestone 6 hasn't shipped it yet) must
-     * safely behave as disabled, same as scenario B.
+     * A missing config/business.php `enabled` key must safely behave as
+     * disabled, same as scenario B. config/business.php ships the key with
+     * a `false` default today (verified directly), so this test genuinely
+     * removes the runtime nested key rather than merely setting it to
+     * `false` -- otherwise, once setUp() establishes an enabled=true
+     * baseline (above), this would silently degrade into a duplicate of
+     * the explicit-false test and stop proving what its name claims.
      */
     public function test_dashboard_is_not_redirected_when_onboarding_config_key_is_missing(): void
     {
+        $onboardingConfig = config('business.onboarding');
+        unset($onboardingConfig['enabled']);
+        config(['business.onboarding' => $onboardingConfig]);
+        $this->assertFalse(config('business.onboarding.enabled', false));
+
         $customer = $this->actingAsHttpCustomer();
         app(OnboardingManager::class)->start($customer, true);
 
@@ -355,13 +386,98 @@ class BusinessOnboardingHttpTest extends TestCase
         $this->get(route('user.home'))->assertOk();
     }
 
-    public function test_direct_onboarding_routes_remain_reachable_when_config_is_disabled(): void
+    /**
+     * Design System M2 A1 onboarding behavior remediation, Blocker 1: the
+     * documented RFC-001 master-switch intent (RFC-001-BUSINESS-CORE-DEPLOYMENT.md
+     * §1 -- "the entire onboarding wizard ... behave[s] as if the feature
+     * does not exist" when disabled) is now enforced by
+     * app/Http/Middleware/EnsureBusinessOnboardingIsEnabled.php on the
+     * whole onboarding route group. This corrects the previously-stale
+     * assertion here (assertOk()), which encoded the pre-remediation drift.
+     */
+    public function test_direct_onboarding_routes_return_not_found_when_config_is_disabled(): void
     {
         config(['business.onboarding.enabled' => false]);
 
         $this->actingAsHttpCustomer();
 
-        $this->get(route('customer.onboarding.show'))->assertOk();
+        $this->get(route('customer.onboarding.show'))->assertNotFound();
+    }
+
+    /**
+     * Proves the master switch gates every one of the 11 onboarding routes,
+     * including the six FormRequest-backed actions (storeGoals,
+     * storeBusiness, storeLocation, storeServices, storeAssets,
+     * completeAction) -- each POSTed here with an empty/malformed body, so
+     * a 404 (not a validation-error redirect) proves the route middleware
+     * intercepts the request before Laravel ever resolves/validates the
+     * FormRequest (the exact defect the original controller-body-guard
+     * design could not have prevented). No onboarding row is lazily
+     * created, no Business/Location/Service is mutated, and no analysis
+     * job is dispatched by any denied request.
+     */
+    public function test_every_onboarding_route_is_denied_when_the_master_switch_is_disabled(): void
+    {
+        Bus::fake();
+        config(['business.onboarding.enabled' => false]);
+        $this->actingAsHttpCustomer();
+
+        $this->get(route('customer.onboarding.show'))->assertNotFound();
+        $this->post(route('customer.onboarding.goals.store'), [])->assertNotFound();
+        $this->post(route('customer.onboarding.business.store'), [])->assertNotFound();
+        $this->post(route('customer.onboarding.location.store'), [])->assertNotFound();
+        $this->post(route('customer.onboarding.services.store'), [])->assertNotFound();
+        $this->post(route('customer.onboarding.assets.store'), [])->assertNotFound();
+        $this->post(route('customer.onboarding.assets.skip'))->assertNotFound();
+        $this->post(route('customer.onboarding.analysis.request'))->assertNotFound();
+        $this->post(route('customer.onboarding.action.complete'), [])->assertNotFound();
+        $this->post(route('customer.onboarding.complete'))->assertNotFound();
+
+        $this->assertSame(0, CustomerOnboarding::count());
+        $this->assertSame(0, Business::count());
+        Bus::assertNotDispatched(BuildInitialBusinessSnapshot::class);
+    }
+
+    /**
+     * The analysis-status endpoint is the only onboarding route whose own
+     * client (the polling script) sets Accept: application/json -- locked
+     * to a real HTTP 404 with an exact JSON envelope, not the repository's
+     * separate wantsJson()-returns-200 Handler.php convention, since the
+     * middleware returns this response directly and never reaches
+     * Handler::render() for this gate.
+     */
+    public function test_analysis_status_returns_not_found_with_exact_json_body_when_disabled(): void
+    {
+        config(['business.onboarding.enabled' => false]);
+        $this->actingAsHttpCustomer();
+
+        $this->getJson(route('customer.onboarding.analysis.status'))
+            ->assertNotFound()
+            ->assertExactJson(['status' => 'error', 'message' => 'Not Found']);
+    }
+
+    /**
+     * Disabling is an availability gate, not a data-mutation event: an
+     * existing onboarding row's full state must be byte-identical before
+     * and after a denied ordinary HTTP request while the master switch is
+     * off.
+     */
+    public function test_existing_onboarding_row_is_unchanged_by_a_denied_request_while_disabled(): void
+    {
+        $customer = $this->actingAsHttpCustomer();
+        $onboarding = app(OnboardingManager::class)->start($customer);
+        $onboarding->current_step = OnboardingStep::Location;
+        $onboarding->completed_steps = ['goals', 'business'];
+        $onboarding->save();
+        $before = $onboarding->refresh()->toArray();
+
+        config(['business.onboarding.enabled' => false]);
+
+        $this->get(route('customer.onboarding.show'))->assertNotFound();
+        $this->post(route('customer.onboarding.location.store'), $this->locationAttributes())->assertNotFound();
+
+        $onboarding->refresh();
+        $this->assertSame($before, $onboarding->toArray());
     }
 
     public function test_guest_cannot_request_analysis(): void
@@ -580,6 +696,96 @@ class BusinessOnboardingHttpTest extends TestCase
         $this->get(route('user.home'))->assertOk();
     }
 
+    // =========================================================================
+    // Design System M2 A1 onboarding behavior remediation, Blocker 2: an
+    // expected RFC-004 Business-capacity denial during the onboarding
+    // Business step must redirect back with a fixed, onboarding-safe
+    // message -- never the generic framework 500 the uncaught exception
+    // previously produced. All five denial families are covered
+    // individually, matching the exact union catch in
+    // BusinessOnboardingController::saveStep().
+    // =========================================================================
+
+    public function test_capacity_denial_workspace_plan_unassigned_redirects_with_the_safe_message(): void
+    {
+        [$customer, $workspace, $onboarding] = $this->customerAtCapacityDeniedBusinessStep('workspace_plan_unassigned');
+
+        $this->assertCapacityDenialResponse($workspace, $onboarding);
+    }
+
+    public function test_capacity_denial_inactive_workspace_plan_redirects_with_the_safe_message(): void
+    {
+        [$customer, $workspace, $onboarding] = $this->customerAtCapacityDeniedBusinessStep('plan_inactive');
+
+        $this->assertCapacityDenialResponse($workspace, $onboarding);
+    }
+
+    public function test_capacity_denial_suspended_workspace_plan_redirects_with_the_safe_message(): void
+    {
+        [$customer, $workspace, $onboarding] = $this->customerAtCapacityDeniedBusinessStep('plan_suspended');
+
+        $this->assertCapacityDenialResponse($workspace, $onboarding);
+    }
+
+    public function test_capacity_denial_business_slot_allocation_required_redirects_with_the_safe_message(): void
+    {
+        [$customer, $workspace, $onboarding] = $this->customerAtCapacityDeniedBusinessStep('business_slot_allocation_required');
+
+        $this->assertCapacityDenialResponse($workspace, $onboarding);
+    }
+
+    public function test_capacity_denial_business_slot_limit_exceeded_redirects_with_the_safe_message(): void
+    {
+        [$customer, $workspace, $onboarding] = $this->customerAtCapacityDeniedBusinessStep('business_slot_limit_exceeded');
+
+        $this->assertCapacityDenialResponse($workspace, $onboarding);
+    }
+
+    /**
+     * The update-existing-Business branch never calls
+     * EntitlementManager::assertCanCreateAnotherBusiness() at all (the
+     * capacity gate applies only to Business creation) -- an existing
+     * regression confirmation, unaffected by the new catch clause.
+     */
+    public function test_capacity_gate_does_not_apply_to_updating_an_existing_business(): void
+    {
+        [$customer, $workspace, $onboarding] = $this->customerAtCapacityDeniedBusinessStep('business_slot_limit_exceeded');
+        $existingBusiness = Business::where('workspace_id', $workspace->id)->first();
+        $onboarding->business_id = $existingBusiness->id;
+        $onboarding->save();
+
+        $this->post(route('customer.onboarding.business.store'), $this->businessAttributes(['name' => 'Renamed Existing Business']))
+            ->assertRedirect(route('customer.onboarding.show', ['step' => 'location']));
+
+        $existingBusiness->refresh();
+        $this->assertSame('Renamed Existing Business', $existingBusiness->name);
+    }
+
+    /**
+     * A genuine ownership failure (AuthorizationException, thrown when the
+     * onboarding's own attached business_id no longer belongs to the
+     * authenticated customer) must never be caught by the new capacity
+     * union type and converted into the friendly capacity message --
+     * AuthorizationException does not extend RuntimeException and is
+     * structurally incapable of matching it, so this app's existing
+     * AuthorizationException handling (HTTP 401 via Handler::render(),
+     * identical to AuthenticationException in this app) is unaffected.
+     */
+    public function test_a_cross_customer_business_attachment_is_not_converted_into_a_capacity_message(): void
+    {
+        $customer = $this->actingAsHttpCustomer();
+        $foreignCustomer = $this->createCustomer();
+        $foreignBusiness = $this->createBusinessWithWorkspace($foreignCustomer, $this->businessAttributes());
+
+        $onboarding = app(OnboardingManager::class)->start($customer);
+        $onboarding->current_step = OnboardingStep::Business;
+        $onboarding->business_id = $foreignBusiness->id;
+        $onboarding->save();
+
+        $this->post(route('customer.onboarding.business.store'), $this->businessAttributes())
+            ->assertUnauthorized();
+    }
+
     /**
      * A logged-in customer with a complete business (primary location + one
      * active primary service) whose onboarding is bookmarked at the Analysis
@@ -626,6 +832,114 @@ class BusinessOnboardingHttpTest extends TestCase
         $this->assertNotNull($finding, "Expected a seeded finding for action_key [{$actionKey}].");
 
         return $finding['fingerprint'];
+    }
+
+    /**
+     * Prepares an HTTP-authenticated customer whose sole owned Workspace
+     * already denies further Business creation for the given
+     * EntitlementManager denial reason, with onboarding bookmarked at the
+     * Business step -- mirroring the exact fixture pattern
+     * BusinessManagerTest::test_legacy_onboarding_against_an_existing_at_capacity_workspace_denies()
+     * already uses to exercise this same underlying decision engine, so
+     * POSTing customer.onboarding.business.store exercises
+     * BusinessManager::applyIdentity()'s CREATE branch against exactly
+     * that denial via the real HTTP surface.
+     *
+     * @return array{0: Customer, 1: Workspace, 2: CustomerOnboarding}
+     */
+    private function customerAtCapacityDeniedBusinessStep(string $denialReason): array
+    {
+        $customer = $this->actingAsHttpCustomer();
+        $workspace = Workspace::create([
+            'name' => 'Existing',
+            'owner_user_id' => $customer->user_id,
+            'is_active' => true,
+        ]);
+        $admin = User::create([
+            'first_name' => 'Admin',
+            'last_name' => 'User',
+            'email' => 'admin' . uniqid('', true) . '@example.test',
+            'status' => true,
+            'is_admin' => true,
+            'is_customer' => false,
+            'active_portal' => 'admin',
+        ]);
+        $entitlementManager = app(EntitlementManager::class);
+        $businessRepository = app(BusinessRepository::class);
+
+        switch ($denialReason) {
+            case 'plan_inactive':
+                $entitlementManager->assignFirstPlan($workspace, WorkspacePlanTier::Core, $admin->id, 'Fixture.', true, 0);
+                $entitlementManager->changePlanStatus($workspace, WorkspacePlanAssignmentStatus::Inactive, $admin->id, 'Fixture.');
+                break;
+            case 'plan_suspended':
+                $entitlementManager->assignFirstPlan($workspace, WorkspacePlanTier::Core, $admin->id, 'Fixture.', true, 0);
+                $entitlementManager->changePlanStatus($workspace, WorkspacePlanAssignmentStatus::Suspended, $admin->id, 'Fixture.');
+                break;
+            case 'business_slot_allocation_required':
+                $entitlementManager->assignFirstPlan($workspace, WorkspacePlanTier::Core, $admin->id, 'Fixture.', true, 0);
+                for ($i = 0; $i < 3; $i++) {
+                    $businessRepository->createForCustomerInWorkspace($customer, $workspace, $this->businessAttributes(['name' => "Existing {$i}"]));
+                }
+                break;
+            case 'business_slot_limit_exceeded':
+                $entitlementManager->assignFirstPlan($workspace, WorkspacePlanTier::Core, $admin->id, 'Fixture.', true, 2);
+                for ($i = 0; $i < 5; $i++) {
+                    $businessRepository->createForCustomerInWorkspace($customer, $workspace, $this->businessAttributes(['name' => "Existing {$i}"]));
+                }
+                break;
+            case 'workspace_plan_unassigned':
+            default:
+                // No plan assignment at all -- decideBusinessSlotCapacity()'s
+                // own null-assignment branch.
+                break;
+        }
+
+        $onboarding = app(OnboardingManager::class)->start($customer);
+        $onboarding->current_step = OnboardingStep::Business;
+        $onboarding->save();
+
+        return [$customer, $workspace, $onboarding];
+    }
+
+    /**
+     * Asserts the exact, locked capacity-denial outcome (Design System M2
+     * A1 onboarding behavior remediation, Blocker 2): no generic 500, the
+     * fixed safe message, no Business persisted, no step advancement, no
+     * completion mutation, and no raw exception text or Workspace ID
+     * leakage into the response.
+     */
+    private function assertCapacityDenialResponse(Workspace $workspace, CustomerOnboarding $onboarding): void
+    {
+        $businessCountBefore = Business::where('workspace_id', $workspace->id)->count();
+
+        $response = $this->post(
+            route('customer.onboarding.business.store'),
+            $this->businessAttributes(['name' => 'Denied Attempt'])
+        );
+
+        $response->assertRedirect(route('customer.onboarding.show', ['step' => 'business']));
+        $response->assertSessionHasErrors([
+            'onboarding' => "We can't create your business with the current account setup. Please contact support for help.",
+        ]);
+
+        $onboarding->refresh();
+        $this->assertSame(OnboardingStep::Business, $onboarding->current_step);
+        $this->assertNotSame(OnboardingStatus::Completed, $onboarding->status);
+        $this->assertNull($onboarding->business_id);
+        $this->assertSame($businessCountBefore, Business::where('workspace_id', $workspace->id)->count());
+
+        $sessionErrorText = implode(' ', session('errors')->get('onboarding'));
+        $this->assertStringNotContainsString((string) $workspace->id, $sessionErrorText);
+        foreach ([
+            'WorkspacePlanUnassignedException',
+            'InactiveWorkspacePlanException',
+            'SuspendedWorkspacePlanException',
+            'BusinessSlotAllocationRequiredException',
+            'BusinessSlotLimitExceededException',
+        ] as $exceptionClassName) {
+            $this->assertStringNotContainsString($exceptionClassName, $sessionErrorText);
+        }
     }
 
     /**

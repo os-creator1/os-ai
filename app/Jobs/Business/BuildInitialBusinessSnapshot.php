@@ -64,6 +64,20 @@ class BuildInitialBusinessSnapshot implements ShouldQueue, ShouldQueueAfterCommi
             return;
         }
 
+        if (! config('business.onboarding.enabled', false)) {
+            // RFC-001-BUSINESS-CORE-DEPLOYMENT.md §8: an in-flight job encountering
+            // a disabled feature "safely no-ops or marks a safe failure." Only a
+            // genuinely still-pending analysis is safe-failed here -- a job that
+            // arrives after the onboarding already reached ResultsReady or Failed
+            // must no-op, never regress a valid result or dispatch a duplicate
+            // failure event merely because the feature is now disabled.
+            if ($onboarding->status === OnboardingStatus::AnalysisPending) {
+                $this->markFailed($onboarding, $onboardingRepository);
+            }
+
+            return;
+        }
+
         if ($onboarding->business_id === null) {
             // A missing business is not a transient condition — leaving the
             // onboarding stuck in AnalysisPending forever is worse than
