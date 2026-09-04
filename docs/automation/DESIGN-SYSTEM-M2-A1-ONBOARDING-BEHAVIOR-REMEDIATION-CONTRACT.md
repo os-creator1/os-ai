@@ -1,11 +1,12 @@
 # Design System M2 A1 — Onboarding Nonvisual Behavior Remediation Contract
 
 **Status: CONTRACT / AUDIT ONLY. No implementation has occurred under this
-document. Merging this contract does NOT authorize implementation — that
-requires its own separate, explicit human authorization, exactly like
-every prior contract in this repository. This contract is explicitly
-NONVISUAL: it does not touch, and does not authorize touching, any of the
-nine onboarding Blade views.**
+document. This is Correction Round 1 of the remediation contract.
+Merging this contract does NOT authorize implementation — that requires
+its own separate, explicit human authorization, exactly like every prior
+contract in this repository. This contract is explicitly NONVISUAL: it
+does not touch, and does not authorize touching, any of the nine
+onboarding Blade views.**
 
 ---
 
@@ -46,58 +47,63 @@ no_force_push: true
 no_deployment: true
 
 maximum_correction_rounds: 2
-correction_round: 0
+correction_round: 1
 correction_round_is_final: false
 ```
 
-**Base verification**: this contract is drafted on branch
+**Base verification**: this correction is drafted on branch
 `chore/design-system-m2-a1-onboarding-behavior-remediation-contract`, in
-an isolated worktree, created fresh from `origin/main` at
-`9e4127b8159741fb61f3dca8174d33d267b6c759` (confirmed exactly matching,
-mechanically, before any drafting began — the human merge of PR #188,
-"Design System M2 A1 — Business Onboarding Contract Final Correction,"
-parents `b7eabccd0702723965023336dcc4f01d5389f42a` and
-`2d8b43e88747a6b16a22ef2a8c80496afd055a6b`). This branch changes
+an isolated worktree, remaining on the same branch as the original draft.
+`origin/main` confirmed exactly `9e4127b8159741fb61f3dca8174d33d267b6c759`
+before this correction began — unchanged since the original draft (PR
+#188, "Design System M2 A1 — Business Onboarding Contract Final
+Correction," parents `b7eabccd0702723965023336dcc4f01d5389f42a` and
+`2d8b43e88747a6b16a22ef2a8c80496afd055a6b`). Pre-correction head:
+`d99ef6d3652edf967ebb6ef56e127229145b7f82`. This branch changes
 **exactly one path**: this document. No `resources/`, `app/`,
-`database/`, `routes/`, or test file is touched by drafting this
-contract.
+`database/`, or `routes/` file is touched by drafting this correction —
+the two production source files cited below (`BusinessOnboardingController.php`,
+`BuildInitialBusinessSnapshot.php`, plus `routes/customer.php` and
+`app/Http/Kernel.php`) were read directly to verify the corrections
+below against real code, never edited.
 
 ---
 
 ## 1. Authoritative inputs read
 
-Read in full: `CLAUDE.md`, `AGENTS.md`,
-`docs/automation/DESIGN-SYSTEM-M2-A1-BUSINESS-ONBOARDING-CONTRACT.md`
-(the merged A1 visual contract, §5/§15 of which named the two blockers
-this document resolves), `docs/rfcs/RFC-001-BUSINESS-CORE.md`,
-`docs/rfcs/RFC-001-BUSINESS-CORE-DEPLOYMENT.md`,
+Read in full (original draft, unchanged by this correction): `CLAUDE.md`,
+`AGENTS.md`, `docs/automation/DESIGN-SYSTEM-M2-A1-BUSINESS-ONBOARDING-CONTRACT.md`,
+`docs/rfcs/RFC-001-BUSINESS-CORE.md`, `docs/rfcs/RFC-001-BUSINESS-CORE-DEPLOYMENT.md`,
 `docs/rfcs/RFC-004-PLANS-AND-BUSINESS-FEATURE-ENTITLEMENTS.md`,
-`docs/rfcs/RFC-004-PLANS-AND-BUSINESS-FEATURE-ENTITLEMENTS-DEPLOYMENT.md`.
-Current implementation inspected in full: `routes/customer.php`,
-`routes/auth.php`, `app/Http/Kernel.php`,
-`app/Http/Controllers/Customer/BusinessOnboardingController.php`,
+`docs/rfcs/RFC-004-PLANS-AND-BUSINESS-FEATURE-ENTITLEMENTS-DEPLOYMENT.md`,
 `app/Http/Middleware/EnsureRequiredBusinessOnboardingIsComplete.php`,
 `app/Repositories/Eloquent/EloquentAccountRepository.php`,
 `app/Library/Business/OnboardingManager.php`,
-`app/Library/Business/BusinessManager.php`,
-`app/Jobs/Business/BuildInitialBusinessSnapshot.php`,
-`app/Exceptions/Handler.php`, `config/business.php`,
-`app/Library/Entitlement/EntitlementManager.php`, all six
-`App\Exceptions\Entitlement\*` classes reachable from
+`app/Library/Business/BusinessManager.php`, `app/Exceptions/Handler.php`,
+`config/business.php`, `app/Library/Entitlement/EntitlementManager.php`,
+all six `App\Exceptions\Entitlement\*` classes reachable from
 `assertCanCreateAnotherBusiness()`, the existing entitlement-denial
-handling in `app/Http/Controllers/Customer/Workspace/WorkspaceController.php`
-and `app/Http/Controllers/Admin/WorkspaceEntitlementController.php`, the
-`opportunity.enabled` precedent (`config/opportunity.php`,
-`app/Http/Controllers/Customer/OpportunityController.php`,
-`app/Http/Controllers/Admin/{Opportunity,OpportunityRun}Controller.php`),
-and every existing test file covering these paths (§15).
+handling in `WorkspaceController`/`Admin\WorkspaceEntitlementController`,
+the `opportunity.enabled` precedent, and every existing test file
+covering these paths.
+
+**Additionally re-read for this correction, in full, against current
+source**: `app/Http/Controllers/Customer/BusinessOnboardingController.php`
+(exact current `saveStep()`/`requestAnalysis()`/`completeAction()`/
+`complete()` redirect code, verified line-by-line — §9), `app/Jobs/Business/BuildInitialBusinessSnapshot.php`
+(exact current `handle()`/`markFailed()` code — §7), `routes/customer.php:508-520`
+(exact current route-group definition — §4), `app/Http/Kernel.php:91-117`
+(exact current `$routeMiddleware` alias registration convention — §4),
+and `docs/rfcs/RFC-001-BUSINESS-CORE-DEPLOYMENT.md:158` (exact
+in-flight-job wording, re-quoted verbatim — §7, previously
+mischaracterized in the original draft).
 
 ---
 
 ## 2. Authoritative RFC semantics — Blocker 1
 
-`docs/rfcs/RFC-001-BUSINESS-CORE-DEPLOYMENT.md` §1 (environment-variable
-table), verbatim:
+Unchanged from the original draft. `docs/rfcs/RFC-001-BUSINESS-CORE-DEPLOYMENT.md`
+§1 (environment-variable table), verbatim:
 
 > `BUSINESS_ONBOARDING_ENABLED` | `false` | **Master switch. When
 > `false`, the entire onboarding wizard, analysis job, and dashboard
@@ -108,189 +114,246 @@ Reinforced at §8 (Rollback considerations): "setting
 `BUSINESS_ONBOARDING_ENABLED=false` ... immediately stops new onboarding
 rows, dashboard redirects, and analysis dispatches." Reinforced again at
 §3 (rollout procedure): "voluntary onboarding" is only ever tested at
-step 6, *after* `BUSINESS_ONBOARDING_ENABLED=true` is already set — the
-documented rollout never exercises onboarding while the flag is `false`.
+step 6, *after* `BUSINESS_ONBOARDING_ENABLED=true` is already set.
 
-**No merged RFC-001 document contradicts this.** `RFC-001-BUSINESS-CORE.md`
-§30 (Migration and deployment) and §29 are consistent with, not
-contradictory to, the deployment guide's more explicit wording — neither
-document claims the flag should leave onboarding routes reachable while
-disabled. This is not a case of internally-contradictory merged RFCs
-(§21's stop condition does not apply). **Both RFC-001 documents are
-confirmed silent on the exact HTTP-level mechanics** (404? redirect?
-something else?) of "behaves as if the feature does not exist" — that
-choice is made in §6 below from codebase precedent, not invented.
-
-**Resolution direction is locked**: fix the implementation to conform to
-the merged RFC. `RFC-001-BUSINESS-CORE-DEPLOYMENT.md` is not amended by
-this contract or its future implementation.
+**No merged RFC-001 document contradicts this** — both documents are
+confirmed silent on exact HTTP-level mechanics; that choice is made in
+§5 from codebase precedent, not invented. **Resolution direction is
+locked**: fix the implementation to conform to the merged RFC. No RFC
+document is amended by this contract or its future implementation.
 
 ---
 
 ## 3. Blocker 1 — complete onboarding entry-point inventory
 
-Mechanically re-enumerated against current `main`, not assumed from any
-prior contract's list.
+Unchanged from the original draft — mechanically re-enumerated against
+current `main`, not assumed from any prior contract's list.
 
 | # | Entry point | Route/caller | Current config read | Current disabled-state gate | Side effects possible today while `enabled=false` |
 |---|---|---|---|---|---|
-| 1 | Lazy `CustomerOnboarding` row creation | `BusinessOnboardingController::currentOnboarding()` (`:240`), called by all 11 controller actions; `OnboardingManager::start()` (`OnboardingManager.php:65-74`) | none | **none** | `INSERT` into `customer_onboardings`, fires `CustomerOnboardingStarted` |
-| 2 | Render wizard (GET) | `customer.onboarding.show`, `BusinessOnboardingController::show()` (`:39-61`) | none | **none** | Full wizard HTML (200 OK) to any authenticated customer |
-| 3 | Submit a step (5 routes: goals/business/location/services/assets) | `customer.onboarding.{goals,business,location,services,assets}.store`, `BusinessOnboardingController::store*()` (`:63-116`) | none | **none** | Creates/updates `Business`, `BusinessLocation`, `BusinessService` rows; fires `CustomerOnboardingStepCompleted` |
+| 1 | Lazy `CustomerOnboarding` row creation | `BusinessOnboardingController::currentOnboarding()` (`:238-241`), called by all 11 controller actions; `OnboardingManager::start()` | none | **none** | `INSERT` into `customer_onboardings`, fires `CustomerOnboardingStarted` |
+| 2 | Render wizard (GET) | `customer.onboarding.show`, `::show()` (`:39-61`) | none | **none** | Full wizard HTML (200 OK) to any authenticated customer |
+| 3 | Submit a step (5 routes: goals/business/location/services/assets) | `customer.onboarding.{goals,business,location,services,assets}.store`, `::store*()` (`:63-116`) | none | **none** | Creates/updates `Business`, `BusinessLocation`, `BusinessService` rows |
 | 4 | Skip Assets | `customer.onboarding.assets.skip`, `::skipAssets()` (`:122-127`) | none | **none** | Advances `current_step` to `Analysis` |
 | 5 | Request analysis | `customer.onboarding.analysis.request` (`throttle:5,60`), `::requestAnalysis()` (`:129-143`) | none | **none** | Increments `analysis_version`, sets `status=AnalysisPending`, **dispatches `BuildInitialBusinessSnapshot`** |
-| 6 | Poll analysis status | `customer.onboarding.analysis.status` (`throttle:60,1`), `::analysisStatus()` (`:150-163`) | none | **none** | Read-only JSON; also triggers item 1's lazy-create if no row exists |
+| 6 | Poll analysis status | `customer.onboarding.analysis.status` (`throttle:60,1`), `::analysisStatus()` (`:150-163`) | none | **none** | Read-only JSON; also triggers item 1's lazy-create |
 | 7 | Results-step action | `customer.onboarding.action.complete`, `::completeAction()` (`:165-186`) | none | **none** | Mutates a `Business` field; may set `current_step=Complete` |
-| 8 | Complete onboarding | `customer.onboarding.complete`, `::complete()` (`:188-202`) | none | **none** | Sets `status=Completed`, fires `CustomerOnboardingCompleted`, redirects to dashboard |
-| 9 | Dispatch `BuildInitialBusinessSnapshot` | Exactly one production call site: `OnboardingManager.php:260`, inside item 5's path | none (job's own `analysis_queue` config read is queue selection, not a gate) | **none** | Queues async job |
-| 10 | Job processing | `BuildInitialBusinessSnapshot::handle()` (`:52-101`) | queue-name only | **none** | Builds/persists analysis snapshot, fires `InitialBusinessAnalysisCompleted` |
-| 11 | Dashboard redirect | `user.home` (`routes/auth.php:56`), `EnsureRequiredBusinessOnboardingIsComplete` (alias `business.onboarding`, `Kernel.php:116`) | `business.onboarding.enabled` (`Middleware.php:40`, default `false`) | **YES — the only gated entry point today** | Pure passthrough when disabled; correct, unaffected by this remediation |
-| 12 | Registration required-onboarding creation | `EloquentAccountRepository::register()` (`:125-127`) | `business.onboarding.enabled` **and** `business.onboarding.require_for_new_customers` (compound) | **YES — already correct today** | No required row created when disabled; correct, unaffected by this remediation |
+| 8 | Complete onboarding | `customer.onboarding.complete`, `::complete()` (`:188-202`) | none | **none** | Sets `status=Completed`, redirects to dashboard |
+| 9 | Dispatch `BuildInitialBusinessSnapshot` | `OnboardingManager.php:260`, inside item 5's path | none (queue-name selection only) | **none** | Queues async job |
+| 10 | Job processing | `BuildInitialBusinessSnapshot::handle()` (`:52-101`) | queue-name only, **before this correction** | **none, before this correction** | Builds/persists analysis snapshot — **corrected, §7** |
+| 11 | Dashboard redirect | `user.home` (`routes/auth.php:56`), `EnsureRequiredBusinessOnboardingIsComplete` (alias `business.onboarding`, `Kernel.php:116`) | `business.onboarding.enabled` (default `false`) | **YES — already correct today** | Pure passthrough when disabled; unaffected by this remediation |
+| 12 | Registration required-onboarding creation | `EloquentAccountRepository::register()` (`:125-127`) | compound `enabled` + `require_for_new_customers` | **YES — already correct today** | No required row created when disabled; unaffected by this remediation |
 
 **Confirmed**: the onboarding route group itself
-(`routes/customer.php:508-520`, `Route::prefix('onboarding')->name('onboarding.')->group(...)`)
-attaches no flag-aware middleware — only per-route throttling on 2 of the
-11 routes. The group inherits solely the blanket `web, auth,
-can:access_backend, ValidProduct, twofactor` stack applied to all of
-`routes/customer.php`. **Items 1-10 (11 of the 12 entry points) have
+(`routes/customer.php:508-520`) attaches no flag-aware middleware today
+— only per-route throttling on 2 of the 11 routes. **Items 1-10 have
 zero disabled-state gating today** — only items 11 and 12 are already
-correct and require no change.
+correct.
 
 ---
 
 ## 4. Selected master-switch architecture
 
-### 4.1 Seam comparison
+### 4.1 Correction Round 1 — the original controller-body guard is rejected
 
-| Candidate seam | Production paths touched | Fully satisfies RFC? | Duplicates existing checks? | Verdict |
-|---|---|---|---|---|
-| New onboarding route middleware | New middleware class + `Kernel.php` registration + 11 route-attribute edits across `routes/customer.php` | Yes, if applied to the whole group | No | Rejected: no codebase precedent for this shape (§6.3 of research); larger diff (3 files) than the alternative below for the same outcome |
-| Reuse/extend `EnsureRequiredBusinessOnboardingIsComplete` | 1 file, but this middleware is registered only on `user.home` and is semantically "should I redirect you *into* onboarding," not "is onboarding *reachable at all*" — repurposing it would conflate two different gates | No — would require either duplicating it as a second alias (defeats "reuse") or changing its meaning (regression risk to item 11, which is already correct) | Yes, if forced onto the wrong route | Rejected |
-| Manager/service-level guard (e.g., inside `OnboardingManager::start()`) | 1 file, but `OnboardingManager::start()` is called after `currentOnboarding()` already exists as the controller's own gate point — pushing the check one layer deeper doesn't prevent `analysisStatus()`'s independent JSON contract or `requestAnalysis()`'s job-dispatch from being reachable before reaching that check in every caller | No — several actions (`skipAssets`, `analysisStatus`, `completeAction`, `complete`) don't call `start()` on every path in a way that would uniformly gate them first | N/A | Rejected: doesn't cleanly cover all 11 route-level entry points as the *first* thing that runs |
-| Job-level guard (inside `BuildInitialBusinessSnapshot::handle()`) | 1 file | Only addresses item 10, not items 2-8 (the wizard itself would remain fully reachable) | N/A | Rejected as a sole solution — necessary analysis only for §7's already-queued-job question, not sufficient for the master switch itself |
-| **Controller-level centralized guard, mirroring the established `OpportunityController::ensureOpportunityEngineEnabled()` precedent** | **1 file**: `BusinessOnboardingController.php` | **Yes — every one of items 1-10 is reached only after this controller's own action methods execute, so gating each action's first statement structurally prevents all of them** | **No — this is the only entitlement/feature-flag "route reachability" gate pattern that already exists anywhere in this codebase (`opportunity.enabled`), so reusing its exact shape introduces no new pattern** | **SELECTED** |
+The original draft selected a private `BusinessOnboardingController::ensureOnboardingEnabled()`
+method called as the first statement of each of the 11 controller
+actions. **This is rejected — it does not fully satisfy the RFC.**
 
-### 4.2 Locked architecture
+**Verified against the real controller** (`app/Http/Controllers/Customer/BusinessOnboardingController.php`):
+six of the eleven actions type-hint a dedicated `FormRequest` parameter
+— `storeGoals(UpdateOnboardingGoalsRequest $request)`,
+`storeBusiness(UpsertBusinessIdentityRequest $request)`,
+`storeLocation(UpsertBusinessLocationRequest $request)`,
+`storeServices(SyncBusinessServicesRequest $request)`,
+`storeAssets(UpdateBusinessAssetsRequest $request)`,
+`completeAction(CompleteOnboardingActionRequest $request)`. Laravel
+resolves a type-hinted `FormRequest` from the container as part of
+building the controller method's call arguments — via
+`ValidatesWhenResolvedTrait::validateResolved()`, triggered during
+dependency resolution, which happens **before** the controller method
+body's first statement ever executes. A guard placed as the first line
+of the method body therefore runs **after** that FormRequest has already
+been authorized and validated — a disabled onboarding feature would
+still authorize/validate a malformed or well-formed POST body before
+ever reaching the guard, which does not "behave as if the feature does
+not exist" for those six actions. **This is a real defect in the
+original architecture, not a stylistic preference.**
 
-**Exact production file**: `app/Http/Controllers/Customer/BusinessOnboardingController.php`.
+### 4.2 Locked architecture — route middleware
 
-**Exact new method** (private, mirroring `OpportunityController::ensureOpportunityEngineEnabled()`'s
-own docblock convention: "first executable line of every action"):
+**Selected**: a dedicated route middleware, applied to the whole
+onboarding route group, which runs in the middleware pipeline strictly
+before controller dispatch and therefore strictly before any
+`FormRequest` is ever resolved.
+
+**Exact new file**: `app/Http/Middleware/EnsureBusinessOnboardingIsEnabled.php`:
 
 ```php
-private function ensureOnboardingEnabled(): void
+<?php
+
+namespace App\Http\Middleware;
+
+use Closure;
+use Illuminate\Http\Request;
+
+/**
+ * Master switch (RFC-001-BUSINESS-CORE-DEPLOYMENT.md §1): when
+ * business.onboarding.enabled is false, the entire onboarding route
+ * group behaves as if it does not exist. Runs before controller
+ * dispatch and before any FormRequest is resolved, so a disabled
+ * feature rejects a malformed or well-formed request identically —
+ * no onboarding row lookup, no tenant lookup beyond what the inherited
+ * route stack already ran, no mutation.
+ */
+class EnsureBusinessOnboardingIsEnabled
 {
-    abort_unless(config('business.onboarding.enabled', false), 404);
+    public function handle(Request $request, Closure $next)
+    {
+        if (config('business.onboarding.enabled', false)) {
+            return $next($request);
+        }
+
+        if ($request->wantsJson()) {
+            return response()->json(['status' => 'error', 'message' => 'Not Found'], 404);
+        }
+
+        abort(404);
+    }
 }
 ```
 
-**Exact call sites**: `ensureOnboardingEnabled();` added as the first
-statement of all 11 public controller actions: `show()`, `storeGoals()`,
-`storeBusiness()`, `storeLocation()`, `storeServices()`, `storeAssets()`,
-`skipAssets()`, `requestAnalysis()`, `analysisStatus()`,
-`completeAction()`, `complete()` — before `currentOnboarding()` or any
-other logic runs, so no lazy row creation, no Business mutation, and no
-job dispatch can occur while disabled.
+**Exact `Kernel.php` registration**: one new line in the existing
+`$routeMiddleware` array (`app/Http/Kernel.php:91-117`), immediately
+after the existing `'business.onboarding' => EnsureRequiredBusinessOnboardingIsComplete::class,`
+entry (`:116`), following the same alias-naming convention already
+established there:
 
-**One authoritative config source**: `config('business.onboarding.enabled', false)`
-— the identical key and default already used by the middleware (item
-11) and registration check (item 12); no second flag, no new config
-key.
+```php
+'business.onboarding.enabled' => EnsureBusinessOnboardingIsEnabled::class,
+```
 
-**Items 11 and 12 are untouched** — both are already correct (§3); this
-remediation does not modify `EnsureRequiredBusinessOnboardingIsComplete.php`
-or `EloquentAccountRepository.php`.
+**Exact `routes/customer.php` change** — one attribute added to the
+existing group definition (`:508`), no route added/removed/reordered:
 
-This satisfies all ten criteria from the task: one config source (✓);
-no partial access while disabled, since every action is individually
-gated (✓); no lazy row creation, since the gate is the first statement
-(✓); no new analysis dispatch, since `requestAnalysis()` is gated (✓);
-queued-job treatment locked separately (§7) (✓); dashboard passthrough
-preserved, untouched (✓); registration behavior preserved, untouched
-(✓); no unrelated customer route touched — scoped to 11 actions in one
-controller (✓); minimal production paths — exactly one file (✓);
-straightforward, deterministic, directly mirrors an already-tested
-pattern (✓).
+```php
+Route::prefix('onboarding')->name('onboarding.')->middleware('business.onboarding.enabled')->group(function () {
+    // ...existing 11 routes, byte-identical, unchanged...
+});
+```
+
+**`EnsureRequiredBusinessOnboardingIsComplete` is untouched** — it
+remains registered only on `user.home` (`routes/auth.php:56`), with its
+own distinct "should I redirect you *into* onboarding" responsibility,
+separate from this new "*is* onboarding reachable at all" gate.
+
+### 4.3 Seam comparison (revised)
+
+| Candidate seam | Production paths touched | Runs before FormRequest resolution? | Verdict |
+|---|---|---|---|
+| Controller-body guard (original draft) | 1 file | **No — confirmed defect, §4.1** | **Rejected** |
+| Manager/service-level guard | 1 file, but doesn't uniformly cover every route-level entry point as the first thing that runs | No (deeper than the controller, same problem) | Rejected |
+| Job-level guard alone | 1 file | N/A — addresses only item 10, not the wizard itself | Rejected as sole solution |
+| Reuse/extend `EnsureRequiredBusinessOnboardingIsComplete` | Would conflate two different gates (item 11's own responsibility vs. this one) | Yes, but wrong semantics | Rejected |
+| **New dedicated route middleware, applied to the whole onboarding group** | **3 files**: new middleware class, one `Kernel.php` line, one `routes/customer.php` attribute | **Yes — middleware always runs before controller dispatch/FormRequest resolution in Laravel's pipeline** | **SELECTED** |
+
+The 3-file diff is larger than the original 1-file controller-body
+approach, but is the only seam that actually satisfies "the entire
+onboarding wizard ... behave[s] as if the feature does not exist" for
+every one of the 11 entry points, including the six backed by a
+`FormRequest`.
+
+### 4.4 Criteria re-verified against the corrected architecture
+
+One authoritative config source (✓, same key/default); no partial
+access while disabled — every route in the group is gated identically,
+before dispatch (✓); no lazy row creation (✓, middleware runs before
+`currentOnboarding()` is ever called); no new analysis dispatch (✓); no
+FormRequest authorization/validation runs while disabled (✓ — the
+specific defect this correction fixes); queued-job treatment locked
+separately (§7, corrected); dashboard passthrough preserved, untouched
+(✓); registration behavior preserved, untouched (✓); no unrelated
+customer route touched — only the onboarding group's own middleware
+attribute changes (✓); straightforward, deterministic, directly testable
+(✓).
 
 ---
 
 ## 5. Disabled response contract — browser and JSON
 
-**Evidence, not taste**: `abort_unless($cond, 404)` throws a
-`Symfony\Component\HttpKernel\Exception\NotFoundHttpException`, which
-`app/Exceptions/Handler.php` routes as follows (confirmed by direct
-reading of `Handler::render()`, `:67-103`, and by three independent
-existing test files exercising the identical code path for a different
-exception type):
+**Corrected — locked to an exact, local, self-contained response, not
+inherited from the repository's global `Handler.php` JSON convention.**
+The original draft relied on `app/Exceptions/Handler.php`'s existing
+`wantsJson()` branch (which returns HTTP 200 for any exception,
+including a 404) as the *de facto* JSON behavior. That repository-wide
+legacy convention is real and is not modified by this contract (§17),
+but this new, local feature gate does not need to inherit that
+particular quirk — the middleware (§4.2) builds and returns its own
+`JsonResponse` directly for a JSON-wanting request, entirely bypassing
+`Handler::render()` for this specific gate.
 
-**A. Normal browser request** (no `Accept: application/json`): falls
-through `Handler::render()`'s `wantsJson()` check (false), then matches
-the `HttpException` branch (`:97-99`, only when `config('app.env') !=
-'local'`): `response()->view('errors.404', compact('exception'), 404)`
-— a real HTTP **404** with the app's existing `errors/404.blade.php`
-view. In local/debug environments, Laravel's own debug page renders
-instead (unchanged framework behavior, identical to every other 404 in
-this app). **This is the exact same code path the `opportunity.enabled`
-precedent already uses and already has passing tests for**
-(`tests/Feature/Opportunity/AdminOpportunityControllerTest.php`,
-`OpportunityExecutionStatusHttpTest.php`, `OpportunityMutationHttpTest.php`
-— all assert `assertNotFound()`).
+**Locked, exact responses**:
 
-**B. JSON/AJAX request** (the only onboarding route whose own client
-code sets `Accept: application/json` is `analysis.status`'s polling
-`fetch()` call, §14 of the merged A1 visual contract): `Handler::render()`'s
-`wantsJson()` branch is checked *first*, before any exception-type
-branch (`:70-75`): `response()->json(['status' => 'error', 'message' =>
-$exception->getMessage()])` — **with no explicit status code**, which
-Laravel's `ResponseFactory::json()` defaults to **HTTP 200**. This is a
-real, established, already-relied-upon codebase-wide convention
-(confirmed independently by `CustomerBaseController::redirectResponse()`,
-`AdminBaseController::redirectResponse()`, and three passing security
-test files asserting `assertOk()` + `assertJson(['status'=>'error'])`
-for logically-403/404-class denials). **This remediation does not
-change `Handler.php`'s global JSON behavior** — doing so would be a
-repository-wide change far exceeding this contract's scope (explicitly
-prohibited: "general exception architecture cleanup"). The `analysis.status`
-polling response while disabled is therefore locked as: **HTTP 200,
-body `{"status":"error","message":"Not Found"}`** (the default empty
-message an unqualified `abort_unless(...,404)` produces, or, if a custom
-message string is later found necessary at implementation time for
-clarity, any fixed string containing no onboarding-specific or tenant
-data — not prescribed further here since the *status code and envelope
-shape* is what's being locked, not exception-message wording for a path
-that carries no tenant information regardless).
+**A. Normal browser request** (`$request->wantsJson()` is `false`):
+`abort(404)` inside the middleware — standard Laravel 404 handling,
+identical to every other `abort(404)` in this app (e.g. the
+`opportunity.enabled` precedent's own `abort_unless(...,404)`, confirmed
+tested via `assertNotFound()` in three existing Opportunity test files).
+
+**B. JSON/AJAX request** (`$request->wantsJson()` is `true` — the only
+onboarding route whose own client sets `Accept: application/json` is
+`analysis.status`'s polling `fetch()` call): the middleware returns
+```php
+response()->json(['status' => 'error', 'message' => 'Not Found'], 404)
+```
+directly — **HTTP 404**, with the exact body `{"status":"error","message":"Not Found"}`.
+This is a real 404 status, not the repository-wide 200-status JSON quirk
+— because the middleware constructs and returns this response itself,
+before the request ever reaches `Handler::render()`, the global
+`wantsJson()`-returns-200 convention never applies to this specific gate.
+
+**`app/Exceptions/Handler.php` remains entirely unmodified** — this
+correction achieves a locally-correct JSON status code without touching
+any repository-wide exception-handling behavior.
 
 **Consequence, documented not fixed**: the `analysis.blade.php` polling
-script (unmodified — no visual work, §20) does not check
-`response.ok` and calls `.json()` unconditionally (already a documented,
-out-of-scope existing behavior). Receiving `{"status":"error",...}`
-matches neither its `data.completed` nor `data.status === 'failed'`
-branches, so it would simply keep polling at its existing capped
-interval — a graceful, non-mutating degradation, not a new regression
-introduced by this remediation, and explicitly not something this
-nonvisual, view-untouched contract fixes.
+script (unmodified — no visual work, §18) does not check `response.ok`
+and calls `.json()` unconditionally (an existing, out-of-scope
+behavior). Receiving `{"status":"error","message":"Not Found"}` (now a
+genuine 404, previously it would have been a 200 under the rejected
+design) matches neither its `data.completed` nor
+`data.status === 'failed'` branches, so it continues polling at its
+existing capped interval — a graceful, non-mutating degradation, not a
+regression this remediation introduces.
 
-**No genuine two-way ambiguity was found requiring a human decision
-here** — the `opportunity.enabled` precedent and the Handler's own
-global JSON convention together fully and uniquely determine both
-responses from existing evidence.
+**No genuine two-way ambiguity was found** — the exact response shape is
+fully determined by this contract's own choice to keep the gate local
+and self-contained, not by an inherited convention.
 
 ---
 
 ## 6. Existing-row behavior while disabled
 
-**Locked**: disabling is an availability gate, not a data-mutation
-event. Because `ensureOnboardingEnabled()` is the first statement of
-every gated action (§4.2), a request against a disabled onboarding
-route is rejected via `abort_unless()` *before* `currentOnboarding()`,
-any repository read, or any write ever executes. A customer's existing
-`CustomerOnboarding` row — `current_step`, `completed_steps`,
-`business_id`, `analysis_payload`, `analysis_version`, `status` — is
-therefore **never read, never written, never touched** by a denied
-request while the flag is off. Re-enabling the flag makes the existing
-row immediately resumable exactly where it left off, with zero special
-resume logic needed (none is added) — this falls directly out of the
-guard's placement, not a separate mechanism.
+**Locked, clarified in this correction**: disabling is an availability
+gate, not a data-mutation event, for every **ordinary denied HTTP
+request**. Because the middleware (§4.2) runs before controller
+dispatch, a denied request never reaches `currentOnboarding()`, any
+repository read, or any write — a customer's existing
+`CustomerOnboarding` row (`current_step`, `completed_steps`,
+`business_id`, `analysis_payload`, `analysis_version`, `status`) is
+**never read, never written** by a denied HTTP request while the flag is
+off. Re-enabling makes the row immediately resumable exactly where it
+left off.
+
+**The one deliberate exception, clarified by Correction Round 1**: an
+analysis job dispatched *before* the flag was disabled, which then
+executes *while* the flag is disabled, **may** terminalize *that one
+analysis attempt* as `Failed`, using the job's own existing safe-failure
+path (§7) — this is not a violation of "disablement does not
+mutate data," since it is the job's own established terminal-failure
+mechanism reacting to an unavailable feature at execution time, not a
+side effect of the HTTP-level gate itself. Disablement does not delete,
+reset, or otherwise touch any other field on the row.
 
 ---
 
@@ -299,44 +362,111 @@ guard's placement, not a separate mechanism.
 **Scenario**: onboarding enabled → analysis dispatched (item 5/9) →
 flag switched off → the already-queued job (item 10) executes.
 
-**Locked decision: the job completes normally. No new flag check is
-added inside `BuildInitialBusinessSnapshot::handle()`.**
+### 7.1 Correction Round 1 — the original "completes normally" decision is withdrawn
 
-**Evidence-based reasoning, not a default assumption**:
+The original draft locked "the job completes normally, no new flag
+check." **This directly contradicted the merged RFC and is withdrawn.**
 
-- RFC-001-BUSINESS-CORE-DEPLOYMENT.md's own wording is about **stopping
-  new dispatches** ("immediately stops new onboarding rows, dashboard
-  redirects, and analysis dispatches" — the plural noun describing the
-  *action* of dispatching, consistent with §4's gate at the
-  `requestAnalysis()` dispatch site, not a claim about jobs already in
-  flight).
-- The job's own existing design principle (`BuildInitialBusinessSnapshot.php`'s
-  own comment, quoted in the merged A1 visual contract §14) is explicit
-  that a missing/cross-tenant Business is treated as a **permanent**
-  failure rather than left pending, specifically "so it doesn't stay
-  stuck in AnalysisPending forever." Adding a flag-toggle no-op inside
-  the job would introduce exactly the failure mode this job was already
-  designed to avoid: an onboarding row permanently stuck in
-  `AnalysisPending` if the flag happens to be off at execution time,
-  with no customer-visible retry path (since the retry route,
-  `analysis.request`, is itself now gated §4).
-- This keeps the remediation isolated to the two actual blockers,
-  avoiding "general exception architecture cleanup" / scope creep the
-  task explicitly prohibits.
+**Exact RFC text, re-verified by direct grep against
+`docs/rfcs/RFC-001-BUSINESS-CORE-DEPLOYMENT.md:158`** (§8, "Queued jobs
+in flight during a rollback"):
 
-**Test to lock** (§15): dispatch `BuildInitialBusinessSnapshot` while
-`enabled=true`, then set `config(['business.onboarding.enabled' =>
-false])` before the job runs (simulating the toggle), run the job, and
-assert it still completes normally — `status` transitions to
-`ResultsReady`, `analysis_payload` is populated, no exception is thrown
-by the job itself.
+> "`BuildInitialBusinessSnapshot` re-validates the onboarding's status
+> and analysis version on every run (including retries) and **safely
+> no-ops or marks a safe failure** rather than writing stale data — an
+> in-flight job encountering a disabled feature or a since-completed/
+> dismissed onboarding will not corrupt state."
+
+This sentence restricts an in-flight job's behavior under a disabled
+feature to exactly two options — **no-op**, or **mark a safe failure** —
+and does not sanction a third option of completing the snapshot build
+and transitioning the onboarding to `ResultsReady` while the feature is
+disabled, which is what the original draft locked. That was a drafting
+error, confirmed against the RFC's own text, not a matter of taste.
+
+### 7.2 Locked decision: safe failure, not a no-op
+
+**Locked**: the job marks a safe failure, using its own existing
+`markFailed()`/`failAnalysis()` mechanism — not a silent no-op.
+**Rationale**: `failAnalysis()` already gives the customer a retryable
+terminal state (`status = Failed`) at the Analysis step once the feature
+is re-enabled. A pure no-op would leave the onboarding row stuck in
+`AnalysisPending` indefinitely, with no retry control available while
+pending (the existing UI has no "retry" affordance for the pending
+state, only for the failed state, per the merged A1 visual contract §7.2)
+— exactly the "stuck in AnalysisPending forever" failure mode the job's
+own existing design (its comment at `handle()` lines 68-70) was already
+built to avoid for the missing/cross-tenant-Business case. This choice
+is explicitly permitted by the RFC's own "no-op or marks a safe failure"
+wording and reuses an entirely existing mechanism — no new one is
+invented.
+
+### 7.3 Exact production change
+
+`app/Jobs/Business/BuildInitialBusinessSnapshot.php`'s `handle()`
+method — exact current code (verified directly):
+
+```php
+public function handle(
+    InitialBusinessSnapshotBuilder $builder,
+    CustomerOnboardingRepository $onboardingRepository,
+    BusinessRepository $businessRepository,
+): void {
+    $onboarding = CustomerOnboarding::find($this->onboardingId);
+
+    if ($onboarding === null || $onboarding->analysis_version !== $this->expectedVersion) {
+        return;
+    }
+
+    if (in_array($onboarding->status, [OnboardingStatus::Completed, OnboardingStatus::Dismissed], true)) {
+        return;
+    }
+
+    if ($onboarding->business_id === null) {
+        // ...existing missing-business safe-failure branch...
+    }
+    // ...
+}
+```
+
+**Exact insertion point**: a new check, immediately after the
+`Completed`/`Dismissed` terminal-state check and immediately before the
+`business_id === null` check:
+
+```php
+    if (! config('business.onboarding.enabled', false)) {
+        // RFC-001-BUSINESS-CORE-DEPLOYMENT.md §8: an in-flight job encountering
+        // a disabled feature "safely no-ops or marks a safe failure" -- a safe
+        // failure is chosen here, not a no-op, so the customer is not left
+        // stuck in AnalysisPending indefinitely once the retry route is
+        // itself gated (§4) while the feature remains disabled.
+        $this->markFailed($onboarding, $onboardingRepository);
+
+        return;
+    }
+```
+
+**Preserved exactly, per §6's clarification**: `analysis_version` is
+preserved (guarded by `failAnalysis()`'s own existing version re-check
+under `lockForUpdate()`, unchanged); `business_id` is preserved
+(`markFailed()`/`failAnalysis()` never touch it); `completed_steps` is
+preserved (untouched by this branch); `current_step` remains `Analysis`
+through the existing `failAnalysis()` implementation (it does not
+advance `current_step`, matching every other `markFailed()` call site);
+`status` becomes `Failed`; `analysis_error` is set to the job's existing
+`SAFE_ERROR` constant, verbatim: `"We could not finish the analysis.
+Please retry."`; the existing `InitialBusinessAnalysisFailed` event
+dispatch follows `markFailed()`'s own established, unmodified logic.
+
+**This adds `app/Jobs/Business/BuildInitialBusinessSnapshot.php` to the
+production implementation allowlist** (§17) — it is no longer excluded.
 
 ---
 
-## 8. Blocker 2 — exact exception inventory (mechanically re-verified)
+## 8. Blocker 2 — exact exception inventory (unchanged, mechanically re-verified)
 
-`EntitlementManager::assertCanCreateAnotherBusiness()` (`:225-241`) —
-the exact, complete `match` statement:
+Unchanged from the original draft. `EntitlementManager::assertCanCreateAnotherBusiness()`
+(`:225-241`) — the exact, complete `match` statement:
 
 | Denial reason | Thrown class | Extends | Message (no tenant data beyond a numeric Workspace ID) |
 |---|---|---|---|
@@ -347,118 +477,73 @@ the exact, complete `match` statement:
 | `business_slot_limit_exceeded` | `App\Exceptions\Entitlement\BusinessSlotLimitExceededException` | `\RuntimeException` | `"Workspace [{$id}] is at its maximum Business slot capacity."` |
 | *(default arm, currently unreachable)* | bare `\RuntimeException` | — | `"Unexpected capacity denial reason [...] for Workspace [{$id}]."` |
 
-**Confirmed complete**: `decideBusinessSlotCapacity()` (the only method
-`assertCanCreateAnotherBusiness()` calls) contains zero `throw`
-statements and only ever returns one of the five known reason strings
-or `null` — the `default` match arm is real code but currently
-unreachable in practice. **No shared base/abstract exception class
-exists anywhere in `app/Exceptions/**`** — every custom exception,
-including all five above, extends the base PHP `\RuntimeException`
-directly, confirmed by grep across all ~78 exception files. There is
-therefore no legitimate shared parent to catch instead of the five
-named types, and this contract does **not** introduce a new shared
-exception interface/hierarchy purely for catching convenience (that
-would be a "speculative new exception hierarchy," explicitly
-prohibited).
+**Confirmed complete** (unchanged): `decideBusinessSlotCapacity()`
+throws nothing and only ever returns one of the five known reasons or
+`null`. **No shared base/abstract exception class exists** anywhere in
+`app/Exceptions/**` — every custom exception extends base
+`\RuntimeException` directly; no legitimate shared parent to catch
+instead, and this contract does not invent one. **Confirmed
+anonymization**: all five messages carry only a numeric Workspace ID,
+nothing else. **Confirmed via `Handler.php`**: none of the six is
+special-cased; HTML → generic framework 500 today (the actual defect);
+JSON → the repository-wide `wantsJson()` 200-status envelope, which
+today leaks the raw message (including the Workspace ID) — corrected by
+§9, since the new catch intercepts the exception before it ever reaches
+`Handler::render()`.
 
-**Confirmed anonymization**: all five constructors take only `public
-readonly int $workspaceId`, interpolated into a fixed English sentence
-— no customer name, email, Business name, or other tenant-identifying
-string in any message. The prior contract's "already deliberately
-anonymized to a numeric Workspace ID" claim is verified true, not
-assumed.
-
-**Confirmed via `app/Exceptions/Handler.php`**: none of the six throw
-sites above is special-cased (`$dontReport` list and `render()`'s
-`instanceof` branches both checked, §5). An uncaught instance of any of
-them produces the exact same 404-shaped... no — **HTML: a generic
-framework/500-shaped response** (falls through every branch to
-`parent::render()`, which for a plain `RuntimeException` in production
-is a generic 500, not a 404 — this is a different, uncaught-generic-error
-outcome than Blocker 1's deliberate `abort_unless(...,404)`, and is the
-actual defect being fixed here). **JSON**: same `wantsJson()` 200-status
-envelope as §5 (`{"status":"error","message":"<raw message, currently
-including the Workspace ID>"}` — i.e., **today, a JSON-wanting request
-that hits this path leaks the numeric Workspace ID in the response
-body**, since nothing intercepts it before Handler's generic pass-through;
-this is corrected by this remediation, §9, since the seam intercepts the
-exception before it ever reaches `Handler::render()`).
-
-**Not part of `assertCanCreateAnotherBusiness()`'s own throw set, noted
-but out of this contract's exact scope**: `BusinessManager::applyIdentity()`'s
-immediately-preceding calls, `resolveLegacyOnboardingWorkspace()` and
-`lockForLegacyOnboardingBusinessCreation()`, can throw
-`WorkspaceContextRequiredException` or a missing-owner
-`ModelNotFoundException` (per an existing code comment,
-`BusinessManager.php:144-151`). These hit the identical `saveStep()`
-catch-gap for the identical structural reason, but are **not** RFC-004
-capacity-denial exceptions and are **not** added to this contract's
-catch set — expanding the catch beyond the exact six `EntitlementManager`
-throw sites above would exceed this contract's locked purpose (§ "Locked
-purpose": resolves exactly two blockers, not a general exception-handling
-audit of the onboarding Business-creation path). If a future defect
-report finds these two exceptions also reach a customer as a generic
-500, that is separate, future scope.
+**Not part of this contract's catch set, unchanged**:
+`resolveLegacyOnboardingWorkspace()`/`lockForLegacyOnboardingBusinessCreation()`'s
+own possible `WorkspaceContextRequiredException`/`ModelNotFoundException`
+throws remain out of scope, as originally decided.
 
 ---
 
 ## 9. Selected capacity-denial architecture
 
-### 9.1 Existing repository precedent (the deciding evidence)
+### 9.1 Existing repository precedent (unchanged — the deciding evidence)
 
-**This exact pattern already exists, twice, for the other two callers
-of `assertCanCreateAnotherBusiness()`** — `WorkspaceController::storeBusiness()`/`::reassignBusiness()`
-(customer-facing, `app/Http/Controllers/Customer/Workspace/WorkspaceController.php:241-268,288-318`)
-and `Admin\WorkspaceEntitlementController::mutationErrorRedirect()`
-(`:230-248`): both catch each of the five named exception types
-individually and redirect back with a `flash_error` session message.
-One of these two (`WorkspaceController`) has its own test
-(`tests/Feature/Workspace/WorkspaceBusinessCreationHttpTest.php:379-398`)
-whose docblock states this exact defect — uncaught propagation —
-**previously existed on that surface too, and was fixed by RFC-004
-Milestone 3**. Onboarding's `BusinessManager::applyIdentity()` call site
-is the one caller of `assertCanCreateAnotherBusiness()` that was never
-given the same treatment.
+Unchanged from the original draft: `WorkspaceController::storeBusiness()`/`::reassignBusiness()`
+and `Admin\WorkspaceEntitlementController::mutationErrorRedirect()` both
+already catch each of the five named exception types and redirect with
+a message — a pattern already fixed on those two surfaces under RFC-004
+Milestone 3, never extended to onboarding. Onboarding cannot reuse
+`flash_error` verbatim (no Blade partial renders it in any of the nine
+onboarding views) — it reuses its own existing `saveStep()` error seam
+instead.
 
-**Why onboarding cannot reuse `flash_error` verbatim**: the
-`flash_error` session-flash convention is rendered by a Blade partial
-used in the Workspace/Admin surfaces, not present anywhere in the nine
-onboarding views (confirmed: onboarding's only error-rendering surface
-is the shared `$errors->any()` block in `show.blade.php`, per the
-merged A1 visual contract §7.1/§11). Introducing `flash_error` into
-onboarding would require either a Blade view change (explicitly
-forbidden, §20) or would silently render nothing. The onboarding
-surface already has its **own** working error-rendering seam:
-`BusinessOnboardingController::saveStep()` (`:211-226`) already catches
-`InvalidArgumentException` and redirects to the resolved step with
-`withInput()->withErrors(['onboarding' => $message])` — which the
-existing `show.blade.php` `$errors->any()` block already renders,
-today, with zero further view work.
-
-### 9.2 Locked architecture
+### 9.2 Locked architecture — corrected redirect target
 
 **Exact production file/method**: `app/Http/Controllers/Customer/BusinessOnboardingController.php`,
-method `saveStep(Closure $action)` (`:211-226`) — the same shared
-closure-wrapper already used by all 5 step-store actions
-(`storeGoals`/`storeBusiness`/`storeLocation`/`storeServices`/`storeAssets`).
-Only the Business step's underlying call chain
-(`OnboardingManager::saveBusinessStep()` → `BusinessManager::createOrUpdateOnboardingBusiness()`
-→ `applyIdentity()`'s CREATE branch) can throw the six types in §8 —
-Location/Services/Assets never call that CREATE branch — so adding one
-additional `catch` clause to this single shared helper covers the
-exact, and only, path that can produce them, without touching five
-separate action methods individually.
+method `saveStep(Closure $action)` (`:211-226`) — verified exact current
+code:
 
-**Exact caught type**: a union catch of the five named
-`App\Exceptions\Entitlement\*` classes from §8 — **not** a bare
-`\RuntimeException` catch (which would also swallow unrelated
-`RuntimeException`s from elsewhere in the wrapped closure, masking real
-bugs as friendly "try again" messages) and **not** a new shared
-interface (§8, prohibited). The `default`-arm bare `RuntimeException`
-(currently unreachable, §8) is **deliberately not caught** — it remains
-whatever generic error it always was if it ever becomes reachable,
-which this contract records as a conscious, evidence-based choice, not
-an oversight.
+```php
+private function saveStep(Closure $action): RedirectResponse
+{
+    $onboarding = $this->currentOnboarding();
+    $customer = $this->customer();
+
+    try {
+        $onboarding = $action($onboarding, $customer);
+    } catch (InvalidArgumentException) {
+        return redirect()
+            ->route('customer.onboarding.show', ['step' => $this->onboarding->resolveStep($onboarding)->value])
+            ->withInput()
+            ->withErrors(['onboarding' => 'We could not save that step. Please check your entries and try again.']);
+    }
+
+    return redirect()->route('customer.onboarding.show', ['step' => $onboarding->current_step->value]);
+}
+```
+
+**Correction Round 1 — redirect target fixed.** The original draft's
+locked example used `redirect()->to($this->onboarding->resolveStep($onboarding)->value)`
+— **this is wrong**: `resolveStep(...)->value` is a bare step-name
+string (e.g. `"business"`), and `redirect()->to('business')` would
+target the relative path `/business`, not the actual onboarding show
+route `/onboarding/business`. **Locked, exact, corrected catch clause**,
+mirroring the verified existing `InvalidArgumentException` catch above
+exactly — via the named route, not a bare value:
 
 ```php
 } catch (WorkspacePlanUnassignedException
@@ -467,290 +552,287 @@ an oversight.
        | BusinessSlotAllocationRequiredException
        | BusinessSlotLimitExceededException $e) {
     return redirect()
-        -&gt;to($this-&gt;onboarding-&gt;resolveStep($onboarding)-&gt;value)
-        -&gt;withInput()
-        -&gt;withErrors(['onboarding' =&gt; self::CAPACITY_DENIAL_MESSAGE]);
+        ->route('customer.onboarding.show', ['step' => $this->onboarding->resolveStep($onboarding)->value])
+        ->withInput()
+        ->withErrors(['onboarding' => self::CAPACITY_DENIAL_MESSAGE]);
 }
 ```
 
-placed alongside the existing `catch (InvalidArgumentException $e)`
-clause in `saveStep()`, using the identical redirect-target/`withInput()`/
-`withErrors(['onboarding' => ...])` shape already established there —
-zero new redirect logic, zero new error-rendering mechanism.
+placed alongside the existing `catch (InvalidArgumentException)` clause,
+using the identical named-route/`withInput()`/`withErrors(['onboarding'
+=> ...])` shape already established there.
 
-**Redirect target**: identical to the existing `InvalidArgumentException`
-handler's target — the resolved current step (which will be `Business`,
-since `current_step` never advances past it when `applyIdentity()`
-throws before `completeStep()` is ever reached).
+**Exact caught type** (unchanged): a union catch of the five named
+`App\Exceptions\Entitlement\*` classes from §8 — never a bare
+`\RuntimeException`, never a new shared interface.
 
-**Input preservation**: `withInput()`, matching every other `saveStep()`
-failure path — the customer's submitted Business-step form values are
-preserved.
+**State-preservation guarantees** (unchanged, all already true today by
+virtue of the existing transaction wrapping `applyIdentity()`'s CREATE
+branch): zero Business persisted; `business_id` remains null;
+`current_step` remains `Business`, not advanced; `status` unchanged; no
+analysis dispatch.
 
-**State-preservation guarantees** (all already true today, by virtue of
-the existing `DB::transaction()` wrapping `applyIdentity()`'s CREATE
-branch — not newly introduced by this catch clause, only newly
-surfaced safely instead of as a 500): zero Business persisted (the
-transaction rolls back before any insert completes); `business_id`
-remains null (never attached); `current_step` remains `Business`, not
-advanced; onboarding `status` unchanged, not completed; no analysis
-dispatch (unreachable — the Business step precedes Analysis in
-`STEP_ORDER`).
-
-**Non-onboarding callers unaffected**: `WorkspaceController` and
-`Admin\WorkspaceEntitlementController`'s own catch blocks are not
-touched by this contract.
+**Non-onboarding callers unaffected** (unchanged).
 
 ---
 
 ## 10. Exact safe customer message
 
-**Locked, single, generic, deterministic string** — not five distinct
-messages. Rationale: the task's own default preference ("prefer one
-generic deterministic message unless repository precedent proves
-separate messages are necessary") governs here; the existing five
-distinct Workspace/Admin messages are written for an audience that
-already understands "plan," "slot allocation," and Workspace-management
-concepts — a brand-new customer mid-onboarding, who has typically never
-seen a plan-management screen, is not that audience, and no
-onboarding-specific evidence was found requiring finer granularity.
+**Correction Round 1 — message text corrected; the constant stays
+private.**
+
+**The original draft's message was misleading**: "We can't create your
+business right now. Please try again in a moment, or contact support if
+this continues." implies transience ("in a moment," "try again") for
+denials that will not resolve merely by waiting — an unassigned,
+inactive, or suspended plan, or a hard slot limit, none of which self-heal
+on retry. This is corrected to a message that does not claim transience:
 
 ```php
 private const CAPACITY_DENIAL_MESSAGE =
-    "We can't create your business right now. Please try again in a moment, or contact support if this continues.";
+    "We can't create your business with the current account setup. Please contact support for help.";
 ```
 
-(mirroring the existing `BuildInitialBusinessSnapshot::SAFE_ERROR`
-fixed-string convention already established elsewhere in this exact
-codebase for the identical "never leak raw exception text" discipline).
+(`private`, unchanged — mirroring `BuildInitialBusinessSnapshot::SAFE_ERROR`'s
+own private, fixed-string convention. **Correction Round 1**: the
+original draft's test plan referenced
+`BusinessOnboardingController::CAPACITY_DENIAL_MESSAGE` from within test
+assertions — **a private class constant cannot be accessed from outside
+its own class in PHP**, so that reference was invalid. Tests must assert
+the exact literal string above, never the constant reference — corrected
+throughout §15.)
 
-**Verified against every requirement**: actionable for a legitimate
-customer (retry / contact support) — ✓; no Workspace numeric ID — ✓
-(zero interpolation); no internal plan-assignment details — ✓; no
-exception-class text — ✓; no stack/error information — ✓; applies
-uniformly to all five capacity/plan-denial variants covered by the
-catch — ✓ (deliberately generic, not variant-specific); exactly
-testable — ✓ (`assertSessionHasErrors(['onboarding' =>
-BusinessOnboardingController::CAPACITY_DENIAL_MESSAGE])` or the literal
-string).
+**Verified against every requirement**: still actionable (contact
+support) — ✓; no Workspace numeric ID, zero interpolation — ✓; no
+internal plan-assignation details — ✓; no exception-class text — ✓; no
+stack/error information — ✓; the same exact string for all five
+covered denial types — ✓; no longer implies the denial is transient or
+retry-resolvable — ✓ (the correction itself); exactly testable via the
+literal string — ✓.
 
 ---
 
 ## 11. Security preservation
 
-Reconfirmed, none weakened by either blocker's remediation:
+Reconfirmed, unchanged in substance, updated only where the corrected
+architecture (§4, §7, §9) changes *which* file enforces a guarantee:
 
-- **Authentication**: unaffected — `ensureOnboardingEnabled()` runs
-  after the route group's own `auth` middleware already ran; a
-  guest still gets redirected to login before ever reaching the new
-  guard (unchanged route-group ordering).
+- **Authentication**: unaffected — the new middleware (§4.2) runs after
+  the route group's own `auth` middleware, inheriting the same ordering
+  as every other guard in the group; a guest is redirected to login
+  before ever reaching the new gate.
 - **Onboarding/Business ownership, Workspace association, RFC-004
-  capacity enforcement, transaction/locking**: entirely untouched code
-  paths — this contract adds a guard clause and a catch clause; it does
-  not modify `OnboardingManager::assertOwnership()`,
-  `BusinessManager::assertOwnership()`, `EntitlementManager`'s decision
-  logic, or any lock acquisition.
-- **Cross-customer isolation**: unaffected — the new catch clause fires
-  only after ownership has already been asserted upstream
-  (`OnboardingManager::saveBusinessStep()`'s own `assertOwnership()`
-  call precedes `BusinessManager` invocation).
-- **Exception anonymization**: strengthened, not weakened — today, a
-  JSON-wanting caller hitting this path would see the raw exception
-  message (including the numeric Workspace ID) via Handler's generic
-  pass-through (§8); after remediation, the fixed, zero-interpolation
-  message in §10 is used instead, and the exception never reaches
-  `Handler::render()` at all for this specific path.
+  capacity enforcement, transaction/locking**: entirely untouched — this
+  correction still only adds a route middleware, a `saveStep()` catch
+  clause, and one job-level guard; it does not modify
+  `assertOwnership()`, `EntitlementManager`'s decision logic, or any
+  lock acquisition.
+- **Cross-customer isolation**: unaffected — the capacity catch clause
+  fires only after ownership has already been asserted upstream.
+- **Exception anonymization**: strengthened — today, a JSON-wanting
+  caller hitting the capacity-denial path would see the raw exception
+  message (including the Workspace ID) via `Handler`'s generic
+  pass-through (§8); after remediation, the fixed §10 message is used,
+  and the exception never reaches `Handler::render()`.
 - **No raw server exception output**: guaranteed — `withErrors()`
-  receives only the fixed constant string, never `$e->getMessage()`.
-- **`AuthorizationException` is not accidentally converted into a
-  friendly capacity error**: guaranteed by type-safety — the new catch
-  clause's union type list contains only the five named
-  `RuntimeException` subclasses from §8; `AuthorizationException` does
-  not extend `RuntimeException` and is structurally incapable of
-  matching this catch, so it continues to propagate uncaught exactly as
-  documented in the merged A1 visual contract §4.2/§16 item 14 (a
-  framework 403, unchanged).
-- **Cannot infer a foreign Workspace's ID/plan/allocation/capacity
-  through the new path**: the fixed message in §10 carries zero
-  interpolated data of any kind, for any of the five exception types,
-  for any Workspace — a foreign customer triggering any of the five
-  denial reasons against their own Workspace sees the identical fixed
-  string a legitimate customer would, with nothing to distinguish which
-  of the five reasons actually fired, let alone any other tenant's
-  data.
+  receives only the fixed constant string, never `$e->getMessage()`;
+  the middleware's JSON body (§5) is a fixed literal, never derived from
+  request/tenant data.
+- **`AuthorizationException` is not converted into a friendly capacity
+  error**: guaranteed by type-safety — unchanged reasoning, `AuthorizationException`
+  does not extend `RuntimeException` and cannot match the new catch's
+  union type.
+- **No foreign Workspace ID/plan/allocation/capacity can be inferred**
+  through either new path — the middleware's JSON body (§5) and the
+  capacity-denial message (§10) both carry zero interpolated data.
 
 ---
 
 ## 12. State-machine preservation
 
-Neither remediation redesigns the onboarding state machine. Preserved
-exactly: step order `Goals → Business → Location → Services → Assets →
-Analysis → Results → Complete`; Assets remains the only skippable step
-(`OnboardingManager::SKIPPABLE_STEPS`, untouched).
+Unchanged in substance; re-verified against the corrected architecture.
+Step order `Goals → Business → Location → Services → Assets → Analysis
+→ Results → Complete` preserved; Assets remains the only skippable
+step.
 
-**Capacity denial at Business** (§9): leaves the customer on/recoverable
-at Business (redirect target = resolved current step, still `Business`)
-— ✓; does not mark Business complete — ✓ (no Business row exists to
-mark); does not advance `current_step` — ✓ (unreached `completeStep()`
-call); does not create Business — ✓ (transaction rollback); does not
-dispatch analysis — ✓ (unreachable, Analysis follows Business in
-`STEP_ORDER`).
+**Capacity denial at Business** (§9): leaves the customer recoverable at
+Business; does not mark Business complete; does not advance
+`current_step`; does not create Business; does not dispatch analysis —
+all ✓, unchanged reasoning.
 
-**Master-switch disablement** (§4-§7): does not itself complete,
-dismiss, reset, delete, or advance an existing onboarding record — ✓
-(§6: the guard runs before any read/write; no code path in this
-remediation calls `complete()`, `dismiss()`, or any mutation method).
+**Master-switch disablement** (§4-§7, updated): an ordinary denied HTTP
+request does not itself complete, dismiss, reset, delete, or advance an
+existing onboarding record (§6) — ✓. The one deliberate exception,
+clarified by this correction: an in-flight analysis job executing while
+disabled may terminalize *that analysis attempt* to `Failed` via the
+job's own existing `markFailed()` path (§7) — this does not advance
+`current_step` (remains `Analysis`) and does not otherwise touch the
+row.
 
 ---
 
 ## 13. Stale-test inventory
 
-Mechanically identified, from `tests/Feature/Business/BusinessOnboardingHttpTest.php`
-(the only test file with disabled-flag-named tests):
+Unchanged core finding, expanded scope per the corrected architecture.
 
 - **`test_direct_onboarding_routes_remain_reachable_when_config_is_disabled`**
-  (`:358-365`) — exact current body:
-  ```php
-  public function test_direct_onboarding_routes_remain_reachable_when_config_is_disabled(): void
-  {
-      config(['business.onboarding.enabled' =&gt; false]);
-      $this-&gt;actingAsHttpCustomer();
-      $this-&gt;get(route('customer.onboarding.show'))-&gt;assertOk();
-  }
-  ```
-  **This is the one stale test** — it directly encodes the pre-remediation
-  drift (asserting `assertOk()` where the merged RFC intent, and this
-  contract's §4-§5, require `assertNotFound()`). It must be rewritten
-  during implementation to assert the corrected behavior; it is not
-  fixed by this docs-only contract (§20).
+  (`tests/Feature/Business/BusinessOnboardingHttpTest.php:358-365`) —
+  still the one stale test from the original inventory; must be
+  rewritten to assert `assertNotFound()` (§15).
 
-**Not stale, remain unchanged**: `test_dashboard_redirects_when_onboarding_enabled_and_required_incomplete`
-(`:301-310`), `test_dashboard_is_not_redirected_when_onboarding_config_is_disabled`
-(`:317-330`), `test_dashboard_is_not_redirected_when_onboarding_config_key_is_missing`
-(`:336-342`), `test_dashboard_is_not_redirected_when_onboarding_is_completed_and_config_enabled`
-(`:347-356`) — all four test the dashboard-redirect middleware (item 11,
-§3), which is already correct and is not modified by this remediation;
-they remain valid regression tests.
+**Newly identified by this correction — not a stale assertion, but a
+missing test-fixture precondition**: `BusinessOnboardingHttpTest.php`'s
+existing "master switch on" wizard-workflow tests (the majority of the
+file) currently pass without ever setting `config(['business.onboarding.enabled'
+=> true])`, because today's routes are ungated. Once the route
+middleware (§4.2) is added, those tests will 404 unless the file
+establishes an enabled baseline. **These tests are not reclassified as
+stale — their workflow assertions remain entirely valid** (per explicit
+instruction: do not treat all of them as stale); only the missing
+fixture precondition changes (§15/§16). The identical situation applies
+to `BuildInitialBusinessSnapshotJobTest.php`'s existing successful-job
+tests, which historically ran without the flag enabled because the job
+ignored it — once the job enforces the flag (§7.3), those tests need
+the same explicit enabled baseline.
 
-**No stale test exists for Blocker 2** — `BusinessOnboardingHttpTest.php`
-contains zero tests referencing `EntitlementManager`/capacity/slot
-keywords (confirmed by grep); the gap is a missing test, not a wrong
-one.
+**No stale test exists for Blocker 2** (unchanged) — zero existing
+capacity/slot-keyword tests in `BusinessOnboardingHttpTest.php`.
 
 ---
 
 ## 14. Focused test file strategy
 
-**Locked**: extend two existing files. No new test file is created.
+Unchanged: extend the same two existing files, no new test file.
 
-- **`tests/Feature/Business/BusinessOnboardingHttpTest.php`** — already
-  the HTTP-level test file for this exact controller/route surface
-  (§13); its responsibility already matches both blockers' HTTP-level
-  behavior. Receives: the corrected stale test (§13), the full "master
-  switch off" matrix (§15), the "master switch on" regression
-  confirmations, and the capacity-denial HTTP-level tests (§15) — the
-  latter closing the coverage gap identified in §8/§9.1 (no HTTP-level
-  capacity test exists today for onboarding, unlike the analogous,
-  already-covered `WorkspaceController` surface).
+- **`tests/Feature/Business/BusinessOnboardingHttpTest.php`** — receives
+  the corrected stale test, an explicit enabled-baseline fixture (§13,
+  §15), the full master-switch-off matrix (now including
+  before-FormRequest-validation proof, §15), and the full five-exception
+  capacity-denial matrix (§15).
 - **`tests/Feature/Business/BuildInitialBusinessSnapshotJobTest.php`** —
-  already the job-level test file; receives exactly one new test for
-  the already-queued-job flag-toggle scenario (§7).
-
-**Why not a new file**: both existing files' stated responsibilities
-already exactly match what needs testing; the task explicitly disfavors
-"redundant files merely for slice naming," and no distinct
-responsibility exists here that isn't already "onboarding HTTP
-behavior" or "onboarding analysis job behavior."
+  receives an explicit enabled-baseline fixture (§13) and the corrected
+  disabled-queued-job safe-failure test (§7.3/§15).
 
 ---
 
 ## 15. Exact focused test plan
 
+**Test-fixture baselines (Correction Round 1, both files)**:
+
+```php
+protected function setUp(): void
+{
+    parent::setUp();
+
+    config(['business.onboarding.enabled' => true]);
+}
+```
+
+added to `BusinessOnboardingHttpTest.php` and
+`BuildInitialBusinessSnapshotJobTest.php` alike — every existing
+"master switch on" test continues to exercise the enabled path
+explicitly rather than accidentally; every disabled-state test
+explicitly overrides `config(['business.onboarding.enabled' => false])`
+within its own method, as several already do. Implementation must
+mechanically re-audit every test in both files to confirm each one
+intentionally runs in either the enabled baseline or an explicit
+disabled override — not silently left ambiguous.
+
 **MASTER SWITCH OFF** (`BusinessOnboardingHttpTest.php`):
 
 - Registration does not create a required onboarding row when disabled
-  (already-correct regression, re-confirmed explicitly).
+  (already-correct regression, re-confirmed).
 - Dashboard does not redirect into onboarding when disabled (existing
-  test, unchanged, re-confirmed as still passing).
-- Corrected: direct `GET customer.onboarding.show` returns **404**, not
-  200 (replaces the stale test, §13).
-- Every one of the 5 step-store POSTs denied with 404.
+  test, unchanged).
+- Corrected: direct `GET customer.onboarding.show` returns **404**
+  (replaces the stale test, §13).
+- Every one of the 5 step-store POSTs denied with 404 — **including with
+  malformed/empty input**, proving the new middleware wins over
+  FormRequest validation (the exact defect §4.1 corrects) — e.g. POST to
+  `business.store` with an empty body while disabled must still 404, not
+  produce a 422 validation-error response.
 - Assets skip denied with 404.
 - Analysis-request POST denied with 404.
-- Analysis-status GET denied consistently: **HTTP 200**, body
-  `{"status":"error",...}` (§5.B — locked, not a 404, since this route's
-  own client sets `Accept: application/json`).
-- Results-action POST denied with 404.
+- Analysis-status GET denied consistently: **HTTP 404**, exact body
+  `assertExactJson(['status' => 'error', 'message' => 'Not Found'])`
+  (§5.B — corrected from the original draft's HTTP 200 expectation).
+- Results-action POST denied with 404, including malformed input (same
+  FormRequest-precedence proof as the step-store routes).
 - Completion POST denied with 404.
-- No `CustomerOnboarding` row is created by any denied request (assert
-  `CustomerOnboarding::count()` unchanged before/after).
-- No `Business`/`BusinessLocation`/`BusinessService` row is
-  created/updated by any denied request.
-- No `BuildInitialBusinessSnapshot` dispatch occurs from a denied
-  `analysis.request` (assert via `Queue::fake()` + `Queue::assertNotPushed()`).
-- An existing onboarding record's `current_step`/`completed_steps`/
-  `business_id`/`analysis_payload`/`analysis_version`/`status` are
-  byte-identical before and after a denied request (§6).
+- No `CustomerOnboarding` row created by any denied request.
+- No `Business`/`BusinessLocation`/`BusinessService` row created/updated
+  by any denied request.
+- No `BuildInitialBusinessSnapshot` dispatch from a denied
+  `analysis.request` (`Queue::fake()` + `Queue::assertNotPushed()`).
+- An existing onboarding record's full state is byte-identical
+  before/after a denied ordinary HTTP request (§6).
+- Guest (unauthenticated) behavior is unchanged — still governed by the
+  outer `auth` middleware, confirmed unaffected by the new gate.
 
-**MASTER SWITCH ON** (regression, existing behavior unchanged):
+**MASTER SWITCH ON** (regression, existing behavior unchanged, now
+explicit under the new `setUp()` baseline):
 
 - Existing voluntary onboarding path still fully functional end-to-end.
-- Required-on-registration behavior unchanged when both flags require
-  it.
+- Required-on-registration behavior unchanged.
 - Dashboard redirect behavior unchanged.
 - Normal wizard step persistence unchanged for all 5 steps.
 - Analysis dispatch remains functional.
 
 **QUEUED ANALYSIS** (`BuildInitialBusinessSnapshotJobTest.php`):
 
-- §7's locked flag-toggle behavior: job dispatched while enabled,
-  flag flipped to `false` before the job runs, job still completes
-  normally (`status → ResultsReady`, `analysis_payload` populated, no
-  exception thrown by the job).
+- **Corrected outcome**: job dispatched while enabled, flag flipped to
+  `false` before the job runs — assert: `status == Failed`; `current_step
+  == Analysis` (unchanged); `analysis_payload` remains `null`;
+  `analysis_error` equals the exact existing literal `"We could not
+  finish the analysis. Please retry."`; no `InitialBusinessAnalysisCompleted`
+  event dispatched; `InitialBusinessAnalysisFailed` dispatched, following
+  `markFailed()`'s existing semantics; `analysis_version` unchanged; no
+  `Business` mutation. **Do not test that the disabled job becomes
+  `ResultsReady`** — that was the original draft's incorrect expectation.
 
-**CAPACITY DENIAL** (`BusinessOnboardingHttpTest.php`, new):
+**CAPACITY DENIAL** (`BusinessOnboardingHttpTest.php`, new — corrected to
+cover all five, not two representative types):
 
-- For at least `BusinessSlotLimitExceededException` and
-  `WorkspacePlanUnassignedException` (representative of the five;
-  full coverage of all five preferred if the fixture setup allows it
-  cheaply, mirroring `EntitlementManagerBusinessSlotCapacityTest.php`'s
-  existing fixture patterns) — POSTing the Business step against a
-  capacity-denying Workspace:
-  - No generic 500 — response is a redirect (`assertRedirect()`), not a
-    500 status.
-  - Exact safe message present: `assertSessionHasErrors(['onboarding' =>
-    BusinessOnboardingController::CAPACITY_DENIAL_MESSAGE])`.
-  - No Business persisted (`Business::count()` unchanged).
-  - No step advancement (`current_step` still `Business`).
-  - No onboarding completion mutation (`status` unchanged).
-  - Response body/session contains no digit-string matching the
-    Workspace ID and no substring of any of the five exception class
-    names (asserting the raw message never leaks).
-  - Existing success path (capacity available) remains unchanged —
-    regression confirmation.
-  - The update-existing-Business branch (not the CREATE branch) remains
-    unaffected — regression confirmation that the capacity gate applies
-    only to Business creation, per §9.2/existing `BusinessManagerTest`
-    coverage.
+For **each** of the five exception families —
+`WorkspacePlanUnassignedException`, `InactiveWorkspacePlanException`,
+`SuspendedWorkspacePlanException`, `BusinessSlotAllocationRequiredException`,
+`BusinessSlotLimitExceededException` — POSTing the Business step against
+a Workspace fixture that deterministically triggers that exact denial
+reason:
 
-**SECURITY** (`BusinessOnboardingHttpTest.php`):
+- Redirect target is `customer.onboarding.show` at the `Business` step
+  (§9.2's corrected named-route redirect) — `assertRedirect(route('customer.onboarding.show',
+  ['step' => 'business']))`, not merely `assertRedirect()`.
+- Exact safe message present, asserted as the **literal string**, never
+  the (private) constant: `assertSessionHasErrors(['onboarding' =>
+  "We can't create your business with the current account setup. Please
+  contact support for help."])`.
+- `withInput()` preserved where testable (submitted Business-step field
+  values still present via `old()` on redirect).
+- No Business persisted (`Business::count()` unchanged).
+- No step advancement (`current_step` still `Business`).
+- No onboarding completion mutation (`status` unchanged).
+- `business_id` unchanged.
+- No raw exception message and no numeric Workspace ID present anywhere
+  in the response/session.
+- Existing success path (capacity available) remains unchanged —
+  regression confirmation.
+- The update-existing-Business branch remains unaffected — regression
+  confirmation that the capacity gate applies only to Business creation.
 
-- Cross-tenant/foreign-customer semantics unchanged — existing ownership
-  tests re-run unmodified.
-- `AuthorizationException` (a genuine ownership failure, distinct from a
-  capacity denial) still propagates as a 403, not converted into the
-  new friendly capacity message — explicit test proving the new catch
-  clause's type-safety boundary (§11).
-- Only the five named exception types use the new denial seam — no
-  other `RuntimeException` is silently caught by the new clause
-  (regression test using a different, unrelated `RuntimeException`
-  thrown from a test double, if the existing test infrastructure
-  supports injecting one; otherwise documented as guaranteed by the
-  union catch type alone, §9.2).
+**SECURITY** (`BusinessOnboardingHttpTest.php`, unchanged):
+
+- Cross-tenant/foreign-customer semantics unchanged.
+- `AuthorizationException` still propagates as a 403, not converted into
+  the capacity message.
+- Only the five named exception types use the new denial seam.
 
 ---
 
 ## 16. Regression plan
+
+Unchanged core structure; test-count expectations updated to reflect
+this correction's additional job-file change.
 
 **Focused suites, run before and after implementation**:
 
@@ -761,195 +843,178 @@ php artisan test tests/Feature/Workspace tests/Unit/Workspace
 php artisan test tests/Feature/Usage
 ```
 
-(the last three groups because they exercise the same
-`assertCanCreateAnotherBusiness()`/legacy-onboarding-Business-creation
-path from other angles — `EntitlementManagerBusinessSlotCapacityTest`,
-`EntitlementManagerConcurrencyTest`, `BusinessManagerTest`,
-`WorkspaceManagerPreEnforcementTest`, `WorkspaceM1BBoundaryTest`,
-`NewBusinessWalletInitializationTest`,
-`NewBusinessPayerAssignmentInitializationTest` — none of which this
-remediation's production change should affect, since it adds a
-controller-layer guard/catch, not a domain-layer change).
-
 **Also required**: full suite, `php artisan test`.
 
-**Because remediation legitimately changes one stale test's assertion
-and adds new tests** (§13-§15):
+**Because remediation legitimately changes assertions on existing tests
+and adds new tests**:
 
 - Record the exact **PRE-REMEDIATION** baseline (on this contract's own
   base, `9e4127b8159741fb61f3dca8174d33d267b6c759`) before implementation
   begins.
 - Record the exact **POST-REMEDIATION** baseline after implementation.
-- **Do not require an equal total passing count** — the stale test's
-  assertion changes (same test name, different assertion — net zero
-  count change from that one) while multiple new tests are added (net
-  positive count change) — the exact delta must be reported, not
-  assumed to be exactly the raw new-test count, since the stale test's
-  correction itself might also change whether it counts as 1 test
-  post-fix (it does — same method, corrected body).
+- **Do not require an equal total passing count.**
 - Require **0 failures, 0 skipped, exit 0** on both baselines.
-- Explain any test-count change mechanically (which files, which
-  method names, added vs. corrected) in the implementation's own
-  completion report — not fabricated here in advance of real numbers.
+- Explain any test-count change mechanically in the implementation's own
+  completion report — not fabricated here.
 
-**The post-remediation, human-merged `main` becomes the future A1
-visual implementation's baseline** (§18, and per the merged A1 visual
-contract's own `visual_implementation_base: post_nonvisual_remediation_main`
-governance key) — this remediation's own regression run on that merged
-`main` is what the eventual A1 visual branch must re-verify against
-(per that contract's §5 Correction Round 2 requirement), not any SHA
-this document itself was drafted against.
+**The post-remediation, human-merged `main` becomes the future A1 visual
+implementation's baseline** (§19), unchanged from the original draft.
 
 ---
 
 ## 17. Exact future implementation allowlist and stop threshold
 
-**Mechanically derived, not assumed** — every path below is justified
-by a specific section above; nothing is included speculatively.
+**Correction Round 1 — revised from 3 paths to 7, reflecting the
+corrected architecture (§4, §7, §9-§10).**
 
-**Production (1 path):**
-1. `app/Http/Controllers/Customer/BusinessOnboardingController.php` —
-   add `ensureOnboardingEnabled()` (§4.2) called as the first statement
-   of all 11 public actions; add the five-exception union catch clause
-   and `CAPACITY_DENIAL_MESSAGE` constant to `saveStep()` (§9.2/§10).
+**Production (5 paths):**
+1. `app/Http/Middleware/EnsureBusinessOnboardingIsEnabled.php` — new file
+   (§4.2).
+2. `app/Http/Kernel.php` — one new `$routeMiddleware` alias line (§4.2).
+3. `routes/customer.php` — one `->middleware('business.onboarding.enabled')`
+   attribute added to the existing onboarding route group definition
+   (§4.2); the 11 routes inside the group are otherwise byte-identical.
+4. `app/Jobs/Business/BuildInitialBusinessSnapshot.php` — one new
+   disabled-flag check inside `handle()`, calling the job's existing
+   `markFailed()` (§7.3).
+5. `app/Http/Controllers/Customer/BusinessOnboardingController.php` —
+   add the five-exception union catch clause and `CAPACITY_DENIAL_MESSAGE`
+   constant to `saveStep()` (§9.2/§10). **The original draft's
+   `ensureOnboardingEnabled()` controller method and its 11 per-action
+   call sites are removed from this allowlist entirely** (§4.1) —
+   replaced by the route middleware above.
 
 **Tests (2 paths):**
-2. `tests/Feature/Business/BusinessOnboardingHttpTest.php` — correct
-   the one stale test (§13); add the "master switch off/on" matrix and
-   capacity-denial tests (§15).
-3. `tests/Feature/Business/BuildInitialBusinessSnapshotJobTest.php` —
-   add the queued-job flag-toggle test (§7/§15).
+6. `tests/Feature/Business/BusinessOnboardingHttpTest.php` — enabled
+   baseline `setUp()`; corrected stale test; full master-switch-off
+   matrix including FormRequest-precedence proof; full five-exception
+   capacity-denial matrix; security tests (§15).
+7. `tests/Feature/Business/BuildInitialBusinessSnapshotJobTest.php` —
+   enabled baseline `setUp()`; corrected disabled-queued-job
+   safe-failure test (§7.3/§15).
 
-**Total: exactly 3 paths.**
+**Total: exactly 7 paths.**
 
-**Explicitly NOT included, and not derivable from any section above**:
-`config/business.php` (no new key needed — same flag, same default);
-`app/Http/Middleware/EnsureRequiredBusinessOnboardingIsComplete.php`
+**Explicitly NOT included**: `config/business.php` (same flag, same
+default, no new key); `app/Http/Middleware/EnsureRequiredBusinessOnboardingIsComplete.php`
 (already correct, §3 item 11); `app/Repositories/Eloquent/EloquentAccountRepository.php`
-(already correct, §3 item 12); `app/Jobs/Business/BuildInitialBusinessSnapshot.php`
-(§7 — deliberately not gated); `app/Exceptions/Handler.php` (§5/§8 —
-existing global behavior reused, not modified); `app/Http/Kernel.php`
-and `routes/**` (no new middleware, no route changes, §4.2); any of the
-nine onboarding Blade views (§20); any Design System component; any
-schema/migration (no new column/table needed — the flag and all five
-exception types already exist); any RFC document; the A1 visual
-contract; the parent M2 contract; the Product Surface Retention Audit;
+(already correct, §3 item 12); `app/Exceptions/Handler.php` (§5 — the
+new middleware is self-contained, does not modify global JSON handling);
+any of the nine onboarding Blade views; any Design System component/test;
+any schema/migration; any RFC document; the A1 visual contract; the
+parent M2 contract; the Product Surface Retention Audit;
 `AI-AUTONOMY-STATE.json`.
 
-**Stop threshold: any path beyond this exact 3-path allowlist is a
-required-4th-path-shaped stop condition** — implementation must stop,
-leave the working tree unstaged, and report, exactly as this
-repository's prior contracts require for their own allowlists.
+**Stop threshold: any path beyond this exact 7-path allowlist is a
+required-8th-path-shaped stop condition** — implementation must stop,
+leave the working tree unstaged, and report.
 
 ---
 
 ## 18. No visual work — explicit boundary
 
-This remediation is **explicitly nonvisual**. Future implementation
-must not edit any of the nine `resources/views/customer/onboarding/**`
-views (§17's allowlist contains none of them). It must not: adopt any
-`x-*` Design System component; restyle the stepper; change any
-card/button/field markup; change the Results empty state; change any
-icon; change any layout. Nothing in §4-§10's chosen architecture
-requires a view change — §5 confirmed the 404/JSON responses need no
-new Blade template (reuses `errors/404.blade.php` and the existing JSON
-envelope shape), and §9.1 confirmed the capacity-denial message reuses
-onboarding's own existing `$errors->any()` rendering with zero view
-changes.
+Unchanged. This remediation remains explicitly nonvisual — the corrected
+7-path allowlist (§17) contains none of the nine
+`resources/views/customer/onboarding/**` views, no Design System
+component, and no A1 visual DS test. §5's corrected local JSON response
+and §9's corrected redirect target both still require zero Blade
+changes: the 404 responses reuse Laravel's existing 404 handling, and
+the capacity-denial message still renders through onboarding's own
+existing `$errors->any()` block.
 
 ---
 
 ## 19. Post-remediation A1 visual handoff requirements
 
-Once this remediation is implemented and human-merged (a separate,
-future authorization, not granted by this contract):
-
-- The resulting `main` becomes the authoritative preservation baseline
-  for A1 visual implementation (§16, and the merged A1 visual contract's
-  own `visual_implementation_base` governance key).
-- Before any Blade edit, A1 visual implementation must mechanically
-  re-verify, against that new `main`: the feature-flag/master-switch
-  behavior now matches §4-§7 of this contract exactly; the 9-view
-  inventory (merged A1 visual contract §2) is unchanged; the 12-path A1
-  visual allowlist (merged A1 visual contract §18) is unchanged; the
-  capacity-denial seam (§9-§10 here) now produces the locked outcome
-  and does not require any additional Blade work beyond what that
-  contract's own §11 component-adoption matrix already anticipates
-  (none — the error still renders through the existing `x-alert`/
-  `$errors->any()` adoption already planned there).
-- If this remediation is found, once implemented, to have changed the
-  9-view inventory or to require a new A1 visual path, A1 visual
-  implementation must STOP and request a contract amendment to the
-  merged A1 visual contract — not silently proceed (per that contract's
-  own §5 Correction Round 2 language, restated here for this
-  document's own completeness).
-- A1 visual implementation still requires its own separate, explicit
-  human authorization after this remediation merges — this remediation
-  contract's own merge does not grant it (§0).
+Unchanged from the original draft. Once this remediation is implemented
+and human-merged (a separate, future authorization): the resulting
+`main` becomes the A1 visual implementation's authoritative preservation
+baseline; A1 visual implementation must mechanically re-verify the
+feature-flag/master-switch behavior now matches §4-§7 of this contract,
+the 9-view inventory and 12-path A1 visual allowlist are unchanged, and
+the capacity-denial seam now produces the locked §9-§10 outcome without
+requiring additional Blade work; if this remediation is found to have
+changed the 9-view inventory or to require a new A1 visual path, A1
+visual implementation must STOP and request a contract amendment; A1
+visual implementation still requires its own separate, explicit human
+authorization after this remediation merges.
 
 ---
 
 ## 20. Stop-condition self-check
 
-None of the task's stop conditions apply, verified against the evidence
-gathered:
+Re-verified against the corrected evidence:
 
 - Merged RFC-001 documents do not contradict each other (§2).
-- Disabling semantics were determined from the `opportunity.enabled`
-  codebase precedent, not a coin-flip product decision (§4-§5).
+- Disabling semantics were determined from codebase precedent and the
+  RFC's own exact wording, not invented (§4-§5, §7.1 — this correction
+  specifically re-grounded the queued-job decision in the RFC's literal
+  text after finding the original draft had misread it).
 - The five known capacity exceptions were mechanically re-verified
-  complete, plus one confirmed-unreachable default arm (§8).
+  complete (§8, unchanged).
 - No schema migration is required (§17).
-- No A2 product behavior changes (`WorkspaceController`/`Admin\WorkspaceEntitlementController`
-  are read-only precedent, untouched, §9.1/§9.2).
-- The remediation is fully isolated to `BusinessOnboardingController.php`
-  (§17) — not entangled with general entitlement behavior.
+- No A2 product behavior changes.
+- The remediation remains isolated to the onboarding surface — 5
+  production files, all specific to onboarding's own controller, job,
+  routes, and middleware registration; no general entitlement or
+  exception-architecture change (§17).
 - No visual view change is required (§18).
-- The implementation allowlist is bounded at exactly 3 paths (§17).
+- The implementation allowlist is bounded at exactly 7 paths (§17).
 
 ---
 
 ## 21. Mechanical final check
 
-- Exactly one changed path: this document. ✓
-- Remediation contract only — no application, test, RFC, or other
-  governance file created/modified by drafting this contract. ✓
-- `origin/main` verified exactly `9e4127b8159741fb61f3dca8174d33d267b6c759`
-  before drafting began. ✓
-- PR #188's merged A1 visual contract read in full (§1). ✓
-- Both RFC-001 documents read in full (§1-§2). ✓
-- Relevant RFC-004 documents read in full (§1, §8). ✓
-- Complete flag read-site inventory: 2 sites, both already correct
-  (items 11-12, §3), plus 10 currently-ungated entry points identified
-  and closed (§3-§4). ✓
-- Complete onboarding entry-point inventory: 12 items, mechanically
-  re-derived, not assumed (§3). ✓
-- Complete expected capacity-exception inventory: 5 named + 1 confirmed-
-  unreachable default arm, mechanically re-verified against current
-  `main`, not trusted from a prior list (§8). ✓
-- Exact master-switch architecture selected, with a seam comparison
-  showing why alternatives were rejected (§4). ✓
-- Exact disabled response selected for both browser and JSON, evidence-
-  based (§5). ✓
-- Queued-job semantics selected and justified (§7). ✓
-- Exact capacity-denial seam selected, mirroring verified existing
-  precedent (§9). ✓
-- Exact safe customer message locked (§10). ✓
-- Stale test identified and named exactly (§13). ✓
-- Exact implementation allowlist locked at 3 paths, with an explicit
-  list of what is deliberately excluded and why (§17). ✓
-- Stop threshold locked at the 4th path (§17). ✓
-- Zero onboarding Blade paths in the implementation allowlist. ✓
-- Zero Design System visual paths in the implementation allowlist. ✓
+- Exactly one changed path this correction: this document. ✓
+- `origin/main` re-verified exactly `9e4127b8159741fb61f3dca8174d33d267b6c759`,
+  unchanged since the original draft. ✓
+- Pre-correction head verified exactly `d99ef6d3652edf967ebb6ef56e127229145b7f82`. ✓
+- `correction_round: 1` recorded (§0). ✓
+- Controller-body guard defect identified and corrected — replaced with
+  route middleware (§4). ✓
+- Exact local disabled response locked for browser and JSON, no
+  `Handler.php` dependency (§5). ✓
+- Queued-job decision corrected against the RFC's exact, re-quoted text
+  — safe failure, not normal completion (§7). ✓
+- `BuildInitialBusinessSnapshot.php` added to the production allowlist (§17). ✓
+- Capacity-denial redirect target corrected to the named-route form,
+  verified against the real existing `saveStep()` code (§9.2). ✓
+- Safe capacity message corrected to avoid implying transience (§10). ✓
+- Capacity-denial test coverage expanded to all five exception families,
+  not two representative ones (§15). ✓
+- Private constant confirmed to remain private; every test reference
+  corrected to assert the literal string (§10, §15). ✓
+- Both test files' enabled-baseline `setUp()` fixtures locked (§13, §15). ✓
+- Exact implementation allowlist locked at 7 paths, 8th-path stop
+  threshold (§17). ✓
+- Zero onboarding Blade paths, zero Design System visual paths in the
+  allowlist. ✓
 - A1 visual implementation remains blocked; this contract's own merge
   does not authorize it (§0, §19). ✓
 - `docs/automation/AI-AUTONOMY-STATE.json` untouched. ✓
 - `docs/automation/DESIGN-SYSTEM-M2-CONTRACT.md` untouched. ✓
 - `docs/automation/DESIGN-SYSTEM-M2-A1-BUSINESS-ONBOARDING-CONTRACT.md`
   untouched. ✓
-- `docs/rfcs/RFC-001-BUSINESS-CORE.md`,
-  `docs/rfcs/RFC-001-BUSINESS-CORE-DEPLOYMENT.md`, and every RFC-004
-  document untouched — no amendment performed (§2, §20). ✓
+- All four RFC-001/RFC-004 documents untouched — no amendment performed. ✓
+- **Stale-claim sweep performed mechanically**: zero live claims that a
+  job dispatched before disablement completes normally while disabled;
+  zero live claims that disabled jobs transition to `ResultsReady`; zero
+  live claims that `BuildInitialBusinessSnapshot.php` is excluded from
+  the production allowlist; zero live claims that RFC-001 only governs
+  new dispatches (§7.1 explicitly quotes and applies the in-flight-job
+  sentence); zero live claims that a controller first-line guard executes
+  before FormRequest validation (§4.1 explicitly documents why it does
+  not); zero live claims that controller-only guarding fully hides
+  disabled onboarding routes; zero live claims that
+  `redirect()->to($resolvedStepValue)` is the capacity-denial redirect
+  (§9.2 corrected to the named-route form); zero live claims that
+  capacity coverage of only two representative exception families is
+  sufficient (§15 covers all five); zero live claims that tests may
+  access a private `CAPACITY_DENIAL_MESSAGE` constant (§10, §15 assert
+  the literal string); zero live claims that "try again in a moment" is
+  the locked capacity-denial message (§10 replaced it); zero live claims
+  that the implementation allowlist total is 3 or that the stop
+  threshold is the 4th path (§17 now locks 7 and the 8th). ✓
 
 `git diff --check` run against the staged file before commit — reported
 in the final chat report.
@@ -957,8 +1022,8 @@ in the final chat report.
 ---
 
 *End of Design System M2 A1 — Onboarding Nonvisual Behavior Remediation
-Contract. Docs/audit only. No implementation has occurred. Implementation
-requires its own separate, explicit human authorization. A1 visual
-implementation remains blocked until this remediation is implemented and
-human-merged. A2, A3, B1, and every other roadmap group remain
-unstarted.*
+Contract, Correction Round 1. Docs/audit only. No implementation has
+occurred. Implementation requires its own separate, explicit human
+authorization. A1 visual implementation remains blocked until this
+remediation is implemented and human-merged. A2, A3, B1, and every other
+roadmap group remain unstarted.*
