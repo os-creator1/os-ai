@@ -2,6 +2,8 @@
 
 namespace App\Http\Controllers\Customer;
 
+use App\Exceptions\Workspace\BusinessWorkspaceMismatchException;
+use App\Exceptions\Workspace\WorkspaceAccessDeniedException;
 use App\Http\Requests\Business\UpdateBusinessRequest;
 use App\Library\Business\BusinessManager;
 use App\Models\Customer;
@@ -44,7 +46,9 @@ class BusinessController extends CustomerBaseController
         }
 
         try {
-            $this->businessManager->updateBusiness($customer, $business, $request->validated());
+            $this->businessManager->updateOwnBusinessProfile($customer, $business, $request->validated());
+        } catch (WorkspaceAccessDeniedException|BusinessWorkspaceMismatchException) {
+            abort(404);
         } catch (InvalidArgumentException) {
             return redirect()
                 ->route('customer.business.edit')

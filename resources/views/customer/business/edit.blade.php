@@ -46,6 +46,11 @@
                             </div>
 
                             <div class="mb-1">
+                                <label class="form-label" for="industry_other">Industry (other)</label>
+                                <input type="text" class="form-control" id="industry_other" name="industry_other" maxlength="255" value="{{ old('industry_other', $business->industry_other) }}">
+                            </div>
+
+                            <div class="mb-1">
                                 <label class="form-label" for="description">Description</label>
                                 <textarea class="form-control" id="description" name="description" maxlength="5000">{{ old('description', $business->description) }}</textarea>
                             </div>

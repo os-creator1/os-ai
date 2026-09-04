@@ -519,7 +519,7 @@
         Route::post('/complete', 'BusinessOnboardingController@complete')->name('complete');
     });
 
-    Route::prefix('business')->name('business.')->group(function () {
+    Route::prefix('business')->name('business.')->middleware('business.profile.accessible')->group(function () {
         Route::get('/', 'BusinessController@edit')->name('edit');
         Route::put('/', 'BusinessController@update')->name('update');
     });
