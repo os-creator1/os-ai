@@ -11,112 +11,103 @@
 
             <div class="col-12">
                 @if (session('flash_success'))
-                    <div class="alert alert-success">{{ session('flash_success') }}</div>
+                    <x-alert variant="success">{{ session('flash_success') }}</x-alert>
                 @endif
 
                 @if (session('flash_error'))
-                    <div class="alert alert-danger">{{ session('flash_error') }}</div>
+                    <x-alert variant="danger">{{ session('flash_error') }}</x-alert>
                 @endif
 
                 @if ($errors->any())
-                    <div class="alert alert-danger">
+                    <x-alert variant="danger">
                         <ul class="mb-0">
                             @foreach ($errors->all() as $error)
                                 <li>{{ $error }}</li>
                             @endforeach
                         </ul>
-                    </div>
+                    </x-alert>
                 @endif
             </div>
 
             <div class="col-12">
-                <div class="card">
-                    <div class="card-header">
-                        <h4 class="card-title">{{ $workspace['name'] }}</h4>
-                    </div>
-                    <div class="card-body">
-                        <dl class="row mb-0">
-                            <dt class="col-sm-3">Status</dt>
-                            <dd class="col-sm-9">
-                                @if ($workspace['is_active'])
-                                    <span class="badge badge-light-success">Active</span>
-                                @else
-                                    <span class="badge badge-light-secondary">Inactive</span>
-                                @endif
-                            </dd>
-
-                            <dt class="col-sm-3">Your role</dt>
-                            <dd class="col-sm-9">{{ $workspace['role'] }}</dd>
-                        </dl>
-
-                        @if (in_array($workspace['role'], ['Owner', 'Admin'], true))
-                            <form method="POST" data-workspace-action="rename" class="mt-1">
-                                @csrf
-
-                                <div class="mb-1">
-                                    <label class="form-label" for="workspace-rename">Rename Workspace</label>
-                                    <input type="text" class="form-control" id="workspace-rename" name="name" value="{{ old('name', $workspace['name']) }}" required>
-                                </div>
-
-                                <button type="submit" class="btn btn-outline-primary">Rename</button>
-                            </form>
-                        @endif
-
-                        @if ($workspace['role'] === 'Owner')
+                <x-card title="{{ $workspace['name'] }}">
+                    <dl class="row mb-0">
+                        <dt class="col-sm-3">Status</dt>
+                        <dd class="col-sm-9">
                             @if ($workspace['is_active'])
-                                <form method="POST" data-workspace-action="deactivate" class="mt-1">
-                                    @csrf
-
-                                    <button type="submit" class="btn btn-outline-danger">Deactivate Workspace</button>
-                                </form>
+                                <x-badge variant="success">Active</x-badge>
                             @else
-                                <form method="POST" data-workspace-action="reactivate" class="mt-1">
-                                    @csrf
-
-                                    <button type="submit" class="btn btn-outline-success">Reactivate Workspace</button>
-                                </form>
+                                <x-badge variant="neutral">Inactive</x-badge>
                             @endif
+                        </dd>
 
-                            <form method="POST" data-workspace-action="ownership/transfer" class="mt-1">
+                        <dt class="col-sm-3">Your role</dt>
+                        <dd class="col-sm-9">{{ $workspace['role'] }}</dd>
+                    </dl>
+
+                    @if (in_array($workspace['role'], ['Owner', 'Admin'], true))
+                        <form method="POST" data-workspace-action="rename" class="mt-1">
+                            @csrf
+
+                            <div class="mb-1">
+                                <label class="form-label" for="workspace-rename">Rename Workspace</label>
+                                <input type="text" class="form-control" id="workspace-rename" name="name" value="{{ old('name', $workspace['name']) }}" required>
+                            </div>
+
+                            <x-button type="submit" variant="outline">Rename</x-button>
+                        </form>
+                    @endif
+
+                    @if ($workspace['role'] === 'Owner')
+                        @if ($workspace['is_active'])
+                            <form method="POST" data-workspace-action="deactivate" class="mt-1">
                                 @csrf
 
-                                <div class="mb-1">
-                                    <label class="form-label" for="ownership-transfer-new-owner">New owner User UID</label>
-                                    <input type="text" class="form-control" id="ownership-transfer-new-owner" name="new_owner_user_uid" value="{{ old('new_owner_user_uid') }}" required>
-                                </div>
+                                <button type="submit" class="btn btn-outline-danger">Deactivate Workspace</button>
+                            </form>
+                        @else
+                            <form method="POST" data-workspace-action="reactivate" class="mt-1">
+                                @csrf
 
-                                <div class="mb-1">
-                                    <label class="form-label" for="ownership-transfer-disposition">Previous owner disposition</label>
-                                    <select class="form-control" id="ownership-transfer-disposition" name="previous_owner_disposition">
-                                        <option value="deactivate" @selected(old('previous_owner_disposition', 'deactivate') === 'deactivate')>Deactivate previous owner</option>
-                                        <option value="convert_to_admin" @selected(old('previous_owner_disposition') === 'convert_to_admin')>Convert previous owner to Admin</option>
-                                    </select>
-                                </div>
-
-                                <div class="mb-1" data-ownership-transfer-admin-fields>
-                                    <label class="form-label" for="ownership-transfer-scope">Business access</label>
-                                    <select class="form-control" id="ownership-transfer-scope" name="business_access_scope">
-                                        <option value="all">All Businesses</option>
-                                        <option value="selected">Selected Businesses</option>
-                                    </select>
-
-                                    @if (! empty($manageableBusinesses))
-                                        <div class="mt-1">
-                                            @foreach ($manageableBusinesses as $business)
-                                                <div class="form-check form-check-inline">
-                                                    <input class="form-check-input" type="checkbox" name="business_uids[]" value="{{ $business['uid'] }}" id="ownership-transfer-business-{{ $business['uid'] }}">
-                                                    <label class="form-check-label" for="ownership-transfer-business-{{ $business['uid'] }}">{{ $business['name'] }}</label>
-                                                </div>
-                                            @endforeach
-                                        </div>
-                                    @endif
-                                </div>
-
-                                <button type="submit" class="btn btn-outline-warning">Transfer ownership</button>
+                                <button type="submit" class="btn btn-outline-success">Reactivate Workspace</button>
                             </form>
                         @endif
-                    </div>
-                </div>
+
+                        <form method="POST" data-workspace-action="ownership/transfer" class="mt-1">
+                            @csrf
+
+                            <x-input name="new_owner_user_uid" label="New owner User UID" type="text" value="{{ old('new_owner_user_uid') }}" required />
+
+                            <x-select
+                                name="previous_owner_disposition"
+                                label="Previous owner disposition"
+                                :options="['deactivate' => 'Deactivate previous owner', 'convert_to_admin' => 'Convert previous owner to Admin']"
+                                :selected="old('previous_owner_disposition', 'deactivate')"
+                            />
+
+                            <div class="mb-1" data-ownership-transfer-admin-fields>
+                                <label class="form-label" for="ownership-transfer-scope">Business access</label>
+                                <select class="form-control" id="ownership-transfer-scope" name="business_access_scope">
+                                    <option value="all">All Businesses</option>
+                                    <option value="selected">Selected Businesses</option>
+                                </select>
+
+                                @if (! empty($manageableBusinesses))
+                                    <div class="mt-1">
+                                        @foreach ($manageableBusinesses as $business)
+                                            <div class="form-check form-check-inline">
+                                                <input class="form-check-input" type="checkbox" name="business_uids[]" value="{{ $business['uid'] }}" id="ownership-transfer-business-{{ $business['uid'] }}">
+                                                <label class="form-check-label" for="ownership-transfer-business-{{ $business['uid'] }}">{{ $business['name'] }}</label>
+                                            </div>
+                                        @endforeach
+                                    </div>
+                                @endif
+                            </div>
+
+                            <button type="submit" class="btn btn-outline-warning">Transfer ownership</button>
+                        </form>
+                    @endif
+                </x-card>
             </div>
 
             @isset($entitlement)
@@ -187,58 +178,40 @@
                                     <input type="text" class="form-control" id="business-name" name="name" value="{{ old('name') }}" required>
                                 </div>
 
-                                <div class="mb-1">
-                                    <label class="form-label" for="business-industry">Industry</label>
-                                    <select class="form-control" id="business-industry" name="industry" required>
-                                        @foreach (\App\Enums\Business\BusinessIndustry::cases() as $industry)
-                                            <option value="{{ $industry->value }}" @selected(old('industry') === $industry->value)>
-                                                {{ ucwords(str_replace('_', ' ', $industry->value)) }}
-                                            </option>
-                                        @endforeach
-                                    </select>
-                                </div>
+                                <x-select
+                                    name="industry"
+                                    label="Industry"
+                                    :options="collect(\App\Enums\Business\BusinessIndustry::cases())->mapWithKeys(fn ($industry) => [$industry->value => ucwords(str_replace('_', ' ', $industry->value))])->all()"
+                                    :selected="old('industry')"
+                                    required
+                                />
 
-                                <div class="mb-1">
-                                    <label class="form-label" for="business-industry-other">Industry (other)</label>
-                                    <input type="text" class="form-control" id="business-industry-other" name="industry_other" value="{{ old('industry_other') }}">
-                                </div>
+                                <x-input name="industry_other" label="Industry (other)" type="text" value="{{ old('industry_other') }}" />
 
                                 <div class="mb-1">
                                     <label class="form-label" for="business-description">Description</label>
                                     <textarea class="form-control" id="business-description" name="description" maxlength="5000">{{ old('description') }}</textarea>
                                 </div>
 
-                                <div class="mb-1">
-                                    <label class="form-label" for="business-email">Public email</label>
-                                    <input type="email" class="form-control" id="business-email" name="email" value="{{ old('email') }}">
-                                </div>
+                                <x-input name="email" label="Public email" type="email" value="{{ old('email') }}" />
 
-                                <div class="mb-1">
-                                    <label class="form-label" for="business-phone">Phone</label>
-                                    <input type="text" class="form-control" id="business-phone" name="phone" value="{{ old('phone') }}">
-                                </div>
+                                <x-input name="phone" label="Phone" type="text" value="{{ old('phone') }}" />
 
-                                <div class="mb-1">
-                                    <label class="form-label" for="business-website">Website</label>
-                                    <input type="text" class="form-control" id="business-website" name="website_url" value="{{ old('website_url') }}">
-                                </div>
+                                <x-input name="website_url" label="Website" type="text" value="{{ old('website_url') }}" />
 
                                 <div class="row">
-                                    <div class="col-md-4 mb-1">
-                                        <label class="form-label" for="business-country-code">Country code</label>
-                                        <input type="text" class="form-control" id="business-country-code" name="country_code" maxlength="2" value="{{ old('country_code') }}" required>
+                                    <div class="col-md-4">
+                                        <x-input name="country_code" label="Country code" type="text" maxlength="2" value="{{ old('country_code') }}" required />
                                     </div>
-                                    <div class="col-md-4 mb-1">
-                                        <label class="form-label" for="business-timezone">Timezone</label>
-                                        <input type="text" class="form-control" id="business-timezone" name="timezone" value="{{ old('timezone') }}" required>
+                                    <div class="col-md-4">
+                                        <x-input name="timezone" label="Timezone" type="text" value="{{ old('timezone') }}" required />
                                     </div>
-                                    <div class="col-md-4 mb-1">
-                                        <label class="form-label" for="business-currency-code">Currency code</label>
-                                        <input type="text" class="form-control" id="business-currency-code" name="currency_code" maxlength="3" value="{{ old('currency_code') }}" required>
+                                    <div class="col-md-4">
+                                        <x-input name="currency_code" label="Currency code" type="text" maxlength="3" value="{{ old('currency_code') }}" required />
                                     </div>
                                 </div>
 
-                                <button type="submit" class="btn btn-outline-primary">Create Business</button>
+                                <x-button type="submit" variant="outline">Create Business</x-button>
                             </form>
 
                             @php
@@ -246,56 +219,37 @@
                             @endphp
 
                             @if (! empty($manageableBusinesses) && ! empty($reassignTargetWorkspaces))
-                                <div class="table-responsive mb-2">
-                                    <table class="table table-sm">
-                                        <thead>
-                                            <tr>
-                                                <th>Business</th>
-                                                <th>Reassign to</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            @foreach ($manageableBusinesses as $business)
-                                                <tr>
-                                                    <td>{{ $business['name'] }}</td>
-                                                    <td>
-                                                        <form method="POST" data-business-action="reassign" data-business-uid="{{ $business['uid'] }}" class="d-flex">
-                                                            @csrf
-                                                            <select name="target_workspace_uid" class="form-control form-control-sm d-inline-block w-auto me-1">
-                                                                @foreach ($reassignTargetWorkspaces as $targetWorkspace)
-                                                                    <option value="{{ $targetWorkspace['uid'] }}">{{ $targetWorkspace['name'] }}</option>
-                                                                @endforeach
-                                                            </select>
-                                                            <button type="submit" class="btn btn-sm btn-outline-primary">Reassign</button>
-                                                        </form>
-                                                    </td>
-                                                </tr>
-                                            @endforeach
-                                        </tbody>
-                                    </table>
-                                </div>
+                                <x-table :headers="['Business', 'Reassign to']" class="mb-2">
+                                    @foreach ($manageableBusinesses as $business)
+                                        <tr>
+                                            <td>{{ $business['name'] }}</td>
+                                            <td>
+                                                <form method="POST" data-business-action="reassign" data-business-uid="{{ $business['uid'] }}" class="d-flex">
+                                                    @csrf
+                                                    <select name="target_workspace_uid" class="form-control form-control-sm d-inline-block w-auto me-1">
+                                                        @foreach ($reassignTargetWorkspaces as $targetWorkspace)
+                                                            <option value="{{ $targetWorkspace['uid'] }}">{{ $targetWorkspace['name'] }}</option>
+                                                        @endforeach
+                                                    </select>
+                                                    <x-button type="submit" variant="outline" size="sm">Reassign</x-button>
+                                                </form>
+                                            </td>
+                                        </tr>
+                                    @endforeach
+                                </x-table>
                             @endif
                         @endif
 
                         @if (empty($businesses))
-                            <p class="mb-0">No Businesses are accessible in this Workspace.</p>
+                            <x-empty-state icon="inbox" title="No Businesses are accessible in this Workspace." />
                         @else
-                            <div class="table-responsive">
-                                <table class="table">
-                                    <thead>
-                                        <tr>
-                                            <th>Name</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        @foreach ($businesses as $business)
-                                            <tr>
-                                                <td>{{ $business['name'] }}</td>
-                                            </tr>
-                                        @endforeach
-                                    </tbody>
-                                </table>
-                            </div>
+                            <x-table :headers="['Name']">
+                                @foreach ($businesses as $business)
+                                    <tr>
+                                        <td>{{ $business['name'] }}</td>
+                                    </tr>
+                                @endforeach
+                            </x-table>
                         @endif
 
                         @isset($entitlement)
@@ -370,147 +324,125 @@
 
             @isset($directory)
                 <div class="col-12">
-                    <div class="card">
-                        <div class="card-header">
-                            <h4 class="card-title">Members</h4>
-                        </div>
-                        <div class="card-body">
-                            <form method="POST" data-workspace-action="members" class="mb-2">
-                                @csrf
+                    <x-card title="Members">
+                        <form method="POST" data-workspace-action="members" class="mb-2">
+                            @csrf
 
+                            <x-input name="user_uid" label="User UID" type="text" value="{{ old('user_uid') }}" required />
+
+                            <div class="mb-1">
+                                <label class="form-label" for="member-role">Role</label>
+                                <select class="form-control" id="member-role" name="role">
+                                    <option value="staff">Staff</option>
+                                    @if ($workspace['role'] === 'Owner')
+                                        <option value="admin">Admin</option>
+                                    @endif
+                                </select>
+                            </div>
+
+                            <div class="mb-1">
+                                <label class="form-label" for="member-scope">Business access</label>
+                                <select class="form-control" id="member-scope" name="business_access_scope">
+                                    <option value="all">All Businesses</option>
+                                    <option value="selected">Selected Businesses</option>
+                                </select>
+                            </div>
+
+                            @if (! empty($manageableBusinesses))
                                 <div class="mb-1">
-                                    <label class="form-label" for="member-user-uid">User UID</label>
-                                    <input type="text" class="form-control" id="member-user-uid" name="user_uid" value="{{ old('user_uid') }}" required>
-                                </div>
-
-                                <div class="mb-1">
-                                    <label class="form-label" for="member-role">Role</label>
-                                    <select class="form-control" id="member-role" name="role">
-                                        <option value="staff">Staff</option>
-                                        @if ($workspace['role'] === 'Owner')
-                                            <option value="admin">Admin</option>
-                                        @endif
-                                    </select>
-                                </div>
-
-                                <div class="mb-1">
-                                    <label class="form-label" for="member-scope">Business access</label>
-                                    <select class="form-control" id="member-scope" name="business_access_scope">
-                                        <option value="all">All Businesses</option>
-                                        <option value="selected">Selected Businesses</option>
-                                    </select>
-                                </div>
-
-                                @if (! empty($manageableBusinesses))
-                                    <div class="mb-1">
-                                        @foreach ($manageableBusinesses as $business)
-                                            <div class="form-check form-check-inline">
-                                                <input class="form-check-input" type="checkbox" name="business_uids[]" value="{{ $business['uid'] }}" id="add-member-business-{{ $business['uid'] }}">
-                                                <label class="form-check-label" for="add-member-business-{{ $business['uid'] }}">{{ $business['name'] }}</label>
-                                            </div>
-                                        @endforeach
-                                    </div>
-                                @endif
-
-                                <button type="submit" class="btn btn-outline-primary">Add member</button>
-                            </form>
-
-                            @if (empty($directory))
-                                <p class="mb-0">This Workspace has no members.</p>
-                            @else
-                                @php
-                                    $manageableBusinessUids = collect($manageableBusinesses ?? [])->pluck('uid')->all();
-                                @endphp
-                                <div class="table-responsive">
-                                    <table class="table">
-                                        <thead>
-                                            <tr>
-                                                <th>Name</th>
-                                                <th>Role</th>
-                                                <th>Business access</th>
-                                                <th>Assigned Businesses</th>
-                                                <th>Status</th>
-                                                <th>Actions</th>
-                                            </tr>
-                                        </thead>
-                                        <tbody>
-                                            @foreach ($directory as $member)
-                                                <tr>
-                                                    <td>{{ $member['name'] }}</td>
-                                                    <td>{{ $member['role'] }}</td>
-                                                    <td>{{ $member['scope'] }}</td>
-                                                    <td>{{ $member['assigned_business_count'] }}</td>
-                                                    <td>
-                                                        @if ($member['is_active'])
-                                                            <span class="badge badge-light-success">Active</span>
-                                                        @else
-                                                            <span class="badge badge-light-secondary">Inactive</span>
-                                                        @endif
-                                                    </td>
-                                                    <td>
-                                                        @php
-                                                            $viewerIsOwner = $workspace['role'] === 'Owner';
-                                                            $viewerCanManageLifecycle = $viewerIsOwner || $member['role'] !== 'Admin';
-                                                            $viewerCanSeeMembersCompleteAccess = empty(array_diff($member['assigned_business_uids'], $manageableBusinessUids));
-                                                        @endphp
-                                                        @if ($member['is_active'])
-                                                            @if ($viewerIsOwner)
-                                                                <form method="POST" data-member-action="role" data-member-uid="{{ $member['uid'] }}" class="mb-1">
-                                                                    @csrf
-                                                                    <select name="role" class="form-control form-control-sm d-inline-block w-auto">
-                                                                        <option value="staff" @selected($member['role'] === 'Staff')>Staff</option>
-                                                                        <option value="admin" @selected($member['role'] === 'Admin')>Admin</option>
-                                                                    </select>
-                                                                    <button type="submit" class="btn btn-sm btn-outline-primary">Change role</button>
-                                                                </form>
-                                                            @endif
-
-                                                            @if ($viewerCanSeeMembersCompleteAccess)
-                                                                <form method="POST" data-member-action="access" data-member-uid="{{ $member['uid'] }}" class="mb-1">
-                                                                    @csrf
-                                                                    <select name="business_access_scope" class="form-control form-control-sm d-inline-block w-auto">
-                                                                        <option value="all" @selected($member['scope'] === 'All Businesses')>All Businesses</option>
-                                                                        <option value="selected" @selected($member['scope'] === 'Selected Businesses')>Selected Businesses</option>
-                                                                    </select>
-
-                                                                    @if (! empty($manageableBusinesses))
-                                                                        @foreach ($manageableBusinesses as $business)
-                                                                            <div class="form-check form-check-inline">
-                                                                                <input class="form-check-input" type="checkbox" name="business_uids[]" value="{{ $business['uid'] }}" id="access-{{ $member['uid'] }}-{{ $business['uid'] }}" @checked(in_array($business['uid'], $member['assigned_business_uids'], true))>
-                                                                                <label class="form-check-label" for="access-{{ $member['uid'] }}-{{ $business['uid'] }}">{{ $business['name'] }}</label>
-                                                                            </div>
-                                                                        @endforeach
-                                                                    @endif
-
-                                                                    <button type="submit" class="btn btn-sm btn-outline-primary">Update access</button>
-                                                                </form>
-                                                            @else
-                                                                <p class="mb-1 text-muted">Business access can only be changed by a manager who can see this member's complete assigned Businesses.</p>
-                                                            @endif
-
-                                                            @if ($viewerCanManageLifecycle)
-                                                                <form method="POST" data-member-action="deactivate" data-member-uid="{{ $member['uid'] }}">
-                                                                    @csrf
-                                                                    <button type="submit" class="btn btn-sm btn-outline-danger">Deactivate</button>
-                                                                </form>
-                                                            @endif
-                                                        @else
-                                                            @if ($viewerCanManageLifecycle)
-                                                                <form method="POST" data-member-action="reactivate" data-member-uid="{{ $member['uid'] }}">
-                                                                    @csrf
-                                                                    <button type="submit" class="btn btn-sm btn-outline-success">Reactivate</button>
-                                                                </form>
-                                                            @endif
-                                                        @endif
-                                                    </td>
-                                                </tr>
-                                            @endforeach
-                                        </tbody>
-                                    </table>
+                                    @foreach ($manageableBusinesses as $business)
+                                        <div class="form-check form-check-inline">
+                                            <input class="form-check-input" type="checkbox" name="business_uids[]" value="{{ $business['uid'] }}" id="add-member-business-{{ $business['uid'] }}">
+                                            <label class="form-check-label" for="add-member-business-{{ $business['uid'] }}">{{ $business['name'] }}</label>
+                                        </div>
+                                    @endforeach
                                 </div>
                             @endif
-                        </div>
-                    </div>
+
+                            <x-button type="submit" variant="outline">Add member</x-button>
+                        </form>
+
+                        @if (empty($directory))
+                            <x-empty-state icon="inbox" title="This Workspace has no members." />
+                        @else
+                            @php
+                                $manageableBusinessUids = collect($manageableBusinesses ?? [])->pluck('uid')->all();
+                            @endphp
+                            <x-table :headers="['Name', 'Role', 'Business access', 'Assigned Businesses', 'Status', 'Actions']">
+                                @foreach ($directory as $member)
+                                    <tr>
+                                        <td>{{ $member['name'] }}</td>
+                                        <td>{{ $member['role'] }}</td>
+                                        <td>{{ $member['scope'] }}</td>
+                                        <td>{{ $member['assigned_business_count'] }}</td>
+                                        <td>
+                                            @if ($member['is_active'])
+                                                <x-badge variant="success">Active</x-badge>
+                                            @else
+                                                <x-badge variant="neutral">Inactive</x-badge>
+                                            @endif
+                                        </td>
+                                        <td>
+                                            @php
+                                                $viewerIsOwner = $workspace['role'] === 'Owner';
+                                                $viewerCanManageLifecycle = $viewerIsOwner || $member['role'] !== 'Admin';
+                                                $viewerCanSeeMembersCompleteAccess = empty(array_diff($member['assigned_business_uids'], $manageableBusinessUids));
+                                            @endphp
+                                            @if ($member['is_active'])
+                                                @if ($viewerIsOwner)
+                                                    <form method="POST" data-member-action="role" data-member-uid="{{ $member['uid'] }}" class="mb-1">
+                                                        @csrf
+                                                        <select name="role" class="form-control form-control-sm d-inline-block w-auto">
+                                                            <option value="staff" @selected($member['role'] === 'Staff')>Staff</option>
+                                                            <option value="admin" @selected($member['role'] === 'Admin')>Admin</option>
+                                                        </select>
+                                                        <x-button type="submit" variant="outline" size="sm">Change role</x-button>
+                                                    </form>
+                                                @endif
+
+                                                @if ($viewerCanSeeMembersCompleteAccess)
+                                                    <form method="POST" data-member-action="access" data-member-uid="{{ $member['uid'] }}" class="mb-1">
+                                                        @csrf
+                                                        <select name="business_access_scope" class="form-control form-control-sm d-inline-block w-auto">
+                                                            <option value="all" @selected($member['scope'] === 'All Businesses')>All Businesses</option>
+                                                            <option value="selected" @selected($member['scope'] === 'Selected Businesses')>Selected Businesses</option>
+                                                        </select>
+
+                                                        @if (! empty($manageableBusinesses))
+                                                            @foreach ($manageableBusinesses as $business)
+                                                                <div class="form-check form-check-inline">
+                                                                    <input class="form-check-input" type="checkbox" name="business_uids[]" value="{{ $business['uid'] }}" id="access-{{ $member['uid'] }}-{{ $business['uid'] }}" @checked(in_array($business['uid'], $member['assigned_business_uids'], true))>
+                                                                    <label class="form-check-label" for="access-{{ $member['uid'] }}-{{ $business['uid'] }}">{{ $business['name'] }}</label>
+                                                                </div>
+                                                            @endforeach
+                                                        @endif
+
+                                                        <x-button type="submit" variant="outline" size="sm">Update access</x-button>
+                                                    </form>
+                                                @else
+                                                    <p class="mb-1 text-muted">Business access can only be changed by a manager who can see this member's complete assigned Businesses.</p>
+                                                @endif
+
+                                                @if ($viewerCanManageLifecycle)
+                                                    <form method="POST" data-member-action="deactivate" data-member-uid="{{ $member['uid'] }}">
+                                                        @csrf
+                                                        <button type="submit" class="btn btn-sm btn-outline-danger">Deactivate</button>
+                                                    </form>
+                                                @endif
+                                            @else
+                                                @if ($viewerCanManageLifecycle)
+                                                    <form method="POST" data-member-action="reactivate" data-member-uid="{{ $member['uid'] }}">
+                                                        @csrf
+                                                        <button type="submit" class="btn btn-sm btn-outline-success">Reactivate</button>
+                                                    </form>
+                                                @endif
+                                            @endif
+                                        </td>
+                                    </tr>
+                                @endforeach
+                            </x-table>
+                        @endif
+                    </x-card>
                 </div>
             @endisset
 
