@@ -21,5 +21,5 @@
         </div>
     @endforeach
 
-    <button type="submit" class="btn btn-primary mt-2">Continue</button>
+    <x-button type="submit" variant="primary" class="mt-2">Continue</x-button>
 </form>
