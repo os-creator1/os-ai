@@ -70,22 +70,35 @@ branch changes **exactly one path**: this document. PR #187 is not
 reverted, and the old branch
 `chore/design-system-m2-a1-business-onboarding-contract` is not reused.
 
-This document is drafted on branch
+**Original draft provenance (historical — not current).** The original
+(Round 0) draft of this document was on branch
 `chore/design-system-m2-a1-business-onboarding-contract`, in an isolated
 worktree, based on `origin/main` at
 `3e36dd5e857da074b4334eb106cdce353e94f19c` — the human merge of PR #186,
-"Design System M2 — Surviving Product Roadmap." This branch changes
-**exactly one path**: this document. No `resources/`, `app/`, `database/`,
-`routes/`, or test file is touched.
+"Design System M2 — Surviving Product Roadmap." That branch was
+subsequently merged as PR #187 (§0, above) and is no longer current or
+reused; it is recorded here only as historical provenance. **The current
+authoritative provenance is the Round 2 base verification immediately
+above this paragraph**: branch
+`chore/design-system-m2-a1-contract-correction2`, base
+`b7eabccd0702723965023336dcc4f01d5389f42a`. This document has never
+touched `resources/`, `app/`, `database/`, `routes/`, or any test file,
+across any drafting pass or correction round.
 
 ---
 
-## 1. Base verification
+## 1. Original draft base verification — HISTORICAL
+
+**This section documents facts about the original (Round 0) draft only.
+It is not current provenance — see the "Round 2 base verification"
+paragraph in §0 for the document's actual current branch/base.**
 
 - `git rev-parse origin/main` = `3e36dd5e857da074b4334eb106cdce353e94f19c`
-  — confirmed exactly matching, mechanically, before any drafting began.
-- Branch `chore/design-system-m2-a1-business-onboarding-contract` created
-  fresh from that exact SHA via `git worktree add -b ... origin/main`.
+  — confirmed exactly matching, mechanically, before the original
+  drafting pass began.
+- Branch `chore/design-system-m2-a1-business-onboarding-contract` (now
+  merged as PR #187, no longer current) was created fresh from that
+  exact SHA via `git worktree add -b ... origin/main`.
 - Read in full: `CLAUDE.md`, `AGENTS.md`,
   `docs/automation/DESIGN-SYSTEM-CONTRACT.md`,
   `docs/automation/DESIGN-SYSTEM-M2-CONTRACT.md`,
@@ -760,13 +773,14 @@ already quoted in §4.11.
 | `goals.blade.php` dynamic checkboxes; `location.blade.php` `public_address`; `services.blade.php` `is_primary` | (would-be `x-checkbox`) | **No checkbox/radio component exists.** Native `.form-check`/`.form-check-input`/`.form-check-label` markup is retained unchanged — already token-clean (§9), no functional or visual debt to justify inventing a new component for this contract. |
 | `results.blade.php` "Finish setup" `<button class="btn btn-success">` | `x-button` | `x-button`'s variant enum (`primary\|secondary\|outline\|ghost\|danger`) **has no `success` option.** **Locked (Correction Round 2, final): native `btn-success` remains for A1** — this one button stays a native `<button class="btn btn-success">` (unchanged, already token-clean). Adding a shared `x-button` success variant is **OUT OF SCOPE for A1**; any future shared-component extension requires its own separate human authorization, not decided or implied by this contract. §13 (the stepper section) is not a decision point for this or any other shared-component variant. |
 | `business.blade.php`/`location.blade.php` `<select>` inline validation state | `x-select`'s (nonexistent) error prop | `x-select` has **no `error` prop at all**, unlike `x-input`. The dropdown markup itself is still adopted (§11) for its options-generation convenience; only its error-state styling is non-adopted — the shared top-of-page `$errors->any()` alert (already present today, §7.1) continues to carry validation feedback for these 2 fields, an existing, disclosed, non-regressive gap, not a new one introduced by A1. |
-| `show.blade.php` nav-pills stepper | (would-be a new stepper/progress component) | **No stepper component exists.** See §13 — this is escalated as an explicit OPTIONAL SHARED-COMPONENT DECISION requiring separate human authorization, with a no-new-component fallback also documented. |
+| `show.blade.php` nav-pills stepper | (would-be a new stepper/progress component) | **No stepper component exists, and none is authorized for A1 (locked, §13 final).** A1 does **not** authorize creating `x-stepper` or `x-progress-steps`. The current non-interactive `nav-pills` structure remains exactly as it is today; A1 may only restyle it. Any richer stepper (navigation, completed-state indication, a new shared component) is outside A1's scope and would require its own separate, future product/UX authorization. |
 | `analysis.blade.php` `#analysis-status` wrapper (`role="status" aria-live="polite"`) | `x-card` / `x-alert` | Neither component has a live-region variant, and wrapping this bespoke ARIA-live status region in generic card/alert chrome would risk disturbing the exact `role`/`aria-live` semantics that must be preserved byte-for-byte (§17). The wrapper `<div>` stays plain; only the buttons/links inside it individually adopt `x-button` (§11). |
 
 No shared component file is modified by this contract or by A1's future
-implementation — every non-adoption above is resolved either by keeping
-native markup or, for the stepper only, by an explicit optional
-human-authorizable decision (§13).
+implementation — every non-adoption above is resolved by keeping and, for
+the stepper only, restyling existing native markup. No non-adoption in
+this table is resolved by a future optional or discretionary
+shared-component decision.
 
 ---
 
