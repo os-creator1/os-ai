@@ -9,6 +9,7 @@
     use App\Http\Middleware\CheckPasswordChanged;
     use App\Http\Middleware\EncryptCookies;
     use App\Http\Middleware\EnsureBusinessOnboardingIsEnabled;
+    use App\Http\Middleware\EnsureBusinessProfileIsAccessible;
     use App\Http\Middleware\EnsureRequiredBusinessOnboardingIsComplete;
     use App\Http\Middleware\ForceJsonResponse;
     use App\Http\Middleware\LocaleMiddleware;
@@ -116,6 +117,7 @@
             'customer.sub_only' => SubAccountRestriction::class,
             'business.onboarding' => EnsureRequiredBusinessOnboardingIsComplete::class,
             'business.onboarding.enabled' => EnsureBusinessOnboardingIsEnabled::class,
+            'business.profile.accessible' => EnsureBusinessProfileIsAccessible::class,
 
 
         ];

@@ -8,6 +8,8 @@ use App\Events\Business\BusinessCreated;
 use App\Events\Business\BusinessPrimaryLocationUpdated;
 use App\Events\Business\BusinessServicesSynced;
 use App\Events\Business\BusinessUpdated;
+use App\Exceptions\Workspace\BusinessWorkspaceMismatchException;
+use App\Exceptions\Workspace\WorkspaceAccessDeniedException;
 use App\Exceptions\Workspace\WorkspaceContextRequiredException;
 use App\Library\Business\BusinessManager;
 use App\Library\Workspace\WorkspaceManager;
@@ -166,6 +168,84 @@ class BusinessManagerTest extends TestCase
         $this->assertNull($updated->canonical_domain);
 
         Event::assertDispatched(BusinessUpdated::class, fn ($event) => $event->changedFields === ['name']);
+    }
+
+    // -----------------------------------------------------------------
+    // Design System M2 A2 nonvisual remediation, Finding 6, Boundary B:
+    // updateOwnBusinessProfile()'s own mutation-time authoritative
+    // recheck, proven directly (bypassing HTTP/middleware entirely) since
+    // a sequential HTTP test cannot itself prove a TOCTOU race is closed.
+    // -----------------------------------------------------------------
+
+    public function test_update_own_business_profile_persists_changes_for_an_active_workspace(): void
+    {
+        Event::fake([BusinessUpdated::class]);
+
+        $customer = $this->createCustomer();
+        $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
+
+        $manager = app(BusinessManager::class);
+        $updated = $manager->updateOwnBusinessProfile($customer, $business, ['name' => 'Renamed Booth Co']);
+
+        $this->assertSame('Renamed Booth Co', $updated->name);
+        $this->assertSame('Renamed Booth Co', Business::find($business->id)->name);
+        Event::assertDispatched(BusinessUpdated::class, fn ($event) => $event->businessId === $business->id);
+    }
+
+    public function test_update_own_business_profile_denies_and_leaves_business_unchanged_when_workspace_is_inactive(): void
+    {
+        Event::fake([BusinessUpdated::class]);
+
+        $customer = $this->createCustomer();
+        $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
+        $originalName = $business->name;
+
+        Workspace::whereKey($business->workspace_id)->update(['is_active' => false]);
+
+        $manager = app(BusinessManager::class);
+
+        try {
+            $manager->updateOwnBusinessProfile($customer, $business, ['name' => 'Attempted Update']);
+            $this->fail('Expected WorkspaceAccessDeniedException.');
+        } catch (WorkspaceAccessDeniedException $e) {
+            $this->assertSame($customer->user_id, $e->userId);
+            $this->assertSame($business->id, $e->businessId);
+        }
+
+        $this->assertSame($originalName, Business::find($business->id)->name);
+        Event::assertNotDispatched(BusinessUpdated::class);
+    }
+
+    public function test_update_own_business_profile_denies_when_business_workspace_relationship_is_stale(): void
+    {
+        Event::fake([BusinessUpdated::class]);
+
+        $customer = $this->createCustomer();
+        $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
+        $originalName = $business->name;
+        $originalWorkspaceId = $business->workspace_id;
+
+        $otherWorkspace = Workspace::create(['name' => 'Other', 'owner_user_id' => $customer->user_id, 'is_active' => true]);
+
+        // Simulate a concurrent reassignment: the authoritative DB row's
+        // workspace_id changes, but this test's in-memory $business
+        // instance is never refreshed -- exactly modeling "the caller
+        // read Business before a concurrent reassignment committed."
+        Business::whereKey($business->id)->update(['workspace_id' => $otherWorkspace->id]);
+
+        $manager = app(BusinessManager::class);
+
+        try {
+            $manager->updateOwnBusinessProfile($customer, $business, ['name' => 'Attempted Update']);
+            $this->fail('Expected BusinessWorkspaceMismatchException.');
+        } catch (BusinessWorkspaceMismatchException $e) {
+            $this->assertSame($business->id, $e->businessId);
+            $this->assertSame($originalWorkspaceId, $e->expectedWorkspaceId);
+            $this->assertSame($otherWorkspace->id, $e->actualWorkspaceId);
+        }
+
+        $this->assertSame($originalName, Business::find($business->id)->name);
+        Event::assertNotDispatched(BusinessUpdated::class);
     }
 
     public function test_upsert_primary_location_delegates_invariant_and_dispatches_event(): void

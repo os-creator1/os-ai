@@ -6,6 +6,8 @@ use App\Events\Business\BusinessCreated;
 use App\Events\Business\BusinessPrimaryLocationUpdated;
 use App\Events\Business\BusinessServicesSynced;
 use App\Events\Business\BusinessUpdated;
+use App\Exceptions\Workspace\BusinessWorkspaceMismatchException;
+use App\Exceptions\Workspace\WorkspaceAccessDeniedException;
 use App\Library\Entitlement\EntitlementManager;
 use App\Library\Workspace\WorkspaceManager;
 use App\Models\Business;
@@ -14,6 +16,7 @@ use App\Models\Customer;
 use App\Repositories\Contracts\BusinessLocationRepository;
 use App\Repositories\Contracts\BusinessRepository;
 use App\Repositories\Contracts\BusinessServiceRepository;
+use App\Repositories\Contracts\WorkspaceRepository;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -42,6 +45,7 @@ class BusinessManager
         private readonly UrlNormalizer $urlNormalizer,
         private readonly WorkspaceManager $workspaceManager,
         private readonly EntitlementManager $entitlementManager,
+        private readonly ?WorkspaceRepository $workspaceRepository = null,
     ) {
     }
 
@@ -81,6 +85,71 @@ class BusinessManager
         }
 
         return $outcome['business'];
+    }
+
+    /**
+     * Boundary B (Design System M2 A2 nonvisual remediation, Finding 6):
+     * the customer-direct Business-profile update seam. Used only by
+     * Customer\BusinessController::update() -- never by the generic
+     * updateBusiness() callers (admin, onboarding, opportunity), which
+     * remain entirely unaffected since this is a new, additive method.
+     *
+     * Closes the TOCTOU gap between the route middleware's unlocked
+     * Workspace-active pre-check (Boundary A, EnsureBusinessProfileIsAccessible)
+     * and the actual write: locks the Workspace first, then the Business,
+     * inside one transaction -- matching WorkspaceManager::reassignBusiness()'s
+     * own established Workspace-then-Business lock order (RFC-003 §16.2,
+     * §18) to avoid an inverse-order deadlock against it. Re-verifies the
+     * Business still belongs to the locked Workspace (BusinessWorkspaceMismatchException,
+     * reused verbatim from reassignBusiness()'s identical scenario), then
+     * re-runs the unmodified WorkspaceManager::userCanAccessBusiness()
+     * decision -- safe to call here since both rows are already held under
+     * this transaction's own locks by this point -- before delegating the
+     * actual write to the existing, unmodified updateBusiness()/applyIdentity().
+     *
+     * $workspaceRepository is a trailing, defaulted-null constructor
+     * dependency (not a required positional one) so that pre-existing test
+     * doubles built as `new class(...) extends BusinessManager` with the
+     * historical six-argument constructor (none of which exercise this
+     * method -- they only override updateBusiness() for unrelated
+     * Opportunity-flow verification tests) remain source-compatible. The
+     * production, container-resolved instance always receives the real
+     * bound WorkspaceRepository via ordinary constructor injection; only a
+     * manually constructed instance that omits it and then unexpectedly
+     * calls this method falls back to resolving the same container binding
+     * here, immediately before use.
+     */
+    public function updateOwnBusinessProfile(Customer $customer, Business $business, array $attributes): Business
+    {
+        $workspaceRepository = $this->workspaceRepository ?? app(WorkspaceRepository::class);
+
+        return DB::transaction(function () use ($customer, $business, $attributes, $workspaceRepository) {
+            $expectedWorkspaceId = $business->workspace_id;
+
+            if ($expectedWorkspaceId !== null) {
+                $workspaceRepository->findForUpdate($expectedWorkspaceId);
+            }
+
+            $lockedBusiness = $this->businessRepository->findForUpdate($business->id);
+
+            if ($lockedBusiness === null) {
+                throw new WorkspaceAccessDeniedException($customer->user_id, $business->id);
+            }
+
+            if ($expectedWorkspaceId !== null && (int) $lockedBusiness->workspace_id !== (int) $expectedWorkspaceId) {
+                throw new BusinessWorkspaceMismatchException(
+                    $lockedBusiness->id,
+                    (int) $expectedWorkspaceId,
+                    (int) $lockedBusiness->workspace_id,
+                );
+            }
+
+            if (! $this->workspaceManager->userCanAccessBusiness($customer->user_id, $lockedBusiness)) {
+                throw new WorkspaceAccessDeniedException($customer->user_id, $lockedBusiness->id);
+            }
+
+            return $this->updateBusiness($customer, $lockedBusiness, $attributes);
+        });
     }
 
     /**
