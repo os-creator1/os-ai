@@ -1,9 +1,12 @@
 # Design System M2 — Surviving Roadmap A1: Business Onboarding — Visual Contract
 
 **Status: CONTRACT / AUDIT ONLY. No implementation has occurred under this
-document. Correction Round 1 found two BLOCKING NONVISUAL prerequisites
-(§5, §15) — A1 visual implementation is BLOCKED until both are separately
-remediated and human-merged. Merging this contract does NOT authorize
+document. This contract's Correction Round 1 state (commit `59ce743`) was
+human-merged into `main` as PR #187 (`b7eabccd0702723965023336dcc4f01d5389f42a`).
+This is Correction Round 2 — FINAL, a post-merge docs correction on a
+fresh branch. Two BLOCKING NONVISUAL prerequisites (§5, §15) remain open
+— A1 visual implementation is BLOCKED until both are separately
+remediated and human-merged. Merging this correction does NOT authorize
 visual implementation, and would not even if it were unblocked — that
 still requires its own separate, explicit human authorization, exactly
 like every prior contract in this repository.**
@@ -22,6 +25,11 @@ implementation_has_occurred: false
 merge_authorizes_implementation: false
 implementation_requires_separate_human_authorization: true
 
+contract_status: final_correction_pending_human_merge
+
+a1_contract_round1_merge_pr: 187
+a1_contract_round1_merge_sha: b7eabccd0702723965023336dcc4f01d5389f42a
+
 security_pre_audit_required: true
 security_pre_audit_complete: true
 security_pre_audit_status: passed_no_blocking_security_defect
@@ -33,8 +41,14 @@ capacity_denial_500_blocking: true
 
 a1_visual_status: blocked_until_nonvisual_onboarding_behavior_remediation_human_merged
 
+visual_implementation_base: post_nonvisual_remediation_main
+visual_implementation_base_must_include_nonvisual_remediation: true
+pre_remediation_flag_behavior_is_not_visual_preservation_baseline: true
+post_remediation_behavior_requires_mechanical_reverification: true
+
 advance_automatically: false
 start_a2_automatically: false
+start_a3_automatically: false
 start_b1_automatically: false
 
 merge_authority: human_only
@@ -42,26 +56,49 @@ no_force_push: true
 no_deployment: true
 
 maximum_correction_rounds: 2
-correction_round: 1
-correction_round_is_final: false
+correction_round: 2
+correction_round_is_final: true
 ```
 
-This document is drafted on branch
+**Round 2 base verification**: this correction is drafted on branch
+`chore/design-system-m2-a1-contract-correction2`, created fresh from
+`origin/main` at `b7eabccd0702723965023336dcc4f01d5389f42a` (confirmed
+exactly matching, mechanically, before any drafting began — the human
+merge of PR #187, which itself carried this contract's Correction Round
+1 state at commit `59ce7438efa53c627b3a56bad34570faf9516617`). This
+branch changes **exactly one path**: this document. PR #187 is not
+reverted, and the old branch
+`chore/design-system-m2-a1-business-onboarding-contract` is not reused.
+
+**Original draft provenance (historical — not current).** The original
+(Round 0) draft of this document was on branch
 `chore/design-system-m2-a1-business-onboarding-contract`, in an isolated
 worktree, based on `origin/main` at
 `3e36dd5e857da074b4334eb106cdce353e94f19c` — the human merge of PR #186,
-"Design System M2 — Surviving Product Roadmap." This branch changes
-**exactly one path**: this document. No `resources/`, `app/`, `database/`,
-`routes/`, or test file is touched.
+"Design System M2 — Surviving Product Roadmap." That branch was
+subsequently merged as PR #187 (§0, above) and is no longer current or
+reused; it is recorded here only as historical provenance. **The current
+authoritative provenance is the Round 2 base verification immediately
+above this paragraph**: branch
+`chore/design-system-m2-a1-contract-correction2`, base
+`b7eabccd0702723965023336dcc4f01d5389f42a`. This document has never
+touched `resources/`, `app/`, `database/`, `routes/`, or any test file,
+across any drafting pass or correction round.
 
 ---
 
-## 1. Base verification
+## 1. Original draft base verification — HISTORICAL
+
+**This section documents facts about the original (Round 0) draft only.
+It is not current provenance — see the "Round 2 base verification"
+paragraph in §0 for the document's actual current branch/base.**
 
 - `git rev-parse origin/main` = `3e36dd5e857da074b4334eb106cdce353e94f19c`
-  — confirmed exactly matching, mechanically, before any drafting began.
-- Branch `chore/design-system-m2-a1-business-onboarding-contract` created
-  fresh from that exact SHA via `git worktree add -b ... origin/main`.
+  — confirmed exactly matching, mechanically, before the original
+  drafting pass began.
+- Branch `chore/design-system-m2-a1-business-onboarding-contract` (now
+  merged as PR #187, no longer current) was created fresh from that
+  exact SHA via `git worktree add -b ... origin/main`.
 - Read in full: `CLAUDE.md`, `AGENTS.md`,
   `docs/automation/DESIGN-SYSTEM-CONTRACT.md`,
   `docs/automation/DESIGN-SYSTEM-M2-CONTRACT.md`,
@@ -386,10 +423,45 @@ active primary, a non-null `analysis_payload`, and — only if that
 payload's `findings` is non-empty — a recorded `first_value_action_key`.
 On success, redirects to `user.home`.
 
-**None of this is redesigned by A1.** A future visual implementation must
-preserve every flag read-site, every redirect target, every exempt-route
-prefix, and every resume/skip/completion condition exactly as documented
-here.
+**CORRECTION ROUND 2 — visual baseline is POST-REMEDIATION, not
+pre-remediation.** The original wording here ("a future visual
+implementation must preserve every flag read-site... exactly as
+documented here") is wrong, because BLOCKING NONVISUAL PREREQUISITE #1
+(above) is specifically expected to *change* the flag's enforcement
+behavior — preserving today's drifted, pre-remediation behavior would
+mean preserving the very bug this contract just identified.
+
+**The two flag read-sites and the "only the redirect is gated" behavior
+documented above in this section are PRE-REMEDIATION EVIDENCE ONLY** —
+they describe what is true of `origin/main` today, not what a future A1
+visual implementation is obligated to preserve. RFC-001's merged
+master-switch semantics (`RFC-001-BUSINESS-CORE-DEPLOYMENT.md` §1/§8,
+quoted above) remain the intended target behavior. The nonvisual
+remediation (fixing the drift, or deliberately revising the
+documentation to match shipped behavior — either way, via its own
+separate contract) must be human-merged first. **The eventual A1 visual
+implementation branch must be created from the resulting
+POST-REMEDIATION `main`**, and *that* behavior — not what's described in
+this section today — becomes the authoritative preservation baseline for
+visual work.
+
+Before any Blade edit, A1 visual implementation must mechanically
+re-verify, against the post-remediation `main` it branches from: the
+feature-flag/master-switch behavior, every route/middleware/controller
+behavior affected by remediation, analysis-dispatch behavior, the
+capacity-denial behavior (§15), the relevant regression tests, and the
+exact 9-view inventory (§2) — in case remediation incidentally touched
+any of them. **If remediation is found to have changed the visual
+inventory or to require a new visual path, implementation must STOP and
+require a contract amendment — the 12-path allowlist (§18) may not be
+silently expanded or altered to accommodate it.**
+
+Everything else in this section (redirect targets, exempt-route prefixes,
+resume/skip/completion conditions, route names/URIs/HTTP methods) is
+**not** expected to change under remediation and remains locked exactly
+as documented — only the flag-enforcement-scope behavior specifically
+tied to BLOCKING NONVISUAL PREREQUISITE #1 is provisional pending
+remediation.
 
 ---
 
@@ -571,9 +643,10 @@ old()/value binding: yes, all fields, both existing and new rows.
 - Back/next/skip UI: **the nav-pills are non-interactive `<span>`
   elements** — there is currently no clickable in-UI way to revisit an
   earlier completed step, even though `resolveStep()` already supports it
-  server-side. **Per Correction Round 1 (§13), this stays non-interactive
-  in A1 — no clickable step navigation is authorized**; only visual
-  completed/current/upcoming state distinction is in-scope.
+  server-side. **Per §13 (final, Correction Round 2): this stays
+  non-interactive in A1, with only today's single `.active` state
+  distinction — no clickable step navigation and no new
+  completed/upcoming state semantics of any kind are authorized.**
 - `results.blade.php`'s dynamic "value" input lacks `old()` binding
   (every other field in every other step has it). This is an existing,
   minor, disclosed inconsistency — **not fixed by A1**, since restoring a
@@ -698,15 +771,16 @@ already quoted in §4.11.
 |---|---|---|
 | `business.blade.php` `description` `<textarea>` | (would-be `x-textarea`) | **Does not exist in the component library.** Adopting a nonexistent component isn't possible; native `<textarea class="form-control">` is retained, restyled only via existing token-driven Bootstrap classes (§9 — already clean, no hardcoded literals to fix). |
 | `goals.blade.php` dynamic checkboxes; `location.blade.php` `public_address`; `services.blade.php` `is_primary` | (would-be `x-checkbox`) | **No checkbox/radio component exists.** Native `.form-check`/`.form-check-input`/`.form-check-label` markup is retained unchanged — already token-clean (§9), no functional or visual debt to justify inventing a new component for this contract. |
-| `results.blade.php` "Finish setup" `<button class="btn btn-success">` | `x-button` | `x-button`'s variant enum (`primary\|secondary\|outline\|ghost\|danger`) **has no `success` option.** Locked default: leave this one button as a native `<button class="btn btn-success">` (unchanged, already token-clean). See §13 for the alternative optional path (adding a `success` variant to `x-button`) — that requires human authorization as a shared-component change and is not decided by this contract. |
+| `results.blade.php` "Finish setup" `<button class="btn btn-success">` | `x-button` | `x-button`'s variant enum (`primary\|secondary\|outline\|ghost\|danger`) **has no `success` option.** **Locked (Correction Round 2, final): native `btn-success` remains for A1** — this one button stays a native `<button class="btn btn-success">` (unchanged, already token-clean). Adding a shared `x-button` success variant is **OUT OF SCOPE for A1**; any future shared-component extension requires its own separate human authorization, not decided or implied by this contract. §13 (the stepper section) is not a decision point for this or any other shared-component variant. |
 | `business.blade.php`/`location.blade.php` `<select>` inline validation state | `x-select`'s (nonexistent) error prop | `x-select` has **no `error` prop at all**, unlike `x-input`. The dropdown markup itself is still adopted (§11) for its options-generation convenience; only its error-state styling is non-adopted — the shared top-of-page `$errors->any()` alert (already present today, §7.1) continues to carry validation feedback for these 2 fields, an existing, disclosed, non-regressive gap, not a new one introduced by A1. |
-| `show.blade.php` nav-pills stepper | (would-be a new stepper/progress component) | **No stepper component exists.** See §13 — this is escalated as an explicit OPTIONAL SHARED-COMPONENT DECISION requiring separate human authorization, with a no-new-component fallback also documented. |
+| `show.blade.php` nav-pills stepper | (would-be a new stepper/progress component) | **No stepper component exists, and none is authorized for A1 (locked, §13 final).** A1 does **not** authorize creating `x-stepper` or `x-progress-steps`. The current non-interactive `nav-pills` structure remains exactly as it is today; A1 may only restyle it. Any richer stepper (navigation, completed-state indication, a new shared component) is outside A1's scope and would require its own separate, future product/UX authorization. |
 | `analysis.blade.php` `#analysis-status` wrapper (`role="status" aria-live="polite"`) | `x-card` / `x-alert` | Neither component has a live-region variant, and wrapping this bespoke ARIA-live status region in generic card/alert chrome would risk disturbing the exact `role`/`aria-live` semantics that must be preserved byte-for-byte (§17). The wrapper `<div>` stays plain; only the buttons/links inside it individually adopt `x-button` (§11). |
 
 No shared component file is modified by this contract or by A1's future
-implementation — every non-adoption above is resolved either by keeping
-native markup or, for the stepper only, by an explicit optional
-human-authorizable decision (§13).
+implementation — every non-adoption above is resolved by keeping and, for
+the stepper only, restyling existing native markup. No non-adoption in
+this table is resolved by a future optional or discretionary
+shared-component decision.
 
 ---
 
@@ -717,46 +791,39 @@ list of 8 `<span>` labels with only a CSS `.active` class distinguishing
 the current step — no completed/upcoming visual distinction, no click
 navigation, no `aria-current`.
 
-**CORRECTION ROUND 1 — narrowed scope.** The original draft of this
-section authorized making completed-step pills clickable links, reasoning
-that it only exposed already-safe backend capability. Per human direction
-in Correction Round 1, **that authorization is withdrawn.** A1's visual
-scope is restricted to **restyling the current non-interactive stepper
-only — no new navigation behavior of any kind is authorized**, even
-where the underlying route/capability is already safe. This removes any
-ambiguity about whether A1 is "purely presentational": the stepper's
-*interactivity* (none today) is preserved exactly, not just its markup.
+**CORRECTION ROUND 2 — FINAL: strictly restyle-only.** Correction Round 1
+already withdrew authorization for clickable step-pill navigation.
+Correction Round 2 goes further and removes Round 1's remaining
+carve-out (visually distinguishing completed/current/upcoming state via
+a check-mark icon), which itself introduced new state semantics not
+present today. **The final A1 stepper rule is: RESTYLE THE CURRENT
+NON-INTERACTIVE STEPPER ONLY.** A1 must preserve, unchanged:
 
-**One thing remains in-scope, since it changes no interactivity, no URL,
-and no route** — visually distinguishing completed vs. current vs.
-upcoming steps using only existing primitives (e.g. an `x-ds-icon`
-check-mark next to a completed step's label, driven by
-`$onboarding->completed_steps` membership), with the pills remaining
-non-interactive `<span>`s exactly as today. This is restyling, not new
-navigation.
+- exactly 8 step labels;
+- the same label order;
+- the same current-step/`.active` meaning (today's only state
+  distinction);
+- non-interactive, `<span>`-only behavior — no `<a>`/`<button>` anywhere
+  in the stepper;
+- no new navigation of any kind.
 
-**Making the pills clickable (or any other new stepper interactivity) is
-withdrawn from A1's scope entirely** — it is not authorized here, it is
-not an "optional, in-scope" enhancement, and it is not delegated to a
-future implementer's discretion. If a future human decision wants
-step-pill navigation, that must be authorized explicitly, in its own
-future scope, separate from a "pure restyle" contract like this one.
+**A1 does NOT authorize, anywhere in the stepper**: clickable completed
+steps; back navigation; new completed/upcoming state semantics beyond
+today's single `.active`/not-`.active` distinction; completed-step check
+icons; step numbers; progress percentages; a new `x-stepper` or
+`x-progress-steps` component; or any other stepper interaction or state
+feature. A richer stepper (navigation, completed-state indication, step
+numbering, a progress bar) is a separate future UX/product decision, not
+something A1's visual scope, or a future implementer's discretion, may
+introduce.
 
-**OPTIONAL SHARED-COMPONENT DECISION REQUIRING HUMAN AUTHORIZATION**: a
-purpose-built `x-stepper`/`x-progress-steps` component (showing
-current/completed/upcoming state, step numbers, and optionally a
-progress percentage) would likely present more cleanly than restyled
-nav-pills, especially on narrow/mobile layouts. **This contract does not
-create it.** If a future implementer or the human authorizing A1's
-visual work wants one, that is a new addition to the shared component
-library and requires its own separate authorization, exactly like any
-other shared-component change — not something A1's own implementation
-allowlist may add silently.
+**Fallback (the only path, not merely a default among options)**: keep
+the existing `nav-pills`/non-interactive-`<span>` structure exactly as
+it is today, and restyle it using existing M2 token/component
+conventions, without adding any behavior or new state semantics.
 
-**No-new-component alternative** (the default, always available without
-further authorization): keep the current `nav-pills` markup, restyled
-only with already-token-clean Bootstrap classes, augmented with items 1
-and 2 above.
+No shared component file enters A1's visual allowlist (§18) for any
+stepper purpose.
 
 ---
 
@@ -861,11 +928,12 @@ behavior are locked, preservation-only.
   require touching one of those, it is out of A1's scope and must be
   identified as a separate, future, non-visual contract — not smuggled
   into this one.
-- **CORRECTION ROUND 1 — reclassified from "disclosed, non-blocking" to
-  BLOCKING NONVISUAL PREREQUISITE #2.** When `assertCanCreateAnotherBusiness()`
-  denies during the Business step, none of its five exception types are
-  caught anywhere in the onboarding call chain
-  (`BusinessOnboardingController::saveStep()` only catches
+- **BLOCKING NONVISUAL PREREQUISITE #2** (reclassified in Correction
+  Round 1 from "disclosed, non-blocking"; scope narrowed in Correction
+  Round 2 to remove an over-prescriptive implementation choice). When
+  `assertCanCreateAnotherBusiness()` denies during the Business step,
+  none of its five exception types are caught anywhere in the onboarding
+  call chain (`BusinessOnboardingController::saveStep()` only catches
   `InvalidArgumentException`) or specially handled by
   `app/Exceptions/Handler.php`. The result is an **uncaught 500 error**
   (or, for a JSON request, a generic anonymized-message JSON error) with
@@ -874,22 +942,38 @@ behavior are locked, preservation-only.
   exposure, no auth bypass; the denial-message classes are already
   deliberately anonymized to a numeric Workspace ID per their own
   docblocks) — the security verdict itself is unchanged (§16). It is
-  **not fixable by a pure Blade-only visual contract**, since a friendly
-  wizard-level error message for this case requires catching a new
-  exception type in the controller — a behavior/domain change, out of
-  A1's Blade-only scope. Per human direction in Correction Round 1, this
-  gap is now treated as a **blocking prerequisite for A1 visual
-  authorization** (not merely a disclosed footnote): a capacity-exhausted
-  customer must not be able to reach a redesigned onboarding wizard whose
-  Business step still terminates in a generic framework 500 page with no
-  wizard-consistent error handling. Remediation (catching the five
-  `EntitlementManager` exception types in `BusinessOnboardingController::saveStep()`
-  and redirecting back to the Business step with a wizard-consistent
-  `'onboarding'` error message, mirroring the existing
-  `InvalidArgumentException` handling) is a separate, small, non-visual
-  contract — **not performed here, not performed by A1's future
-  implementation allowlist (§18), and must be human-merged before A1
-  visual implementation begins.**
+  **not fixable by a pure Blade-only visual contract**, since resolving
+  it requires a behavior/domain change, out of A1's Blade-only scope. Per
+  human direction, this gap is a **blocking prerequisite for A1 visual
+  authorization**: a capacity-exhausted customer must not be able to
+  reach a redesigned onboarding wizard whose Business step still
+  terminates in a generic framework 500 page with no wizard-consistent
+  error handling.
+
+  **CORRECTION ROUND 2 — this contract does not prescribe an exact
+  remediation implementation.** It locks only the **required outcome**:
+
+  - the expected RFC-004 capacity denial must not surface as a generic
+    HTTP 500;
+  - denial must remain non-destructive — zero Business persistence on
+    denial, and the transaction rollback already in place (§15 above)
+    must remain intact;
+  - RFC-004 entitlement/capacity semantics (the exception types, the
+    lock ordering, the retry behavior) must remain intact, unmodified;
+  - no tenant/security information may be exposed in the denial
+    response (the existing anonymized-message posture must be
+    preserved or improved, never weakened);
+  - the customer must receive an intentional, onboarding-safe denial
+    response instead of a generic framework error page.
+
+  **This visual contract does not choose whether remediation belongs in
+  controller handling, exception `Handler` mapping, domain-level
+  translation, or another existing application seam.** The separate,
+  future, non-visual remediation contract must mechanically select the
+  smallest, architecture-consistent seam for achieving the outcome above
+  — not performed here, not performed by A1's future implementation
+  allowlist (§18), and must be human-merged before A1 visual
+  implementation begins.
 
 ---
 
@@ -1017,12 +1101,14 @@ currently satisfied.**
   `services.blade.php`, `assets.blade.php` — `x-input`/`x-select`
   adoption (§11) preserves this automatically via their own `label`/`name`
   props, which render the same `for`/`id` association.
-- **Genuine, in-scope, optional improvement**: adding `aria-current="step"`
-  to the active nav-pill item, and visually-hidden "completed"/"upcoming"
-  state text for the other pills, is a legitimate accessibility
-  improvement within pure-presentation scope (no state-machine change,
-  no new component required beyond what §13 already allows) — not
-  required, not locked, available to a future implementer.
+- **CORRECTION ROUND 2**: adding `aria-current="step"` to the active
+  nav-pill item remains a permitted, optional accessibility improvement
+  — it only labels today's existing `.active` state, introducing no new
+  completed/upcoming distinction. **Visually-hidden "completed"/
+  "upcoming" state text for the other pills is withdrawn** — per §13
+  (final), A1 authorizes no completed/upcoming state semantics beyond
+  today's single `.active`/not-`.active` distinction, accessible or
+  otherwise.
 - No other explicit ARIA attributes exist anywhere in the 9 views today;
   A1 does not need to preserve what doesn't exist, only avoid removing
   the one ARIA-live region and the existing label associations.
@@ -1044,7 +1130,7 @@ change and was correctly excluded from that slice's write allowlist).
 **Exact future implementation allowlist — 12 paths, numbered 1-12:**
 
 ### Onboarding views (9)
-1. `resources/views/customer/onboarding/show.blade.php` — `x-card`/`x-alert` adoption (§11); optional stepper enhancement (§13).
+1. `resources/views/customer/onboarding/show.blade.php` — `x-card`/`x-alert` adoption (§11); restyle existing non-interactive stepper only; no new state semantics, icons, shared component, or navigation (§13, final).
 2. `resources/views/customer/onboarding/steps/analysis.blade.php` — `x-button` adoption on 3 elements; `#analysis-status` wrapper and its inline script preserved unchanged (§12/§14).
 3. `resources/views/customer/onboarding/steps/assets.blade.php` — `x-button` ×2, `x-input` ×3.
 4. `resources/views/customer/onboarding/steps/business.blade.php` — `x-input` ×7 (one non-adopted textarea, §12), `x-select` ×1, `x-button` ×1.
@@ -1070,13 +1156,19 @@ required-13th-path-shaped stop condition** — implementation must stop,
 leave the working tree unstaged, and report, exactly as this repository's
 prior contracts require for their own allowlists. **This 12-path
 allowlist and 13th-path stop threshold are unchanged by Correction Round
-1** — the two blocking nonvisual prerequisites (§5, §15) are, by
-definition, not on this visual-only allowlist and are not remediated by
-it. **This allowlist may not be executed until both blocking
-prerequisites are separately remediated and human-merged** (§0
-`a1_visual_status`) — its existence here documents the visual scope in
-advance; it does not itself authorize starting implementation, now or
-once unblocked.
+1 and unchanged by Correction Round 2** — the two blocking nonvisual
+prerequisites (§5, §15) are, by definition, not on this visual-only
+allowlist and are not remediated by it. **This allowlist may not be
+executed until both blocking prerequisites are separately remediated and
+human-merged** (§0 `a1_visual_status`) — its existence here documents the
+visual scope in advance; it does not itself authorize starting
+implementation, now or once unblocked. Per §5's Correction Round 2
+addition, the future visual implementation branch must also mechanically
+re-verify the 9-view inventory (§2) and this allowlist's own scope
+against the post-remediation `main` it branches from — if remediation is
+found to require expanding or altering this allowlist, implementation
+must STOP and request a contract amendment rather than silently
+proceeding.
 
 ---
 
@@ -1096,31 +1188,83 @@ once unblocked.
    native `<textarea>`); exact locked non-adoptions from §12 present and
    unchanged (native checkboxes/radio still present; the one
    `btn-success` button still native, not wrapped in `x-button`).
-3. **`BusinessOnboardingExistingBehaviorPreservedTest.php`** — the
-   9-view inventory itself (no 10th view silently added); every form's
-   `action`/`method` and `@csrf` token still present and unchanged; the
-   step-order/skip hooks (`STEP_ORDER`, `SKIPPABLE_STEPS`) still reachable
-   through the same routes; the analysis polling script's target route
-   and status-branch structure unchanged; the Results step's fingerprint/
-   action_key hidden-input pattern intact; all 6 feature-flag/redirect
-   behaviors from §5 unchanged; critical IDs (`#business-onboarding`,
-   `#analysis-status`) and the `role="status" aria-live="polite"`
-   attributes intact.
+3. **`BusinessOnboardingExistingBehaviorPreservedTest.php`** —
+   **CORRECTION ROUND 2: this test must assert the POST-REMEDIATION
+   authoritative behavior, not today's pre-remediation drift.** The
+   original plan said "all feature-flag/redirect behaviors from §5
+   unchanged" — that is wrong, since the nonvisual remediation (§5, §0)
+   will deliberately change some of those behaviors (specifically the
+   flag's enforcement scope) before visual work begins; a test asserting
+   "unchanged" would incorrectly freeze today's documented-intent-vs-
+   shipped-behavior drift into a permanent regression guard. Corrected
+   plan — assert:
+   - the 9-view inventory itself (no 10th view silently added);
+   - every form's `action`/`method` and `@csrf` token still present and
+     unchanged;
+   - the step-order/skip hooks (`STEP_ORDER`, `SKIPPABLE_STEPS`) still
+     reachable through the same routes;
+   - the analysis polling script's target route and status-branch
+     structure unchanged;
+   - the Results step's fingerprint/action_key hidden-input pattern
+     intact;
+   - **the feature-flag master-switch behavior *as implemented by the
+     human-merged nonvisual remediation*** — not today's pre-remediation
+     reachability;
+   - **the capacity-denial seam *as implemented by that same
+     remediation*** (§15) — not today's uncaught 500;
+   - critical IDs (`#business-onboarding`, `#analysis-status`) and the
+     `role="status" aria-live="polite"` attributes intact;
+   - that the visual implementation itself introduces no further change
+     to any of the remediated behaviors above — the visual pass may only
+     touch markup, never re-drift what remediation just fixed.
+
+   **These exact assertions must be mechanically finalized from the
+   post-remediation `main`, before the visual implementation commit is
+   written** — they cannot be fully specified from this contract alone,
+   since the remediation's own exact seam (§15) is deliberately not
+   prescribed here.
 
 Security tests, if any are ever needed, belong to a separate future
-remediation contract — none are required here (§16 verdict: unblocked,
-no defect found).
+remediation contract — none are required here: the security-specific
+pre-audit passed with no blocking security defect (§16); overall A1
+visual implementation remains BLOCKED by the two nonvisual behavior
+prerequisites (§0, §5, §15), for reasons unrelated to security.
 
 ---
 
 ## 20. Existing regression test plan
 
-**CORRECTION ROUND 1 — corrected test-count policy.** The original draft
-required "the exact same pass count" before and after A1 implementation.
-That is imprecise: A1's own future implementation *adds* 3 new Design
-System test files (§18/§19), which genuinely increase the total passing
-count — requiring an unchanged *total* would be self-contradictory. The
-corrected policy:
+**CORRECTION ROUND 2 — regression baseline timing.** The pre-A1-visual
+regression baseline is collected only **after** both nonvisual
+prerequisites (§0, §5, §15) are human-merged — never against
+`3e36dd5e857da074b4334eb106cdce353e94f19c` (the pre-Round-1 base) or
+`b7eabccd0702723965023336dcc4f01d5389f42a` (this correction's own base,
+carrying the merged Round-1 contract but not yet any remediation) as
+though either were the final visual baseline. Concretely:
+
+1. The nonvisual remediation may legitimately modify or add its own
+   regression tests as part of fixing §5/§15 — that is within its scope,
+   not this visual contract's.
+2. Once that remediation is human-merged, the exact regression-subset and
+   full-suite counts must be recorded fresh, on that new `main` — this is
+   the actual pre-A1-visual baseline, not any SHA named in this document
+   today.
+3. The A1 visual implementation branch is then created from that same
+   post-remediation state (§5/§18), and must preserve that
+   post-remediation regression subset exactly.
+4. The three new A1 Design System test files (§18/§19) add their own
+   tests to the total — they are not expected to net to zero against
+   anything.
+5. The final post-visual full suite requires: 0 failures; 0 skipped;
+   exit 0; every post-remediation baseline test still passing; plus the
+   new A1 DS tests passing.
+
+**CORRECTION ROUND 1 — corrected test-count policy** (unchanged by Round
+2, restated for completeness). The original draft required "the exact
+same pass count" before and after A1 implementation. That is imprecise:
+A1's own future implementation *adds* 3 new Design System test files
+(§18/§19), which genuinely increase the total passing count — requiring
+an unchanged *total* would be self-contradictory. The corrected policy:
 
 - **Existing regression subset** (the tests listed below): must preserve
   its own **pre-existing test count** exactly — none of these files are
@@ -1137,7 +1281,8 @@ corrected policy:
   post-count must equal the pre-count **plus** the 3 new test files' own
   method count — not simply "equal."
 
-Must be run both **before** and **after** any eventual A1 visual
+Must be run both **before** (i.e., on the post-remediation `main`,
+per the timing rule above) and **after** any eventual A1 visual
 implementation (none of these are modified by A1 — they exercise
 behavior, not markup):
 
@@ -1163,6 +1308,20 @@ test-contract discipline.
 ---
 
 ## 21. Manual visual verification checklist (for the future implementer)
+
+**CORRECTION ROUND 2**: this checklist must use the final,
+post-remediation feature-flag semantics — do **not** assume, as the
+current pre-remediation implementation happens to allow, that direct
+onboarding access works regardless of `BUSINESS_ONBOARDING_ENABLED`.
+Before walking through the wizard manually, **explicitly enable
+onboarding according to the remediated master-switch semantics** if the
+remediation requires that for direct access (per RFC-001's documented
+intent, §5, it should). Disabled-state/master-switch behavior itself is
+verified primarily through the remediated regression suite (§20) and,
+where appropriate, a separate manual disabled-state smoke check — not by
+assuming today's drifted behavior persists. All ordinary wizard workflow
+checks below remain applicable regardless of the flag semantics used to
+reach the wizard.
 
 - Load `/onboarding` fresh (no row) as a brand-new customer — confirm
   `show.blade.php` renders the redesigned card/alert shell with the Goals
@@ -1217,8 +1376,9 @@ test-contract discipline.
   "fetch never checks response.ok" detail (§14). ✓
 - RFC-004/Business-capacity behavior fully documented, including the
   exact call order relative to the Workspace lock (§15). ✓
-- Security pre-audit complete, 20/20 items clear, verdict unblocked
-  (§16). ✓
+- Security-specific pre-audit complete, 20/20 items clear, passed with
+  no blocking security defect; overall A1 visual implementation remains
+  BLOCKED by the two nonvisual behavior prerequisites (§16, §0). ✓
 - Component APIs inspected by reading every one of the 11 requested
   components' actual source (§10). ✓
 - Exact adoption counts locked (§11), exact non-adoptions locked with
@@ -1230,9 +1390,24 @@ test-contract discipline.
 - `docs/automation/AI-AUTONOMY-STATE.json` untouched. ✓
 - `docs/automation/DESIGN-SYSTEM-M2-CONTRACT.md` untouched. ✓
 - `docs/automation/PRODUCT-SURFACE-RETENTION-AUDIT.md` untouched. ✓
-- **Correction Round 1**: `correction_round: 1` recorded (§0); both
-  blocking nonvisual prerequisites documented with evidence and cross-
-  referenced consistently across §0/§5/§15/§16/§18/§23. ✓
+- **Correction Round 1**: both blocking nonvisual prerequisites
+  documented with evidence and cross-referenced consistently across
+  §0/§5/§15/§16/§18/§23. ✓
+- **Correction Round 2 (final)**: `correction_round: 2`,
+  `correction_round_is_final: true` recorded (§0); visual baseline
+  reframed as post-remediation, not pre-remediation, throughout (§5,
+  §18); exact capacity-remediation implementation prescription removed,
+  replaced with outcome-only requirements (§15); stepper narrowed to
+  strict restyle-only, no completed-state semantics/icons/component/
+  navigation (§13, §7.10, §17); stale §13 cross-reference for an
+  `x-button` success variant removed (§12); §18's stepper wording
+  corrected to the exact required semantics; DS behavior-preservation
+  test plan corrected to assert post-remediation behavior, not today's
+  drift (§19); regression-baseline timing clarified as post-remediation
+  (§20); manual checklist corrected to not assume pre-remediation
+  disabled-state behavior (§21); "verdict unblocked" phrasing replaced
+  everywhere with security-specific-vs-overall-readiness wording (§16,
+  §22); final stale-claim sweep performed, zero live violations found. ✓
 
 `git diff --check` run against the staged file before commit — reported
 in the final chat report.
@@ -1295,11 +1470,121 @@ only this file. Outcomes:
     `DESIGN-SYSTEM-M2-CONTRACT.md`, `PRODUCT-SURFACE-RETENTION-AUDIT.md`,
     or `AI-AUTONOMY-STATE.json` file was modified.
 
+Round 1 was itself human-merged into `main` as PR #187
+(`b7eabccd0702723965023336dcc4f01d5389f42a`) before Correction Round 2
+began.
+
+---
+
+## 24. Correction Round 2 (final) — summary
+
+Executed on a fresh branch, `chore/design-system-m2-a1-contract-correction2`,
+created from `origin/main` at
+`b7eabccd0702723965023336dcc4f01d5389f42a` (the human merge of PR #187,
+which carried Round 1's contract state at `59ce7438efa53c627b3a56bad34570faf9516617`).
+PR #187 is not reverted; the old branch is not reused. Outcomes:
+
+1. **Governance finalized**: `correction_round: 2`,
+   `correction_round_is_final: true`, `contract_status:
+   final_correction_pending_human_merge`, plus explicit
+   `a1_contract_round1_merge_pr`/`_sha`, `visual_implementation_base:
+   post_nonvisual_remediation_main`, and the three supporting
+   post-remediation-baseline governance keys (§0).
+2. **Visual baseline corrected from pre- to post-remediation** (§5, §18):
+   the two current `BUSINESS_ONBOARDING_ENABLED` read-sites and the
+   "only the redirect is gated" behavior are now explicitly labeled
+   PRE-REMEDIATION EVIDENCE ONLY, not a preservation obligation. The
+   eventual A1 visual branch must be created from `main` *after* the
+   nonvisual remediation is human-merged, and must mechanically
+   re-verify feature-flag behavior, affected routes/middleware,
+   analysis-dispatch behavior, capacity-denial behavior, regression
+   tests, and the 9-view inventory before any Blade edit — stopping for
+   a contract amendment, not silently expanding the allowlist, if
+   remediation changes any of them.
+3. **Capacity-remediation implementation prescription removed** (§15):
+   this contract now locks only the required outcome (no generic 500;
+   zero Business persistence and intact rollback on denial; intact
+   RFC-004 semantics; no tenant/security information exposure; an
+   intentional onboarding-safe denial response) — it no longer names
+   `BusinessOnboardingController::saveStep()` as the remediation site.
+   The separate future remediation contract selects the seam
+   (controller, exception `Handler`, domain translation, or another
+   existing seam).
+4. **Stepper narrowed to strict restyle-only** (§13, final): Round 1's
+   remaining carve-out (a completed-step check-icon state) is withdrawn.
+   A1 preserves exactly 8 labels, the same order, the same single
+   `.active` meaning, and non-interactive `<span>`-only behavior — no
+   clickable navigation, no completed/upcoming state semantics, no check
+   icons, no step numbers, no progress percentage, no `x-stepper`/
+   `x-progress-steps`. The stale "augmented with items 1 and 2 above"
+   fallback wording is removed; the fallback is simply restyling the
+   existing structure with no added behavior or state. §7.10 and §17
+   updated to match.
+5. **Stale success-variant cross-reference removed** (§12): the "Finish
+   setup" `btn-success` non-adoption no longer points to §13 as a
+   decision path for a shared `x-button` success variant — that is
+   locked as out-of-scope for A1, requiring its own separate future
+   authorization if ever pursued.
+6. **§18 stepper wording corrected**: `show.blade.php`'s allowlist entry
+   now reads "restyle existing non-interactive stepper only; no new
+   state semantics, icons, shared component, or navigation," replacing
+   "optional stepper enhancement." The 12-path allowlist and 13th-path
+   stop threshold are unchanged.
+7. **DS behavior-preservation test plan corrected** (§19):
+   `BusinessOnboardingExistingBehaviorPreservedTest.php` must assert the
+   post-remediation authoritative flag/capacity-denial behavior, finalized
+   mechanically from the post-remediation `main` — not today's
+   pre-remediation drift frozen as "unchanged."
+8. **Regression-baseline timing clarified** (§20): the pre-A1-visual
+   baseline is collected only after both prerequisites are human-merged,
+   never against `3e36dd5...` or `b7eabcc...` as the final baseline.
+9. **Manual checklist corrected** (§21): does not assume direct
+   onboarding access works while `BUSINESS_ONBOARDING_ENABLED=false`;
+   instructs explicit enablement per the remediated semantics, with
+   disabled-state behavior verified through the remediated regression
+   suite and, where appropriate, a manual smoke check.
+10. **"Verdict unblocked" ambiguity removed everywhere** (§16, §19, §22):
+    replaced with "security-specific pre-audit passed with no blocking
+    security defect; overall A1 visual implementation remains BLOCKED by
+    the two nonvisual behavior prerequisites." The actual 20-item
+    security findings are unchanged.
+11. **Final stale-claim sweep performed**, mechanically, across the whole
+    document: zero live assertions found that pre-remediation flag
+    behavior is the visual preservation baseline, that remediation must
+    live in `saveStep()`, that A1 may add stepper navigation/check-icons/
+    a new stepper component, that the stepper fallback references
+    nonexistent enhancement items, that §13 hosts a success-variant
+    decision, that §18 calls stepper work optional, that DS tests must
+    freeze today's drift, that either `3e36dd5...` or `b7eabcc...` is the
+    eventual visual baseline, or that overall A1 visual work is
+    unblocked. Pre-remediation descriptions that remain are explicitly
+    labeled as historical/current evidence, not a preservation target.
+12. **Preserved unchanged, per instruction**: the exact 9-view inventory
+    (§2), exact step order and Assets-only-skippable (§6), the 0/0/0
+    data-feather/hardcoded-color/hardcoded-font counts (§7-§9), every
+    exact component-adoption finding (§11), `x-empty-state icon="inbox"`
+    (§11), the textarea/checkbox non-adoptions and the native
+    `btn-success` non-adoption itself (§12), analysis ARIA-live
+    preservation and async/polling evidence (§14/§17), RFC-004
+    capacity-enforcement evidence (§15), the `Business::$fillable`
+    non-blocking hardening note (§16), the 12-path future visual
+    allowlist and 13th-path stop threshold (§18), the 3 DS test file
+    paths (§18/§19), and the A1/A2 boundary (§3).
+13. **Aggregate diff against `origin/main` remains exactly one path**:
+    this document. No application code, test, RFC document (including
+    `RFC-001-BUSINESS-CORE.md`/`-DEPLOYMENT.md`),
+    `DESIGN-SYSTEM-M2-CONTRACT.md`, `PRODUCT-SURFACE-RETENTION-AUDIT.md`,
+    or `AI-AUTONOMY-STATE.json` file was modified. PR #187 is not
+    reverted.
+
 ---
 
 *End of Design System M2 A1 — Business Onboarding visual contract.
-Docs/audit only. No implementation has occurred. A1 visual implementation
-is BLOCKED pending separate, human-merged remediation of two nonvisual
-prerequisites (§5, §15/§0) — once unblocked, implementation still
-requires its own separate, explicit human authorization. A2, A3, B1, and
-every other roadmap group remain unstarted.*
+Docs/audit only. No implementation has occurred. This is Correction
+Round 2, FINAL — no further correction rounds remain
+(`maximum_correction_rounds: 2`). A1 visual implementation is BLOCKED
+pending separate, human-merged remediation of two nonvisual
+prerequisites (§5, §15/§0), and once unblocked still requires its own
+separate, explicit human authorization, from a branch created after that
+remediation is merged. A2, A3, B1, and every other roadmap group remain
+unstarted.*
