@@ -53,10 +53,10 @@ no_force_push: true
 no_deployment: true
 
 maximum_correction_rounds: 2
-correction_round: 1
-correction_round_is_final: false
+correction_round: 2
+correction_round_is_final: true
 
-contract_status: correction_round_1_pending_review
+contract_status: correction_round_2_final_pending_human_review
 
 base_sha: 5be68c00ee146c34f2fd9ef8985389309db6c7e8
 base_pr: 191
@@ -72,9 +72,11 @@ base_merge_parents:
 
 This document is a **docs-only contract and security/behavior pre-audit** for "A2 — Workspace / Business," the second surviving roadmap group named in `docs/automation/PRODUCT-SURFACE-RETENTION-AUDIT.md` §9 (surviving roadmap group 2 of 8). It does not implement any visual change. It does not modify production code, tests, or any other document. It exists to (a) mechanically lock the exact set of retained Workspace/Business Blade views, (b) trace and document their current authorization/behavior model so a future visual redesign cannot accidentally regress it, (c) run a dedicated security/correctness pre-audit, and (d) derive the exact future visual implementation allowlist and test plan.
 
-**Correction Round 1 (this revision):** the initial draft's security/correctness pre-audit (§19) incorrectly concluded there was no blocking prerequisite. Independent review, mechanically re-verified against RFC-003 §14/§14.1/§22, `BusinessController`, `BusinessManager`, `WorkspaceManager`, `BusinessIndustry`, `UpdateBusinessRequest`, and both `customer`/`admin` Business edit views, found **two real blocking nonvisual prerequisites** (§19) plus several component-adoption and role-matrix inconsistencies (§10, §12, §16, §17) that this revision corrects. No visual implementation, no application code, and no other document is touched by this correction — exactly one path changes, as before.
+**Correction Round 1:** the initial draft's security/correctness pre-audit (§19) incorrectly concluded there was no blocking prerequisite. Independent review, mechanically re-verified against RFC-003 §14/§14.1/§22, `BusinessController`, `BusinessManager`, `WorkspaceManager`, `BusinessIndustry`, `UpdateBusinessRequest`, and both `customer`/`admin` Business edit views, found **two real blocking nonvisual prerequisites** (§19) plus several component-adoption and role-matrix inconsistencies (§10, §12, §16, §17) that Round 1 corrected.
 
-No visual implementation may begin from this document alone, and — as of this correction — **A2 visual implementation is now explicitly blocked** pending a separate nonvisual remediation contract and its human-merged implementation (§19, §28). This mirrors, and is now consistent with, the A1 precedent's own two-phase structure: `DESIGN-SYSTEM-M2-A1-BUSINESS-ONBOARDING-CONTRACT.md` → `DESIGN-SYSTEM-M2-A1-ONBOARDING-BEHAVIOR-REMEDIATION-CONTRACT.md` (nonvisual remediation, PR #189) → remediation implementation (PR #190) → visual implementation (PR #191). A2 will follow the identical sequence (§28).
+**Correction Round 2 (this revision, FINAL):** a fresh, independent mechanical audit re-verified every material statement in the Round 1 contract directly against the actual repository — not by trusting the Round 1 report — re-reading RFC-003 §14/§14.1/§22, `BusinessController`, `BusinessManager`, `WorkspaceManager`, `BusinessIndustry`, `UpdateBusinessRequest`, `WorkspaceManager::changeMemberBusinessAccessScope()`, both Business edit views, `customer/workspaces/show.blade.php`'s repeated-field-name markup, `admin/businesses/edit.blade.php`'s card header, and the `x-card`/`x-input`/`x-select`/`x-empty-state` component sources. `origin/main` had not moved since Round 1 (still `5be68c00...`), so the underlying application code was guaranteed identical to what Round 1 already verified — the re-audit confirmed this directly rather than assuming it. **Every material claim in the Round 1 contract was found accurate; no content defect was found.** This revision's only change is governance metadata: `correction_round: 2`, `correction_round_is_final: true`, and this narrative update recording that the final audit passed. No section's substantive findings, classifications, allowlists, or rules were altered.
+
+No visual implementation may begin from this document alone, and **A2 visual implementation remains explicitly blocked** pending a separate nonvisual remediation contract and its human-merged implementation (§19, §28). This mirrors the A1 precedent's own two-phase structure: `DESIGN-SYSTEM-M2-A1-BUSINESS-ONBOARDING-CONTRACT.md` → `DESIGN-SYSTEM-M2-A1-ONBOARDING-BEHAVIOR-REMEDIATION-CONTRACT.md` (nonvisual remediation, PR #189) → remediation implementation (PR #190) → visual implementation (PR #191). A2 will follow the identical sequence (§28). **This is the final normal correction round for this contract** — no Correction Round 3 is authorized; any further issue discovered after this point requires a separate, human-authorized exception process rather than another routine correction round.
 
 ---
 
@@ -88,7 +90,7 @@ git rev-parse origin/main
 5be68c00ee146c34f2fd9ef8985389309db6c7e8
 ```
 
-This is the human merge of PR #191, "Design System M2 A1 — Business Onboarding," merge parents `caa48f1b975dbaaaec9ce84c87952f4cb077ca9a` (PR #190 merge) and `c3fcff3b84100ae03d600995220b2fae0a823ae3` (the A1 visual implementation commit) — both confirmed via `git log -1 --format="%H %P"` against `origin/main`. Branch `chore/design-system-m2-a2-workspace-business-contract` was created fresh from this exact commit via `git worktree add -b`. This correction's starting head, `61099dca56cad6bb8aec84b8d4e02d5109533ca8`, was independently re-verified to have exactly `5be68c00...` as its sole parent before any edit was made.
+This is the human merge of PR #191, "Design System M2 A1 — Business Onboarding," merge parents `caa48f1b975dbaaaec9ce84c87952f4cb077ca9a` (PR #190 merge) and `c3fcff3b84100ae03d600995220b2fae0a823ae3` (the A1 visual implementation commit) — both confirmed via `git log -1 --format="%H %P"` against `origin/main`. Branch `chore/design-system-m2-a2-workspace-business-contract` was created fresh from this exact commit via `git worktree add -b`. Round 1's starting head, `61099dca56cad6bb8aec84b8d4e02d5109533ca8`, was independently re-verified to have exactly `5be68c00...` as its sole parent before any Round 1 edit was made. Round 2's starting head, `74d77fc225d12ebbd29c05299f5960ac5c219772` (Round 1's own commit), was independently re-verified before this correction: `origin/main` was re-fetched and re-confirmed unchanged at `5be68c00...`, the branch was confirmed exactly 2 ahead / 0 behind, and the aggregate `origin/main...HEAD` diff was confirmed to contain exactly this one document, before any Round 2 edit was made.
 
 ---
 
@@ -504,6 +506,8 @@ Dedicated pre-audit performed against real code (two independent Explore passes 
 A separate nonvisual remediation contract must select the exact architecture for both blockers — this contract does not, and must not, prescribe whether either fix belongs in `BusinessController`, `BusinessManager`, reused `WorkspaceManager` calls, new middleware, or another existing domain seam; nor whether both blockers are remediated together or separately. That remediation contract will carry its own exact write allowlist, entirely independent of this visual contract's future 11-path allowlist (§23) — **do not conflate the two.**
 
 **A2 visual implementation is now explicitly blocked** (§0, §28) pending: (a) a separate nonvisual remediation contract for both blockers, (b) its separate implementation, (c) human merge of that implementation, and (d) a mechanical re-audit of post-remediation `main` before any A2 visual branch may be created (§28).
+
+**Correction Round 2 (final) confirmation:** both findings were independently re-derived from a fresh reading of the cited code and RFC text (not copied from the Round 1 report) and confirmed unchanged — `origin/main` had not moved since Round 1, so no code-level drift was possible, and the re-audit verified this directly rather than assuming it. No additional blocking or nonblocking finding was discovered. The two-blocker count, both classifications, and the required-outcome lists above remain exactly as Round 1 established them.
 
 ---
 
