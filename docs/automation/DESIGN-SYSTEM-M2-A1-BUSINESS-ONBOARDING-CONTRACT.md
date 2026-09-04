@@ -1,9 +1,12 @@
 # Design System M2 — Surviving Roadmap A1: Business Onboarding — Visual Contract
 
 **Status: CONTRACT / AUDIT ONLY. No implementation has occurred under this
-document. Merging this contract does NOT authorize visual implementation —
-that requires its own separate, explicit human authorization, exactly like
-every prior contract in this repository.**
+document. Correction Round 1 found two BLOCKING NONVISUAL prerequisites
+(§5, §15) — A1 visual implementation is BLOCKED until both are separately
+remediated and human-merged. Merging this contract does NOT authorize
+visual implementation, and would not even if it were unblocked — that
+still requires its own separate, explicit human authorization, exactly
+like every prior contract in this repository.**
 
 ---
 
@@ -21,7 +24,14 @@ implementation_requires_separate_human_authorization: true
 
 security_pre_audit_required: true
 security_pre_audit_complete: true
-a1_visual_status: awaiting_separate_human_implementation_authorization
+security_pre_audit_status: passed_no_blocking_security_defect
+
+nonvisual_blocking_prerequisites_found: true
+nonvisual_blocking_prerequisite_count: 2
+onboarding_enabled_flag_rfc_drift_blocking: true
+capacity_denial_500_blocking: true
+
+a1_visual_status: blocked_until_nonvisual_onboarding_behavior_remediation_human_merged
 
 advance_automatically: false
 start_a2_automatically: false
@@ -32,7 +42,7 @@ no_force_push: true
 no_deployment: true
 
 maximum_correction_rounds: 2
-correction_round: 0
+correction_round: 1
 correction_round_is_final: false
 ```
 
@@ -292,23 +302,61 @@ general customer self-grant path").
 Both named flags exist exactly as specified, plus a third
 (`analysis_queue`, §4.8/§14).
 
-**`BUSINESS_ONBOARDING_ENABLED`** — read in exactly one place,
-`EnsureRequiredBusinessOnboardingIsComplete::handle()`. When `false`,
-that middleware is a **pure passthrough on every request** — it never
-redirects anyone, regardless of any existing onboarding row's state. This
-is the *only* thing the flag controls. **Direct navigation to any
-`onboarding/*` route continues to work identically whether the flag is
-true or false** (confirmed by an existing test,
-`test_direct_onboarding_routes_remain_reachable_when_config_is_disabled`)
-— there is no 404/hard-block tied to this flag anywhere.
+**`BUSINESS_ONBOARDING_ENABLED`** — **CORRECTION ROUND 1: read at
+exactly TWO runtime sites, not one, as originally (incorrectly) stated.**
+
+1. `EnsureRequiredBusinessOnboardingIsComplete::handle()` — when `false`,
+   this middleware is a pure passthrough; it never redirects anyone.
+2. `EloquentAccountRepository::register()` — as part of the compound
+   condition `if (config('business.onboarding.enabled') &&
+   config('business.onboarding.require_for_new_customers')) {
+   OnboardingManager::start($customer, required: true); }` — this is the
+   flag's *second* read site, originally omitted from this contract.
+
+**BLOCKING NONVISUAL PREREQUISITE — documented-intent vs. actual-behavior
+drift.** `docs/rfcs/RFC-001-BUSINESS-CORE-DEPLOYMENT.md` §1 (the merged
+companion deployment doc for RFC-001, not found by this contract's
+original research pass) states, verbatim, in its environment-variable
+table:
+
+> `BUSINESS_ONBOARDING_ENABLED` ... **"Master switch. When `false`, the
+> entire onboarding wizard, analysis job, and dashboard redirect
+> middleware behave as if the feature does not exist. Existing customer
+> routes and the registration flow are unaffected."**
+
+Its §8 "Rollback considerations" reinforces this: "setting
+`BUSINESS_ONBOARDING_ENABLED=false` ... immediately stops new onboarding
+rows, dashboard redirects, **and analysis dispatches**." Its §3 rollout
+procedure only tests "voluntary onboarding" at step 6, *after* first
+setting `BUSINESS_ONBOARDING_ENABLED=true` — i.e., the documented
+rollout never exercises onboarding while the flag is `false`.
+
+**The actual current implementation does not match this documented
+intent.** As originally found (§4.9 above, and confirmed by the existing
+test `test_direct_onboarding_routes_remain_reachable_when_config_is_disabled`):
+the flag gates *only* the `EnsureRequiredBusinessOnboardingIsComplete`
+dashboard-redirect middleware. Direct navigation to any `onboarding/*`
+route, and a direct `POST onboarding/analysis` request, continue to work
+identically whether the flag is `true` or `false` — there is no
+route-level, controller-level, or job-dispatch-level gate anywhere tied
+to this flag; only the redirect is gated. **This is a genuine,
+mechanically-confirmed drift between the merged, documented "master
+switch" contract and the shipped behavior — not a visual/presentation
+matter, and not something this Blade-only contract can resolve.** It is
+recorded here as **BLOCKING NONVISUAL PREREQUISITE #1**: A1 visual
+implementation must not proceed until this drift is either (a) fixed in
+the application (routes/analysis dispatch/job start out gated behind the
+flag, matching the documented master-switch behavior) or (b) the
+documentation is deliberately revised to match the shipped behavior —
+either way, via a separate, explicitly-authorized, non-visual contract,
+human-merged before A1 implementation begins.
 
 **`BUSINESS_ONBOARDING_REQUIRE_NEW_CUSTOMERS`** — read in exactly one
-place, `EloquentAccountRepository::register()`: `if (enabled &&
-require_for_new_customers) { OnboardingManager::start($customer, required:
-true); }`. Gates only whether a **required** (`is_required=true`)
-onboarding row is auto-created at registration. If either flag is off, no
-row is auto-created; a row is lazily created (`is_required=false`,
-voluntary) the first time the customer visits
+place, `EloquentAccountRepository::register()` (the same compound
+condition quoted above). Gates only whether a **required**
+(`is_required=true`) onboarding row is auto-created at registration. If
+either flag is off, no row is auto-created; a row is lazily created
+(`is_required=false`, voluntary) the first time the customer visits
 `customer.onboarding.show`.
 
 **Middleware behavior on failure** (`business.onboarding`, applied only
@@ -523,8 +571,9 @@ old()/value binding: yes, all fields, both existing and new rows.
 - Back/next/skip UI: **the nav-pills are non-interactive `<span>`
   elements** — there is currently no clickable in-UI way to revisit an
   earlier completed step, even though `resolveStep()` already supports it
-  server-side. See §13 for the disclosed, optional, presentation-safe
-  enhancement this makes possible.
+  server-side. **Per Correction Round 1 (§13), this stays non-interactive
+  in A1 — no clickable step navigation is authorized**; only visual
+  completed/current/upcoming state distinction is in-scope.
 - `results.blade.php`'s dynamic "value" input lacks `old()` binding
   (every other field in every other step has it). This is an existing,
   minor, disclosed inconsistency — **not fixed by A1**, since restoring a
@@ -539,11 +588,14 @@ old()/value binding: yes, all fields, both existing and new rows.
 all 9 views.** The standing M2 "eliminate remaining static icons, migrate
 to `x-ds-icon`" mandate (`DESIGN-SYSTEM-M2-CONTRACT.md` §8's "standing
 mandate," carried forward to Category A items in §8.4) is **trivially
-satisfied for A1 — there is nothing to migrate.** Any icon a future
-redesign chooses to *add* (e.g., via `x-button`'s `icon` prop, or
-`x-empty-state`'s `icon` prop for the Results empty state, §11) is a new,
-optional addition, not a migration obligation, and must still be verified
-against the installed Lucide set before use — the mechanical verification
+satisfied for A1 — there is nothing to migrate.** The one icon usage this
+contract does lock (§11) — `x-empty-state`'s `icon="inbox"` on the
+Results empty state — uses that component's own documented default
+(§10), so it requires no separate Lucide-name verification. Any other
+icon a future redesign chooses to *add* beyond that (e.g., via
+`x-button`'s `icon` prop) is a new, optional addition, not a migration
+obligation, and must still be verified against the installed Lucide set
+before use — the mechanical verification
 path this repo's own prior contracts use is
 `vendor/technikermathe/blade-lucide-icons/resources/svg/{name}.svg`
 (package `technikermathe/blade-lucide-icons` v3.166.0, on
@@ -631,7 +683,7 @@ already quoted in §4.11.
 | `services.blade.php` | `name`/`starting_price` inputs per row | `x-input` | `name="services[{{i}}][name]"` etc., `type="text"`/`type="number" step="0.01"` | — | Dynamic `name` attribute per row index, unchanged | Same forwarding pattern as other steps |
 | `services.blade.php` | `is_primary` checkbox per row | *(non-adoption — see §12)* | — | — | — | Same no-checkbox-component reason |
 | `services.blade.php` | "Continue" button | `x-button` | `type="submit"`, `variant="primary"` | — | — | Direct match |
-| `results.blade.php` | "No outstanding items found..." empty state | `x-empty-state` | `title`, icon TBD-at-implementation (Lucide-verified) | — | Only when `findings` is empty | `x-empty-state` is purpose-built for exactly this "nothing to show" case |
+| `results.blade.php` | "No outstanding items found..." empty state | `x-empty-state` | `title`, **`icon="inbox"` (locked, Correction Round 1 — matches the component's own default, no invented icon name)** | — | Only when `findings` is empty | `x-empty-state` is purpose-built for exactly this "nothing to show" case; `inbox` is already its documented default (§10), requiring no separate Lucide-name verification step |
 | `results.blade.php` | "Go fix this" `<button class="btn btn-sm btn-outline-primary">` | `x-button` | `type="submit"`, `variant="outline"`, `size="sm"` | — | — | `outline→btn-outline-primary` exact match |
 | `results.blade.php` | "Save" `<button class="btn btn-sm btn-primary">` | `x-button` | `type="submit"`, `variant="primary"`, `size="sm"` | — | — | Direct match |
 | `results.blade.php` | dynamic "value" `<input type="text">` | `x-input` | `name="value"`, `type="text"` | maxlength=2048 forwarded | **No `old()` binding today — not added by A1** (§7.9) | Forwarding-only pattern, no feature gap |
@@ -665,23 +717,30 @@ list of 8 `<span>` labels with only a CSS `.active` class distinguishing
 the current step — no completed/upcoming visual distinction, no click
 navigation, no `aria-current`.
 
-**Two things can improve here without a new component, a workflow
-change, an accessible-information change, or a URL/action change** (all
-compliant with this contract's constraints):
+**CORRECTION ROUND 1 — narrowed scope.** The original draft of this
+section authorized making completed-step pills clickable links, reasoning
+that it only exposed already-safe backend capability. Per human direction
+in Correction Round 1, **that authorization is withdrawn.** A1's visual
+scope is restricted to **restyling the current non-interactive stepper
+only — no new navigation behavior of any kind is authorized**, even
+where the underlying route/capability is already safe. This removes any
+ambiguity about whether A1 is "purely presentational": the stepper's
+*interactivity* (none today) is preserved exactly, not just its markup.
 
-1. **Make completed-step pills clickable links** to
-   `route('customer.onboarding.show', ['step' => $stepValue])` for any
-   step at or behind `current_step`. This exposes existing, already-safe
-   backend capability (`resolveStep()` already permits revisiting
-   completed steps, §6) through the UI — it changes no URL, no route, no
-   controller behavior, and no accessible step information beyond adding
-   genuine navigability. **This is in-scope for A1 and does not require
-   separate authorization** — it is a presentation-only change over an
-   already-authorized GET route.
-2. Visually distinguish completed vs. current vs. upcoming steps using
-   only existing primitives (e.g. an `x-ds-icon` check-mark next to a
-   completed step's label, driven by `$onboarding->completed_steps`
-   membership) — also in-scope, no new component, no workflow change.
+**One thing remains in-scope, since it changes no interactivity, no URL,
+and no route** — visually distinguishing completed vs. current vs.
+upcoming steps using only existing primitives (e.g. an `x-ds-icon`
+check-mark next to a completed step's label, driven by
+`$onboarding->completed_steps` membership), with the pills remaining
+non-interactive `<span>`s exactly as today. This is restyling, not new
+navigation.
+
+**Making the pills clickable (or any other new stepper interactivity) is
+withdrawn from A1's scope entirely** — it is not authorized here, it is
+not an "optional, in-scope" enhancement, and it is not delegated to a
+future implementer's discretion. If a future human decision wants
+step-pill navigation, that must be authorized explicitly, in its own
+future scope, separate from a "pure restyle" contract like this one.
 
 **OPTIONAL SHARED-COMPONENT DECISION REQUIRING HUMAN AUTHORIZATION**: a
 purpose-built `x-stepper`/`x-progress-steps` component (showing
@@ -802,23 +861,35 @@ behavior are locked, preservation-only.
   require touching one of those, it is out of A1's scope and must be
   identified as a separate, future, non-visual contract — not smuggled
   into this one.
-- **Disclosed, non-blocking, out-of-scope gap found during this audit**:
-  when `assertCanCreateAnotherBusiness()` denies during the Business
-  step, none of its five exception types are caught anywhere in the
-  onboarding call chain (`BusinessOnboardingController::saveStep()` only
-  catches `InvalidArgumentException`) or specially handled by
+- **CORRECTION ROUND 1 — reclassified from "disclosed, non-blocking" to
+  BLOCKING NONVISUAL PREREQUISITE #2.** When `assertCanCreateAnotherBusiness()`
+  denies during the Business step, none of its five exception types are
+  caught anywhere in the onboarding call chain
+  (`BusinessOnboardingController::saveStep()` only catches
+  `InvalidArgumentException`) or specially handled by
   `app/Exceptions/Handler.php`. The result is an **uncaught 500 error**
   (or, for a JSON request, a generic anonymized-message JSON error) with
   **no onboarding-specific, wizard-styled error UI** for this case. This
-  is a genuine, disclosed backend/UX gap — but it is **not** a security
-  defect (no data exposure, no auth bypass; the denial-message classes
-  are already deliberately anonymized to a numeric Workspace ID per their
-  own docblocks) and it is **not** fixable by a pure Blade-only visual
-  contract, since a friendly wizard-level error message for this case
-  would require catching a new exception type in the controller — a
-  behavior/domain change. **Flagged here for future consideration as a
-  possible separate, small, non-visual contract; not addressed, and not
-  blocking, for A1.**
+  remains, as originally found, **not a security defect** (no data
+  exposure, no auth bypass; the denial-message classes are already
+  deliberately anonymized to a numeric Workspace ID per their own
+  docblocks) — the security verdict itself is unchanged (§16). It is
+  **not fixable by a pure Blade-only visual contract**, since a friendly
+  wizard-level error message for this case requires catching a new
+  exception type in the controller — a behavior/domain change, out of
+  A1's Blade-only scope. Per human direction in Correction Round 1, this
+  gap is now treated as a **blocking prerequisite for A1 visual
+  authorization** (not merely a disclosed footnote): a capacity-exhausted
+  customer must not be able to reach a redesigned onboarding wizard whose
+  Business step still terminates in a generic framework 500 page with no
+  wizard-consistent error handling. Remediation (catching the five
+  `EntitlementManager` exception types in `BusinessOnboardingController::saveStep()`
+  and redirecting back to the Business step with a wizard-consistent
+  `'onboarding'` error message, mirroring the existing
+  `InvalidArgumentException` handling) is a separate, small, non-visual
+  contract — **not performed here, not performed by A1's future
+  implementation allowlist (§18), and must be human-merged before A1
+  visual implementation begins.**
 
 ---
 
@@ -912,14 +983,26 @@ routes, and all 9 Blade views.
     ownership re-asserted at every domain-method entry point even for
     already-attached IDs.
 
-**Overall verdict: NO BLOCKING SECURITY DEFECT FOUND — visual work is
-UNBLOCKED.** `a1_visual_status: awaiting_separate_human_implementation_authorization`
-(§0), not `blocked_until_security_remediation_human_merged`. The one
-non-blocking hardening note (`Business::$fillable` including
-`customer_id`, item 6) and the one disclosed non-visual UX gap
-(uncaught capacity-denial exception, §15) are recorded for future
-awareness — neither is a security defect, and neither is fixed by this
-contract or blocks A1's future visual implementation.
+**Security verdict (unchanged by Correction Round 1): NO BLOCKING
+SECURITY DEFECT FOUND.** `security_pre_audit_status:
+passed_no_blocking_security_defect` (§0) —
+**`a1_visual_status` is explicitly NOT** `blocked_until_security_remediation_human_merged`;
+none of the 20 security items above found a defect, and nothing here
+requires security remediation. The one non-blocking hardening note
+(`Business::$fillable` including `customer_id`, item 6) remains
+non-blocking — it is not a security defect either, merely a future
+defense-in-depth improvement.
+
+**Overall A1 visual status is nonetheless BLOCKED, for reasons entirely
+separate from security** — Correction Round 1 identified two blocking
+NONVISUAL prerequisites unrelated to tenancy/security: the
+`BUSINESS_ONBOARDING_ENABLED` documented-master-switch-vs-actual-behavior
+drift (§5) and the uncaught capacity-denial 500 (§15, formerly recorded
+here as non-blocking, now reclassified as blocking). `a1_visual_status:
+blocked_until_nonvisual_onboarding_behavior_remediation_human_merged`
+(§0). **Do not conflate "security-clear" with "visual-work-authorized"
+— they are independent gates in this contract, and only the first is
+currently satisfied.**
 
 ---
 
@@ -985,7 +1068,15 @@ without a separate, future, explicitly-authorized non-visual contract.
 **Stop threshold: any path beyond this exact 12-item allowlist is a
 required-13th-path-shaped stop condition** — implementation must stop,
 leave the working tree unstaged, and report, exactly as this repository's
-prior contracts require for their own allowlists.
+prior contracts require for their own allowlists. **This 12-path
+allowlist and 13th-path stop threshold are unchanged by Correction Round
+1** — the two blocking nonvisual prerequisites (§5, §15) are, by
+definition, not on this visual-only allowlist and are not remediated by
+it. **This allowlist may not be executed until both blocking
+prerequisites are separately remediated and human-merged** (§0
+`a1_visual_status`) — its existence here documents the visual scope in
+advance; it does not itself authorize starting implementation, now or
+once unblocked.
 
 ---
 
@@ -1024,9 +1115,31 @@ no defect found).
 
 ## 20. Existing regression test plan
 
-Must be run, and must pass with the exact same pass count, both **before**
-and **after** any eventual A1 visual implementation (none of these are
-modified by A1 — they exercise behavior, not markup):
+**CORRECTION ROUND 1 — corrected test-count policy.** The original draft
+required "the exact same pass count" before and after A1 implementation.
+That is imprecise: A1's own future implementation *adds* 3 new Design
+System test files (§18/§19), which genuinely increase the total passing
+count — requiring an unchanged *total* would be self-contradictory. The
+corrected policy:
+
+- **Existing regression subset** (the tests listed below): must preserve
+  its own **pre-existing test count** exactly — none of these files are
+  modified by A1, so none of their individual test methods may be added,
+  removed, or change outcome.
+- **The 3 new A1 Design System tests** (§19): are net-new and **increase**
+  the full suite's total passing count by their own test-method count —
+  they are not expected to net to zero against anything.
+- **Full suite**: requires **0 failures, 0 skipped, exit code 0**, both
+  before and after — this is the actual regression guarantee, not a
+  specific total number.
+- **Reporting**: the pre-implementation and post-implementation full-suite
+  pass counts must both be reported exactly (not estimated), and the
+  post-count must equal the pre-count **plus** the 3 new test files' own
+  method count — not simply "equal."
+
+Must be run both **before** and **after** any eventual A1 visual
+implementation (none of these are modified by A1 — they exercise
+behavior, not markup):
 
 - `tests/Feature/Business/BusinessOnboardingHttpTest.php`
 - `tests/Feature/Business/OnboardingManagerTest.php`
@@ -1042,8 +1155,10 @@ modified by A1 — they exercise behavior, not markup):
 - `tests/Unit/Business/BusinessConfigTest.php`
 
 Plus the full existing suite's exact pass count, compared against the
-pre-A1-implementation baseline — zero regressions permitted, per this
-repository's standing test-contract discipline.
+pre-A1-implementation baseline per the corrected policy above — zero
+regressions in the existing subset permitted, with the 3 new A1 tests
+adding to (not replacing) the total, per this repository's standing
+test-contract discipline.
 
 ---
 
@@ -1115,13 +1230,76 @@ repository's standing test-contract discipline.
 - `docs/automation/AI-AUTONOMY-STATE.json` untouched. ✓
 - `docs/automation/DESIGN-SYSTEM-M2-CONTRACT.md` untouched. ✓
 - `docs/automation/PRODUCT-SURFACE-RETENTION-AUDIT.md` untouched. ✓
+- **Correction Round 1**: `correction_round: 1` recorded (§0); both
+  blocking nonvisual prerequisites documented with evidence and cross-
+  referenced consistently across §0/§5/§15/§16/§18/§23. ✓
 
 `git diff --check` run against the staged file before commit — reported
 in the final chat report.
 
 ---
 
+## 23. Correction Round 1 — summary
+
+Executed against this contract's own pre-correction head
+`1018983cc7c68ea0923beb8b437c9e6304f38bf4`, on the same branch, changing
+only this file. Outcomes:
+
+1. **`BUSINESS_ONBOARDING_ENABLED` read-site count corrected**: 2 runtime
+   sites (`EnsureRequiredBusinessOnboardingIsComplete::handle()` and
+   `EloquentAccountRepository::register()`'s compound condition), not 1
+   as originally stated (§5).
+2. **RFC-001 drift documented and verified against the actual merged
+   text**, not merely asserted: `docs/rfcs/RFC-001-BUSINESS-CORE-DEPLOYMENT.md`
+   §1/§8 (a companion deployment doc this contract's original research
+   pass did not find) explicitly calls `BUSINESS_ONBOARDING_ENABLED` a
+   "Master switch" whose disabled state should make "the entire
+   onboarding wizard, analysis job, and dashboard redirect middleware
+   behave as if the feature does not exist" — contradicted by the actual
+   shipped behavior (only the dashboard redirect is gated; direct routes
+   and analysis dispatch remain reachable regardless of the flag,
+   confirmed by an existing passing test). Recorded as **BLOCKING
+   NONVISUAL PREREQUISITE #1** (§5, §0).
+3. **Capacity-denial uncaught-500 gap reclassified** from "disclosed,
+   non-blocking" to **BLOCKING NONVISUAL PREREQUISITE #2** (§15, §0) —
+   per human direction, not a re-discovered defect; the underlying
+   evidence is unchanged from the original draft.
+4. **Security verdict kept explicitly separate** from the now-blocked
+   overall status: `security_pre_audit_status:
+   passed_no_blocking_security_defect` (§0, §16) — the block is entirely
+   for the two nonvisual behavioral prerequisites above, not for any
+   security finding.
+5. **Overall status**: `a1_visual_status` changed from
+   `awaiting_separate_human_implementation_authorization` to
+   `blocked_until_nonvisual_onboarding_behavior_remediation_human_merged`
+   (§0).
+6. **Stepper-navigation authorization withdrawn** (§13): A1 visual scope
+   is now restyle-only for the stepper — no clickable step-pill
+   navigation or other new interactivity is authorized, narrowing the
+   original draft's broader "presentation-safe enhancement" framing.
+7. **`x-empty-state` icon locked** to `icon="inbox"` (§11) — the
+   component's own documented default, not left "TBD-at-implementation."
+8. **Test-count policy corrected** (§19/§20): the existing regression
+   subset must preserve its own pre-existing count exactly; the 3 new A1
+   Design System tests add to, not replace, the total; the full suite
+   requires 0 failures/0 skipped/exit 0; pre- and post- counts are both
+   reported, not required to be numerically equal.
+9. **Preserved unchanged, per instruction**: the exact 9-view inventory
+   (§2), exact step order and Assets-only-skippable (§6), the 0/0/0
+   data-feather/hardcoded-color/hardcoded-font counts (§7-§9), and the
+   12-path future visual allowlist with its 13th-path stop threshold
+   (§18) — none of these were found to need correction, and none were
+   altered.
+10. **Aggregate diff against `origin/main` remains exactly one path**:
+    this document. No application code, test, RFC document,
+    `DESIGN-SYSTEM-M2-CONTRACT.md`, `PRODUCT-SURFACE-RETENTION-AUDIT.md`,
+    or `AI-AUTONOMY-STATE.json` file was modified.
+
+---
+
 *End of Design System M2 A1 — Business Onboarding visual contract.
-Docs/audit only. No implementation has occurred. Implementation requires
-its own separate, explicit human authorization. A2, A3, B1, and every
-other roadmap group remain unstarted.*
+Docs/audit only. No implementation has occurred. A1 visual implementation
+is BLOCKED pending separate, human-merged remediation of two nonvisual
+prerequisites (§5, §15/§0) — once unblocked, implementation still
+requires its own separate, explicit human authorization. A2, A3, B1, and
+every other roadmap group remain unstarted.*
