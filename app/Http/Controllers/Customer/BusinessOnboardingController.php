@@ -4,6 +4,11 @@ namespace App\Http\Controllers\Customer;
 
 use App\Enums\Business\OnboardingStatus;
 use App\Enums\Business\OnboardingStep;
+use App\Exceptions\Entitlement\BusinessSlotAllocationRequiredException;
+use App\Exceptions\Entitlement\BusinessSlotLimitExceededException;
+use App\Exceptions\Entitlement\InactiveWorkspacePlanException;
+use App\Exceptions\Entitlement\SuspendedWorkspacePlanException;
+use App\Exceptions\Entitlement\WorkspacePlanUnassignedException;
 use App\Http\Requests\Business\CompleteOnboardingActionRequest;
 use App\Http\Requests\Business\SyncBusinessServicesRequest;
 use App\Http\Requests\Business\UpdateBusinessAssetsRequest;
@@ -30,6 +35,14 @@ use InvalidArgumentException;
  */
 class BusinessOnboardingController extends CustomerBaseController
 {
+    /**
+     * The only string ever surfaced to a customer for an expected RFC-004
+     * capacity denial -- never $e->getMessage(), never a Workspace ID, and
+     * deliberately not worded to imply the denial will resolve on retry.
+     */
+    private const CAPACITY_DENIAL_MESSAGE =
+        "We can't create your business with the current account setup. Please contact support for help.";
+
     public function __construct(
         private readonly OnboardingManager $onboarding,
         private readonly OnboardingActionExecutor $actions,
@@ -220,6 +233,15 @@ class BusinessOnboardingController extends CustomerBaseController
                 ->route('customer.onboarding.show', ['step' => $this->onboarding->resolveStep($onboarding)->value])
                 ->withInput()
                 ->withErrors(['onboarding' => 'We could not save that step. Please check your entries and try again.']);
+        } catch (WorkspacePlanUnassignedException
+               | InactiveWorkspacePlanException
+               | SuspendedWorkspacePlanException
+               | BusinessSlotAllocationRequiredException
+               | BusinessSlotLimitExceededException) {
+            return redirect()
+                ->route('customer.onboarding.show', ['step' => $this->onboarding->resolveStep($onboarding)->value])
+                ->withInput()
+                ->withErrors(['onboarding' => self::CAPACITY_DENIAL_MESSAGE]);
         }
 
         return redirect()->route('customer.onboarding.show', ['step' => $onboarding->current_step->value]);

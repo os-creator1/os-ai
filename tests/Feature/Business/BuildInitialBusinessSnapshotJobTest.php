@@ -24,6 +24,21 @@ class BuildInitialBusinessSnapshotJobTest extends TestCase
     use RefreshDatabase;
     use CreatesBusinessTestData;
 
+    /**
+     * Design System M2 A1 onboarding behavior remediation: handle() now
+     * checks the business.onboarding.enabled master switch. Every existing
+     * successful-run test in this file must run under an explicit enabled
+     * baseline rather than accidentally relying on the job's previous,
+     * unconditional behavior -- the disabled-state tests below override
+     * this explicitly within their own method.
+     */
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        config(['business.onboarding.enabled' => true]);
+    }
+
     public function test_tries_and_backoff_are_configured(): void
     {
         $job = new BuildInitialBusinessSnapshot(1, 1);
@@ -72,6 +87,89 @@ class BuildInitialBusinessSnapshotJobTest extends TestCase
 
         Event::assertDispatched(InitialBusinessAnalysisCompleted::class, fn ($event) => $event->onboardingId === $onboarding->id
             && $event->analysisVersion === 1);
+    }
+
+    // =========================================================================
+    // Design System M2 A1 onboarding behavior remediation, Blocker 1's
+    // queued-job corollary: RFC-001-BUSINESS-CORE-DEPLOYMENT.md §8's own
+    // "safely no-ops or marks a safe failure" wording, applied state-aware
+    // -- only a genuinely still-pending analysis is safe-failed while
+    // disabled; a job arriving after the onboarding already reached
+    // ResultsReady or Failed must no-op, never regress a valid result or
+    // dispatch a duplicate failure event merely because the feature is now
+    // disabled.
+    // =========================================================================
+
+    public function test_disabled_analysis_pending_job_safely_fails(): void
+    {
+        Event::fake([InitialBusinessAnalysisFailed::class, InitialBusinessAnalysisCompleted::class]);
+
+        [$onboarding] = $this->readyOnboarding();
+        $onboarding = app(CustomerOnboardingRepository::class)->startAnalysis($onboarding, 1);
+
+        config(['business.onboarding.enabled' => false]);
+        $job = new BuildInitialBusinessSnapshot($onboarding->id, 1);
+        app()->call([$job, 'handle']);
+
+        $onboarding->refresh();
+        $this->assertSame(OnboardingStatus::Failed, $onboarding->status);
+        $this->assertSame(OnboardingStep::Analysis, $onboarding->current_step);
+        $this->assertNull($onboarding->analysis_payload);
+        $this->assertSame('We could not finish the analysis. Please retry.', $onboarding->analysis_error);
+        $this->assertSame(1, $onboarding->analysis_version);
+
+        Event::assertDispatched(InitialBusinessAnalysisFailed::class, fn ($event) => $event->onboardingId === $onboarding->id
+            && $event->analysisVersion === 1
+            && $event->safeError === 'We could not finish the analysis. Please retry.');
+        Event::assertNotDispatched(InitialBusinessAnalysisCompleted::class);
+    }
+
+    public function test_disabled_already_results_ready_job_is_a_noop(): void
+    {
+        Event::fake([InitialBusinessAnalysisFailed::class, InitialBusinessAnalysisCompleted::class]);
+
+        [$onboarding] = $this->readyOnboarding();
+        $onboarding = app(CustomerOnboardingRepository::class)->startAnalysis($onboarding, 1);
+        $payload = [
+            'version' => 1, 'generated_at' => now()->toIso8601String(), 'profile_completeness_percent' => 80,
+            'facts' => [], 'findings' => [],
+        ];
+        $onboarding = app(CustomerOnboardingRepository::class)->completeAnalysis($onboarding, 1, $payload);
+        $beforePayload = $onboarding->refresh()->analysis_payload;
+
+        config(['business.onboarding.enabled' => false]);
+        $job = new BuildInitialBusinessSnapshot($onboarding->id, 1);
+        app()->call([$job, 'handle']);
+
+        $onboarding->refresh();
+        $this->assertSame(OnboardingStatus::ResultsReady, $onboarding->status);
+        $this->assertSame(OnboardingStep::Results, $onboarding->current_step);
+        $this->assertSame($beforePayload, $onboarding->analysis_payload);
+        $this->assertNull($onboarding->analysis_error);
+
+        Event::assertNotDispatched(InitialBusinessAnalysisFailed::class);
+        Event::assertNotDispatched(InitialBusinessAnalysisCompleted::class);
+    }
+
+    public function test_disabled_already_failed_job_is_a_noop_with_no_duplicate_failure_event(): void
+    {
+        Event::fake([InitialBusinessAnalysisFailed::class, InitialBusinessAnalysisCompleted::class]);
+
+        [$onboarding] = $this->readyOnboarding();
+        $onboarding = app(CustomerOnboardingRepository::class)->startAnalysis($onboarding, 1);
+        $onboarding = app(CustomerOnboardingRepository::class)->failAnalysis($onboarding, 1, 'We could not finish the analysis. Please retry.');
+
+        config(['business.onboarding.enabled' => false]);
+        $job = new BuildInitialBusinessSnapshot($onboarding->id, 1);
+        app()->call([$job, 'handle']);
+
+        $onboarding->refresh();
+        $this->assertSame(OnboardingStatus::Failed, $onboarding->status);
+        $this->assertSame(OnboardingStep::Analysis, $onboarding->current_step);
+        $this->assertSame('We could not finish the analysis. Please retry.', $onboarding->analysis_error);
+
+        Event::assertNotDispatched(InitialBusinessAnalysisFailed::class);
+        Event::assertNotDispatched(InitialBusinessAnalysisCompleted::class);
     }
 
     public function test_stale_version_job_exits_without_writing(): void
