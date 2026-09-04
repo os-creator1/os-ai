@@ -7,16 +7,16 @@
         <p>{{ $onboarding->analysis_error ?? 'We could not finish the analysis. Please retry.' }}</p>
         <form method="POST" action="{{ route('customer.onboarding.analysis.request') }}">
             @csrf
-            <button type="submit" class="btn btn-primary">Retry analysis</button>
+            <x-button type="submit" variant="primary">Retry analysis</x-button>
         </form>
     @elseif($status === 'results_ready')
         <p>Your analysis is ready.</p>
-        <a href="{{ route('customer.onboarding.show', ['step' => 'results']) }}" class="btn btn-primary">View results</a>
+        <x-button :href="route('customer.onboarding.show', ['step' => 'results'])" variant="primary">View results</x-button>
     @else
         <p>Your business profile is saved. Ready to see how complete it is?</p>
         <form method="POST" action="{{ route('customer.onboarding.analysis.request') }}">
             @csrf
-            <button type="submit" class="btn btn-primary">Run analysis</button>
+            <x-button type="submit" variant="primary">Run analysis</x-button>
         </form>
     @endif
 </div>

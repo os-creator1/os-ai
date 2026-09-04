@@ -6,16 +6,14 @@
     @csrf
 
     @foreach ($services as $index => $service)
-        <div class="border rounded p-1 mb-1">
+        <x-card class="mb-1">
             <input type="hidden" name="services[{{ $index }}][id]" value="{{ $service->id }}">
             <div class="row">
-                <div class="col-md-6 mb-1">
-                    <label class="form-label">Service name</label>
-                    <input type="text" class="form-control" name="services[{{ $index }}][name]" value="{{ old("services.$index.name", $service->name) }}" required>
+                <div class="col-md-6">
+                    <x-input name="services[{{ $index }}][name]" label="Service name" type="text" value="{{ old("services.$index.name", $service->name) }}" required />
                 </div>
-                <div class="col-md-3 mb-1">
-                    <label class="form-label">Starting price</label>
-                    <input type="number" step="0.01" class="form-control" name="services[{{ $index }}][starting_price]" value="{{ old("services.$index.starting_price", $service->starting_price) }}">
+                <div class="col-md-3">
+                    <x-input name="services[{{ $index }}][starting_price]" label="Starting price" type="number" step="0.01" value="{{ old("services.$index.starting_price", $service->starting_price) }}" />
                 </div>
                 <div class="col-md-3 mb-1 d-flex align-items-end">
                     <div class="form-check">
@@ -24,19 +22,17 @@
                     </div>
                 </div>
             </div>
-        </div>
+        </x-card>
     @endforeach
 
     @php($newIndex = $services->count())
-    <div class="border rounded p-1 mb-1">
+    <x-card class="mb-1">
         <div class="row">
-            <div class="col-md-6 mb-1">
-                <label class="form-label">New service name</label>
-                <input type="text" class="form-control" name="services[{{ $newIndex }}][name]" value="{{ old("services.$newIndex.name") }}">
+            <div class="col-md-6">
+                <x-input name="services[{{ $newIndex }}][name]" label="New service name" type="text" value="{{ old("services.$newIndex.name") }}" />
             </div>
-            <div class="col-md-3 mb-1">
-                <label class="form-label">Starting price</label>
-                <input type="number" step="0.01" class="form-control" name="services[{{ $newIndex }}][starting_price]" value="{{ old("services.$newIndex.starting_price") }}">
+            <div class="col-md-3">
+                <x-input name="services[{{ $newIndex }}][starting_price]" label="Starting price" type="number" step="0.01" value="{{ old("services.$newIndex.starting_price") }}" />
             </div>
             <div class="col-md-3 mb-1 d-flex align-items-end">
                 <div class="form-check">
@@ -45,7 +41,7 @@
                 </div>
             </div>
         </div>
-    </div>
+    </x-card>
 
-    <button type="submit" class="btn btn-primary mt-2">Continue</button>
+    <x-button type="submit" variant="primary" class="mt-2">Continue</x-button>
 </form>

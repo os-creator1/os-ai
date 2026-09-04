@@ -16,17 +16,17 @@
                     <input type="hidden" name="action_key" value="{{ $finding['action_key'] }}">
 
                     @if(in_array($finding['action_key'], ['add_location', 'complete_location', 'add_service', 'confirm_primary_service'], true))
-                        <button type="submit" class="btn btn-sm btn-outline-primary">Go fix this</button>
+                        <x-button type="submit" variant="outline" size="sm">Go fix this</x-button>
                     @else
-                        <input type="text" name="value" class="form-control form-control-sm" placeholder="Enter a value" maxlength="2048">
-                        <button type="submit" class="btn btn-sm btn-primary">Save</button>
+                        <x-input name="value" type="text" placeholder="Enter a value" maxlength="2048" class="form-control-sm" />
+                        <x-button type="submit" variant="primary" size="sm">Save</x-button>
                     @endif
                 </form>
             </li>
         @endforeach
     </ul>
 @else
-    <p>No outstanding items found in your stored profile data.</p>
+    <x-empty-state icon="inbox" title="No outstanding items found in your stored profile data." />
 @endif
 
 <form method="POST" action="{{ route('customer.onboarding.complete') }}" class="mt-2">
