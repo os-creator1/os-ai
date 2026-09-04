@@ -1,19 +1,15 @@
 <div class="sidebar-content">
 
     <span class="sidebar-close-icon">
-        <i data-feather="x"></i>
+        <x-ds-icon name="x" />
     </span>
 
     <div class="text-center pt-1 pb-1">
         <div role="group" class="tab-group btn-group">
-            <button type="button" class="btn tab-button btn-primary btn-sm"
-                    data-filter="recents">{{ __('locale.labels.recents') }}</button>
-            <button type="button" class="btn tab-button btn-outline-primary btn-sm"
-                    data-filter="unread">{{ __('locale.labels.unread') }}</button>
-            <button type="button" class="btn tab-button btn-outline-primary btn-sm"
-                    data-filter="read">{{ __('locale.labels.read') }}</button>
-            <button type="button" class="btn tab-button btn-outline-primary btn-sm"
-                    data-filter="all">{{ __('locale.labels.all') }}</button>
+            <x-button variant="primary" size="sm" class="tab-button" data-filter="recents">{{ __('locale.labels.recents') }}</x-button>
+            <x-button variant="outline" size="sm" class="tab-button" data-filter="unread">{{ __('locale.labels.unread') }}</x-button>
+            <x-button variant="outline" size="sm" class="tab-button" data-filter="read">{{ __('locale.labels.read') }}</x-button>
+            <x-button variant="outline" size="sm" class="tab-button" data-filter="all">{{ __('locale.labels.all') }}</x-button>
         </div>
     </div>
 
@@ -21,12 +17,12 @@
     <div class="chat-fixed-search">
         <div class="d-flex align-items-center w-100">
             <div class="input-group input-group-merge ms-1 w-100">
-                <span class="input-group-text round"><i data-feather="search" class="text-muted"></i></span>
+                <span class="input-group-text round"><x-ds-icon name="search" class="text-muted" /></span>
                 <input type="text" class="form-control round" id="chat-search"
                        placeholder="{{ __('locale.labels.search') }}">
             </div>
             <div class="d-block d-md-none">
-                <a href="{{ route('customer.chatbox.new') }}" class="text-dark ms-1"><i data-feather="plus-circle"></i>
+                <a href="{{ route('customer.chatbox.new') }}" class="text-dark ms-1"><x-ds-icon name="plus-circle" />
                 </a>
             </div>
         </div>
@@ -95,7 +91,7 @@
 
     <!-- Load More button -->
     <div class="text-center" id="load-more-wrapper" style="display:none;">
-        <button class="btn btn-sm btn-primary mt-1" id="load-more"><i data-feather="refresh-cw"></i></button>
+        <x-button variant="primary" size="sm" id="load-more" class="mt-1" icon="refresh-cw" />
     </div>
 
 </div>

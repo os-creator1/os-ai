@@ -16,7 +16,7 @@
             <div class="col-md-6 col-12">
                 <div class="alert alert-info" role="alert">
                     <div class="alert-body d-flex align-items-center">
-                        <i data-feather="info" class="me-50"></i>
+                        <x-ds-icon name="info" class="me-50" />
                         <span class="text-uppercase"> {{ __('locale.template_tags.not_work_with_quick_send')  }}</span>
                     </div>
                 </div>
@@ -26,14 +26,11 @@
         <div class="row match-height">
             <div class="col-md-6 col-12">
 
-                <div class="card">
-                    <div class="card-header">
-                        <h4 class="card-title">{{ __('locale.labels.new_conversion') }}</h4>
+                <x-card :title="__('locale.labels.new_conversion')">
+                    <x-slot:actions>
                         <a href="{{ route('customer.chatbox.index') }}"
                            class="text-primary d-block d-md-none">{{ __('locale.menu.Chat Box') }}</a>
-                    </div>
-                    <div class="card-content">
-                        <div class="card-body">
+                    </x-slot:actions>
 
                             <form class="form form-vertical" action="{{ route('customer.chatbox.sent') }}"
                                   method="post">
@@ -148,16 +145,11 @@
                                         {{-- RFC-005 Milestone 5 §6.1 — controller-passed token (fresh, or the
                                              same one on a 'retain' retry), never minted inline here. --}}
                                         <input type="hidden" name="idempotency_token" value="{{ $idempotencyToken }}">
-                                        <button type="submit" class="btn btn-primary mr-1 mb-1 float-end">
-                                            <i data-feather="send"></i> {{__('locale.buttons.send')}}
-                                        </button>
+                                        <x-button variant="primary" type="submit" icon="send" class="mr-1 mb-1 float-end">{{__('locale.buttons.send')}}</x-button>
                                     </div>
                                 </div>
                             </form>
-                        </div>
-
-                    </div>
-                </div>
+                </x-card>
             </div>
 
 

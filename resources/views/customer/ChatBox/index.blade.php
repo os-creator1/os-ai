@@ -65,7 +65,7 @@
             height: 38px; /* Set a fixed height (same as most input fields) */
             line-height: 1.5; /* Adjust line height for vertical alignment */
             padding: 8px 12px; /* Match padding of input fields */
-            border: 1px solid #ced4da; /* Match border of input fields */
+            border: 1px solid var(--color-input-border); /* Match border of input fields */
             border-radius: 4px; /* Match border radius of input fields */
             font-family: inherit; /* Use the same font as input fields */
             font-size: 14px; /* Match font size of input fields */
@@ -73,9 +73,9 @@
 
         /* Optional: Add focus styling to match input fields */
         textarea.message:focus {
-            border-color: #80bdff; /* Match focus border color of input fields */
+            border-color: var(--color-focus-border); /* Match focus border color of input fields */
             outline: 0; /* Remove default outline */
-            box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25); /* Match focus shadow of input fields */
+            box-shadow: 0 0 0 0.2rem var(--focus-ring-color); /* Match focus shadow of input fields */
         }
 
     </style>
@@ -94,7 +94,7 @@
         <!-- To load Conversation -->
         <div class="start-chat-area">
             <div class="mb-1 start-chat-icon">
-                <i data-feather="message-square"></i>
+                <x-ds-icon name="message-square" />
             </div>
             <h4 class="sidebar-toggle start-chat-text d-block d-md-none">
                 {{ __('locale.labels.new_conversion') }}
@@ -113,20 +113,20 @@
                 <header class="chat-header">
                     <div class="d-flex align-items-center">
                         <div class="sidebar-toggle d-block d-lg-none me-1">
-                            <i data-feather="menu" class="font-medium-5"></i>
+                            <x-ds-icon name="menu" class="font-medium-5" />
                         </div>
                         <div class="avatar avatar-border user-profile-toggle m-0 me-1"></div>
                         <span class="add-to-pin"> </span>
                     </div>
                     <div class="d-flex align-items-center">
 
-                        <span class="add-to-blacklist" data-bs-toggle="tooltip" data-bs-placement="top"
-                              title="{{ __('locale.labels.block') }}"> <i data-feather="shield"
-                                                                          class="cursor-pointer font-medium-2 mx-1 text-primary"></i> </span>
+                        <x-tooltip text="{{ __('locale.labels.block') }}" placement="top" class="add-to-blacklist">
+                            <x-ds-icon name="shield" class="cursor-pointer font-medium-2 mx-1 text-primary" />
+                        </x-tooltip>
 
-                        <span class="remove-btn" data-bs-toggle="tooltip" data-bs-placement="top"
-                              title="{{ __('locale.buttons.delete') }}"><i data-feather="trash"
-                                                                           class="cursor-pointer font-medium-2 text-danger"></i></span>
+                        <x-tooltip text="{{ __('locale.buttons.delete') }}" placement="top" class="remove-btn">
+                            <x-ds-icon name="trash" class="cursor-pointer font-medium-2 text-danger" />
+                        </x-tooltip>
 
                     </div>
                 </header>
@@ -149,7 +149,7 @@
 
                     <span class="input-group-text">
                           <label for="media_image" class="attachment-icon form-label mb-0 position-relative">
-                            <i id="mms-icon" data-feather="image" class="cursor-pointer text-secondary"></i>
+                            <x-ds-icon name="image" id="mms-icon" class="cursor-pointer text-secondary" />
                             <input type="file" id="media_image" name="media_image" accept="image/*,video/*" hidden />
                           </label>
                         </span>
@@ -167,10 +167,10 @@
                 </div>
 
 
-                <button type="button" class="btn btn-primary send" onclick="enter_chat();">
-                    <i data-feather="send" class="d-lg-none"></i>
+                <x-button variant="primary" class="send" onclick="enter_chat();">
+                    <x-ds-icon name="send" class="d-lg-none" />
                     <span class="d-none d-lg-block">{{ __('locale.buttons.send') }}</span>
-                </button>
+                </x-button>
             </form>
             <!--/ Submit Chat form -->
         </div>
@@ -321,9 +321,9 @@ $("#media_image").val("");
                 addToPin.tooltip("dispose").tooltip();
 
 
-                // Find the <i> element and change the data-feather attribute to 'delete'
-                addToPin.find("svg").remove();  // Remove the old <i> element
-                addToPin.append("<i data-feather=\"delete\" class=\"cursor-pointer font-medium-2 mx-1 text-danger\"></i>");
+                // Swap the icon to 'delete'
+                addToPin.find("svg").remove();  // Remove the old icon element
+                addToPin.append('<x-ds-icon name="delete" class="cursor-pointer font-medium-2 mx-1 text-danger" />');
 
                 // Re-initialize Feather icons to update
                 feather.replace();
@@ -332,9 +332,9 @@ $("#media_image").val("");
 
                 addToPin.tooltip("dispose").tooltip();
 
-                // Find the <i> element and change the data-feather attribute to 'edit-2'
-                addToPin.find("svg").remove();  // Remove the old <i> element
-                addToPin.append("<i data-feather=\"edit-2\" class=\"cursor-pointer font-medium-2 mx-1 text-info\"></i>");
+                // Swap the icon to 'edit-2'
+                addToPin.find("svg").remove();  // Remove the old icon element
+                addToPin.append('<x-ds-icon name="edit-2" class="cursor-pointer font-medium-2 mx-1 text-info" />');
 
                 // Re-initialize Feather icons to update
                 feather.replace();
