@@ -22,7 +22,7 @@
 
                 <x-card :title="__('locale.contacts.new_contact')">
                             <form class="form form-vertical"
-                                  action="{{ route('customer.contact.store', $contact->uid) }}" method="post">
+                                  action="{{ \App\Library\CrmRouting::route('contact.store', $contact->uid) }}" method="post">
                                 @csrf
                                 <div class="row">
 

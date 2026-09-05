@@ -258,9 +258,6 @@
                 $sendData['recipient']    = $phone['recipient'];
                 $sendData['region_code']  = $phone['region_code'];
 
-
-
-\Log::info('QUICKSEND SENDDATA', $sendData);
                 $data = $this->campaigns->quickSend($campaign, $sendData);
 
                 if ($data->getData()->status !== 'success') {

@@ -13,7 +13,7 @@
 
                     <li class="nav-item">
                         <a class="nav-link @if ($tab == 'import_file') active @endif"
-                           href="{{ route('customer.contact.import', ['tab' => 'import_file', 'contact' => $contact->uid]) }}">
+                           href="{{ \App\Library\CrmRouting::route('contact.import', ['tab' => 'import_file', 'contact' => $contact->uid]) }}">
                             <x-ds-icon name="upload" class="font-medium-3 me-50" />
                             <span class="fw-bold">{{__('locale.labels.import_file')}}</span>
                         </a>
@@ -22,7 +22,7 @@
                     <!-- sendByEmail -->
                     <li class="nav-item">
                         <a class="nav-link {{ $tab == 'paste_text' ? 'active':null }}"
-                           href="{{ route('customer.contact.paste-text', ['tab' => 'paste_text', 'contact' => $contact->uid]) }}">
+                           href="{{ \App\Library\CrmRouting::route('contact.paste-text', ['tab' => 'paste_text', 'contact' => $contact->uid]) }}">
                             <x-ds-icon name="file-text" class="font-medium-3 me-50" />
                             <span class="fw-bold">{{ __('locale.labels.paste_text') }}</span>
                         </a>
@@ -36,7 +36,7 @@
                     <x-card class="mb-3">
 
                                 <form class="form form-vertical"
-                                      action="{{ route('customer.contact.import', $contact->uid) }}" method="post">
+                                      action="{{ \App\Library\CrmRouting::route('contact.import', $contact->uid) }}" method="post">
                                     @csrf
 
                                     <div class="mb-1">

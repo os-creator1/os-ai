@@ -208,6 +208,7 @@ class TemplateController extends Controller
     public function show(Templates $template)
     {
         $this->authorize('sms_template');
+        abort_unless($template->user_id === Auth::id(), 404);
 
         $breadcrumbs   = [
                 ['link' => url('dashboard'), 'name' => __('locale.menu.Dashboard')],
@@ -249,7 +250,10 @@ class TemplateController extends Controller
             }
         }
 
-        $this->templates->store($request->input());
+        $input             = $request->input();
+        $input['user_id']  = Auth::id();
+
+        $this->templates->store($input);
 
         return redirect()->route('customer.templates.index')->with([
                 'status'  => 'success',
@@ -270,6 +274,7 @@ class TemplateController extends Controller
 
     public function update(Templates $template, UpdateTemplate $request): RedirectResponse
     {
+        abort_unless($template->user_id === Auth::id(), 404);
 
         if (config('app.stage') == 'demo') {
             return redirect()->route('customer.templates.index')->with([
@@ -314,6 +319,7 @@ class TemplateController extends Controller
         }
 
         $this->authorize('sms_template');
+        abort_unless($template->user_id === Auth::id(), 404);
 
         $this->templates->destroy($template);
 
@@ -344,6 +350,7 @@ class TemplateController extends Controller
         }
         try {
             $this->authorize('sms_template');
+            abort_unless($template->user_id === Auth::id(), 404);
 
             if (config('app.trai_dlt') && Auth::user()->customer->activeSubscription()->plan->is_dlt) {
                 if ($template->approved == 'in_review' && ! $template->status) {
@@ -406,7 +413,7 @@ class TemplateController extends Controller
         $this->authorize('sms_template');
 
         $action = $request->get('action');
-        $ids    = $request->get('ids');
+        $ids    = Templates::where('user_id', Auth::id())->whereIn('uid', (array) $request->get('ids'))->pluck('uid')->all();
 
         switch ($action) {
             case 'destroy':

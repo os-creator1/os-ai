@@ -829,6 +829,7 @@
             'Overview'            => 'Overview',
             'Campaign Builder'    => 'Campaign Builder',
             'Quick Send'          => 'Quick Send',
+            'Outreach'            => 'Outreach',
             'Send Using File'     => 'Send Using File',
             'Developers'          => 'Developers',
             'Plugins'             => 'Plugins',

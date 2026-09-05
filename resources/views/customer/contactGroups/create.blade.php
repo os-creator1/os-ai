@@ -9,7 +9,7 @@
             <div class="col-md-6 col-12">
 
                 <x-card :title="__('locale.contacts.new_contact_group')">
-                            <form class="form form-vertical" action="{{ route('customer.contacts.store') }}" method="post">
+                            <form class="form form-vertical" action="{{ \App\Library\CrmRouting::route('contacts.store') }}" method="post">
                                 @csrf
                                 <div class="row">
 

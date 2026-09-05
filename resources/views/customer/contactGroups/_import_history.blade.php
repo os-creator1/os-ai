@@ -32,7 +32,7 @@
                             <td>{{ strtoupper($progress['message']) }}</td>
                             <td>
                                 @if($job->status == 'done' && $progress['failed'] > 0)
-                                    <x-button :href="route('customer.contacts.download_failed', ['contact' => $contact->uid , 'job_id' => $job->id])"
+                                    <x-button :href="\App\Library\CrmRouting::route('contacts.download_failed', ['contact' => $contact->uid , 'job_id' => $job->id])"
                                        size="sm" icon="download" data-bs-toggle="tooltip" data-bs-placement="top"
                                        title="Download Failed Records">
                                     </x-button>

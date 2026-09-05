@@ -37,13 +37,13 @@
 
             @can('create_contact_group')
                 <div class="btn-group">
-                    <a href="{{route('customer.contacts.create')}}" class="btn btn-success waves-light waves-effect fw-bold mx-1"> {{__('locale.buttons.add_new')}} <x-ds-icon name="plus-circle" /></a>
+                    <a href="{{\App\Library\CrmRouting::route('contacts.create')}}" class="btn btn-success waves-light waves-effect fw-bold mx-1"> {{__('locale.buttons.add_new')}} <x-ds-icon name="plus-circle" /></a>
                 </div>
             @endcan
 
             @can('view_contact_group')
                 <div class="btn-group">
-                    <a href="{{route('customer.contacts.export')}}" class="btn btn-info waves-light waves-effect fw-bold"> {{__('locale.buttons.export')}} <x-ds-icon name="file-text" /></a>
+                    <a href="{{\App\Library\CrmRouting::route('contacts.export')}}" class="btn btn-info waves-light waves-effect fw-bold"> {{__('locale.buttons.export')}} <x-ds-icon name="file-text" /></a>
                 </div>
             @endcan
 
@@ -144,7 +144,7 @@
                 "processing": true,
                 "serverSide": true,
                 "ajax": {
-                    "url": "{{ route('customer.contacts.search') }}",
+                    "url": "{{ \App\Library\CrmRouting::route('contacts.search') }}",
                     "dataType": "json",
                     "type": "POST",
                     "data": {_token: "{{csrf_token()}}"}
@@ -449,7 +449,7 @@
                         if (group_ids.length > 0) {
 
                             $.ajax({
-                                url: "{{ route('customer.contacts.batch_action') }}",
+                                url: "{{ \App\Library\CrmRouting::route('contacts.batch_action') }}",
                                 type: "POST",
                                 data: {
                                     _token: "{{csrf_token()}}",
@@ -523,7 +523,7 @@
                         if (group_ids.length > 0) {
 
                             $.ajax({
-                                url: "{{ route('customer.contacts.batch_action') }}",
+                                url: "{{ \App\Library\CrmRouting::route('contacts.batch_action') }}",
                                 type: "POST",
                                 data: {
                                     _token: "{{csrf_token()}}",
@@ -599,7 +599,7 @@
                         if (group_ids.length > 0) {
 
                             $.ajax({
-                                url: "{{ route('customer.contacts.batch_action') }}",
+                                url: "{{ \App\Library\CrmRouting::route('contacts.batch_action') }}",
                                 type: "POST",
                                 data: {
                                     _token: "{{csrf_token()}}",

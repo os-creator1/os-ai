@@ -48,7 +48,7 @@ class ContactsCrmExistingBehaviorPreservedTest extends TestCase
     {
         $contents = file_get_contents(base_path('resources/views/customer/Contacts/create.blade.php'));
 
-        $this->assertStringContainsString("route('customer.contact.store', \$contact->uid)", $contents);
+        $this->assertStringContainsString("\\App\\Library\\CrmRouting::route('contact.store', \$contact->uid)", $contents);
         $this->assertStringContainsString('method="post"', $contents);
         $this->assertStringContainsString('@csrf', $contents);
     }
@@ -75,7 +75,7 @@ class ContactsCrmExistingBehaviorPreservedTest extends TestCase
     {
         $contents = file_get_contents(base_path('resources/views/customer/contactGroups/_contacts.blade.php'));
 
-        $this->assertStringContainsString("route('customer.contact.export', \$contact->uid)", $contents);
+        $this->assertStringContainsString("\\App\\Library\\CrmRouting::route('contact.export', \$contact->uid)", $contents);
         $this->assertStringContainsString('method="post"', $contents);
         $this->assertStringContainsString('@csrf', $contents);
     }
@@ -146,14 +146,14 @@ class ContactsCrmExistingBehaviorPreservedTest extends TestCase
     public function test_datatables_ajax_endpoints_are_unchanged_across_the_three_datatable_shells(): void
     {
         $expected = [
-            'resources/views/customer/contactGroups/index.blade.php' => 'customer.contacts.search',
-            'resources/views/customer/Blacklists/index.blade.php' => 'customer.blacklists.search',
-            'resources/views/admin/Blacklists/index.blade.php' => 'admin.blacklists.search',
+            'resources/views/customer/contactGroups/index.blade.php' => "\\App\\Library\\CrmRouting::route('contacts.search')",
+            'resources/views/customer/Blacklists/index.blade.php' => "route('customer.blacklists.search')",
+            'resources/views/admin/Blacklists/index.blade.php' => "route('admin.blacklists.search')",
         ];
 
-        foreach ($expected as $view => $routeName) {
+        foreach ($expected as $view => $routeCall) {
             $contents = file_get_contents(base_path($view));
-            $this->assertStringContainsString("route('{$routeName}')", $contents, "{$view} must keep its DataTables ajax.url route.");
+            $this->assertStringContainsString($routeCall, $contents, "{$view} must keep its DataTables ajax.url route.");
             $this->assertStringContainsString('"ajax"', $contents);
         }
     }
