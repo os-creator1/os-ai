@@ -20,6 +20,7 @@
     use App\Models\Country;
     use App\Models\CsvData;
     use App\Models\CustomerBasedPricingPlan;
+    use App\Models\CustomerBasedSendingServer;
     use App\Models\PhoneNumbers;
     use App\Models\PlansCoverageCountries;
     use App\Models\Reports;
@@ -193,6 +194,26 @@
             // Check if $input['sending_server'] is provided
             if (isset($input['sending_server'])) {
                 $sending_server = SendingServer::where('status', true)->find($input['sending_server']);
+
+                // Correction 1 — a submitted sending_server existing and
+                // supporting the sms type globally is not enough: when an
+                // explicit Business is selected, the server must also be
+                // assigned to THAT Business via customer_based_sending_
+                // servers, or a malicious manually-submitted foreign
+                // server id would be authorized for the Business's send.
+                // Legacy (no explicit Business) callers keep their
+                // existing behavior unchanged.
+                $sendQuickSendBusinessId = $input['business_id'] ?? null;
+                if ($sending_server !== null && $sendQuickSendBusinessId !== null) {
+                    $isAssignedToBusiness = CustomerBasedSendingServer::where('business_id', $sendQuickSendBusinessId)
+                        ->where('sending_server', $input['sending_server'])
+                        ->where('status', 1)
+                        ->exists();
+
+                    if ( ! $isAssignedToBusiness) {
+                        $sending_server = null;
+                    }
+                }
             } else {
                 // Use the map to get the sending server or fallback to the default
                 $serverKey      = $smsTypeToServerMap[$db_sms_type] ?? $defaultServer;
@@ -1055,9 +1076,14 @@
                 // if advanced set true then work with send copy to email and create template
                 if (isset($input['create_template']) && $input['create_template'] == 'true') {
                     // create sms template
+                    // Correction 1 — an explicit selected Business (Outreach)
+                    // always wins over the LegacyBusinessResolver guess, so a
+                    // multi-Business owner's template lands in the Business
+                    // the campaign was actually built for, not whichever one
+                    // the resolver happens to pick.
                     Templates::create([
                         'user_id'     => $user->id,
-                        'business_id' => app(LegacyBusinessResolver::class)->resolveForCustomer((int) $user->id)?->id,
+                        'business_id' => $outreachBusinessId ?? app(LegacyBusinessResolver::class)->resolveForCustomer((int) $user->id)?->id,
                         'name'        => $input['name'],
                         'message'     => $input['message'],
                         'status'      => true,
@@ -1145,75 +1171,49 @@
             $camp = $new_campaign->save();
 
             if ($camp) {
-                
-                
-                
-                
-                
-                
-                
-                $contacts = Contacts::whereIn('group_id', $contactGroupIds)
-    ->where('status', 'subscribe')
-    ->get();
 
-$boxIds = [];
+                // Correction 1 - this is the legacy Agency AI-Prospecting
+                // hook (predates B1/Business tenancy entirely). B1 Business
+                // Outreach and AI Prospecting are separate products: a
+                // Business-aware campaign (explicit business_id) must never
+                // enter the AI sales state machine. Legacy callers with no
+                // explicit Business context keep this behavior unchanged
+                // until AI Prospecting is separately ported/reused.
+                if ($outreachBusinessId === null) {
+                    $contacts = Contacts::whereIn('group_id', $contactGroupIds)
+                        ->where('status', 'subscribe')
+                        ->get();
 
-foreach ($contacts as $contact) {
-    $phone = preg_replace('/\D+/', '', $contact->phone);
+                    $boxIds = [];
 
-    $boxId = DB::table('chat_boxes')->insertGetId([
-        'user_id'    => $user->id,
-        'to'         => $phone,
-        'from'       => $sender_id[0] ?? null,
-        'ai_stage'   => 1, // THIS is what makes "Stage 1" count
-        'created_at' => now(),
-        'updated_at' => now(),
-    ]);
+                    foreach ($contacts as $contact) {
+                        $phone = preg_replace('/\D+/', '', $contact->phone);
 
-    $boxIds[] = $boxId;
-}
+                        $boxId = DB::table('chat_boxes')->insertGetId([
+                            'user_id'    => $user->id,
+                            'to'         => $phone,
+                            'from'       => $sender_id[0] ?? null,
+                            'ai_stage'   => 1, // THIS is what makes "Stage 1" count
+                            'created_at' => now(),
+                            'updated_at' => now(),
+                        ]);
 
-// now map them to campaign
-$mapRows = [];
+                        $boxIds[] = $boxId;
+                    }
 
-foreach ($boxIds as $boxId) {
-    $mapRows[] = [
-        'box_id'     => $boxId,
-        'campaign_id'=> $new_campaign->id,
-        'created_at' => now(),
-    ];
-}
+                    // now map them to campaign
+                    $mapRows = [];
 
-DB::table('ai_box_campaign_map')->insert($mapRows);
-                
-                
-                
-                
-                
-                
-                
-                
-                
-                
-                
-                
-                
-                
-                
-                
-                
-                
-                
-                
-                
-                
-                
-                
-                
-                
-                
-                
+                    foreach ($boxIds as $boxId) {
+                        $mapRows[] = [
+                            'box_id'      => $boxId,
+                            'campaign_id' => $new_campaign->id,
+                            'created_at'  => now(),
+                        ];
+                    }
 
+                    DB::table('ai_box_campaign_map')->insert($mapRows);
+                }
                 $getCount = $new_campaign->subscribersToSend()->count();
                 if ($getCount == 0) {
                     $new_campaign->delete();
@@ -1276,6 +1276,28 @@ DB::table('ai_box_campaign_map')->insert($mapRows);
                         'status'  => 'error',
                         'message' => __('locale.campaigns.sending_server_not_available'),
                     ]);
+                }
+
+                // Correction 1 — a submitted sending_server existing and
+                // supporting the sms type globally is not enough: when an
+                // explicit Business is selected, the server must also be
+                // assigned to THAT Business via customer_based_sending_
+                // servers, or a malicious manually-submitted foreign
+                // server id would be authorized for the Business's
+                // campaign. Legacy (no explicit Business) callers keep
+                // their existing behavior unchanged.
+                if ($businessId !== null) {
+                    $isAssignedToBusiness = CustomerBasedSendingServer::where('business_id', $businessId)
+                        ->where('sending_server', $input['sending_server'])
+                        ->where('status', 1)
+                        ->exists();
+
+                    if ( ! $isAssignedToBusiness) {
+                        return response()->json([
+                            'status'  => 'error',
+                            'message' => __('locale.campaigns.sending_server_not_available'),
+                        ]);
+                    }
                 }
 
                 $db_sms_type = $sms_type == 'unicode' ? 'plain' : $sms_type;
@@ -1528,15 +1550,9 @@ DB::table('ai_box_campaign_map')->insert($mapRows);
                     $sender_id = $input['sender_id'];
                 }
 
-                $check_sender_id = ($businessId !== null
-                        ? Senderid::where('business_id', $businessId)
-                        : Senderid::where('user_id', $user->id))
-                    ->where('sender_id', $sender_id)->where('status', 'active')->first();
+                $check_sender_id = Senderid::where('user_id', $user->id)->where('sender_id', $sender_id)->where('status', 'active')->first();
                 if ( ! $check_sender_id) {
-                    $number = ($businessId !== null
-                            ? PhoneNumbers::where('business_id', $businessId)
-                            : PhoneNumbers::where('user_id', $user->id))
-                        ->where('number', $sender_id)->where('status', 'assigned')->first();
+                    $number = PhoneNumbers::where('user_id', $user->id)->where('number', $sender_id)->where('status', 'assigned')->first();
 
                     if ( ! $number) {
                         return response()->json([
@@ -2032,9 +2048,18 @@ DB::table('ai_box_campaign_map')->insert($mapRows);
          */
         public function restart(Campaigns $campaign): JsonResponse
         {
+            // Correction 1 — tenant/billing identity for a campaign
+            // lifecycle action comes from the campaign's own owner (its
+            // Business, when it has one), never the acting Workspace
+            // member: an authorized staff member restarting Business B's
+            // campaign must be evaluated against Business B's balance and
+            // plan options, not their own.
+            $tenantUser = $campaign->business_id !== null
+                ? $campaign->business?->customer?->user
+                : $campaign->user;
 
-            $sms_unit = Auth::user()->sms_unit;
-            $max_unit = Auth::user()->customer->getOption('sms_max');
+            $sms_unit = $tenantUser->sms_unit;
+            $max_unit = $tenantUser->customer->getOption('sms_max');
 
             if ($max_unit != '-1' && $sms_unit <= 0) {
                 return response()->json([
@@ -2070,8 +2095,18 @@ DB::table('ai_box_campaign_map')->insert($mapRows);
          */
         public function resend(Campaigns $campaign): JsonResponse
         {
-            TrackingLog::where('campaign_id', $campaign->id)->where('customer_id', Auth::user()->id)->where('status', 'not like', '%Delivered%')->delete();
-            Reports::where('campaign_id', $campaign->id)->where('user_id', Auth::user()->id)->where('status', 'not like', '%Delivered%')->delete();
+            // Correction 1 — failed TrackingLog/Reports cleanup must be
+            // constrained to the campaign's own tenant (its Business, when
+            // it has one), never Auth::id(): an authorized staff member
+            // resending Business B's campaign must clean up Business B's
+            // failed rows, not rows that happen to belong to the actor.
+            if ($campaign->business_id !== null) {
+                TrackingLog::where('campaign_id', $campaign->id)->where('business_id', $campaign->business_id)->where('status', 'not like', '%Delivered%')->delete();
+                Reports::where('campaign_id', $campaign->id)->where('business_id', $campaign->business_id)->where('status', 'not like', '%Delivered%')->delete();
+            } else {
+                TrackingLog::where('campaign_id', $campaign->id)->where('customer_id', $campaign->user_id)->where('status', 'not like', '%Delivered%')->delete();
+                Reports::where('campaign_id', $campaign->id)->where('user_id', $campaign->user_id)->where('status', 'not like', '%Delivered%')->delete();
+            }
 
             $campaign->execute();
 
@@ -2646,7 +2681,17 @@ DB::table('ai_box_campaign_map')->insert($mapRows);
 
                 $sender_id = $input['phone_number'];
 
-                $number = PhoneNumbers::where('user_id', $user->id)->where('number', $sender_id)->where('status', 'assigned')->first();
+                // Correction 1 - this branch (sender_id_verification !=
+                // 'yes', view_numbers permission present) was still
+                // authorizing the submitted phone number against the
+                // owner's user_id even when an explicit Business was
+                // selected, letting one Business tamper-submit a phone
+                // number that only belongs to a different Business owned
+                // by the same customer.
+                $number = ($businessId !== null
+                        ? PhoneNumbers::where('business_id', $businessId)
+                        : PhoneNumbers::where('user_id', $user->id))
+                    ->where('number', $sender_id)->where('status', 'assigned')->first();
 
                 if ( ! $number) {
                     return response()->json([
