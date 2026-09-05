@@ -22,6 +22,7 @@ class TrackingLog extends Model
             'message_id',
             'automation_id',
             'customer_id',
+            'business_id',
             'sending_server_id',
             'campaign_id',
             'contact_id',
@@ -42,6 +43,14 @@ class TrackingLog extends Model
     public function customer(): BelongsTo
     {
         return $this->belongsTo(User::class);
+    }
+
+    /**
+     * Business Data Tenancy Foundation, Pass 1 — additive only.
+     */
+    public function business(): BelongsTo
+    {
+        return $this->belongsTo(Business::class);
     }
 
     /**

@@ -52,6 +52,7 @@
 
         protected $fillable = [
             'customer_id',
+            'business_id',
             'name',
             'sender_id',
             'send_welcome_sms',
@@ -292,6 +293,14 @@
         public function customer()
         {
             return $this->belongsTo(User::class);
+        }
+
+        /**
+         * Business Data Tenancy Foundation, Pass 1 — additive only.
+         */
+        public function business(): BelongsTo
+        {
+            return $this->belongsTo(Business::class);
         }
 
         /*Version 3.9*/
@@ -838,8 +847,8 @@
                     // @TODO LIMITATION: tags are not updated if subscribers already exist
                     $insertToSubscribersSql = strtr(
                         '
-                    INSERT INTO %contacts (uid, customer_id ,group_id, phone, status, created_at, updated_at)
-                    SELECT SUBSTRING(MD5(UUID()), 1, 13), %customer_id, %list_id, uniq.phone, %status, NOW(), NOW()
+                    INSERT INTO %contacts (uid, customer_id, business_id ,group_id, phone, status, created_at, updated_at)
+                    SELECT SUBSTRING(MD5(UUID()), 1, 13), %customer_id, %business_id, %list_id, uniq.phone, %status, NOW(), NOW()
                     FROM (
                         SELECT tmp.%phone_field AS phone, tmp.tags
                         FROM %tmp tmp
@@ -848,6 +857,7 @@
                         [
                             '%contacts'    => Helper::table('contacts'),
                             '%customer_id' => $this->customer->id,
+                            '%business_id' => $this->business_id !== null ? (int) $this->business_id : 'NULL',
                             '%list_id'     => $this->id,
                             '%status'      => Helper::db_quote('subscribe'),
                             '%tmp'         => $tmpTable,

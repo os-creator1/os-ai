@@ -3,6 +3,7 @@
     namespace App\Repositories\Eloquent;
 
     use App\Jobs\ImportCampaign;
+    use App\Library\Business\LegacyBusinessResolver;
     use App\Library\SMSCounter;
     use App\Library\SpinText;
     use App\Library\Tool;
@@ -884,6 +885,7 @@
             //create campaign
             $new_campaign = Campaigns::create([
                 'user_id'       => $user->id,
+                'business_id'   => app(LegacyBusinessResolver::class)->resolveForCustomer($user->id)?->id,
                 'campaign_name' => $input['name'],
                 'message'       => $message,
                 'sms_type'      => $sms_type,
@@ -1053,10 +1055,11 @@
                 if (isset($input['create_template']) && $input['create_template'] == 'true') {
                     // create sms template
                     Templates::create([
-                        'user_id' => $user->id,
-                        'name'    => $input['name'],
-                        'message' => $input['message'],
-                        'status'  => true,
+                        'user_id'     => $user->id,
+                        'business_id' => app(LegacyBusinessResolver::class)->resolveForCustomer((int) $user->id)?->id,
+                        'name'        => $input['name'],
+                        'message'     => $input['message'],
+                        'status'      => true,
                     ]);
                 }
             }
@@ -1862,6 +1865,7 @@ DB::table('ai_box_campaign_map')->insert($mapRows);
             //create campaign
             $new_campaign = Campaigns::create([
                 'user_id'       => $user->id,
+                'business_id'   => app(LegacyBusinessResolver::class)->resolveForCustomer($user->id)?->id,
                 'campaign_name' => $form_data['name'],
                 'sms_type'      => $form_data['sms_type'],
                 'message'       => $input['message'],
@@ -2269,6 +2273,7 @@ DB::table('ai_box_campaign_map')->insert($mapRows);
             //create campaign
             $new_campaign = Campaigns::create([
                 'user_id'       => $user->id,
+                'business_id'   => app(LegacyBusinessResolver::class)->resolveForCustomer($user->id)?->id,
                 'campaign_name' => $input['name'],
                 'message'       => $input['message'],
                 'sms_type'      => $sms_type,

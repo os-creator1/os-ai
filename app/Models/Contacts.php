@@ -28,6 +28,7 @@
 
         protected $fillable = [
             'customer_id',
+            'business_id',
             'group_id',
             'phone',
             'status',
@@ -45,6 +46,14 @@
         public function contactGroup(): BelongsTo
         {
             return $this->belongsTo(ContactGroups::class, 'group_id');
+        }
+
+        /**
+         * Business Data Tenancy Foundation, Pass 1 — additive only.
+         */
+        public function business(): BelongsTo
+        {
+            return $this->belongsTo(Business::class);
         }
 
         /**

@@ -34,7 +34,8 @@
          */
         public function store(array $input): Collection
         {
-            $user      = auth()->user();
+            $user       = auth()->user();
+            $businessId = app(\App\Library\Business\LegacyBusinessResolver::class)->resolveForCustomer((int) $user->id)?->id;
             $delimiter = match ($input['delimiter']) {
                 ';' => ';',
                 '|' => '|',
@@ -51,7 +52,7 @@
 
             
             // Process in chunks
-            $numbers->chunk(1000)->each(function ($chunk) use ($input, $user) {
+            $numbers->chunk(1000)->each(function ($chunk) use ($input, $user, $businessId) {
                 $insertData = [];
 
                 foreach ($chunk as $number) {
@@ -63,12 +64,13 @@
                     $query->update(['status' => 'unsubscribe']);
 
                     $insertData[] = [
-                        'uid'        => uniqid(),
-                        'user_id'    => $user->id,
-                        'number'     => $number,
-                        'reason'     => $input['reason'],
-                        'created_at' => now(),
-                        'updated_at' => now(),
+                        'uid'         => uniqid(),
+                        'user_id'     => $user->id,
+                        'business_id' => $businessId,
+                        'number'      => $number,
+                        'reason'      => $input['reason'],
+                        'created_at'  => now(),
+                        'updated_at'  => now(),
                     ];
                 }
 

@@ -1167,6 +1167,7 @@
 
                 CustomerBasedSendingServer::create([
                     'user_id'        => $customer->id,
+                    'business_id'    => app(\App\Library\Business\LegacyBusinessResolver::class)->resolveForCustomer((int) $customer->id)?->id,
                     'sending_server' => $server,
                 ]);
 

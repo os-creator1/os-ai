@@ -33,6 +33,7 @@
         protected $fillable = [
             'uid',
             'user_id',
+            'business_id',
             'number',
             'reason',
         ];
@@ -46,6 +47,14 @@
         public function user(): BelongsTo
         {
             return $this->belongsTo(User::class);
+        }
+
+        /**
+         * Business Data Tenancy Foundation, Pass 1 — additive only.
+         */
+        public function business(): BelongsTo
+        {
+            return $this->belongsTo(Business::class);
         }
 
         /**

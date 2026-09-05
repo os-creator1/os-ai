@@ -13431,6 +13431,7 @@
 
             $reportsData = [
                 'user_id'           => $data['user_id'],
+                'business_id'       => $this->business_id,
                 'to'                => str_replace(['(', ')', '+', '-', ' '], '', $phone),
                 'message'           => $message,
                 'sms_type'          => $data['sms_type'],
@@ -14401,6 +14402,7 @@
 
             $reportsData = [
                 'user_id'           => $data['user_id'],
+                'business_id'       => $this->business_id,
                 'to'                => $phone,
                 'message'           => $message,
                 'sms_type'          => 'voice',
@@ -15612,6 +15614,7 @@
 
             $reportsData = [
                 'user_id'           => $data['user_id'],
+                'business_id'       => $this->business_id,
                 'to'                => $phone,
                 'message'           => $message,
                 'sms_type'          => 'mms',
@@ -17108,6 +17111,7 @@
 
             $reportsData = [
                 'user_id'           => $data['user_id'],
+                'business_id'       => $this->business_id,
                 'to'                => $phone,
                 'message'           => $message,
                 'sms_type'          => 'whatsapp',
@@ -17385,6 +17389,7 @@
 
             $reportsData = [
                 'user_id'           => $data['user_id'],
+                'business_id'       => $this->business_id,
                 'to'                => $phone,
                 'message'           => $message,
                 'sms_type'          => 'viber',
@@ -18140,6 +18145,7 @@
 
             $reportsData = [
                 'user_id'           => $data['user_id'],
+                'business_id'       => $this->business_id,
                 'to'                => $phone,
                 'message'           => $message,
                 'sms_type'          => 'otp',

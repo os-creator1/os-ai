@@ -105,7 +105,8 @@
                         $senderid->validity_date   = $current->add($senderid->frequency_unit, (int) $senderid->frequency_amount);
                         $senderid->payment_claimed = true;
                     }
-                    $senderid->user_id = $user_id;
+                    $senderid->user_id     = $user_id;
+                    $senderid->business_id = app(\App\Library\Business\LegacyBusinessResolver::class)->resolveForCustomer((int) $user_id)?->id;
                     $senderid->save();
                 }
             }
@@ -127,6 +128,7 @@
 
             $plan                       = SenderidPlan::find($input['plan']);
             $senderid->user_id          = Auth::user()->id;
+            $senderid->business_id      = app(\App\Library\Business\LegacyBusinessResolver::class)->resolveForCustomer((int) Auth::user()->id)?->id;
             $senderid->currency_id      = $plan->currency_id;
             $senderid->status           = 'Pending';
             $senderid->price            = $plan->price;

@@ -90,6 +90,7 @@
 
         protected $fillable = [
             'user_id',
+            'business_id',
             'campaign_name',
             'message',
             'media_url',
@@ -142,6 +143,14 @@
         public function customer(): BelongsTo
         {
             return $this->belongsTo(Customer::class, 'user_id');
+        }
+
+        /**
+         * Business Data Tenancy Foundation, Pass 1 — additive only.
+         */
+        public function business(): BelongsTo
+        {
+            return $this->belongsTo(Business::class);
         }
 
         /**
@@ -717,6 +726,7 @@
             $params = [
                 'message_id'        => $response->id,
                 'customer_id'       => $this->user->id,
+                'business_id'       => $this->business_id,
                 'sending_server_id' => $server->id,
                 'campaign_id'       => $this->id,
                 'contact_id'        => $subscriber->id,
@@ -1251,6 +1261,7 @@
 
                     $params = [
                         'customer_id'       => $this->user->id,
+                        'business_id'       => $this->business_id,
                         'sending_server_id' => 1,
                         'campaign_id'       => $this->id,
                         'contact_id'        => $subscriber->id,
@@ -1264,6 +1275,7 @@
 
                     $reportsData = [
                         'user_id'           => $this->user->id,
+                        'business_id'       => $this->business_id,
                         'to'                => $subscriber->phone,
                         'message'           => $this->message,
                         'sms_type'          => $this->sms_type,
@@ -1283,6 +1295,7 @@
 
                 $params = [
                     'customer_id'       => $this->user->id,
+                    'business_id'       => $this->business_id,
                     'sending_server_id' => 1,
                     'campaign_id'       => $this->id,
                     'contact_id'        => $subscriber->id,
@@ -1296,6 +1309,7 @@
 
                 $reportsData = [
                     'user_id'           => $this->user->id,
+                    'business_id'       => $this->business_id,
                     'to'                => $subscriber->phone,
                     'message'           => $this->message,
                     'sms_type'          => $this->sms_type,
@@ -1502,6 +1516,7 @@
 
                             $params = [
                                 'customer_id'       => $this->user->id,
+                                'business_id'       => $this->business_id,
                                 'sending_server_id' => null,
                                 'campaign_id'       => $this->id,
                                 'contact_id'        => $subscriber->id,
@@ -1515,6 +1530,7 @@
 
                             $reportsData = [
                                 'user_id'           => $this->user->id,
+                                'business_id'       => $this->business_id,
                                 'to'                => $subscriber->phone,
                                 'message'           => $this->message,
                                 'sms_type'          => $this->sms_type,
@@ -1533,6 +1549,7 @@
                     } catch (NumberParseException|Exception $e) {
                         $params = [
                             'customer_id'       => $this->user->id,
+                            'business_id'       => $this->business_id,
                             'sending_server_id' => null,
                             'campaign_id'       => $this->id,
                             'contact_id'        => $subscriber->id,
@@ -1546,6 +1563,7 @@
 
                         $reportsData = [
                             'user_id'           => $this->user->id,
+                            'business_id'       => $this->business_id,
                             'to'                => $subscriber->phone,
                             'message'           => $this->message,
                             'sms_type'          => $this->sms_type,
@@ -1890,6 +1908,7 @@
         {
             $params = [
                 'customer_id'       => $this->user->id,
+                'business_id'       => $this->business_id,
                 'sending_server_id' => null,
                 'campaign_id'       => $this->id,
                 'contact_id'        => $subscriber->id,
@@ -1903,6 +1922,7 @@
 
             Reports::create([
                 'user_id'           => $this->user->id,
+                'business_id'       => $this->business_id,
                 'to'                => $subscriber->phone,
                 'message'           => $this->message,
                 'sms_type'          => $this->sms_type,

@@ -34,6 +34,9 @@
         {
             /** @var Templates $template */
             $template = $this->make(Arr::only($input, ['name', 'message', 'user_id', 'dlt_template_id', 'dlt_category', 'sender_id']));
+            $template->business_id = isset($input['user_id'])
+                ? app(\App\Library\Business\LegacyBusinessResolver::class)->resolveForCustomer((int) $input['user_id'])?->id
+                : null;
 
             if (config('app.trai_dlt')) {
                 if ($input['user_type'] == 'admin' || ! Auth::user()->customer->activeSubscription()->plan->is_dlt) {
