@@ -360,6 +360,18 @@
 
     /*
     |--------------------------------------------------------------------------
+    | Agency AI Prospecting entry
+    |--------------------------------------------------------------------------
+    |
+    | Bare selector only — the actual Workspace-level prospecting surface
+    | lives at customer.workspaces.prospecting.*. Never guesses a
+    | Workspace. See Workspace\AgencyProspectingController::entry().
+    |
+    */
+    Route::get('prospecting', 'Workspace\AgencyProspectingController@entry')->name('prospecting.index');
+
+    /*
+    |--------------------------------------------------------------------------
     | Reports module
     |--------------------------------------------------------------------------
     |
@@ -777,6 +789,37 @@
             Route::match(['put', 'patch'], '/connections/{connection}', 'Business\MessagingChannelsController@update')->name('connections.update');
             Route::post('/connections/{connection}/enable', 'Business\MessagingChannelsController@enable')->name('connections.enable');
             Route::post('/connections/{connection}/disable', 'Business\MessagingChannelsController@disable')->name('connections.disable');
+        });
+
+        /*
+        |----------------------------------------------------------------
+        | Agency AI Prospecting foundation
+        |----------------------------------------------------------------
+        |
+        | Workspace-level (never Business-scoped) acquisition system —
+        | the Agency itself finding/messaging external businesses to
+        | acquire as clients. Deliberately a sibling of the
+        | {workspaceUid}/businesses/... routes above, never nested under
+        | them. See Workspace\AgencyProspectingController.
+        |
+        */
+        Route::prefix('{workspaceUid}/prospecting')->name('prospecting.')->group(function () {
+            Route::get('/', 'Workspace\AgencyProspectingController@overview')->name('overview');
+
+            Route::get('/prospects', 'Workspace\AgencyProspectingController@prospects')->name('prospects.index');
+            Route::post('/prospects', 'Workspace\AgencyProspectingController@storeProspect')->name('prospects.store');
+            Route::get('/prospects/{prospect}', 'Workspace\AgencyProspectingController@showProspect')->name('prospects.show');
+            Route::post('/prospects/{prospect}/stop', 'Workspace\AgencyProspectingController@stopProspect')->name('prospects.stop');
+            Route::post('/prospects/{prospect}/mark-booked', 'Workspace\AgencyProspectingController@markProspectBooked')->name('prospects.mark-booked');
+
+            Route::get('/campaigns', 'Workspace\AgencyProspectingController@campaigns')->name('campaigns.index');
+            Route::post('/campaigns', 'Workspace\AgencyProspectingController@storeCampaign')->name('campaigns.store');
+            Route::get('/campaigns/{campaign}', 'Workspace\AgencyProspectingController@showCampaign')->name('campaigns.show');
+            Route::post('/campaigns/{campaign}/status', 'Workspace\AgencyProspectingController@updateCampaignStatus')->name('campaigns.status');
+            Route::post('/campaigns/{campaign}/members', 'Workspace\AgencyProspectingController@enrollProspect')->name('campaigns.members.store');
+
+            Route::get('/settings', 'Workspace\AgencyProspectingController@settings')->name('settings.show');
+            Route::post('/settings', 'Workspace\AgencyProspectingController@updateSettings')->name('settings.update');
         });
     });
 

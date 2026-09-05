@@ -177,6 +177,71 @@ final class EntitlementManager
     }
 
     /**
+     * Agency AI Prospecting foundation — decide()'s Business-independent
+     * subset, for a PlatformFeature that is Workspace-level and has no
+     * owning Business at all (unlike every feature decide() was written
+     * for). RFC-004 §14's decide() requires a Business to evaluate two of
+     * its eight steps: the per-Business feature toggle (step 8) and the
+     * Business-scoped usage-authorization-gateway check (step 11) — neither
+     * concept exists without a Business, so this method reproduces only
+     * the remaining, Business-independent precedence chain: known key
+     * (floor) → available (floor, never bypassable by an override) →
+     * Workspace plan assignment exists → Workspace override if present,
+     * else plan mapping → suspended/inactive status. It uses this class's
+     * own existing repositories exclusively — assignmentRepository,
+     * catalogRepository, overrideRepository, planFeatureRepository — never
+     * a parallel authority, and never mutates anything. Omitting the
+     * usage-authorization-gateway step is not a shortcut: RFC-005 keeps
+     * every PlatformFeature at is_metered=false through M5, so that step
+     * is already a behavioral no-op for every feature today, Business or
+     * not. This method is never called once a Business is in hand —
+     * decide() remains the sole authority whenever one is.
+     */
+    public function decideForWorkspace(Workspace $workspace, string $featureKey): EntitlementDecision
+    {
+        $feature = PlatformFeature::tryFrom($featureKey);
+
+        if ($feature === null) {
+            return new EntitlementDecision(false, 'platform_feature_unknown');
+        }
+
+        if (! PlatformFeatureRegistry::isAvailable($feature->value)) {
+            return new EntitlementDecision(false, 'platform_feature_unavailable');
+        }
+
+        $assignment = $this->assignmentRepository->findByWorkspaceId((int) $workspace->id);
+
+        if ($assignment === null) {
+            return new EntitlementDecision(false, 'workspace_plan_unassigned');
+        }
+
+        $catalog = $this->catalogRepository->findById($assignment->workspace_plan_catalog_id);
+        $override = $this->overrideRepository->findByWorkspaceAndFeature((int) $workspace->id, $feature->value);
+
+        if ($override !== null) {
+            $workspaceEntitled = $override->state === WorkspaceEntitlementOverrideState::Allow;
+            $denialReasonIfNot = 'denied_by_workspace_override';
+        } else {
+            $workspaceEntitled = $catalog !== null && $this->planFeatureRepository->includesFeature($catalog, $feature->value);
+            $denialReasonIfNot = 'not_entitled_by_plan';
+        }
+
+        if (! $workspaceEntitled) {
+            return new EntitlementDecision(false, $denialReasonIfNot);
+        }
+
+        if ($assignment->status === WorkspacePlanAssignmentStatus::Suspended) {
+            return new EntitlementDecision(false, 'plan_suspended');
+        }
+
+        if ($assignment->status === WorkspacePlanAssignmentStatus::Inactive) {
+            return new EntitlementDecision(false, 'plan_inactive');
+        }
+
+        return new EntitlementDecision(true, null);
+    }
+
+    /**
      * RFC-004 §17's exact algorithm, reproduced not redesigned.
      */
     public function decideBusinessSlotCapacity(Workspace $workspace): BusinessSlotCapacityDecision

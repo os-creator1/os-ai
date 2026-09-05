@@ -13,11 +13,12 @@ use Tests\TestCase;
  */
 class PlatformFeatureRegistryTest extends TestCase
 {
-    public function test_available_features_are_exactly_crm_conversations_automations(): void
+    public function test_available_features_are_exactly_crm_conversations_automations_prospect_outreach(): void
     {
         $this->assertTrue(PlatformFeatureRegistry::isAvailable(PlatformFeature::Crm->value));
         $this->assertTrue(PlatformFeatureRegistry::isAvailable(PlatformFeature::Conversations->value));
         $this->assertTrue(PlatformFeatureRegistry::isAvailable(PlatformFeature::Automations->value));
+        $this->assertTrue(PlatformFeatureRegistry::isAvailable(PlatformFeature::ProspectOutreach->value));
     }
 
     public function test_every_other_feature_is_planned_not_available(): void
@@ -34,10 +35,9 @@ class PlatformFeatureRegistryTest extends TestCase
             PlatformFeature::MetaAdsModule,
             PlatformFeature::WhiteLabel,
             PlatformFeature::AgencyPackageCapabilities,
-            PlatformFeature::ProspectOutreach,
         ];
 
-        $this->assertCount(12, $planned);
+        $this->assertCount(11, $planned);
 
         foreach ($planned as $feature) {
             $this->assertFalse(
@@ -47,13 +47,15 @@ class PlatformFeatureRegistryTest extends TestCase
         }
     }
 
-    public function test_prospect_outreach_availability_reflects_direct_repository_evidence_not_assumed(): void
+    public function test_prospect_outreach_availability_reflects_the_agency_ai_prospecting_foundation_pass(): void
     {
-        // RFC-004 M1 Contract §6: direct repository inspection found no
-        // executable Prospect Outreach implementation anywhere in this
-        // repository — this assertion reflects that finding, not an
-        // inherited product-intent assumption.
-        $this->assertFalse(PlatformFeatureRegistry::isAvailable(PlatformFeature::ProspectOutreach->value));
+        // Agency AI Prospecting foundation pass: a real, executable,
+        // Workspace-scoped controller/routes/persistence now exists
+        // (App\Http\Controllers\Customer\Workspace\AgencyProspectingController),
+        // matching the same evidentiary bar Crm/Conversations/Automations
+        // were already held to — this assertion reflects that direct
+        // repository evidence, not an inherited product-intent assumption.
+        $this->assertTrue(PlatformFeatureRegistry::isAvailable(PlatformFeature::ProspectOutreach->value));
     }
 
     public function test_is_known_true_for_every_platform_feature_case(): void

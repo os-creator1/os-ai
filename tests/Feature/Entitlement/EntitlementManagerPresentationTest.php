@@ -87,7 +87,11 @@ class EntitlementManagerPresentationTest extends TestCase
         $this->assertTrue($agency->unlimitedBusinessSlots);
         $this->assertNull($agency->businessSlotMax);
         $this->assertContains('prospect_outreach', $agency->planFeatureKeys);
-        $this->assertFalse($agency->featureAvailability['prospect_outreach']);
+
+        // Agency AI Prospecting foundation pass flipped prospect_outreach
+        // to Available in PlatformFeatureRegistry — see
+        // PlatformFeatureRegistryTest for the direct registry coverage.
+        $this->assertTrue($agency->featureAvailability['prospect_outreach']);
     }
 
     // --- getWorkspaceEntitlementSummary() -----------------------------------
@@ -247,8 +251,17 @@ class EntitlementManagerPresentationTest extends TestCase
         $result = app(EntitlementManager::class)->decideAvailableFeaturesForBusiness($workspace, $business, $this->createAdmin());
 
         $this->assertArrayNotHasKey(PlatformFeature::Calendar->value, $result);
-        $this->assertArrayNotHasKey(PlatformFeature::ProspectOutreach->value, $result);
-        $this->assertCount(3, $result);
+
+        // Agency AI Prospecting foundation pass: ProspectOutreach is now
+        // Available (PlatformFeatureRegistry), so decideAvailableFeaturesForBusiness()
+        // correctly includes it here like any other Available feature —
+        // this fixture's Workspace is on Core, which does not package
+        // prospect_outreach, so the decision itself is still not allowed.
+        $this->assertArrayHasKey(PlatformFeature::ProspectOutreach->value, $result);
+        $this->assertFalse($result[PlatformFeature::ProspectOutreach->value]['decision']->allowed);
+        $this->assertSame('not_entitled_by_plan', $result[PlatformFeature::ProspectOutreach->value]['decision']->reason);
+
+        $this->assertCount(4, $result);
     }
 
     public function test_stale_or_reassigned_business_returns_an_empty_map(): void

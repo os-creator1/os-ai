@@ -1000,6 +1000,14 @@
                         'access' => 'view_numbers',
                     ],
                     [
+                        'url'    => url('prospecting'),
+                        'slug'   => 'prospecting',
+                        'name'   => 'Prospecting',
+                        'i18n'   => 'Prospecting',
+                        'icon'   => 'target',
+                        'access' => 'access_backend',
+                    ],
+                    [
                         'url'    => url('blacklists'),
                         'slug'   => 'blacklists',
                         'name'   => 'Blacklist',

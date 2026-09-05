@@ -3,6 +3,9 @@
 namespace Tests\Feature\Outreach;
 
 use App\Helpers\Helper;
+use App\Models\AgencyProspect;
+use App\Models\AgencyProspectCampaign;
+use App\Models\AgencyProspectCampaignMember;
 use App\Models\AppConfig;
 use App\Models\Business;
 use App\Models\Campaigns;
@@ -177,6 +180,35 @@ class OutreachComposeTest extends TestCase
 
         $response->assertRedirect(route('customer.workspaces.businesses.outreach.campaigns', [$business->workspace->uid, $business->uid]));
         $response->assertSessionHas('status', 'success');
+    }
+
+    /**
+     * Agency AI Prospecting foundation — Business Outreach and Agency
+     * Prospecting are separate products with separate persistence.
+     * Creating an ordinary B1 Business-scoped campaign must never create
+     * an Agency prospect, enrollment, or campaign row — there is no code
+     * path connecting OutreachController/EloquentCampaignRepository to
+     * the agency_prospect_* tables at all.
+     */
+    public function test_business_outreach_campaign_creation_never_touches_agency_prospecting_tables(): void
+    {
+        [$tenant, $business] = $this->sendableTenant();
+        $this->authenticateAsCustomer($tenant, ['sms_campaign_builder']);
+        $group = ContactGroups::create(['customer_id' => $tenant->user_id, 'business_id' => $business->id, 'name' => 'VIPs', 'status' => true]);
+
+        $mockRepo = \Mockery::mock(CampaignRepository::class);
+        $mockRepo->shouldReceive('campaignBuilder')->once()->andReturn(response()->json(['status' => 'success', 'message' => 'queued']));
+        $this->app->instance(CampaignRepository::class, $mockRepo);
+
+        $this->post(route('customer.workspaces.businesses.outreach.sms.campaign', [$business->workspace->uid, $business->uid]), [
+            'name' => 'VIP Blast',
+            'contact_groups' => [$group->id],
+            'message' => 'Hello VIPs',
+        ])->assertSessionHas('status', 'success');
+
+        $this->assertSame(0, AgencyProspect::count());
+        $this->assertSame(0, AgencyProspectCampaign::count());
+        $this->assertSame(0, AgencyProspectCampaignMember::count());
     }
 
     public function test_mms_campaign_builder_reuses_existing_campaignbuilder_persistence_with_explicit_business(): void
