@@ -13,13 +13,7 @@
         <div class="row match-height">
             <div class="col-md-7 col-12">
 
-                <div class="card">
-                    <div class="card-header">
-                        <h4 class="card-title">@if(isset($role)) {{ __('locale.role.update_role') }} @else
-                                {{ __('locale.role.create_role') }} @endif </h4>
-                    </div>
-                    <div class="card-content">
-                        <div class="card-body">
+                <x-card :title="isset($role) ? __('locale.role.update_role') : __('locale.role.create_role')">
                             <form class="form form-vertical" @if(isset($role)) action="{{ route('admin.roles.update',  $role->uid) }}" @else action="{{ route('admin.roles.store') }}" @endif method="post">
                                 @if(isset($role))
                                     {{ method_field('PUT') }}
@@ -29,15 +23,7 @@
 
                                     <div class="col-12">
 
-
-                                        <div class="form-group">
-                                            <label for="name" class="required">{{ __('locale.labels.name') }}</label>
-                                            <input type="text" id="name" class="form-control @error('name') is-invalid @enderror" value="{{ old('name',  $role->name ?? null) }}" name="name" required placeholder="{{__('locale.labels.required')}}" autofocus>
-                                            @error('name')
-                                            <p><small class="text-danger">{{ $message }}</small></p>
-                                            @enderror
-                                        </div>
-
+                                        <x-input name="name" :label="__('locale.labels.name')" value="{{ old('name',  $role->name ?? null) }}" :placeholder="__('locale.labels.required')" :error="$errors->first('name')" autofocus required />
 
                                         <div class="mt-4"></div>
                                         <div class="form-check">
@@ -79,18 +65,13 @@
 
                                     <div class="col-12 mt-2">
                                         <input type="hidden" value="access backend" name="permissions[]">
-                                        <button type="submit" class="btn btn-primary mr-1 mb-1">
-                                            <i class="feather icon-save"></i> {{__('locale.buttons.save')}}
-                                        </button>
+                                        <x-button type="submit" variant="primary" class="mr-1 mb-1" icon="save">{{__('locale.buttons.save')}}</x-button>
                                     </div>
 
 
                                 </div>
                             </form>
-                        </div>
-
-                    </div>
-                </div>
+                </x-card>
             </div>
 
 

@@ -28,7 +28,7 @@
                                id="announcements-tab" data-bs-toggle="tab" href="#announcements"
                                aria-controls="announcements" role="tab"
                                aria-selected="true">
-                                <i data-feather="tv" class="font-medium-3 me-50"></i>
+                                <x-ds-icon name="tv" class="font-medium-3 me-50" />
                                 <span class="fw-bold">{{__('locale.menu.Announcements')}}</span>
                             </a>
                         </li>
@@ -40,7 +40,7 @@
                         <li class="nav-item">
                             <a class="nav-link {{ $tab == 'send_by_email' ? 'active':null }}"
                                href="{{ route('admin.announcements.create', ['tab' => 'send_by_email']) }}">
-                                <i data-feather="send" class="font-medium-3 me-50"></i>
+                                <x-ds-icon name="send" class="font-medium-3 me-50" />
                                 <span class="fw-bold">{{ __('locale.announcements.send_announcement') }}</span>
                             </a>
                         </li>
@@ -50,7 +50,7 @@
                         <li class="nav-item">
                             <a class="nav-link {{ $tab == 'send_by_sms' ? 'active':null }}"
                                href="{{ route('admin.announcements.create', ['tab' => 'send_by_sms']) }}">
-                                <i data-feather="message-square" class="font-medium-3 me-50"></i>
+                                <x-ds-icon name="message-square" class="font-medium-3 me-50" />
                                 <span class="fw-bold">{{ __('locale.labels.send_by_sms') }}</span>
                             </a>
                         </li>
