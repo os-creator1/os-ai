@@ -17,6 +17,7 @@ use Illuminate\Contracts\View\View;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 
 /**
  * B2 — Business Messaging Channels: a small, simple Business-level
@@ -74,6 +75,8 @@ class MessagingChannelsController extends CustomerBaseController
      */
     public function entry(): View|Factory|Application|RedirectResponse
     {
+        $this->authorize('view_numbers');
+
         $accessible = $this->accessibleBusinesses();
 
         if (count($accessible) === 0) {
@@ -91,6 +94,8 @@ class MessagingChannelsController extends CustomerBaseController
 
     public function channels(string $workspaceUid, string $businessUid): View|Factory|Application
     {
+        $this->authorize('view_numbers');
+
         $business = $this->resolveAccessibleBusiness($workspaceUid, $businessUid);
 
         $connections = CustomerBasedSendingServer::where('business_id', $business->id)
@@ -120,6 +125,8 @@ class MessagingChannelsController extends CustomerBaseController
 
     public function connect(string $workspaceUid, string $businessUid, string $provider): View|Factory|Application|RedirectResponse
     {
+        $this->authorize('view_numbers');
+
         $business = $this->resolveAccessibleBusiness($workspaceUid, $businessUid);
 
         if (! $this->isAllowedProvider($provider)) {
@@ -137,6 +144,8 @@ class MessagingChannelsController extends CustomerBaseController
 
     public function storeConnect(Request $request, string $workspaceUid, string $businessUid, string $provider): RedirectResponse
     {
+        $this->authorize('view_numbers');
+
         $business = $this->resolveAccessibleBusiness($workspaceUid, $businessUid);
 
         if (! $this->isAllowedProvider($provider)) {
@@ -166,14 +175,20 @@ class MessagingChannelsController extends CustomerBaseController
             'user_id' => $business->customer_id,
         ]);
 
-        $sendingServer = $this->sendingServers->store($input);
+        // A new connection's SendingServer and its CustomerBasedSendingServer
+        // assignment must be created together or not at all — otherwise a
+        // failure between the two writes would leave an orphan,
+        // credential-bearing SendingServer with no Business assignment.
+        DB::transaction(function () use ($input, $business): void {
+            $sendingServer = $this->sendingServers->store($input);
 
-        CustomerBasedSendingServer::create([
-            'user_id' => $business->customer_id,
-            'business_id' => $business->id,
-            'sending_server' => $sendingServer->id,
-            'status' => true,
-        ]);
+            CustomerBasedSendingServer::create([
+                'user_id' => $business->customer_id,
+                'business_id' => $business->id,
+                'sending_server' => $sendingServer->id,
+                'status' => true,
+            ]);
+        });
 
         return redirect()->route('customer.workspaces.businesses.channels.index', [$workspaceUid, $businessUid])->with([
             'status' => 'success',
@@ -183,6 +198,8 @@ class MessagingChannelsController extends CustomerBaseController
 
     public function show(string $workspaceUid, string $businessUid, CustomerBasedSendingServer $connection): View|Factory|Application
     {
+        $this->authorize('view_numbers');
+
         $business = $this->resolveAccessibleBusiness($workspaceUid, $businessUid);
         $this->resolveOwnedConnection($connection, $business);
 
@@ -204,6 +221,8 @@ class MessagingChannelsController extends CustomerBaseController
 
     public function update(Request $request, string $workspaceUid, string $businessUid, CustomerBasedSendingServer $connection): RedirectResponse
     {
+        $this->authorize('view_numbers');
+
         $business = $this->resolveAccessibleBusiness($workspaceUid, $businessUid);
         $this->resolveOwnedConnection($connection, $business);
 
@@ -242,6 +261,8 @@ class MessagingChannelsController extends CustomerBaseController
 
     public function enable(string $workspaceUid, string $businessUid, CustomerBasedSendingServer $connection): RedirectResponse
     {
+        $this->authorize('view_numbers');
+
         $business = $this->resolveAccessibleBusiness($workspaceUid, $businessUid);
         $this->resolveOwnedConnection($connection, $business);
 
@@ -261,6 +282,8 @@ class MessagingChannelsController extends CustomerBaseController
 
     public function disable(string $workspaceUid, string $businessUid, CustomerBasedSendingServer $connection): RedirectResponse
     {
+        $this->authorize('view_numbers');
+
         $business = $this->resolveAccessibleBusiness($workspaceUid, $businessUid);
         $this->resolveOwnedConnection($connection, $business);
 
@@ -372,9 +395,21 @@ class MessagingChannelsController extends CustomerBaseController
         return $business;
     }
 
+    /**
+     * Correction 1 — every connection-specific B2 action must positively
+     * prove BOTH invariants before touching a connection: it belongs to
+     * the selected Business, AND its underlying SendingServer's provider
+     * type is inside B2's hard allowlist. Without the second check, an
+     * already-existing Business-owned connection for an inherited
+     * provider outside B2's scope (e.g. Plivo) could still be opened/
+     * enabled/disabled through B2 merely because its uid was known.
+     * Centralizing both checks here means the invariant cannot drift
+     * between show()/update()/enable()/disable().
+     */
     private function resolveOwnedConnection(CustomerBasedSendingServer $connection, Business $business): CustomerBasedSendingServer
     {
         abort_unless($connection->business_id === $business->id, 404);
+        abort_unless($connection->sendingServer !== null && $this->isAllowedProvider($connection->sendingServer->settings), 404);
 
         return $connection;
     }
