@@ -38,7 +38,7 @@
                     <li class="nav-item">
                         <a class="nav-link @if ($tab == 'announcements') active @endif"
                            href="{{ route('admin.announcements.index') }}">
-                            <i data-feather="tv" class="font-medium-3 me-50"></i>
+                            <x-ds-icon name="tv" class="font-medium-3 me-50" />
                             <span class="fw-bold">{{__('locale.menu.Announcements')}}</span>
                         </a>
                     </li>
@@ -49,7 +49,7 @@
                     <li class="nav-item">
                         <a class="nav-link {{ $tab == 'send_by_email' ? 'active':null }}"
                            href="{{ route('admin.announcements.create', ['tab' => 'send_by_email']) }}">
-                            <i data-feather="send" class="font-medium-3 me-50"></i>
+                            <x-ds-icon name="send" class="font-medium-3 me-50" />
                             <span class="fw-bold">{{ __('locale.announcements.send_announcement') }}</span>
                         </a>
                     </li>
@@ -59,7 +59,7 @@
                     <li class="nav-item">
                         <a class="nav-link {{ $tab == 'send_by_sms' ? 'active':null }}"
                            href="{{ route('admin.announcements.create', ['tab' => 'send_by_sms']) }}">
-                            <i data-feather="message-square" class="font-medium-3 me-50"></i>
+                            <x-ds-icon name="message-square" class="font-medium-3 me-50" />
                             <span class="fw-bold">{{ __('locale.labels.send_by_sms') }}</span>
                         </a>
                     </li>
@@ -70,10 +70,7 @@
 
             <div class="col-md-8 col-12">
 
-                <div class="card mb-3 mt-2">
-                    <div class="card-header"></div>
-                    <div class="card-content">
-                        <div class="card-body">
+                <x-card class="mb-3 mt-2">
                             <form class="form form-vertical"
                                   @if(isset($announcement)) action="{{ route('admin.announcements.update',  $announcement->uid) }}"
                                   @else action="{{ route('admin.announcements.store') }}" @endif method="post">
@@ -145,62 +142,28 @@
 
                                             @if($sendingServers->count() > 0)
                                                 <div class="col-12">
-                                                    <div class="mb-1">
-                                                        <label for="sending_server"
-                                                               class="form-label required">{{ __('locale.labels.sending_server') }}</label>
-                                                        <select class="select2 form-select" name="sending_server"
-                                                                id="sending_server">
-                                                            @foreach($sendingServers as $server)
-
-                                                                <option value="{{$server->id}}"> {{ $server->name }}</option>
-
-                                                            @endforeach
-                                                        </select>
-
-                                                        @error('sending_server')
-                                                        <p><small class="text-danger">{{ $message }}</small></p>
-                                                        @enderror
-                                                    </div>
+                                                    <x-select name="sending_server" class="select2" :label="__('locale.labels.sending_server')" :options="$sendingServers->pluck('name', 'id')" />
+                                                    @error('sending_server')
+                                                    <p><small class="text-danger">{{ $message }}</small></p>
+                                                    @enderror
                                                 </div>
 
                                             @endif
 
                                             <div class="col-12">
-                                                <div class="mb-1">
-                                                    <label for="sender_id"
-                                                           class="form-label">{{__('locale.labels.sender_id')}}</label>
-                                                    <input type="text" id="sender_id"
-                                                           class="form-control @error('sender_id') is-invalid @enderror"
-                                                           name="sender_id"
-                                                           value="{{ old('sender_id',  $announcement->sender_id ?? null) }}"
-                                                           placeholder="{{__('locale.labels.sender_id')}}">
-                                                    @error('sender_id')
-                                                    <p><small class="text-danger">{{ $message }}</small></p>
-                                                    @enderror
-                                                </div>
+                                                <x-input name="sender_id" :label="__('locale.labels.sender_id')" value="{{ old('sender_id',  $announcement->sender_id ?? null) }}" :placeholder="__('locale.labels.sender_id')" :error="$errors->first('sender_id')" />
                                             </div>
 
                                         @endif
                                     @endif
 
                                     <div class="col-12">
-                                        <div class="mb-1">
-                                            <label for="title"
-                                                   class="form-label required">{{ __('locale.labels.title') }}</label>
-                                            <input type="text" id="title"
-                                                   class="form-control @error('title') is-invalid @enderror"
-                                                   value="{{ old('title',  $announcement->title ?? null) }}"
-                                                   name="title"
-                                                   required placeholder="{{__('locale.labels.required')}}">
-                                            @error('title')
-                                            <p><small class="text-danger">{{ $message }}</small></p>
-                                            @enderror
-                                            @if($tab == 'send_by_sms')
-                                                <p>
-                                                    <small class="text-primary text-uppercase">{{ __('locale.announcements.title_count_as_sms') }}</small>
-                                                </p>
-                                            @endif
-                                        </div>
+                                        <x-input name="title" :label="__('locale.labels.title')" value="{{ old('title',  $announcement->title ?? null) }}" :placeholder="__('locale.labels.required')" :error="$errors->first('title')" required />
+                                        @if($tab == 'send_by_sms')
+                                            <p>
+                                                <small class="text-primary text-uppercase">{{ __('locale.announcements.title_count_as_sms') }}</small>
+                                            </p>
+                                        @endif
                                     </div>
 
 
@@ -234,17 +197,13 @@
 
                                     <div class="col-12 mt-1">
                                         <input type="hidden" name="send_by" value="{{$tab}}">
-                                        <button type="submit" class="btn btn-primary"><i
-                                                    data-feather="save"></i> {{ isset($announcement) ? __('locale.buttons.update') : __('locale.buttons.send') }}
-                                        </button>
+                                        <x-button type="submit" variant="primary" icon="save">{{ isset($announcement) ? __('locale.buttons.update') : __('locale.buttons.send') }}</x-button>
                                     </div>
 
                                 </div>
 
                             </form>
-                        </div>
-                    </div>
-                </div>
+                </x-card>
             </div>
         </div>
     </section>

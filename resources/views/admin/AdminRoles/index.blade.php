@@ -18,39 +18,39 @@
         <div class="mb-3 mt-2">
             @can('view roles')
                 <div class="btn-group">
-                    <button
-                            class="btn btn-primary fw-bold dropdown-toggle"
+                    <x-button
+                            class="fw-bold dropdown-toggle"
                             type="button"
                             id="bulk_actions"
                             data-bs-toggle="dropdown"
                             aria-expanded="false"
                     >
                         {{ __('locale.labels.actions') }}
-                    </button>
+                    </x-button>
                     <div class="dropdown-menu" aria-labelledby="bulk_actions">
-                        <a class="dropdown-item bulk-enable" href="#"><i data-feather="check"></i> {{ __('locale.datatables.bulk_enable') }}</a>
-                        <a class="dropdown-item bulk-disable" href="#"><i data-feather="stop-circle"></i> {{ __('locale.datatables.bulk_disable') }}</a>
-                        <a class="dropdown-item bulk-delete" href="#"><i data-feather="trash"></i> {{ __('locale.datatables.bulk_delete') }}</a>
+                        <a class="dropdown-item bulk-enable" href="#"><x-ds-icon name="check" /> {{ __('locale.datatables.bulk_enable') }}</a>
+                        <a class="dropdown-item bulk-disable" href="#"><x-ds-icon name="circle-stop" /> {{ __('locale.datatables.bulk_disable') }}</a>
+                        <a class="dropdown-item bulk-delete" href="#"><x-ds-icon name="trash" /> {{ __('locale.datatables.bulk_delete') }}</a>
                     </div>
                 </div>
             @endcan
 
             @can('create roles')
                 <div class="btn-group">
-                    <a href="{{route('admin.roles.create')}}" class="btn btn-success waves-light waves-effect fw-bold mx-1"> {{__('locale.buttons.create')}} <i data-feather="plus-circle"></i></a>
+                    <a href="{{route('admin.roles.create')}}" class="btn btn-success waves-light waves-effect fw-bold mx-1"> {{__('locale.buttons.create')}} <x-ds-icon name="plus-circle" /></a>
                 </div>
             @endcan
 
             @can('view roles')
                 <div class="btn-group">
-                    <a href="{{route('admin.roles.export')}}" class="btn btn-info waves-light waves-effect fw-bold"> {{__('locale.buttons.export')}} <i data-feather="file-text"></i></a>
+                    <a href="{{route('admin.roles.export')}}" class="btn btn-info waves-light waves-effect fw-bold"> {{__('locale.buttons.export')}} <x-ds-icon name="file-text" /></a>
                 </div>
             @endcan
 
         </div>
         <div class="row">
             <div class="col-12">
-                <div class="card">
+                <x-card :padded="false">
                     <table class="table datatables-basic">
                         <thead>
                         <tr>
@@ -64,7 +64,7 @@
                         </tr>
                         </thead>
                     </table>
-                </div>
+                </x-card>
             </div>
         </div>
     </section>

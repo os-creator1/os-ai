@@ -13,25 +13,14 @@
         <div class="row match-height">
             <div class="col-md-6 col-12">
 
-                <div class="card">
-                    <div class="card-header">
-                        <h4 class="card-title">{{ __('locale.administrator.update_administrator') }}</h4>
-                    </div>
-                    <div class="card-content">
-                        <div class="card-body">
+                <x-card :title="__('locale.administrator.update_administrator')">
                             <form class="form form-vertical" action="{{ route('admin.administrators.update', $administrator->uid)  }}" method="post" enctype="multipart/form-data">
                                 @method('PATCH')
                                 @csrf
                                 <div class="row">
 
                                     <div class="col-12">
-                                        <div class="mb-1">
-                                            <label for="email" class="form-label required">{{__('locale.labels.email')}}</label>
-                                            <input type="email" id="email" class="form-control @error('email') is-invalid @enderror" value="{{ $administrator->email }}" name="email" required>
-                                            @error('email')
-                                            <p><small class="text-danger">{{ $message }}</small></p>
-                                            @enderror
-                                        </div>
+                                        <x-input name="email" type="email" :label="__('locale.labels.email')" value="{{ $administrator->email }}" :error="$errors->first('email')" required />
                                     </div>
 
 
@@ -40,7 +29,7 @@
                                             <label class="form-label" for="password">{{ __('locale.labels.password') }}</label>
                                             <div class="input-group input-group-merge form-password-toggle">
                                                 <input type="password" id="password" class="form-control @error('password') is-invalid @enderror" value="{{ old('password') }}" name="password">
-                                                <span class="input-group-text cursor-pointer"><i data-feather="eye"></i></span>
+                                                <span class="input-group-text cursor-pointer"><x-ds-icon name="eye" /></span>
                                             </div>
 
                                             @if($errors->has('password'))
@@ -63,30 +52,17 @@
                                                        name="password_confirmation"
                                                 >
 
-                                                <span class="input-group-text cursor-pointer"><i data-feather="eye"></i></span>
+                                                <span class="input-group-text cursor-pointer"><x-ds-icon name="eye" /></span>
                                             </div>
                                         </div>
                                     </div>
 
                                     <div class="col-12">
-                                        <div class="mb-1">
-                                            <label class="form-label required" for="first_name">{{ __('locale.labels.first_name') }}</label>
-                                            <input type="text" id="first_name" class="form-control @error('first_name') is-invalid @enderror" value="{{ $administrator->first_name }}" name="first_name" required/>
-                                            @error('first_name')
-                                            <p><small class="text-danger">{{ $message }}</small></p>
-                                            @enderror
-                                        </div>
+                                        <x-input name="first_name" :label="__('locale.labels.first_name')" value="{{ $administrator->first_name }}" :error="$errors->first('first_name')" required />
                                     </div>
 
                                     <div class="col-12">
-                                        <div class="mb-1">
-                                            <label class="form-label" for="last_name">{{ __('locale.labels.last_name') }}</label>
-                                            <input type="text" id="last_name" class="form-control @error('last_name') is-invalid @enderror" value="{{ $administrator->last_name }}" name="last_name"/>
-
-                                            @error('last_name')
-                                            <p><small class="text-danger">{{ $message }}</small></p>
-                                            @enderror
-                                        </div>
+                                        <x-input name="last_name" :label="__('locale.labels.last_name')" value="{{ $administrator->last_name }}" :error="$errors->first('last_name')" />
                                     </div>
 
                                     <div class="col-12">
@@ -145,16 +121,13 @@
                                     </div>
 
                                     <div class="col-12 mt-1">
-                                        <button type="submit" class="btn btn-primary mr-1 mb-1"><i data-feather="save" class="align-middle me-sm-25 me-0"></i> {{__('locale.buttons.update')}}</button>
+                                        <x-button type="submit" variant="primary" class="mr-1 mb-1" icon="save">{{__('locale.buttons.update')}}</x-button>
                                     </div>
 
 
                                 </div>
                             </form>
-                        </div>
-
-                    </div>
-                </div>
+                </x-card>
             </div>
 
 
