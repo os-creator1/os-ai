@@ -330,6 +330,32 @@
 
     /*
     |--------------------------------------------------------------------------
+    | Outreach / Compose module (B1)
+    |--------------------------------------------------------------------------
+    |
+    | Consolidated SMS/MMS compose product. Reuses the existing Campaign send
+    | core (CampaignRepository::quickSend()/campaignBuilder()) via a thin
+    | controller; see docs/automation/DESIGN-SYSTEM-M2-CONTRACT.md (B1).
+    |
+    */
+
+    Route::prefix('outreach')->name('outreach.')->group(function () {
+        Route::get('/', 'OutreachController@index')->name('index');
+        Route::post('/sms/send', 'OutreachController@sendSms')->name('sms.send');
+        Route::post('/mms/send', 'OutreachController@sendMms')->name('mms.send');
+        Route::post('/sms/campaign', 'OutreachController@storeSmsCampaign')->name('sms.campaign');
+        Route::post('/mms/campaign', 'OutreachController@storeMmsCampaign')->name('mms.campaign');
+
+        Route::get('/campaigns', 'OutreachController@campaigns')->name('campaigns');
+        Route::get('/campaigns/{campaign}', 'OutreachController@show')->name('campaigns.show');
+        Route::post('/campaigns/{campaign}/pause', 'OutreachController@pause')->name('campaigns.pause');
+        Route::post('/campaigns/{campaign}/restart', 'OutreachController@restart')->name('campaigns.restart');
+        Route::post('/campaigns/{campaign}/resend', 'OutreachController@resend')->name('campaigns.resend');
+        Route::post('/campaigns/{campaign}/destroy', 'OutreachController@destroy')->name('campaigns.destroy');
+    });
+
+    /*
+    |--------------------------------------------------------------------------
     | Reports module
     |--------------------------------------------------------------------------
     |

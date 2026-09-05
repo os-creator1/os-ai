@@ -125,15 +125,6 @@
                 ->where('iso_code', $region_code)
                 ->where('status', 1)
                 ->first();
-                
-                
-                \Log::info('QUICKSEND COUNTRY LOOKUP', [
-    'country_code' => $input['country_code'],
-    'region_code' => $region_code,
-    'country_found' => $country ? $country->id : null
-]);
-                
-                
 
             if (empty($country)) {
                 return response()->json([
@@ -202,11 +193,6 @@
             // Check if $input['sending_server'] is provided
             if (isset($input['sending_server'])) {
                 $sending_server = SendingServer::where('status', true)->find($input['sending_server']);
-                
-                \Log::info('QUICKSEND SERVER', [
-    'server_id' => $sending_server?->id,
-    'server_name' => $sending_server?->name
-]);
             } else {
                 // Use the map to get the sending server or fallback to the default
                 $serverKey      = $smsTypeToServerMap[$db_sms_type] ?? $defaultServer;
@@ -406,10 +392,6 @@
                     }
 
                     $data = $campaign->sendPlainSMS($preparedData);
-
-                    \Log::info('QUICKSEND PROVIDER RESPONSE', [
-    'response' => json_encode($data)
-]);
 
                     if ($m5 !== null && $m5['qualifies']) {
                         $m5TokenAction = $this->settleConversationsMeterReservation($m5['reservation_id'], $m5['business_id'], $data, (string) $sms_count);
