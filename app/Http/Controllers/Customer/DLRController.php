@@ -4,6 +4,7 @@
 
     use App\Events\MessageReceived;
     use App\Http\Controllers\Controller;
+    use App\Library\Business\LegacyBusinessResolver;
     use App\Library\SMSCounter;
     use App\Library\SpinText;
     use App\Models\Blacklists;
@@ -513,6 +514,7 @@
 
                 Reports::create([
                     'user_id'           => $user_id,
+                    'business_id'       => app(LegacyBusinessResolver::class)->resolveForCustomer((int) $user_id)?->id,
                     'from'              => $from,
                     'to'                => $to,
                     'message'           => $message,
@@ -744,6 +746,7 @@ $chatBox->touch();
                             if ( ! $exist) {
                                 $data = Contacts::create([
                                     'customer_id' => $user_id,
+                                    'business_id' => app(LegacyBusinessResolver::class)->resolveForCustomer((int) $user_id)?->id,
                                     'group_id'    => $contact->id,
                                     'phone'       => $to,
                                     'status'      => 'subscribe',
@@ -876,9 +879,10 @@ $chatBox->touch();
                                     ]);
                                     if ($data) {
                                         Blacklists::create([
-                                            'user_id' => $user_id,
-                                            'number'  => $to,
-                                            'reason'  => 'Optout by User',
+                                            'user_id'     => $user_id,
+                                            'business_id' => app(LegacyBusinessResolver::class)->resolveForCustomer((int) $user_id)?->id,
+                                            'number'      => $to,
+                                            'reason'      => 'Optout by User',
                                         ]);
                                     }
                                 }
@@ -914,6 +918,7 @@ $chatBox->touch();
 
                 Reports::create([
                     'user_id'           => $user_id,
+                    'business_id'       => app(LegacyBusinessResolver::class)->resolveForCustomer((int) $user_id)?->id,
                     'from'              => $from,
                     'to'                => $to,
                     'message'           => $message,
@@ -936,9 +941,10 @@ $chatBox->touch();
 
                 if ( ! $blacklist) {
                     Blacklists::create([
-                        'user_id' => $user_id,
-                        'number'  => $to,
-                        'reason'  => 'Optout by User',
+                        'user_id'     => $user_id,
+                        'business_id' => app(LegacyBusinessResolver::class)->resolveForCustomer((int) $user_id)?->id,
+                        'number'      => $to,
+                        'reason'      => 'Optout by User',
                     ]);
 
                     ChatBox::where('user_id', $user_id)

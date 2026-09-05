@@ -3776,6 +3776,7 @@ POSTXML;
                         'validity_date'    => $current->add($plan->getOption('sender_id_frequency_unit'), (int) $plan->getOption('sender_id_frequency_amount')),
                         'payment_claimed'  => true,
                         'user_id'          => $user->id,
+                        'business_id'      => app(\App\Library\Business\LegacyBusinessResolver::class)->resolveForCustomer((int) $user->id)?->id,
                     ]);
                 }
             }

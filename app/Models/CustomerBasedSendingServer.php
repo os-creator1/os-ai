@@ -16,6 +16,7 @@ class CustomerBasedSendingServer extends Model
 
     protected $fillable = [
             'user_id',
+            'business_id',
             'sending_server',
             'status',
     ];
@@ -34,6 +35,14 @@ class CustomerBasedSendingServer extends Model
     public function user(): BelongsTo
     {
         return $this->belongsTo(User::class);
+    }
+
+    /**
+     * Business Data Tenancy Foundation, Pass 1 — additive only.
+     */
+    public function business(): BelongsTo
+    {
+        return $this->belongsTo(Business::class);
     }
 
     /**

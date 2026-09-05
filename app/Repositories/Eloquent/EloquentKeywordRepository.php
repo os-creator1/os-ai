@@ -148,14 +148,17 @@
             if ($input['user_id'] != 0) {
                 $user = User::find($input['user_id'])->is_customer;
                 if ($user) {
-                    $input['status']  = 'assigned';
-                    $keyword->status  = 'assigned';
-                    $keyword->user_id = $input['user_id'];
+                    $input['status']    = 'assigned';
+                    $keyword->status    = 'assigned';
+                    $keyword->user_id   = $input['user_id'];
+                    $keyword->business_id = app(\App\Library\Business\LegacyBusinessResolver::class)->resolveForCustomer((int) $input['user_id'])?->id;
                 } else {
-                    $keyword->user_id = 1;
+                    $keyword->user_id     = 1;
+                    $keyword->business_id = null;
                 }
             } else {
-                $keyword->user_id = 1;
+                $keyword->user_id     = 1;
+                $keyword->business_id = null;
             }
 
             if ($input['status'] == 'assigned') {
@@ -213,7 +216,10 @@
             }
 
             if ($input['user_id'] == 0) {
-                $input['user_id'] = 1;
+                $input['user_id']     = 1;
+                $input['business_id'] = null;
+            } else {
+                $input['business_id'] = app(\App\Library\Business\LegacyBusinessResolver::class)->resolveForCustomer((int) $input['user_id'])?->id;
             }
 
             if ( ! $keyword->update($input)) {
@@ -330,6 +336,7 @@
 
             if ($available) {
                 $available->user_id       = 1;
+                $available->business_id   = null;
                 $available->status        = 'available';
                 $available->validity_date = null;
                 if ( ! $available->save()) {

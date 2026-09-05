@@ -10512,6 +10512,7 @@ POSTXML;
                 'validity_date'    => $validityDate,
                 'payment_claimed'  => true,
                 'user_id'          => $user->id,
+                'business_id'      => app(\App\Library\Business\LegacyBusinessResolver::class)->resolveForCustomer((int) $user->id)?->id,
             ]);
         }
 

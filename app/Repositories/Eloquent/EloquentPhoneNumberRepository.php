@@ -92,6 +92,9 @@
 
             $number->number       = str_replace(['(', ')', '+', '-', ' '], '', $input['number']);
             $number->capabilities = json_encode($input['capabilities']);
+            $number->business_id  = ((int) ($input['user_id'] ?? 0)) === 1
+                ? null
+                : app(\App\Library\Business\LegacyBusinessResolver::class)->resolveForCustomer((int) ($input['user_id'] ?? 0))?->id;
 
             if (isset($input['billing_cycle']) && $input['billing_cycle'] != 'custom') {
                 $limits                   = $billingCycle[$input['billing_cycle']];
@@ -123,7 +126,10 @@
         {
 
             if (isset($input['status']) && $input['status'] == 'available') {
-                $input['user_id'] = 1;
+                $input['user_id']     = 1;
+                $input['business_id'] = null;
+            } elseif (isset($input['user_id'])) {
+                $input['business_id'] = app(\App\Library\Business\LegacyBusinessResolver::class)->resolveForCustomer((int) $input['user_id'])?->id;
             }
 
 
@@ -205,6 +211,7 @@
 
             if ($available) {
                 $available->user_id       = 1;
+                $available->business_id   = null;
                 $available->status        = 'available';
                 $available->validity_date = null;
                 if ( ! $available->save()) {

@@ -66,6 +66,8 @@
                 $contactGroups->customer_id = $input['user_id'];
             }
 
+            $contactGroups->business_id = app(\App\Library\Business\LegacyBusinessResolver::class)->resolveForCustomer((int) $contactGroups->customer_id)?->id;
+
             $contactGroups->status = true;
 
             if ( ! $this->save($contactGroups)) {
@@ -238,6 +240,7 @@
                 if ($phoneUtil->isPossibleNumber($phoneNumberObject) && ! empty($countryCode) && ! empty($isoCode)) {
                     $contact = Contacts::create([
                         'customer_id' => $contactGroups->customer_id,
+                        'business_id' => $contactGroups->business_id,
                         'group_id'    => $contactGroups->id,
                         'phone'       => $phone,
                         'status'      => 'subscribe',
@@ -683,6 +686,7 @@
 
             $subscriber->group_id    = $contactGroups->id;
             $subscriber->customer_id = $contactGroups->customer_id;
+            $subscriber->business_id = $contactGroups->business_id;
             $subscriber->status      = 'subscribe';
             $subscriber->save();
 

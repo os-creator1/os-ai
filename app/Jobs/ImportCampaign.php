@@ -228,6 +228,7 @@
                     $reportData = array_map(fn($phone) => [
                         'uid'               => uniqid(),
                         'user_id'           => $this->campaign->user_id,
+                        'business_id'       => $this->campaign->business_id,
                         'to'                => $phone,
                         'message'           => $this->campaign->message,
                         'sms_type'          => $this->campaign->sms_type,

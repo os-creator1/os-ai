@@ -1002,6 +1002,7 @@
                                     $list[] = [
                                         'uid'         => uniqid(),
                                         'customer_id' => Auth::user()->id,
+                                        'business_id' => $contact->business_id,
                                         'group_id'    => $contact->id,
                                         'status'      => 'subscribe',
                                         'phone'       => $phone,
