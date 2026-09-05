@@ -281,11 +281,6 @@
             }
         }
 
-        public function getCanEditAttribute(): bool
-        {
-            return auth()->id() === 1;
-        }
-
         public function getCanDeleteAttribute(): bool
         {
             return $this->id !== auth()->id() && (Gate::check('delete customer'));

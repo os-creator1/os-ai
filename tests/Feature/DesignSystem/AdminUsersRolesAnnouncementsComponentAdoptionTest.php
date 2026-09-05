@@ -136,8 +136,15 @@ class AdminUsersRolesAnnouncementsComponentAdoptionTest extends TestCase
         $contents = file_get_contents(base_path('resources/views/admin/AdminRoles/create.blade.php'));
 
         $this->assertStringContainsString('name="permissions[]"', $contents);
-        $this->assertStringContainsString('id="{{ $permission[\'name\'] }}"', $contents);
-        $this->assertStringContainsString('for="{{ $permission[\'name\'] }}"', $contents);
+        $this->assertStringContainsString('value="{{ $permission[\'name\'] }}"', $contents);
+        // A3 Bug-Cleanup Checkpoint: the id/for pair is now a deterministic,
+        // HTML5-valid slug derived from the permission name (spaces are
+        // invalid inside an id/for value) rather than the raw, space-
+        // containing permission string itself. The submitted field name
+        // and value -- what the backend and JS actually depend on --
+        // are unchanged.
+        $this->assertStringContainsString('id="permission-{{ str_replace(\' \', \'-\', $permission[\'name\']) }}"', $contents);
+        $this->assertStringContainsString('for="permission-{{ str_replace(\' \', \'-\', $permission[\'name\']) }}"', $contents);
         $this->assertSame(0, substr_count($contents, '<x-select'), 'Permission checkboxes must never be represented via a select-style component.');
         // Every checkbox in the matrix stays a bare native <input type="checkbox">.
         $this->assertMatchesRegularExpression('/<input type="checkbox"\s*$/m', $contents);

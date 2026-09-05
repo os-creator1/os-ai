@@ -59,6 +59,7 @@
             $users_ids = Arr::pluck($customers, 'id');
 
             $announcement = new Announcements([
+                'user_id'     => auth()->id(),
                 'title'       => $input['title'],
                 'description' => $input['description'],
                 'type'        => $sendBy,

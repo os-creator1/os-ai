@@ -18,7 +18,6 @@ use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\View\View;
 use JetBrains\PhpStorm\NoReturn;
@@ -250,8 +249,13 @@ class AdministratorController extends AdminBaseController
         return view('admin.Administrator.show', compact('breadcrumbs', 'administrator', 'languages', 'roles', 'get_roles'));
     }
 
+    /**
+     * @throws AuthorizationException
+     */
     public function update(User $administrator, UpdateAdministrator $request): RedirectResponse
     {
+        $this->authorize('edit administrator');
+
         if (config('app.stage') == 'demo') {
             return redirect()->route('admin.administrators.index')->with([
                 'status' => 'error',
@@ -424,13 +428,5 @@ class AdministratorController extends AdminBaseController
                 'message' => $e->getMessage(),
             ]);
         }
-    }
-
-    /**
-     * get allowed roles
-     */
-    public function getRoles(): Collection
-    {
-        return $this->roles->getAllowedRoles();
     }
 }

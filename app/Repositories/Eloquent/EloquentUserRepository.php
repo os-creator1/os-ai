@@ -138,13 +138,13 @@
          */
         public function update(User $user, array $input): User
         {
-            if ( ! $user->can_edit) {
-                throw new GeneralException(__('locale.exceptions.something_went_wrong'));
-            }
-
             $user->fill(Arr::except($input, 'password'));
 
-            if ($user->is_super_admin && ! $user->active) {
+            // Genuine target protection (independent of the caller's own
+            // identity, unlike the removed `can_edit` actor-id-1 gate this
+            // replaces): the one true super-admin account may never be
+            // fill()-ed into an inactive state through this path.
+            if ($user->is_super_admin && ! $user->status) {
                 throw new GeneralException(__('locale.exceptions.something_went_wrong'));
             }
 
