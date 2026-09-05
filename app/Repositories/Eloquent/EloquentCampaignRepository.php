@@ -1371,24 +1371,35 @@
                         $sender_id = $input['phone_number'];
 
                         if (is_array($sender_id) && count($sender_id) > 0) {
-                            $type_supported = [];
-                            $numbers        = ($businessId !== null
-                                    ? PhoneNumbers::where("business_id", $businessId)
-                                    : PhoneNumbers::where("user_id", $user->id))
-                                ->where('status', 'assigned')
-                                ->cursor();
-
-                            foreach ($numbers as $number) {
-                                if (in_array($number->number, $sender_id) && ! str_contains($number->capabilities, $capabilities_type)) {
-                                    $type_supported[] = $number->number;
+                            // Correction 2 — a foreign submitted phone
+                            // number that does not exist in the selected
+                            // Business never appears in a capability-only
+                            // scan, leaving it silently accepted. When an
+                            // explicit Business is selected, membership
+                            // must be positively proven before capability
+                            // is even checked.
+                            if ($businessId !== null) {
+                                if ($errorResponse = $this->validateBusinessPhoneNumbers($businessId, $sender_id, $capabilities_type, $sms_type)) {
+                                    return $errorResponse;
                                 }
-                            }
+                            } else {
+                                $type_supported = [];
+                                $numbers        = PhoneNumbers::where("user_id", $user->id)
+                                    ->where('status', 'assigned')
+                                    ->cursor();
 
-                            if (count($type_supported)) {
-                                return response()->json([
-                                    'status'  => 'error',
-                                    'message' => __('locale.sender_id.sender_id_sms_capabilities', ['sender_id' => $type_supported[0], 'type' => $sms_type]),
-                                ]);
+                                foreach ($numbers as $number) {
+                                    if (in_array($number->number, $sender_id) && ! str_contains($number->capabilities, $capabilities_type)) {
+                                        $type_supported[] = $number->number;
+                                    }
+                                }
+
+                                if (count($type_supported)) {
+                                    return response()->json([
+                                        'status'  => 'error',
+                                        'message' => __('locale.sender_id.sender_id_sms_capabilities', ['sender_id' => $type_supported[0], 'type' => $sms_type]),
+                                    ]);
+                                }
                             }
                         } else {
                             return response()->json([
@@ -1407,24 +1418,30 @@
                 $sender_id = $input['phone_number'];
 
                 if (is_array($sender_id) && count($sender_id) > 0) {
-                    $type_supported = [];
-                    $numbers        = ($businessId !== null
-                            ? PhoneNumbers::where("business_id", $businessId)
-                            : PhoneNumbers::where("user_id", $user->id))
-                        ->where('status', 'assigned')
-                        ->cursor();
-
-                    foreach ($numbers as $number) {
-                        if (in_array($number->number, $sender_id) && ! str_contains($number->capabilities, $capabilities_type)) {
-                            $type_supported[] = $number->number;
+                    // Correction 2 — same membership-before-capability fix
+                    // as the sender_id_verification == 'yes' branch above.
+                    if ($businessId !== null) {
+                        if ($errorResponse = $this->validateBusinessPhoneNumbers($businessId, $sender_id, $capabilities_type, $sms_type)) {
+                            return $errorResponse;
                         }
-                    }
+                    } else {
+                        $type_supported = [];
+                        $numbers        = PhoneNumbers::where("user_id", $user->id)
+                            ->where('status', 'assigned')
+                            ->cursor();
 
-                    if (count($type_supported)) {
-                        return response()->json([
-                            'status'  => 'error',
-                            'message' => __('locale.sender_id.sender_id_sms_capabilities', ['sender_id' => $type_supported[0], 'type' => $sms_type]),
-                        ]);
+                        foreach ($numbers as $number) {
+                            if (in_array($number->number, $sender_id) && ! str_contains($number->capabilities, $capabilities_type)) {
+                                $type_supported[] = $number->number;
+                            }
+                        }
+
+                        if (count($type_supported)) {
+                            return response()->json([
+                                'status'  => 'error',
+                                'message' => __('locale.sender_id.sender_id_sms_capabilities', ['sender_id' => $type_supported[0], 'type' => $sms_type]),
+                            ]);
+                        }
                     }
                 } else {
                     return response()->json([
@@ -1465,6 +1482,25 @@
                 if (isset($input['sender_id'])) {
                     $sender_id           = $input['sender_id'];
                     $input['originator'] = 'sender_id';
+                }
+
+                // Correction 2 — this fallback branch (neither
+                // sender_id_verification == 'yes' nor the view_numbers +
+                // phone_number branch above applied) previously accepted
+                // the submitted sender_id/phone_number values without any
+                // ownership check at all. When an explicit Business is
+                // selected, every submitted value must be positively
+                // proven to belong to it.
+                if ($businessId !== null && is_array($sender_id) && count($sender_id) > 0) {
+                    if (($input['originator'] ?? null) === 'sender_id') {
+                        if ($errorResponse = $this->validateBusinessSenderIds($businessId, $sender_id)) {
+                            return $errorResponse;
+                        }
+                    } else {
+                        if ($errorResponse = $this->validateBusinessPhoneNumbers($businessId, $sender_id, $capabilities_type, $sms_type)) {
+                            return $errorResponse;
+                        }
+                    }
                 }
             }
 
@@ -2650,32 +2686,8 @@
                     $sender_id = $input['sender_id'];
                 }
 
-                $check_sender_id = ($businessId !== null
-                        ? Senderid::where('business_id', $businessId)
-                        : Senderid::where('user_id', $user->id))
-                    ->where('sender_id', $sender_id)->where('status', 'active')->first();
-                if ( ! $check_sender_id) {
-                    $number = ($businessId !== null
-                            ? PhoneNumbers::where('business_id', $businessId)
-                            : PhoneNumbers::where('user_id', $user->id))
-                        ->where('number', $sender_id)->where('status', 'assigned')->first();
-
-                    if ( ! $number) {
-                        return response()->json([
-                            'status'  => 'error',
-                            'message' => __('locale.sender_id.sender_id_invalid', ['sender_id' => $sender_id]),
-                        ]);
-                    }
-
-                    $capabilities = str_contains($number->capabilities, $capabilities_type);
-
-                    if ( ! $capabilities) {
-                        return response()->json([
-                            'status'  => 'error',
-                            'message' => __('locale.sender_id.sender_id_sms_capabilities', ['sender_id' => $sender_id, 'type' => $db_sms_type]),
-                        ]);
-                    }
-
+                if ($errorResponse = $this->validateQuickSendOriginatorValue($user, $businessId, $sender_id, $capabilities_type, $db_sms_type)) {
+                    return $errorResponse;
                 }
             } else if ($user->can('view_numbers') && isset($input['originator']) && $input['originator'] == 'phone_number' && isset($input['phone_number'])) {
 
@@ -2711,6 +2723,23 @@
 
             } else if (isset($input['sender_id'])) {
                 $sender_id = $input['sender_id'];
+
+                // Correction 2 — this final fallback (sender_id_verification
+                // != 'yes' AND (no view_numbers OR originator != phone_number))
+                // previously accepted the submitted sender_id unconditionally.
+                // That is a cross-Business tamper path when an explicit
+                // Business is selected, so it is now re-authorized exactly
+                // like the other branches: Business SenderID first, then
+                // Business PhoneNumber. A legacy (no explicit Business)
+                // caller keeps the original unconditional-accept behavior
+                // unchanged — this fallback never performed a user_id-
+                // scoped check either, so introducing one now would be a
+                // legacy behavior change, not a Business-tenancy fix.
+                if ($businessId !== null) {
+                    if ($errorResponse = $this->validateQuickSendOriginatorValue($user, $businessId, $sender_id, $capabilities_type, $db_sms_type)) {
+                        return $errorResponse;
+                    }
+                }
             }
 
             if (BlockSenderId::where('sender_id', $sender_id)->exists()) {
@@ -2726,6 +2755,118 @@
                 'sms_type'  => $sms_type,
                 'user_id'   => $user->id,
             ]);
+        }
+
+        /**
+         * Correction 2 — the Business-aware originator invariant for a
+         * single scalar sender_id/phone_number value (checkQuickSendValidation()):
+         * the selected Business is authoritative, so a submitted value is
+         * tried as a Business SenderID first, then as a Business
+         * PhoneNumber (matching this method's existing scalar fallback
+         * convention) — never falling back to "not found in the loop
+         * means okay". Returns a ready-to-send error JsonResponse, or
+         * null when the value is valid for the given scope.
+         */
+        private function validateQuickSendOriginatorValue($user, ?int $businessId, $senderId, string $capabilitiesType, string $dbSmsType): ?JsonResponse
+        {
+            $check_sender_id = ($businessId !== null
+                    ? Senderid::where('business_id', $businessId)
+                    : Senderid::where('user_id', $user->id))
+                ->where('sender_id', $senderId)->where('status', 'active')->first();
+
+            if ($check_sender_id) {
+                return null;
+            }
+
+            $number = ($businessId !== null
+                    ? PhoneNumbers::where('business_id', $businessId)
+                    : PhoneNumbers::where('user_id', $user->id))
+                ->where('number', $senderId)->where('status', 'assigned')->first();
+
+            if ( ! $number) {
+                return response()->json([
+                    'status'  => 'error',
+                    'message' => __('locale.sender_id.sender_id_invalid', ['sender_id' => $senderId]),
+                ]);
+            }
+
+            if ( ! str_contains($number->capabilities, $capabilitiesType)) {
+                return response()->json([
+                    'status'  => 'error',
+                    'message' => __('locale.sender_id.sender_id_sms_capabilities', ['sender_id' => $senderId, 'type' => $dbSmsType]),
+                ]);
+            }
+
+            return null;
+        }
+
+        /**
+         * Correction 2 — the Business-aware SenderID membership invariant
+         * for an array of submitted values (validateCampaignBuilder()):
+         * every submitted SenderID must be positively found among the
+         * selected Business's own active SenderIDs. Returns a
+         * ready-to-send error JsonResponse for the first foreign/invalid
+         * value, or null when every submitted value belongs to the
+         * Business.
+         */
+        private function validateBusinessSenderIds(int $businessId, array $submittedSenderIds): ?JsonResponse
+        {
+            $validSenderIds = Senderid::where('business_id', $businessId)
+                ->where('status', 'active')
+                ->pluck('sender_id')
+                ->all();
+
+            $invalid = array_diff($submittedSenderIds, $validSenderIds);
+
+            if (count($invalid)) {
+                return response()->json([
+                    'status'  => 'error',
+                    'message' => __('locale.sender_id.sender_id_invalid', ['sender_id' => reset($invalid)]),
+                ]);
+            }
+
+            return null;
+        }
+
+        /**
+         * Correction 2 — the Business-aware PhoneNumber membership +
+         * capability invariant for an array of submitted values
+         * (validateCampaignBuilder()): every submitted number must be
+         * positively found among the selected Business's own assigned
+         * numbers (a foreign number never appearing in a capability-only
+         * scan is NOT the same as it being valid), and every found number
+         * must support the requested capability. Returns a ready-to-send
+         * error JsonResponse for the first missing/incapable value, or
+         * null when every submitted value belongs to the Business and
+         * supports the capability.
+         */
+        private function validateBusinessPhoneNumbers(int $businessId, array $submittedNumbers, string $capabilitiesType, string $smsType): ?JsonResponse
+        {
+            $businessNumbers = PhoneNumbers::where('business_id', $businessId)
+                ->where('status', 'assigned')
+                ->whereIn('number', $submittedNumbers)
+                ->get();
+
+            $foundNumbers = $businessNumbers->pluck('number')->all();
+            $missing      = array_diff($submittedNumbers, $foundNumbers);
+
+            if (count($missing)) {
+                return response()->json([
+                    'status'  => 'error',
+                    'message' => __('locale.sender_id.sender_id_invalid', ['sender_id' => reset($missing)]),
+                ]);
+            }
+
+            foreach ($businessNumbers as $number) {
+                if ( ! str_contains($number->capabilities, $capabilitiesType)) {
+                    return response()->json([
+                        'status'  => 'error',
+                        'message' => __('locale.sender_id.sender_id_sms_capabilities', ['sender_id' => $number->number, 'type' => $smsType]),
+                    ]);
+                }
+            }
+
+            return null;
         }
 
     }
