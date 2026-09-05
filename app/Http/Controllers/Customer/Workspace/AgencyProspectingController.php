@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Customer\Workspace;
 
 use App\Enums\AgencyProspecting\AgencyProspectCampaignStatus;
+use App\Enums\AgencyProspecting\AgencyProspectStage;
 use App\Enums\AgencyProspecting\AgencyProspectStatus;
 use App\Enums\Entitlement\PlatformFeature;
 use App\Enums\Workspace\WorkspaceMembershipRole;
@@ -21,6 +22,8 @@ use Illuminate\Contracts\View\View;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\Rule;
 
 /**
  * Agency AI Prospecting foundation — a Workspace-level (never Business-
@@ -116,10 +119,21 @@ class AgencyProspectingController extends CustomerBaseController
     {
         $workspace = $this->resolveEntitledWorkspace($workspaceUid);
 
+        // Correction 1 — a phone number identifies at most one prospect
+        // inside one Workspace (agency_prospects.unique(workspace_id,
+        // phone)). Validating this here surfaces a normal validation
+        // error instead of an unhandled database integrity exception; the
+        // uniqueness check is exact-stored-value, matching the migration
+        // (see its own docblock for why no E.164 normalization is applied
+        // here — no canonical normalizer exists anywhere in this
+        // repository today).
         $validated = $request->validate([
             'company_name' => ['required', 'string', 'max:255'],
             'contact_name' => ['nullable', 'string', 'max:255'],
-            'phone' => ['required', 'string', 'max:32'],
+            'phone' => [
+                'required', 'string', 'max:32',
+                Rule::unique('agency_prospects', 'phone')->where('workspace_id', $workspace->id),
+            ],
             'email' => ['nullable', 'email', 'max:255'],
             'website' => ['nullable', 'string', 'max:2048'],
             'source' => ['nullable', 'string', 'max:255'],
@@ -154,17 +168,27 @@ class AgencyProspectingController extends CustomerBaseController
      * this action can never suppress the same phone number for a
      * different Workspace's prospecting, and never touches any Business's
      * own CRM Blacklist — a completely separate table this controller
-     * never references.
+     * never references. Correction 1 — every existing campaign
+     * membership for this prospect is synchronized to the terminal
+     * AgencyProspectStage::StoppedOptOut stage in the same transaction,
+     * so no membership is ever left contradicting its own prospect's
+     * terminal state before the responder engine exists to reconcile it.
+     * Memberships are updated, never deleted — attribution/history is
+     * preserved.
      */
     public function stopProspect(string $workspaceUid, AgencyProspect $prospect): RedirectResponse
     {
         $workspace = $this->resolveEntitledWorkspace($workspaceUid);
         $this->resolveWorkspaceProspect($workspace, $prospect);
 
-        $prospect->update([
-            'status' => AgencyProspectStatus::Stopped->value,
-            'stopped_at' => now(),
-        ]);
+        DB::transaction(function () use ($prospect): void {
+            $prospect->update([
+                'status' => AgencyProspectStatus::Stopped->value,
+                'stopped_at' => now(),
+            ]);
+
+            $prospect->campaignMemberships()->update(['stage' => AgencyProspectStage::StoppedOptOut->value]);
+        });
 
         return redirect()
             ->route('customer.workspaces.prospecting.prospects.show', [$workspaceUid, $prospect->uid])
@@ -176,16 +200,23 @@ class AgencyProspectingController extends CustomerBaseController
      * foundation pass): no automatic booking-linkage exists yet — no
      * calendar/booking model of any kind exists anywhere in this
      * codebase — so this is an explicit, human-initiated correction only.
+     * Correction 1 — every existing campaign membership for this prospect
+     * is synchronized to AgencyProspectStage::Booked in the same
+     * transaction, mirroring stopProspect()'s discipline exactly.
      */
     public function markProspectBooked(string $workspaceUid, AgencyProspect $prospect): RedirectResponse
     {
         $workspace = $this->resolveEntitledWorkspace($workspaceUid);
         $this->resolveWorkspaceProspect($workspace, $prospect);
 
-        $prospect->update([
-            'status' => AgencyProspectStatus::Booked->value,
-            'booked_at' => now(),
-        ]);
+        DB::transaction(function () use ($prospect): void {
+            $prospect->update([
+                'status' => AgencyProspectStatus::Booked->value,
+                'booked_at' => now(),
+            ]);
+
+            $prospect->campaignMemberships()->update(['stage' => AgencyProspectStage::Booked->value]);
+        });
 
         return redirect()
             ->route('customer.workspaces.prospecting.prospects.show', [$workspaceUid, $prospect->uid])
@@ -261,7 +292,11 @@ class AgencyProspectingController extends CustomerBaseController
      * prospect with a campaign. Both the campaign (route-bound) and the
      * submitted prospect uid are independently re-authorized against this
      * same Workspace; a foreign-Workspace prospect uid fails exactly like
-     * an unknown one.
+     * an unknown one. Correction 1 — a terminal-status prospect (Stopped
+     * or Booked) must never be newly enrolled: the UI's own enrollable-
+     * prospect chooser already filters to Active only, but that is
+     * display convenience, not enforcement, so this is checked here
+     * server-side regardless of what was submitted.
      */
     public function enrollProspect(Request $request, string $workspaceUid, AgencyProspectCampaign $campaign): RedirectResponse
     {
@@ -276,6 +311,12 @@ class AgencyProspectingController extends CustomerBaseController
 
         if ($prospect === null || (int) $prospect->workspace_id !== (int) $workspace->id) {
             abort(404);
+        }
+
+        if ($prospect->status !== AgencyProspectStatus::Active) {
+            return redirect()
+                ->route('customer.workspaces.prospecting.campaigns.show', [$workspaceUid, $campaign->uid])
+                ->with('flash_error', 'Only active prospects can be enrolled.');
         }
 
         AgencyProspectCampaignMember::firstOrCreate(
@@ -333,18 +374,24 @@ class AgencyProspectingController extends CustomerBaseController
     // -----------------------------------------------------------------
 
     /**
-     * The sole resolver for every action: BOTH the Workspace-role
-     * invariant (owner or active Admin; Staff denied by default) AND the
-     * independent RFC-004 entitlement decision must pass. Centralizing
-     * both checks here means the invariant cannot drift between actions —
-     * the same discipline B2's resolveOwnedConnection() correction
-     * established for its own connection-specific actions.
+     * The sole resolver for every action: the Workspace must exist and be
+     * active (Workspace.is_active is independent of, and never inferred
+     * from, WorkspacePlanAssignment.status — WorkspaceRepository::
+     * allForUser() deliberately returns a Workspace regardless of its own
+     * active state, so this boundary enforces is_active itself rather
+     * than relying on that repository), the actor must hold the
+     * Workspace-role invariant (owner or active Admin; Staff denied by
+     * default), AND the independent RFC-004 entitlement decision must
+     * pass. Centralizing all three checks here means the invariant cannot
+     * drift between actions — the same discipline B2's
+     * resolveOwnedConnection() correction established for its own
+     * connection-specific actions.
      */
     private function resolveEntitledWorkspace(string $workspaceUid): Workspace
     {
         $workspace = $this->workspaceRepository->findByUid($workspaceUid);
 
-        if ($workspace === null || ! $this->hasProspectingRole($workspace, (int) Auth::id())) {
+        if ($workspace === null || ! $workspace->is_active || ! $this->hasProspectingRole($workspace, (int) Auth::id())) {
             abort(404);
         }
 
@@ -401,6 +448,7 @@ class AgencyProspectingController extends CustomerBaseController
         $userId = (int) Auth::id();
 
         return $this->workspaceRepository->allForUser($userId)
+            ->filter(fn (Workspace $workspace) => $workspace->is_active)
             ->filter(fn (Workspace $workspace) => $this->hasProspectingRole($workspace, $userId))
             ->filter(fn (Workspace $workspace) => $this->entitlementManager
                 ->decideForWorkspace($workspace, PlatformFeature::ProspectOutreach->value)->allowed)

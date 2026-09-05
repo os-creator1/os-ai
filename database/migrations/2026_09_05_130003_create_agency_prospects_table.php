@@ -17,6 +17,19 @@
      * never touches). No automatic transition to `stopped`/`booked` is
      * wired in this foundation pass — both are set only by an explicit,
      * human-initiated action.
+     *
+     * Correction 1 — `unique(workspace_id, phone)` enforces the locked
+     * invariant that a phone number identifies at most one prospect
+     * inside one Workspace (the same phone may still independently exist
+     * in a different Workspace — opt-out isolation is Workspace-scoped,
+     * not global). This is exact-stored-value uniqueness, not E.164-
+     * normalized: no canonical phone-normalization seam exists anywhere
+     * in this repository today (only the scattered, non-reusable
+     * `preg_replace('/\D+/', '', $phone)` idiom, and App\Rules\Phone,
+     * which validates shape only and returns no normalized value) — see
+     * AgencyProspectingController::storeProspect()'s matching validation
+     * rule for the same reasoning. Canonical E.164 normalization is
+     * deferred to the future provider/responder integration pass.
      */
     return new class extends Migration {
         public function up(): void
@@ -38,7 +51,7 @@
                 $table->timestamps();
 
                 $table->index('workspace_id');
-                $table->index(['workspace_id', 'phone']);
+                $table->unique(['workspace_id', 'phone']);
                 $table->index(['workspace_id', 'status']);
             });
         }

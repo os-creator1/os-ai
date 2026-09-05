@@ -4,6 +4,7 @@ namespace App\Library\Entitlement;
 
 use App\Enums\Entitlement\PlatformFeature;
 use App\Enums\Entitlement\PlatformFeatureAvailability;
+use App\Enums\Entitlement\PlatformFeatureScope;
 
 /**
  * Code-backed, static implementation-availability authority (RFC-004 §11),
@@ -49,6 +50,18 @@ final class PlatformFeatureRegistry
         PlatformFeature::AgencyPackageCapabilities->value => PlatformFeatureAvailability::Planned,
     ];
 
+    /**
+     * Correction 1 — the single source of feature-scope truth. Every key
+     * absent here defaults to Business scope (the overwhelming majority
+     * and every case that predates this correction); ProspectOutreach is
+     * the sole Workspace-scoped exception. Never consulted for identity
+     * (PlatformFeature) or implementation-availability (AVAILABILITY
+     * above) — a third, independent, orthogonal concern.
+     */
+    private const SCOPE = [
+        PlatformFeature::ProspectOutreach->value => PlatformFeatureScope::Workspace,
+    ];
+
     public static function isKnown(string $featureKey): bool
     {
         return PlatformFeature::tryFrom($featureKey) !== null;
@@ -58,5 +71,15 @@ final class PlatformFeatureRegistry
     {
         return self::isKnown($featureKey)
             && (self::AVAILABILITY[$featureKey] ?? null) === PlatformFeatureAvailability::Available;
+    }
+
+    public static function isWorkspaceScoped(string $featureKey): bool
+    {
+        return (self::SCOPE[$featureKey] ?? PlatformFeatureScope::Business) === PlatformFeatureScope::Workspace;
+    }
+
+    public static function isBusinessScoped(string $featureKey): bool
+    {
+        return ! self::isWorkspaceScoped($featureKey);
     }
 }

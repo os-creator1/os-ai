@@ -120,6 +120,16 @@ final class EntitlementManager
             return new EntitlementDecision(false, 'platform_feature_unavailable');
         }
 
+        // Correction 1 — a Workspace-scoped feature (ProspectOutreach) has
+        // no owning Business at all; it must never be treated as an
+        // ordinary Business-entitled feature just because it is
+        // Available. This denies before the Business is even looked up,
+        // so a Workspace-scoped feature can never surface a Business-
+        // existence/mismatch exception either.
+        if (! PlatformFeatureRegistry::isBusinessScoped($feature->value)) {
+            return new EntitlementDecision(false, 'wrong_feature_scope');
+        }
+
         $currentBusiness = $this->businessRepository->findById($business->id);
 
         if ($currentBusiness === null) {
@@ -207,6 +217,16 @@ final class EntitlementManager
 
         if (! PlatformFeatureRegistry::isAvailable($feature->value)) {
             return new EntitlementDecision(false, 'platform_feature_unavailable');
+        }
+
+        // Correction 1 — this method exists solely for Workspace-scoped
+        // features with no owning Business (ProspectOutreach today). It
+        // must never become a generic bypass around decide() for an
+        // ordinary Business-scoped feature (Crm, Conversations,
+        // Automations, ...), which would silently skip decide()'s
+        // Business-toggle and usage-authorization steps.
+        if (! PlatformFeatureRegistry::isWorkspaceScoped($feature->value)) {
+            return new EntitlementDecision(false, 'wrong_feature_scope');
         }
 
         $assignment = $this->assignmentRepository->findByWorkspaceId((int) $workspace->id);
@@ -396,6 +416,15 @@ final class EntitlementManager
 
         foreach (PlatformFeature::cases() as $feature) {
             if (! PlatformFeatureRegistry::isAvailable($feature->value)) {
+                continue;
+            }
+
+            // Correction 1 — this API returns Business-addressable feature
+            // decisions only. A Workspace-scoped feature (ProspectOutreach)
+            // is never a Business's own feature to view, toggle, or
+            // disable, so it is excluded here entirely rather than
+            // appearing with a denied decision.
+            if (! PlatformFeatureRegistry::isBusinessScoped($feature->value)) {
                 continue;
             }
 
@@ -1052,6 +1081,14 @@ final class EntitlementManager
     // Business feature toggles
     // =====================================================================
 
+    /**
+     * Correction 1 — a Workspace-scoped feature (ProspectOutreach) can
+     * never receive a business_feature_toggles row here: decide()'s own
+     * wrong_feature_scope denial (never reaching the toggle-repository
+     * write below) is the single, central scope authority this relies on
+     * — never a separate, duplicated feature-key check that could drift
+     * from decide()'s own rule.
+     */
     public function disableBusinessFeature(Business $business, PlatformFeature $feature, int $actorUserId, ?string $reason = null): BusinessFeatureToggle
     {
         return DB::transaction(function () use ($business, $feature, $actorUserId, $reason) {

@@ -162,4 +162,21 @@ class EntitlementManagerWorkspaceFeatureDecisionTest extends TestCase
         $this->assertFalse($decision->allowed);
         $this->assertSame('platform_feature_unknown', $decision->reason);
     }
+
+    /**
+     * Correction 1 — decideForWorkspace() must never become a generic
+     * bypass around decide() for an ordinary Business-scoped feature: a
+     * wrong-scope request (Crm, which is Business-scoped) must
+     * deterministically deny, never silently skip decide()'s Business-
+     * toggle/usage-authorization steps.
+     */
+    public function test_business_scoped_feature_is_rejected_as_wrong_scope(): void
+    {
+        $workspace = $this->createWorkspace(WorkspacePlanTier::Agency);
+
+        $decision = app(EntitlementManager::class)->decideForWorkspace($workspace, PlatformFeature::Crm->value);
+
+        $this->assertFalse($decision->allowed);
+        $this->assertSame('wrong_feature_scope', $decision->reason);
+    }
 }

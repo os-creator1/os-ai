@@ -139,6 +139,48 @@ class AgencyProspectingTest extends TestCase
     }
 
     // -----------------------------------------------------------------
+    // Correction 1 — Workspace.is_active must independently gate every
+    // action, in addition to (never instead of) Workspace-role authority
+    // and WorkspacePlanAssignment.status. WorkspaceRepository::allForUser()
+    // deliberately returns a Workspace regardless of its own active
+    // state, so this boundary must enforce is_active itself.
+    // -----------------------------------------------------------------
+
+    public function test_inactive_agency_workspace_owner_is_denied(): void
+    {
+        [$owner, $workspace] = $this->agencyWorkspace();
+        $workspace->update(['is_active' => false]);
+
+        $this->authenticateAsCustomer($owner);
+
+        $this->get(route('customer.workspaces.prospecting.overview', $workspace->uid))->assertStatus(404);
+    }
+
+    public function test_inactive_agency_workspace_active_admin_is_denied(): void
+    {
+        [, $workspace] = $this->agencyWorkspace();
+        $admin = $this->createCustomerUser();
+        $this->makeMembership($workspace, $admin, WorkspaceMembershipRole::Admin, true);
+        $workspace->update(['is_active' => false]);
+
+        $this->authenticateAsCustomer($admin);
+
+        $this->get(route('customer.workspaces.prospecting.overview', $workspace->uid))->assertStatus(404);
+    }
+
+    public function test_reactivated_agency_workspace_becomes_reachable_again(): void
+    {
+        [$owner, $workspace] = $this->agencyWorkspace();
+        $workspace->update(['is_active' => false]);
+        $this->authenticateAsCustomer($owner);
+        $this->get(route('customer.workspaces.prospecting.overview', $workspace->uid))->assertStatus(404);
+
+        $workspace->update(['is_active' => true]);
+
+        $this->get(route('customer.workspaces.prospecting.overview', $workspace->uid))->assertOk();
+    }
+
+    // -----------------------------------------------------------------
     // Entry/selector route.
     // -----------------------------------------------------------------
 
@@ -156,6 +198,18 @@ class AgencyProspectingTest extends TestCase
         [$owner] = $this->workspaceOnTier(WorkspacePlanTier::Core);
         $this->authenticateAsCustomer($owner);
 
+        $this->get(route('customer.prospecting.index'))->assertOk();
+    }
+
+    public function test_entry_route_never_offers_or_redirects_into_an_inactive_workspace(): void
+    {
+        [$owner, $workspace] = $this->agencyWorkspace();
+        $workspace->update(['is_active' => false]);
+        $this->authenticateAsCustomer($owner);
+
+        // Not a redirect into the (inactive) overview — a 302 here would
+        // mean the inactive Workspace was wrongly offered as the sole
+        // accessible one.
         $this->get(route('customer.prospecting.index'))->assertOk();
     }
 
@@ -297,6 +351,126 @@ class AgencyProspectingTest extends TestCase
         $this->assertNotNull($member);
         $this->assertSame($workspace->id, $member->workspace_id);
         $this->assertSame(1, $member->stage->value);
+    }
+
+    // -----------------------------------------------------------------
+    // Correction 1 — a terminal-status prospect (Stopped/Booked) must
+    // never be newly enrolled, server-side, regardless of what a forged
+    // request submits.
+    // -----------------------------------------------------------------
+
+    public function test_stopped_prospect_cannot_be_enrolled(): void
+    {
+        [$owner, $workspace] = $this->agencyWorkspace();
+        $campaign = $this->createCampaign($workspace);
+        $prospect = $this->createProspect($workspace, ['status' => 'stopped', 'stopped_at' => now()]);
+
+        $this->authenticateAsCustomer($owner);
+
+        $this->post(route('customer.workspaces.prospecting.campaigns.members.store', [$workspace->uid, $campaign->uid]), [
+            'prospect_uid' => $prospect->uid,
+        ])->assertSessionHas('flash_error');
+
+        $this->assertSame(0, AgencyProspectCampaignMember::where('campaign_id', $campaign->id)->count());
+    }
+
+    public function test_booked_prospect_cannot_be_enrolled(): void
+    {
+        [$owner, $workspace] = $this->agencyWorkspace();
+        $campaign = $this->createCampaign($workspace);
+        $prospect = $this->createProspect($workspace, ['status' => 'booked', 'booked_at' => now()]);
+
+        $this->authenticateAsCustomer($owner);
+
+        $this->post(route('customer.workspaces.prospecting.campaigns.members.store', [$workspace->uid, $campaign->uid]), [
+            'prospect_uid' => $prospect->uid,
+        ])->assertSessionHas('flash_error');
+
+        $this->assertSame(0, AgencyProspectCampaignMember::where('campaign_id', $campaign->id)->count());
+    }
+
+    // -----------------------------------------------------------------
+    // Correction 1 — duplicate phone identity within one Workspace.
+    // -----------------------------------------------------------------
+
+    public function test_a_second_prospect_with_the_same_phone_in_the_same_workspace_is_rejected(): void
+    {
+        [$owner, $workspace] = $this->agencyWorkspace();
+        $this->createProspect($workspace, ['phone' => '15559998888']);
+        $this->authenticateAsCustomer($owner);
+
+        $this->post(route('customer.workspaces.prospecting.prospects.store', $workspace->uid), [
+            'company_name' => 'Duplicate Co',
+            'phone' => '15559998888',
+        ])->assertSessionHasErrors(['phone']);
+
+        $this->assertSame(1, AgencyProspect::where('workspace_id', $workspace->id)->where('phone', '15559998888')->count());
+    }
+
+    public function test_the_same_phone_in_a_different_workspace_is_allowed(): void
+    {
+        [$ownerA, $workspaceA] = $this->agencyWorkspace();
+        [, $workspaceB] = $this->agencyWorkspace();
+        $this->createProspect($workspaceB, ['phone' => '15557778888']);
+
+        $this->authenticateAsCustomer($ownerA);
+
+        $this->post(route('customer.workspaces.prospecting.prospects.store', $workspaceA->uid), [
+            'company_name' => 'Workspace A Co',
+            'phone' => '15557778888',
+        ])->assertSessionHas('flash_success');
+
+        $this->assertSame(1, AgencyProspect::where('workspace_id', $workspaceA->id)->where('phone', '15557778888')->count());
+        $this->assertSame(1, AgencyProspect::where('workspace_id', $workspaceB->id)->where('phone', '15557778888')->count());
+    }
+
+    // -----------------------------------------------------------------
+    // Correction 1 — stopping/booking a prospect synchronizes every
+    // existing campaign membership to the matching terminal stage,
+    // atomically, without affecting any other Workspace.
+    // -----------------------------------------------------------------
+
+    public function test_stopping_a_prospect_moves_every_membership_to_the_stopped_stage(): void
+    {
+        [$owner, $workspace] = $this->agencyWorkspace();
+        [, $otherWorkspace] = $this->agencyWorkspace();
+        $prospect = $this->createProspect($workspace);
+        $campaignOne = $this->createCampaign($workspace, ['name' => 'Campaign One']);
+        $campaignTwo = $this->createCampaign($workspace, ['name' => 'Campaign Two']);
+        $memberOne = AgencyProspectCampaignMember::create(['workspace_id' => $workspace->id, 'campaign_id' => $campaignOne->id, 'prospect_id' => $prospect->id, 'stage' => 1, 'enrolled_at' => now()]);
+        $memberTwo = AgencyProspectCampaignMember::create(['workspace_id' => $workspace->id, 'campaign_id' => $campaignTwo->id, 'prospect_id' => $prospect->id, 'stage' => 3, 'enrolled_at' => now()]);
+
+        $this->authenticateAsCustomer($owner);
+
+        $this->post(route('customer.workspaces.prospecting.prospects.stop', [$workspace->uid, $prospect->uid]))
+            ->assertSessionHas('flash_success');
+
+        $this->assertSame('stopped', $prospect->fresh()->status->value);
+        $this->assertSame(99, $memberOne->fresh()->stage->value);
+        $this->assertSame(99, $memberTwo->fresh()->stage->value);
+        $this->assertSame(0, Blacklists::count());
+        $this->assertSame(0, AgencyProspect::where('workspace_id', $otherWorkspace->id)->count());
+    }
+
+    public function test_marking_a_prospect_booked_moves_every_membership_to_the_booked_stage(): void
+    {
+        [$owner, $workspace] = $this->agencyWorkspace();
+        [, $otherWorkspace] = $this->agencyWorkspace();
+        $prospect = $this->createProspect($workspace);
+        $campaignOne = $this->createCampaign($workspace, ['name' => 'Campaign One']);
+        $campaignTwo = $this->createCampaign($workspace, ['name' => 'Campaign Two']);
+        $memberOne = AgencyProspectCampaignMember::create(['workspace_id' => $workspace->id, 'campaign_id' => $campaignOne->id, 'prospect_id' => $prospect->id, 'stage' => 1, 'enrolled_at' => now()]);
+        $memberTwo = AgencyProspectCampaignMember::create(['workspace_id' => $workspace->id, 'campaign_id' => $campaignTwo->id, 'prospect_id' => $prospect->id, 'stage' => 4, 'enrolled_at' => now()]);
+
+        $this->authenticateAsCustomer($owner);
+
+        $this->post(route('customer.workspaces.prospecting.prospects.mark-booked', [$workspace->uid, $prospect->uid]))
+            ->assertSessionHas('flash_success');
+
+        $this->assertSame('booked', $prospect->fresh()->status->value);
+        $this->assertSame(6, $memberOne->fresh()->stage->value);
+        $this->assertSame(6, $memberTwo->fresh()->stage->value);
+        $this->assertSame(0, AgencyProspect::where('workspace_id', $otherWorkspace->id)->count());
     }
 
     // -----------------------------------------------------------------

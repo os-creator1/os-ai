@@ -268,4 +268,31 @@ class EntitlementManagerBusinessToggleTest extends TestCase
 
         $this->assertNotNull($toggle->id);
     }
+
+    /**
+     * Correction 1 — ProspectOutreach is Workspace-scoped only. Even a
+     * genuine Workspace owner on an Agency-tier plan (truly entitled to
+     * ProspectOutreach at the Workspace level) must never be able to
+     * create a business_feature_toggles row for it — decide()'s own
+     * wrong_feature_scope denial rejects this before any toggle write,
+     * the same central authority every other feature relies on.
+     */
+    public function test_prospect_outreach_toggle_attempt_is_rejected_and_creates_no_row(): void
+    {
+        $owner = $this->createUser();
+        $workspace = Workspace::create(['name' => 'Agency Workspace', 'owner_user_id' => $owner->id, 'is_active' => true]);
+        app(EntitlementManager::class)->assignFirstPlan($workspace, WorkspacePlanTier::Agency, $this->createAdmin(), 'Fixture.', true, 0);
+        $customer = Customer::create(['user_id' => $owner->id]);
+        $business = app(BusinessRepository::class)->createForCustomerInWorkspace($customer, $workspace, [
+            'name' => 'Agency Test Business', 'industry' => 'photo_booth_service', 'country_code' => 'US', 'timezone' => 'America/New_York', 'currency_code' => 'USD',
+        ]);
+
+        $this->expectException(RuntimeException::class);
+
+        try {
+            app(EntitlementManager::class)->disableBusinessFeature($business->fresh(), PlatformFeature::ProspectOutreach, $workspace->owner_user_id);
+        } finally {
+            $this->assertDatabaseMissing('business_feature_toggles', ['business_id' => $business->id, 'feature_key' => 'prospect_outreach']);
+        }
+    }
 }

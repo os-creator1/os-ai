@@ -28,6 +28,14 @@ class EntitlementManagerNineKeySurfaceUnchangedTest extends TestCase
     use RefreshDatabase;
     use CreatesBusinessTestData;
 
+    /**
+     * Correction 1 — Agency AI Prospecting added a tenth decide() denial
+     * reason, 'wrong_feature_scope' (a Workspace-scoped feature, i.e.
+     * ProspectOutreach, submitted to decide()). The original nine keys
+     * this class is named for are still exactly unchanged among
+     * themselves; this list is extended, not redesigned, to keep this
+     * sanity check accurate rather than silently stale.
+     */
     private const NINE_KEYS = [
         'platform_feature_unknown',
         'platform_feature_unavailable',
@@ -38,11 +46,12 @@ class EntitlementManagerNineKeySurfaceUnchangedTest extends TestCase
         'plan_suspended',
         'plan_inactive',
         'usage_unauthorized',
+        'wrong_feature_scope',
     ];
 
     public function test_nine_denial_keys_are_unchanged(): void
     {
-        $this->assertCount(9, self::NINE_KEYS);
+        $this->assertCount(10, self::NINE_KEYS);
     }
 
     public function test_decide_outcome_identical_across_both_gateway_bindings_for_every_feature(): void

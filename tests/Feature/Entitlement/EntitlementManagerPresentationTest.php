@@ -244,7 +244,7 @@ class EntitlementManagerPresentationTest extends TestCase
         $this->assertTrue($result[PlatformFeature::Crm->value]['decision']->allowed);
     }
 
-    public function test_planned_feature_keys_are_never_present_in_the_returned_map(): void
+    public function test_planned_and_wrong_scope_feature_keys_are_never_present_in_the_returned_map(): void
     {
         ['workspace' => $workspace, 'business' => $business] = $this->createWorkspaceWithBusiness();
 
@@ -252,16 +252,58 @@ class EntitlementManagerPresentationTest extends TestCase
 
         $this->assertArrayNotHasKey(PlatformFeature::Calendar->value, $result);
 
-        // Agency AI Prospecting foundation pass: ProspectOutreach is now
-        // Available (PlatformFeatureRegistry), so decideAvailableFeaturesForBusiness()
-        // correctly includes it here like any other Available feature —
-        // this fixture's Workspace is on Core, which does not package
-        // prospect_outreach, so the decision itself is still not allowed.
-        $this->assertArrayHasKey(PlatformFeature::ProspectOutreach->value, $result);
-        $this->assertFalse($result[PlatformFeature::ProspectOutreach->value]['decision']->allowed);
-        $this->assertSame('not_entitled_by_plan', $result[PlatformFeature::ProspectOutreach->value]['decision']->reason);
+        // Correction 1 — ProspectOutreach is Available but Workspace-
+        // scoped only (PlatformFeatureRegistry::isWorkspaceScoped()): this
+        // API returns Business-addressable feature decisions only, so a
+        // Workspace-scoped feature must never appear here, Agency plan or
+        // not, allowed or not.
+        $this->assertArrayNotHasKey(PlatformFeature::ProspectOutreach->value, $result);
 
-        $this->assertCount(4, $result);
+        $this->assertCount(3, $result);
+    }
+
+    /**
+     * @return array{workspace: Workspace, business: Business}
+     */
+    private function createWorkspaceWithBusinessOnTier(WorkspacePlanTier $tier): array
+    {
+        $owner = User::create([
+            'first_name' => 'Owner', 'last_name' => 'User',
+            'email' => 'owner' . uniqid('', true) . '@example.test',
+            'status' => true, 'is_admin' => false, 'is_customer' => true, 'active_portal' => 'customer',
+        ]);
+        $customer = Customer::create(['user_id' => $owner->id]);
+        $workspace = Workspace::create(['name' => 'Test Workspace', 'owner_user_id' => $owner->id, 'is_active' => true]);
+        $business = app(BusinessRepository::class)->createForCustomerInWorkspace($customer, $workspace, [
+            'name' => 'Test Business', 'industry' => 'photo_booth_service',
+            'country_code' => 'US', 'timezone' => 'America/New_York', 'currency_code' => 'USD',
+        ]);
+
+        app(EntitlementManager::class)->assignFirstPlan($workspace, $tier, $this->createAdmin(), 'Fixture assignment.', true, 0);
+
+        return ['workspace' => $workspace->fresh(), 'business' => $business->fresh()];
+    }
+
+    public function test_prospect_outreach_is_never_present_in_the_business_map_on_growth(): void
+    {
+        ['workspace' => $workspace, 'business' => $business] = $this->createWorkspaceWithBusinessOnTier(WorkspacePlanTier::Growth);
+
+        $result = app(EntitlementManager::class)->decideAvailableFeaturesForBusiness($workspace, $business, $this->createAdmin());
+
+        $this->assertArrayNotHasKey(PlatformFeature::ProspectOutreach->value, $result);
+    }
+
+    public function test_prospect_outreach_is_never_present_in_the_business_map_on_agency(): void
+    {
+        ['workspace' => $workspace, 'business' => $business] = $this->createWorkspaceWithBusinessOnTier(WorkspacePlanTier::Agency);
+
+        $result = app(EntitlementManager::class)->decideAvailableFeaturesForBusiness($workspace, $business, $this->createAdmin());
+
+        // Even though this Workspace is genuinely entitled to
+        // ProspectOutreach at the Workspace level, it must never appear
+        // in a Business's own feature map — Agency Prospecting is not one
+        // of this (or any) Business's own features.
+        $this->assertArrayNotHasKey(PlatformFeature::ProspectOutreach->value, $result);
     }
 
     public function test_stale_or_reassigned_business_returns_an_empty_map(): void
