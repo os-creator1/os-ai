@@ -66,7 +66,10 @@
                 $contactGroups->customer_id = $input['user_id'];
             }
 
-            $contactGroups->business_id = app(\App\Library\Business\LegacyBusinessResolver::class)->resolveForCustomer((int) $contactGroups->customer_id)?->id;
+            // Pass 2 — an explicit selected Business (Business-addressable
+            // CRM) always wins over the LegacyBusinessResolver guess.
+            $contactGroups->business_id = $input['business_id']
+                ?? app(\App\Library\Business\LegacyBusinessResolver::class)->resolveForCustomer((int) $contactGroups->customer_id)?->id;
 
             $contactGroups->status = true;
 

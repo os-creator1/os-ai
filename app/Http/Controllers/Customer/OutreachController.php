@@ -7,8 +7,11 @@ use App\Http\Requests\Campaigns\MMSCampaignBuilderRequest;
 use App\Http\Requests\Campaigns\MMSQuickSendRequest;
 use App\Http\Requests\Campaigns\QuickSendRequest;
 use App\Library\Tool;
+use App\Library\Workspace\WorkspaceManager;
+use App\Models\Business;
 use App\Models\Campaigns;
 use App\Models\ContactGroups;
+use App\Models\Contacts;
 use App\Models\Country;
 use App\Models\CustomerBasedPricingPlan;
 use App\Models\CustomerBasedSendingServer;
@@ -19,35 +22,77 @@ use App\Models\Senderid;
 use App\Models\Templates;
 use App\Models\User;
 use App\Repositories\Contracts\CampaignRepository;
+use App\Repositories\Contracts\WorkspaceRepository;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Contracts\View\Factory;
 use Illuminate\Contracts\View\View;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Auth;
 use libphonenumber\NumberParseException;
 use libphonenumber\PhoneNumberUtil;
 
 /**
- * B1 — Outreach / Compose. A thin orchestration layer over the existing
- * Campaign send/persistence core (App\Repositories\Contracts\CampaignRepository).
- * It reuses EloquentCampaignRepository::quickSend()/campaignBuilder() unchanged,
- * and never calls quickSend() with a 3rd argument (RFC-005 conversationContext
- * stays at its default false here, matching legacy Quick Send/Campaign Builder).
+ * B1 Pass 2 — Outreach / Compose, cut over to explicit Business scope.
+ *
+ * A thin orchestration layer over the existing Campaign send/persistence
+ * core (App\Repositories\Contracts\CampaignRepository). It still reuses
+ * EloquentCampaignRepository::quickSend()/campaignBuilder()/
+ * checkQuickSendValidation() unchanged in signature — Business context is
+ * threaded through as additive $input/$sendData array keys
+ * ('business_id', 'user_id') those methods already read (or now read),
+ * never as a new method parameter, so RFC-005's
+ * QuickSendNonConversationCallersUnaffectedTest's exact-signature
+ * assertions stay intact and quickSend() is still never called with a 3rd
+ * argument.
+ *
+ * Every action resolves its Business via the exact RFC-003 §14.1
+ * boundary (WorkspaceRepository::findByUid()/businessesForWorkspace() +
+ * WorkspaceManager::userCanAccessBusiness()), mirroring
+ * Customer\Business\UsageBillingController::resolveViewableBusiness()
+ * verbatim — never business.customer_id === Auth::id().
  */
 class OutreachController extends CustomerBaseController
 {
-    protected CampaignRepository $campaigns;
-
-    public function __construct(CampaignRepository $campaigns)
-    {
-        $this->campaigns = $campaigns;
+    public function __construct(
+        private readonly CampaignRepository $campaigns,
+        private readonly WorkspaceRepository $workspaceRepository,
+        private readonly WorkspaceManager $workspaceManager,
+    ) {
     }
 
-    public function index(): View|Factory|Application|RedirectResponse
+    /**
+     * Bare /outreach entry/selector route. Never guesses a Business.
+     */
+    public function entry(): View|Factory|Application|RedirectResponse
     {
-        $user = Auth::user();
+        $accessible = $this->accessibleBusinesses();
+
+        if (count($accessible) === 0) {
+            return view('customer.Outreach.entry', ['accessible' => []]);
+        }
+
+        if (count($accessible) === 1) {
+            [$workspace, $business] = $accessible[0];
+
+            return redirect()->route('customer.workspaces.businesses.outreach.index', [$workspace->uid, $business->uid]);
+        }
+
+        return view('customer.Outreach.entry', ['accessible' => $accessible]);
+    }
+
+    /**
+     * Renamed from index() (kept by the legacy B1 controller) to avoid a
+     * fatal LSP signature-compatibility error against
+     * CustomerBaseController::index(), which takes zero parameters.
+     */
+    public function compose(string $workspaceUid, string $businessUid): View|Factory|Application|RedirectResponse
+    {
+        $business = $this->resolveAccessibleBusiness($workspaceUid, $businessUid);
+        $user     = Auth::user();
 
         $canSmsQuickSend       = $user->can('sms_quick_send');
         $canSmsCampaignBuilder = $user->can('sms_campaign_builder');
@@ -61,7 +106,7 @@ class OutreachController extends CustomerBaseController
             throw new AuthorizationException();
         }
 
-        $activeSubscription = $user->customer->activeSubscription();
+        $activeSubscription = $business->customer->activeSubscription();
         if (! $activeSubscription) {
             return redirect()->route('customer.subscriptions.index')->with([
                 'status'  => 'error',
@@ -72,18 +117,21 @@ class OutreachController extends CustomerBaseController
         $plan_id = $activeSubscription->plan_id;
         $plan    = Plan::where('status', true)->find($plan_id);
 
+        // Legacy Subscription/Plan/coverage stays Customer-level (not
+        // Business-level) by design — resolved from the selected
+        // Business's owning customer, never the acting Workspace member.
         $coverage = CustomerBasedPricingPlan::where('plan_id', $plan_id)
             ->where('status', true)
-            ->where('user_id', $user->id)
+            ->where('user_id', $business->customer_id)
             ->get();
 
         if ($coverage->count() < 1) {
             $coverage = PlansCoverageCountries::where('plan_id', $plan_id)->where('status', true)->get();
         }
 
-        $sender_ids = Senderid::where('user_id', $user->id)->where('status', 'active')->get();
+        $sender_ids = Senderid::where('business_id', $business->id)->where('status', 'active')->get();
 
-        $phoneNumbers = PhoneNumbers::where('user_id', $user->id)->where('status', 'assigned')->get();
+        $phoneNumbers = PhoneNumbers::where('business_id', $business->id)->where('status', 'assigned')->get();
 
         $smsPhoneNumbers = $phoneNumbers->filter(function ($number) {
             $caps = json_decode($number->capabilities, true);
@@ -97,11 +145,13 @@ class OutreachController extends CustomerBaseController
             return is_array($caps) && in_array('mms', $caps);
         });
 
-        $templates      = Templates::where('user_id', $user->id)->where('status', 1)->get();
-        $sendingServers = CustomerBasedSendingServer::where('user_id', $user->id)->where('status', 1)->get();
-        $contact_groups = ContactGroups::where('status', 1)->where('customer_id', $user->id)->get();
+        $templates      = Templates::where('business_id', $business->id)->where('status', 1)->get();
+        $sendingServers = CustomerBasedSendingServer::where('business_id', $business->id)->where('status', 1)->get();
+        $contact_groups = ContactGroups::where('status', 1)->where('business_id', $business->id)->get();
 
         return view('customer.Outreach.index', [
+            'workspaceUid'           => $workspaceUid,
+            'businessUid'            => $businessUid,
             'canSms'                 => $canSms,
             'canMms'                 => $canMms,
             'canSmsQuickSend'        => $canSmsQuickSend,
@@ -120,63 +170,73 @@ class OutreachController extends CustomerBaseController
         ]);
     }
 
-    public function sendSms(Campaigns $campaign, QuickSendRequest $request): RedirectResponse
+    public function sendSms(Campaigns $campaign, QuickSendRequest $request, string $workspaceUid, string $businessUid): RedirectResponse
     {
+        $business = $this->resolveAccessibleBusiness($workspaceUid, $businessUid);
+
         if (config('app.stage') === 'demo') {
-            return $this->outreachError('Sorry! This option is not available in demo mode');
+            return $this->outreachError($workspaceUid, $businessUid, 'Sorry! This option is not available in demo mode');
         }
 
-        $user               = Auth::user();
-        $customer           = $user->customer;
-        $activeSubscription = $customer->activeSubscription();
+        $activeSubscription = $business->customer->activeSubscription();
 
         if (! $activeSubscription) {
-            return $this->outreachError(__('locale.customer.no_active_subscription'));
+            return $this->outreachError($workspaceUid, $businessUid, __('locale.customer.no_active_subscription'));
         }
 
         $plan = Plan::where('status', true)->find($activeSubscription->plan_id);
         if (! $plan) {
-            return $this->outreachError(__('locale.customer.no_active_subscription'));
+            return $this->outreachError($workspaceUid, $businessUid, __('locale.customer.no_active_subscription'));
         }
+
+        $businessOwner = $business->customer->user;
 
         if (config('app.trai_dlt') && $plan->is_dlt) {
             if (empty($request->input('dlt_template_id'))) {
-                return $this->outreachError('DLT Template ID is required.');
+                return $this->outreachError($workspaceUid, $businessUid, 'DLT Template ID is required.');
             }
 
-            if (empty($user->dlt_entity_id)) {
-                return $this->outreachError('The DLT Entity ID is mandatory. Kindly reach out to the system administrator for further assistance.');
+            if (empty($businessOwner?->dlt_entity_id)) {
+                return $this->outreachError($workspaceUid, $businessUid, 'The DLT Entity ID is mandatory. Kindly reach out to the system administrator for further assistance.');
             }
         }
 
         $recipients = $this->getRecipients($request);
 
         if ($recipients->isEmpty()) {
-            return $this->outreachError(__('locale.campaigns.at_least_one_number'));
+            return $this->outreachError($workspaceUid, $businessUid, __('locale.campaigns.at_least_one_number'));
         }
 
         if ($recipients->count() > 100) {
-            return $this->outreachError(__('locale.campaigns.too_many_numbers'));
+            return $this->outreachError($workspaceUid, $businessUid, __('locale.campaigns.too_many_numbers'));
         }
 
-        $sendingServersExist = CustomerBasedSendingServer::where('user_id', $user->id)->where('status', 1)->exists();
+        $sendingServersExist = CustomerBasedSendingServer::where('business_id', $business->id)->where('status', 1)->exists();
         if ($sendingServersExist && ! $request->has('sending_server')) {
-            return $this->outreachError('Please select your sending server.');
+            return $this->outreachError($workspaceUid, $businessUid, 'Please select your sending server.');
         }
 
-        $sendData            = $request->except('_token', 'recipients', 'delimiter');
-        $sendData['message'] = str_replace("\r", '', $sendData['message']);
+        $sendData               = $request->except('_token', 'recipients', 'delimiter');
+        $sendData['message']    = str_replace("\r", '', $sendData['message']);
+        $sendData['business_id'] = $business->id;
+        $sendData['user_id']     = $business->customer_id;
 
         $validateData = $this->campaigns->checkQuickSendValidation($sendData);
         $responseData = $validateData->getData();
 
         if ($responseData->status === 'error') {
-            return $this->outreachError($responseData->message);
+            return $this->outreachError($workspaceUid, $businessUid, $responseData->message);
         }
 
         $sendData['sender_id'] = $responseData->sender_id;
         $sendData['sms_type']  = $responseData->sms_type;
         $sendData['user']      = User::find($responseData->user_id);
+
+        // The explicit Business, never the LegacyBusinessResolver, decides
+        // tenancy for this send — set it on the transient (unsaved)
+        // Campaigns instance before quickSend() so every Reports/
+        // TrackingLog row it creates inherits business_id from $this.
+        $campaign->business_id = $business->id;
 
         $errors = [];
 
@@ -214,69 +274,73 @@ class OutreachController extends CustomerBaseController
         }
 
         if (! empty($errors)) {
-            return redirect()->route('customer.outreach.index')->with([
+            return redirect()->route('customer.workspaces.businesses.outreach.index', [$workspaceUid, $businessUid])->with([
                 'status'  => 'warning',
                 'message' => implode('<br>', $errors),
             ]);
         }
 
-        return redirect()->route('customer.outreach.campaigns')->with([
+        return redirect()->route('customer.workspaces.businesses.outreach.campaigns', [$workspaceUid, $businessUid])->with([
             'status'  => 'success',
             'message' => __('locale.campaigns.message_successfully_delivered'),
         ]);
     }
 
-    public function sendMms(Campaigns $campaign, MMSQuickSendRequest $request): RedirectResponse
+    public function sendMms(Campaigns $campaign, MMSQuickSendRequest $request, string $workspaceUid, string $businessUid): RedirectResponse
     {
+        $business = $this->resolveAccessibleBusiness($workspaceUid, $businessUid);
+
         if (config('app.stage') === 'demo') {
-            return $this->outreachError('Sorry, this feature is disabled in demo version.');
+            return $this->outreachError($workspaceUid, $businessUid, 'Sorry, this feature is disabled in demo version.');
         }
 
-        $user               = Auth::user();
-        $customer           = $user->customer;
-        $activeSubscription = $customer->activeSubscription();
+        $activeSubscription = $business->customer->activeSubscription();
 
         if (! $activeSubscription) {
-            return $this->outreachError(__('locale.customer.no_active_subscription'));
+            return $this->outreachError($workspaceUid, $businessUid, __('locale.customer.no_active_subscription'));
         }
 
         $plan = Plan::where('status', true)->find($activeSubscription->plan_id);
         if (! $plan) {
-            return $this->outreachError(__('locale.customer.no_active_subscription'));
+            return $this->outreachError($workspaceUid, $businessUid, __('locale.customer.no_active_subscription'));
         }
 
         $recipients = $this->getRecipients($request);
         if ($recipients->isEmpty()) {
-            return $this->outreachError('No recipients found.');
+            return $this->outreachError($workspaceUid, $businessUid, 'No recipients found.');
         }
 
         if ($recipients->count() > 100) {
-            return $this->outreachError(__('locale.campaigns.too_many_numbers'));
+            return $this->outreachError($workspaceUid, $businessUid, __('locale.campaigns.too_many_numbers'));
         }
 
         if (! $request->hasFile('mms_file')) {
-            return $this->outreachError('MMS media file is required.');
+            return $this->outreachError($workspaceUid, $businessUid, 'MMS media file is required.');
         }
 
-        $sendData              = $request->except('_token', 'recipients', 'delimiter');
-        $sendData['media_url'] = Tool::uploadImage($request->file('mms_file'));
+        $sendData               = $request->except('_token', 'recipients', 'delimiter');
+        $sendData['media_url']  = Tool::uploadImage($request->file('mms_file'));
+        $sendData['business_id'] = $business->id;
+        $sendData['user_id']     = $business->customer_id;
 
-        $sendingServersExist = CustomerBasedSendingServer::where('user_id', $user->id)->where('status', 1)->exists();
+        $sendingServersExist = CustomerBasedSendingServer::where('business_id', $business->id)->where('status', 1)->exists();
 
         if ($sendingServersExist && ! $request->has('sending_server')) {
-            return $this->outreachError('No sending server selected.');
+            return $this->outreachError($workspaceUid, $businessUid, 'No sending server selected.');
         }
 
         $validateData = $this->campaigns->checkQuickSendValidation($sendData);
         $validated    = $validateData->getData();
 
         if ($validated->status === 'error') {
-            return $this->outreachError($validated->message);
+            return $this->outreachError($workspaceUid, $businessUid, $validated->message);
         }
 
         $sendData['sender_id'] = $validated->sender_id;
         $sendData['sms_type']  = 'mms';
         $sendData['user']      = User::find($validated->user_id);
+
+        $campaign->business_id = $business->id;
 
         $errors  = [];
         $success = [];
@@ -316,23 +380,24 @@ class OutreachController extends CustomerBaseController
         }
 
         if (! empty($errors)) {
-            return $this->outreachError(implode(' ', $errors));
+            return $this->outreachError($workspaceUid, $businessUid, implode(' ', $errors));
         }
 
-        return redirect()->route('customer.outreach.campaigns')->with([
+        return redirect()->route('customer.workspaces.businesses.outreach.campaigns', [$workspaceUid, $businessUid])->with([
             'status'  => 'info',
             'message' => implode(' ', $success),
         ]);
     }
 
-    public function storeSmsCampaign(Campaigns $campaign, CampaignBuilderRequest $request): RedirectResponse
+    public function storeSmsCampaign(Campaigns $campaign, CampaignBuilderRequest $request, string $workspaceUid, string $businessUid): RedirectResponse
     {
+        $business = $this->resolveAccessibleBusiness($workspaceUid, $businessUid);
+
         if (config('app.stage') == 'demo') {
-            return $this->outreachError('Sorry! This option is not available in demo mode');
+            return $this->outreachError($workspaceUid, $businessUid, 'Sorry! This option is not available in demo mode');
         }
 
-        $customer           = Auth::user()->customer;
-        $activeSubscription = $customer->activeSubscription();
+        $activeSubscription = $business->customer->activeSubscription();
 
         if (! $activeSubscription) {
             return redirect()->route('customer.subscriptions.index')->with([
@@ -344,37 +409,44 @@ class OutreachController extends CustomerBaseController
         $plan = Plan::where('status', true)->find($activeSubscription->plan_id);
 
         if (! $plan) {
-            return $this->outreachError('Purchased plan is not active. Please contact support team.');
+            return $this->outreachError($workspaceUid, $businessUid, 'Purchased plan is not active. Please contact support team.');
         }
+
+        $businessOwner = $business->customer->user;
 
         if (config('app.trai_dlt') && $plan->is_dlt && $request->input('dlt_template_id') == null) {
-            return $this->outreachError('DLT Template id is required');
+            return $this->outreachError($workspaceUid, $businessUid, 'DLT Template id is required');
         }
 
-        if (config('app.trai_dlt') && $activeSubscription->plan->is_dlt && Auth::user()->dlt_entity_id == null) {
-            return $this->outreachError('The DLT Entity ID is mandatory. Kindly reach out to the system administrator for further assistance');
+        if (config('app.trai_dlt') && $plan->is_dlt && empty($businessOwner?->dlt_entity_id)) {
+            return $this->outreachError($workspaceUid, $businessUid, 'The DLT Entity ID is mandatory. Kindly reach out to the system administrator for further assistance');
         }
 
-        $data = $this->campaigns->campaignBuilder($campaign, $request->except('_token'));
+        $input               = $request->except('_token');
+        $input['business_id'] = $business->id;
+        $input['user_id']     = $business->customer_id;
+
+        $data = $this->campaigns->campaignBuilder($campaign, $input);
 
         if (isset($data->getData()->status) && $data->getData()->status == 'success') {
-            return redirect()->route('customer.outreach.campaigns')->with([
+            return redirect()->route('customer.workspaces.businesses.outreach.campaigns', [$workspaceUid, $businessUid])->with([
                 'status'  => 'success',
                 'message' => $data->getData()->message,
             ]);
         }
 
-        return $this->outreachError($data->getData()->message ?? __('locale.exceptions.something_went_wrong'));
+        return $this->outreachError($workspaceUid, $businessUid, $data->getData()->message ?? __('locale.exceptions.something_went_wrong'));
     }
 
-    public function storeMmsCampaign(Campaigns $campaign, MMSCampaignBuilderRequest $request): RedirectResponse
+    public function storeMmsCampaign(Campaigns $campaign, MMSCampaignBuilderRequest $request, string $workspaceUid, string $businessUid): RedirectResponse
     {
+        $business = $this->resolveAccessibleBusiness($workspaceUid, $businessUid);
+
         if (config('app.stage') == 'demo') {
-            return $this->outreachError('Sorry! This option is not available in demo mode');
+            return $this->outreachError($workspaceUid, $businessUid, 'Sorry! This option is not available in demo mode');
         }
 
-        $customer           = Auth::user()->customer;
-        $activeSubscription = $customer->activeSubscription();
+        $activeSubscription = $business->customer->activeSubscription();
 
         if (! $activeSubscription) {
             return redirect()->route('customer.subscriptions.index')->with([
@@ -386,137 +458,237 @@ class OutreachController extends CustomerBaseController
         $plan = Plan::where('status', true)->find($activeSubscription->plan_id);
 
         if (! $plan) {
-            return $this->outreachError('Purchased plan is not active. Please contact support team.');
+            return $this->outreachError($workspaceUid, $businessUid, 'Purchased plan is not active. Please contact support team.');
         }
 
-        $campaignData             = $request->all();
-        $campaignData['sms_type'] = 'mms';
+        $campaignData               = $request->all();
+        $campaignData['sms_type']   = 'mms';
+        $campaignData['business_id'] = $business->id;
+        $campaignData['user_id']     = $business->customer_id;
 
         $data = $this->campaigns->campaignBuilder($campaign, $campaignData);
 
         if (isset($data->getData()->status) && $data->getData()->status == 'success') {
-            return redirect()->route('customer.outreach.campaigns')->with([
+            return redirect()->route('customer.workspaces.businesses.outreach.campaigns', [$workspaceUid, $businessUid])->with([
                 'status'  => 'success',
                 'message' => $data->getData()->message,
             ]);
         }
 
-        return $this->outreachError($data->getData()->message ?? __('locale.exceptions.something_went_wrong'));
+        return $this->outreachError($workspaceUid, $businessUid, $data->getData()->message ?? __('locale.exceptions.something_went_wrong'));
     }
 
-    public function campaigns(Request $request): View|Factory|Application
+    public function campaigns(Request $request, string $workspaceUid, string $businessUid): View|Factory|Application
     {
-        $user = Auth::user();
+        $business = $this->resolveAccessibleBusiness($workspaceUid, $businessUid);
+        $user     = Auth::user();
+
         if (! $user->can('sms_campaign_builder') && ! $user->can('mms_campaign_builder') && ! $user->can('sms_quick_send') && ! $user->can('mms_quick_send')) {
             throw new AuthorizationException();
         }
 
-        $campaignList = Campaigns::where('user_id', $user->id)
+        $campaignList = Campaigns::where('business_id', $business->id)
             ->whereIn('sms_type', ['plain', 'unicode', 'mms'])
             ->orderByDesc('id')
             ->paginate(20);
 
         return view('customer.Outreach.campaigns', [
-            'campaigns' => $campaignList,
+            'workspaceUid' => $workspaceUid,
+            'businessUid'  => $businessUid,
+            'campaigns'    => $campaignList,
         ]);
     }
 
-    public function show(Campaigns $campaign): View|Factory|Application
+    public function show(string $workspaceUid, string $businessUid, Campaigns $campaign): View|Factory|Application
     {
-        $this->resolveOwnedCampaign($campaign);
+        $business = $this->resolveAccessibleBusiness($workspaceUid, $businessUid);
+        $this->resolveOwnedCampaign($campaign, $business);
 
         return view('customer.Outreach.show', [
-            'campaign' => $campaign,
+            'workspaceUid' => $workspaceUid,
+            'businessUid'  => $businessUid,
+            'campaign'     => $campaign,
         ]);
     }
 
-    public function pause(Campaigns $campaign): RedirectResponse
+    public function pause(string $workspaceUid, string $businessUid, Campaigns $campaign): RedirectResponse
     {
-        $this->resolveOwnedCampaign($campaign);
+        $business = $this->resolveAccessibleBusiness($workspaceUid, $businessUid);
+        $this->resolveOwnedCampaign($campaign, $business);
 
         if (config('app.stage') == 'demo') {
-            return $this->campaignsError('Sorry! This option is not available in demo mode');
+            return $this->campaignsError($workspaceUid, $businessUid, 'Sorry! This option is not available in demo mode');
         }
 
         $data = $this->campaigns->pause($campaign);
 
-        return $this->campaignsResult($data);
+        return $this->campaignsResult($workspaceUid, $businessUid, $data);
     }
 
-    public function restart(Campaigns $campaign): RedirectResponse
+    public function restart(string $workspaceUid, string $businessUid, Campaigns $campaign): RedirectResponse
     {
-        $this->resolveOwnedCampaign($campaign);
+        $business = $this->resolveAccessibleBusiness($workspaceUid, $businessUid);
+        $this->resolveOwnedCampaign($campaign, $business);
 
         if (config('app.stage') == 'demo') {
-            return $this->campaignsError('Sorry! This option is not available in demo mode');
+            return $this->campaignsError($workspaceUid, $businessUid, 'Sorry! This option is not available in demo mode');
         }
 
         $data = $this->campaigns->restart($campaign);
 
-        return $this->campaignsResult($data);
+        return $this->campaignsResult($workspaceUid, $businessUid, $data);
     }
 
-    public function resend(Campaigns $campaign): RedirectResponse
+    public function resend(string $workspaceUid, string $businessUid, Campaigns $campaign): RedirectResponse
     {
-        $this->resolveOwnedCampaign($campaign);
+        $business = $this->resolveAccessibleBusiness($workspaceUid, $businessUid);
+        $this->resolveOwnedCampaign($campaign, $business);
 
         if (config('app.stage') == 'demo') {
-            return $this->campaignsError('Sorry! This option is not available in demo mode');
+            return $this->campaignsError($workspaceUid, $businessUid, 'Sorry! This option is not available in demo mode');
         }
 
         $data = $this->campaigns->resend($campaign);
 
-        return $this->campaignsResult($data);
+        return $this->campaignsResult($workspaceUid, $businessUid, $data);
     }
 
-    public function destroy(Campaigns $campaign): RedirectResponse
+    public function destroy(string $workspaceUid, string $businessUid, Campaigns $campaign): RedirectResponse
     {
-        $this->resolveOwnedCampaign($campaign);
+        $business = $this->resolveAccessibleBusiness($workspaceUid, $businessUid);
+        $this->resolveOwnedCampaign($campaign, $business);
 
         if (config('app.stage') == 'demo') {
-            return $this->campaignsError('Sorry! This option is not available in demo mode');
+            return $this->campaignsError($workspaceUid, $businessUid, 'Sorry! This option is not available in demo mode');
         }
 
         if (! $campaign->delete()) {
-            return $this->campaignsError(__('locale.exceptions.something_went_wrong'));
+            return $this->campaignsError($workspaceUid, $businessUid, __('locale.exceptions.something_went_wrong'));
         }
 
-        return redirect()->route('customer.outreach.campaigns')->with([
+        return redirect()->route('customer.workspaces.businesses.outreach.campaigns', [$workspaceUid, $businessUid])->with([
             'status'  => 'success',
             'message' => __('locale.campaigns.campaign_was_successfully_deleted'),
         ]);
     }
 
-    private function resolveOwnedCampaign(Campaigns $campaign): Campaigns
+    /**
+     * Outreach-specific template lookup — never the legacy, user_id-scoped
+     * customer.templates.show_data endpoint. Foreign-Business and
+     * nonexistent template ids fail identically (the same JSON error
+     * shape the existing composer JS already handles).
+     */
+    public function templateData(string $workspaceUid, string $businessUid, $id): JsonResponse
     {
-        abort_unless($campaign->user_id === Auth::id(), 404);
+        $business = $this->resolveAccessibleBusiness($workspaceUid, $businessUid);
+
+        $data = Templates::where('business_id', $business->id)->find($id);
+
+        if ($data) {
+            return response()->json([
+                'status'          => 'success',
+                'dlt_template_id' => $data->dlt_template_id,
+                'message'         => $data->message,
+            ]);
+        }
+
+        return response()->json([
+            'status'  => 'error',
+            'message' => __('locale.templates.template_info_not_found'),
+        ]);
+    }
+
+    /**
+     * Business-scoped eligible-contact count for the Campaign Builder
+     * preview, mirroring customer.contacts.count_contact's response shape
+     * (a bare integer body) without depending on that legacy, user_id-
+     * scoped endpoint.
+     */
+    public function countContacts(Request $request, string $workspaceUid, string $businessUid): Response
+    {
+        $business = $this->resolveAccessibleBusiness($workspaceUid, $businessUid);
+
+        $groupIds = ContactGroups::where('business_id', $business->id)
+            ->whereIn('id', (array) $request->input('contact_group_ids', []))
+            ->pluck('id');
+
+        $count = Contacts::whereIn('group_id', $groupIds)->where('status', 'subscribe')->count();
+
+        return response((string) $count);
+    }
+
+    /**
+     * @return array<int, array{0: \App\Models\Workspace, 1: Business}>
+     */
+    private function accessibleBusinesses(): array
+    {
+        $userId     = (int) Auth::id();
+        $accessible = [];
+
+        foreach ($this->workspaceRepository->allForUser($userId) as $workspace) {
+            foreach ($this->workspaceRepository->businessesForWorkspace($workspace) as $business) {
+                if ($this->workspaceManager->userCanAccessBusiness($userId, $business)) {
+                    $accessible[] = [$workspace, $business];
+                }
+            }
+        }
+
+        return $accessible;
+    }
+
+    /**
+     * RFC-003 §14.1 boundary, mirroring
+     * Customer\Business\UsageBillingController::resolveViewableBusiness()
+     * verbatim: unknown Workspace, unknown Business, Business in the wrong
+     * Workspace, and an inaccessible Business all fail identically as 404.
+     */
+    private function resolveAccessibleBusiness(string $workspaceUid, string $businessUid): Business
+    {
+        $workspace = $this->workspaceRepository->findByUid($workspaceUid);
+
+        if ($workspace === null) {
+            abort(404);
+        }
+
+        $business = $this->workspaceRepository->businessesForWorkspace($workspace)->firstWhere('uid', $businessUid);
+
+        if ($business === null || ! $this->workspaceManager->userCanAccessBusiness((int) Auth::id(), $business)) {
+            abort(404);
+        }
+
+        return $business;
+    }
+
+    private function resolveOwnedCampaign(Campaigns $campaign, Business $business): Campaigns
+    {
+        abort_unless($campaign->business_id === $business->id, 404);
 
         return $campaign;
     }
 
-    private function campaignsResult($data): RedirectResponse
+    private function campaignsResult(string $workspaceUid, string $businessUid, $data): RedirectResponse
     {
         if (isset($data->getData()->status) && $data->getData()->status == 'success') {
-            return redirect()->route('customer.outreach.campaigns')->with([
+            return redirect()->route('customer.workspaces.businesses.outreach.campaigns', [$workspaceUid, $businessUid])->with([
                 'status'  => 'success',
                 'message' => $data->getData()->message,
             ]);
         }
 
-        return $this->campaignsError($data->getData()->message ?? __('locale.exceptions.something_went_wrong'));
+        return $this->campaignsError($workspaceUid, $businessUid, $data->getData()->message ?? __('locale.exceptions.something_went_wrong'));
     }
 
-    private function campaignsError(string $message): RedirectResponse
+    private function campaignsError(string $workspaceUid, string $businessUid, string $message): RedirectResponse
     {
-        return redirect()->route('customer.outreach.campaigns')->with([
+        return redirect()->route('customer.workspaces.businesses.outreach.campaigns', [$workspaceUid, $businessUid])->with([
             'status'  => 'error',
             'message' => $message,
         ]);
     }
 
-    private function outreachError(string $message): RedirectResponse
+    private function outreachError(string $workspaceUid, string $businessUid, string $message): RedirectResponse
     {
-        return redirect()->route('customer.outreach.index')->with([
+        return redirect()->route('customer.workspaces.businesses.outreach.index', [$workspaceUid, $businessUid])->with([
             'status'  => 'error',
             'message' => $message,
         ]);

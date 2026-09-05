@@ -2,7 +2,7 @@
 
     <x-card>
             <div class="col-md-7 col-12 settings">
-                <form class="form form-vertical" action="{{ route('customer.contacts.update', $contact->uid) }}" method="post">
+                <form class="form form-vertical" action="{{ \App\Library\CrmRouting::route('contacts.update', $contact->uid) }}" method="post">
                     {{ method_field('PUT') }}
                     @csrf
                     <div class="row">

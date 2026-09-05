@@ -348,7 +348,7 @@
 
                 $.ajax({
                     type: "POST",
-                    url: "{{ route('customer.contacts.message_form', $contact->uid) }}",
+                    url: "{{ \App\Library\CrmRouting::route('contacts.message_form', $contact->uid) }}",
                     data: {
                         _token: "{{csrf_token()}}",
                         sms_form: smsForm
@@ -409,7 +409,7 @@
                 "processing": true,
                 "serverSide": true,
                 "ajax": {
-                    "url": "{{ route('customer.contact.search', $contact->uid) }}",
+                    "url": "{{ \App\Library\CrmRouting::route('contact.search', $contact->uid) }}",
                     "dataType": "json",
                     "type": "POST",
                     "data": {_token: "{{csrf_token()}}"}
@@ -632,7 +632,7 @@
             //change status
             Table.delegate(".get_status", "click", function () {
                 let contact_id = $(this).data("id");
-                let url = "{{ route('customer.contact.status', [ 'contact' => $contact->uid, 'id' => "contact_id"]) }}";
+                let url = "{{ \App\Library\CrmRouting::route('contact.status', [ 'contact' => $contact->uid, 'id' => "contact_id"]) }}";
 
                 $.ajax({
                     url: url.replace("contact_id", contact_id),
@@ -652,7 +652,7 @@
                 e.stopPropagation();
 
                 let contact_id = $(this).data("id");
-                let url = "{{ route('customer.contact.delete', [ 'contact' => $contact->uid, 'id' => "contact_id"]) }}";
+                let url = "{{ \App\Library\CrmRouting::route('contact.delete', [ 'contact' => $contact->uid, 'id' => "contact_id"]) }}";
 
                 Swal.fire({
                     title: "{{ __('locale.labels.are_you_sure') }}",
@@ -710,7 +710,7 @@
 
                 let field_id = $(this).data("field-id");
 
-                let url = "{{ route('customer.contact.delete-contact-field', [ 'contact' => $contact->uid, 'field_id' => "field_id"]) }}";
+                let url = "{{ \App\Library\CrmRouting::route('contact.delete-contact-field', [ 'contact' => $contact->uid, 'field_id' => "field_id"]) }}";
 
                 Swal.fire({
                     title: "{{ __('locale.labels.are_you_sure') }}",
@@ -791,7 +791,7 @@
                         if (contacts_ids.length > 0) {
 
                             $.ajax({
-                                url: "{{ route('customer.contact.batch_action', $contact->uid) }}",
+                                url: "{{ \App\Library\CrmRouting::route('contact.batch_action', $contact->uid) }}",
                                 type: "POST",
                                 data: {
                                     _token: "{{csrf_token()}}",
@@ -865,7 +865,7 @@
                         if (contacts_ids.length > 0) {
 
                             $.ajax({
-                                url: "{{ route('customer.contact.batch_action', $contact->uid) }}",
+                                url: "{{ \App\Library\CrmRouting::route('contact.batch_action', $contact->uid) }}",
                                 type: "POST",
                                 data: {
                                     _token: "{{csrf_token()}}",
@@ -954,7 +954,7 @@
                         if (contacts_ids.length > 0) {
 
                             $.ajax({
-                                url: "{{ route('customer.contact.batch_action', $contact->uid) }}",
+                                url: "{{ \App\Library\CrmRouting::route('contact.batch_action', $contact->uid) }}",
                                 type: "POST",
                                 data: {
                                     _method: "POST",
@@ -1044,7 +1044,7 @@
                         if (contacts_ids.length > 0) {
 
                             $.ajax({
-                                url: "{{ route('customer.contact.batch_action', $contact->uid) }}",
+                                url: "{{ \App\Library\CrmRouting::route('contact.batch_action', $contact->uid) }}",
                                 type: "POST",
                                 data: {
                                     _method: "POST",
@@ -1121,7 +1121,7 @@
                         if (contacts_ids.length > 0) {
 
                             $.ajax({
-                                url: "{{ route('customer.contact.batch_action', $contact->uid) }}",
+                                url: "{{ \App\Library\CrmRouting::route('contact.batch_action', $contact->uid) }}",
                                 type: "POST",
                                 data: {
                                     _token: "{{csrf_token()}}",
@@ -1202,7 +1202,7 @@
                 }).then(function (result) {
                     if (result.value) {
                         $.ajax({
-                            url: "{{ route('customer.contacts.optin_keyword', $contact->uid) }}",
+                            url: "{{ \App\Library\CrmRouting::route('contacts.optin_keyword', $contact->uid) }}",
                             type: "POST",
                             data: {
                                 _method: "POST",
@@ -1276,7 +1276,7 @@
                 }).then(function (result) {
                     if (result.value) {
                         $.ajax({
-                            url: "{{ route('customer.contacts.optout_keyword', $contact->uid) }}",
+                            url: "{{ \App\Library\CrmRouting::route('contacts.optout_keyword', $contact->uid) }}",
                             type: "POST",
                             data: {
                                 _method: "POST",
@@ -1323,7 +1323,7 @@
                 e.stopPropagation();
 
                 let keyword_id = $(this).data("id");
-                let url = "{{ route('customer.contacts.delete_optin_keyword', [ 'contact' => $contact->uid, 'id' => "keyword_id"]) }}";
+                let url = "{{ \App\Library\CrmRouting::route('contacts.delete_optin_keyword', [ 'contact' => $contact->uid, 'id' => "keyword_id"]) }}";
 
                 Swal.fire({
                     title: "{{ __('locale.labels.are_you_sure') }}",
@@ -1384,7 +1384,7 @@
                 e.stopPropagation();
 
                 let keyword_id = $(this).data("id");
-                let url = "{{ route('customer.contacts.delete_optout_keyword', [ 'contact' => $contact->uid, 'id' => "keyword_id"]) }}";
+                let url = "{{ \App\Library\CrmRouting::route('contacts.delete_optout_keyword', [ 'contact' => $contact->uid, 'id' => "keyword_id"]) }}";
 
                 Swal.fire({
                     title: "{{ __('locale.labels.are_you_sure') }}",

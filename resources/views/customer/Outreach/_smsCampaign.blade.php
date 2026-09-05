@@ -1,6 +1,6 @@
 <x-card :padded="true">
     <form class="form form-vertical outreach-form" data-channel="sms" data-mode="campaign"
-          action="{{ route('customer.outreach.sms.campaign') }}" method="post">
+          action="{{ route('customer.workspaces.businesses.outreach.sms.campaign', [$workspaceUid, $businessUid]) }}" method="post">
         @csrf
         <div class="row">
             <div class="col-12">

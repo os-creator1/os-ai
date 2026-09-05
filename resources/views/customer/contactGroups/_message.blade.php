@@ -2,7 +2,7 @@
 
     <x-card>
             <div class="col-md-6 col-12">
-                <form class="form form-vertical" action="{{ route('customer.contacts.message', $contact->uid) }}"
+                <form class="form form-vertical" action="{{ \App\Library\CrmRouting::route('contacts.message', $contact->uid) }}"
                       method="post">
                     @csrf
                     <div class="row">

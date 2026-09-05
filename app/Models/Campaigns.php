@@ -760,6 +760,8 @@
             $trackingLogsTable = (new TrackingLog())->getTable();
             $blacklistTable    = (new Blacklists())->getTable();
 
+            $businessId = $this->business_id;
+
             return $this->subscribers()
                 ->whereNotIn("{$contactsTable}.phone", function ($q) use ($trackingLogsTable, $contactsTable) {
                     $q->select('c.phone')
@@ -767,8 +769,18 @@
                         ->join("{$contactsTable} as c", 't.contact_id', '=', 'c.id')
                         ->where('t.campaign_id', $this->id);
                 })
-                ->whereNotIn("{$contactsTable}.phone", function ($q) use ($blacklistTable) {
+                ->whereNotIn("{$contactsTable}.phone", function ($q) use ($blacklistTable, $businessId) {
+                    // Pass 2 — a Campaign with a resolved business_id scopes
+                    // the blacklist exclusion to that Business only, so
+                    // Business A's blacklist never suppresses Business B's
+                    // sends. A Campaign whose business_id is still null
+                    // (legacy, pre-tenancy data) keeps the original global
+                    // exclusion unchanged.
                     $q->select('number')->from($blacklistTable);
+
+                    if ($businessId !== null) {
+                        $q->where('business_id', $businessId);
+                    }
                 });
         }
 

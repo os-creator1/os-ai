@@ -28,7 +28,7 @@
     <div class="row mb-2">
         <div class="col-12 d-flex justify-content-between align-items-center">
             <h4 class="mb-0">{{ __('locale.menu.Outreach') }}</h4>
-            <x-button variant="outline" size="sm" :href="route('customer.outreach.campaigns')" icon="list">
+            <x-button variant="outline" size="sm" :href="route('customer.workspaces.businesses.outreach.campaigns', [$workspaceUid, $businessUid])" icon="list">
                 {{ __('locale.menu.Campaigns') }}
             </x-button>
         </div>
@@ -326,7 +326,7 @@
             }
 
             $.ajax({
-              url: "{{ url('templates/show-data') }}" + '/' + templateId,
+              url: "{{ route('customer.workspaces.businesses.outreach.templates.show_data', [$workspaceUid, $businessUid, 'OUTREACH_TEMPLATE_ID']) }}".replace('OUTREACH_TEMPLATE_ID', templateId),
               type: 'POST',
               data: { _token: "{{ csrf_token() }}" },
               cache: false,
@@ -380,7 +380,7 @@
               $msgRecipients.html($msgRecipients.data('loading-text'));
 
               $.ajax({
-                url: "{{ route('customer.contacts.count_contact') }}",
+                url: "{{ route('customer.workspaces.businesses.outreach.contacts.count_contact', [$workspaceUid, $businessUid]) }}",
                 type: 'POST',
                 data: { _token: "{{ csrf_token() }}", contact_group_ids: groupIds },
                 cache: false,

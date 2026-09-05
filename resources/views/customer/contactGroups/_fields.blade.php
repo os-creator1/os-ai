@@ -5,7 +5,7 @@
                     Manage the fields available to your groups contacts.
                 </p>
 
-            <form action="{{ route('customer.contact.store-contact-field', $contact->uid) }}"
+            <form action="{{ \App\Library\CrmRouting::route('contact.store-contact-field', $contact->uid) }}"
                   method="post">
                 {{ csrf_field() }}
 
@@ -128,31 +128,31 @@
                         Click To add
                     </p>
 
-                    <span sample-url="{{ route('customer.contact.contact-sample-field', ['contact' => $contact->uid,"type" => "text" ]) }}"
+                    <span sample-url="{{ \App\Library\CrmRouting::route('contact.contact-sample-field', ['contact' => $contact->uid,"type" => "text" ]) }}"
                           class="btn btn-relief-primary me-1 add-custom-field-button" type_name="text">
                         <x-ds-icon name="type" class="me-25" />
                         Text
                     </span>
 
-                    <span sample-url="{{ route('customer.contact.contact-sample-field', ['contact' => $contact->uid,"type" => "number" ]) }}"
+                    <span sample-url="{{ \App\Library\CrmRouting::route('contact.contact-sample-field', ['contact' => $contact->uid,"type" => "number" ]) }}"
                           class="btn btn-relief-success me-1 add-custom-field-button" type_name="number">
                         <x-ds-icon name="hash" class="me-25" />
                         Number
                     </span>
 
-                    <span sample-url="{{ route('customer.contact.contact-sample-field', ['contact' => $contact->uid,"type" => "date" ]) }}"
+                    <span sample-url="{{ \App\Library\CrmRouting::route('contact.contact-sample-field', ['contact' => $contact->uid,"type" => "date" ]) }}"
                           class="btn btn-relief-info me-1 add-custom-field-button" type_name="date">
                         <x-ds-icon name="calendar" class="me-25" />
                         Date
                     </span>
 
-                    <span sample-url="{{ route('customer.contact.contact-sample-field', ['contact' => $contact->uid,"type" => "datetime" ]) }}"
+                    <span sample-url="{{ \App\Library\CrmRouting::route('contact.contact-sample-field', ['contact' => $contact->uid,"type" => "datetime" ]) }}"
                           class="btn btn-relief-warning me-1 add-custom-field-button" type_name="datetime">
                         <x-ds-icon name="clock" class="me-25" />
                         Datetime
                     </span>
 
-                    <span sample-url="{{ route('customer.contact.contact-sample-field', ['contact' => $contact->uid,"type" => "textarea" ]) }}"
+                    <span sample-url="{{ \App\Library\CrmRouting::route('contact.contact-sample-field', ['contact' => $contact->uid,"type" => "textarea" ]) }}"
                           class="btn btn-relief-danger me-1 add-custom-field-button" type_name="textarea">
                         <x-ds-icon name="file-text" class="me-25" />
                         Textarea

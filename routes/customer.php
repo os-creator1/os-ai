@@ -330,29 +330,21 @@
 
     /*
     |--------------------------------------------------------------------------
-    | Outreach / Compose module (B1)
+    | Outreach / Compose module (B1 Pass 2 — Business-addressable)
     |--------------------------------------------------------------------------
     |
-    | Consolidated SMS/MMS compose product. Reuses the existing Campaign send
-    | core (CampaignRepository::quickSend()/campaignBuilder()) via a thin
-    | controller; see docs/automation/DESIGN-SYSTEM-M2-CONTRACT.md (B1).
+    | Consolidated SMS/MMS compose product. Every actual compose/send/
+    | campaign-lifecycle action now lives under the Business-addressable
+    | routes registered in the "workspaces" group below
+    | (customer.workspaces.businesses.outreach.*). This bare route is
+    | ONLY the entry/selector: it never guesses a Business — exactly one
+    | accessible Business redirects straight through, several show a
+    | chooser, and none shows an onboarding state. See
+    | OutreachController::entry().
     |
     */
 
-    Route::prefix('outreach')->name('outreach.')->group(function () {
-        Route::get('/', 'OutreachController@index')->name('index');
-        Route::post('/sms/send', 'OutreachController@sendSms')->name('sms.send');
-        Route::post('/mms/send', 'OutreachController@sendMms')->name('mms.send');
-        Route::post('/sms/campaign', 'OutreachController@storeSmsCampaign')->name('sms.campaign');
-        Route::post('/mms/campaign', 'OutreachController@storeMmsCampaign')->name('mms.campaign');
-
-        Route::get('/campaigns', 'OutreachController@campaigns')->name('campaigns');
-        Route::get('/campaigns/{campaign}', 'OutreachController@show')->name('campaigns.show');
-        Route::post('/campaigns/{campaign}/pause', 'OutreachController@pause')->name('campaigns.pause');
-        Route::post('/campaigns/{campaign}/restart', 'OutreachController@restart')->name('campaigns.restart');
-        Route::post('/campaigns/{campaign}/resend', 'OutreachController@resend')->name('campaigns.resend');
-        Route::post('/campaigns/{campaign}/destroy', 'OutreachController@destroy')->name('campaigns.destroy');
-    });
+    Route::get('outreach', 'OutreachController@entry')->name('outreach.index');
 
     /*
     |--------------------------------------------------------------------------
@@ -656,6 +648,103 @@
         Route::post('{workspaceUid}/members/{memberUid}/access', 'Workspace\WorkspaceController@updateMemberAccess')->name('members.access');
         Route::post('{workspaceUid}/members/{memberUid}/deactivate', 'Workspace\WorkspaceController@deactivateMember')->name('members.deactivate');
         Route::post('{workspaceUid}/members/{memberUid}/reactivate', 'Workspace\WorkspaceController@reactivateMember')->name('members.reactivate');
+
+        /*
+        |----------------------------------------------------------------
+        | B1 Pass 2 — Business-addressable Outreach / Compose
+        |----------------------------------------------------------------
+        |
+        | Same Campaign send/persistence core as the legacy outreach.*
+        | routes below, cut over to explicit Business scope. See
+        | OutreachController::resolveAccessibleBusiness().
+        |
+        */
+        Route::prefix('{workspaceUid}/businesses/{businessUid}/outreach')->name('businesses.outreach.')->group(function () {
+            Route::get('/', 'OutreachController@compose')->name('index');
+            Route::post('/sms/send', 'OutreachController@sendSms')->name('sms.send');
+            Route::post('/mms/send', 'OutreachController@sendMms')->name('mms.send');
+            Route::post('/sms/campaign', 'OutreachController@storeSmsCampaign')->name('sms.campaign');
+            Route::post('/mms/campaign', 'OutreachController@storeMmsCampaign')->name('mms.campaign');
+
+            Route::get('/campaigns', 'OutreachController@campaigns')->name('campaigns');
+            Route::get('/campaigns/{campaign}', 'OutreachController@show')->name('campaigns.show');
+            Route::post('/campaigns/{campaign}/pause', 'OutreachController@pause')->name('campaigns.pause');
+            Route::post('/campaigns/{campaign}/restart', 'OutreachController@restart')->name('campaigns.restart');
+            Route::post('/campaigns/{campaign}/resend', 'OutreachController@resend')->name('campaigns.resend');
+            Route::post('/campaigns/{campaign}/destroy', 'OutreachController@destroy')->name('campaigns.destroy');
+
+            Route::post('/templates/{id}/show-data', 'OutreachController@templateData')->name('templates.show_data');
+            Route::post('/contacts/count', 'OutreachController@countContacts')->name('contacts.count_contact');
+        });
+
+        /*
+        |----------------------------------------------------------------
+        | B1 Pass 2 — Business-addressable CRM (Contacts / Contact Groups)
+        |----------------------------------------------------------------
+        |
+        | Same ContactsController actions as the legacy contacts. /
+        | contact. routes below; scope is resolved per-request from the
+        | route's workspaceUid/businessUid via
+        | ContactsController::currentBusinessContext(). See
+        | docs/automation/DESIGN-SYSTEM-M2-CONTRACT.md (B1 Pass 2).
+        |
+        */
+        // Every action below that carries a leading scalar route
+        // parameter (string $contact, and/or a second scalar like
+        // $field_id/$job_id) is routed to a "{action}ForBusiness" name
+        // handled by ContactsController::__call() — seeContactsController
+        // for why the legacy action methods cannot be called directly
+        // from a route with 2 extra leading segments ($workspaceUid,
+        // $businessUid) ahead of $contact. Actions taking ONLY
+        // Request/FormRequest (no leading scalar) call the legacy method
+        // name directly since there is no positional hazard for them.
+        Route::prefix('{workspaceUid}/businesses/{businessUid}/contacts')->group(function () {
+            Route::post('/search', 'ContactsController@search')->name('businesses.contacts.search');
+            Route::get('/export', 'ContactsController@export')->name('businesses.contacts.export');
+            Route::get('/{contact}/show', 'ContactsController@showForBusiness')->name('businesses.contacts.show');
+            Route::post('/{contact}/copy', 'ContactsController@copyForBusiness')->name('businesses.contacts.copy');
+            Route::post('/{contact}/active', 'ContactsController@activeToggleForBusiness')->name('businesses.contacts.active');
+            Route::post('/{contact}/message', 'ContactsController@messageForBusiness')->name('businesses.contacts.message');
+            Route::post('/{contact}/get-message-form', 'ContactsController@getMessageFormForBusiness')->name('businesses.contacts.message_form');
+            Route::post('/{contact}/opt-in-keyword', 'ContactsController@optInKeywordForBusiness')->name('businesses.contacts.optin_keyword');
+            Route::post('/{contact}/opt-out-keyword', 'ContactsController@optOutKeywordForBusiness')->name('businesses.contacts.optout_keyword');
+            Route::post('/{contact}/delete-opt-in-keyword', 'ContactsController@deleteOptInKeywordForBusiness')->name('businesses.contacts.delete_optin_keyword');
+            Route::post('/{contact}/delete-opt-out-keyword', 'ContactsController@deleteOptOutKeywordForBusiness')->name('businesses.contacts.delete_optout_keyword');
+            Route::post('/batch_action', 'ContactsController@batchAction')->name('businesses.contacts.batch_action');
+
+            Route::get('/', 'ContactsController@index')->name('businesses.contacts.index');
+            Route::get('/create', 'ContactsController@create')->name('businesses.contacts.create');
+            Route::post('/', 'ContactsController@store')->name('businesses.contacts.store');
+            Route::match(['put', 'patch'], '/{contact}', 'ContactsController@updateForBusiness')->name('businesses.contacts.update');
+            Route::delete('/{contact}', 'ContactsController@destroyForBusiness')->name('businesses.contacts.destroy');
+
+            Route::post('/{contact}/search', 'ContactsController@searchContactForBusiness')->name('businesses.contact.search');
+            Route::post('/{contact}/export', 'ContactsController@exportContactForBusiness')->name('businesses.contact.export');
+            Route::get('/{contact}/import', 'ContactsController@importContactForBusiness')->name('businesses.contact.import');
+            Route::post('/{contact}/import', 'ContactsController@storeImportContactForBusiness');
+            Route::post('/{contact}/import-file', 'ContactsController@storeImportFileForBusiness')->name('businesses.contact.import_file');
+            Route::post('/{contact}/import-process', 'ContactsController@importProcessDataForBusiness')->name('businesses.contact.import_process');
+            Route::post('/{contact}/batch_action', 'ContactsController@batchActionContactForBusiness')->name('businesses.contact.batch_action');
+            Route::get('/{contact}/create', 'ContactsController@createContactForBusiness')->name('businesses.contact.create');
+            Route::post('/{contact}/store', 'ContactsController@storeContactForBusiness')->name('businesses.contact.store');
+            Route::get('/{contact}/conversions', 'ContactsController@createContactForBusiness')->name('businesses.contact.conversions');
+            Route::post('/{contact}/status', 'ContactsController@updateContactStatusForBusiness')->name('businesses.contact.status');
+            Route::get('/{contact}/edit', 'ContactsController@editContactForBusiness')->name('businesses.contact.edit');
+            Route::post('/{contact}/update', 'ContactsController@updateContactForBusiness')->name('businesses.contact.update');
+            Route::post('/{contact}/delete', 'ContactsController@deleteContactForBusiness')->name('businesses.contact.delete');
+
+            Route::get('/{contact}/fields/sample/{type}', 'ContactsController@contactSampleFieldForBusiness')->name('businesses.contact.contact-sample-field');
+            Route::post('/{contact}/fields/{field_id}/delete', 'ContactsController@deleteContactFieldForBusiness')->name('businesses.contact.delete-contact-field');
+            Route::post('/{contact}/fields/store', 'ContactsController@storeContactFieldForBusiness')->name('businesses.contact.store-contact-field');
+            Route::get('/{contact}/paste-text', 'ContactsController@pasteTextForBusiness')->name('businesses.contact.paste-text');
+            Route::post('/{contact}/import-mapping', 'ContactsController@importMappingForBusiness')->name('businesses.contacts.import-mapping');
+            Route::post('/{contact}/import-run', 'ContactsController@importRunForBusiness')->name('businesses.contact.import-run');
+            Route::post('/{contact}/import-validate', 'ContactsController@importValidateForBusiness')->name('businesses.contact.import-validate');
+            Route::post('/count', 'ContactsController@countContacts')->name('businesses.contacts.count_contact');
+
+            Route::get('/{contact}/download-failed/{job_id}', 'ContactsController@downloadFailedContactsForBusiness')
+                ->name('businesses.contacts.download_failed');
+        });
     });
 
 

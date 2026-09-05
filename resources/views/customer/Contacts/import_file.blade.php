@@ -26,7 +26,7 @@
                 {!! __('locale.contacts.only_supported_file') !!}
                 {!! __('locale.contacts.for_date_format') !!}
             </p>
-            <form action="{{ route('customer.contact.import_file', $contact->uid) }}" class="dropzone dropzone-area"
+            <form action="{{ \App\Library\CrmRouting::route('contact.import_file', $contact->uid) }}" class="dropzone dropzone-area"
                   id="import-contacts">
                 @csrf
                 <div class="dz-message">{{ __('locale.filezone.click_here_to_upload') }}</div>

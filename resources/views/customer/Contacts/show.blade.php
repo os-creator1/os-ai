@@ -21,7 +21,7 @@
 
                 <x-card :title="__('locale.contacts.update_contact')">
                             <form class="form form-vertical"
-                                  action="{{ route('customer.contact.update', ['contact' => $contact->uid , 'contact_id' => $subscriber->uid]) }}"
+                                  action="{{ \App\Library\CrmRouting::route('contact.update', ['contact' => $contact->uid , 'contact_id' => $subscriber->uid]) }}"
                                   method="post">
                                 @csrf
                                 <div class="row">

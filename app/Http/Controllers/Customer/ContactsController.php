@@ -9,9 +9,12 @@
     use App\Jobs\ImportContacts;
     use App\Jobs\ReplicateContacts;
     use App\Library\ContactGroupFieldMapping;
+    use App\Library\CrmRouting;
     use App\Library\StringHelper;
     use App\Library\Tool;
+    use App\Library\Workspace\WorkspaceManager;
     use App\Models\Blacklists;
+    use App\Models\Business;
     use App\Models\ContactGroupFields;
     use App\Models\ContactGroups;
     use App\Models\ContactGroupsOptinKeywords;
@@ -28,6 +31,7 @@
     use App\Models\TemplateTags;
     use App\Models\User;
     use App\Repositories\Contracts\ContactsRepository;
+    use App\Repositories\Contracts\WorkspaceRepository;
     use App\Rules\ExcelRule;
     use Exception;
     use Generator;
@@ -59,13 +63,50 @@
     {
         protected ContactsRepository $contactGroups;
 
-        public function __construct(ContactsRepository $contactGroups)
-        {
+        public function __construct(
+            ContactsRepository $contactGroups,
+            private readonly WorkspaceRepository $workspaceRepository,
+            private readonly WorkspaceManager $workspaceManager,
+        ) {
             $this->contactGroups = $contactGroups;
         }
 
         /**
-         * Resolve a ContactGroups row owned by the authenticated customer, or abort(404).
+         * Resolve the explicit Business for a request dispatched through
+         * /workspaces/{workspaceUid}/businesses/{businessUid}/contacts/...,
+         * or null for a legacy, non-Business-addressable Contacts request.
+         * Mirrors Customer\Business\UsageBillingController's fail-closed
+         * Workspace/Business boundary verbatim: unknown Workspace, unknown
+         * Business, and an inaccessible Business all abort(404).
+         */
+        private function currentBusinessContext(): ?Business
+        {
+            $workspaceUid = request()->route('workspaceUid');
+            $businessUid  = request()->route('businessUid');
+
+            if ($workspaceUid === null || $businessUid === null) {
+                return null;
+            }
+
+            $workspace = $this->workspaceRepository->findByUid($workspaceUid);
+
+            if ($workspace === null) {
+                abort(404);
+            }
+
+            $business = $this->workspaceRepository->businessesForWorkspace($workspace)->firstWhere('uid', $businessUid);
+
+            if ($business === null || ! $this->workspaceManager->userCanAccessBusiness((int) Auth::id(), $business)) {
+                abort(404);
+            }
+
+            return $business;
+        }
+
+        /**
+         * Resolve a ContactGroups row scoped to the current tenancy
+         * boundary, or abort(404). Business-addressable requests scope by
+         * business_id; legacy requests keep scoping by customer_id.
          *
          * @param  string  $uid
          *
@@ -73,13 +114,45 @@
          */
         private function resolveOwnedContactGroup(string $uid): ContactGroups
         {
-            $contact = ContactGroups::where('uid', $uid)
-                ->where('customer_id', Auth::id())
-                ->first();
+            $business = $this->currentBusinessContext();
+
+            $query = ContactGroups::where('uid', $uid);
+
+            if ($business !== null) {
+                $query->where('business_id', $business->id);
+            } else {
+                $query->where('customer_id', Auth::id());
+            }
+
+            $contact = $query->first();
 
             abort_unless($contact, 404);
 
             return $contact;
+        }
+
+        /**
+         * Scope a batch of requested ContactGroups uids down to the ones
+         * owned by the current tenancy boundary (Business, or legacy
+         * customer_id), silently dropping any uid outside that boundary.
+         *
+         * @param  array<int, string>  $uids
+         *
+         * @return array<int, string>
+         */
+        private function ownedGroupUids(array $uids): array
+        {
+            $business = $this->currentBusinessContext();
+
+            $query = ContactGroups::whereIn('uid', $uids);
+
+            if ($business !== null) {
+                $query->where('business_id', $business->id);
+            } else {
+                $query->where('customer_id', Auth::id());
+            }
+
+            return $query->pluck('uid')->all();
         }
 
         /**
@@ -89,6 +162,11 @@
          */
         public function index(): View|Factory|Application
         {
+            // Resolve (and fail-closed validate) the Business context for
+            // a Business-addressable request; a legacy request without
+            // workspaceUid/businessUid route params returns null here and
+            // is otherwise unaffected.
+            $this->currentBusinessContext();
 
             $this->authorize('view_contact_group');
 
@@ -113,6 +191,15 @@
 
             $this->authorize('view_contact_group');
 
+            $business = $this->currentBusinessContext();
+            $scope    = function () use ($business) {
+                $query = ContactGroups::query();
+
+                return $business !== null
+                    ? $query->where('business_id', $business->id)
+                    : $query->where('customer_id', auth()->user()->id);
+            };
+
             $columns = [
                 0 => 'responsive_id',
                 1 => 'uid',
@@ -125,7 +212,7 @@
                 8 => 'updated_at',
             ];
 
-            $totalData = ContactGroups::where('customer_id', auth()->user()->id)->count();
+            $totalData = $scope()->count();
 
             $totalFiltered = $totalData;
 
@@ -135,20 +222,20 @@
             $dir   = $request->input('order.0.dir');
 
             if (empty($request->input('search.value'))) {
-                $contact_groups = ContactGroups::where('customer_id', auth()->user()->id)->offset($start)
+                $contact_groups = $scope()->offset($start)
                     ->limit($limit)
                     ->orderBy($order, $dir)
                     ->get();
             } else {
                 $search = $request->input('search.value');
 
-                $contact_groups = ContactGroups::where('customer_id', auth()->user()->id)->whereLike(['uid', 'name', 'status', 'created_at'], $search)
+                $contact_groups = $scope()->whereLike(['uid', 'name', 'status', 'created_at'], $search)
                     ->offset($start)
                     ->limit($limit)
                     ->orderBy($order, $dir)
                     ->get();
 
-                $totalFiltered = ContactGroups::where('customer_id', auth()->user()->id)->whereLike(['uid', 'name', 'status', 'created_at'], $search)->count();
+                $totalFiltered = $scope()->whereLike(['uid', 'name', 'status', 'created_at'], $search)->count();
             }
 
             $data = [];
@@ -175,9 +262,9 @@
                 </label>
               </div>";
 
-                    $nestedData['show']              = route('customer.contacts.show', $group->uid);
+                    $nestedData['show']              = CrmRouting::route('contacts.show', $group->uid);
                     $nestedData['show_label']        = __('locale.buttons.edit');
-                    $nestedData['new_contact']       = route('customer.contact.create', $group->uid);
+                    $nestedData['new_contact']       = CrmRouting::route('contact.create', $group->uid);
                     $nestedData['new_contact_label'] = __('locale.contacts.new_contact');
                     $nestedData['copy']              = __('locale.buttons.copy');
                     $nestedData['delete']            = __('locale.buttons.delete');
@@ -209,6 +296,8 @@
          */
         public function create(): View|Factory|RedirectResponse|Application
         {
+            $this->currentBusinessContext();
+
             if ( ! Auth::user()->customer->activeSubscription()) {
                 return redirect()->route('customer.subscriptions.index')->with([
                     'status'  => 'error',
@@ -221,7 +310,7 @@
             $list_max  = Auth::user()->customer->getOption('list_max');
 
             if ($list_max != '-1' && $list_max < $totalData) {
-                return redirect()->route('customer.contacts.index')->with([
+                return CrmRouting::redirectRoute('contacts.index')->with([
                     'status'  => 'error',
                     'message' => __('locale.contacts.max_list_quota', ['max_list' => $list_max]),
                 ]);
@@ -243,15 +332,22 @@
         {
 
             if (config('app.stage') == 'demo') {
-                return redirect()->route('customer.contacts.index')->with([
+                return CrmRouting::redirectRoute('contacts.index')->with([
                     'status'  => 'error',
                     'message' => 'Sorry! This option is not available in demo mode',
                 ]);
             }
 
-            $group = $this->contactGroups->store($request->input());
+            $input = $request->input();
 
-            return redirect()->route('customer.contacts.show', $group->uid)->with([
+            if ($business = $this->currentBusinessContext()) {
+                $input['business_id'] = $business->id;
+                $input['user_id']     = $business->customer_id;
+            }
+
+            $group = $this->contactGroups->store($input);
+
+            return CrmRouting::redirectRoute('contacts.show', $group->uid)->with([
                 'status'  => 'success',
                 'message' => __('locale.contacts.contact_group_successfully_added'),
             ]);
@@ -283,8 +379,12 @@
                 $sender_ids    = null;
                 $phone_numbers = null;
             }
-            $template_tags          = TemplateTags::get();
-            $contact_groups         = ContactGroups::where('status', 1)->where('uid', '!=', $contact->uid)->where('customer_id', auth()->user()->id)->select('uid', 'name')->get();
+            $template_tags  = TemplateTags::get();
+            $showBusiness   = $this->currentBusinessContext();
+            $contact_groups = ($showBusiness !== null
+                ? ContactGroups::where('business_id', $showBusiness->id)
+                : ContactGroups::where('customer_id', auth()->user()->id))
+                ->where('status', 1)->where('uid', '!=', $contact->uid)->select('uid', 'name')->get();
             $opt_in_keywords        = ContactGroupsOptinKeywords::where('contact_group', $contact->id)->get();
             $existing_opt_in        = array_column($opt_in_keywords->toArray(), 'keyword');
             $remain_opt_in_keywords = Keywords::where('user_id', $contact->customer_id)->where('status', 'assigned')->whereNotIn('keyword_name', $existing_opt_in)->select('keyword_name')->get();
@@ -473,7 +573,7 @@
             $contact = $this->resolveOwnedContactGroup($contact);
 
             if (config('app.stage') == 'demo') {
-                return redirect()->route('customer.contacts.index')->with([
+                return CrmRouting::redirectRoute('contacts.index')->with([
                     'status'  => 'error',
                     'message' => 'Sorry! This option is not available in demo mode',
                 ]);
@@ -481,7 +581,7 @@
 
             $group = $this->contactGroups->update($contact, $request->except('_method', '_token'));
 
-            return redirect()->route('customer.contacts.show', $group->uid)->withInput(['tab' => 'settings'])->with([
+            return CrmRouting::redirectRoute('contacts.show', $group->uid)->withInput(['tab' => 'settings'])->with([
                 'status'  => 'success',
                 'message' => __('locale.contacts.contact_group_successfully_updated'),
             ]);
@@ -537,7 +637,7 @@
                 case 'destroy':
                     $this->authorize('delete_contact_group');
 
-                    $ownedIds = ContactGroups::where('customer_id', Auth::id())->whereIn('uid', $ids)->pluck('uid')->all();
+                    $ownedIds = $this->ownedGroupUids($ids);
 
                     $this->contactGroups->batchDestroy($ownedIds);
 
@@ -549,7 +649,7 @@
                 case 'enable':
                     $this->authorize('update_contact_group');
 
-                    $ownedIds = ContactGroups::where('customer_id', Auth::id())->whereIn('uid', $ids)->pluck('uid')->all();
+                    $ownedIds = $this->ownedGroupUids($ids);
 
                     $this->contactGroups->batchActive($ownedIds);
 
@@ -562,7 +662,7 @@
 
                     $this->authorize('update_contact_group');
 
-                    $ownedIds = ContactGroups::where('customer_id', Auth::id())->whereIn('uid', $ids)->pluck('uid')->all();
+                    $ownedIds = $this->ownedGroupUids($ids);
 
                     $this->contactGroups->batchDisable($ownedIds);
 
@@ -648,7 +748,7 @@
                 </label>
               </div>';
 
-                    $nestedData['show']             = route('customer.contact.edit', ['contact' => $contact->uid, 'contact_id' => $singleContact->uid]);
+                    $nestedData['show']             = CrmRouting::route('contact.edit', ['contact' => $contact->uid, 'contact_id' => $singleContact->uid]);
                     $nestedData['show_label']       = __('locale.buttons.edit');
                     $nestedData['conversion']       = route('customer.reports.all', ['recipient' => $singleContact->phone]);
                     $nestedData['conversion_label'] = __('locale.contacts.view_conversion');
@@ -700,13 +800,13 @@
             if (Auth::user()->customer->getOption('subscriber_per_list_max') != '-1' && $subscriber_per_list_max > Auth::user()->customer->getOption('subscriber_per_list_max')) {
                 $subscriber_max = Contacts::where('customer_id', Auth::user()->id)->count();
                 if (Auth::user()->customer->getOption('subscriber_max') != '-1' && $subscriber_max > Auth::user()->customer->getOption('subscriber_max')) {
-                    return redirect()->route('customer.contacts.show', $contact->uid)->with([
+                    return CrmRouting::redirectRoute('contacts.show', $contact->uid)->with([
                         'status'  => 'error',
                         'message' => __('locale.contacts.subscriber_max_quota', ['subscriber_max' => Auth::user()->customer->getOption('subscriber_max')]),
                     ]);
                 }
 
-                return redirect()->route('customer.contacts.show', $contact->uid)->withInput(['tab' => 'contact'])->with([
+                return CrmRouting::redirectRoute('contacts.show', $contact->uid)->withInput(['tab' => 'contact'])->with([
                     'status'  => 'error',
                     'message' => __('locale.contacts.subscriber_per_list_max_quota', ['subscriber_per_list_max' => Auth::user()->customer->getOption('subscriber_per_list_max')]),
                 ]);
@@ -714,7 +814,7 @@
 
             $breadcrumbs = [
                 ['link' => url('dashboard'), 'name' => __('locale.menu.Dashboard')],
-                ['link' => route('customer.contacts.show', $contact->uid), 'name' => $contact->name],
+                ['link' => CrmRouting::route('contacts.show', $contact->uid), 'name' => $contact->name],
                 ['name' => __('locale.contacts.new_contact')],
             ];
 
@@ -730,7 +830,7 @@
             $contact = $this->resolveOwnedContactGroup($contact);
 
             if (config('app.stage') == 'demo') {
-                return redirect()->route('customer.contacts.show', $contact->uid)->withInput(['tab' => 'contact'])->with([
+                return CrmRouting::redirectRoute('contacts.show', $contact->uid)->withInput(['tab' => 'contact'])->with([
                     'status'  => 'error',
                     'message' => 'Sorry! This option is not available in demo mode',
                 ]);
@@ -744,7 +844,7 @@
                 return back()->withInput()->withErrors($validator);
             }
 
-            return redirect()->route('customer.contacts.show', $contact->uid)->withInput(['tab' => 'contact'])->with([
+            return CrmRouting::redirectRoute('contacts.show', $contact->uid)->withInput(['tab' => 'contact'])->with([
                 'status'  => 'success',
                 'message' => __('locale.contacts.contact_successfully_added'),
             ]);
@@ -845,7 +945,7 @@
 
                 $breadcrumbs = [
                     ['link' => url('dashboard'), 'name' => __('locale.menu.Dashboard')],
-                    ['link' => route('customer.contacts.show', $contact->uid), 'name' => $contact->name],
+                    ['link' => CrmRouting::route('contacts.show', $contact->uid), 'name' => $contact->name],
                     ['name' => __('locale.contacts.update_contact')],
                 ];
 
@@ -869,7 +969,7 @@
                 return view('customer.Contacts.show', compact('breadcrumbs', 'contact', 'subscriber', 'values'));
             }
 
-            return redirect()->route('customer.contacts.show', $contact->uid)->with([
+            return CrmRouting::redirectRoute('contacts.show', $contact->uid)->with([
                 'status'  => 'error',
                 'message' => __('locale.contacts.contact_not_found'),
             ]);
@@ -883,7 +983,7 @@
             $contact = $this->resolveOwnedContactGroup($contact);
 
             if (config('app.stage') == 'demo') {
-                return redirect()->route('customer.contacts.show', $contact->uid)->with([
+                return CrmRouting::redirectRoute('contacts.show', $contact->uid)->with([
                     'status'  => 'error',
                     'message' => 'Sorry! This option is not available in demo mode',
                 ]);
@@ -894,7 +994,7 @@
             $subscriber = Contacts::where('group_id', $contact->id)->where('customer_id', Auth::user()->id)->where('uid', $request->input('contact_id'))->first();
 
             if ( ! $subscriber) {
-                return redirect()->route('customer.contacts.show', $contact->uid)->with([
+                return CrmRouting::redirectRoute('contacts.show', $contact->uid)->with([
                     'status'  => 'error',
                     'message' => __('locale.contacts.contact_not_found'),
                 ]);
@@ -906,7 +1006,7 @@
             $subscriber->updateFields($request->all());
 
 
-            return redirect()->route('customer.contacts.show', $contact->uid)->withInput(['tab' => 'contact'])->with([
+            return CrmRouting::redirectRoute('contacts.show', $contact->uid)->withInput(['tab' => 'contact'])->with([
                 'status'  => 'success',
                 'message' => __('locale.contacts.contact_successfully_updated'),
             ]);
@@ -947,7 +1047,7 @@
             if (isset($request->recipients) && $request->recipients != null) {
 
                 if (config('app.stage') == 'demo') {
-                    return redirect()->route('customer.contacts.show', $contact->uid)->withInput(['tab' => 'contact'])->with([
+                    return CrmRouting::redirectRoute('contacts.show', $contact->uid)->withInput(['tab' => 'contact'])->with([
                         'status'  => 'error',
                         'message' => 'Sorry! This option is not available in demo mode',
                     ]);
@@ -957,7 +1057,7 @@
                 $delimiter  = $request->input('delimiter');
 
                 if ( ! isset($delimiters[$delimiter])) {
-                    return redirect()->route('customer.contacts.show', $contact->uid)
+                    return CrmRouting::redirectRoute('contacts.show', $contact->uid)
                         ->withInput(['tab' => 'contact'])
                         ->withErrors(['message' => __('locale.labels.invalid_delimiter')]);
                 }
@@ -966,7 +1066,7 @@
                 $total      = count($recipients);
 
                 if ($total > 1000) {
-                    return redirect()->route('customer.contacts.show', $contact->uid)
+                    return CrmRouting::redirectRoute('contacts.show', $contact->uid)
                         ->withInput(['tab' => 'contact'])
                         ->withErrors(['message' => __('locale.contacts.upload_maximum_1000_rows')]);
                 }
@@ -1020,7 +1120,7 @@
                 $failed = $total - $processed;
                 $contact->updateCache();
 
-                return redirect()->route('customer.contacts.show', $contact->uid)
+                return CrmRouting::redirectRoute('contacts.show', $contact->uid)
                     ->withInput(['tab' => 'contact'])
                     ->with([
                         'status'  => 'success',
@@ -1028,7 +1128,7 @@
                     ]);
 
             } else {
-                return redirect()->route('customer.contacts.show', $contact->uid)->withInput(['tab' => 'contact'])->with([
+                return CrmRouting::redirectRoute('contacts.show', $contact->uid)->withInput(['tab' => 'contact'])->with([
                     'status'  => 'error',
                     'message' => __('locale.exceptions.invalid_action'),
                 ]);
@@ -1045,7 +1145,7 @@
             $this->authorize('create_contact');
 
             if (config('app.stage') == 'demo') {
-                return redirect()->route('customer.contact.import', $contact->uid)->withInput(['tab' => 'import_file'])->with([
+                return CrmRouting::redirectRoute('contact.import', $contact->uid)->withInput(['tab' => 'import_file'])->with([
                     'status'  => 'error',
                     'message' => 'Sorry! This option is not available in demo mode',
                 ]);
@@ -1054,7 +1154,7 @@
             $data = CsvData::find($request->input('csv_data_file_id'));
 
             if (empty($data)) {
-                return redirect()->route('customer.contact.import', $contact->uid)->withInput(['tab' => 'import_file'])->with([
+                return CrmRouting::redirectRoute('contact.import', $contact->uid)->withInput(['tab' => 'import_file'])->with([
                     'status'  => 'error',
                     'message' => 'No data to import',
                 ]);
@@ -1064,7 +1164,7 @@
             $csv_data = json_decode($data->csv_data, true);
 
             if (empty($csv_data)) {
-                return redirect()->route('customer.contact.import', $contact->uid)->withInput(['tab' => 'import_file'])->with([
+                return CrmRouting::redirectRoute('contact.import', $contact->uid)->withInput(['tab' => 'import_file'])->with([
                     'status'  => 'error',
                     'message' => 'No data to import',
                 ]);
@@ -1073,7 +1173,7 @@
             $db_fields = $request->input('fields');
 
             if (empty($db_fields)) {
-                return redirect()->route('customer.contact.import', $contact->uid)->withInput(['tab' => 'import_file'])->with([
+                return CrmRouting::redirectRoute('contact.import', $contact->uid)->withInput(['tab' => 'import_file'])->with([
                     'status'  => 'error',
                     'message' => 'No data to import',
                 ]);
@@ -1081,7 +1181,7 @@
 
 
             if (is_array($db_fields) && ! in_array('phone', $db_fields)) {
-                return redirect()->route('customer.contact.import', $contact->uid)->withInput(['tab' => 'import_file'])->with([
+                return CrmRouting::redirectRoute('contact.import', $contact->uid)->withInput(['tab' => 'import_file'])->with([
                     'status'  => 'error',
                     'message' => __('locale.filezone.phone_number_column_require'),
                 ]);
@@ -1090,7 +1190,7 @@
             $collection = collect($csv_data)->skip($data->csv_header)->unique(array_keys($db_fields, 'phone'));
 
             if ($collection->isEmpty()) {
-                return redirect()->route('customer.contact.import', $contact->uid)->withInput(['tab' => 'import_file'])->with([
+                return CrmRouting::redirectRoute('contact.import', $contact->uid)->withInput(['tab' => 'import_file'])->with([
                     'status'  => 'error',
                     'message' => 'No data to import',
                 ]);
@@ -1107,7 +1207,7 @@
 
             $data->delete();
 
-            return redirect()->route('customer.contacts.show', $contact->uid)->withInput(['tab' => 'import_history'])->with([
+            return CrmRouting::redirectRoute('contacts.show', $contact->uid)->withInput(['tab' => 'import_history'])->with([
                 'status'  => 'success',
                 'message' => __('locale.contacts.contact_successfully_imported_in_background'),
             ]);
@@ -1171,8 +1271,12 @@
 
                     $this->authorize('update_contact');
 
-                    $target_group = $request->get('target_group');
-                    $group        = ContactGroups::where('uid', $target_group)->where('customer_id', Auth::id())->first();
+                    $target_group  = $request->get('target_group');
+                    $targetBusiness = $this->currentBusinessContext();
+                    $group          = ($targetBusiness !== null
+                        ? ContactGroups::where('business_id', $targetBusiness->id)
+                        : ContactGroups::where('customer_id', Auth::id()))
+                        ->where('uid', $target_group)->first();
 
                     if ( ! $group) {
                         return response()->json([
@@ -1197,8 +1301,12 @@
 
                     $this->authorize('update_contact');
 
-                    $target_group = $request->get('target_group');
-                    $group        = ContactGroups::where('uid', $target_group)->where('customer_id', Auth::id())->first();
+                    $target_group  = $request->get('target_group');
+                    $targetBusiness = $this->currentBusinessContext();
+                    $group          = ($targetBusiness !== null
+                        ? ContactGroups::where('business_id', $targetBusiness->id)
+                        : ContactGroups::where('customer_id', Auth::id()))
+                        ->where('uid', $target_group)->first();
 
                     if ( ! $group) {
                         return response()->json([
@@ -1325,14 +1433,14 @@
             $contact = $this->resolveOwnedContactGroup($contact);
 
             if (config('app.stage') == 'demo') {
-                return redirect()->route('customer.contacts.show', $contact->uid)->with([
+                return CrmRouting::redirectRoute('contacts.show', $contact->uid)->with([
                     'status'  => 'error',
                     'message' => 'Sorry! This option is not available in demo mode',
                 ]);
             }
 
             if ( ! $request->get('contact_fields') || ! is_array($request->get('contact_fields')) || count($request->get('contact_fields')) == 0) {
-                return redirect()->route('customer.contacts.show', $contact->uid)->with([
+                return CrmRouting::redirectRoute('contacts.show', $contact->uid)->with([
                     'status'  => 'error',
                     'message' => __('locale.contacts.contact_fields_not_found'),
                 ]);
@@ -1345,7 +1453,7 @@
 
                 return response()->download($file_name);
             } catch (IOException|InvalidArgumentException|UnsupportedTypeException|WriterNotOpenedException|Exception $e) {
-                return redirect()->route('customer.contacts.show', $contact->uid)->with([
+                return CrmRouting::redirectRoute('contacts.show', $contact->uid)->with([
                     'status'  => 'error',
                     'message' => $e->getMessage(),
                 ]);
@@ -1450,7 +1558,7 @@
             $contact = $this->resolveOwnedContactGroup($contact);
 
             if (config('app.stage') == 'demo') {
-                return redirect()->route('customer.contacts.show', $contact->uid)->with([
+                return CrmRouting::redirectRoute('contacts.show', $contact->uid)->with([
                     'status'  => 'error',
                     'message' => 'Sorry! This option is not available in demo mode',
                 ]);
@@ -1459,7 +1567,7 @@
             $message_form = $request->input('message_form');
 
             if ( ! in_array($message_form, ['signup_sms', 'welcome_sms', 'unsubscribe_sms'], true)) {
-                return redirect()->route('customer.contacts.show', $contact->uid)->with([
+                return CrmRouting::redirectRoute('contacts.show', $contact->uid)->with([
                     'status'  => 'error',
                     'message' => __('locale.exceptions.invalid_action'),
                 ]);
@@ -1468,7 +1576,7 @@
             $contact->{$message_form} = $request->input('message');
             $contact->save();
 
-            return redirect()->route('customer.contacts.show', $contact->uid)->withInput(['tab' => 'message'])->with([
+            return CrmRouting::redirectRoute('contacts.show', $contact->uid)->withInput(['tab' => 'message'])->with([
                 'status'  => 'success',
                 'message' => __('locale.contacts.contact_groups_message_information', ['message_from' => ucfirst(str_replace('_', ' ', $request->input('message_form')))]),
             ]);
@@ -1639,7 +1747,12 @@
 
         public function contactGroupsGenerator(): Generator
         {
-            foreach (ContactGroups::where('customer_id', Auth::user()->id)->get() as $contactGroup) {
+            $business = $this->currentBusinessContext();
+            $query    = $business !== null
+                ? ContactGroups::where('business_id', $business->id)
+                : ContactGroups::where('customer_id', Auth::user()->id);
+
+            foreach ($query->get() as $contactGroup) {
                 yield $contactGroup;
             }
         }
@@ -1651,7 +1764,7 @@
         {
 
             if (config('app.stage') == 'demo') {
-                return redirect()->route('customer.contacts.index')->with([
+                return CrmRouting::redirectRoute('contacts.index')->with([
                     'status'  => 'error',
                     'message' => 'Sorry! This option is not available in demo mode',
                 ]);
@@ -1664,7 +1777,7 @@
 
                 return response()->download($file_name);
             } catch (IOException|InvalidArgumentException|UnsupportedTypeException|WriterNotOpenedException $e) {
-                return redirect()->route('customer.contacts.index')->with([
+                return CrmRouting::redirectRoute('contacts.index')->with([
                     'status'  => 'error',
                     'message' => $e->getMessage(),
                 ]);
@@ -1758,7 +1871,7 @@
             $contact = $this->resolveOwnedContactGroup($contact);
 
             if (config('app.stage') == 'demo') {
-                return redirect()->route('customer.contacts.index')->with([
+                return CrmRouting::redirectRoute('contacts.index')->with([
                     'status'  => 'error',
                     'message' => 'Sorry! This option is not available in demo mode',
                 ]);
@@ -1820,7 +1933,7 @@
             $contact = $this->resolveOwnedContactGroup($contact);
 
             if (config('app.stage') == 'demo') {
-                return redirect()->route('customer.contacts.show', $contact->uid)->withInput(['tab' => 'fields'])->with([
+                return CrmRouting::redirectRoute('contacts.show', $contact->uid)->withInput(['tab' => 'fields'])->with([
                     'status'  => 'error',
                     'message' => 'Sorry! This option is not available in demo mode',
                 ]);
@@ -1832,10 +1945,10 @@
 
             if ($validator->fails()) {
 
-                return redirect()->route('customer.contacts.show', $contact->uid)->withInput(['tab' => 'fields'])->withErrors($validator);
+                return CrmRouting::redirectRoute('contacts.show', $contact->uid)->withInput(['tab' => 'fields'])->withErrors($validator);
             }
 
-            return redirect()->route('customer.contacts.show', $contact->uid)->withInput(['tab' => 'fields'])->with([
+            return CrmRouting::redirectRoute('contacts.show', $contact->uid)->withInput(['tab' => 'fields'])->with([
                 'status'  => 'success',
                 'message' => __('locale.fields.created'),
             ]);
@@ -1864,7 +1977,7 @@
             $contact = $this->resolveOwnedContactGroup($contact);
 
             if (config('app.stage') == 'demo') {
-                return redirect()->route('customer.contacts.show', $contact->uid)->withInput(['tab' => 'fields'])->with([
+                return CrmRouting::redirectRoute('contacts.show', $contact->uid)->withInput(['tab' => 'fields'])->with([
                     'status'  => 'error',
                     'message' => 'Sorry! This option is not available in demo mode',
                 ]);
@@ -1889,7 +2002,7 @@
             return response()->json([
                 'status'     => 'success',
                 'message'    => __('locale.filezone.csv_uploaded'),
-                'mappingUrl' => route('customer.contacts.import-mapping', [
+                'mappingUrl' => CrmRouting::route('contacts.import-mapping', [
                     'contact'  => $contact->uid,
                     'filepath' => $filepath,
                 ]),
@@ -1953,7 +2066,7 @@
             return response()->json([
                 'status'      => 'success',
                 'job_uid'     => $job->uid,
-                'redirectUrl' => route('customer.contacts.show', ['contact' => $contact->uid, 'tab' => 'import_history']),
+                'redirectUrl' => CrmRouting::route('contacts.show', ['contact' => $contact->uid, 'tab' => 'import_history']),
                 'message'     => __('locale.contacts.contact_successfully_imported_in_background'),
             ]);
         }
@@ -2064,7 +2177,10 @@
             if (is_null($contactGroupIds))
                 return response()->json('No contact groups selected', 404);
 
-            $ownedGroupIds = ContactGroups::where('customer_id', Auth::id())
+            $business      = $this->currentBusinessContext();
+            $ownedGroupIds = ($business !== null
+                ? ContactGroups::where('business_id', $business->id)
+                : ContactGroups::where('customer_id', Auth::id()))
                 ->whereIn('id', $contactGroupIds)
                 ->pluck('id');
 
@@ -2096,7 +2212,7 @@
                 ->exists();
 
             if ( ! $exists) {
-                return redirect()->route('customer.contacts.show', $contact->uid)->with([
+                return CrmRouting::redirectRoute('contacts.show', $contact->uid)->with([
                     'status'  => 'error',
                     'message' => __('locale.contacts.contact_not_found'),
                 ]);
@@ -2135,5 +2251,48 @@
             return response()->stream($callback, 200, $headers);
         }
 
+        /**
+         * Business-addressable routes call "{action}ForBusiness" instead
+         * of the legacy "{action}" action name. Every one of these nested
+         * per-group actions still takes its original scalar parameter
+         * (e.g. string $contact) as its FIRST parameter — but under
+         * /workspaces/{workspaceUid}/businesses/{businessUid}/contacts/...
+         * there are two EXTRA leading route segments ahead of it, and
+         * Laravel's controller dependency resolver fills scalar (non
+         * class-typed) parameters POSITIONALLY from the raw route
+         * parameter array, not by name. Calling the legacy action
+         * directly under this longer route would silently bind
+         * workspaceUid's value into $contact instead of the real one.
+         *
+         * app()->call() resolves parameters BY NAME against this
+         * request's own route parameter map (correct regardless of how
+         * many leading segments precede $contact), falling back to
+         * type-hint container resolution for anything not explicitly
+         * provided (Request/FormRequest instances, etc.) — so every
+         * legacy action method below is reused completely unmodified.
+         */
+        public function __call($method, $parameters)
+        {
+            if (! str_ends_with($method, 'ForBusiness')) {
+                return parent::__call($method, $parameters);
+            }
 
+            $original = substr($method, 0, -strlen('ForBusiness'));
+
+            $routeParameters = request()->route()?->parameters() ?? [];
+            unset($routeParameters['workspaceUid'], $routeParameters['businessUid']);
+
+            // Container::call() matches by exact parameter name; a route
+            // segment named with an underscore (e.g. {job_id}) needs a
+            // camelCase alias too, since the target method's parameter is
+            // named $jobId, not $job_id.
+            foreach ($routeParameters as $key => $value) {
+                $camelKey = \Illuminate\Support\Str::camel($key);
+                if ($camelKey !== $key && ! array_key_exists($camelKey, $routeParameters)) {
+                    $routeParameters[$camelKey] = $value;
+                }
+            }
+
+            return app()->call([$this, $original], $routeParameters);
+        }
     }

@@ -4,7 +4,7 @@
     </x-alert>
 
     <form class="form form-vertical outreach-form" data-channel="sms" data-mode="quick"
-          action="{{ route('customer.outreach.sms.send') }}" method="post">
+          action="{{ route('customer.workspaces.businesses.outreach.sms.send', [$workspaceUid, $businessUid]) }}" method="post">
         @csrf
         <div class="row">
             @include('customer.Outreach._originator', [
@@ -35,7 +35,7 @@
                     <label for="recipients-sms-quick" class="form-label">{{ __('locale.labels.recipients') }}:
                         @can('sms_campaign_builder')
                             <small class="text-primary">{!! __('locale.description.manual_input') !!}</small>
-                            <a class="text-success text-uppercase text-decoration-underline" href="{{ route('customer.outreach.index') }}#sms-campaign">{{ __('locale.menu.Campaign Builder') }}</a>
+                            <a class="text-success text-uppercase text-decoration-underline" href="{{ route('customer.workspaces.businesses.outreach.index', [$workspaceUid, $businessUid]) }}#sms-campaign">{{ __('locale.menu.Campaign Builder') }}</a>
                             <small class="text-primary">{!! __('locale.contacts.include_country_code_for_successful_import') !!}</small>
                         @else
                             <small class="text-primary">{!! __('locale.description.manual_input') !!}</small>

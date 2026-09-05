@@ -4,6 +4,7 @@ namespace Tests\Feature\Outreach;
 
 use App\Helpers\Helper;
 use App\Models\AppConfig;
+use App\Models\Business;
 use App\Models\Campaigns;
 use App\Models\ContactGroups;
 use App\Models\Country;
@@ -22,23 +23,21 @@ use Tests\Feature\Business\Concerns\CreatesBusinessTestData;
 use Tests\TestCase;
 
 /**
- * B1 Outreach / Compose — behavior coverage: reuse of the existing
- * Campaign send core, campaign-builder persistence, template/AI reuse,
- * subscription/coverage protection, RFC-005 metering non-engagement,
- * the removed raw QuickSend debug logging, and navigation consolidation.
+ * B1 Pass 2 — Outreach / Compose, Business-addressable: reuse of the
+ * existing Campaign send core with an explicit selected Business, campaign-
+ * builder persistence, template/AI reuse, subscription/coverage protection
+ * resolved from the Business owner, RFC-005 metering non-engagement, and
+ * navigation consolidation.
  *
  * The send/campaign-builder tests bind a Mockery double for
  * CampaignRepository into the container rather than rebuilding the full
- * legacy SendingServer/coverage-relation fixture depth that
- * ConversationsPlainSmsMeteringTest explicitly declined to build (see its
- * own class docblock) — that depth belongs to
- * EloquentCampaignRepository's own already-covered internals. What these
+ * legacy SendingServer/coverage-relation fixture depth — that depth belongs
+ * to EloquentCampaignRepository's own already-covered internals. What these
  * tests prove instead is the OutreachController wiring itself: the exact
- * sanitized payload shape reaching checkQuickSendValidation()/
- * quickSend()/campaignBuilder(), and — critically — that quickSend() is
- * always invoked with exactly its 2 default-shaped arguments (never a 3rd
- * `true` conversationContext), which is what keeps RFC-005 M5 metering
- * untouched by B1.
+ * sanitized payload shape (now including the explicit business_id/user_id
+ * keys) reaching checkQuickSendValidation()/quickSend()/campaignBuilder(),
+ * and that quickSend() is always invoked with exactly its 2 default-shaped
+ * arguments (never a 3rd `true` conversationContext).
  */
 class OutreachComposeTest extends TestCase
 {
@@ -73,58 +72,60 @@ class OutreachComposeTest extends TestCase
     }
 
     // -----------------------------------------------------------------
-    // Item 6 — manual SMS send reaches the existing send core
+    // Manual SMS send reaches the existing send core with the explicit
+    // selected Business threaded through as sendData['business_id'].
     // -----------------------------------------------------------------
 
-    public function test_manual_sms_send_reaches_existing_quicksend_core_with_default_conversation_context(): void
+    public function test_manual_sms_send_reaches_existing_quicksend_core_with_explicit_business(): void
     {
-        [$tenant, $fixture] = $this->sendableTenant();
+        [$tenant, $business, $fixture] = $this->sendableTenant();
         $this->authenticateAsCustomer($tenant, ['sms_quick_send']);
 
         $mockRepo = \Mockery::mock(CampaignRepository::class);
         $mockRepo->shouldReceive('checkQuickSendValidation')
             ->once()
-            ->withArgs(function (array $input) {
+            ->withArgs(function (array $input) use ($business) {
                 return $input['message'] === 'Hello there'
+                    && $input['business_id'] === $business->id
+                    && $input['user_id'] === $business->customer_id
                     && ! array_key_exists('recipients', $input)
                     && ! array_key_exists('delimiter', $input)
                     && ! array_key_exists('_token', $input);
             })
             ->andReturn(response()->json([
-                'status' => 'success', 'sender_id' => 'TestSender', 'sms_type' => 'plain', 'user_id' => $tenant->user_id,
+                'status' => 'success', 'sender_id' => 'TestSender', 'sms_type' => 'plain', 'user_id' => $business->customer_id,
             ]));
         $mockRepo->shouldReceive('quickSend')
             ->once()
-            ->with(\Mockery::type(Campaigns::class), \Mockery::type('array'))
+            ->withArgs(function ($campaign, array $sendData) use ($business) {
+                return $campaign instanceof Campaigns && $campaign->business_id === $business->id;
+            })
             ->andReturn(response()->json(['status' => 'success', 'message' => 'sent']));
         $this->app->instance(CampaignRepository::class, $mockRepo);
 
-        $response = $this->post(route('customer.outreach.sms.send'), [
+        $response = $this->post(route('customer.workspaces.businesses.outreach.sms.send', [$business->workspace->uid, $business->uid]), [
             'recipients' => '4155552671',
             'delimiter' => ',',
             'message' => 'Hello there',
             'country_code' => $fixture['country']->id,
         ]);
 
-        $response->assertRedirect(route('customer.outreach.campaigns'));
+        $response->assertRedirect(route('customer.workspaces.businesses.outreach.campaigns', [$business->workspace->uid, $business->uid]));
         $response->assertSessionHas('status', 'success');
         $this->assertSame(0, \DB::table('business_usage_reservations')->count(), 'Default Outreach quick-send must never engage RFC-005 M5 metering.');
     }
 
-    // -----------------------------------------------------------------
-    // Item 7 — MMS send reaches the existing send core
-    // -----------------------------------------------------------------
-
-    public function test_manual_mms_send_reaches_existing_quicksend_core(): void
+    public function test_manual_mms_send_reaches_existing_quicksend_core_with_explicit_business(): void
     {
-        [$tenant, $fixture] = $this->sendableTenant();
+        [$tenant, $business, $fixture] = $this->sendableTenant();
         $this->authenticateAsCustomer($tenant, ['mms_quick_send']);
 
         $mockRepo = \Mockery::mock(CampaignRepository::class);
         $mockRepo->shouldReceive('checkQuickSendValidation')
             ->once()
+            ->withArgs(fn (array $input) => $input['business_id'] === $business->id)
             ->andReturn(response()->json([
-                'status' => 'success', 'sender_id' => 'TestSender', 'sms_type' => 'mms', 'user_id' => $tenant->user_id,
+                'status' => 'success', 'sender_id' => 'TestSender', 'sms_type' => 'mms', 'user_id' => $business->customer_id,
             ]));
         $mockRepo->shouldReceive('quickSend')
             ->once()
@@ -132,7 +133,7 @@ class OutreachComposeTest extends TestCase
             ->andReturn(response()->json(['status' => 'success', 'message' => 'sent']));
         $this->app->instance(CampaignRepository::class, $mockRepo);
 
-        $response = $this->post(route('customer.outreach.mms.send'), [
+        $response = $this->post(route('customer.workspaces.businesses.outreach.mms.send', [$business->workspace->uid, $business->uid]), [
             'recipients' => '4155552671',
             'delimiter' => ',',
             'message' => 'Picture attached',
@@ -140,70 +141,69 @@ class OutreachComposeTest extends TestCase
             'mms_file' => UploadedFile::fake()->image('pic.jpg'),
         ]);
 
-        $response->assertRedirect(route('customer.outreach.campaigns'));
+        $response->assertRedirect(route('customer.workspaces.businesses.outreach.campaigns', [$business->workspace->uid, $business->uid]));
         $this->assertSame(0, \DB::table('business_usage_reservations')->count());
     }
 
     // -----------------------------------------------------------------
-    // Items 8 & 9 — campaign-builder persistence/path + contact-group
-    // recipients reused unchanged
+    // Campaign-builder persistence receives the explicit Business, and
+    // Business-scoped contact groups are reused unchanged.
     // -----------------------------------------------------------------
 
-    public function test_sms_campaign_builder_reuses_existing_campaignbuilder_persistence(): void
+    public function test_sms_campaign_builder_reuses_existing_campaignbuilder_persistence_with_explicit_business(): void
     {
-        [$tenant] = $this->sendableTenant();
+        [$tenant, $business] = $this->sendableTenant();
         $this->authenticateAsCustomer($tenant, ['sms_campaign_builder']);
-        $group = ContactGroups::create(['customer_id' => $tenant->user_id, 'name' => 'VIPs', 'status' => true]);
+        $group = ContactGroups::create(['customer_id' => $tenant->user_id, 'business_id' => $business->id, 'name' => 'VIPs', 'status' => true]);
 
         $mockRepo = \Mockery::mock(CampaignRepository::class);
         $mockRepo->shouldReceive('campaignBuilder')
             ->once()
-            ->withArgs(function ($campaign, array $input) use ($group) {
+            ->withArgs(function ($campaign, array $input) use ($group, $business) {
                 return $campaign instanceof Campaigns
                     && $input['name'] === 'VIP Blast'
+                    && $input['business_id'] === $business->id
+                    && $input['user_id'] === $business->customer_id
                     && array_map('strval', $input['contact_groups']) === [(string) $group->id];
             })
             ->andReturn(response()->json(['status' => 'success', 'message' => 'queued']));
         $this->app->instance(CampaignRepository::class, $mockRepo);
 
-        $response = $this->post(route('customer.outreach.sms.campaign'), [
+        $response = $this->post(route('customer.workspaces.businesses.outreach.sms.campaign', [$business->workspace->uid, $business->uid]), [
             'name' => 'VIP Blast',
             'contact_groups' => [$group->id],
             'message' => 'Hello VIPs',
         ]);
 
-        $response->assertRedirect(route('customer.outreach.campaigns'));
+        $response->assertRedirect(route('customer.workspaces.businesses.outreach.campaigns', [$business->workspace->uid, $business->uid]));
         $response->assertSessionHas('status', 'success');
     }
 
-    public function test_mms_campaign_builder_reuses_existing_campaignbuilder_persistence(): void
+    public function test_mms_campaign_builder_reuses_existing_campaignbuilder_persistence_with_explicit_business(): void
     {
-        [$tenant] = $this->sendableTenant();
+        [$tenant, $business] = $this->sendableTenant();
         $this->authenticateAsCustomer($tenant, ['mms_campaign_builder']);
-        $group = ContactGroups::create(['customer_id' => $tenant->user_id, 'name' => 'VIPs', 'status' => true]);
+        $group = ContactGroups::create(['customer_id' => $tenant->user_id, 'business_id' => $business->id, 'name' => 'VIPs', 'status' => true]);
 
         $mockRepo = \Mockery::mock(CampaignRepository::class);
         $mockRepo->shouldReceive('campaignBuilder')
             ->once()
-            ->withArgs(function ($campaign, array $input) {
-                return $input['sms_type'] === 'mms';
-            })
+            ->withArgs(fn ($campaign, array $input) => $input['sms_type'] === 'mms' && $input['business_id'] === $business->id)
             ->andReturn(response()->json(['status' => 'success', 'message' => 'queued']));
         $this->app->instance(CampaignRepository::class, $mockRepo);
 
-        $response = $this->post(route('customer.outreach.mms.campaign'), [
+        $response = $this->post(route('customer.workspaces.businesses.outreach.mms.campaign', [$business->workspace->uid, $business->uid]), [
             'name' => 'VIP MMS Blast',
             'contact_groups' => [$group->id],
             'message' => 'Hello VIPs',
             'mms_file' => UploadedFile::fake()->image('pic.jpg'),
         ]);
 
-        $response->assertRedirect(route('customer.outreach.campaigns'));
+        $response->assertRedirect(route('customer.workspaces.businesses.outreach.campaigns', [$business->workspace->uid, $business->uid]));
     }
 
     // -----------------------------------------------------------------
-    // Item 10 — legacy CSV import routes remain reachable (contextual
-    // link, not rebuilt inline in Outreach)
+    // Legacy CSV import routes remain reachable (unaffected by B1 Pass 2)
     // -----------------------------------------------------------------
 
     public function test_legacy_sms_and_mms_import_routes_remain_reachable(): void
@@ -216,15 +216,16 @@ class OutreachComposeTest extends TestCase
     }
 
     // -----------------------------------------------------------------
-    // Item 11 — template selection/application reuses the existing
-    // templates.show_data endpoint unchanged
+    // Template application now reuses the new, Business-scoped
+    // templates.show_data endpoint — never the legacy user-scoped one.
     // -----------------------------------------------------------------
 
-    public function test_template_application_reuses_existing_show_data_endpoint(): void
+    public function test_template_application_reuses_the_new_business_scoped_show_data_endpoint(): void
     {
-        [$tenant] = $this->sendableTenant();
+        [$tenant, $business] = $this->sendableTenant();
         $template = Templates::create([
             'user_id' => $tenant->user_id,
+            'business_id' => $business->id,
             'name' => 'Welcome',
             'message' => 'Welcome aboard!',
             'dlt_template_id' => 'DLT123',
@@ -232,24 +233,24 @@ class OutreachComposeTest extends TestCase
         ]);
         $this->authenticateAsCustomer($tenant, ['sms_quick_send']);
 
-        $response = $this->postJson(route('customer.templates.show_data', $template->id));
+        $response = $this->postJson(route('customer.workspaces.businesses.outreach.templates.show_data', [$business->workspace->uid, $business->uid, $template->id]));
 
         $response->assertOk();
         $response->assertJson(['status' => 'success', 'message' => 'Welcome aboard!', 'dlt_template_id' => 'DLT123']);
     }
 
     // -----------------------------------------------------------------
-    // Item 13 — AI generation surfaced via the existing openai.generate
-    // route, no duplicated backend
+    // AI generation surfaced via the existing openai.generate route, no
+    // duplicated backend, reachable from the Business-scoped page.
     // -----------------------------------------------------------------
 
     public function test_composer_wires_ai_generate_to_existing_openai_route_when_active(): void
     {
         config(['services.openai.active' => true]);
-        [$tenant] = $this->sendableTenant();
+        [$tenant, $business] = $this->sendableTenant();
         $this->authenticateAsCustomer($tenant, ['sms_quick_send']);
 
-        $response = $this->get(route('customer.outreach.index'));
+        $response = $this->get(route('customer.workspaces.businesses.outreach.index', [$business->workspace->uid, $business->uid]));
 
         $response->assertOk();
         $response->assertSee(route('customer.openai.generate'), false);
@@ -257,40 +258,43 @@ class OutreachComposeTest extends TestCase
     }
 
     // -----------------------------------------------------------------
-    // Item 14 — legacy subscription/coverage protection preserved
+    // Legacy subscription/coverage protection preserved, now resolved
+    // from the selected Business's owning customer.
     // -----------------------------------------------------------------
 
-    public function test_outreach_index_redirects_to_subscriptions_when_no_active_subscription(): void
+    public function test_outreach_index_redirects_to_subscriptions_when_business_owner_has_no_active_subscription(): void
     {
         $this->ensureRequiredAppConfigRowsExist();
         $tenant = $this->createCustomer();
+        $business = $this->createBusinessWithWorkspace($tenant, $this->businessAttributes());
         $this->authenticateAsCustomer($tenant, ['sms_quick_send']);
 
-        $response = $this->get(route('customer.outreach.index'));
+        $response = $this->get(route('customer.workspaces.businesses.outreach.index', [$business->workspace->uid, $business->uid]));
 
         $response->assertRedirect(route('customer.subscriptions.index'));
         $response->assertSessionHas('status', 'error');
     }
 
-    public function test_sms_send_redirects_to_subscriptions_when_no_active_subscription(): void
+    public function test_sms_send_redirects_when_business_owner_has_no_active_subscription(): void
     {
         $this->ensureRequiredAppConfigRowsExist();
         $tenant = $this->createCustomer();
+        $business = $this->createBusinessWithWorkspace($tenant, $this->businessAttributes());
         $this->authenticateAsCustomer($tenant, ['sms_quick_send']);
 
-        $response = $this->post(route('customer.outreach.sms.send'), [
+        $response = $this->post(route('customer.workspaces.businesses.outreach.sms.send', [$business->workspace->uid, $business->uid]), [
             'recipients' => '4155552671',
             'delimiter' => ',',
             'message' => 'Hello',
         ]);
 
-        $response->assertRedirect(route('customer.outreach.index'));
+        $response->assertRedirect(route('customer.workspaces.businesses.outreach.index', [$business->workspace->uid, $business->uid]));
         $response->assertSessionHas('status', 'error');
     }
 
     // -----------------------------------------------------------------
-    // Item 17 — the raw QuickSend debug logging is gone from the send
-    // path B1 reuses
+    // The raw QuickSend debug logging is still gone from the reused send
+    // path (unaffected by B1 Pass 2).
     // -----------------------------------------------------------------
 
     public function test_raw_quicksend_debug_logging_has_been_removed_from_the_reused_send_path(): void
@@ -305,8 +309,8 @@ class OutreachComposeTest extends TestCase
     }
 
     // -----------------------------------------------------------------
-    // Item 18 — navigation points to Outreach instead of six legacy
-    // channel silos
+    // Navigation still points to one Outreach entry, not six legacy
+    // channel silos (unaffected by B1 Pass 2).
     // -----------------------------------------------------------------
 
     public function test_customer_navigation_exposes_one_outreach_entry_not_six_channel_silos(): void
@@ -334,7 +338,7 @@ class OutreachComposeTest extends TestCase
     // -----------------------------------------------------------------
     // Voice/WhatsApp/Viber/OTP backend confirmation — routes/controller
     // methods must remain reachable even though navigation no longer
-    // links to them
+    // links to them (unaffected by B1 Pass 2).
     // -----------------------------------------------------------------
 
     public function test_deferred_channel_backend_routes_remain_reachable(): void
@@ -353,12 +357,13 @@ class OutreachComposeTest extends TestCase
     // -----------------------------------------------------------------
 
     /**
-     * @return array{0: Customer, 1: array{country: Country, plan: Plan}}
+     * @return array{0: Customer, 1: Business, 2: array{country: Country, plan: Plan}}
      */
     private function sendableTenant(): array
     {
         $this->ensureRequiredAppConfigRowsExist();
         $tenant = $this->createCustomer();
+        $business = $this->createBusinessWithWorkspace($tenant, $this->businessAttributes());
 
         $country = Country::firstOrCreate(['country_code' => '1', 'iso_code' => 'US'], ['name' => 'United States', 'status' => 1]);
         $currency = Currency::firstOrCreate(['code' => 'USD'], ['name' => 'US Dollar', 'format' => '$', 'status' => true]);
@@ -390,7 +395,7 @@ class OutreachComposeTest extends TestCase
             'end_at' => null,
         ]);
 
-        return [$tenant, ['country' => $country, 'plan' => $plan]];
+        return [$tenant, $business, ['country' => $country, 'plan' => $plan]];
     }
 
     private function authenticateAsCustomer(Customer $customer, array $permissions): void

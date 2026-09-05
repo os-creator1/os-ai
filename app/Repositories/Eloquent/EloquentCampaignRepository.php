@@ -224,9 +224,15 @@
 
             $phone = str_replace(['(', ')', '+', '-', ' '], '', $input['country_code'] . $input['recipient']);
 
-            $blacklist = Blacklists::where('user_id', $user->id)
-                ->where('number', $phone)
-                ->first();
+            // Pass 2 — Business-aware Outreach passes 'business_id' explicitly
+            // in $input; scope the blacklist check to that Business rather
+            // than the legacy per-user_id check, so Business A's blacklist
+            // never suppresses Business B's sends. Legacy (non-Outreach)
+            // callers that never set 'business_id' keep the original
+            // per-user_id behavior unchanged.
+            $blacklist = isset($input['business_id']) && $input['business_id'] !== null
+                ? Blacklists::where('business_id', $input['business_id'])->where('number', $phone)->first()
+                : Blacklists::where('user_id', $user->id)->where('number', $phone)->first();
 
             if ($blacklist) {
                 return response()->json([
@@ -819,7 +825,14 @@
 
         public function campaignBuilder(Campaigns $campaign, array $input): JsonResponse
         {
-            $user     = Auth::user();
+            // Pass 2 — Business-aware Outreach passes 'user_id' explicitly
+            // (the selected Business's owning customer id), matching
+            // checkQuickSendValidation()'s existing override convention, so
+            // the legacy subscription/balance/spam-option checks below
+            // resolve against the Business owner rather than whichever
+            // Workspace member is acting. Legacy (non-Outreach) callers
+            // that never set 'user_id' keep resolving Auth::user() unchanged.
+            $user     = isset($input['user_id']) ? User::find($input['user_id']) : Auth::user();
             $sms_type = $input['sms_type'];
 
             $validateData = $this->validateCampaignBuilder($user, $input);
@@ -846,8 +859,14 @@
                 ]);
             }
 
-            // Check if all contact group IDs belong to the user and insert campaign-to-contact-group associations
-            $invalidGroupIds = array_diff($contactGroupIds, $user->customer->lists()->pluck('id')->toArray());
+            // Check if all contact group IDs belong to the user (or, for
+            // Business-aware Outreach, to the explicit Business) and insert
+            // campaign-to-contact-group associations.
+            $outreachBusinessId = $input['business_id'] ?? null;
+            $ownedGroupIds      = $outreachBusinessId !== null
+                ? ContactGroups::where('business_id', $outreachBusinessId)->pluck('id')->toArray()
+                : $user->customer->lists()->pluck('id')->toArray();
+            $invalidGroupIds    = array_diff($contactGroupIds, $ownedGroupIds);
 
             if (count($invalidGroupIds) > 0) {
                 return response()->json([
@@ -867,7 +886,7 @@
             //create campaign
             $new_campaign = Campaigns::create([
                 'user_id'       => $user->id,
-                'business_id'   => app(LegacyBusinessResolver::class)->resolveForCustomer($user->id)?->id,
+                'business_id'   => $outreachBusinessId ?? app(LegacyBusinessResolver::class)->resolveForCustomer($user->id)?->id,
                 'campaign_name' => $input['name'],
                 'message'       => $message,
                 'sms_type'      => $sms_type,
@@ -1243,7 +1262,11 @@ DB::table('ai_box_campaign_map')->insert($mapRows);
                 ]);
             }
 
-            $sms_type = $input['sms_type'];
+            $sms_type   = $input['sms_type'];
+            // Pass 2 — Business-aware Outreach's campaignBuilder() call
+            // passes 'business_id' explicitly (see checkQuickSendValidation()
+            // for the identical rationale).
+            $businessId = $input['business_id'] ?? null;
 
             if (isset($input['sending_server'])) {
                 $sending_server = SendingServer::where('status', true)->find($input['sending_server']);
@@ -1294,7 +1317,9 @@ DB::table('ai_box_campaign_map')->insert($mapRows);
                         $sender_id = $input['sender_id'];
 
                         if (is_array($sender_id) && count($sender_id) > 0) {
-                            $senderids = Senderid::where('user_id', $user->id)
+                            $senderids = ($businessId !== null
+                                    ? Senderid::where("business_id", $businessId)
+                                    : Senderid::where("user_id", $user->id))
                                 ->where('status', 'active')
                                 ->pluck('sender_id')
                                 ->all();
@@ -1325,7 +1350,9 @@ DB::table('ai_box_campaign_map')->insert($mapRows);
 
                         if (is_array($sender_id) && count($sender_id) > 0) {
                             $type_supported = [];
-                            $numbers        = PhoneNumbers::where('user_id', $user->id)
+                            $numbers        = ($businessId !== null
+                                    ? PhoneNumbers::where("business_id", $businessId)
+                                    : PhoneNumbers::where("user_id", $user->id))
                                 ->where('status', 'assigned')
                                 ->cursor();
 
@@ -1359,7 +1386,9 @@ DB::table('ai_box_campaign_map')->insert($mapRows);
 
                 if (is_array($sender_id) && count($sender_id) > 0) {
                     $type_supported = [];
-                    $numbers        = PhoneNumbers::where('user_id', $user->id)
+                    $numbers        = ($businessId !== null
+                            ? PhoneNumbers::where("business_id", $businessId)
+                            : PhoneNumbers::where("user_id", $user->id))
                         ->where('status', 'assigned')
                         ->cursor();
 
@@ -1499,9 +1528,15 @@ DB::table('ai_box_campaign_map')->insert($mapRows);
                     $sender_id = $input['sender_id'];
                 }
 
-                $check_sender_id = Senderid::where('user_id', $user->id)->where('sender_id', $sender_id)->where('status', 'active')->first();
+                $check_sender_id = ($businessId !== null
+                        ? Senderid::where('business_id', $businessId)
+                        : Senderid::where('user_id', $user->id))
+                    ->where('sender_id', $sender_id)->where('status', 'active')->first();
                 if ( ! $check_sender_id) {
-                    $number = PhoneNumbers::where('user_id', $user->id)->where('number', $sender_id)->where('status', 'assigned')->first();
+                    $number = ($businessId !== null
+                            ? PhoneNumbers::where('business_id', $businessId)
+                            : PhoneNumbers::where('user_id', $user->id))
+                        ->where('number', $sender_id)->where('status', 'assigned')->first();
 
                     if ( ! $number) {
                         return response()->json([
@@ -2532,8 +2567,14 @@ DB::table('ai_box_campaign_map')->insert($mapRows);
 
         public function checkQuickSendValidation(array $input)
         {
-            $user     = isset($input['user_id']) ? User::find($input['user_id']) : Auth::user();
-            $sms_type = $input['sms_type'];
+            $user       = isset($input['user_id']) ? User::find($input['user_id']) : Auth::user();
+            $sms_type   = $input['sms_type'];
+            // Pass 2 — when Business-aware Outreach passes 'business_id'
+            // explicitly, sender-id/phone-number authorization below scopes
+            // to that Business rather than the owning customer's user_id,
+            // so a customer with multiple Businesses never authorizes a
+            // sender resource that actually belongs to a different Business.
+            $businessId = $input['business_id'] ?? null;
 
             if ($user->customer->getOption('send_spam_message') == 'no') {
                 $spamWords = SpamWord::whereRaw("LOWER(?) LIKE CONCAT('%', LOWER(word), '%')", [$input['message']])->get();
@@ -2574,9 +2615,15 @@ DB::table('ai_box_campaign_map')->insert($mapRows);
                     $sender_id = $input['sender_id'];
                 }
 
-                $check_sender_id = Senderid::where('user_id', $user->id)->where('sender_id', $sender_id)->where('status', 'active')->first();
+                $check_sender_id = ($businessId !== null
+                        ? Senderid::where('business_id', $businessId)
+                        : Senderid::where('user_id', $user->id))
+                    ->where('sender_id', $sender_id)->where('status', 'active')->first();
                 if ( ! $check_sender_id) {
-                    $number = PhoneNumbers::where('user_id', $user->id)->where('number', $sender_id)->where('status', 'assigned')->first();
+                    $number = ($businessId !== null
+                            ? PhoneNumbers::where('business_id', $businessId)
+                            : PhoneNumbers::where('user_id', $user->id))
+                        ->where('number', $sender_id)->where('status', 'assigned')->first();
 
                     if ( ! $number) {
                         return response()->json([

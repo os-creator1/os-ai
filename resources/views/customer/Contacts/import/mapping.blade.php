@@ -95,7 +95,7 @@
         } else {
 
             $.ajax({
-                url: '{{ route('customer.contact.import-run', $list->uid) }}',
+                url: '{{ \App\Library\CrmRouting::route('contact.import-run', $list->uid) }}',
                 type: 'POST',
                 data: {
                     _token: '{{ csrf_token() }}',

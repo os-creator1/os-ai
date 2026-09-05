@@ -82,7 +82,7 @@
 
         @can('create_contact')
             <div class="btn-group">
-                <a href="{{route('customer.contact.create', $contact->uid)}}"
+                <a href="{{\App\Library\CrmRouting::route('contact.create', $contact->uid)}}"
                    class="btn btn-success waves-light waves-effect fw-bold me-1"> {{__('locale.buttons.add_new')}} <x-ds-icon
                             name="plus-circle" /></a>
             </div>
@@ -90,7 +90,7 @@
 
         @can('view_contact')
             <div class="btn-group">
-                <a href="{{ route('customer.contact.import', $contact->uid) }}"
+                <a href="{{ \App\Library\CrmRouting::route('contact.import', $contact->uid) }}"
                    class="btn btn-secondary waves-light waves-effect fw-bold me-1"> {{__('locale.buttons.import')}} <x-ds-icon
                             name="upload" /></a>
             </div>
@@ -168,7 +168,7 @@
      aria-hidden="true">
     <div class="modal-dialog modal-lg" role="document">
         <div class="modal-content">
-            <form method="post" action="{{route('customer.contact.export', $contact->uid)}}">
+            <form method="post" action="{{\App\Library\CrmRouting::route('contact.export', $contact->uid)}}">
                 <div class="modal-header">
                     <h5 class="modal-title" id="exampleModalLabel">Overview</h5>
                 </div>
