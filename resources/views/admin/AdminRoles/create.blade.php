@@ -49,10 +49,10 @@
                                                                @endif
                                                                value="{{ $permission['name'] }}"
                                                                name="permissions[]"
-                                                               id="{{ $permission['name'] }}"
+                                                               id="permission-{{ str_replace(' ', '-', $permission['name']) }}"
                                                                class="form-check-input"
                                                         >
-                                                        <label class="form-check-label text-uppercase" for="{{ $permission['name'] }}"> {{ __('locale.permission.'.$permission['display_name']) }} </label>
+                                                        <label class="form-check-label text-uppercase" for="permission-{{ str_replace(' ', '-', $permission['name']) }}"> {{ __('locale.permission.'.$permission['display_name']) }} </label>
 
                                                     </div>
 

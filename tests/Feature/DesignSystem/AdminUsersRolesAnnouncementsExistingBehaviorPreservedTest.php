@@ -39,32 +39,29 @@ class AdminUsersRolesAnnouncementsExistingBehaviorPreservedTest extends TestCase
         // Created first, deliberately, in every test so every OTHER actor
         // created below lands on a higher id -- permission-denial
         // assertions then test the real Gate::define()/session-permission
-        // path rather than accidentally exercising the id-1 bypass. Kept
-        // as $this->superAdmin because EloquentUserRepository::update()'s
-        // own `User::getCanEditAttribute()` (auth()->id() === 1) makes
-        // this the ONLY actor for whom a single-record administrator edit
-        // can ever succeed, regardless of the 'edit administrator'
-        // permission -- a genuine pre-existing quirk, not something this
-        // restyle introduced (see Known unrelated issues in the final
-        // report).
+        // path rather than accidentally exercising the id-1 bypass. Kept as
+        // $this->superAdmin: post A3-Bug-Cleanup-Checkpoint,
+        // EloquentUserRepository::update() no longer requires the actor to
+        // be id 1 (that was Bug 1 -- fixed), but User::is_super_admin
+        // (id === 1) still names a genuine, target-specific protected
+        // account, used by the super-admin-protection test below.
         //
         // Explicitly forced to id=1 (a raw insert, not User::create(),
         // which would merely take whatever the next auto-increment value
         // happens to be): MySQL/InnoDB does not roll back an
         // AUTO_INCREMENT counter on transaction rollback, so across a
         // long RefreshDatabase-wrapped test run "the next id" drifts well
-        // past 1 long before this file's own tests execute. A second,
-        // independent pre-existing bug depends on id=1 genuinely
-        // existing: the `announcements` table's own migration hardcodes
-        // `user_id` to `default(1)`, and EloquentAnnouncementsRepository
-        // ::store() never sets `user_id` explicitly -- so creating any
-        // Announcement fails its `announcements_user_id_foreign`
-        // constraint unless a real id=1 user is present. Forcing this
-        // fixture to id=1 exercises the real success path for both
-        // pre-existing behaviors instead of failing on ambient test-order
-        // drift.
+        // past 1 long before this file's own tests execute. Also required
+        // by Bug 2's pre-fix behavior (announcements.user_id defaulted to
+        // 1) and still harmless/useful post-fix as the fixed super-admin
+        // account's own real id.
+        // A raw query-builder insert bypasses Eloquent model events
+        // entirely (including HasUid::boot()'s `creating` listener), so
+        // `uid` must be set explicitly here or route-model-binding calls
+        // like route('admin.administrators.update', $this->superAdmin->uid)
+        // would fail with a missing-parameter error.
         DB::table('users')->insert([
-            'id' => 1, 'first_name' => 'Seed', 'last_name' => 'Filler',
+            'id' => 1, 'uid' => uniqid('', true), 'first_name' => 'Seed', 'last_name' => 'Filler',
             'email' => 'seed-filler-' . uniqid('', true) . '@example.test',
             'status' => true, 'is_admin' => true, 'is_customer' => false,
             'active_portal' => 'admin', 'created_at' => now(), 'updated_at' => now(),
@@ -156,7 +153,8 @@ class AdminUsersRolesAnnouncementsExistingBehaviorPreservedTest extends TestCase
 
     public function test_administrator_show_renders_existing_role_selection_and_update_persists(): void
     {
-        $this->actingAsAdmin(['access backend', 'create administrator', 'edit administrator']);
+        $actor = $this->actingAsAdmin(['access backend', 'create administrator', 'edit administrator']);
+        $this->assertNotSame(1, $actor->id, 'This test must exercise a genuine non-super-admin actor.');
         $role = Role::create(['name' => 'support-' . uniqid('', true), 'status' => 1]);
 
         $store = $this->post(route('admin.administrators.store'), [
@@ -173,14 +171,13 @@ class AdminUsersRolesAnnouncementsExistingBehaviorPreservedTest extends TestCase
             ->assertOk()
             ->assertSee($administrator->first_name);
 
-        // EloquentUserRepository::update()'s own can_edit gate
-        // (auth()->id() === 1) means a single-record administrator update
-        // only ever succeeds for the true super-admin, independent of the
-        // 'edit administrator' permission -- see the setUp() note. Acting
-        // as $this->superAdmin here exercises the real success path.
-        $this->actingAs($this->superAdmin);
-        $this->withSession(['permissions' => collect(['access backend', 'edit administrator'])]);
-
+        // A3 Bug-Cleanup Checkpoint (Bug 1): a single-record administrator
+        // update must succeed for any actor holding the real
+        // 'edit administrator' permission -- not only the literal
+        // super-admin (id===1). $actor here is deliberately NOT id 1 (see
+        // the setUp() note on actor ordering), proving the removed
+        // `auth()->id() === 1` mutation gate no longer blocks a
+        // legitimately authorized administrator.
         $update = $this->from(route('admin.administrators.show', $administrator->uid))
             ->put(route('admin.administrators.update', $administrator->uid), [
                 'first_name' => 'Renamed', 'email' => $administrator->email,
@@ -189,6 +186,62 @@ class AdminUsersRolesAnnouncementsExistingBehaviorPreservedTest extends TestCase
 
         $update->assertRedirect(route('admin.administrators.index'));
         $this->assertSame('Renamed', $administrator->fresh()->first_name);
+    }
+
+    public function test_administrator_update_denied_without_edit_permission(): void
+    {
+        // A3 Bug-Cleanup Checkpoint (Bug 1, invariant item 3): an actor
+        // without 'edit administrator' must still be rejected -- the fix
+        // removes the accidental id-1 gate, it does not remove real
+        // authorization.
+        $this->actingAsAdmin(['access backend', 'create administrator']);
+        $role = Role::create(['name' => 'noedit-' . uniqid('', true), 'status' => 1]);
+
+        $this->post(route('admin.administrators.store'), [
+            'first_name' => 'NoEdit', 'last_name' => 'Target',
+            'email' => 'noedit-target-' . uniqid('', true) . '@example.test',
+            'phone' => '12025550199',
+            'password' => 'Password!234', 'password_confirmation' => 'Password!234',
+            'status' => 1, 'roles' => [$role->id],
+        ]);
+        $administrator = User::where('email', 'like', 'noedit-target-%')->first();
+
+        $update = $this->put(route('admin.administrators.update', $administrator->uid), [
+            'first_name' => 'ShouldNotApply', 'email' => $administrator->email,
+            'roles' => [$role->id], 'timezone' => 'UTC', 'locale' => 'en',
+        ]);
+
+        $update->assertStatus(401);
+        $this->assertSame('NoEdit', $administrator->fresh()->first_name);
+    }
+
+    public function test_administrator_update_still_protects_the_super_admin_from_deactivation(): void
+    {
+        // A3 Bug-Cleanup Checkpoint (Bug 1, invariant item 4): the genuine,
+        // target-specific super-admin protection in
+        // EloquentUserRepository::update() (User::is_super_admin &&
+        // ! User::status, corrected from the broken, always-truthy
+        // `! $user->active` reference) must still block deactivating the
+        // one true super-admin account, independent of who the acting,
+        // authorized administrator is.
+        $actor = $this->actingAsAdmin(['access backend', 'edit administrator']);
+        $this->assertNotSame(1, $actor->id);
+        $role = Role::create(['name' => 'protect-' . uniqid('', true), 'status' => 1]);
+
+        $update = $this->put(route('admin.administrators.update', $this->superAdmin->uid), [
+            'first_name' => $this->superAdmin->first_name, 'email' => $this->superAdmin->email,
+            'roles' => [$role->id], 'timezone' => 'UTC', 'locale' => 'en',
+            'status' => 0,
+        ]);
+
+        // The FormRequest/controller boundary succeeds (real permission
+        // held); the repository's own target-protection guard is what
+        // rejects the mutation, rendered as the app's generic JSON error
+        // shape (App\Exceptions\Handler -- see other tests' notes on
+        // this app's exception rendering).
+        $update->assertOk();
+        $update->assertJson(['status' => 'error']);
+        $this->assertTrue((bool) $this->superAdmin->fresh()->status, 'The super-admin must remain active.');
     }
 
     public function test_administrator_active_toggle_flips_status(): void
@@ -338,7 +391,8 @@ class AdminUsersRolesAnnouncementsExistingBehaviorPreservedTest extends TestCase
 
     public function test_announcement_store_broadcast_to_all_customers_persists(): void
     {
-        $this->actingAsAdmin(['access backend', 'create announcement']);
+        $actor = $this->actingAsAdmin(['access backend', 'create announcement']);
+        $this->assertNotSame(1, $actor->id, 'This test must exercise a genuine non-id-1 creator.');
         $this->createActiveCustomer();
 
         $response = $this->post(route('admin.announcements.store'), [
@@ -349,7 +403,13 @@ class AdminUsersRolesAnnouncementsExistingBehaviorPreservedTest extends TestCase
         ]);
 
         $response->assertRedirect(route('admin.announcements.index'));
-        $this->assertNotNull(Announcements::where('title', 'Scheduled maintenance')->first());
+
+        // A3 Bug-Cleanup Checkpoint (Bug 2): the announcement must record
+        // the real authenticated creator, not silently rely on the
+        // `announcements.user_id` schema default of 1.
+        $announcement = Announcements::where('title', 'Scheduled maintenance')->first();
+        $this->assertNotNull($announcement);
+        $this->assertSame($actor->id, $announcement->user_id);
     }
 
     public function test_announcement_show_renders_correct_tab_for_existing_type_and_update_persists(): void
