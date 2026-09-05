@@ -992,6 +992,14 @@
                         ],
                     ],
                     [
+                        'url'    => url('channels'),
+                        'slug'   => 'channels',
+                        'name'   => 'Channels',
+                        'i18n'   => 'Channels',
+                        'icon'   => 'link',
+                        'access' => 'view_numbers',
+                    ],
+                    [
                         'url'    => url('blacklists'),
                         'slug'   => 'blacklists',
                         'name'   => 'Blacklist',

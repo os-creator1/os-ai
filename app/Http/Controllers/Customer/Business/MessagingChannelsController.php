@@ -1,0 +1,424 @@
+<?php
+
+namespace App\Http\Controllers\Customer\Business;
+
+use App\Http\Controllers\Customer\CustomerBaseController;
+use App\Library\Workspace\WorkspaceManager;
+use App\Models\Business;
+use App\Models\CustomerBasedSendingServer;
+use App\Models\PhoneNumbers;
+use App\Models\Senderid;
+use App\Models\SendingServer;
+use App\Repositories\Contracts\SendingServerRepository;
+use App\Repositories\Contracts\WorkspaceRepository;
+use Illuminate\Contracts\Foundation\Application;
+use Illuminate\Contracts\View\Factory;
+use Illuminate\Contracts\View\View;
+use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
+
+/**
+ * B2 — Business Messaging Channels: a small, simple Business-level
+ * connect/manage experience for exactly two launch providers (Twilio,
+ * Telnyx), built on top of the existing, unmodified SendingServer backend.
+ *
+ * A "connection" is represented entirely with existing schema:
+ * Business -> CustomerBasedSendingServer -> SendingServer. A B2-created
+ * connection always gets its OWN dedicated, non-shared SendingServer row
+ * (never silently shared across Businesses); a pre-existing legacy/admin
+ * assignment that IS shared (or whose SendingServer's legacy owner isn't
+ * this Business's owner) is surfaced read-only ("Managed").
+ *
+ * Every action resolves its Business via the exact RFC-003 §14.1 boundary
+ * (WorkspaceRepository::findByUid()/businessesForWorkspace() +
+ * WorkspaceManager::userCanAccessBusiness()), mirroring
+ * OutreachController::resolveAccessibleBusiness() verbatim — never
+ * business.customer_id === Auth::id().
+ */
+class MessagingChannelsController extends CustomerBaseController
+{
+    /**
+     * B2's entire customer-facing provider allowlist. Server-side
+     * authoritative: a submitted provider outside this list is always
+     * rejected, regardless of how many providers the inherited backend
+     * actually supports.
+     */
+    private const ALLOWED_PROVIDERS = [
+        SendingServer::TYPE_TWILIO => [
+            'label' => 'Twilio',
+            'credential_fields' => [
+                'account_sid' => ['label' => 'Account SID', 'required' => true],
+                'auth_token' => ['label' => 'Auth Token', 'required' => true],
+            ],
+        ],
+        SendingServer::TYPE_TELNYX => [
+            'label' => 'Telnyx',
+            'credential_fields' => [
+                'api_key' => ['label' => 'API Key', 'required' => true],
+                'c1' => ['label' => 'Message Profile ID', 'required' => true],
+                'c2' => ['label' => 'Message Connection ID', 'required' => false],
+            ],
+        ],
+    ];
+
+    public function __construct(
+        private readonly SendingServerRepository $sendingServers,
+        private readonly WorkspaceRepository $workspaceRepository,
+        private readonly WorkspaceManager $workspaceManager,
+    ) {
+    }
+
+    /**
+     * Bare /channels entry/selector route. Never guesses a Business.
+     */
+    public function entry(): View|Factory|Application|RedirectResponse
+    {
+        $this->authorize('view_numbers');
+
+        $accessible = $this->accessibleBusinesses();
+
+        if (count($accessible) === 0) {
+            return view('customer.business.MessagingChannels.entry', ['accessible' => []]);
+        }
+
+        if (count($accessible) === 1) {
+            [$workspace, $business] = $accessible[0];
+
+            return redirect()->route('customer.workspaces.businesses.channels.index', [$workspace->uid, $business->uid]);
+        }
+
+        return view('customer.business.MessagingChannels.entry', ['accessible' => $accessible]);
+    }
+
+    public function channels(string $workspaceUid, string $businessUid): View|Factory|Application
+    {
+        $this->authorize('view_numbers');
+
+        $business = $this->resolveAccessibleBusiness($workspaceUid, $businessUid);
+
+        $connections = CustomerBasedSendingServer::where('business_id', $business->id)
+            ->whereHas('sendingServer', function ($query) {
+                $query->whereIn('settings', array_keys(self::ALLOWED_PROVIDERS));
+            })
+            ->with('sendingServer')
+            ->get();
+
+        $providers = [];
+        foreach (self::ALLOWED_PROVIDERS as $type => $meta) {
+            $providers[$type] = [
+                'type' => $type,
+                'label' => $meta['label'],
+                'connections' => $connections->filter(fn ($connection) => $connection->sendingServer?->settings === $type)->values(),
+            ];
+        }
+
+        return view('customer.business.MessagingChannels.index', [
+            'workspaceUid' => $workspaceUid,
+            'businessUid' => $businessUid,
+            'providers' => $providers,
+            'phoneNumbers' => PhoneNumbers::where('business_id', $business->id)->get(),
+            'senderIds' => Senderid::where('business_id', $business->id)->get(),
+        ]);
+    }
+
+    public function connect(string $workspaceUid, string $businessUid, string $provider): View|Factory|Application|RedirectResponse
+    {
+        $this->authorize('view_numbers');
+
+        $business = $this->resolveAccessibleBusiness($workspaceUid, $businessUid);
+
+        if (! $this->isAllowedProvider($provider)) {
+            return $this->channelsError($workspaceUid, $businessUid, 'Unsupported provider.');
+        }
+
+        return view('customer.business.MessagingChannels.connect', [
+            'workspaceUid' => $workspaceUid,
+            'businessUid' => $businessUid,
+            'provider' => $provider,
+            'providerLabel' => self::ALLOWED_PROVIDERS[$provider]['label'],
+            'fields' => self::ALLOWED_PROVIDERS[$provider]['credential_fields'],
+        ]);
+    }
+
+    public function storeConnect(Request $request, string $workspaceUid, string $businessUid, string $provider): RedirectResponse
+    {
+        $this->authorize('view_numbers');
+
+        $business = $this->resolveAccessibleBusiness($workspaceUid, $businessUid);
+
+        if (! $this->isAllowedProvider($provider)) {
+            return $this->channelsError($workspaceUid, $businessUid, 'Unsupported provider.');
+        }
+
+        if (config('app.stage') === 'demo') {
+            return $this->channelsError($workspaceUid, $businessUid, 'Sorry! This option is not available in demo mode');
+        }
+
+        [$errors, $credentials] = $this->validateCredentials($provider, $request->all(), false);
+
+        if (! empty($errors)) {
+            return redirect()->route('customer.workspaces.businesses.channels.connect', [$workspaceUid, $businessUid, $provider])
+                ->withErrors($errors);
+        }
+
+        // Correction-style discipline carried over from B1: the explicit
+        // selected Business is authoritative. The new SendingServer's
+        // legacy owner and the CustomerBasedSendingServer assignment both
+        // use the Business owner's id — never the acting Workspace
+        // member's — and the assignment's business_id is always the
+        // selected Business.
+        $metadata = $this->sendingServers->allSendingServer()[$provider];
+        $input = array_merge($metadata, $credentials, [
+            'settings' => $provider,
+            'user_id' => $business->customer_id,
+        ]);
+
+        // A new connection's SendingServer and its CustomerBasedSendingServer
+        // assignment must be created together or not at all — otherwise a
+        // failure between the two writes would leave an orphan,
+        // credential-bearing SendingServer with no Business assignment.
+        DB::transaction(function () use ($input, $business): void {
+            $sendingServer = $this->sendingServers->store($input);
+
+            CustomerBasedSendingServer::create([
+                'user_id' => $business->customer_id,
+                'business_id' => $business->id,
+                'sending_server' => $sendingServer->id,
+                'status' => true,
+            ]);
+        });
+
+        return redirect()->route('customer.workspaces.businesses.channels.index', [$workspaceUid, $businessUid])->with([
+            'status' => 'success',
+            'message' => self::ALLOWED_PROVIDERS[$provider]['label'] . ' connected.',
+        ]);
+    }
+
+    public function show(string $workspaceUid, string $businessUid, CustomerBasedSendingServer $connection): View|Factory|Application
+    {
+        $this->authorize('view_numbers');
+
+        $business = $this->resolveAccessibleBusiness($workspaceUid, $businessUid);
+        $this->resolveOwnedConnection($connection, $business);
+
+        $provider = $connection->sendingServer->settings;
+
+        return view('customer.business.MessagingChannels.show', [
+            'workspaceUid' => $workspaceUid,
+            'businessUid' => $businessUid,
+            'connection' => $connection,
+            'provider' => $provider,
+            'providerLabel' => self::ALLOWED_PROVIDERS[$provider]['label'] ?? $provider,
+            'fields' => self::ALLOWED_PROVIDERS[$provider]['credential_fields'] ?? [],
+            'managed' => $this->isManagedConnection($business, $connection),
+            'inboundUrl' => $this->inboundUrl($provider, $connection->sendingServer->uid),
+            'phoneNumbers' => PhoneNumbers::where('business_id', $business->id)->get(),
+            'senderIds' => Senderid::where('business_id', $business->id)->get(),
+        ]);
+    }
+
+    public function update(Request $request, string $workspaceUid, string $businessUid, CustomerBasedSendingServer $connection): RedirectResponse
+    {
+        $this->authorize('view_numbers');
+
+        $business = $this->resolveAccessibleBusiness($workspaceUid, $businessUid);
+        $this->resolveOwnedConnection($connection, $business);
+
+        if ($this->isManagedConnection($business, $connection)) {
+            return $this->channelsError($workspaceUid, $businessUid, 'This connection is managed and cannot be edited here.');
+        }
+
+        if (config('app.stage') === 'demo') {
+            return $this->channelsError($workspaceUid, $businessUid, 'Sorry! This option is not available in demo mode');
+        }
+
+        $provider = $connection->sendingServer->settings;
+
+        if (! $this->isAllowedProvider($provider)) {
+            return $this->channelsError($workspaceUid, $businessUid, 'Unsupported provider.');
+        }
+
+        // Blank credential fields intentionally preserve the current
+        // secret — only non-blank submitted values are applied.
+        [$errors, $credentials] = $this->validateCredentials($provider, $request->all(), true);
+
+        if (! empty($errors)) {
+            return redirect()->route('customer.workspaces.businesses.channels.connections.show', [$workspaceUid, $businessUid, $connection->uid])
+                ->withErrors($errors);
+        }
+
+        if (! empty($credentials)) {
+            $this->sendingServers->update($connection->sendingServer, $credentials);
+        }
+
+        return redirect()->route('customer.workspaces.businesses.channels.connections.show', [$workspaceUid, $businessUid, $connection->uid])->with([
+            'status' => 'success',
+            'message' => 'Connection updated.',
+        ]);
+    }
+
+    public function enable(string $workspaceUid, string $businessUid, CustomerBasedSendingServer $connection): RedirectResponse
+    {
+        $this->authorize('view_numbers');
+
+        $business = $this->resolveAccessibleBusiness($workspaceUid, $businessUid);
+        $this->resolveOwnedConnection($connection, $business);
+
+        // A Business may never override an administrator-disabled global
+        // SendingServer by re-enabling its own assignment.
+        if (! $connection->sendingServer || ! $connection->sendingServer->status) {
+            return $this->channelsError($workspaceUid, $businessUid, 'This provider is not currently available.');
+        }
+
+        $connection->update(['status' => true]);
+
+        return redirect()->route('customer.workspaces.businesses.channels.index', [$workspaceUid, $businessUid])->with([
+            'status' => 'success',
+            'message' => 'Connection enabled.',
+        ]);
+    }
+
+    public function disable(string $workspaceUid, string $businessUid, CustomerBasedSendingServer $connection): RedirectResponse
+    {
+        $this->authorize('view_numbers');
+
+        $business = $this->resolveAccessibleBusiness($workspaceUid, $businessUid);
+        $this->resolveOwnedConnection($connection, $business);
+
+        // Disabling this Business's assignment only ever touches this row
+        // — never the underlying (possibly shared) SendingServer, and
+        // never another Business's assignment of the same server.
+        $connection->update(['status' => false]);
+
+        return redirect()->route('customer.workspaces.businesses.channels.index', [$workspaceUid, $businessUid])->with([
+            'status' => 'success',
+            'message' => 'Connection disabled.',
+        ]);
+    }
+
+    // -----------------------------------------------------------------
+    // Helpers
+    // -----------------------------------------------------------------
+
+    private function isAllowedProvider(string $provider): bool
+    {
+        return array_key_exists($provider, self::ALLOWED_PROVIDERS);
+    }
+
+    /**
+     * @return array{0: array<string,string>, 1: array<string,string>} [errors, valid credential values]
+     */
+    private function validateCredentials(string $provider, array $submitted, bool $isUpdate): array
+    {
+        $errors = [];
+        $values = [];
+
+        foreach (self::ALLOWED_PROVIDERS[$provider]['credential_fields'] as $key => $meta) {
+            $value = trim((string) ($submitted[$key] ?? ''));
+
+            if ($value === '') {
+                // Create: a required field left blank is an error. Update:
+                // a blank field means "keep the current value" — never an
+                // error, never applied.
+                if ($meta['required'] && ! $isUpdate) {
+                    $errors[$key] = $meta['label'] . ' is required.';
+                }
+
+                continue;
+            }
+
+            $values[$key] = $value;
+        }
+
+        return [$errors, $values];
+    }
+
+    private function isManagedConnection(Business $business, CustomerBasedSendingServer $connection): bool
+    {
+        $isShared = CustomerBasedSendingServer::where('sending_server', $connection->sending_server)->count() > 1;
+        $ownerMismatch = $connection->sendingServer === null || (int) $connection->sendingServer->user_id !== (int) $business->customer_id;
+
+        return $isShared || $ownerMismatch;
+    }
+
+    private function inboundUrl(string $provider, string $sendingServerUid): ?string
+    {
+        return match ($provider) {
+            SendingServer::TYPE_TWILIO => route('inbound.twilio', $sendingServerUid),
+            SendingServer::TYPE_TELNYX => route('inbound.telnyx', $sendingServerUid),
+            default => null,
+        };
+    }
+
+    /**
+     * @return array<int, array{0: \App\Models\Workspace, 1: Business}>
+     */
+    private function accessibleBusinesses(): array
+    {
+        $userId = (int) Auth::id();
+        $accessible = [];
+
+        foreach ($this->workspaceRepository->allForUser($userId) as $workspace) {
+            foreach ($this->workspaceRepository->businessesForWorkspace($workspace) as $business) {
+                if ($this->workspaceManager->userCanAccessBusiness($userId, $business)) {
+                    $accessible[] = [$workspace, $business];
+                }
+            }
+        }
+
+        return $accessible;
+    }
+
+    /**
+     * RFC-003 §14.1 boundary, mirroring
+     * Customer\Business\UsageBillingController::resolveViewableBusiness()
+     * verbatim: unknown Workspace, unknown Business, Business in the
+     * wrong Workspace, and an inaccessible Business all fail identically
+     * as 404.
+     */
+    private function resolveAccessibleBusiness(string $workspaceUid, string $businessUid): Business
+    {
+        $workspace = $this->workspaceRepository->findByUid($workspaceUid);
+
+        if ($workspace === null) {
+            abort(404);
+        }
+
+        $business = $this->workspaceRepository->businessesForWorkspace($workspace)->firstWhere('uid', $businessUid);
+
+        if ($business === null || ! $this->workspaceManager->userCanAccessBusiness((int) Auth::id(), $business)) {
+            abort(404);
+        }
+
+        return $business;
+    }
+
+    /**
+     * Correction 1 — every connection-specific B2 action must positively
+     * prove BOTH invariants before touching a connection: it belongs to
+     * the selected Business, AND its underlying SendingServer's provider
+     * type is inside B2's hard allowlist. Without the second check, an
+     * already-existing Business-owned connection for an inherited
+     * provider outside B2's scope (e.g. Plivo) could still be opened/
+     * enabled/disabled through B2 merely because its uid was known.
+     * Centralizing both checks here means the invariant cannot drift
+     * between show()/update()/enable()/disable().
+     */
+    private function resolveOwnedConnection(CustomerBasedSendingServer $connection, Business $business): CustomerBasedSendingServer
+    {
+        abort_unless($connection->business_id === $business->id, 404);
+        abort_unless($connection->sendingServer !== null && $this->isAllowedProvider($connection->sendingServer->settings), 404);
+
+        return $connection;
+    }
+
+    private function channelsError(string $workspaceUid, string $businessUid, string $message): RedirectResponse
+    {
+        return redirect()->route('customer.workspaces.businesses.channels.index', [$workspaceUid, $businessUid])->with([
+            'status' => 'error',
+            'message' => $message,
+        ]);
+    }
+}

@@ -39,7 +39,12 @@
             $sendingServer = $this->make(Arr::only($input, $insertKeys));
 
             $sendingServer->status  = true;
-            $sendingServer->user_id = auth()->id();
+            // B2 — Business-aware Messaging Channels passes 'user_id'
+            // explicitly (the selected Business's owning customer id) so
+            // the legacy owner column reflects the Business owner, never
+            // the acting Workspace staff member. Legacy/admin callers that
+            // never set 'user_id' keep resolving auth()->id() unchanged.
+            $sendingServer->user_id = $input['user_id'] ?? auth()->id();
 
             if ( ! $this->save($sendingServer)) {
                 throw new GeneralException(__('locale.exceptions.something_went_wrong'));
