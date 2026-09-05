@@ -348,6 +348,18 @@
 
     /*
     |--------------------------------------------------------------------------
+    | Messaging Channels entry (B2)
+    |--------------------------------------------------------------------------
+    |
+    | Bare selector only — the actual connect/manage experience lives at
+    | customer.workspaces.businesses.channels.*. Never guesses a Business.
+    | See Business\MessagingChannelsController::entry().
+    |
+    */
+    Route::get('channels', 'Business\MessagingChannelsController@entry')->name('channels.index');
+
+    /*
+    |--------------------------------------------------------------------------
     | Reports module
     |--------------------------------------------------------------------------
     |
@@ -744,6 +756,27 @@
 
             Route::get('/{contact}/download-failed/{job_id}', 'ContactsController@downloadFailedContactsForBusiness')
                 ->name('businesses.contacts.download_failed');
+        });
+
+        /*
+        |----------------------------------------------------------------
+        | B2 — Business Messaging Channels (Twilio / Telnyx connect)
+        |----------------------------------------------------------------
+        |
+        | A small, simple Business-level provider connect/manage surface
+        | built entirely on the existing, unmodified SendingServer +
+        | CustomerBasedSendingServer backend — never a parallel provider
+        | registry. See MessagingChannelsController.
+        |
+        */
+        Route::prefix('{workspaceUid}/businesses/{businessUid}/channels')->name('businesses.channels.')->group(function () {
+            Route::get('/', 'Business\MessagingChannelsController@channels')->name('index');
+            Route::get('/connect/{provider}', 'Business\MessagingChannelsController@connect')->name('connect');
+            Route::post('/connect/{provider}', 'Business\MessagingChannelsController@storeConnect');
+            Route::get('/connections/{connection}', 'Business\MessagingChannelsController@show')->name('connections.show');
+            Route::match(['put', 'patch'], '/connections/{connection}', 'Business\MessagingChannelsController@update')->name('connections.update');
+            Route::post('/connections/{connection}/enable', 'Business\MessagingChannelsController@enable')->name('connections.enable');
+            Route::post('/connections/{connection}/disable', 'Business\MessagingChannelsController@disable')->name('connections.disable');
         });
     });
 
