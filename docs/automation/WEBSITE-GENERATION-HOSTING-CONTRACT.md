@@ -1,13 +1,27 @@
 # WEBSITE GENERATION + HOSTING — IMPLEMENTATION CONTRACT
 
 Status: CONTRACT ONLY — no product code authorized by this document itself.
-Base SHA: `2425b9f1b4415a6b1dbeab99070191cc3d178b35`
+Original base SHA: `2425b9f1b4415a6b1dbeab99070191cc3d178b35`
+Correction 1 base SHA (current `origin/main`, merged in — B5 Business
+Analytics contract, docs-only, zero file overlap):
+`b2bedfc91848c90be2f1fc4e8e0ac440c6d4d892`
 Branch: `agent/website-generation-hosting-contract`
 
 Every claim in this contract is backed by a mechanical inspection of the
-tree at the base SHA. Where a decision was left open by the task, the
-resolving evidence is cited inline by file and line. This document
-contracts **Slice A** (product + platform publishing) in full, and records
+tree at the base SHA (re-verified at Correction 1 against the merged main —
+no Website-relevant repository evidence changed between the two SHAs above;
+the only intervening change anywhere in the tree is the new, unrelated
+`docs/automation/B5-BUSINESS-ANALYTICS-CONTRACT.md` file). Where a decision
+was left open by the task, the resolving evidence is cited inline by file
+and line. Correction 1 resolves every Slice A product decision this
+contract had left open (§26, §21, §13.1, §33) and additionally locks two
+narrow predecessor seams a future, separately contracted SEO Slice A will
+need (§9.2/§10's `WebsitePublished` domain event, §17.1's
+`WebsiteDraftPageService`) — without adding any SEO product code. Slice A
+now has zero unresolved product policy; only Slice B's own named
+infrastructure questions (§40) remain open, because Slice B is a recorded
+boundary, not an authorized implementation. This document contracts
+**Slice A** (product and platform publishing) in full, and records
 **Slice B**'s (custom domains + host infrastructure) boundary and
 prerequisites without designing it.
 
@@ -263,9 +277,14 @@ column.
 
 ## 5. SCHEMA — PROPOSED TABLES
 
-Exactly four new tables. No `website_domains` table (Slice B, §40). No
-generic CMS/event framework, no `website_sections` table separate from
-`website_pages` (sections are stored inline as JSON per page, §9).
+Exactly four new **domain tables**, created via **five migration files**
+(§33 — `websites` and `website_revisions` reference each other, so the
+`websites → website_revisions` forward FK is added in its own, later
+migration rather than attempted inside `create_websites_table` itself; the
+table count is still four, only the migration-file count is five). No
+`website_domains` table (Slice B, §40). No generic CMS/event framework, no
+`website_sections` table separate from `website_pages` (sections are
+stored inline as JSON per page, §9).
 
 ```
 websites
@@ -292,8 +311,8 @@ column, and matching this repository's existing `business_services`/
 | `business_id` | FK → `businesses.id`, unique, `restrictOnDelete()` | §4 |
 | `name` | string(120) | owner-facing display title only; never rendered publicly |
 | `status` | string(16), default `draft` | `App\Enums\Website\WebsiteStatus`: `draft`, `published`, `archived` (§6) |
-| `published_revision_id` | nullable FK → `website_revisions.id`, `nullOnDelete()` | §9/§10 |
-| `theme` | json, nullable | §15 bounded presentation config |
+| `published_revision_id` | nullable FK → `website_revisions.id`, `nullOnDelete()` | §9/§10; added by its own migration after `website_revisions` exists — exact sequence in §33 |
+| `theme` | json, nullable | §18 bounded presentation config |
 | `created_at`/`updated_at` | timestamps | |
 
 Indexes: `business_id` (from the unique constraint), `public_id` (from its
@@ -360,14 +379,14 @@ row after insert.
 | `id` | bigint PK | |
 | `uid` | uuid, unique | |
 | `website_id` | FK → `websites.id`, `cascadeOnDelete()` | |
-| `disk` | string(32) | e.g. `public`, matching this repo's existing `public_path()`-based convention (§16) |
-| `path` | string(255) | server-generated only (§16) — never user input |
+| `disk` | string(32) | e.g. `public`, matching this repo's existing `public_path()`-based convention (§13) |
+| `path` | string(255) | server-generated only (§13) — never user input |
 | `mime_type` | string(64) | derived from verified magic bytes, never client `Content-Type` |
 | `size` | unsigned integer | bytes |
 | `width` / `height` | unsigned integer, nullable | from real decode, not headers |
 | `alt_text` | string(160), nullable | |
 | `content_hash` | string(64), nullable | sha256 of the stored file, for the same write-verify-swap integrity check `BrandingUploadService` already uses |
-| `is_referenced_by_published_revision` | boolean, default false | denormalized flag, recomputed only during publish (§16 deletion rule) — avoids an expensive JSON scan of `snapshot` on every delete attempt |
+| `first_published_at` | nullable timestamp | Correction 1 — replaces an earlier `is_referenced_by_published_revision` boolean design. `NULL` until the asset first appears in a successful publish (§9.1 step 6 sets it exactly once, on first appearance only); never cleared, and never updated again by a later publish that omits the asset. This is a durable, monotonic marker, not a "currently referenced" flag — see §13.1 for why. |
 | `created_at`/`updated_at` | timestamps | |
 
 Indexes: `website_id`.
@@ -470,7 +489,7 @@ outright (§19), never partially persisted.
 ### 7.1 Real-data sourcing rule — LOCKED
 
 Business has **no** hours, FAQ, reviews, or offers model anywhere in this
-codebase (confirmed — see §18.3). `Services`/`ContactDetails` sections
+codebase (confirmed — see §15). `Services`/`ContactDetails` sections
 therefore support an explicit **one-time copy-on-generate** from
 `BusinessService`/`Business`/`BusinessLocation` at AI-generation time
 (§18/§19) — never a live foreign key or live join. Once written into a
@@ -488,8 +507,8 @@ data edit silently mutate an already-published revision.
 | `text` | `heading?`, `body` | heading ≤120, body ≤5000 | none | none |
 | `image_text` | `heading?`, `body`, `image`, `image_position` | heading ≤120, body ≤3000 | `image`: one asset ref, required | none |
 | `services` | `heading?`, `items[]` | heading ≤120, items ≤12; each item: `name` ≤120 (required), `description` ≤500, `price_label` ≤40, `image?` | each item may hold one asset ref | none |
-| `testimonials` | `heading?`, `items[]` | items ≤10; each item: `quote` ≤400 (required), `author_name` ≤80 (required), `author_title` ≤80 | none | none — explicitly authored content, never sourced from any review platform (§7.1, §18.3) |
-| `faq` | `heading?`, `items[]` | items ≤20; each item: `question` ≤200 (required), `answer` ≤1000 (required) | none | none — explicitly authored, no FAQ model exists to source from (§18.3) |
+| `testimonials` | `heading?`, `items[]` | items ≤10; each item: `quote` ≤400 (required), `author_name` ≤80 (required), `author_title` ≤80 | none | none — explicitly authored content, never sourced from any review platform (§7.1, §15) |
+| `faq` | `heading?`, `items[]` | items ≤20; each item: `question` ≤200 (required), `answer` ≤1000 (required) | none | none — explicitly authored, no FAQ model exists to source from (§15) |
 | `cta` | `heading`, `body?`, `buttons[]` | heading ≤120, body ≤300, buttons ≤2; each: `{label ≤40, url}` | none | URL rules §25 |
 | `contact_details` | `show_phone`, `show_email`, `show_address` (each boolean) | — | none | phone/email rendered as `tel:`/`mailto:` links (§25) built server-side from the Business's own real, currently-live `phone`/`email`/primary `BusinessLocation` address at render time — see the one deliberate exception in §7.3 |
 
@@ -568,12 +587,63 @@ edit from ever reaching a live visitor before an explicit publish.
    transaction as step 5 to make the increment race-safe).
 5. Atomically move `websites.published_revision_id` to the new revision's
    id, and set `status = published` if not already.
-6. Recompute `website_assets.is_referenced_by_published_revision` for this
-   Website (§5.4/§16).
+6. For every asset referenced anywhere in the just-built snapshot whose
+   `first_published_at` is still `NULL`, set it to the current timestamp
+   — once, monotonically. An asset already carrying a non-null
+   `first_published_at` from an earlier publish is left untouched, even if
+   this new snapshot no longer references it (§5.4/§13.1).
 
 Steps 3-6 run inside one DB transaction. **No network operation runs
 inside that transaction** — no AI call, no outbound HTTP, no queue
 dispatch requiring an external round trip before commit.
+
+### 9.2 Post-publish domain event — `WebsitePublished` (predecessor seam for a future SEO module)
+
+No SEO product code exists in Slice A (§20/§40 remain the SEO boundary and
+custom-domain boundary respectively, unchanged). What Slice A **does**
+expose is one narrow, already-useful domain seam so a later, separately
+contracted SEO module (or any other future bounded consumer) can react to
+"this Website's live content changed" **without** Website depending on
+SEO, and without a future controller-extraction refactor of the publish
+path:
+
+Immediately **after** §9.1's transaction commits (never inside it — no
+network/queue side effect is ever added to the transaction itself), dispatch
+one event:
+
+```php
+App\Events\Website\WebsitePublished
+```
+
+carrying exactly three stable, scalar identifiers — never a hydrated model,
+never a snapshot payload:
+
+```php
+final class WebsitePublished
+{
+    public function __construct(
+        public readonly int $websiteId,
+        public readonly int $websiteRevisionId,
+        public readonly int $businessId,
+    ) {}
+}
+```
+
+Dispatched via the framework's ordinary `event()`/`Event::dispatch()` —
+**no generic event-bus/message-queue architecture is introduced**; this is
+a single, already-idiomatic Laravel event, the same mechanism
+`App\Events\Entitlement\*` and `App\Events\Workspace\*` already use
+elsewhere in this codebase. The event carries **no SEO logic whatsoever**
+— Website defines and dispatches it; it is not aware of, and does not
+import, anything SEO-shaped. **Publishing succeeds identically whether or
+not any listener exists** — a missing listener is not an error condition,
+and no listener Website ships with may fail the publish request if it
+throws (out of caution, though no listener exists in Slice A at all).
+
+A future SEO Slice A may listen for this event to enqueue its own
+post-publish work (e.g., regenerating structured-data hints) — that
+listener, its queue, and its own tables belong entirely to SEO's own
+future contract, not this one.
 
 ---
 
@@ -587,6 +657,16 @@ Every successful publish creates exactly one new immutable revision (§5.3,
    (404 if foreign/absent).
 3. Atomically move `websites.published_revision_id` back to that
    revision's id.
+4. **After** that commit — never inside it — dispatch `WebsitePublished`
+   (§9.2) with the rolled-back-to revision's own `id`. **Locked decision:**
+   rollback **does** emit the same event, because the public Website's
+   live content has genuinely changed to a different immutable revision,
+   and any future consumer (SEO's own audit state, in particular) needs to
+   know the live revision changed regardless of whether that change came
+   from a forward publish or a rollback. This is not a separate
+   "no-event-on-rollback" path — a rollback is, from `WebsitePublished`'s
+   own perspective, indistinguishable from any other change of the live
+   revision.
 
 Rollback **never** mutates the target revision, never deletes newer
 revisions, and never touches `website_pages` (the current draft is left
@@ -594,6 +674,12 @@ exactly as it was — rolling back the *public* site does not silently
 discard in-progress draft edits). No branching/version-control UI, no
 per-user drafts, no merge logic — history is a simple, linear, immutable
 publication sequence keyed by `version_number`.
+
+**Rollback asset guarantee:** every asset any retained revision ever
+referenced remains permanently retained (§13.1's `first_published_at`
+rule) — a rollback to any historical revision is therefore guaranteed to
+render every image it originally referenced, with no broken/missing-asset
+case in Slice A.
 
 ---
 
@@ -681,22 +767,54 @@ and `App\Rules\ValidBrandingImageRule` (both read in full):
   existing `public_path()`-based disk convention — never a raw private
   storage path, and never a path containing a user-controlled segment.
 
-### 13.1 Deletion policy
+### 13.1 Deletion policy — any ever-published asset is retained for the life of Slice A history
 
-- An asset with `is_referenced_by_published_revision = true` (§5.4,
-  recomputed only at publish, §9.1 step 6) **cannot** be deleted.
-- A draft-only asset (not referenced by the current published revision) may
-  be deleted at any time.
-- Historical (non-current) revisions may reference an asset that was later
-  deleted once it stopped being part of the *current* published revision —
-  an accepted, explicitly recorded v1 limitation (rollback to a sufficiently
-  old revision is not guaranteed to render every original image if that
-  asset was deleted in the interim). Only the *current* published revision's
-  assets are protected.
-- **No automatic background orphan-cleanup job** in Slice A (matches the
-  stop-list's "no generic workflow engine"). The editor UI may flag unused
-  assets for manual deletion; scheduled cleanup is a future, separately
-  contracted enhancement.
+Correction 1 replaces an earlier, weaker design (a
+`is_referenced_by_published_revision` boolean recomputed at every publish,
+which allowed an asset to become deletable the moment a later publish
+stopped referencing it — and since revisions are immutable and never
+deleted, §10, a rollback to that earlier revision could then point at a
+physically deleted file). That was a real gap: immutable publication
+history is only meaningful if a historical revision can always resolve
+every asset it originally referenced.
+
+**Locked rule:** `website_assets.first_published_at` (§5.4) is a durable,
+monotonic marker, not a "currently referenced" flag:
+
+- **Never published** (`first_published_at IS NULL`): the asset was
+  uploaded but has never appeared in a successful publish. It may be
+  deleted at any time, subject only to the ordinary "not blocked by a
+  current draft reference" check (deleting an asset a draft page is
+  actively pointing at is rejected the same way any dangling-reference
+  bug would be — reject the delete, do not silently break the draft).
+- **First publish that includes the asset:** `first_published_at` is set
+  exactly once, to that moment (§9.1 step 6).
+- **A later publish that omits the asset:** `first_published_at` is
+  **left untouched** — it is never cleared, never recomputed, never
+  re-evaluated against "is this the current revision."
+- **Any asset with `first_published_at IS NOT NULL` can never be deleted
+  in Slice A** — permanently, regardless of whether it is still part of
+  the *current* published revision. This guarantees every retained
+  historical revision (§10 — revisions are immutable and never deleted)
+  can always resolve every asset it originally referenced; a rollback to
+  any historical revision is therefore guaranteed to render successfully,
+  images included.
+
+This requires **no expensive historical JSON scan on delete** (the check
+is a single indexed column read), **no asset reference-count table**, and
+**no revision-assets pivot table** in v1 — exactly the same schema
+footprint as the design it replaces, just a different column semantic.
+
+**No automatic background orphan-cleanup job** in Slice A (matches the
+stop-list's "no generic workflow engine") — a never-published, currently-
+unused asset simply accumulates until manually deleted via the editor UI.
+**Physical garbage collection of ever-published-but-no-longer-current
+assets is explicitly out of Slice A's scope** and requires its own future,
+separately contracted revision-retention/asset-retention policy (e.g., "an
+asset unreferenced by any revision younger than N months may be purged") —
+Slice A's own guarantee is permanent retention, not automatic cleanup, and
+the two are not in tension: retention is the safe default; deciding when
+it is safe to prune is a distinct, deliberately deferred decision.
 
 ---
 
@@ -808,9 +926,50 @@ requirement.
 Screens: Website overview/setup; Pages list; Create/edit page; Section
 list; Add section; Edit section; Reorder sections; Delete section;
 Preview; Publish; Publication history; Rollback. One bounded per-page
-update endpoint (§26) is preferred over a sprawling per-section CRUD API,
-consistent with "the narrowest route set that avoids generic mutation
+update endpoint (§31.1) is preferred over a sprawling per-section CRUD
+API, consistent with "the narrowest route set that avoids generic mutation
 APIs."
+
+### 17.1 Draft page update service seam — predecessor seam for a future SEO module
+
+`WebsiteController::updatePage()` (§31.1) is a thin HTTP boundary only. The
+authoritative mutation logic for a Business-scoped draft `WebsitePage`
+lives in one bounded, Website-owned service:
+
+```php
+App\Library\Website\WebsiteDraftPageService
+```
+
+(name illustrative — an equally bounded name is acceptable at
+implementation time; the architectural property below is what is locked,
+not the exact class name). The controller calls this service; the service
+is not a second, parallel way to reach the same mutation — it **is** the
+mutation.
+
+This service is the **sole supported application seam** for changing any
+of: `title`, `slug`, `seo_title`, `meta_description`, `noindex`,
+`sections` on a Business-scoped draft `WebsitePage` row. It performs every
+invariant this contract already locks for a page mutation, in one place:
+Business/Workspace tenancy re-check (§2.2), entitlement (§26.2), the
+component/field validation of §7, asset-reference validation (§13), the
+homepage invariant (§6.2), and slug rules (§6.3/§6.4). No other code path
+in the application — present or future — is authorized to
+`UPDATE website_pages` for these six fields directly.
+
+**Why this matters now, before any SEO code exists:** a future, separately
+contracted SEO Slice A will want to adjust `seo_title`/`meta_description`/
+`noindex` (and plausibly propose slug changes) as part of its own
+workflow. Exposing this service today — even though nothing outside
+Website calls it yet — means that future SEO module calls
+`WebsiteDraftPageService` only, after its own independent Business
+authorization, and only ever touches **draft** state (never
+`website_revisions`, never bypassing publish) — exactly like every other
+caller. **SEO must never write to `website_pages` directly**, and this
+contract does not design any SEO-specific method on this service now; the
+service's contract today is the same six-field, fully-validated draft
+update it already needs to serve its own editor UI (§17). No
+SEO-specific behavior, no SEO-aware branch, no SEO import exists in this
+service in Slice A.
 
 ---
 
@@ -845,11 +1004,24 @@ here; v1 ships authenticated-only preview.
 ## 20. SEO CORE BOUNDARY — LOCKED
 
 **Website Core (Slice A owns):** page slug; document title (`seo_title`
-falling back to page `title`); meta description; index/noindex; canonical
-URL generation (`https://{app-host}/sites/{public_id}/{slug|home}`); Open
-Graph title/description; OG image reference where a page has one; a basic
-sitemap endpoint (§21); semantic heading structure in the rendered
-component templates.
+falling back to page `title`); meta description; the per-page `noindex`
+field; canonical URL generation
+(`https://{app-host}/sites/{public_id}/{slug|home}`); Open Graph title/
+description; OG image reference where a page has one; a basic sitemap
+endpoint (§21); semantic heading structure in the rendered component
+templates.
+
+**Platform-path indexability — LOCKED (§21):** every Slice A public
+Website is served under the platform's own `/sites/{public_id}` path, not
+a customer domain — this is the pre-custom-domain hosting phase. Slice A
+Websites are **publicly viewable but not search-indexed**: §21 locks a
+mandatory `noindex` response directive on every public Website response,
+independent of and in addition to the per-page `noindex` field above. The
+per-page field is not dead weight — it is Slice A's stored, forward-
+compatible SEO primitive, and becomes the live, page-specific indexability
+rule once Slice B (§40) enables indexable custom-domain URLs and removes
+the platform-wide directive for a verified domain. Slice A itself never
+promotes a platform-path URL as indexable.
 
 **SEO Module (explicitly later, not built now):** keyword research, rank
 tracking, competitor analysis, content scoring, automated optimization,
@@ -888,21 +1060,46 @@ ordering) as defense in depth on top of the reservation.
 **No root `.htaccess` rewrite is touched.** Modifying that rule to special-
 case `/sites/*` was considered and rejected — it is a global, security-
 relevant rewrite affecting the entire application, and the extensionless
-route above achieves the same outcome with zero infrastructure risk.
+route above achieves the same outcome with zero infrastructure risk. The
+sitemap route is retained (not merely as an unused artifact) because it
+validates publication/page-inclusion behavior end-to-end (§37.3/§37.9) and
+is the exact seam a future Slice B custom-domain SEO integration reuses —
+**the sitemap route's existence does not itself authorize indexing**; that
+is governed entirely by the noindex directive below.
 
-**Robots:** a single static `/home/user/os-ai/public/robots.txt` already
-exists (`User-agent: *` / `Disallow:` — everything allowed) and is served
-directly by the webserver for the bare `/robots.txt` path, never reaching
-Laravel — the same static-file-precedence fact as above. Because Slice A
-shares the platform hostname and does not own a customer host root, **no
-per-Website `/robots.txt` is built** — that only becomes meaningful once a
-Website has its own domain (Slice B, §40). The existing global
-`public/robots.txt` is left exactly as-is; per-page `noindex` (§6/§14) is
-the only Slice A crawl-control primitive. Whether pages under
-`/sites/{public_id}/...` should be *platform-wide* discouraged from
-indexing until a Website earns a custom domain is a real open product
-question this contract surfaces but does not resolve — flagged for a
-human decision, not invented here.
+**Robots and indexing — LOCKED:** a single static
+`/home/user/os-ai/public/robots.txt` already exists (`User-agent: *` /
+`Disallow:` — everything allowed) and is served directly by the webserver
+for the bare `/robots.txt` path, never reaching Laravel — the same
+static-file-precedence fact as §21's own `.htaccess` finding. **This
+global file is not modified, and no per-Website `/robots.txt` is added in
+Slice A** — Slice A does not own a customer host root, so a per-site
+robots file is meaningless until Slice B (§40).
+
+Instead, indexability is controlled at the response level: every public
+Website HTML response (`public.website.home` and `public.website.page`,
+§31.2) emits the response header
+
+```
+X-Robots-Tag: noindex, follow
+```
+
+and, wherever the public layout already has a canonical `<meta>` seam
+(§20), the equivalent `<meta name="robots" content="noindex, follow">`
+directive. This is unconditional for every Slice A public page — it does
+not depend on a page's own `noindex` field (§6/§14), which remains stored
+for Slice B's later use (§20). `follow` (not `nofollow`) is used because
+there is no reason to block crawlers from following internal links between
+a Website's own pages; only indexing of the platform-path URL itself is
+suppressed. The sitemap response itself is unaffected (an XML document has
+no robots meta/header concept) and continues to enumerate exactly the
+published snapshot's pages (§37.9) regardless of the noindex directive on
+the pages it lists — a crawler that already has the sitemap can still see
+what pages exist, it is simply told not to index the platform-path URLs.
+
+Slice B (§40) is where the platform-wide `noindex` is explicitly lifted
+for a page served from a verified custom domain — not designed here, but
+named as a required Slice B decision so it is not silently forgotten.
 
 ---
 
@@ -924,11 +1121,15 @@ Forms-owned form definition by uid — not designed further now.
 
 No page-view analytics platform, generic event warehouse, tracking-pixel
 framework, or pageview-rollup table is built in Slice A. B5 (Business
-Analytics) is being contracted independently and untouched here. Recorded
-future event names a later, separately-contracted Website Analytics pass
-could emit for B5 to consume: `page_view`, `cta_click`, `form_submission`
-(the last only once §22's Forms integration exists) — **not implemented,
-not scheduled, no table added.**
+Analytics) has its own contract now merged
+(`docs/automation/B5-BUSINESS-ANALYTICS-CONTRACT.md`, at `origin/main`
+commit `b2bedfc91848c90be2f1fc4e8e0ac440c6d4d892`) but its product
+implementation still depends on B4 and is entirely untouched by Website
+Slice A — no B5 file, table, or code path is read, written, or referenced
+anywhere in this contract. Recorded future event names a later,
+separately-contracted Website Analytics pass could emit for B5 to consume:
+`page_view`, `cta_click`, `form_submission` (the last only once §22's Forms
+integration exists) — **not implemented, not scheduled, no table added.**
 
 ---
 
@@ -950,14 +1151,23 @@ second TTLs) — no cache tags exist anywhere in this codebase (confirmed:
 `AdminBaseController.php:31`'s own comment calls tagging an unrealized
 aspiration), so this contract does not introduce one.
 
-Cache key: `"website_public_{$publicId}_v{$versionNumber}"`. Publishing a
-new revision naturally produces a **new** cache key (the version number
-changes), so no explicit invalidation call is required for the common
-path — the old key simply ages out under its own short TTL (recommend 300
-seconds) and is never read again once `published_revision_id` has moved.
-No cache entry is ever shared between two Websites.
+Two **separate, independently-keyed** cache entries exist for a public
+Website request — never conflated into one:
 
-### 24.2 Entitlement and cache interaction — see §26's own §26.4.
+- **Content snapshot cache** — key `"website_public_{$publicId}_v{$versionNumber}"`,
+  TTL 300 seconds. Publishing a new revision naturally produces a **new**
+  key (the version number changes), so no explicit invalidation call is
+  required for the common path — the old key simply ages out under its own
+  TTL and is never read again once `published_revision_id` has moved.
+- **Entitlement decision cache** — key `"website_public_entitlement_{$business->id}"`,
+  TTL 60 seconds (§26.4).
+
+No cache entry of either kind is ever shared between two Websites/
+Businesses. **The entitlement cache is always consulted before the
+snapshot cache is allowed to serve a response** (§26.4) — a snapshot-cache
+hit never short-circuits past the entitlement gate, and a fresh
+`decide()` call on entitlement-cache-miss never skips the snapshot
+lookup that follows it.
 
 No premature CDN. No aggregate tables. Public render path never invokes
 AI (§14) and never reads the draft (`website_pages`) — both are hard
@@ -969,27 +1179,65 @@ architectural guarantees, not merely performance choices.
 
 Bounded page/component counts (§7) keep the snapshot small and
 predictable. Eager-load pages/assets when building/reading a snapshot (no
-N+1). Indexes per §5. No aggregate/rollup table is introduced (§23). The
-public render path performs at most: one cache lookup, on miss one query
-for `websites` + `website_revisions.snapshot` (joined), decode the JSON,
-render — no AI call, no draft read, no per-request full entitlement
-decision tree (§26.4).
+N+1). Indexes per §5. No aggregate/rollup table is introduced (§23).
+
+**Query-count guarantee — bounded, not a promised exact number.** This
+contract does not claim "one database query" for a public request — that
+would require redesigning route-model-binding and eager-loading choices
+this contract does not make, and an implementation that mechanically
+guarantees a specific count is free to do so, but is not required to. What
+**is** locked:
+
+- Resolving `{website:public_id}` (§3.3) via implicit route-model binding
+  is itself one query; `business`/`workspace` (needed for §26.4's cheap
+  state checks and, on cache-miss, for `decide()`) are loaded via eager
+  relations on that same binding — bounded, no N+1, not a second round
+  trip per field.
+- On both caches hit (the common case after warm-up): zero additional
+  queries beyond the binding/eager-load above — both the entitlement
+  decision and the snapshot content are served from cache.
+- On entitlement-cache-miss: exactly one `EntitlementManager::decide()`
+  call, whose own internal read chain (§26.2's 8-step plan/override/
+  usage-gateway sequence, `EntitlementManager.php:111-186`) is that
+  class's existing, unmodified implementation — not redesigned or
+  re-bounded by this contract.
+- On snapshot-cache-miss: one additional query for the published
+  `website_revisions.snapshot` row.
+- The public render path **never** invokes AI (§14), **never** reads the
+  draft `website_pages` table, and **never** runs a per-request full
+  entitlement decision tree when the entitlement cache is warm (§26.4) —
+  these three are the hard architectural guarantees; the exact query count
+  around them is an implementation-time detail, not a number this contract
+  fixes.
 
 ---
 
 ## 26. ENTITLEMENT — LOCKED
 
-### 26.1 Availability flip
+### 26.1 Availability flip — no new packaging or pricing decision needed
 
 `PlatformFeatureRegistry::AVAILABILITY[PlatformFeature::WebsiteGeneration->value]`
 moves from `Planned` to `Available` as part of the Slice A implementation
 — narrowly, mirroring the exact evidentiary bar already applied to
 `ProspectOutreach`'s own flip (`PlatformFeatureRegistry.php`'s class
 docblock, lines 19-29: flip only once "a real, executable... controller/
-routes/persistence" exists). No other `Planned` feature is touched. No
-pricing/plan-mapping decision is invented by this contract — which
-Workspace plans include `website_generation` in their feature set is a
-commercial/plan-catalog decision outside engineering scope here.
+routes/persistence" exists). No other `Planned` feature is touched.
+
+**Confirmed mechanically:** `website_generation` is already packaged into
+every Workspace plan tier by the existing
+`database/migrations/2026_08_13_120007_seed_workspace_plan_catalog_and_features.php`
+(lines 93-100): it is a member of `$coreFeatures`, which
+`$growthFeatures` and `$agencyFeatures` both `array_merge()` in full — so
+Core, Growth, and Agency all already include it in their
+`workspace_plan_features` packaging row, seeded independently of the
+registry's own availability lock (that migration's own docblock, lines
+12-15, states packaging a `Planned` feature is "a valid, honest seed row,
+not a promise of current executability"). **Slice A therefore requires no
+new plan-feature packaging migration and no pricing decision merely to
+become executable for an existing Workspace on any of these three tiers.**
+The single narrow registry change (`Planned` → `Available`) is the entire
+availability-side change this contract authorizes, applied only once
+implementation lands.
 
 ### 26.2 Authenticated mutation gate
 
@@ -1004,9 +1252,10 @@ $decision = $entitlementManager->decide($workspace, $business, PlatformFeature::
 `app/Library/Entitlement/EntitlementManager.php:111-186`) and branches on
 `$decision->allowed`/`$decision->reason` — never a bare boolean helper.
 `decideForWorkspace()` is never used (`WebsiteGeneration` is Business-
-scoped, §2). This is always freshly decided on every mutation — never
-cached (§26.4 explains the one place a cheap, cached check is used
-instead: anonymous public rendering).
+scoped, §2). This mutation-path decision is always freshly computed —
+never cached. §26.4 covers the one place a cached `decide()` result is
+read instead of a fresh one: anonymous public rendering, bounded to a
+60-second TTL.
 
 ### 26.3 Background/public-render identity — RESOLVED MECHANICALLY
 
@@ -1023,35 +1272,59 @@ whenever a background/public code path in this feature needs an
 the Business's real persistence owner — never a session user, never a
 placeholder like `0` or `1`.
 
-### 26.4 Public rendering does not call `decide()` per-request — LOCKED, WITH RATIONALE
+### 26.4 Public rendering — bounded 60-second cached entitlement gate — LOCKED
 
-`decide()` runs an 8-step plan/override/usage-gateway read chain
-(`EntitlementManager.php:111-186`) — appropriate for an authenticated
-mutation, too expensive to run on every anonymous page view (§25). Instead:
+Public hosting **must respect Website entitlement** — a public route that
+never re-checks entitlement at all would let cache expiry (§24.1) do
+nothing, since a snapshot cache miss would simply reload and keep serving
+the same still-published Website forever. Running the full 8-step
+`decide()` chain (`EntitlementManager.php:111-186`) on every anonymous page
+view is too expensive to do uncached (§25), so this contract locks a
+**short-lived cached decision** instead of either extreme (never-checked,
+or checked-uncached-per-request):
 
-- **At publish time** (§9.1 step 1), `decide()` **is** called and must
-  return `allowed: true`, or the publish is rejected outright.
-- **Public rendering** checks three cheap, already-available state signals
-  directly, with no plan/override read at all: `websites.status ===
-  'published'` **and** `published_revision_id` set; `businesses.status ===
-  BusinessStatus::Active`; `workspaces.is_active === true`. Any failure is
-  a 404 (§27), regardless of the stored snapshot content.
-- Full entitlement (plan suspension, per-Business feature toggle, workspace
-  override) is **not** re-verified on every anonymous request. This is an
-  explicit, named v1 simplification with a stated consequence: if
-  `WebsiteGeneration` entitlement is revoked for a Business after its site
-  is already published (e.g., a plan downgrade), the public site keeps
-  serving its last-published content until either (a) the next
-  authenticated mutation attempt is blocked by §26.2's fresh `decide()`
-  call, or (b) the cache entry from §24.1 expires and is **not**
-  refreshed by any background process — Slice A adds no scheduled
-  revalidation job (matches the stop-list's "no generic workflow engine").
-  **This means entitlement revocation does not immediately unpublish** — it
-  only blocks future authenticated mutation, and the site is only ever
-  taken down explicitly via §27's Business/Workspace-inactive checks or an
-  owner-initiated archive/unpublish action. This is recorded here as an
-  explicit product trade-off for a human to accept or override before
-  Slice A implementation — not silently decided.
+1. **Cheap, mandatory, always-fresh state checks** (no caching, negligible
+   cost — already-loaded columns on the rows this request resolves
+   anyway): `websites.status === 'published'` **and**
+   `published_revision_id` set; `businesses.status === BusinessStatus::Active`;
+   `workspaces.is_active === true`. Any failure is an immediate 404 (§27).
+   These checks are mandatory on **every** request, cache hit or miss, and
+   do not replace the entitlement gate below — they are a separate,
+   additional layer.
+2. **Cached entitlement gate**, keyed per Business:
+   `"website_public_entitlement_{$business->id}"`, TTL **60 seconds**.
+   - **Cache hit:** use the cached `allowed` boolean.
+   - **Cache miss:** call
+     ```php
+     $decision = $entitlementManager->decide(
+         $workspace,
+         $business,
+         PlatformFeature::WebsiteGeneration->value,
+         (int) $business->customer_id,   // §26.3 — never Auth::id(), never fabricated
+     );
+     ```
+     store `$decision->allowed` under that key for 60 seconds, and gate on
+     it immediately.
+3. If either the cheap checks (step 1) or the cached entitlement gate
+   (step 2) is negative, the public route returns **404** — regardless of
+   whether a snapshot (§24.1) is otherwise cached and ready to serve. **A
+   snapshot-cache hit is never permitted to bypass the entitlement gate**:
+   the entitlement check runs before the snapshot is returned, on every
+   request, whether the entitlement result itself came from cache or from
+   a fresh `decide()` call.
+
+**Consequence, precisely bounded:** entitlement revocation (plan
+suspension, a `disabled_for_business` toggle, a workspace override denial,
+or the feature going unavailable) takes effect for public rendering within
+**at most 60 seconds** of being set — never indefinitely, and never
+dependent on the separate, longer-lived snapshot cache (§24.1) expiring.
+`websites.status`/`published_revision_id` are not touched by an
+entitlement revocation — the underlying data is untouched and rendering
+resumes automatically, within the same 60-second bound, if entitlement is
+restored. No background revalidation job, no scheduled worker, no new
+entitlement system — the existing `Cache` facade with a plain per-Business
+key and a 60-second TTL is the entire mechanism, matching this
+repository's own established `Cache::remember()` conventions (§24.1).
 
 ---
 
@@ -1062,7 +1335,7 @@ mutation, too expensive to run on every anonymous page view (§25). Instead:
 | Workspace `is_active = false` | 404 (checked directly, §26.4) |
 | Business `status !== Active` | 404 (checked directly, §26.4) |
 | Website `status !== published` or `published_revision_id` null | 404 |
-| Feature entitlement removed | see §26.4 — does not immediately unpublish; blocks future mutation only |
+| Feature entitlement removed | 404 within at most 60 seconds (§26.4's cached gate) — blocks both future mutation (§26.2, always fresh) and public rendering (§26.4, cached, bounded) |
 | Business deleted | no hard-delete route exists for Business anywhere in this codebase today (`routes/admin.php:582-584`: `Route::resource('businesses', ..., ['only' => ['index','show','edit','update']])` explicitly excludes `destroy`; no customer-side destroy route exists either) — this state is **not currently reachable**. The `restrictOnDelete()` FK on `websites.business_id` (§5.1) is a defensive choice for if that ever changes, not a designed-for scenario. |
 
 No destructive auto-delete anywhere in this table. Fail-safe default is
@@ -1200,28 +1473,50 @@ their own single link) — one new entry, no broader navigation refactor.
 
 ## 33. MIGRATION CONTRACT — LOCKED
 
-Four new, additive-only migrations (exact filenames/timestamps assigned at
-implementation time, in this repo's existing `YYYY_MM_DD_HHMMSS_create_..._table.php`
-convention):
+**Exactly five migration files** (exact filenames/timestamps assigned at
+implementation time, in this repo's existing
+`YYYY_MM_DD_HHMMSS_create_..._table.php` convention), creating **exactly
+four domain tables** (§5) — the fifth migration adds one nullable FK
+column to a table created earlier, resolving the `websites` ↔
+`website_revisions` circular reference explicitly rather than leaving it
+ambiguous:
 
-1. `create_websites_table` — §5.1. `business_id` FK `restrictOnDelete()`,
-   unique. `published_revision_id` FK to `website_revisions.id`,
-   `nullOnDelete()` (added as a **separate**, second migration or a
-   deferred/nullable foreign key added after `website_revisions` exists,
-   to avoid a forward-reference cycle between the two `create_*` migrations
-   — implementation detail, not a design change). Rollback: `dropIfExists`.
+1. `create_websites_table` — §5.1, **without** `published_revision_id`.
+   `business_id` FK `restrictOnDelete()`, unique. All other columns exactly
+   as §5.1. Rollback: `dropIfExists('websites')`.
 2. `create_website_pages_table` — §5.2. `website_id` FK
-   `cascadeOnDelete()`. Rollback: `dropIfExists`.
+   `cascadeOnDelete()`. Rollback: `dropIfExists('website_pages')`.
 3. `create_website_revisions_table` — §5.3. `website_id` FK
    `cascadeOnDelete()`, `created_by` FK to `users.id` `restrictOnDelete()`.
-   Rollback: `dropIfExists`.
-4. `create_website_assets_table` — §5.4. `website_id` FK
-   `cascadeOnDelete()`. Rollback: `dropIfExists`.
+   Rollback: `dropIfExists('website_revisions')`.
+4. `add_published_revision_id_to_websites_table` — adds
+   `published_revision_id`: nullable `foreignId`, `->constrained('website_revisions')`,
+   `->nullOnDelete()`. This is the **only** migration that alters a table
+   created by an earlier migration in this set.
+   `down()` drops the foreign key constraint **first**, then drops the
+   column — never the reverse order, and never via disabling FK checks.
+5. `create_website_assets_table` — §5.4. `website_id` FK
+   `cascadeOnDelete()`. Rollback: `dropIfExists('website_assets')`.
+
+**Dependency order is unambiguous:** 1 → 2 → 3 → 4 (needs `website_revisions`
+from step 3 and `websites` from step 1) → 5. No forward reference exists at
+any point — migration 1 never mentions `website_revisions`, and migration
+4 runs strictly after both tables it references already exist.
+
+**Full-rollback order** (Laravel's own `migrate:rollback`, running each
+migration's `down()` in reverse creation order) is therefore: 5 (drop
+`website_assets`) → 4 (drop the FK, then the `published_revision_id`
+column) → 3 (drop `website_revisions`) → 2 (drop `website_pages`) → 1
+(drop `websites`) — always a clean drop, never a leftover dangling FK,
+never a disabled-FK-checks workaround, and never a nullable integer column
+left without a real, eventual FK constraint.
 
 No table uses a database ENUM type (§5.1's own rationale). No table adds
 `workspace_id`. No table stores a secret. No migration touches any
-existing table — this is purely additive, mirroring B4's own "Schema —
-Additive Only" framing.
+table that exists before this feature — this is purely additive, mirroring
+B4's own "Schema — Additive Only" framing; migration 4 is additive to a
+table this same feature just created two migrations earlier, not to any
+pre-existing table.
 
 ---
 
@@ -1265,7 +1560,12 @@ hard-delete path exists to cascade from.
 **Library / services**
 - `app/Library/Website/**` *(new — snapshot builder, publish/rollback
   service, section validator, asset upload service, AI generation client
-  and prompt/context builder)*
+  and prompt/context builder, and `WebsiteDraftPageService` (§17.1) — the
+  one sole authorized seam for draft `title`/`slug`/`seo_title`/
+  `meta_description`/`noindex`/`sections` mutation)*
+- `app/Events/Website/WebsitePublished.php` *(new — §9.2/§10, dispatched
+  after commit on both publish and rollback; three scalar identifier
+  fields only)*
 - `app/DTO/Website/**` *(new, if a typed DTO is preferred over an array
   shape for the snapshot/section payloads)*
 
@@ -1286,7 +1586,7 @@ hard-delete path exists to cascade from.
 - `config/customer-permissions.php` *(one new `website` capability, §28)*
 
 **Migrations**
-- the four migrations in §33
+- the five migration files (four domain tables) in §33
 
 **Views**
 - `resources/views/customer/business/website/**` *(new — authenticated
@@ -1330,6 +1630,17 @@ generic workflow engine; a generic analytics warehouse; `config/services.php`
 (the OpenAI seam is read-only for this feature, §14); `AI-AUTONOMY-STATE.json`;
 any RFC document.
 
+Also explicitly forbidden: any SEO-specific method, branch, or import on
+`WebsiteDraftPageService` (§17.1) — its contract in Slice A is exactly the
+generic six-field draft update its own editor UI needs, nothing SEO-aware;
+any code path other than that service writing to `website_pages`'
+`title`/`slug`/`seo_title`/`meta_description`/`noindex`/`sections`
+columns; any listener on `WebsitePublished` (§9.2) shipped as part of this
+feature (Slice A dispatches the event and stops — it does not consume its
+own event); and any generic event-bus/message-queue architecture —
+`WebsitePublished` is one ordinary Laravel event, not a new pub/sub
+system.
+
 No unrelated cleanup.
 
 ---
@@ -1365,6 +1676,25 @@ snapshot, never `website_pages`; rollback moves the pointer without
 mutating any revision row; unpublished Website 404s publicly; archived
 Website 404s publicly.
 
+**Draft page update service seam (§17.1):** `WebsiteDraftPageService` (or
+its implementation-time equivalent) is the only code path a feature test
+can find writing `website_pages`' `title`/`slug`/`seo_title`/
+`meta_description`/`noindex`/`sections` columns — proved by exercising
+every one of those fields through the controller and asserting the same
+tenancy/validation/homepage-invariant rules apply uniformly (no field
+bypasses §2.2/§6/§7/§13 by taking a different code path than the others).
+
+**`WebsitePublished` event (§9.2/§10):** dispatched exactly once after a
+successful publish transaction commits, carrying the correct
+`websiteId`/`websiteRevisionId`/`businessId`; **not** dispatched if the
+publish transaction is rolled back (e.g. a mid-transaction validation
+failure); dispatched again, with the earlier revision's id, after a
+successful rollback (§10's locked "rollback also emits" decision); the
+event is dispatched strictly after commit (assert no listener observes it
+inside an open transaction, e.g. via `DB::transaction()` boundary
+assertions or a fake event listener recording dispatch order relative to
+commit).
+
 ### 37.4 Public rendering
 
 Home render; page render; unknown site 404; unknown page 404; a page that
@@ -1373,13 +1703,41 @@ inactive/Workspace-inactive 404 (§27); no `Auth::id()`/session dependency
 anywhere on the public render path (grep-provable); cache isolation
 between two different Websites' identical version numbers.
 
-### 37.5 Components
+### 37.5 Entitlement / public hosting (§26)
+
+- An allowed Business (fresh `decide()` returns `allowed: true`) serves
+  its published Website normally.
+- `disabled_for_business` → 404 once the 60-second entitlement cache
+  (§26.4) has revalidated (prove via cache time-travel/manual cache-store
+  manipulation, never `sleep()`).
+- `denied_by_workspace_override` → 404 under the same revalidation
+  window.
+- `plan_suspended` / `plan_inactive` → 404 under the same window.
+- `WebsiteGeneration` unavailable (registry flipped back, or a fresh
+  install before the flip) → 404.
+- No `Auth::id()`/browser session is created or required anywhere on this
+  path; the `(int) $business->customer_id` actor-id argument (§26.3) is
+  asserted directly in the test, not inferred from a session.
+- A cached `allowed: true` result has a bounded TTL: advance test time (or
+  manipulate the cache store directly) past 60 seconds with the
+  underlying `decide()` now returning `allowed: false`, and assert the
+  very next public request 404s — proving the cache cannot serve a stale
+  `true` past its bound.
+- **Content-cache-cannot-bypass-entitlement regression:** warm the
+  300-second snapshot cache (§24.1) with an allowed decision, then flip
+  the underlying entitlement to denied and let only the 60-second
+  entitlement cache (not the 300-second snapshot cache) expire; assert
+  the request now 404s even though the snapshot cache is still warm —
+  proving a snapshot-cache hit alone can never serve a response without
+  the entitlement gate passing first.
+
+### 37.6 Components
 
 Only allowlisted `WebsiteSectionType` values accepted; malformed `data`
 shape rejected per-type; unknown type rejected; per-type field-count/length
 limits enforced (§7.2); section order preserved through save/publish.
 
-### 37.6 Security
+### 37.7 Security
 
 Text-field XSS escaped; `javascript:`/`data:`/`file:`/`vbscript:` CTA
 rejected; raw HTML/script in any field rejected or escaped, never
@@ -1390,7 +1748,7 @@ extension, wrong magic bytes) rejected; oversized upload rejected;
 cross-Business asset reference rejected even when both Businesses belong
 to the same acting user.
 
-### 37.7 AI
+### 37.8 AI
 
 Mocked OpenAI client only, no live network call; structured-output
 validation rejects an invalid component; AI-authored draft cannot be
@@ -1401,30 +1759,83 @@ AVAILABLE-classified fields for the one Business being generated for,
 never another Business's data; no secret (API key, `.env` value) appears
 in any stored `website_pages`/`website_revisions` row.
 
-### 37.8 SEO
+### 37.9 SEO
 
 Title/meta render escaped; canonical URL correct for home and for a
-slugged page; `noindex` respected; sitemap includes only pages from the
-current published snapshot (never draft-only pages); the sitemap route
-resolves correctly despite being extensionless (regression-proves §21's
-`.htaccess` finding); `sitemap` as an attempted page slug is rejected at
-creation time.
+slugged page; the per-page `noindex` field is stored and survives the
+snapshot build unchanged (§20/§11) — forward-ready for Slice B, not yet
+acted on by the public renderer's own indexability decision (§37.10 covers
+that); sitemap includes only pages from the current published snapshot
+(never draft-only pages); the sitemap route resolves correctly despite
+being extensionless (regression-proves §21's `.htaccess` finding);
+`sitemap` as an attempted page slug is rejected at creation time.
 
-### 37.9 Forms / Analytics boundary
+### 37.10 Indexing (§21/§20)
+
+- The home response (`public.website.home`) carries the response header
+  `X-Robots-Tag: noindex, follow`.
+- A slugged page response (`public.website.page`) carries the same header.
+- `public/robots.txt` is byte-identical to its pre-implementation content
+  (a direct file-content assertion) — proving no per-Website or modified
+  global robots file was introduced.
+- The sitemap route (§21) continues to resolve and list only the current
+  published snapshot's pages, independent of the noindex directive on the
+  pages it lists (an XML document, not subject to the header/meta
+  directive itself).
+- The stored per-page `noindex` field (§37.9) round-trips through a
+  publish/snapshot cycle unchanged, proving it is ready for Slice B to act
+  on later without a schema change.
+
+### 37.11 Revision asset retention (§13.1/§10)
+
+The exact required regression:
+
+1. Publish revision 1 with an Asset A referenced by one of its sections.
+2. Edit the draft to remove Asset A's reference and publish revision 2
+   (revision 2's snapshot does not mention Asset A).
+3. Attempt to delete Asset A → rejected (its `first_published_at` is
+   non-null from step 1 and is never cleared by step 2).
+4. Roll back to revision 1.
+5. Request the public page containing Asset A → renders successfully,
+   asset resolves (proving retention, not merely rejection of the delete
+   attempt in isolation).
+
+Additional coverage: a never-published asset (`first_published_at` still
+`NULL`) can be deleted once no current draft page references it; deleting
+an asset a draft page currently references is rejected independent of
+publish history.
+
+### 37.12 Migrations (§33)
+
+- The five-migration dependency sequence runs in order with no forward-
+  reference error (`create_websites_table` → `create_website_pages_table`
+  → `create_website_revisions_table` → `add_published_revision_id_to_websites_table`
+  → `create_website_assets_table`).
+- Migration 4's `down()` drops the foreign key constraint before dropping
+  the `published_revision_id` column (assert both operations occur, in
+  that order, e.g. via a schema-introspection check immediately after
+  `down()` partially completes, or by asserting the full rollback below
+  succeeds without a dangling-FK database error).
+- A full `migrate:rollback` across all five files completes cleanly in
+  reverse order (`website_assets` → the `published_revision_id`
+  column/FK → `website_revisions` → `website_pages` → `websites`) with no
+  disabled-FK-checks workaround and no leftover table/column.
+
+### 37.13 Forms / Analytics boundary
 
 No form-builder route, controller, or component exists (assertion against
 the route list and the `WebsiteSectionType` enum); no Website-specific
 analytics/event table exists in the schema (assertion against
 `information_schema`/migration file list, or simply the absence of any
-such migration in §33's four).
+such migration among §33's five).
 
-### 37.10 Custom-domain boundary
+### 37.14 Custom-domain boundary
 
 No hostname-based Website resolver exists in Slice A (public resolution is
 `public_id`-only, §3); no `website_domains` table exists (§5); no
 TLS/DNS/ACME code exists anywhere in the diff.
 
-### 37.11 Regression
+### 37.15 Regression
 
 Workspace/Business tenancy tests (`tests/Feature/Workspace/**`,
 `tests/Feature/Business/**`); Branding; B3 Settings
@@ -1436,7 +1847,9 @@ that `config/services.php`'s `openai` block is byte-identical to base,
 mirroring B3's own `PlatformSettingsAiSeamTest` pattern); one full suite
 run at implementation time.
 
-No sleep-based concurrency test anywhere in this contract's scope.
+No sleep-based concurrency test anywhere in this contract's scope — the
+entitlement-cache-TTL tests (§37.5) use time travel (e.g. `Carbon::setTestNow()`/
+`Date::setTestNow()`) or direct cache-store manipulation, never `sleep()`.
 
 ---
 
@@ -1474,7 +1887,14 @@ verified, never unbounded (§13); SVG is excluded (§13); the public route
 never serves a draft (§9/§19); a live page-level read never bypasses the
 revision snapshot except the one named §7.3 exception; no generic
 CMS/workflow framework exists (§35's allowlist is exhaustive); no B3/B4/B5
-path is edited (§36); no RFC is edited (§36).
+path is edited (§36); no RFC is edited (§36); public rendering never
+serves a response without passing the 60-second cached entitlement gate
+(§26.4); no Slice A public page is search-indexable (§20/§21); an
+ever-published asset is never physically deletable in Slice A (§13.1);
+`WebsiteDraftPageService` (§17.1) carries no SEO-specific method and is
+the only writer of the six draft-page fields it owns; `WebsitePublished`
+(§9.2) carries no SEO logic, is dispatched only after commit, and ships
+with zero listeners in Slice A.
 
 ---
 
