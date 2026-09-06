@@ -496,6 +496,80 @@ class AutomationsTenancyTest extends TestCase
         $this->assertSame(0, Automation::where('business_id', $business->id)->count());
     }
 
+    /**
+     * Contract §7.B (Correction 1): an UPDATE_CONTACT_FIELD definition needs
+     * the exact group its field belongs to.
+     */
+    private function updateFieldPayload(?int $groupId, int $fieldId): array
+    {
+        return [
+            'name' => 'Tag on create',
+            'trigger_type' => AutomationTriggerType::ContactCreated->value,
+            'contact_group_id' => $groupId === null ? '' : (string) $groupId,
+            'action_type' => AutomationActionType::UpdateContactField->value,
+            'field_id' => $fieldId,
+            'value' => 'lead',
+            'enabled' => '1',
+        ];
+    }
+
+    public function test_store_rejects_same_business_field_from_a_different_group(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $audience = $this->contactGroup($business, 'Audience');
+        $otherGroup = $this->contactGroup($business, 'Other');
+        $otherField = $this->textField($otherGroup, 'OTHER_NOTE');
+        $this->authenticateAsCustomer($customer);
+
+        $this->post(route('customer.workspaces.businesses.automations.store', $this->routeParams($workspace, $business)), $this->updateFieldPayload($audience->id, $otherField->id))
+            ->assertSessionHasErrors(['field_id']);
+
+        $this->assertSame(0, Automation::where('business_id', $business->id)->count());
+    }
+
+    public function test_store_rejects_update_field_action_without_a_group(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $group = $this->contactGroup($business, 'Audience');
+        $field = $this->textField($group);
+        $this->authenticateAsCustomer($customer);
+
+        $this->post(route('customer.workspaces.businesses.automations.store', $this->routeParams($workspace, $business)), $this->updateFieldPayload(null, $field->id))
+            ->assertSessionHasErrors(['contact_group_id']);
+
+        $this->assertSame(0, Automation::where('business_id', $business->id)->count());
+    }
+
+    public function test_store_accepts_update_field_action_with_its_own_group(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $group = $this->contactGroup($business, 'Audience');
+        $field = $this->textField($group);
+        $this->authenticateAsCustomer($customer);
+
+        $this->post(route('customer.workspaces.businesses.automations.store', $this->routeParams($workspace, $business)), $this->updateFieldPayload($group->id, $field->id))
+            ->assertRedirect()
+            ->assertSessionHasNoErrors();
+
+        $automation = Automation::where('business_id', $business->id)->firstOrFail();
+        $this->assertSame((int) $group->id, (int) $automation->trigger_config['contact_group_id']);
+        $this->assertSame((int) $field->id, (int) $automation->action_config['field_id']);
+    }
+
+    public function test_create_form_labels_fields_by_their_group(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $group = $this->contactGroup($business, 'Audience');
+        $field = $this->textField($group);
+        $this->authenticateAsCustomer($customer);
+
+        $this->get(route('customer.workspaces.businesses.automations.create', $this->routeParams($workspace, $business)))
+            ->assertOk()
+            ->assertSee('data-group="' . $group->id . '"', false)
+            ->assertSee('Audience › ' . $field->label)
+            ->assertSee('data-role="group-required-note"', false);
+    }
+
     public function test_update_enable_disable_and_destroy_are_business_scoped(): void
     {
         [$customer, $business, $workspace] = $this->entitledTenant();

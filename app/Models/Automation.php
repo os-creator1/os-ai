@@ -19,7 +19,10 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
  * `dlt_template_id`, `timezone`, `cache`, `contact_list_id`,
  * `sending_server_id`, `data`, `running_pid`, `reason`, `last_error`)
  * remains physically present and is simply unused by B4 (§3) — none is
- * read, written, or repurposed here.
+ * read, written, or repurposed here. Three of them (`contact_list_id`,
+ * `sms_type`, `data`) were NOT NULL for the legacy Birthday builder and
+ * are nullable since B4 (contract §3.1a): a B4 definition legitimately
+ * leaves them NULL, and nothing may invent values for them.
  *
  * Tenancy is `business_id` only (§2/§3.3). A row whose `business_id` is
  * NULL is a preserved-but-inert legacy automation: never executed by the

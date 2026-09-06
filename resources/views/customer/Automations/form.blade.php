@@ -34,7 +34,8 @@
         </x-card>
     @endif
 
-    <form method="post" action="{{ $formAction }}" data-role="automation-form">
+    <form method="post" action="{{ $formAction }}" data-role="automation-form"
+          data-update-field-action="{{ \App\Enums\Automation\AutomationActionType::UpdateContactField->value }}">
         @csrf
 
         <x-card title="1. Name" :padded="true" class="mb-2">
@@ -57,12 +58,15 @@
 
             <div class="mb-1">
                 <label class="form-label" for="contact_group_id">Contact group <span class="text-caption" data-role="group-hint">(optional for "Contact created")</span></label>
-                <select id="contact_group_id" name="contact_group_id" class="form-select">
-                    <option value="">Any group in this Business</option>
+                <select id="contact_group_id" name="contact_group_id" class="form-select @error('contact_group_id') is-invalid @enderror" data-role="group-select">
+                    <option value="" data-role="any-group">Any group in this Business</option>
                     @foreach($groups as $group)
                         <option value="{{ $group->id }}" @selected((string) old('contact_group_id', $triggerConfig['contact_group_id'] ?? '') === (string) $group->id)>{{ $group->name }}</option>
                     @endforeach
                 </select>
+                <p class="text-caption mb-0" data-role="group-required-note" hidden>
+                    "Update contact field" writes one group's field, so this automation must be limited to that contact group.
+                </p>
             </div>
 
             <div data-role="trigger-config" data-trigger="{{ \App\Enums\Automation\AutomationTriggerType::ContactDateReached->value }}">
@@ -150,13 +154,14 @@
             <div data-role="action-config" data-action="{{ \App\Enums\Automation\AutomationActionType::UpdateContactField->value }}">
                 <div class="row">
                     <div class="col-md-6 mb-1">
-                        <label class="form-label" for="field_id">Custom field</label>
-                        <select id="field_id" name="field_id" class="form-select">
+                        <label class="form-label" for="field_id">Custom field <span class="text-caption">(of the selected contact group)</span></label>
+                        <select id="field_id" name="field_id" class="form-select @error('field_id') is-invalid @enderror" data-role="field-select">
                             <option value="">Select a field…</option>
                             @foreach($customFields as $field)
-                                <option value="{{ $field->id }}" @selected((string) old('field_id', $actionConfig['field_id'] ?? '') === (string) $field->id)>{{ $field->label }}</option>
+                                <option value="{{ $field->id }}" data-group="{{ $field->contact_group_id }}" @selected((string) old('field_id', $actionConfig['field_id'] ?? '') === (string) $field->id)>{{ $field->contactGroup?->name }} › {{ $field->label }}</option>
                             @endforeach
                         </select>
+                        <p class="text-caption mb-0" data-role="field-hint">Only fields of the selected contact group are listed.</p>
                     </div>
                     <div class="col-md-6 mb-1">
                         <label class="form-label" for="value">Set value to</label>
@@ -183,9 +188,33 @@
             var form = document.querySelector('[data-role="automation-form"]');
             if (!form) { return; }
 
+            var updateFieldAction = form.getAttribute('data-update-field-action');
+            var groupSelect = form.querySelector('[data-role="group-select"]');
+            var anyGroupOption = groupSelect.querySelector('[data-role="any-group"]');
+            var groupHint = form.querySelector('[data-role="group-hint"]');
+            var groupRequiredNote = form.querySelector('[data-role="group-required-note"]');
+
+            // Show only the options that belong to the selected group; a
+            // field belongs to exactly one group, so nothing may look
+            // usable across groups.
+            function filterByGroup(select, groupId, requireGroup) {
+                var visible = 0;
+                select.querySelectorAll('option[data-group]').forEach(function (opt) {
+                    var match = groupId !== '' && opt.getAttribute('data-group') === groupId;
+                    var show = requireGroup ? match : (groupId === '' || match);
+                    opt.hidden = !show;
+                    opt.disabled = !show;
+                    if (show) { visible++; }
+                    if (!show && opt.selected) { select.value = ''; }
+                });
+                return visible;
+            }
+
             function sync() {
                 var trigger = form.querySelector('[data-role="trigger-type"]').value;
                 var action = form.querySelector('[data-role="action-type"]').value;
+                var needsGroup = action === updateFieldAction;
+                var groupId = groupSelect.value;
 
                 form.querySelectorAll('[data-role="trigger-config"]').forEach(function (el) {
                     el.hidden = el.getAttribute('data-trigger') !== trigger;
@@ -193,10 +222,21 @@
                 form.querySelectorAll('[data-role="action-config"]').forEach(function (el) {
                     el.hidden = el.getAttribute('data-action') !== action;
                 });
+
+                // "Any group" is not a valid audience for "Update contact field".
+                anyGroupOption.hidden = needsGroup;
+                anyGroupOption.disabled = needsGroup;
+                groupSelect.required = needsGroup;
+                groupHint.textContent = needsGroup ? '(required for "Update contact field")' : '(optional for "Contact created")';
+                groupRequiredNote.hidden = !needsGroup;
+
+                filterByGroup(form.querySelector('[data-role="field-select"]'), groupId, true);
+                filterByGroup(form.querySelector('#date_field_id'), groupId, false);
             }
 
             form.querySelector('[data-role="trigger-type"]').addEventListener('change', sync);
             form.querySelector('[data-role="action-type"]').addEventListener('change', sync);
+            groupSelect.addEventListener('change', sync);
             sync();
         })();
     </script>

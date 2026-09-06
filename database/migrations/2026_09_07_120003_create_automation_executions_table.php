@@ -21,8 +21,17 @@ use Illuminate\Support\Facades\Schema;
  * Never stores provider response bodies, credentials, or raw payloads —
  * only bounded, human-safe summaries.
  *
+ * Indexes (§4.1): `business_id`, `automation_id`, `(automation_id,
+ * created_at)` for the history view, `status`, and — per the B4/B5 index
+ * coordination decision (Correction 1) — the explicitly named composite
+ * `automation_executions_business_id_created_at_index` on
+ * `(business_id, created_at)`, because B5 Business Analytics reads this
+ * table by Business over a bounded created_at range. Index only: no
+ * analytics code and no further analytics-oriented indexes live here.
+ *
  * ROLLBACK IS DESTRUCTIVE OF RUN HISTORY (§3.6): this table is the only
- * record of B4-era executions; `down()` drops it entirely.
+ * record of B4-era executions; `down()` drops it entirely, which removes
+ * every index above (the composite included) with it.
  */
 return new class extends Migration {
     public function up(): void
@@ -48,9 +57,15 @@ return new class extends Migration {
             $table->index('automation_id');
             $table->index(['automation_id', 'created_at']);
             $table->index('status');
+            $table->index(['business_id', 'created_at'], 'automation_executions_business_id_created_at_index');
         });
     }
 
+    /**
+     * Dropping the table drops all of its indexes, including the explicitly
+     * named `automation_executions_business_id_created_at_index`; no
+     * separate dropIndex is needed or performed.
+     */
     public function down(): void
     {
         Schema::dropIfExists('automation_executions');

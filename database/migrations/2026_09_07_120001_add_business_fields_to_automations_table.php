@@ -21,11 +21,13 @@ use Illuminate\Support\Facades\Schema;
  *
  * Three legacy NOT NULL columns that only the removed Birthday builder ever
  * populated — `contact_list_id` (FK to contact_groups), `sms_type` and
- * `data` — are relaxed to NULLABLE. A v1 definition carries its group (if
- * any), channel type and configuration in trigger_config/action_config, so
- * it has nothing meaningful to write there; on a strict-mode MySQL the
- * INSERT would otherwise be rejected. The columns, their types and the
- * existing FK are kept exactly as they were (nothing dropped or renamed).
+ * `data` — are relaxed to NULLABLE: the exact three compatibility
+ * relaxations the contract authorizes (§3.1a), and no others. A v1
+ * definition carries its group (if any), channel type and configuration in
+ * trigger_config/action_config, so it has nothing meaningful to write
+ * there; on a strict-mode MySQL the INSERT would otherwise be rejected.
+ * The columns, their types and the existing FK are kept exactly as they
+ * were (nothing dropped, renamed, or repurposed).
  *
  * Column/index/FK naming follows the tenancy-foundation convention used by
  * 2026_09_05_120001_add_nullable_business_id_to_tenancy_tables.php.
@@ -60,9 +62,10 @@ return new class extends Migration {
      * columns. Legacy columns and every legacy row are untouched.
      *
      * The three relaxed legacy columns deliberately stay NULLABLE on
-     * rollback: re-imposing NOT NULL would fail (or silently rewrite data)
-     * once any v1 row exists, and a nullable column is strictly more
-     * permissive than the pre-B4 schema for every legacy row.
+     * rollback (contract §3.6): re-imposing NOT NULL would fail, or would
+     * have to destructively invent values, once any B4-era row carries a
+     * NULL there — and a nullable column is strictly more permissive than
+     * the pre-B4 schema for every legacy row.
      */
     public function down(): void
     {

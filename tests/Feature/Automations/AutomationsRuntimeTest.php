@@ -542,6 +542,164 @@ class AutomationsRuntimeTest extends TestCase
         $this->assertSame(1, AutomationExecution::count());
     }
 
+    // ---------------------------------------------------------------
+    // Execution-start claim (§5.4): the SAME row acts at most once
+    // ---------------------------------------------------------------
+
+    public function test_execution_already_started_never_calls_provider(): void
+    {
+        [, $automation, $contact] = $this->dueBirthdayScenario();
+        $execution = $this->pendingExecution($automation, $contact, 'k:started');
+        $startedAt = now()->subMinute()->startOfSecond();
+        $execution->update(['started_at' => $startedAt]);
+        $this->mockSendCore(0);
+
+        $this->runAction($execution);
+        $this->runAction($execution);
+
+        $fresh = $execution->fresh();
+        $this->assertSame(AutomationExecutionStatus::Pending, $fresh->status, 'A started-but-unfinished row stays honestly pending.');
+        $this->assertTrue($startedAt->equalTo($fresh->started_at), 'started_at is never reset.');
+        $this->assertNull($fresh->completed_at);
+    }
+
+    public function test_execution_already_started_never_updates_contact_field(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $group = $this->contactGroup($business);
+        $field = $this->textField($group);
+        $automation = Automation::create([
+            'business_id' => $business->id,
+            'user_id' => $business->customer_id,
+            'name' => 'Tag',
+            'status' => Automation::STATUS_ACTIVE,
+            'trigger_type' => AutomationTriggerType::ContactCreated->value,
+            'trigger_config' => ['contact_group_id' => $group->id],
+            'action_type' => AutomationActionType::UpdateContactField->value,
+            'action_config' => ['field_id' => $field->id, 'value' => 'lead'],
+        ]);
+        $contact = $this->contact($business, $group, '12025556001');
+        $execution = $this->pendingExecution($automation, $contact, 'k:started-field');
+        $execution->update(['started_at' => now()]);
+
+        $this->runAction($execution);
+
+        $this->assertSame(AutomationExecutionStatus::Pending, $execution->fresh()->status);
+        $this->assertSame(0, ContactsCustomField::where('contact_id', $contact->id)->where('field_id', $field->id)->count());
+    }
+
+    /**
+     * Deterministic duplicate delivery: while worker A is inside the
+     * provider call (row still Pending), worker B processes the SAME
+     * executionId re-entrantly. B must lose the execution-start claim and
+     * produce no side effect; exactly one provider call happens.
+     */
+    public function test_duplicate_processing_of_the_same_execution_yields_exactly_one_side_effect(): void
+    {
+        [, $automation, $contact] = $this->dueBirthdayScenario();
+        $execution = $this->pendingExecution($automation, $contact, 'k:dup');
+        $nestedSawStarted = null;
+
+        $mock = \Mockery::mock(\App\Repositories\Contracts\CampaignRepository::class);
+        $mock->shouldReceive('checkQuickSendValidation')->andReturnUsing(fn (array $input) => response()->json([
+            'status' => 'success',
+            'sender_id' => $input['sender_id'] ?? null,
+            'sms_type' => 'plain',
+            'user_id' => $input['user_id'] ?? null,
+        ]));
+        $mock->shouldReceive('quickSend')->once()->andReturnUsing(function () use ($execution, &$nestedSawStarted) {
+            // Worker B, mid-flight of worker A.
+            $nestedSawStarted = $execution->fresh()->started_at !== null;
+            $this->runAction($execution);
+
+            return response()->json(['status' => 'success', 'message' => 'sent']);
+        });
+        $this->app->instance(\App\Repositories\Contracts\CampaignRepository::class, $mock);
+
+        $this->runAction($execution);
+
+        $fresh = $execution->fresh();
+        $this->assertTrue($nestedSawStarted, 'The start claim must be durable before the provider call.');
+        $this->assertSame(AutomationExecutionStatus::Succeeded, $fresh->status);
+        $this->assertNotNull($fresh->started_at);
+        $this->assertSame(1, AutomationExecution::count());
+    }
+
+    public function test_start_claim_is_granted_exactly_once(): void
+    {
+        [, $automation, $contact] = $this->dueBirthdayScenario();
+        $execution = $this->pendingExecution($automation, $contact, 'k:once');
+        $claims = app(AutomationExecutionClaimService::class);
+
+        $first = $claims->claimStart($execution->id);
+        $second = $claims->claimStart($execution->id);
+
+        $this->assertInstanceOf(AutomationExecution::class, $first);
+        $this->assertNull($second);
+        $this->assertNotNull($execution->fresh()->started_at);
+
+        $execution->update(['status' => AutomationExecutionStatus::Failed->value]);
+        $this->assertNull($claims->claimStart($execution->id), 'A terminal row can never be started.');
+    }
+
+    // ---------------------------------------------------------------
+    // Stale-definition guard at claim time (§5.2)
+    // ---------------------------------------------------------------
+
+    public function test_claim_refuses_a_stale_trigger_type(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $channel = $this->sendableChannel($business);
+        $group = $this->contactGroup($business);
+        $field = $this->dateField($group);
+        $automation = $this->sendMessageAutomation($business, $channel['server'], $channel['sender']);
+        $contact = $this->contact($business, $group, '12025557001');
+        $this->mockSendCore(0);
+
+        // The evaluator observed CONTACT_CREATED; the definition is edited
+        // to the other trigger before the claim runs.
+        $automation->update([
+            'trigger_type' => AutomationTriggerType::ContactDateReached->value,
+            'trigger_config' => ['contact_group_id' => $group->id, 'date_field_id' => $field->id, 'offset' => '0 day', 'send_at' => '09:00'],
+        ]);
+
+        $result = app(AutomationExecutionClaimService::class)->claim(
+            $automation->id,
+            $contact,
+            AutomationTriggerType::ContactCreated,
+            AutomationExecutionClaimService::contactCreatedKey($automation->id, $contact->id)
+        );
+
+        $this->assertNull($result);
+        $this->assertSame(0, AutomationExecution::count());
+    }
+
+    public function test_claim_refuses_a_contact_outside_the_current_audience_group(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $channel = $this->sendableChannel($business);
+        $groupA = $this->contactGroup($business, 'A');
+        $groupB = $this->contactGroup($business, 'B');
+        $automation = $this->sendMessageAutomation($business, $channel['server'], $channel['sender'], [
+            'trigger_config' => ['contact_group_id' => null],
+        ]);
+        $contact = $this->contact($business, $groupA, '12025557002');
+        $this->mockSendCore(0);
+
+        // Audience narrowed to group B after the candidate was prepared.
+        $automation->update(['trigger_config' => ['contact_group_id' => $groupB->id]]);
+
+        $result = app(AutomationExecutionClaimService::class)->claim(
+            $automation->id,
+            $contact,
+            AutomationTriggerType::ContactCreated,
+            AutomationExecutionClaimService::contactCreatedKey($automation->id, $contact->id)
+        );
+
+        $this->assertNull($result);
+        $this->assertSame(0, AutomationExecution::count());
+    }
+
     public function test_action_job_never_reruns_a_terminal_execution(): void
     {
         [, $automation, $contact] = $this->dueBirthdayScenario();
@@ -673,6 +831,36 @@ class AutomationsRuntimeTest extends TestCase
         $this->assertSame(0, ContactsCustomField::where('contact_id', $contact->id)->where('field_id', $foreignField->id)->count());
     }
 
+    /**
+     * Defense in depth (§7.B): even a definition that bypassed the
+     * definition-time group rule cannot write a field of another group of
+     * the same Business at runtime.
+     */
+    public function test_update_contact_field_refuses_same_business_field_from_another_group_at_runtime(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $audience = $this->contactGroup($business, 'Audience');
+        $otherField = $this->textField($this->contactGroup($business, 'Other'), 'OTHER_NOTE');
+        $automation = Automation::create([
+            'business_id' => $business->id,
+            'user_id' => $business->customer_id,
+            'name' => 'Cross-group',
+            'status' => Automation::STATUS_ACTIVE,
+            'trigger_type' => AutomationTriggerType::ContactCreated->value,
+            'trigger_config' => ['contact_group_id' => $audience->id],
+            'action_type' => AutomationActionType::UpdateContactField->value,
+            'action_config' => ['field_id' => $otherField->id, 'value' => 'x'],
+        ]);
+        $this->mockSendCore(0);
+
+        $contact = $this->storeContactThroughSeam($audience, '12025554004');
+
+        $execution = AutomationExecution::where('automation_id', $automation->id)->firstOrFail();
+        $this->assertSame(AutomationExecutionStatus::Skipped, $execution->status);
+        $this->assertStringContainsString('field_not_in_contact_business', (string) $execution->safe_error_summary);
+        $this->assertSame(0, ContactsCustomField::where('contact_id', $contact->id)->where('field_id', $otherField->id)->count());
+    }
+
     public function test_update_contact_field_refuses_phone_field(): void
     {
         [, $business] = $this->entitledTenant();
@@ -696,6 +884,54 @@ class AutomationsRuntimeTest extends TestCase
         $this->assertSame(AutomationExecutionStatus::Skipped, $execution->status);
         $this->assertStringContainsString('phone_field_not_writable', (string) $execution->safe_error_summary);
         $this->assertSame('12025554003', (string) $contact->fresh()->phone);
+    }
+
+    // ---------------------------------------------------------------
+    // Schema (§4.1): B4/B5 index coordination
+    // ---------------------------------------------------------------
+
+    public function test_executions_table_has_the_business_created_at_composite_index(): void
+    {
+        $indexes = collect(Schema::getIndexes('automation_executions'));
+
+        $composite = $indexes->firstWhere('name', 'automation_executions_business_id_created_at_index');
+
+        $this->assertNotNull($composite, 'Missing automation_executions_business_id_created_at_index. Present: ' . $indexes->pluck('name')->implode(', '));
+        $this->assertSame(['business_id', 'created_at'], array_values($composite['columns']));
+        $this->assertFalse($composite['unique']);
+
+        // The contracted set, and nothing analytics-oriented beyond it.
+        $this->assertTrue($indexes->contains(fn (array $index) => $index['unique'] && array_values($index['columns']) === ['idempotency_key']));
+        $this->assertTrue($indexes->contains(fn (array $index) => array_values($index['columns']) === ['automation_id', 'created_at']));
+    }
+
+    // ---------------------------------------------------------------
+    // Import policy (§6.B): only the two interactive seams dispatch
+    // ---------------------------------------------------------------
+
+    public function test_import_path_has_no_automation_dispatch_and_contacts_has_no_model_hook(): void
+    {
+        $import = php_strip_whitespace(app_path('Models/ContactGroups.php'));
+        $contacts = php_strip_whitespace(app_path('Models/Contacts.php'));
+
+        $this->assertStringNotContainsString('AutomationJob', $import);
+        $this->assertStringNotContainsString('forContactCreated', $import);
+        $this->assertStringNotContainsString('AutomationJob', $contacts);
+        $this->assertStringNotContainsString('::created(', $contacts);
+        $this->assertStringNotContainsString('::saved(', $contacts);
+
+        // Exactly the two contracted interactive seams dispatch the trigger
+        // (AutomationJob itself only DEFINES the factory).
+        $callSites = [];
+        foreach (new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator(app_path())) as $file) {
+            if ($file->isFile() && $file->getExtension() === 'php' && str_contains(php_strip_whitespace($file->getPathname()), 'AutomationJob::forContactCreated(')) {
+                $callSites[] = str_replace('\\', '/', substr($file->getPathname(), strlen(app_path()) + 1));
+            }
+        }
+
+        sort($callSites);
+        $this->assertSame(['Repositories/Eloquent/EloquentContactsRepository.php'], $callSites, 'Unexpected CONTACT_CREATED dispatch sites: ' . json_encode($callSites));
+        $this->assertSame(2, substr_count(php_strip_whitespace(app_path('Repositories/Eloquent/EloquentContactsRepository.php')), 'AutomationJob::forContactCreated('));
     }
 
     // ---------------------------------------------------------------

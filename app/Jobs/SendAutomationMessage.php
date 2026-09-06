@@ -6,6 +6,7 @@ use App\Enums\Automation\AutomationExecutionStatus;
 use App\Library\Automation\AutomationActionDispatcher;
 use App\Library\Automation\AutomationActionResult;
 use App\Library\Automation\AutomationEligibility;
+use App\Library\Automation\AutomationExecutionClaimService;
 use App\Models\AutomationExecution;
 use App\Models\Contacts;
 use Illuminate\Support\Facades\DB;
@@ -26,11 +27,16 @@ use Throwable;
  *     allowed, Contact still in the same Business. Any change since the
  *     claim records `skipped` with a safe reason — a stale snapshot never
  *     authorizes an external send.
- *  3. The action (and its provider call, if any) runs OUTSIDE any DB
+ *  3. The SAME row performs its action at most once (§5.4): immediately
+ *     before the action, the execution-start claim sets `started_at`
+ *     exactly once under a row lock. A second worker holding the same
+ *     executionId — even while the first is mid-provider-call and the row
+ *     is still Pending — loses that claim and stops without side effects.
+ *  4. The action (and its provider call, if any) runs OUTSIDE any DB
  *     transaction; only the short bookkeeping writes are transactional.
- *  4. A failure is recorded as `failed` and is NEVER automatically
- *     retried: `Base` already sets tries=1, and the claimed row itself
- *     forecloses a second attempt for the same key.
+ *  5. A failure is recorded as `failed` and is NEVER automatically
+ *     retried: `Base` already sets tries=1, the claimed row forecloses a
+ *     second attempt for the same key, and `started_at` is never reset.
  */
 class SendAutomationMessage extends Base
 {
@@ -39,11 +45,13 @@ class SendAutomationMessage extends Base
         $this->onQueue('automation');
     }
 
-    public function handle(AutomationEligibility $eligibility, AutomationActionDispatcher $dispatcher): void
+    public function handle(AutomationEligibility $eligibility, AutomationActionDispatcher $dispatcher, AutomationExecutionClaimService $claims): void
     {
         $execution = AutomationExecution::query()->find($this->executionId);
 
-        if ($execution === null || ! $execution->isPending()) {
+        // A row that already carries started_at was handed to an action
+        // once; whatever happened to that attempt, it is never re-run.
+        if ($execution === null || ! $execution->isPending() || $execution->started_at !== null) {
             return;
         }
 
@@ -74,13 +82,18 @@ class SendAutomationMessage extends Base
             return;
         }
 
-        DB::transaction(function () use ($execution): void {
-            $execution->update(['started_at' => now()]);
-        });
+        // Execution-start claim (§5.4): exactly one worker may proceed past
+        // this line for this row, ever. Losing it means another worker is
+        // (or was) already acting on it — leave the row entirely alone.
+        $started = $claims->claimStart($execution->id);
+
+        if ($started === null) {
+            return;
+        }
 
         try {
             // Outside any transaction by construction (§5.1 rule 3).
-            $result = $dispatcher->dispatch($execution, $automation, $business, $contact);
+            $result = $dispatcher->dispatch($started, $automation, $business, $contact);
         } catch (Throwable $exception) {
             $result = AutomationActionResult::failed('action_exception: ' . get_class($exception));
         }

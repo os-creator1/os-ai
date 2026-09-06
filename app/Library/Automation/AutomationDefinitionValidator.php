@@ -37,16 +37,23 @@ class AutomationDefinitionValidator
     }
 
     /**
+     * `$triggerConfig` is the ALREADY-normalized trigger configuration for
+     * the same definition: an action may only be accepted when it is
+     * structurally possible for the audience that trigger selects
+     * (contract §7.B — an UPDATE_CONTACT_FIELD definition needs the exact
+     * group its field belongs to).
+     *
      * @param  array<string, mixed>  $input
+     * @param  array<string, mixed>  $triggerConfig
      * @return array<string, mixed>
      *
      * @throws ValidationException
      */
-    public function actionConfig(Business $business, AutomationActionType $type, array $input): array
+    public function actionConfig(Business $business, AutomationActionType $type, array $input, array $triggerConfig): array
     {
         return match ($type) {
             AutomationActionType::SendMessage => $this->sendMessageConfig($business, $input),
-            AutomationActionType::UpdateContactField => $this->updateContactFieldConfig($business, $input),
+            AutomationActionType::UpdateContactField => $this->updateContactFieldConfig($business, $input, $triggerConfig),
         };
     }
 
@@ -157,8 +164,27 @@ class AutomationDefinitionValidator
         return $config;
     }
 
-    private function updateContactFieldConfig(Business $business, array $input): array
+    /**
+     * Contract §7.B (Correction 1): a custom field belongs to exactly one
+     * contact group, so the definition must name that group explicitly as
+     * its audience. "Any group" is therefore not a valid audience for this
+     * action — a CONTACT_CREATED + UPDATE_CONTACT_FIELD definition must
+     * pick a group; CONTACT_DATE_REACHED already requires one. The field
+     * must belong to that exact group, the group to this Business, and
+     * phone fields are never writable. The runtime re-checks all of this
+     * against the trigger Contact as defense in depth.
+     */
+    private function updateContactFieldConfig(Business $business, array $input, array $triggerConfig): array
     {
+        $audienceGroupId = $triggerConfig['contact_group_id'] ?? null;
+        $audienceGroup = $audienceGroupId !== null ? $this->businessGroup($business, $audienceGroupId) : null;
+
+        if ($audienceGroup === null) {
+            throw ValidationException::withMessages([
+                'contact_group_id' => 'Choose a contact group: an "Update contact field" automation applies to one group\'s field, so "Any group" is not available for this action.',
+            ]);
+        }
+
         $field = ContactGroupFields::query()
             ->with('contactGroup')
             ->find((int) ($input['field_id'] ?? 0));
@@ -170,6 +196,12 @@ class AutomationDefinitionValidator
             || $field->is_phone
         ) {
             throw ValidationException::withMessages(['field_id' => 'Choose a non-phone custom field that belongs to this Business.']);
+        }
+
+        if ((int) $field->contact_group_id !== (int) $audienceGroup->id) {
+            throw ValidationException::withMessages([
+                'field_id' => 'Choose a custom field that belongs to the selected contact group "' . $audienceGroup->name . '".',
+            ]);
         }
 
         if (! array_key_exists('value', $input) || mb_strlen((string) $input['value']) > 255) {

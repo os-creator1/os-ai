@@ -293,7 +293,7 @@ class AutomationsController extends CustomerBaseController
 
         try {
             $triggerConfig = $this->definitions->triggerConfig($business, $triggerType, $input);
-            $actionConfig = $this->definitions->actionConfig($business, $actionType, $input);
+            $actionConfig = $this->definitions->actionConfig($business, $actionType, $input, $triggerConfig);
         } catch (ValidationException $exception) {
             return back()->withInput()->withErrors($exception->errors());
         }
@@ -320,9 +320,13 @@ class AutomationsController extends CustomerBaseController
             ->orderBy('label')
             ->get();
 
+        // Grouped by contact group on purpose: a field belongs to exactly
+        // one group, and the form must never imply cross-group use (§7.B).
         $customFields = ContactGroupFields::query()
+            ->with('contactGroup')
             ->whereIn('contact_group_id', $groups->pluck('id'))
             ->where('is_phone', false)
+            ->orderBy('contact_group_id')
             ->orderBy('label')
             ->get();
 
