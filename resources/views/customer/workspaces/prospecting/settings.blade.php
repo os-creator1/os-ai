@@ -61,6 +61,20 @@
                     <label class="form-label" for="follow_up_policy">Follow-up policy</label>
                     <textarea id="follow_up_policy" name="follow_up_policy" class="form-control" rows="2">{{ old('follow_up_policy', $settings->follow_up_policy) }}</textarea>
                 </div>
+                <div class="col-md-6 mb-2">
+                    <label class="form-label" for="booking_url">Booking URL</label>
+                    <input type="text" id="booking_url" name="booking_url" class="form-control @error('booking_url') is-invalid @enderror"
+                           value="{{ old('booking_url', $settings->booking_url) }}" placeholder="https://your-booking-link.example.com">
+                    @error('booking_url')
+                        <div class="invalid-feedback">{{ $message }}</div>
+                    @enderror
+                    <p class="text-caption mb-0">The only URL the AI responder is ever allowed to send.</p>
+                </div>
+                <div class="col-md-6 mb-2">
+                    <label class="form-label" for="follow_up_delay_hours">Follow-up delay (hours)</label>
+                    <input type="number" id="follow_up_delay_hours" name="follow_up_delay_hours" class="form-control" min="1" max="168"
+                           value="{{ old('follow_up_delay_hours', $settings->follow_up_delay_hours ?? 24) }}">
+                </div>
             </div>
 
             <x-button type="submit" variant="primary">Save agent settings</x-button>

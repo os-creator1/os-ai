@@ -21,16 +21,47 @@
                     <p class="mb-2">{{ $campaign->context }}</p>
                 @endif
 
-                <form method="post" action="{{ route('customer.workspaces.prospecting.campaigns.status', [$workspaceUid, $campaign->uid]) }}" class="d-flex gap-2">
-                    @csrf
-                    <select name="status" class="form-select" style="max-width: 200px;">
-                        <option value="draft" @selected($campaign->status->value === 'draft')>Draft</option>
-                        <option value="active" @selected($campaign->status->value === 'active')>Active</option>
-                        <option value="paused" @selected($campaign->status->value === 'paused')>Paused</option>
-                    </select>
-                    <x-button type="submit" variant="primary" size="sm">Update status</x-button>
-                </form>
+                @if($campaign->status->value !== 'draft')
+                    <form method="post" action="{{ route('customer.workspaces.prospecting.campaigns.status', [$workspaceUid, $campaign->uid]) }}" class="d-flex gap-2">
+                        @csrf
+                        <select name="status" class="form-select" style="max-width: 200px;">
+                            <option value="active" @selected($campaign->status->value === 'active')>Active</option>
+                            <option value="paused" @selected($campaign->status->value === 'paused')>Paused</option>
+                        </select>
+                        <x-button type="submit" variant="primary" size="sm">Update status</x-button>
+                    </form>
+                @endif
             </x-card>
+
+            @if($campaign->status->value === 'draft')
+                <x-card title="Configure &amp; start" :padded="true" class="mt-2">
+                    <form method="post" action="{{ route('customer.workspaces.prospecting.campaigns.config', [$workspaceUid, $campaign->uid]) }}">
+                        @csrf
+                        <div class="mb-1">
+                            <label class="form-label" for="channel_uid">Channel</label>
+                            <select id="channel_uid" name="channel_uid" class="form-select">
+                                <option value="">Select a channel…</option>
+                                @foreach($availableChannels as $availableChannel)
+                                    <option value="{{ $availableChannel->uid }}" @selected($campaign->channel_id === $availableChannel->id)>
+                                        {{ $availableChannel->provider }} — {{ $availableChannel->sender_number }}
+                                    </option>
+                                @endforeach
+                            </select>
+                        </div>
+                        <div class="mb-1">
+                            <label class="form-label" for="opening_message">Opening message</label>
+                            <textarea id="opening_message" name="opening_message" class="form-control" rows="3" placeholder="Hi {{ '{{contact_name}}' }}, this is {{ '{{agency_name}}' }}...">{{ old('opening_message', $campaign->opening_message) }}</textarea>
+                            <p class="text-caption mb-0">Placeholders: {{ '{{company_name}}' }}, {{ '{{contact_name}}' }}, {{ '{{agency_name}}' }}</p>
+                        </div>
+                        <x-button type="submit" variant="outline" size="sm">Save configuration</x-button>
+                    </form>
+
+                    <form method="post" action="{{ route('customer.workspaces.prospecting.campaigns.start', [$workspaceUid, $campaign->uid]) }}" class="mt-2">
+                        @csrf
+                        <x-button type="submit" variant="primary">Start campaign</x-button>
+                    </form>
+                </x-card>
+            @endif
 
             <x-card title="Enroll a prospect" :padded="true" class="mt-2">
                 @if($enrollableProspects->isEmpty())

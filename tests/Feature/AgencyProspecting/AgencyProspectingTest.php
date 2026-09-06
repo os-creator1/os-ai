@@ -396,32 +396,32 @@ class AgencyProspectingTest extends TestCase
     public function test_a_second_prospect_with_the_same_phone_in_the_same_workspace_is_rejected(): void
     {
         [$owner, $workspace] = $this->agencyWorkspace();
-        $this->createProspect($workspace, ['phone' => '15559998888']);
+        $this->createProspect($workspace, ['phone' => '12025551000']);
         $this->authenticateAsCustomer($owner);
 
         $this->post(route('customer.workspaces.prospecting.prospects.store', $workspace->uid), [
             'company_name' => 'Duplicate Co',
-            'phone' => '15559998888',
+            'phone' => '12025551000',
         ])->assertSessionHasErrors(['phone']);
 
-        $this->assertSame(1, AgencyProspect::where('workspace_id', $workspace->id)->where('phone', '15559998888')->count());
+        $this->assertSame(1, AgencyProspect::where('workspace_id', $workspace->id)->where('phone', '12025551000')->count());
     }
 
     public function test_the_same_phone_in_a_different_workspace_is_allowed(): void
     {
         [$ownerA, $workspaceA] = $this->agencyWorkspace();
         [, $workspaceB] = $this->agencyWorkspace();
-        $this->createProspect($workspaceB, ['phone' => '15557778888']);
+        $this->createProspect($workspaceB, ['phone' => '12025552000']);
 
         $this->authenticateAsCustomer($ownerA);
 
         $this->post(route('customer.workspaces.prospecting.prospects.store', $workspaceA->uid), [
             'company_name' => 'Workspace A Co',
-            'phone' => '15557778888',
+            'phone' => '12025552000',
         ])->assertSessionHas('flash_success');
 
-        $this->assertSame(1, AgencyProspect::where('workspace_id', $workspaceA->id)->where('phone', '15557778888')->count());
-        $this->assertSame(1, AgencyProspect::where('workspace_id', $workspaceB->id)->where('phone', '15557778888')->count());
+        $this->assertSame(1, AgencyProspect::where('workspace_id', $workspaceA->id)->where('phone', '12025552000')->count());
+        $this->assertSame(1, AgencyProspect::where('workspace_id', $workspaceB->id)->where('phone', '12025552000')->count());
     }
 
     // -----------------------------------------------------------------

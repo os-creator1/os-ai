@@ -185,6 +185,8 @@
                 \App\Repositories\Contracts\BusinessBillingReceiptRepository::class => \App\Repositories\Eloquent\EloquentBusinessBillingReceiptRepository::class,
                 \App\Repositories\Contracts\PlatformThemePresetRepository::class => \App\Repositories\Eloquent\EloquentPlatformThemePresetRepository::class,
                 \App\Repositories\Contracts\PlatformThemeFontRepository::class => \App\Repositories\Eloquent\EloquentPlatformThemeFontRepository::class,
+                \App\Library\AgencyProspecting\Contracts\AgencyProspectingAiClient::class => \App\Library\AgencyProspecting\OpenAiAgencyProspectingClient::class,
+                \App\Library\AgencyProspecting\Contracts\AgencyProspectingMessageSender::class => \App\Library\AgencyProspecting\ProviderAgencyProspectingMessageSender::class,
             ];
 
             foreach ($bindings as $interface => $implementation) {
