@@ -17,6 +17,13 @@ use Tests\TestCase;
  * `Installer/update/overview.blade.php`) along with the rest of the
  * vendor-distribution Installer/Updater/license machinery, dropping the
  * tracked scope to 38.
+ *
+ * B3 Simplified Platform Settings (2026-09) relocated the admin settings
+ * view containing the six branding upload fields from
+ * `admin/settings/AllSettings/_general.blade.php` (the legacy 9-tab "All
+ * Settings" screen, rebuilt as one 6-section page) to
+ * `admin/settings/platform/_appearance.blade.php` -- same tracked count
+ * of 38, one path renamed in place.
  */
 class BrandingDesignSystemContentTest extends TestCase
 {
@@ -43,7 +50,7 @@ class BrandingDesignSystemContentTest extends TestCase
         'app/Http/Controllers/Admin/SettingsController.php',
         'app/Http/Requests/Settings/PostGeneralRequest.php',
         // Admin settings view (1)
-        'resources/views/admin/settings/AllSettings/_general.blade.php',
+        'resources/views/admin/settings/platform/_appearance.blade.php',
         // Shared-chrome adoption (7)
         'resources/views/panels/sidebar.blade.php',
         'resources/views/panels/navbar.blade.php',

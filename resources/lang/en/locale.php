@@ -1173,6 +1173,8 @@
             'maintenance_message'                  => 'Maintenance message',
             'custom_script'                        => 'Copy and paste your custom scripts in the box below. It will be included in every page',
             'settings_successfully_updated'        => 'Settings was successfully updated.',
+            'test_email_sent'                      => 'Test email sent successfully. Please check the destination inbox.',
+            'test_email_failed'                    => 'Unable to send the test email. Please check your mail configuration and try again.',
             'from_email'                           => 'From Email',
             'from_name'                            => 'From Name',
             'method_for_sending'                   => 'Method for sending system mail',

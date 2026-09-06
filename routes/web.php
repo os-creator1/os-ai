@@ -78,13 +78,15 @@ Route::post('/inbound/telnyx', [DLRController::class, 'inboundTelnyx']);
     if (config('app.stage') == 'local') {
         Route::get('debug', [DebugController::class, 'index'])->name('debug');
     }
-    //new
-use App\Http\Controllers\Admin\AiSettingsController;
-
-Route::get('/admin/ai-brain',[AiSettingsController::class,'index'])
-    ->middleware(['auth', 'can:access backend', 'ValidProduct', 'twofactor']);
-Route::post('/admin/ai-brain',[AiSettingsController::class,'save'])
-    ->middleware(['auth', 'can:access backend', 'ValidProduct', 'twofactor']);
+    // B3 Simplified Platform Settings §7 — the orphan "AI Brain" surface
+    // (app/Http/Controllers/Admin/AiSettingsController.php, an ai_settings
+    // table with no migration anywhere in this repository, and its
+    // system_prompt field with zero production consumers) has been
+    // removed. The one canonical platform AI provider configuration path
+    // is admin/ai-settings (SettingsController::aiSettings/postAiSettings/
+    // toggleAiSettings), which both the existing campaign AI feature and
+    // Lane A's Agency Prospecting runtime already read via
+    // config('services.openai.*').
 
 Route::post('/telnyx/webhook', [DLRController::class, 'inboundTelnyx']);
 

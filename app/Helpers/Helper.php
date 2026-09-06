@@ -735,36 +735,50 @@
                             ],
                         ],
                     ],
+                    /*
+                     * B3 Simplified Platform Settings §15/§24. "All
+                     * Settings" (general settings|view languages|
+                     * view payment_gateways|view email_templates|
+                     * manage maintenance_mode|manage ai_settings" access
+                     * string) is replaced by "Platform Settings" — the
+                     * new one-page, six-section screen; AI Settings folds
+                     * into it (SettingsController::general() itself now
+                     * grants entry to anyone holding at least one of the
+                     * section abilities, 'manage ai_settings' included,
+                     * so that independent access path is preserved even
+                     * though its own nav link is gone). Countries and
+                     * Payment Gateways are legacy billing resources
+                     * outside B3's scope (deferred to the RFC-005 billing
+                     * cutover) — hidden from Settings navigation, not
+                     * deleted; both controllers/routes/backends are
+                     * untouched and still directly reachable by URL for
+                     * any admin holding their existing ability. Theme
+                     * Presets (Design System M2's own screen) had no nav
+                     * entry at all before B3 — added here, closing that
+                     * gap.
+                     */
                     [
                         'url'     => '',
                         'name'    => 'Settings',
                         'i18n'    => 'Settings',
                         'icon'    => 'settings',
-                        'access'  => 'general settings|view languages|view payment_gateways|view email_templates|manage maintenance_mode|manage ai_settings',
+                        'access'  => 'general settings|authentication settings|system_email settings|manage ai_settings|view languages|view email_templates|manage maintenance_mode|manage theme',
                         'submenu' => [
                             [
                                 'url'    => url(config('app.admin_path') . '/settings'),
                                 'slug'   => config('app.admin_path') . '/settings',
-                                'name'   => 'All Settings',
-                                'i18n'   => 'All Settings',
-                                'access' => 'general settings',
+                                'name'   => 'Platform Settings',
+                                'i18n'   => 'Platform Settings',
+                                'access' => 'general settings|authentication settings|system_email settings|manage ai_settings',
                                 'icon'   => 'settings',
                             ],
                             [
-                                'url'    => url(config('app.admin_path') . '/countries'),
-                                'slug'   => config('app.admin_path') . '/countries',
-                                'name'   => 'Countries',
-                                'i18n'   => 'Countries',
-                                'access' => 'general settings',
-                                'icon'   => 'map-pin',
-                            ],
-                            [
-                                'url'    => url(config('app.admin_path') . '/ai-settings'),
-                                'slug'   => config('app.admin_path') . '/ai-settings',
-                                'name'   => 'AI Settings',
-                                'i18n'   => 'AI Settings',
-                                'access' => 'manage ai_settings',
-                                'icon'   => 'zap',
+                                'url'    => url(config('app.admin_path') . '/theme-presets'),
+                                'slug'   => config('app.admin_path') . '/theme-presets',
+                                'name'   => 'Theme Presets',
+                                'i18n'   => 'Theme Presets',
+                                'access' => 'manage theme',
+                                'icon'   => 'palette',
                             ],
                             [
                                 'url'    => url(config('app.admin_path') . '/languages'),
@@ -773,14 +787,6 @@
                                 'i18n'   => 'Language',
                                 'access' => 'view languages',
                                 'icon'   => 'globe',
-                            ],
-                            [
-                                'url'    => url(config('app.admin_path') . '/payment-gateways'),
-                                'slug'   => config('app.admin_path') . '/payment-gateways',
-                                'name'   => 'Payment Gateways',
-                                'i18n'   => 'Payment Gateways',
-                                'access' => 'view payment_gateways',
-                                'icon'   => 'shopping-bag',
                             ],
                             [
                                 'url'    => url(config('app.admin_path') . '/email-templates'),

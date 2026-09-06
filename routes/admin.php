@@ -380,7 +380,9 @@
 //All Settings
     Route::get('settings', 'SettingsController@general')->name('settings.general');
     Route::post('settings', 'SettingsController@postGeneral');
+    Route::post('settings/branding-remove', 'SettingsController@removeBrandingAsset')->name('settings.branding.remove');
     Route::post('settings/email', 'SettingsController@email')->name('settings.email');
+    Route::post('settings/email/test', 'SettingsController@testEmail')->name('settings.email.test');
     Route::post('settings/authentication', 'SettingsController@authentication')->name('settings.authentication');
     Route::post('settings/permissions', 'SettingsController@permissions')->name('settings.permissions');
     Route::post('settings/notifications', 'SettingsController@notifications')->name('settings.notifications');

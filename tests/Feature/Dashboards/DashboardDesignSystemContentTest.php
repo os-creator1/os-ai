@@ -5,8 +5,6 @@ namespace Tests\Feature\Dashboards;
 use App\Models\AppConfig;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Schema;
 use Tests\TestCase;
 
 /**
@@ -38,14 +36,9 @@ class DashboardDesignSystemContentTest extends TestCase
 {
     use RefreshDatabase;
 
-    private static bool $createdAiSettingsTable = false;
-    private static bool $ephemeralSchemaEnsured = false;
-
     protected function setUp(): void
     {
         parent::setUp();
-
-        $this->ensureEphemeralSchema();
 
         User::create([
             'first_name' => 'Placeholder',
@@ -128,13 +121,25 @@ class DashboardDesignSystemContentTest extends TestCase
         $this->assertStringContainsString("PlatformTheme.color('color-status-danger-border')", $adminSource);
     }
 
+    /**
+     * B3 Simplified Platform Settings (2026-09) retargeted this from the
+     * orphan `/admin/ai-brain` surface (deleted outright -- an
+     * ai_settings table with no migration anywhere in this repository,
+     * confirmed by exhaustive search, and a system_prompt field with zero
+     * production consumers) to the one canonical platform AI provider
+     * configuration surface, admin/settings' own AI section
+     * (config('services.openai.*'), the same seam the existing campaign
+     * AI feature and Lane A's Agency Prospecting runtime both read). The
+     * assertions are unchanged in substance: shared layout chrome
+     * (core.css) actually renders, and the AI section's own model field
+     * is present.
+     */
     public function test_ai_settings_renders_through_shared_layout_chrome(): void
     {
         $this->ensureRequiredAppConfigRowsExist();
-        $this->seedAiSettingsRow();
-        $admin = $this->actingAsAdmin(['access backend', 'manage ai_settings']);
+        $this->actingAsAdmin(['access backend', 'general settings', 'manage ai_settings']);
 
-        $response = $this->get('/admin/ai-brain');
+        $response = $this->get('/admin/settings');
 
         $response->assertOk();
         $response->assertSee('core.css', false);
@@ -159,70 +164,15 @@ class DashboardDesignSystemContentTest extends TestCase
         return $admin;
     }
 
-    private function seedAiSettingsRow(string $systemPrompt = 'Original prompt', string $model = 'gpt-3.5'): void
-    {
-        DB::table('ai_settings')->updateOrInsert(['id' => 1], [
-            'system_prompt' => $systemPrompt,
-            'model' => $model,
-        ]);
-    }
-
-    /**
-     * §14.1-equivalent ephemeral schema fixture (reproduced here per the
-     * merged Slice-3 contract's own allowance). Only ai_settings is needed
-     * by this file — it never renders Hot Leads/AI Analytics, so the
-     * chat_boxes/ai_box_campaign_map fixtures used elsewhere are not
-     * required here.
-     */
-    private function ephemeralSchema(): \Illuminate\Database\Schema\Builder
-    {
-        config(['database.connections.security_test_ddl' => config('database.connections.mysql')]);
-
-        return Schema::connection('security_test_ddl');
-    }
-
-    private function ensureEphemeralSchema(): void
-    {
-        if (self::$ephemeralSchemaEnsured) {
-            return;
-        }
-
-        self::$ephemeralSchemaEnsured = true;
-
-        $schema = $this->ephemeralSchema();
-
-        if ($schema->hasTable('ai_settings')) {
-            return;
-        }
-
-        $schema->create('ai_settings', function ($table) {
-            $table->id();
-            $table->text('system_prompt')->nullable();
-            $table->string('model')->nullable();
-        });
-
-        self::$createdAiSettingsTable = true;
-
-        $dsn = 'mysql:host=' . config('database.connections.mysql.host')
-            . ';port=' . config('database.connections.mysql.port')
-            . ';dbname=' . config('database.connections.mysql.database')
-            . ';charset=' . config('database.connections.mysql.charset', 'utf8mb4');
-        $username = config('database.connections.mysql.username');
-        $password = config('database.connections.mysql.password');
-
-        register_shutdown_function(function () use ($dsn, $username, $password) {
-            try {
-                $pdo = new \PDO($dsn, $username, $password, [\PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION]);
-                $pdo->exec('DROP TABLE IF EXISTS `ai_settings`');
-            } catch (\Throwable $e) {
-                // Best-effort cleanup at process shutdown; nothing further can be reported here.
-            }
-        });
-    }
-
     private function ensureRequiredAppConfigRowsExist(): void
     {
-        $existing = AppConfig::whereIn('setting', ['license', 'customer_permissions', 'custom_script'])
+        // B3 Simplified Platform Settings: this file's own retargeted
+        // test now renders admin.settings.platform.index (the AI section
+        // lives there, not a standalone page), which additionally reads
+        // the company_address/php_bin_path app_config rows -- seeded here
+        // the same way every other settings-adjacent test in this
+        // repository seeds exactly the rows its own render path touches.
+        $existing = AppConfig::whereIn('setting', ['license', 'customer_permissions', 'custom_script', 'company_address', 'php_bin_path'])
             ->pluck('setting')
             ->all();
 
@@ -239,6 +189,14 @@ class DashboardDesignSystemContentTest extends TestCase
                 ->firstWhere('setting', 'customer_permissions');
 
             AppConfig::create($default);
+        }
+
+        if (! in_array('company_address', $existing, true)) {
+            AppConfig::create(['setting' => 'company_address', 'value' => 'Test Address']);
+        }
+
+        if (! in_array('php_bin_path', $existing, true)) {
+            AppConfig::create(['setting' => 'php_bin_path', 'value' => '/usr/bin/php']);
         }
     }
 }

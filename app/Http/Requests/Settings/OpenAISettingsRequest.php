@@ -22,7 +22,11 @@
         public function rules(): array
         {
             return [
-                'api_key'      => 'required|string',
+                // B3 Simplified Platform Settings: the stored API key is
+                // never rendered back into the form, so it can never be
+                // required to resubmit it. Blank means "keep the existing
+                // key" (EloquentSettingsRepository::aiSettings()).
+                'api_key'      => 'nullable|string',
                 'model'        => 'required|string',
                 'role'         => 'nullable|string',
                 'organization' => 'nullable|string',

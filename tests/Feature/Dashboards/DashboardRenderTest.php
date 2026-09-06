@@ -18,18 +18,24 @@ use Tests\TestCase;
  * 1059112d343f7cf3029e5d13ca8db065f98cdfd0) receives HTTP 200 from all five
  * in-scope routes. The actor model is read directly from the merged
  * security remediation, not re-invented: Hot Leads/AI Analytics require an
- * authenticated customer holding `chat_box`; AI Brain requires an
- * authenticated admin holding `manage ai_settings`; user.home/admin.home
- * are unchanged by the remediation (§17 of that contract), reached by an
- * ordinary customer/admin respectively.
+ * authenticated customer holding `chat_box`; the platform AI settings
+ * surface requires an authenticated admin holding `manage ai_settings`
+ * (and `general settings`, since B3 folded it into the one Settings
+ * page); user.home/admin.home are unchanged by the remediation (§17 of
+ * that contract), reached by an ordinary customer/admin respectively.
+ *
+ * B3 Simplified Platform Settings (2026-09) retargeted the fifth route
+ * from the orphan `/admin/ai-brain` surface (deleted outright) to the
+ * canonical admin/settings AI section — see
+ * test_ai_settings_returns_200_for_authorized_admin() below.
  *
  * chat_boxes.ai_stage/called/website_sent_at/followup_sent/followup_at/
- * ai_replied and the ai_settings/ai_box_campaign_map tables have no
- * tracked migration (established by the merged security remediation's own
- * audit) and are absent from a freshly migrated ultimatesms_testing. This
- * file reproduces the same test-only, self-cleaning ephemeral-schema
- * fixture approach already merged in tests/Feature/Security/*SecurityTest
- * — created once per class via a separate `security_test_ddl` connection
+ * ai_replied and the ai_box_campaign_map table have no tracked migration
+ * (established by the merged security remediation's own audit) and are
+ * absent from a freshly migrated ultimatesms_testing. This file
+ * reproduces the same test-only, self-cleaning ephemeral-schema fixture
+ * approach already merged in tests/Feature/Security/*SecurityTest —
+ * created once per class via a separate `security_test_ddl` connection
  * so its DDL never touches the default connection's RefreshDatabase
  * transaction, and dropped once at true PHP process shutdown.
  */
@@ -40,7 +46,6 @@ class DashboardRenderTest extends TestCase
 
     private static array $addedChatBoxColumns = [];
     private static bool $createdAiBoxCampaignMapTable = false;
-    private static bool $createdAiSettingsTable = false;
     private static bool $ephemeralSchemaEnsured = false;
 
     protected function setUp(): void
@@ -120,13 +125,20 @@ class DashboardRenderTest extends TestCase
         $response->assertOk();
     }
 
-    public function test_ai_brain_returns_200_for_authorized_admin(): void
+    /**
+     * B3 Simplified Platform Settings (2026-09) retargeted this from the
+     * orphan `/admin/ai-brain` surface (deleted outright -- an
+     * ai_settings table with no migration anywhere in this repository,
+     * and a system_prompt field with zero production consumers) to the
+     * one canonical platform AI provider configuration surface, admin/
+     * settings' own AI section (config('services.openai.*')).
+     */
+    public function test_ai_settings_returns_200_for_authorized_admin(): void
     {
         $this->ensureRequiredAppConfigRowsExist();
-        $this->seedAiSettingsRow();
-        $this->actingAsAdmin(['access backend', 'manage ai_settings']);
+        $this->actingAsAdmin(['access backend', 'general settings', 'manage ai_settings']);
 
-        $response = $this->get('/admin/ai-brain');
+        $response = $this->get('/admin/settings');
 
         $response->assertOk();
     }
@@ -147,14 +159,6 @@ class DashboardRenderTest extends TestCase
         $this->actingAs($admin);
 
         return $admin;
-    }
-
-    private function seedAiSettingsRow(string $systemPrompt = 'Original prompt', string $model = 'gpt-3.5'): void
-    {
-        DB::table('ai_settings')->updateOrInsert(['id' => 1], [
-            'system_prompt' => $systemPrompt,
-            'model' => $model,
-        ]);
     }
 
     /**
@@ -213,22 +217,12 @@ class DashboardRenderTest extends TestCase
             self::$createdAiBoxCampaignMapTable = true;
         }
 
-        if (! $schema->hasTable('ai_settings')) {
-            $schema->create('ai_settings', function ($table) {
-                $table->id();
-                $table->text('system_prompt')->nullable();
-                $table->string('model')->nullable();
-            });
-            self::$createdAiSettingsTable = true;
-        }
-
-        if (self::$addedChatBoxColumns === [] && ! self::$createdAiBoxCampaignMapTable && ! self::$createdAiSettingsTable) {
+        if (self::$addedChatBoxColumns === [] && ! self::$createdAiBoxCampaignMapTable) {
             return;
         }
 
         $columnsToDrop = self::$addedChatBoxColumns;
         $dropCampaignMapTable = self::$createdAiBoxCampaignMapTable;
-        $dropAiSettingsTable = self::$createdAiSettingsTable;
         $dsn = 'mysql:host=' . config('database.connections.mysql.host')
             . ';port=' . config('database.connections.mysql.port')
             . ';dbname=' . config('database.connections.mysql.database')
@@ -236,7 +230,7 @@ class DashboardRenderTest extends TestCase
         $username = config('database.connections.mysql.username');
         $password = config('database.connections.mysql.password');
 
-        register_shutdown_function(function () use ($dsn, $username, $password, $columnsToDrop, $dropCampaignMapTable, $dropAiSettingsTable) {
+        register_shutdown_function(function () use ($dsn, $username, $password, $columnsToDrop, $dropCampaignMapTable) {
             try {
                 $pdo = new \PDO($dsn, $username, $password, [\PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION]);
 
@@ -252,10 +246,6 @@ class DashboardRenderTest extends TestCase
                 if ($dropCampaignMapTable) {
                     $pdo->exec('DROP TABLE IF EXISTS `ai_box_campaign_map`');
                 }
-
-                if ($dropAiSettingsTable) {
-                    $pdo->exec('DROP TABLE IF EXISTS `ai_settings`');
-                }
             } catch (\Throwable $e) {
                 // Best-effort cleanup at process shutdown; nothing further can be reported here.
             }
@@ -264,7 +254,13 @@ class DashboardRenderTest extends TestCase
 
     private function ensureRequiredAppConfigRowsExist(): void
     {
-        $existing = AppConfig::whereIn('setting', ['license', 'customer_permissions', 'custom_script'])
+        // B3 Simplified Platform Settings: test_ai_settings_returns_200_
+        // for_authorized_admin() now renders admin.settings.platform.
+        // index, which additionally reads the company_address/
+        // php_bin_path app_config rows -- seeded here the same way every
+        // other settings-adjacent test in this repository seeds exactly
+        // the rows its own render path touches.
+        $existing = AppConfig::whereIn('setting', ['license', 'customer_permissions', 'custom_script', 'company_address', 'php_bin_path'])
             ->pluck('setting')
             ->all();
 
@@ -281,6 +277,14 @@ class DashboardRenderTest extends TestCase
                 ->firstWhere('setting', 'customer_permissions');
 
             AppConfig::create($default);
+        }
+
+        if (! in_array('company_address', $existing, true)) {
+            AppConfig::create(['setting' => 'company_address', 'value' => 'Test Address']);
+        }
+
+        if (! in_array('php_bin_path', $existing, true)) {
+            AppConfig::create(['setting' => 'php_bin_path', 'value' => '/usr/bin/php']);
         }
     }
 }

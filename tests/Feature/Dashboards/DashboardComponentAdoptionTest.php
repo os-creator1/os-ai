@@ -44,7 +44,6 @@ class DashboardComponentAdoptionTest extends TestCase
 
     private static array $addedChatBoxColumns = [];
     private static bool $createdAiBoxCampaignMapTable = false;
-    private static bool $createdAiSettingsTable = false;
     private static bool $ephemeralSchemaEnsured = false;
 
     protected function setUp(): void
@@ -121,13 +120,20 @@ class DashboardComponentAdoptionTest extends TestCase
         $this->assertStringContainsString('<x-alert', $source);
     }
 
+    /**
+     * B3 Simplified Platform Settings (2026-09) retargeted this from the
+     * orphan `/admin/ai-brain` surface (deleted outright) to the one
+     * canonical platform AI provider configuration surface, admin/
+     * settings' own AI section. Assertions unchanged in substance: the
+     * AI section's model field is a real x-input (ds-field wrapper,
+     * id="model") and its save action is a real x-button (btn-primary).
+     */
     public function test_ai_settings_input_and_button_adoption_are_real(): void
     {
         $this->ensureRequiredAppConfigRowsExist();
-        $this->seedAiSettingsRow();
-        $this->actingAsAdmin(['access backend', 'manage ai_settings']);
+        $this->actingAsAdmin(['access backend', 'general settings', 'manage ai_settings']);
 
-        $response = $this->get('/admin/ai-brain');
+        $response = $this->get('/admin/settings');
 
         $response->assertOk();
         $response->assertSee('ds-field', false);
@@ -225,14 +231,6 @@ class DashboardComponentAdoptionTest extends TestCase
         ]);
     }
 
-    private function seedAiSettingsRow(string $systemPrompt = 'Original prompt', string $model = 'gpt-3.5'): void
-    {
-        DB::table('ai_settings')->updateOrInsert(['id' => 1], [
-            'system_prompt' => $systemPrompt,
-            'model' => $model,
-        ]);
-    }
-
     /**
      * §14.1-equivalent ephemeral schema fixture, reproduced per the merged
      * Slice-3 contract's own allowance (identical to the pattern already
@@ -282,22 +280,12 @@ class DashboardComponentAdoptionTest extends TestCase
             self::$createdAiBoxCampaignMapTable = true;
         }
 
-        if (! $schema->hasTable('ai_settings')) {
-            $schema->create('ai_settings', function ($table) {
-                $table->id();
-                $table->text('system_prompt')->nullable();
-                $table->string('model')->nullable();
-            });
-            self::$createdAiSettingsTable = true;
-        }
-
-        if (self::$addedChatBoxColumns === [] && ! self::$createdAiBoxCampaignMapTable && ! self::$createdAiSettingsTable) {
+        if (self::$addedChatBoxColumns === [] && ! self::$createdAiBoxCampaignMapTable) {
             return;
         }
 
         $columnsToDrop = self::$addedChatBoxColumns;
         $dropCampaignMapTable = self::$createdAiBoxCampaignMapTable;
-        $dropAiSettingsTable = self::$createdAiSettingsTable;
         $dsn = 'mysql:host=' . config('database.connections.mysql.host')
             . ';port=' . config('database.connections.mysql.port')
             . ';dbname=' . config('database.connections.mysql.database')
@@ -305,7 +293,7 @@ class DashboardComponentAdoptionTest extends TestCase
         $username = config('database.connections.mysql.username');
         $password = config('database.connections.mysql.password');
 
-        register_shutdown_function(function () use ($dsn, $username, $password, $columnsToDrop, $dropCampaignMapTable, $dropAiSettingsTable) {
+        register_shutdown_function(function () use ($dsn, $username, $password, $columnsToDrop, $dropCampaignMapTable) {
             try {
                 $pdo = new \PDO($dsn, $username, $password, [\PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION]);
 
@@ -321,10 +309,6 @@ class DashboardComponentAdoptionTest extends TestCase
                 if ($dropCampaignMapTable) {
                     $pdo->exec('DROP TABLE IF EXISTS `ai_box_campaign_map`');
                 }
-
-                if ($dropAiSettingsTable) {
-                    $pdo->exec('DROP TABLE IF EXISTS `ai_settings`');
-                }
             } catch (\Throwable $e) {
                 // Best-effort cleanup at process shutdown; nothing further can be reported here.
             }
@@ -333,7 +317,13 @@ class DashboardComponentAdoptionTest extends TestCase
 
     private function ensureRequiredAppConfigRowsExist(): void
     {
-        $existing = AppConfig::whereIn('setting', ['license', 'customer_permissions', 'custom_script'])
+        // B3 Simplified Platform Settings: test_ai_settings_input_and_
+        // button_adoption_are_real() now renders admin.settings.platform.
+        // index, which additionally reads the company_address/
+        // php_bin_path app_config rows -- seeded here the same way every
+        // other settings-adjacent test in this repository seeds exactly
+        // the rows its own render path touches.
+        $existing = AppConfig::whereIn('setting', ['license', 'customer_permissions', 'custom_script', 'company_address', 'php_bin_path'])
             ->pluck('setting')
             ->all();
 
@@ -350,6 +340,14 @@ class DashboardComponentAdoptionTest extends TestCase
                 ->firstWhere('setting', 'customer_permissions');
 
             AppConfig::create($default);
+        }
+
+        if (! in_array('company_address', $existing, true)) {
+            AppConfig::create(['setting' => 'company_address', 'value' => 'Test Address']);
+        }
+
+        if (! in_array('php_bin_path', $existing, true)) {
+            AppConfig::create(['setting' => 'php_bin_path', 'value' => '/usr/bin/php']);
         }
     }
 }

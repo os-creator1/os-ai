@@ -97,14 +97,7 @@
 
         // Set the value if overwrite is set to true or the key value is empty
         if ($overwrite || ! array_key_exists($key, $envs) || empty($envs[$key])) {
-            // Quote if there is at least one space or # or any suspected char!
-            if (preg_match('/[\s#!$]/', $value)) {
-                // Escape single quote
-                $value = addcslashes($value, '"');
-                $value = "\"$value\"";
-            }
-
-            $envs[$key] = $value;
+            $envs[$key] = format_dotenv_value($value);
         } else {
             return;
         }
@@ -118,6 +111,29 @@
 
         // Actually write to file .env
         file_put_contents(app()->environmentFilePath(), $out);
+    }
+
+    /**
+     * B3 Simplified Platform Settings hardening. Quote and escape a raw
+     * scalar value for safe storage as exactly one .env "KEY=value" line.
+     * Always quotes -- unlike write_env()'s previous behavior, which only
+     * quoted when the value happened to contain a space/#/!/$, and even
+     * then only escaped an embedded double quote, never an embedded
+     * backslash or a real newline. Because load_env_from_file()/write_env()
+     * key values by an exact, associative match (never a substring search),
+     * this closes the remaining gap: a value can no longer end its quoted
+     * string early (embedded ") or start what looks like a second physical
+     * line (an embedded real newline), regardless of which .env key it is
+     * written to.
+     */
+    function format_dotenv_value($value): string
+    {
+        $value = (string) $value;
+        $value = str_replace('\\', '\\\\', $value);
+        $value = str_replace('"', '\\"', $value);
+        $value = str_replace(["\r\n", "\n", "\r"], '\\n', $value);
+
+        return '"' . $value . '"';
     }
 
     function write_envs($params)
@@ -141,9 +157,30 @@
 // + Allow only a-zA-Z_ in key name
     function load_env_from_file($path)
     {
+        // B3 Simplified Platform Settings hardening -- this helper had
+        // zero live callers before B3 (confirmed by repo-wide search), so
+        // its two bugs were dormant: array_where() is not a Laravel
+        // helper (fatal "call to undefined function" on any real call),
+        // and file_get_contents() against a missing .env (this
+        // repository's own real test/CI gate runs with no .env file at
+        // all -- Laravel's own LoadEnvironmentVariables::safeLoad()
+        // already tolerates that at boot, config coming entirely from
+        // process-level environment variables) would warn and return
+        // false, which preg_split() cannot accept. A missing/unreadable
+        // file is now treated as an empty environment; write_env() then
+        // creates the file fresh on its first write.
+        if (! is_file($path)) {
+            return [];
+        }
+
         $content = file_get_contents($path);
-        $lines   = preg_split("/(\r\n|\n|\r)/", $content);
-        $lines   = array_where($lines, function ($value) {
+
+        if ($content === false) {
+            return [];
+        }
+
+        $lines = preg_split("/(\r\n|\n|\r)/", $content);
+        $lines = array_filter($lines, function ($value) {
             if (is_null($value)) {
                 return false;
             }
