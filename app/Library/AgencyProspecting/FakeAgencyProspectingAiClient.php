@@ -17,9 +17,24 @@ class FakeAgencyProspectingAiClient implements AgencyProspectingAiClient
     /** @var array<int, array<int, array{role: string, content: string}>> */
     public array $receivedMessages = [];
 
+    /**
+     * Correction 2 — an optional side effect invoked at the exact moment
+     * a real model call would occur, letting a test simulate state
+     * changing (e.g. another job advancing a member's stage) in the
+     * window between the AI call and the responder's later claim
+     * transaction, without any timing/sleep hack.
+     *
+     * @var (callable(): void)|null
+     */
+    public $beforeReturn = null;
+
     public function complete(array $messages): ?string
     {
         $this->receivedMessages[] = $messages;
+
+        if ($this->beforeReturn !== null) {
+            ($this->beforeReturn)();
+        }
 
         return $this->nextRawResponse;
     }

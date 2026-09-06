@@ -82,7 +82,7 @@ final class AgencyProspectAiDecision
             return null;
         }
 
-        $reply = trim(self::stripUrls(trim($reply)));
+        $reply = trim(AgencyProspectUrlPolicy::sanitizeAiText(trim($reply)));
 
         if ($reply === '') {
             return null;
@@ -120,18 +120,5 @@ final class AgencyProspectAiDecision
     public function isHardNegative(): bool
     {
         return $this->intent === 'hard_negative';
-    }
-
-    /**
-     * Removes every http(s) URL from AI-authored text. Deliberately
-     * simple/deterministic (no AI-controlled scheme/host is ever trusted)
-     * — the responder is the only party ever allowed to append a URL
-     * (the one server-configured booking_url, and only when authorized).
-     */
-    private static function stripUrls(string $text): string
-    {
-        $stripped = preg_replace('#https?://\S+#i', '', $text) ?? $text;
-
-        return trim(preg_replace('/\s{2,}/', ' ', $stripped) ?? $stripped);
     }
 }

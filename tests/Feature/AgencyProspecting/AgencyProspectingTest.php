@@ -638,18 +638,22 @@ class AgencyProspectingTest extends TestCase
      * Correction 1 (runtime pass) — the assertion this test actually
      * cares about is that stopProspect()/markProspectBooked()/
      * enrollProspect() never bypass the shared prospect-lock helper with
-     * an ad-hoc lock of their own, and that the helper itself issues
-     * exactly one lockForUpdate() call. A file-wide "lockForUpdate()
+     * an ad-hoc PROSPECT lock of their own, and that the helper itself
+     * issues exactly one lockForUpdate() call. A file-wide "lockForUpdate()
      * appears exactly once" count was a correct proxy for that ONLY
-     * because no other locking existed anywhere else in this file; the
-     * runtime pass legitimately added independent row-locking elsewhere
-     * (startCampaign()'s own campaign/prospect/conflict-check locks, for
-     * the unrelated Campaign-Start atomicity invariant) that a file-wide
-     * count can no longer distinguish from a real violation. Scoping the
-     * count to lockWorkspaceProspect()'s own body — plus asserting the
-     * three terminal actions never call lockForUpdate() directly — tests
-     * the same real invariant precisely, without depending on what does
-     * or does not exist elsewhere in the file.
+     * because no other locking existed anywhere else in this file.
+     *
+     * Correction 2 (Section 1) — enrollProspect() now legitimately also
+     * locks the CAMPAIGN row (AgencyProspectCampaign::...->lockForUpdate()),
+     * a wholly different invariant (membership frozen once Started) from
+     * the prospect-terminal-state locking the shared helper protects, so
+     * a blanket "no lockForUpdate() at all" ban on this method is no
+     * longer correct either. The precise, still-real invariant is: no
+     * method here ever queries the AgencyProspect model itself with its
+     * own lockForUpdate() chain — only lockWorkspaceProspect() may do
+     * that. A model-qualified regex (not a bare substring) is what makes
+     * this distinguish "AgencyProspect::...->lockForUpdate()" from
+     * "AgencyProspectCampaign::...->lockForUpdate()" cleanly.
      */
     public function test_all_three_terminal_actions_share_the_single_row_lock_helper(): void
     {
@@ -660,10 +664,12 @@ class AgencyProspectingTest extends TestCase
         $lockHelperSource = $this->extractMethodSource($source, 'lockWorkspaceProspect');
         $this->assertSame(1, substr_count($lockHelperSource, '->lockForUpdate()'), 'The shared prospect lock helper itself must issue exactly one lockForUpdate() call.');
 
+        $adHocProspectLock = '/\bAgencyProspect::[^;]*?->lockForUpdate\(\)/s';
+
         foreach (['stopProspect', 'markProspectBooked', 'enrollProspect'] as $method) {
             $methodSource = $this->extractMethodSource($source, $method);
             $this->assertStringContainsString('$this->lockWorkspaceProspect(', $methodSource, "{$method}() must acquire the shared prospect lock.");
-            $this->assertStringNotContainsString('->lockForUpdate()', $methodSource, "{$method}() must never issue its own lockForUpdate() outside the shared helper.");
+            $this->assertSame(0, preg_match($adHocProspectLock, $methodSource), "{$method}() must never issue its own AgencyProspect lockForUpdate() outside the shared helper.");
         }
     }
 

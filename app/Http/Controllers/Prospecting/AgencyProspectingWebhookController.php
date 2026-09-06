@@ -243,32 +243,51 @@ class AgencyProspectingWebhookController extends Controller
             AgencyProspectCampaignMember::where('id', $member->id)->update(['last_inbound_at' => now()]);
         });
 
-        // Deterministic opt-out/negative detection — always before AI,
-        // never dependent on one, and never blocked by a Paused campaign
-        // (unsubscribe must always be captured).
-        $stage = $member->stage->value;
-        $isHardStop = AgencyProspectStopDetector::isHardStop($body);
-        $isSoftNegative = ! $isHardStop && AgencyProspectStopDetector::isSoftNegative($body);
+        // Correction 2, Section 7 — the hard-stop/soft-negative decision,
+        // and any soft_negative_count mutation, happen inside ONE
+        // transaction against a freshly LOCKED member row. Two
+        // simultaneous early-stage soft negatives can no longer both read
+        // count=0, both decide "first", and both enqueue AI: the second
+        // request's lockForUpdate() blocks until the first commits, then
+        // observes the already-incremented count and correctly stops
+        // instead. Always before AI, never dependent on one, and never
+        // blocked by a Paused campaign (unsubscribe must always be
+        // captured).
+        $stopDecision = DB::transaction(function () use ($member, $body): bool {
+            $locked = AgencyProspectCampaignMember::where('id', $member->id)->lockForUpdate()->first();
 
-        if ($isHardStop || ($isSoftNegative && $stage >= 3)) {
+            if ($locked === null || $locked->isTerminal()) {
+                return false;
+            }
+
+            $stage = $locked->stage->value;
+            $isHardStop = AgencyProspectStopDetector::isHardStop($body);
+            $isSoftNegative = ! $isHardStop && AgencyProspectStopDetector::isSoftNegative($body);
+
+            if ($isHardStop || ($isSoftNegative && $stage >= 3)) {
+                return true;
+            }
+
+            if ($isSoftNegative) {
+                // Stage 1/2 — bounded repeated-soft-negative handling: the
+                // AI may respond at most once; a second soft negative at
+                // any later point stops the conversation before any
+                // further AI involvement. The count is never reset just
+                // because the AI replied.
+                if ($locked->soft_negative_count >= 1) {
+                    return true;
+                }
+
+                $locked->increment('soft_negative_count');
+            }
+
+            return false;
+        });
+
+        if ($stopDecision) {
             app(AgencyProspectStopAction::class)->apply($prospect);
 
             return response('', 200);
-        }
-
-        if ($isSoftNegative) {
-            // Stage 1/2 — bounded repeated-soft-negative handling: the AI
-            // may respond at most once; a second soft negative at any
-            // later point stops the conversation before any further AI
-            // involvement. The count is never reset just because the AI
-            // replied.
-            if ($member->soft_negative_count >= 1) {
-                app(AgencyProspectStopAction::class)->apply($prospect);
-
-                return response('', 200);
-            }
-
-            AgencyProspectCampaignMember::where('id', $member->id)->increment('soft_negative_count');
         }
 
         // A Paused campaign still records inbound and still honors STOP

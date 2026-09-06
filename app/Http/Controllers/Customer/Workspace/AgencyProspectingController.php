@@ -368,16 +368,20 @@ class AgencyProspectingController extends CustomerBaseController
      * already-open conversation may be mid-flight on the currently
      * configured channel/opener — a forged POST must never be able to
      * switch either out from under it.
+     *
+     * Correction 2 — that Draft check now happens against a freshly
+     * LOCKED campaign row inside the same transaction that performs the
+     * update, closing the race where a Config request reads Draft, a
+     * concurrent Start request locks + activates the campaign, and the
+     * Config request would otherwise continue mutating channel/opener
+     * against a stale model. Config and Start now serialize on the same
+     * campaign row: whichever request acquires the lock first determines
+     * the outcome for the other.
      */
     public function updateCampaignConfig(Request $request, string $workspaceUid, AgencyProspectCampaign $campaign): RedirectResponse
     {
         $workspace = $this->resolveEntitledWorkspace($workspaceUid);
         $this->resolveWorkspaceCampaign($workspace, $campaign);
-
-        if ($campaign->status !== AgencyProspectCampaignStatus::Draft) {
-            return redirect()->route('customer.workspaces.prospecting.campaigns.show', [$workspaceUid, $campaign->uid])
-                ->with('flash_error', 'Only a draft campaign\'s configuration can be changed.');
-        }
 
         $validated = $request->validate([
             'channel_uid' => ['nullable', 'string'],
@@ -398,10 +402,28 @@ class AgencyProspectingController extends CustomerBaseController
             $channelId = $channel->id;
         }
 
-        $campaign->update([
-            'channel_id' => $channelId,
-            'opening_message' => $validated['opening_message'] ?? null,
-        ]);
+        $error = DB::transaction(function () use ($workspace, $campaign, $channelId, $validated) {
+            $lockedCampaign = AgencyProspectCampaign::where('id', $campaign->id)
+                ->where('workspace_id', $workspace->id)
+                ->lockForUpdate()
+                ->first();
+
+            if ($lockedCampaign === null || $lockedCampaign->status !== AgencyProspectCampaignStatus::Draft) {
+                return 'Only a draft campaign\'s configuration can be changed.';
+            }
+
+            $lockedCampaign->update([
+                'channel_id' => $channelId,
+                'opening_message' => $validated['opening_message'] ?? null,
+            ]);
+
+            return null;
+        });
+
+        if ($error !== null) {
+            return redirect()->route('customer.workspaces.prospecting.campaigns.show', [$workspaceUid, $campaign->uid])
+                ->with('flash_error', $error);
+        }
 
         return redirect()
             ->route('customer.workspaces.prospecting.campaigns.show', [$workspaceUid, $campaign->uid])
@@ -569,6 +591,7 @@ class AgencyProspectingController extends CustomerBaseController
 
         if ($isResuming) {
             $this->resumePendingFollowUps($campaign);
+            $this->resumeUnclaimedInitialSends($campaign);
         }
 
         return redirect()
@@ -593,6 +616,31 @@ class AgencyProspectingController extends CustomerBaseController
     }
 
     /**
+     * Correction 2, Section 9 — a member whose InitialSendJob executed
+     * and correctly no-op'd while the campaign was Paused (before it ever
+     * claimed an "initial:{memberId}" operation) would otherwise never
+     * receive its opening SMS again: nothing re-dispatches it. Resuming
+     * must recover exactly that case — members with NO outbound
+     * operation row at all for "initial:{memberId}" — while never
+     * touching a member whose initial operation was already claimed in
+     * ANY status (pending/failed/sent): at-most-once operation semantics
+     * dominate, so an already-claimed initial send is never automatically
+     * retried here, only genuinely never-attempted ones are recovered.
+     */
+    private function resumeUnclaimedInitialSends(AgencyProspectCampaign $campaign): void
+    {
+        $eligible = $campaign->members()
+            ->whereNotIn('stage', [AgencyProspectStage::Booked->value, AgencyProspectStage::StoppedOptOut->value])
+            ->whereHas('prospect', fn ($query) => $query->where('status', AgencyProspectStatus::Active->value))
+            ->whereDoesntHave('messages', fn ($query) => $query->where('operation_key', 'like', 'initial:%'))
+            ->get();
+
+        foreach ($eligible as $member) {
+            \App\Jobs\AgencyProspectingInitialSendJob::dispatch($member->id);
+        }
+    }
+
+    /**
      * Explicit prospect enrollment — the ONLY path that associates a
      * prospect with a campaign. Both the campaign (route-bound) and the
      * submitted prospect uid are independently re-authorized against this
@@ -609,6 +657,16 @@ class AgencyProspectingController extends CustomerBaseController
      * into existence against a prospect that has just become non-Active:
      * whichever request locks the row first wins, and a losing enrollment
      * attempt sees the freshly-committed terminal status and refuses.
+     *
+     * Correction 2, Section 1 — campaign membership is now frozen once a
+     * campaign has Started: the CURRENT, freshly-locked campaign row must
+     * still be Draft, checked first and inside the same transaction as
+     * the prospect lock/membership creation (never the possibly-stale
+     * route-bound $campaign). This closes the gap where an already-
+     * Active/Paused campaign could otherwise gain a member that Start's
+     * own conflict check, and its one-time initial-send dispatch, never
+     * saw. Whichever request locks the campaign row first (a concurrent
+     * Start vs. this Enroll) determines the outcome for the other.
      */
     public function enrollProspect(Request $request, string $workspaceUid, AgencyProspectCampaign $campaign): RedirectResponse
     {
@@ -626,6 +684,17 @@ class AgencyProspectingController extends CustomerBaseController
         }
 
         return DB::transaction(function () use ($workspace, $workspaceUid, $campaign, $prospect) {
+            $lockedCampaign = AgencyProspectCampaign::where('id', $campaign->id)
+                ->where('workspace_id', $workspace->id)
+                ->lockForUpdate()
+                ->first();
+
+            if ($lockedCampaign === null || $lockedCampaign->status !== AgencyProspectCampaignStatus::Draft) {
+                return redirect()
+                    ->route('customer.workspaces.prospecting.campaigns.show', [$workspaceUid, $campaign->uid])
+                    ->with('flash_error', 'Prospects can only be enrolled while a campaign is still a draft.');
+            }
+
             $locked = $this->lockWorkspaceProspect($workspace, $prospect);
 
             if ($locked->status !== AgencyProspectStatus::Active) {
@@ -635,7 +704,7 @@ class AgencyProspectingController extends CustomerBaseController
             }
 
             AgencyProspectCampaignMember::firstOrCreate(
-                ['campaign_id' => $campaign->id, 'prospect_id' => $locked->id],
+                ['campaign_id' => $lockedCampaign->id, 'prospect_id' => $locked->id],
                 ['workspace_id' => $workspace->id, 'enrolled_at' => now()],
             );
 
@@ -673,7 +742,13 @@ class AgencyProspectingController extends CustomerBaseController
             'faqs_objections' => ['nullable', 'string', 'max:10000'],
             'booking_context' => ['nullable', 'string', 'max:10000'],
             'follow_up_policy' => ['nullable', 'string', 'max:10000'],
-            'booking_url' => ['nullable', 'string', 'max:2048', 'url'],
+            // Correction 2, Section 8 — the configured booking URL is the
+            // only URL the responder is ever allowed to send; restricting
+            // it to http/https here (never ftp/javascript/mailto/a custom
+            // scheme) at the source keeps AgencyProspectUrlPolicy::
+            // isValidHttpUrl()'s own send-time re-check a true defense in
+            // depth, not the only barrier.
+            'booking_url' => ['nullable', 'string', 'max:2048', 'url', 'regex:/^https?:\/\//i'],
             'follow_up_delay_hours' => ['nullable', 'integer', 'min:1', 'max:168'],
         ]);
 

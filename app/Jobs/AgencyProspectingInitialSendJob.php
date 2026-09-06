@@ -16,22 +16,24 @@ use Illuminate\Support\Facades\DB;
 
 /**
  * Runtime pass — the explicit-Start-only initial outbound send for one
- * campaign member. Re-checks every eligibility condition against
- * freshly-locked, current state (never trusts anything computed at
- * dispatch time) — Workspace active, entitled, campaign active, channel
- * active, underlying SendingServer active, prospect Active, member not
- * terminal — so a retry (or a member whose state changed between Start
- * and this job actually running) can never send twice or send when it
- * shouldn't.
+ * campaign member.
  *
- * Correction 1 — idempotency is a durable `operation_key`
- * ("initial:{campaignMemberId}") enforced by AgencyProspectMessage's own
- * unique DB constraint, the actual race-proof guarantee — not a
- * transaction-timing assumption. The provider network call happens
- * OUTSIDE any open DB transaction: a short transaction claims the
- * operation and records a pending row, the provider is called, then a
- * second short transaction records the result and mutates timestamps
- * only if the member is still current.
+ * Correction 2 — a conservative, true at-most-once automatic-delivery
+ * policy: once ANY AgencyProspectMessage row exists for this operation's
+ * durable key ("initial:{campaignMemberId}") — pending, failed, or sent —
+ * an automatic execution of this job NEVER calls the provider again. A
+ * crashed-mid-send or provider-failed attempt is never silently retried
+ * by this job; a missed message is preferred over a duplicated one. (A
+ * future explicit, human-initiated "retry failed send" action could use
+ * different, deliberate semantics — not implemented here.) The claim
+ * transaction immediately preceding the provider call re-fetches and
+ * re-checks EVERY authoritative eligibility condition against current
+ * state (never the earlier snapshot read, which exists only to build the
+ * outbound body) — Workspace active, entitled, campaign Active, channel
+ * active, SendingServer active, prospect Active, member non-terminal, and
+ * that no operation row has appeared in the meantime — immediately before
+ * atomically creating the operation row. The provider network call itself
+ * always happens strictly outside any open DB transaction.
  */
 class AgencyProspectingInitialSendJob extends Base
 {
@@ -43,56 +45,11 @@ class AgencyProspectingInitialSendJob extends Base
     {
         $operationKey = 'initial:' . $this->campaignMemberId;
 
-        if ($this->alreadySent($operationKey)) {
+        if ($this->operationClaimed($operationKey)) {
             return;
         }
 
-        $snapshot = DB::transaction(function () use ($entitlementManager) {
-            $member = AgencyProspectCampaignMember::where('id', $this->campaignMemberId)->lockForUpdate()->first();
-
-            if ($member === null || $member->isTerminal()) {
-                return null;
-            }
-
-            $workspace = $member->workspace;
-
-            if ($workspace === null || ! $workspace->is_active) {
-                return null;
-            }
-
-            if (! $entitlementManager->decideForWorkspace($workspace, PlatformFeature::ProspectOutreach->value)->allowed) {
-                return null;
-            }
-
-            $campaign = $member->campaign;
-
-            if ($campaign === null || $campaign->status !== AgencyProspectCampaignStatus::Active) {
-                return null;
-            }
-
-            $channel = $campaign->channel;
-
-            if ($channel === null || ! $channel->isActive() || $channel->sendingServer === null || ! $channel->sendingServer->status) {
-                return null;
-            }
-
-            $prospect = $member->prospect;
-
-            if ($prospect === null || $prospect->status !== AgencyProspectStatus::Active) {
-                return null;
-            }
-
-            if (empty($campaign->opening_message)) {
-                return null;
-            }
-
-            return [
-                'workspace_id' => $workspace->id,
-                'campaign' => $campaign,
-                'prospect' => $prospect,
-                'channel' => $channel,
-            ];
-        });
+        $snapshot = $this->readEligibleSnapshot($entitlementManager);
 
         if ($snapshot === null) {
             return;
@@ -101,39 +58,32 @@ class AgencyProspectingInitialSendJob extends Base
         $settings = AgencyProspectingSetting::where('workspace_id', $snapshot['workspace_id'])->first();
         $body = AgencyProspectMessageTemplate::render($snapshot['campaign']->opening_message, $snapshot['prospect'], $settings);
 
-        $claim = DB::transaction(function () use ($operationKey, $snapshot, $body) {
-            $member = AgencyProspectCampaignMember::where('id', $this->campaignMemberId)->lockForUpdate()->first();
-
-            if ($member === null || $member->isTerminal()) {
+        $claim = DB::transaction(function () use ($operationKey, $entitlementManager, $body) {
+            if ($this->operationClaimed($operationKey)) {
                 return null;
             }
 
-            if ($this->alreadySent($operationKey)) {
+            $eligible = $this->lockAndCheckEligibility($entitlementManager);
+
+            if ($eligible === null) {
                 return null;
-            }
-
-            $existing = AgencyProspectMessage::where('operation_key', $operationKey)->first();
-
-            if ($existing !== null) {
-                // A prior provider failure remains retryable — reuse the
-                // same durable operation row rather than claiming a
-                // second one.
-                $existing->update(['status' => AgencyProspectMessage::STATUS_PENDING, 'body' => $body]);
-
-                return $existing;
             }
 
             try {
-                return AgencyProspectMessage::create([
-                    'workspace_id' => $snapshot['workspace_id'],
-                    'campaign_member_id' => $this->campaignMemberId,
-                    'channel_id' => $snapshot['channel']->id,
-                    'direction' => AgencyProspectMessage::DIRECTION_OUTBOUND,
-                    'purpose' => AgencyProspectMessage::PURPOSE_INITIAL,
-                    'operation_key' => $operationKey,
-                    'body' => $body,
-                    'status' => AgencyProspectMessage::STATUS_PENDING,
-                ]);
+                return [
+                    'message' => AgencyProspectMessage::create([
+                        'workspace_id' => $eligible['workspace_id'],
+                        'campaign_member_id' => $this->campaignMemberId,
+                        'channel_id' => $eligible['channel']->id,
+                        'direction' => AgencyProspectMessage::DIRECTION_OUTBOUND,
+                        'purpose' => AgencyProspectMessage::PURPOSE_INITIAL,
+                        'operation_key' => $operationKey,
+                        'body' => $body,
+                        'status' => AgencyProspectMessage::STATUS_PENDING,
+                    ]),
+                    'channel' => $eligible['channel'],
+                    'prospect' => $eligible['prospect'],
+                ];
             } catch (UniqueConstraintViolationException) {
                 // Lost the claim race to a concurrent attempt for this
                 // exact member.
@@ -145,19 +95,20 @@ class AgencyProspectingInitialSendJob extends Base
             return;
         }
 
-        $result = $sender->send($snapshot['channel'], $snapshot['channel']->sender_number, $snapshot['prospect']->phone, $body);
+        $result = $sender->send($claim['channel'], $claim['channel']->sender_number, $claim['prospect']->phone, $body);
 
         if (! $result->success) {
-            // Provider failure — record it, never fake stage progression,
-            // never mark the prospect stopped. The member remains
-            // retryable via the same operation_key.
-            $claim->update(['status' => AgencyProspectMessage::STATUS_FAILED]);
+            // Provider failure — record it for visibility; the operation
+            // row's mere existence now permanently forecloses any further
+            // automatic attempt for this member (Correction 2's
+            // conservative at-most-once policy).
+            $claim['message']->update(['status' => AgencyProspectMessage::STATUS_FAILED]);
 
             return;
         }
 
         DB::transaction(function () use ($claim, $result): void {
-            $claim->update([
+            $claim['message']->update([
                 'status' => AgencyProspectMessage::STATUS_SENT,
                 'provider_message_id' => $result->providerMessageId,
                 'sent_at' => now(),
@@ -179,10 +130,119 @@ class AgencyProspectingInitialSendJob extends Base
         });
     }
 
-    private function alreadySent(string $operationKey): bool
+    /**
+     * A read-only pass used only to decide whether it is even worth
+     * building the outbound body, and to build it. Never the authority
+     * for whether the send may actually proceed — the claim transaction
+     * re-checks everything fresh immediately before claiming.
+     *
+     * @return array{workspace_id: int, campaign: \App\Models\AgencyProspectCampaign, prospect: \App\Models\AgencyProspect, channel: \App\Models\AgencyProspectingChannel}|null
+     */
+    private function readEligibleSnapshot(EntitlementManager $entitlementManager): ?array
     {
-        return AgencyProspectMessage::where('operation_key', $operationKey)
-            ->where('status', AgencyProspectMessage::STATUS_SENT)
-            ->exists();
+        $member = AgencyProspectCampaignMember::where('id', $this->campaignMemberId)->first();
+
+        if ($member === null || $member->isTerminal()) {
+            return null;
+        }
+
+        $workspace = $member->workspace;
+
+        if ($workspace === null || ! $workspace->is_active) {
+            return null;
+        }
+
+        if (! $entitlementManager->decideForWorkspace($workspace, PlatformFeature::ProspectOutreach->value)->allowed) {
+            return null;
+        }
+
+        $campaign = $member->campaign;
+
+        if ($campaign === null || $campaign->status !== AgencyProspectCampaignStatus::Active) {
+            return null;
+        }
+
+        $channel = $campaign->channel;
+
+        if ($channel === null || ! $channel->isActive() || $channel->sendingServer === null || ! $channel->sendingServer->status) {
+            return null;
+        }
+
+        $prospect = $member->prospect;
+
+        if ($prospect === null || $prospect->status !== AgencyProspectStatus::Active) {
+            return null;
+        }
+
+        if (empty($campaign->opening_message)) {
+            return null;
+        }
+
+        return [
+            'workspace_id' => $workspace->id,
+            'campaign' => $campaign,
+            'prospect' => $prospect,
+            'channel' => $channel,
+        ];
+    }
+
+    /**
+     * The authoritative eligibility re-check, performed only inside the
+     * claim transaction against a freshly locked member row. Identical
+     * conditions to readEligibleSnapshot() by design (Correction 2,
+     * Section 4) — this is the one that actually gates the provider call.
+     *
+     * @return array{workspace_id: int, channel: \App\Models\AgencyProspectingChannel, prospect: \App\Models\AgencyProspect}|null
+     */
+    private function lockAndCheckEligibility(EntitlementManager $entitlementManager): ?array
+    {
+        $member = AgencyProspectCampaignMember::where('id', $this->campaignMemberId)->lockForUpdate()->first();
+
+        if ($member === null || $member->isTerminal()) {
+            return null;
+        }
+
+        $workspace = $member->workspace;
+
+        if ($workspace === null || ! $workspace->is_active) {
+            return null;
+        }
+
+        if (! $entitlementManager->decideForWorkspace($workspace, PlatformFeature::ProspectOutreach->value)->allowed) {
+            return null;
+        }
+
+        $campaign = $member->campaign;
+
+        if ($campaign === null || $campaign->status !== AgencyProspectCampaignStatus::Active) {
+            return null;
+        }
+
+        $channel = $campaign->channel;
+
+        if ($channel === null || ! $channel->isActive() || $channel->sendingServer === null || ! $channel->sendingServer->status) {
+            return null;
+        }
+
+        $prospect = $member->prospect;
+
+        if ($prospect === null || $prospect->status !== AgencyProspectStatus::Active) {
+            return null;
+        }
+
+        if (empty($campaign->opening_message)) {
+            return null;
+        }
+
+        return [
+            'workspace_id' => $workspace->id,
+            'channel' => $channel,
+            'prospect' => $prospect,
+        ];
+    }
+
+    private function operationClaimed(string $operationKey): bool
+    {
+        return AgencyProspectMessage::where('operation_key', $operationKey)->exists();
     }
 }

@@ -50,8 +50,8 @@
                         </div>
                         <div class="mb-1">
                             <label class="form-label" for="opening_message">Opening message</label>
-                            <textarea id="opening_message" name="opening_message" class="form-control" rows="3" placeholder="Hi {{ '{{contact_name}}' }}, this is {{ '{{agency_name}}' }}...">{{ old('opening_message', $campaign->opening_message) }}</textarea>
-                            <p class="text-caption mb-0">Placeholders: {{ '{{company_name}}' }}, {{ '{{contact_name}}' }}, {{ '{{agency_name}}' }}</p>
+                            <textarea id="opening_message" name="opening_message" class="form-control" rows="3" placeholder="Hi @{{contact_name}}, this is @{{agency_name}}...">{{ old('opening_message', $campaign->opening_message) }}</textarea>
+                            <p class="text-caption mb-0">Placeholders: @{{company_name}}, @{{contact_name}}, @{{agency_name}}</p>
                         </div>
                         <x-button type="submit" variant="outline" size="sm">Save configuration</x-button>
                     </form>
@@ -63,21 +63,27 @@
                 </x-card>
             @endif
 
-            <x-card title="Enroll a prospect" :padded="true" class="mt-2">
-                @if($enrollableProspects->isEmpty())
-                    <p class="text-caption mb-0">No eligible prospects to enroll.</p>
-                @else
-                    <form method="post" action="{{ route('customer.workspaces.prospecting.campaigns.members.store', [$workspaceUid, $campaign->uid]) }}" class="d-flex gap-2">
-                        @csrf
-                        <select name="prospect_uid" class="form-select">
-                            @foreach($enrollableProspects as $prospect)
-                                <option value="{{ $prospect->uid }}">{{ $prospect->company_name }} ({{ $prospect->phone }})</option>
-                            @endforeach
-                        </select>
-                        <x-button type="submit" variant="primary" size="sm">Enroll</x-button>
-                    </form>
-                @endif
-            </x-card>
+            @if($campaign->status->value === 'draft')
+                <x-card title="Enroll a prospect" :padded="true" class="mt-2">
+                    @if($enrollableProspects->isEmpty())
+                        <p class="text-caption mb-0">No eligible prospects to enroll.</p>
+                    @else
+                        <form method="post" action="{{ route('customer.workspaces.prospecting.campaigns.members.store', [$workspaceUid, $campaign->uid]) }}" class="d-flex gap-2">
+                            @csrf
+                            <select name="prospect_uid" class="form-select">
+                                @foreach($enrollableProspects as $prospect)
+                                    <option value="{{ $prospect->uid }}">{{ $prospect->company_name }} ({{ $prospect->phone }})</option>
+                                @endforeach
+                            </select>
+                            <x-button type="submit" variant="primary" size="sm">Enroll</x-button>
+                        </form>
+                    @endif
+                </x-card>
+            @else
+                <x-card title="Enrolled prospects are frozen" :padded="true" class="mt-2">
+                    <p class="text-caption mb-0">This campaign has started — its enrolled prospect set can no longer be changed.</p>
+                </x-card>
+            @endif
         </div>
 
         <div class="col-md-6 mb-2">
