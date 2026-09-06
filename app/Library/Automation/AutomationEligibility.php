@@ -8,6 +8,7 @@ use App\Exceptions\Workspace\BusinessWorkspaceMismatchException;
 use App\Exceptions\Workspace\WorkspaceBusinessNotFoundException;
 use App\Library\Entitlement\EntitlementManager;
 use App\Models\Automation;
+use App\Models\AutomationExecution;
 use App\Models\Business;
 use App\Models\Contacts;
 use App\Models\Workspace;
@@ -81,12 +82,79 @@ class AutomationEligibility
     }
 
     /**
-     * The Contact must belong to the SAME Business as the automation, and
-     * (for a live conversation) still be subscribed.
+     * Contract §9 / Correction 2 — the FULL authoritative check for one
+     * already-claimed execution, read fresh from the database. Used as the
+     * final checkpoint AFTER the durable execution-start claim and
+     * immediately before the action, so the objects handed to the action
+     * are the ones verified here, never anything loaded earlier.
+     *
+     * Verifies, in order: automation exists / active / runnable, Business
+     * active, Workspace active, entitlement allowed (all via resolve()),
+     * then automation.business_id == execution.business_id,
+     * automation.trigger_type == execution.trigger_type, the Contact still
+     * exists and belongs to that Business, and — when the current trigger
+     * names an explicit audience group — the Contact is still in it.
+     *
+     * @return array{automation: Automation, business: Business, workspace: Workspace, contact: Contacts}|null
+     */
+    public function resolveForExecution(AutomationExecution $execution, ?string &$reason = null): ?array
+    {
+        $resolved = $this->resolve((int) $execution->automation_id, $reason);
+
+        if ($resolved === null) {
+            return null;
+        }
+
+        /** @var Automation $automation */
+        $automation = $resolved['automation'];
+
+        if ((int) $automation->business_id !== (int) $execution->business_id) {
+            $reason = 'business_mismatch';
+
+            return null;
+        }
+
+        if ($automation->trigger_type !== $execution->trigger_type) {
+            $reason = 'trigger_mismatch';
+
+            return null;
+        }
+
+        $contact = Contacts::query()->find($execution->contact_id);
+
+        if ($contact === null || ! $this->contactBelongsToBusiness($contact, $resolved['business'])) {
+            $reason = 'contact_not_in_business';
+
+            return null;
+        }
+
+        if (! $this->contactInAudience($automation, $contact)) {
+            $reason = 'contact_outside_audience';
+
+            return null;
+        }
+
+        return $resolved + ['contact' => $contact];
+    }
+
+    /**
+     * The Contact must belong to the SAME Business as the automation.
      */
     public function contactBelongsToBusiness(Contacts $contact, Business $business): bool
     {
         return $contact->business_id !== null && (int) $contact->business_id === (int) $business->id;
+    }
+
+    /**
+     * When the CURRENT trigger definition names an explicit audience group,
+     * the Contact must still be in it; an unrestricted audience matches any
+     * group of the Business.
+     */
+    public function contactInAudience(Automation $automation, Contacts $contact): bool
+    {
+        $groupId = $automation->trigger_config['contact_group_id'] ?? null;
+
+        return $groupId === null || (int) $groupId === (int) $contact->group_id;
     }
 
     /**

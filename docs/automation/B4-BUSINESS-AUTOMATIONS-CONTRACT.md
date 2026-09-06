@@ -9,6 +9,10 @@ merging main at `2425b9f1b4415a6b1dbeab99070191cc3d178b35`) — corrects
 `(business_id, created_at)` index coordination), §5.2 (stale-definition
 guard), §5.4 (execution-start claim), §6.B (bulk import evidence and
 policy), §7.B (definition-time group rule), §9, §18, §20.
+Revision: **Correction 2** (same branch, after merging main at
+`b2bedfc91848c90be2f1fc4e8e0ac440c6d4d892`, docs-only B5 contract) —
+§5.2 becomes an atomic locked claim checkpoint; new §5.5 post-start-claim
+final checkpoint; §9/§9.1 flow updated; §20 C7/C8 tests.
 
 Every claim in this contract is backed by a mechanical inspection of the
 tree at the base SHA. Where a decision was left open by the task, the
@@ -390,21 +394,38 @@ may additionally lock the automation row for state re-checks.
 A pre-check (`where('idempotency_key', $key)->exists()`) is permitted as a
 fast path but is **never** the guarantee.
 
-**Stale-definition guard (Correction 1).** A trigger evaluation can race an
-edit of the definition (evaluator observes `CONTACT_CREATED`; the
-definition is changed to `CONTACT_DATE_REACHED`; the stale evaluator then
-calls the claim with the old trigger identity while the current row is
-still "runnable"). Immediately before the `INSERT`, against the freshly
-re-read automation, the claim must therefore verify all of:
+**Stale-definition guard — atomic locked checkpoint (Correction 1,
+tightened in Correction 2).** A trigger evaluation can race an edit of the
+definition (evaluator observes `CONTACT_CREATED`; the definition is
+changed to `CONTACT_DATE_REACHED`; the stale evaluator then calls the claim
+with the old trigger identity while the current row is still "runnable").
+A plain re-read before the `INSERT` is itself a check-then-act window, so
+the claim is two-phased:
 
-- the current `trigger_type` **exactly equals** the trigger being claimed;
-- the current `business_id` still equals the Contact's Business (already
-  required);
-- if the current trigger carries an explicit `contact_group_id`, the
-  Contact still belongs to that group.
+1. **Lock-free phase** (may be slow): the automation is re-read and must be
+   active, Business-scoped and entitled (includes the
+   `EntitlementManager` call), and the Contact must belong to that
+   Business. No lock is held here.
+2. **Locked phase** — one short DB transaction, immediately before the
+   `INSERT`: re-read the Automation row with `lockForUpdate()`, re-read the
+   Contact row with `lockForUpdate()` (audience invariant), verify the
+   locked values, `INSERT` the unique-key execution row in the **same**
+   transaction, commit. Required, on the locked rows:
+   - Automation exists, `status = active`;
+   - `automation.business_id` equals the resolved Business;
+   - `automation.trigger_type` **exactly equals** the trigger being claimed;
+   - Contact exists and `contact.business_id` equals that Business;
+   - if the current `trigger_config.contact_group_id` is explicit,
+     `contact.group_id` equals it.
 
-Any mismatch returns without a row and without an action job. This is a
-narrow guard, not a workflow-versioning system, and it never retries.
+Any failed check returns null with no row. A duplicate loses on the UNIQUE
+constraint: `UniqueConstraintViolationException` is caught around the
+transaction/insert and nothing else is masked. A definition edit cannot
+commit through the row lock between verification and `INSERT`; the claim
+row therefore reflects the definition that was atomically verified. No
+entitlement or provider/network call happens inside the locked phase, no
+lock is held across such calls, and there is no versioning engine and no
+retry.
 
 ### 5.3 DB-only actions
 
@@ -440,6 +461,36 @@ before the action:
 
 The start claim lives in the same execution-claim service as §5.2, so there
 is exactly one place that may create or start an execution row.
+
+### 5.5 Post-start-claim FINAL checkpoint (Correction 2)
+
+The durable start claim (§5.4) must not be the last thing that happens
+before the action: a disable, an entitlement revocation, or a Business /
+Workspace / Contact change can land between an earlier eligibility check
+and the action. Therefore, **after** `claimStart()` succeeds and
+**immediately before** the action, the job performs ONE final fully
+authoritative re-read and re-check, and the action receives exactly the
+objects from that re-read — never anything loaded before the start claim.
+
+Required, all fresh from the database:
+
+- Automation still exists and is active;
+- `automation.business_id == execution.business_id`;
+- `automation.trigger_type == execution.trigger_type`;
+- Business still exists and is active;
+- Workspace still active;
+- Automations entitlement still allowed;
+- Contact still exists and still belongs to that Business;
+- if `trigger_config.contact_group_id` is explicit, the Contact still
+  belongs to that group.
+
+If any check fails: no dispatch; the already-started execution is finished
+as `skipped` with a safe bounded reason; it is never retried; `started_at`
+stays as claimed. If all pass, the bounded action handler then performs its
+own channel / SendingServer / sender / field checks. No provider/network
+call happens inside a DB transaction and no Automation/Business lock is
+held across the provider call: this is a checkpoint guarantee, not an
+attempt to make external revocation and provider I/O one atomic unit.
 
 ---
 
@@ -703,29 +754,36 @@ TRIGGER FIRES
  → verify Automations entitlement for (Workspace, Business)
  → verify the Contact belongs to the SAME Business
  → compute the deterministic idempotency key (§6)
- → verify the CURRENT definition still describes this trigger: same
-   trigger_type, same Business, Contact still in the audience group (§5.2)
- → CLAIM: atomically insert the execution row (unique key; catch duplicate)
+ → CLAIM, one short transaction (§5.2): lock the Automation (+ Contact) row,
+   verify the CURRENT definition still describes this trigger — active, same
+   Business, same trigger_type, Contact still in the audience group — and
+   insert the execution row (unique key; catch duplicate); commit
  → dispatch the action job
- → ACTION JOB: re-fetch ALL authoritative state from the database
- → re-verify: automation still active, Business/Workspace still active,
-   entitlement still allowed, Contact still in Business, channel + underlying
-   SendingServer still active, action config still valid
+ → ACTION JOB: row must be pending and unstarted
  → START CLAIM: set started_at exactly once under a row lock (§5.4);
    a worker that loses this claim stops and touches nothing
+ → FINAL CHECKPOINT (§5.5): re-fetch ALL authoritative state fresh —
+   automation exists/active, same Business and trigger as the execution,
+   Business/Workspace still active, entitlement still allowed, Contact still
+   in Business and in the audience group; any failure → skipped, no action
+ → bounded action handler re-checks channel + underlying SendingServer,
+   sender, field, with the fresh objects from the final checkpoint
  → external provider call, OUTSIDE any DB transaction (SEND_MESSAGE only)
  → short transaction: record status + safe summaries + completed_at
 ```
 
 ### 9.1 Where pause/disable is re-checked
 
-Three points, all required:
+Four points, all required:
 
 1. At trigger evaluation (the sweep/hook only considers `status = active`).
-2. **Immediately before the claim**, under a fresh read of the automation
-   row — disabling an automation before the claim **must** prevent the send.
-3. **Inside the action job**, before the provider call, against re-fetched
-   state.
+2. **Immediately before the claim**, under a locked fresh read of the
+   automation row (§5.2) — disabling an automation before the claim
+   **must** prevent the send.
+3. **Inside the action job, after the start claim and before the action**
+   (§5.5), against fully re-fetched state.
+4. **Inside the bounded action handler**, for the action-specific
+   resources (channel, SendingServer, sender, field).
 
 ### 9.2 No stale snapshot may authorize execution
 
@@ -1086,6 +1144,19 @@ Focused suite `tests/Feature/Automations/**`. Required coverage:
 - C6. Schema (§4.1): the composite index
   `automation_executions_business_id_created_at_index` exists on exactly
   `(business_id, created_at)`.
+- C7. Post-start-claim final checkpoint (§5.5, Correction 2): after the
+  execution row exists and the start claim is taken but before the action,
+  each of — automation disabled, entitlement denied, Business inactive,
+  Workspace inactive, Contact moved outside an explicit audience, trigger
+  type changed — yields `skipped` with zero provider calls; duplicate
+  processing of the same execution still performs exactly one side effect;
+  `started_at` is never cleared or rewritten.
+- C8. Atomic locked claim (§5.2, Correction 2), with deterministic row
+  locking and no sleeps: a concurrent definition edit from another
+  database session cannot commit through the row lock before the claim
+  decision, and the claim row reflects the atomically verified definition;
+  a definition edit committed before the lock is acquired makes the claim
+  return null with no row.
 
 **Regression (run, not re-authored)**
 24. B1 Outreach + B2 MessagingChannels.

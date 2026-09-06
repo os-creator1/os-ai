@@ -5,10 +5,9 @@ namespace Tests\Feature\Automations;
 use App\Jobs\AutomationJob;
 use App\Models\AutomationExecution;
 use App\Models\Contacts;
-use Illuminate\Contracts\Console\Kernel;
-use Illuminate\Foundation\Testing\RefreshDatabaseState;
 use Illuminate\Support\Facades\Queue;
 use Tests\Feature\Automations\Concerns\CreatesAutomationFixtures;
+use Tests\Feature\Automations\Concerns\UsesFreshSchema;
 use Tests\TestCase;
 
 /**
@@ -23,34 +22,20 @@ use Tests\TestCase;
  * CONTACT_CREATED automation and proves nothing is enqueued and nothing
  * executes.
  *
- * Isolation, deliberately neither RefreshDatabase nor DatabaseMigrations:
- * the import creates and drops a real `__tmp_subscribers` table, and MySQL
- * DDL implicitly commits, which would silently break a per-test
- * transaction wrapper; and this repository's migration `down()` chain is
- * not rollback-clean, so DatabaseMigrations' `migrate:rollback` fails.
- * Instead a fresh schema is migrated before the test and again after it,
- * and RefreshDatabase is told it may reuse that fresh schema.
+ * Isolation: the import creates and drops a real `__tmp_subscribers`
+ * table, and MySQL DDL implicitly commits, so this runs on a fresh schema
+ * (see UsesFreshSchema) rather than inside a per-test transaction.
  */
 class AutomationsImportPolicyTest extends TestCase
 {
     use CreatesAutomationFixtures;
+    use UsesFreshSchema;
 
     protected function setUp(): void
     {
         parent::setUp();
 
-        $this->freshSchema();
-
-        $this->beforeApplicationDestroyed(function (): void {
-            $this->freshSchema();
-            RefreshDatabaseState::$migrated = true;
-        });
-    }
-
-    private function freshSchema(): void
-    {
-        $this->artisan('migrate:fresh');
-        $this->app[Kernel::class]->setArtisan(null);
+        $this->setUpFreshSchema();
     }
 
     public function test_import_created_business_contacts_do_not_fire_contact_created(): void

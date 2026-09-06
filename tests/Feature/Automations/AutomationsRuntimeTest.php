@@ -6,9 +6,11 @@ use App\Enums\Automation\AutomationActionType;
 use App\Enums\Automation\AutomationExecutionStatus;
 use App\Enums\Automation\AutomationTriggerType;
 use App\Enums\Business\BusinessStatus;
+use App\Enums\Entitlement\PlatformFeature;
 use App\Jobs\AutomationJob;
 use App\Jobs\SendAutomationMessage;
 use App\Library\Automation\AutomationExecutionClaimService;
+use App\Library\Entitlement\EntitlementManager;
 use App\Models\Automation;
 use App\Models\AutomationExecution;
 use App\Models\ContactGroups;
@@ -44,6 +46,7 @@ class AutomationsRuntimeTest extends TestCase
     {
         Carbon::setTestNow();
         CarbonImmutable::setTestNow();
+        AutomationExecutionClaimService::resetTestSeams();
 
         parent::tearDown();
     }
@@ -643,8 +646,170 @@ class AutomationsRuntimeTest extends TestCase
     }
 
     // ---------------------------------------------------------------
+    // Post-start-claim FINAL checkpoint (§9, Correction 2): state that
+    // changes after the durable start claim and before the action is
+    // re-read fresh, and the started row finishes as skipped.
+    // ---------------------------------------------------------------
+
+    /**
+     * Runs the action job for a fresh pending execution while `$mutation`
+     * is applied deterministically AFTER claimStart() commits and BEFORE
+     * the final checkpoint. Returns the finished execution.
+     */
+    private function runActionWithMutationAfterStartClaim(Automation $automation, Contacts $contact, string $key, callable $mutation): AutomationExecution
+    {
+        $execution = $this->pendingExecution($automation, $contact, $key);
+        $startedAtSeen = null;
+
+        AutomationExecutionClaimService::$afterStartClaim = function (AutomationExecution $started) use ($mutation, &$startedAtSeen): void {
+            $startedAtSeen = $started->fresh()->started_at;
+            $mutation($started);
+        };
+
+        $this->runAction($execution);
+
+        $fresh = $execution->fresh();
+        $this->assertNotNull($startedAtSeen, 'The start claim must have been taken before the checkpoint.');
+        $this->assertTrue($startedAtSeen->equalTo($fresh->started_at), 'started_at is never cleared or rewritten (G).');
+
+        return $fresh;
+    }
+
+    private function assertSkippedAtFinalCheckpoint(AutomationExecution $fresh, string $reason): void
+    {
+        $this->assertSame(AutomationExecutionStatus::Skipped, $fresh->status);
+        $this->assertStringContainsString($reason, (string) $fresh->safe_error_summary);
+        $this->assertNotNull($fresh->started_at);
+        $this->assertNotNull($fresh->completed_at);
+    }
+
+    public function test_automation_disabled_after_start_claim_is_skipped_at_final_checkpoint(): void
+    {
+        [, $automation, $contact] = $this->dueBirthdayScenario();
+        $this->mockSendCore(0);
+
+        $fresh = $this->runActionWithMutationAfterStartClaim($automation, $contact, 'k:c2-disabled', function () use ($automation): void {
+            $automation->update(['status' => Automation::STATUS_INACTIVE]);
+        });
+
+        $this->assertSkippedAtFinalCheckpoint($fresh, 'automation_disabled');
+    }
+
+    public function test_entitlement_revoked_after_start_claim_is_skipped_at_final_checkpoint(): void
+    {
+        [$business, $automation, $contact] = $this->dueBirthdayScenario();
+        $this->mockSendCore(0);
+
+        $fresh = $this->runActionWithMutationAfterStartClaim($automation, $contact, 'k:c2-entitlement', function () use ($business): void {
+            // The Workspace owner (the Business's customer user) revokes the
+            // per-Business feature toggle while the execution is in flight.
+            app(EntitlementManager::class)->disableBusinessFeature($business->fresh(), PlatformFeature::Automations, (int) $business->customer_id, 'Revoked mid-flight.');
+        });
+
+        $this->assertSkippedAtFinalCheckpoint($fresh, 'not_entitled');
+    }
+
+    public function test_business_deactivated_after_start_claim_is_skipped_at_final_checkpoint(): void
+    {
+        [$business, $automation, $contact] = $this->dueBirthdayScenario();
+        $this->mockSendCore(0);
+
+        $fresh = $this->runActionWithMutationAfterStartClaim($automation, $contact, 'k:c2-business', function () use ($business): void {
+            DB::table('businesses')->where('id', $business->id)->update(['status' => BusinessStatus::Inactive->value]);
+        });
+
+        $this->assertSkippedAtFinalCheckpoint($fresh, 'business_inactive');
+    }
+
+    public function test_workspace_deactivated_after_start_claim_is_skipped_at_final_checkpoint(): void
+    {
+        [$business, $automation, $contact] = $this->dueBirthdayScenario();
+        $this->mockSendCore(0);
+
+        $fresh = $this->runActionWithMutationAfterStartClaim($automation, $contact, 'k:c2-workspace', function () use ($business): void {
+            DB::table('workspaces')->where('id', $business->workspace_id)->update(['is_active' => false]);
+        });
+
+        $this->assertSkippedAtFinalCheckpoint($fresh, 'workspace_inactive');
+    }
+
+    public function test_contact_moved_outside_explicit_audience_after_start_claim_is_skipped_at_final_checkpoint(): void
+    {
+        [$business, $automation, $contact] = $this->dueBirthdayScenario();
+        $otherGroup = $this->contactGroup($business, 'Elsewhere');
+        $this->mockSendCore(0);
+
+        $fresh = $this->runActionWithMutationAfterStartClaim($automation, $contact, 'k:c2-audience', function () use ($contact, $otherGroup): void {
+            DB::table('contacts')->where('id', $contact->id)->update(['group_id' => $otherGroup->id]);
+        });
+
+        $this->assertSkippedAtFinalCheckpoint($fresh, 'contact_outside_audience');
+    }
+
+    public function test_trigger_type_changed_after_start_claim_is_skipped_at_final_checkpoint(): void
+    {
+        [$business, $automation, $contact] = $this->dueBirthdayScenario();
+        $this->mockSendCore(0);
+
+        $fresh = $this->runActionWithMutationAfterStartClaim($automation, $contact, 'k:c2-trigger', function () use ($automation): void {
+            $automation->update(['trigger_type' => AutomationTriggerType::ContactCreated->value, 'trigger_config' => ['contact_group_id' => null]]);
+        });
+
+        $this->assertSkippedAtFinalCheckpoint($fresh, 'trigger_mismatch');
+    }
+
+    public function test_final_checkpoint_passes_with_fresh_objects_and_started_at_is_stable_after_success(): void
+    {
+        [, $automation, $contact] = $this->dueBirthdayScenario();
+        $this->mockSendCore(1);
+
+        $fresh = $this->runActionWithMutationAfterStartClaim($automation, $contact, 'k:c2-ok', function (): void {
+            // No state change: the checkpoint must pass and the action run once.
+        });
+
+        $this->assertSame(AutomationExecutionStatus::Succeeded, $fresh->status);
+        $startedAt = $fresh->started_at;
+
+        AutomationExecutionClaimService::resetTestSeams();
+        $this->runAction($fresh);
+
+        $this->assertTrue($startedAt->equalTo($fresh->fresh()->started_at));
+        $this->assertSame(AutomationExecutionStatus::Succeeded, $fresh->fresh()->status);
+    }
+
+    // ---------------------------------------------------------------
     // Stale-definition guard at claim time (§5.2)
     // ---------------------------------------------------------------
+
+    public function test_claim_refuses_a_definition_changed_between_eligibility_pass_and_locked_checkpoint(): void
+    {
+        [, $business] = $this->entitledTenant();
+        $channel = $this->sendableChannel($business);
+        $group = $this->contactGroup($business);
+        $field = $this->dateField($group);
+        $automation = $this->sendMessageAutomation($business, $channel['server'], $channel['sender']);
+        $contact = $this->contact($business, $group, '12025557003');
+        $this->mockSendCore(0);
+
+        // The edit lands after the lock-free eligibility pass observed
+        // CONTACT_CREATED and before the locked checkpoint re-reads the row.
+        AutomationExecutionClaimService::$beforeClaimTransaction = function () use ($automation, $group, $field): void {
+            $automation->update([
+                'trigger_type' => AutomationTriggerType::ContactDateReached->value,
+                'trigger_config' => ['contact_group_id' => $group->id, 'date_field_id' => $field->id, 'offset' => '0 day', 'send_at' => '09:00'],
+            ]);
+        };
+
+        $result = app(AutomationExecutionClaimService::class)->claim(
+            $automation->id,
+            $contact,
+            AutomationTriggerType::ContactCreated,
+            AutomationExecutionClaimService::contactCreatedKey($automation->id, $contact->id)
+        );
+
+        $this->assertNull($result);
+        $this->assertSame(0, AutomationExecution::count());
+    }
 
     public function test_claim_refuses_a_stale_trigger_type(): void
     {
