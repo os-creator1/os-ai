@@ -26,6 +26,16 @@
          * six new nullable branding fields added, footer_text replaced by
          * footer_company_name/footer_copyright_text.
          *
+         * B3 Simplified Platform Settings §10 — SettingsController::
+         * postGeneral() now reads exclusively from $request->validated()
+         * (closing the previous $request->except(...) exclusion-list
+         * defect that let any submitted key reach the write layer), so
+         * every field the Platform section actually saves must be
+         * declared here. app_keyword and time_format were previously read
+         * with plain $request->input() and so were validated by neither
+         * this class nor anything else -- declared here now with the same
+         * shape those raw reads already implied.
+         *
          * @return array
          */
         public function rules(): array
@@ -33,6 +43,7 @@
             return [
                 'app_name'                => 'required',
                 'app_title'               => 'required',
+                'app_keyword'             => 'nullable|string|max:255',
                 'company_address'         => 'required',
                 'footer_company_name'     => 'nullable|string|max:255',
                 'footer_copyright_text'   => 'nullable|string|max:255',
@@ -45,6 +56,7 @@
                 'country'                 => 'required',
                 'timezone'                => 'required|timezone',
                 'date_format'             => 'required',
+                'time_format'             => 'required|string',
                 'language'                => 'required',
                 'custom_script'           => 'nullable|string|max:5000',
             ];

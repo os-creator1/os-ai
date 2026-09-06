@@ -18,13 +18,22 @@ use Tests\TestCase;
  * presentation-only edits did not regress the legitimate, own-tenant
  * workflows on Slice 3's authorized post-remediation baseline (dashboard-
  * security remediation merge 1059112d343f7cf3029e5d13ca8db065f98cdfd0):
- * Hot Leads mark-called, AI Analytics mark-booked, AI Analytics owned-
- * campaign filtering, and AI Brain settings update. This test asserts
- * these data-mutation behaviors are unchanged by the restyle — it does
- * not assert anything about validation or authorization being absent or
- * present, since that is exclusively the security remediation's own,
- * already-covered concern (tests/Feature/Security/*SecurityTest, not
- * duplicated here).
+ * Hot Leads mark-called, AI Analytics mark-booked, and AI Analytics
+ * owned-campaign filtering. This test asserts these data-mutation
+ * behaviors are unchanged by the restyle — it does not assert anything
+ * about validation or authorization being absent or present, since that
+ * is exclusively the security remediation's own, already-covered concern
+ * (tests/Feature/Security/*SecurityTest, not duplicated here).
+ *
+ * B3 Simplified Platform Settings (2026-09) removed the fourth behavior
+ * this file originally locked down, "AI Brain settings update": the
+ * orphan `/admin/ai-brain` surface (AiSettingsController, an ai_settings
+ * table with no migration anywhere in this repository, and a
+ * system_prompt field with zero production consumers) was deleted
+ * outright, not restyled, so there is no equivalent canonical behavior
+ * to preserve here. tests/Feature/Security/AiSettingsSecurityTest.php,
+ * which covered only that same orphan surface, was deleted for the same
+ * reason.
  */
 class DashboardExistingBehaviorPreservedTest extends TestCase
 {
@@ -33,7 +42,6 @@ class DashboardExistingBehaviorPreservedTest extends TestCase
 
     private static array $addedChatBoxColumns = [];
     private static bool $createdAiBoxCampaignMapTable = false;
-    private static bool $createdAiSettingsTable = false;
     private static bool $ephemeralSchemaEnsured = false;
 
     protected function setUp(): void
@@ -93,23 +101,6 @@ class DashboardExistingBehaviorPreservedTest extends TestCase
 
         $response->assertOk();
         $response->assertSee((string) $matchingCampaign->id, false);
-    }
-
-    public function test_ai_brain_authorized_update_still_mutates_model_and_system_prompt(): void
-    {
-        $this->ensureRequiredAppConfigRowsExist();
-        $this->seedAiSettingsRow('Original prompt', 'gpt-3.5');
-        $this->actingAsAdmin(['access backend', 'manage ai_settings']);
-
-        $response = $this->post('/admin/ai-brain', [
-            'system_prompt' => 'Updated prompt via presentation-only restyle',
-            'model' => 'gpt-4o',
-        ]);
-
-        $response->assertRedirect();
-        $row = DB::table('ai_settings')->first();
-        $this->assertSame('Updated prompt via presentation-only restyle', $row->system_prompt);
-        $this->assertSame('gpt-4o', $row->model);
     }
 
     private function authenticatedCustomerWithChatBox(): Customer
@@ -179,14 +170,6 @@ class DashboardExistingBehaviorPreservedTest extends TestCase
         ]);
     }
 
-    private function seedAiSettingsRow(string $systemPrompt, string $model): void
-    {
-        DB::table('ai_settings')->updateOrInsert(['id' => 1], [
-            'system_prompt' => $systemPrompt,
-            'model' => $model,
-        ]);
-    }
-
     /**
      * §14.1-equivalent ephemeral schema fixture, reproduced per the merged
      * Slice-3 contract's own allowance (identical to the pattern already
@@ -236,22 +219,12 @@ class DashboardExistingBehaviorPreservedTest extends TestCase
             self::$createdAiBoxCampaignMapTable = true;
         }
 
-        if (! $schema->hasTable('ai_settings')) {
-            $schema->create('ai_settings', function ($table) {
-                $table->id();
-                $table->text('system_prompt')->nullable();
-                $table->string('model')->nullable();
-            });
-            self::$createdAiSettingsTable = true;
-        }
-
-        if (self::$addedChatBoxColumns === [] && ! self::$createdAiBoxCampaignMapTable && ! self::$createdAiSettingsTable) {
+        if (self::$addedChatBoxColumns === [] && ! self::$createdAiBoxCampaignMapTable) {
             return;
         }
 
         $columnsToDrop = self::$addedChatBoxColumns;
         $dropCampaignMapTable = self::$createdAiBoxCampaignMapTable;
-        $dropAiSettingsTable = self::$createdAiSettingsTable;
         $dsn = 'mysql:host=' . config('database.connections.mysql.host')
             . ';port=' . config('database.connections.mysql.port')
             . ';dbname=' . config('database.connections.mysql.database')
@@ -259,7 +232,7 @@ class DashboardExistingBehaviorPreservedTest extends TestCase
         $username = config('database.connections.mysql.username');
         $password = config('database.connections.mysql.password');
 
-        register_shutdown_function(function () use ($dsn, $username, $password, $columnsToDrop, $dropCampaignMapTable, $dropAiSettingsTable) {
+        register_shutdown_function(function () use ($dsn, $username, $password, $columnsToDrop, $dropCampaignMapTable) {
             try {
                 $pdo = new \PDO($dsn, $username, $password, [\PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION]);
 
@@ -274,10 +247,6 @@ class DashboardExistingBehaviorPreservedTest extends TestCase
 
                 if ($dropCampaignMapTable) {
                     $pdo->exec('DROP TABLE IF EXISTS `ai_box_campaign_map`');
-                }
-
-                if ($dropAiSettingsTable) {
-                    $pdo->exec('DROP TABLE IF EXISTS `ai_settings`');
                 }
             } catch (\Throwable $e) {
                 // Best-effort cleanup at process shutdown; nothing further can be reported here.

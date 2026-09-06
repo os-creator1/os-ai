@@ -27,24 +27,40 @@ class AuthenticationRequest extends FormRequest
                 'client_registration'            => 'required|numeric',
                 'registration_verification'      => 'required|numeric',
                 'client_can_delete_account'      => 'required|numeric',
+                // B3 Simplified Platform Settings §6: these two toggles are
+                // no longer first-class Sign-in & Security controls (the
+                // legacy Sub-Accounts surface they gate is a documented
+                // delete-later candidate), but the write path
+                // (EloquentSettingsRepository::authentication()) still
+                // reads and re-writes their env keys on every save, so the
+                // view always submits them as hidden fields carrying the
+                // current config value -- nullable/numeric here so that
+                // stays valid, never a first-class required control.
+                'client_can_create_subaccount'   => 'nullable|numeric',
+                'client_can_delete_subaccount'   => 'nullable|numeric',
                 'captcha_in_login'               => 'required|numeric',
                 'captcha_in_client_registration' => 'required|numeric',
                 'captcha_site_key'               => 'required_if:captcha_in_login,1|required_if:captcha_in_client_registration,1',
-                'captcha_secret_key'             => 'required_if:captcha_in_login,1|required_if:captcha_in_client_registration,1',
+                // B3: the stored captcha/social secrets are never rendered
+                // back into the form (type=password, always blank), so
+                // resubmitting one can never be required. Blank means
+                // "keep the existing secret" (repository write path), not
+                // "clear it" or "reject the save".
+                'captcha_secret_key'             => 'nullable|string',
                 'two_factor'                     => 'required|numeric',
                 'two_factor_send_by'             => 'required_if:two_factor,1',
                 'login_with_facebook'            => 'required|numeric',
                 'facebook_client_id'             => 'required_if:login_with_facebook,1',
-                'facebook_client_secret'         => 'required_if:login_with_facebook,1',
+                'facebook_client_secret'         => 'nullable|string',
                 'login_with_twitter'             => 'required|numeric',
                 'twitter_client_id'              => 'required_if:login_with_twitter,1',
-                'twitter_client_secret'          => 'required_if:login_with_twitter,1',
+                'twitter_client_secret'          => 'nullable|string',
                 'login_with_google'              => 'required|numeric',
                 'google_client_id'               => 'required_if:login_with_google,1',
-                'google_client_secret'           => 'required_if:login_with_google,1',
+                'google_client_secret'           => 'nullable|string',
                 'login_with_github'              => 'required|numeric',
                 'github_client_id'               => 'required_if:login_with_github,1',
-                'github_client_secret'           => 'required_if:login_with_github,1',
+                'github_client_secret'           => 'nullable|string',
         ];
     }
 

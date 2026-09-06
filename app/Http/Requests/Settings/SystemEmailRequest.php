@@ -31,7 +31,12 @@ class SystemEmailRequest extends FormRequest
                 'port'       => 'required_if:driver,smtp|nullable|numeric',
                 'encryption' => 'required_if:driver,smtp|nullable',
                 'username'   => 'required_if:driver,smtp|nullable',
-                'password'   => 'required_if:driver,smtp|nullable',
+                // B3 Simplified Platform Settings: the stored SMTP password is
+                // never rendered back into the form, so it can never be
+                // required to resubmit it. A blank submission means "keep the
+                // existing password" (EloquentSettingsRepository::systemEmail()),
+                // not "clear it".
+                'password'   => 'nullable|string',
         ];
     }
 }
