@@ -27,6 +27,7 @@
             'inbound/*',
             '/payment/*',
             'dlr/*',
+            'webhooks/prospecting/*',
             'maintenance/notify',
             'stripe/webhook/usage-billing',
         ];

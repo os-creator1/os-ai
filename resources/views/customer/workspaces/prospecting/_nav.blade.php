@@ -9,6 +9,8 @@
               :href="route('customer.workspaces.prospecting.prospects.index', $workspaceUid)">Prospects</x-button>
     <x-button :variant="$prospectingActive === 'campaigns' ? 'primary' : 'outline'" size="sm"
               :href="route('customer.workspaces.prospecting.campaigns.index', $workspaceUid)">Campaigns</x-button>
+    <x-button :variant="$prospectingActive === 'channels' ? 'primary' : 'outline'" size="sm"
+              :href="route('customer.workspaces.prospecting.channels.index', $workspaceUid)">Channels</x-button>
     <x-button :variant="$prospectingActive === 'settings' ? 'primary' : 'outline'" size="sm"
               :href="route('customer.workspaces.prospecting.settings.show', $workspaceUid)">Agent Setup</x-button>
 </div>

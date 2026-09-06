@@ -23,6 +23,8 @@ class AgencyProspectingSetting extends Model
         'faqs_objections',
         'booking_context',
         'follow_up_policy',
+        'booking_url',
+        'follow_up_delay_hours',
     ];
 
     public function workspace(): BelongsTo

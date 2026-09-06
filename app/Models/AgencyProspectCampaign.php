@@ -14,9 +14,11 @@ class AgencyProspectCampaign extends Model
 
     protected $fillable = [
         'workspace_id',
+        'channel_id',
         'name',
         'status',
         'context',
+        'opening_message',
     ];
 
     protected $casts = [
@@ -26,6 +28,11 @@ class AgencyProspectCampaign extends Model
     public function workspace(): BelongsTo
     {
         return $this->belongsTo(Workspace::class);
+    }
+
+    public function channel(): BelongsTo
+    {
+        return $this->belongsTo(AgencyProspectingChannel::class, 'channel_id');
     }
 
     public function members(): HasMany

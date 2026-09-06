@@ -396,32 +396,32 @@ class AgencyProspectingTest extends TestCase
     public function test_a_second_prospect_with_the_same_phone_in_the_same_workspace_is_rejected(): void
     {
         [$owner, $workspace] = $this->agencyWorkspace();
-        $this->createProspect($workspace, ['phone' => '15559998888']);
+        $this->createProspect($workspace, ['phone' => '12025551000']);
         $this->authenticateAsCustomer($owner);
 
         $this->post(route('customer.workspaces.prospecting.prospects.store', $workspace->uid), [
             'company_name' => 'Duplicate Co',
-            'phone' => '15559998888',
+            'phone' => '12025551000',
         ])->assertSessionHasErrors(['phone']);
 
-        $this->assertSame(1, AgencyProspect::where('workspace_id', $workspace->id)->where('phone', '15559998888')->count());
+        $this->assertSame(1, AgencyProspect::where('workspace_id', $workspace->id)->where('phone', '12025551000')->count());
     }
 
     public function test_the_same_phone_in_a_different_workspace_is_allowed(): void
     {
         [$ownerA, $workspaceA] = $this->agencyWorkspace();
         [, $workspaceB] = $this->agencyWorkspace();
-        $this->createProspect($workspaceB, ['phone' => '15557778888']);
+        $this->createProspect($workspaceB, ['phone' => '12025552000']);
 
         $this->authenticateAsCustomer($ownerA);
 
         $this->post(route('customer.workspaces.prospecting.prospects.store', $workspaceA->uid), [
             'company_name' => 'Workspace A Co',
-            'phone' => '15557778888',
+            'phone' => '12025552000',
         ])->assertSessionHas('flash_success');
 
-        $this->assertSame(1, AgencyProspect::where('workspace_id', $workspaceA->id)->where('phone', '15557778888')->count());
-        $this->assertSame(1, AgencyProspect::where('workspace_id', $workspaceB->id)->where('phone', '15557778888')->count());
+        $this->assertSame(1, AgencyProspect::where('workspace_id', $workspaceA->id)->where('phone', '12025552000')->count());
+        $this->assertSame(1, AgencyProspect::where('workspace_id', $workspaceB->id)->where('phone', '12025552000')->count());
     }
 
     // -----------------------------------------------------------------
@@ -634,16 +634,42 @@ class AgencyProspectingTest extends TestCase
      * bespoke concurrency harness this foundation-pass correction does
      * not warrant.
      */
+    /**
+     * Correction 1 (runtime pass) — the assertion this test actually
+     * cares about is that stopProspect()/markProspectBooked()/
+     * enrollProspect() never bypass the shared prospect-lock helper with
+     * an ad-hoc PROSPECT lock of their own, and that the helper itself
+     * issues exactly one lockForUpdate() call. A file-wide "lockForUpdate()
+     * appears exactly once" count was a correct proxy for that ONLY
+     * because no other locking existed anywhere else in this file.
+     *
+     * Correction 2 (Section 1) — enrollProspect() now legitimately also
+     * locks the CAMPAIGN row (AgencyProspectCampaign::...->lockForUpdate()),
+     * a wholly different invariant (membership frozen once Started) from
+     * the prospect-terminal-state locking the shared helper protects, so
+     * a blanket "no lockForUpdate() at all" ban on this method is no
+     * longer correct either. The precise, still-real invariant is: no
+     * method here ever queries the AgencyProspect model itself with its
+     * own lockForUpdate() chain — only lockWorkspaceProspect() may do
+     * that. A model-qualified regex (not a bare substring) is what makes
+     * this distinguish "AgencyProspect::...->lockForUpdate()" from
+     * "AgencyProspectCampaign::...->lockForUpdate()" cleanly.
+     */
     public function test_all_three_terminal_actions_share_the_single_row_lock_helper(): void
     {
         $source = file_get_contents(base_path('app/Http/Controllers/Customer/Workspace/AgencyProspectingController.php'));
 
         $this->assertSame(1, substr_count($source, 'function lockWorkspaceProspect('), 'Exactly one shared lock helper must exist.');
-        $this->assertSame(1, substr_count($source, '->lockForUpdate()'), 'lockForUpdate() must be issued from exactly one place.');
+
+        $lockHelperSource = $this->extractMethodSource($source, 'lockWorkspaceProspect');
+        $this->assertSame(1, substr_count($lockHelperSource, '->lockForUpdate()'), 'The shared prospect lock helper itself must issue exactly one lockForUpdate() call.');
+
+        $adHocProspectLock = '/\bAgencyProspect::[^;]*?->lockForUpdate\(\)/s';
 
         foreach (['stopProspect', 'markProspectBooked', 'enrollProspect'] as $method) {
             $methodSource = $this->extractMethodSource($source, $method);
             $this->assertStringContainsString('$this->lockWorkspaceProspect(', $methodSource, "{$method}() must acquire the shared prospect lock.");
+            $this->assertSame(0, preg_match($adHocProspectLock, $methodSource), "{$method}() must never issue its own AgencyProspect lockForUpdate() outside the shared helper.");
         }
     }
 

@@ -820,6 +820,26 @@
 
             Route::get('/settings', 'Workspace\AgencyProspectingController@settings')->name('settings.show');
             Route::post('/settings', 'Workspace\AgencyProspectingController@updateSettings')->name('settings.update');
+
+            Route::post('/campaigns/{campaign}/config', 'Workspace\AgencyProspectingController@updateCampaignConfig')->name('campaigns.config');
+            Route::post('/campaigns/{campaign}/start', 'Workspace\AgencyProspectingController@startCampaign')->name('campaigns.start');
+
+            /*
+            |----------------------------------------------------------------
+            | Runtime pass — Prospecting Channels (Workspace-owned Twilio/
+            | Telnyx sending identity). See
+            | Workspace\AgencyProspectingChannelController.
+            |----------------------------------------------------------------
+            */
+            Route::prefix('channels')->name('channels.')->group(function () {
+                Route::get('/', 'Workspace\AgencyProspectingChannelController@channels')->name('index');
+                Route::get('/connect/{provider}', 'Workspace\AgencyProspectingChannelController@connect')->name('connect');
+                Route::post('/connect/{provider}', 'Workspace\AgencyProspectingChannelController@storeConnect');
+                Route::get('/{channel}', 'Workspace\AgencyProspectingChannelController@show')->name('show');
+                Route::match(['put', 'patch'], '/{channel}', 'Workspace\AgencyProspectingChannelController@update')->name('update');
+                Route::post('/{channel}/enable', 'Workspace\AgencyProspectingChannelController@enable')->name('enable');
+                Route::post('/{channel}/disable', 'Workspace\AgencyProspectingChannelController@disable')->name('disable');
+            });
         });
     });
 

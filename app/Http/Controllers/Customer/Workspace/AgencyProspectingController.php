@@ -5,14 +5,15 @@ namespace App\Http\Controllers\Customer\Workspace;
 use App\Enums\AgencyProspecting\AgencyProspectCampaignStatus;
 use App\Enums\AgencyProspecting\AgencyProspectStage;
 use App\Enums\AgencyProspecting\AgencyProspectStatus;
-use App\Enums\Entitlement\PlatformFeature;
-use App\Enums\Workspace\WorkspaceMembershipRole;
 use App\Http\Controllers\Customer\CustomerBaseController;
+use App\Http\Controllers\Customer\Workspace\Concerns\ResolvesAgencyProspectingWorkspace;
+use App\Library\AgencyProspecting\AgencyProspectPhoneNormalizer;
 use App\Library\Entitlement\EntitlementManager;
 use App\Models\AgencyProspect;
 use App\Models\AgencyProspectCampaign;
 use App\Models\AgencyProspectCampaignMember;
 use App\Models\AgencyProspectingSetting;
+use App\Models\AgencyProspectMessage;
 use App\Models\Workspace;
 use App\Repositories\Contracts\WorkspaceMembershipRepository;
 use App\Repositories\Contracts\WorkspaceRepository;
@@ -21,9 +22,7 @@ use Illuminate\Contracts\View\Factory;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Validation\Rule;
 
 /**
  * Agency AI Prospecting foundation — a Workspace-level (never Business-
@@ -59,6 +58,8 @@ use Illuminate\Validation\Rule;
  */
 class AgencyProspectingController extends CustomerBaseController
 {
+    use ResolvesAgencyProspectingWorkspace;
+
     public function __construct(
         private readonly WorkspaceRepository $workspaceRepository,
         private readonly WorkspaceMembershipRepository $membershipRepository,
@@ -86,20 +87,61 @@ class AgencyProspectingController extends CustomerBaseController
         return view('customer.workspaces.prospecting.entry', ['accessible' => $accessible]);
     }
 
+    /**
+     * Runtime pass — real, prospecting-local operational metrics only
+     * (never B5 Analytics). Every count is a direct query over this
+     * Workspace's own rows; no fabricated/placeholder value is ever
+     * shown, and a rate is only computed when its denominator is
+     * positive (null otherwise, rendered as "—" by the view).
+     */
     public function overview(string $workspaceUid): View|Factory|Application
     {
         $workspace = $this->resolveEntitledWorkspace($workspaceUid);
 
         $prospects = AgencyProspect::where('workspace_id', $workspace->id);
+        $totalProspects = (clone $prospects)->count();
+        $stoppedProspects = (clone $prospects)->where('status', AgencyProspectStatus::Stopped->value)->count();
+        $bookedProspects = (clone $prospects)->where('status', AgencyProspectStatus::Booked->value)->count();
+
+        $memberIds = AgencyProspectCampaignMember::where('workspace_id', $workspace->id)->pluck('id');
+
+        // Correction 1 — "initial messages sent" must count only the true
+        // opening send per member (purpose=initial), never AI replies or
+        // follow-ups; otherwise this metric (and the reply-rate
+        // denominator derived from it) drifts upward as conversations run.
+        $initialMessagesSent = AgencyProspectMessage::whereIn('campaign_member_id', $memberIds)
+            ->where('direction', AgencyProspectMessage::DIRECTION_OUTBOUND)
+            ->where('purpose', AgencyProspectMessage::PURPOSE_INITIAL)
+            ->where('status', AgencyProspectMessage::STATUS_SENT)
+            ->count();
+
+        $inboundReplies = AgencyProspectMessage::whereIn('campaign_member_id', $memberIds)
+            ->where('direction', AgencyProspectMessage::DIRECTION_INBOUND)
+            ->count();
+
+        $engagedStageCount = AgencyProspectCampaignMember::where('workspace_id', $workspace->id)
+            ->whereIn('stage', [2, 3, 4, 5])
+            ->count();
+
+        $bookingLinksSent = AgencyProspectCampaignMember::where('workspace_id', $workspace->id)
+            ->whereNotNull('booking_link_sent_at')
+            ->count();
 
         return view('customer.workspaces.prospecting.overview', [
             'workspaceUid' => $workspaceUid,
-            'totalProspects' => (clone $prospects)->count(),
+            'totalProspects' => $totalProspects,
             'activeCampaigns' => AgencyProspectCampaign::where('workspace_id', $workspace->id)
                 ->where('status', AgencyProspectCampaignStatus::Active->value)
                 ->count(),
-            'stoppedProspects' => (clone $prospects)->where('status', AgencyProspectStatus::Stopped->value)->count(),
-            'bookedProspects' => (clone $prospects)->where('status', AgencyProspectStatus::Booked->value)->count(),
+            'stoppedProspects' => $stoppedProspects,
+            'bookedProspects' => $bookedProspects,
+            'initialMessagesSent' => $initialMessagesSent,
+            'inboundReplies' => $inboundReplies,
+            'engagedStageCount' => $engagedStageCount,
+            'bookingLinksSent' => $bookingLinksSent,
+            'replyRate' => $initialMessagesSent > 0 ? round($inboundReplies / $initialMessagesSent * 100, 1) : null,
+            'bookedRate' => $totalProspects > 0 ? round($bookedProspects / $totalProspects * 100, 1) : null,
+            'optOutRate' => $totalProspects > 0 ? round($stoppedProspects / $totalProspects * 100, 1) : null,
         ]);
     }
 
@@ -115,32 +157,44 @@ class AgencyProspectingController extends CustomerBaseController
         ]);
     }
 
+    /**
+     * Runtime pass — a phone number identifies at most one prospect inside
+     * one Workspace (agency_prospects.unique(workspace_id, phone)), now
+     * enforced against the canonical digits-only international form
+     * (AgencyProspectPhoneNormalizer), the same normalizer used for
+     * channel sender numbers and both providers' inbound From/To. An
+     * unparseable number (no explicit country code — never guessed) and a
+     * canonical duplicate both surface as ordinary validation errors, not
+     * a database integrity exception.
+     */
     public function storeProspect(Request $request, string $workspaceUid): RedirectResponse
     {
         $workspace = $this->resolveEntitledWorkspace($workspaceUid);
 
-        // Correction 1 — a phone number identifies at most one prospect
-        // inside one Workspace (agency_prospects.unique(workspace_id,
-        // phone)). Validating this here surfaces a normal validation
-        // error instead of an unhandled database integrity exception; the
-        // uniqueness check is exact-stored-value, matching the migration
-        // (see its own docblock for why no E.164 normalization is applied
-        // here — no canonical normalizer exists anywhere in this
-        // repository today).
         $validated = $request->validate([
             'company_name' => ['required', 'string', 'max:255'],
             'contact_name' => ['nullable', 'string', 'max:255'],
-            'phone' => [
-                'required', 'string', 'max:32',
-                Rule::unique('agency_prospects', 'phone')->where('workspace_id', $workspace->id),
-            ],
+            'phone' => ['required', 'string', 'max:64'],
             'email' => ['nullable', 'email', 'max:255'],
             'website' => ['nullable', 'string', 'max:2048'],
             'source' => ['nullable', 'string', 'max:255'],
             'location' => ['nullable', 'string', 'max:255'],
         ]);
 
+        $canonicalPhone = AgencyProspectPhoneNormalizer::normalize($validated['phone']);
+
+        if ($canonicalPhone === null) {
+            return redirect()->back()->withInput()
+                ->withErrors(['phone' => 'Enter a valid international phone number (include a country code).']);
+        }
+
+        if (AgencyProspect::where('workspace_id', $workspace->id)->where('phone', $canonicalPhone)->exists()) {
+            return redirect()->back()->withInput()
+                ->withErrors(['phone' => 'A prospect with this phone number already exists in this Workspace.']);
+        }
+
         AgencyProspect::create(array_merge($validated, [
+            'phone' => $canonicalPhone,
             'workspace_id' => $workspace->id,
             'status' => AgencyProspectStatus::Active->value,
         ]));
@@ -296,23 +350,294 @@ class AgencyProspectingController extends CustomerBaseController
                 ->whereNotIn('id', $campaign->members()->pluck('prospect_id'))
                 ->orderBy('company_name')
                 ->get(),
+            'availableChannels' => \App\Models\AgencyProspectingChannel::where('workspace_id', $workspace->id)
+                ->where('status', \App\Models\AgencyProspectingChannel::STATUS_ACTIVE)
+                ->get(),
         ]);
     }
 
+    /**
+     * Runtime pass — the minimum campaign runtime configuration: a
+     * same-Workspace, active channel and an explicit, user-authored
+     * opening message. Never AI-generated at send time (keeps campaign
+     * intent under user control and avoids one model request per initial
+     * outbound).
+     *
+     * Correction 1 — Draft-only, enforced server-side regardless of what
+     * the UI exposes: once a campaign has Started (Active or Paused), an
+     * already-open conversation may be mid-flight on the currently
+     * configured channel/opener — a forged POST must never be able to
+     * switch either out from under it.
+     *
+     * Correction 2 — that Draft check now happens against a freshly
+     * LOCKED campaign row inside the same transaction that performs the
+     * update, closing the race where a Config request reads Draft, a
+     * concurrent Start request locks + activates the campaign, and the
+     * Config request would otherwise continue mutating channel/opener
+     * against a stale model. Config and Start now serialize on the same
+     * campaign row: whichever request acquires the lock first determines
+     * the outcome for the other.
+     */
+    public function updateCampaignConfig(Request $request, string $workspaceUid, AgencyProspectCampaign $campaign): RedirectResponse
+    {
+        $workspace = $this->resolveEntitledWorkspace($workspaceUid);
+        $this->resolveWorkspaceCampaign($workspace, $campaign);
+
+        $validated = $request->validate([
+            'channel_uid' => ['nullable', 'string'],
+            'opening_message' => ['nullable', 'string', 'max:1600'],
+        ]);
+
+        $channelId = null;
+
+        if (! empty($validated['channel_uid'])) {
+            $channel = \App\Models\AgencyProspectingChannel::where('uid', $validated['channel_uid'])
+                ->where('workspace_id', $workspace->id)
+                ->first();
+
+            if ($channel === null) {
+                abort(404);
+            }
+
+            $channelId = $channel->id;
+        }
+
+        $error = DB::transaction(function () use ($workspace, $campaign, $channelId, $validated) {
+            $lockedCampaign = AgencyProspectCampaign::where('id', $campaign->id)
+                ->where('workspace_id', $workspace->id)
+                ->lockForUpdate()
+                ->first();
+
+            if ($lockedCampaign === null || $lockedCampaign->status !== AgencyProspectCampaignStatus::Draft) {
+                return 'Only a draft campaign\'s configuration can be changed.';
+            }
+
+            $lockedCampaign->update([
+                'channel_id' => $channelId,
+                'opening_message' => $validated['opening_message'] ?? null,
+            ]);
+
+            return null;
+        });
+
+        if ($error !== null) {
+            return redirect()->route('customer.workspaces.prospecting.campaigns.show', [$workspaceUid, $campaign->uid])
+                ->with('flash_error', $error);
+        }
+
+        return redirect()
+            ->route('customer.workspaces.prospecting.campaigns.show', [$workspaceUid, $campaign->uid])
+            ->with('flash_success', 'Campaign configuration updated.');
+    }
+
+    /**
+     * Runtime pass — the explicit human action that turns a draft campaign
+     * into a live one. Creating a campaign, enrolling a prospect, or
+     * connecting a channel must never, by themselves, cause a send —
+     * only this action does, and only after re-validating every readiness
+     * condition server-side. Dispatches one initial-send job per eligible
+     * member; the job itself re-checks everything again at execution time
+     * (never trusts this method's own read).
+     *
+     * Correction 1 — the read-check-write is now ATOMIC: the campaign row
+     * and every involved AgencyProspect row (locked in deterministic
+     * ascending-id order, to avoid a Start-vs-Start deadlock over shared
+     * prospects) are locked inside ONE transaction, and the conflict
+     * check itself is a locking read (`lockForUpdate()`), so it always
+     * observes the latest committed state of any competing campaign
+     * rather than a stale MVCC snapshot — two Drafts racing to Start over
+     * a shared prospect are genuinely serialized by the database, not by
+     * a pre-transaction read that both requests could pass. The open-
+     * conversation definition itself now also treats a PAUSED campaign as
+     * reserving its prospects, matching the corrected one-open-
+     * conversation invariant. The provider network call (the initial
+     * send) happens strictly AFTER this transaction commits.
+     */
+    public function startCampaign(string $workspaceUid, AgencyProspectCampaign $campaign): RedirectResponse
+    {
+        $workspace = $this->resolveEntitledWorkspace($workspaceUid);
+        $this->resolveWorkspaceCampaign($workspace, $campaign);
+
+        $outcome = DB::transaction(function () use ($workspace, $campaign) {
+            $lockedCampaign = AgencyProspectCampaign::where('id', $campaign->id)
+                ->where('workspace_id', $workspace->id)
+                ->lockForUpdate()
+                ->first();
+
+            if ($lockedCampaign === null || $lockedCampaign->status !== AgencyProspectCampaignStatus::Draft) {
+                return ['error' => 'Only a draft campaign can be started.'];
+            }
+
+            if (empty($lockedCampaign->opening_message)) {
+                return ['error' => 'Set an opening message before starting this campaign.'];
+            }
+
+            $channel = $lockedCampaign->channel;
+
+            if ($channel === null || (int) $channel->workspace_id !== (int) $workspace->id) {
+                return ['error' => 'Select a channel before starting this campaign.'];
+            }
+
+            if (! $channel->isActive() || $channel->sendingServer === null || ! $channel->sendingServer->status) {
+                return ['error' => 'The selected channel is not currently active.'];
+            }
+
+            $memberRows = $lockedCampaign->members()
+                ->whereNotIn('stage', [AgencyProspectStage::Booked->value, AgencyProspectStage::StoppedOptOut->value])
+                ->get();
+
+            if ($memberRows->isEmpty()) {
+                return ['error' => 'Enroll at least one active prospect before starting this campaign.'];
+            }
+
+            $prospectIds = $memberRows->pluck('prospect_id')->unique()->sort()->values()->all();
+
+            // Deterministic ascending-id lock order — two campaigns
+            // sharing overlapping prospects can never deadlock each other
+            // regardless of which member list was built first.
+            $lockedProspects = AgencyProspect::whereIn('id', $prospectIds)
+                ->where('workspace_id', $workspace->id)
+                ->orderBy('id')
+                ->lockForUpdate()
+                ->get()
+                ->keyBy('id');
+
+            $eligibleMembers = $memberRows->filter(function ($member) use ($lockedProspects) {
+                $prospect = $lockedProspects->get($member->prospect_id);
+
+                return $prospect !== null && $prospect->status === AgencyProspectStatus::Active;
+            })->values();
+
+            if ($eligibleMembers->isEmpty()) {
+                return ['error' => 'Enroll at least one active prospect before starting this campaign.'];
+            }
+
+            $eligibleProspectIds = $eligibleMembers->pluck('prospect_id')->all();
+
+            // One-open-conversation invariant: none of this campaign's own
+            // eligible prospects may already have a non-terminal
+            // membership in a DIFFERENT campaign that is Active OR
+            // Paused (a paused conversation still reserves the prospect).
+            // A locking read here (not a plain snapshot read) is what
+            // makes the whole Start-vs-Start race genuinely serialized.
+            $conflict = AgencyProspectCampaignMember::where('workspace_id', $workspace->id)
+                ->whereIn('prospect_id', $eligibleProspectIds)
+                ->where('campaign_id', '!=', $lockedCampaign->id)
+                ->whereNotIn('stage', [AgencyProspectStage::Booked->value, AgencyProspectStage::StoppedOptOut->value])
+                ->whereHas('campaign', fn ($query) => $query->whereIn('status', [
+                    AgencyProspectCampaignStatus::Active->value,
+                    AgencyProspectCampaignStatus::Paused->value,
+                ]))
+                ->lockForUpdate()
+                ->exists();
+
+            if ($conflict) {
+                return ['error' => 'One or more enrolled prospects already have an open conversation in another active campaign.'];
+            }
+
+            $lockedCampaign->update(['status' => AgencyProspectCampaignStatus::Active->value]);
+
+            return ['memberIds' => $eligibleMembers->pluck('id')->all()];
+        });
+
+        if (isset($outcome['error'])) {
+            return redirect()->route('customer.workspaces.prospecting.campaigns.show', [$workspaceUid, $campaign->uid])
+                ->with('flash_error', $outcome['error']);
+        }
+
+        foreach ($outcome['memberIds'] as $memberId) {
+            \App\Jobs\AgencyProspectingInitialSendJob::dispatch($memberId);
+        }
+
+        return redirect()
+            ->route('customer.workspaces.prospecting.campaigns.show', [$workspaceUid, $campaign->uid])
+            ->with('flash_success', 'Campaign started.');
+    }
+
+    /**
+     * Runtime pass — pause/resume ONLY. This route can never set Draft,
+     * and can never activate a Draft campaign: a DRAFT campaign may only
+     * ever reach "active" through startCampaign()'s own readiness
+     * validation + initial-send dispatch. Correction 1 — the accepted
+     * `status` values themselves are now restricted to active/paused
+     * (Draft was previously accepted by validation and merely blocked by
+     * one conditional, which forged requests could still use to move
+     * Active/Paused back to Draft — a real lifecycle violation). Every
+     * transition where the campaign is not currently Draft is therefore
+     * a plain Active<->Paused toggle. Correction 13 — resuming from
+     * Paused back to Active re-dispatches any still-pending, not-yet-sent,
+     * not-cancelled follow-up exactly once (the job's own durable
+     * operation_key prevents a duplicate send even if resume is called
+     * more than once).
+     */
     public function updateCampaignStatus(Request $request, string $workspaceUid, AgencyProspectCampaign $campaign): RedirectResponse
     {
         $workspace = $this->resolveEntitledWorkspace($workspaceUid);
         $this->resolveWorkspaceCampaign($workspace, $campaign);
 
         $validated = $request->validate([
-            'status' => ['required', 'in:draft,active,paused'],
+            'status' => ['required', 'in:active,paused'],
         ]);
 
-        $campaign->update(['status' => $validated['status']]);
+        if ($campaign->status === AgencyProspectCampaignStatus::Draft) {
+            return redirect()->route('customer.workspaces.prospecting.campaigns.show', [$workspaceUid, $campaign->uid])
+                ->with('flash_error', 'Use Start Campaign to activate a draft campaign.');
+        }
+
+        $newStatus = AgencyProspectCampaignStatus::from($validated['status']);
+        $isResuming = $campaign->status === AgencyProspectCampaignStatus::Paused && $newStatus === AgencyProspectCampaignStatus::Active;
+
+        $campaign->update(['status' => $newStatus->value]);
+
+        if ($isResuming) {
+            $this->resumePendingFollowUps($campaign);
+            $this->resumeUnclaimedInitialSends($campaign);
+        }
 
         return redirect()
             ->route('customer.workspaces.prospecting.campaigns.show', [$workspaceUid, $campaign->uid])
             ->with('flash_success', 'Campaign status updated.');
+    }
+
+    private function resumePendingFollowUps(AgencyProspectCampaign $campaign): void
+    {
+        $eligible = $campaign->members()
+            ->whereNotNull('followup_at')
+            ->whereNull('followup_sent_at')
+            ->whereNull('followup_cancelled_at')
+            ->whereNotIn('stage', [AgencyProspectStage::Booked->value, AgencyProspectStage::StoppedOptOut->value])
+            ->whereHas('prospect', fn ($query) => $query->where('status', AgencyProspectStatus::Active->value))
+            ->get();
+
+        foreach ($eligible as $member) {
+            $delay = $member->followup_at->isFuture() ? $member->followup_at : now();
+            \App\Jobs\AgencyProspectingFollowUpJob::dispatch($member->id)->delay($delay);
+        }
+    }
+
+    /**
+     * Correction 2, Section 9 — a member whose InitialSendJob executed
+     * and correctly no-op'd while the campaign was Paused (before it ever
+     * claimed an "initial:{memberId}" operation) would otherwise never
+     * receive its opening SMS again: nothing re-dispatches it. Resuming
+     * must recover exactly that case — members with NO outbound
+     * operation row at all for "initial:{memberId}" — while never
+     * touching a member whose initial operation was already claimed in
+     * ANY status (pending/failed/sent): at-most-once operation semantics
+     * dominate, so an already-claimed initial send is never automatically
+     * retried here, only genuinely never-attempted ones are recovered.
+     */
+    private function resumeUnclaimedInitialSends(AgencyProspectCampaign $campaign): void
+    {
+        $eligible = $campaign->members()
+            ->whereNotIn('stage', [AgencyProspectStage::Booked->value, AgencyProspectStage::StoppedOptOut->value])
+            ->whereHas('prospect', fn ($query) => $query->where('status', AgencyProspectStatus::Active->value))
+            ->whereDoesntHave('messages', fn ($query) => $query->where('operation_key', 'like', 'initial:%'))
+            ->get();
+
+        foreach ($eligible as $member) {
+            \App\Jobs\AgencyProspectingInitialSendJob::dispatch($member->id);
+        }
     }
 
     /**
@@ -332,6 +657,16 @@ class AgencyProspectingController extends CustomerBaseController
      * into existence against a prospect that has just become non-Active:
      * whichever request locks the row first wins, and a losing enrollment
      * attempt sees the freshly-committed terminal status and refuses.
+     *
+     * Correction 2, Section 1 — campaign membership is now frozen once a
+     * campaign has Started: the CURRENT, freshly-locked campaign row must
+     * still be Draft, checked first and inside the same transaction as
+     * the prospect lock/membership creation (never the possibly-stale
+     * route-bound $campaign). This closes the gap where an already-
+     * Active/Paused campaign could otherwise gain a member that Start's
+     * own conflict check, and its one-time initial-send dispatch, never
+     * saw. Whichever request locks the campaign row first (a concurrent
+     * Start vs. this Enroll) determines the outcome for the other.
      */
     public function enrollProspect(Request $request, string $workspaceUid, AgencyProspectCampaign $campaign): RedirectResponse
     {
@@ -349,6 +684,17 @@ class AgencyProspectingController extends CustomerBaseController
         }
 
         return DB::transaction(function () use ($workspace, $workspaceUid, $campaign, $prospect) {
+            $lockedCampaign = AgencyProspectCampaign::where('id', $campaign->id)
+                ->where('workspace_id', $workspace->id)
+                ->lockForUpdate()
+                ->first();
+
+            if ($lockedCampaign === null || $lockedCampaign->status !== AgencyProspectCampaignStatus::Draft) {
+                return redirect()
+                    ->route('customer.workspaces.prospecting.campaigns.show', [$workspaceUid, $campaign->uid])
+                    ->with('flash_error', 'Prospects can only be enrolled while a campaign is still a draft.');
+            }
+
             $locked = $this->lockWorkspaceProspect($workspace, $prospect);
 
             if ($locked->status !== AgencyProspectStatus::Active) {
@@ -358,7 +704,7 @@ class AgencyProspectingController extends CustomerBaseController
             }
 
             AgencyProspectCampaignMember::firstOrCreate(
-                ['campaign_id' => $campaign->id, 'prospect_id' => $locked->id],
+                ['campaign_id' => $lockedCampaign->id, 'prospect_id' => $locked->id],
                 ['workspace_id' => $workspace->id, 'enrolled_at' => now()],
             );
 
@@ -396,7 +742,22 @@ class AgencyProspectingController extends CustomerBaseController
             'faqs_objections' => ['nullable', 'string', 'max:10000'],
             'booking_context' => ['nullable', 'string', 'max:10000'],
             'follow_up_policy' => ['nullable', 'string', 'max:10000'],
+            // Correction 2, Section 8 — the configured booking URL is the
+            // only URL the responder is ever allowed to send; restricting
+            // it to http/https here (never ftp/javascript/mailto/a custom
+            // scheme) at the source keeps AgencyProspectUrlPolicy::
+            // isValidHttpUrl()'s own send-time re-check a true defense in
+            // depth, not the only barrier.
+            'booking_url' => ['nullable', 'string', 'max:2048', 'url', 'regex:/^https?:\/\//i'],
+            'follow_up_delay_hours' => ['nullable', 'integer', 'min:1', 'max:168'],
         ]);
+
+        // follow_up_delay_hours has a NOT NULL default (24) at the schema
+        // level; unlike the free-text context fields, a request that
+        // simply omits it must never null out an already-configured value.
+        $validated['follow_up_delay_hours'] = $validated['follow_up_delay_hours']
+            ?? AgencyProspectingSetting::where('workspace_id', $workspace->id)->value('follow_up_delay_hours')
+            ?? 24;
 
         AgencyProspectingSetting::updateOrCreate(
             ['workspace_id' => $workspace->id],
@@ -411,59 +772,11 @@ class AgencyProspectingController extends CustomerBaseController
     // -----------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------
-
-    /**
-     * The sole resolver for every action: the Workspace must exist and be
-     * active (Workspace.is_active is independent of, and never inferred
-     * from, WorkspacePlanAssignment.status — WorkspaceRepository::
-     * allForUser() deliberately returns a Workspace regardless of its own
-     * active state, so this boundary enforces is_active itself rather
-     * than relying on that repository), the actor must hold the
-     * Workspace-role invariant (owner or active Admin; Staff denied by
-     * default), AND the independent RFC-004 entitlement decision must
-     * pass. Centralizing all three checks here means the invariant cannot
-     * drift between actions — the same discipline B2's
-     * resolveOwnedConnection() correction established for its own
-     * connection-specific actions.
-     */
-    private function resolveEntitledWorkspace(string $workspaceUid): Workspace
-    {
-        $workspace = $this->workspaceRepository->findByUid($workspaceUid);
-
-        if ($workspace === null || ! $workspace->is_active || ! $this->hasProspectingRole($workspace, (int) Auth::id())) {
-            abort(404);
-        }
-
-        $decision = $this->entitlementManager->decideForWorkspace($workspace, PlatformFeature::ProspectOutreach->value);
-
-        if (! $decision->allowed) {
-            abort(404);
-        }
-
-        return $workspace;
-    }
-
-    /**
-     * Owner or active Workspace Admin only — ordinary Staff denied by
-     * default, per the foundation task's own instruction: no existing
-     * Workspace-role mechanic establishes a narrower, appropriate Staff
-     * grant for a product this sensitive (external outbound messaging on
-     * the Agency's own behalf), so this defaults closed rather than
-     * reusing Business-access-scope staff grants, which govern access to
-     * client Businesses, not the Agency's own acquisition system.
-     */
-    private function hasProspectingRole(Workspace $workspace, int $userId): bool
-    {
-        if ((int) $workspace->owner_user_id === $userId) {
-            return true;
-        }
-
-        $membership = $this->membershipRepository->findByWorkspaceAndUser($workspace, $userId);
-
-        return $membership !== null
-            && $membership->is_active
-            && $membership->role === WorkspaceMembershipRole::Admin;
-    }
+    //
+    // resolveEntitledWorkspace()/hasProspectingRole()/accessibleWorkspaces()
+    // now live in ResolvesAgencyProspectingWorkspace (used above), shared
+    // verbatim with AgencyProspectingChannelController so the invariant
+    // cannot drift between Prospecting's own sub-pages.
 
     private function resolveWorkspaceProspect(Workspace $workspace, AgencyProspect $prospect): AgencyProspect
     {
@@ -504,21 +817,5 @@ class AgencyProspectingController extends CustomerBaseController
         abort_unless((int) $campaign->workspace_id === (int) $workspace->id, 404);
 
         return $campaign;
-    }
-
-    /**
-     * @return array<int, Workspace>
-     */
-    private function accessibleWorkspaces(): array
-    {
-        $userId = (int) Auth::id();
-
-        return $this->workspaceRepository->allForUser($userId)
-            ->filter(fn (Workspace $workspace) => $workspace->is_active)
-            ->filter(fn (Workspace $workspace) => $this->hasProspectingRole($workspace, $userId))
-            ->filter(fn (Workspace $workspace) => $this->entitlementManager
-                ->decideForWorkspace($workspace, PlatformFeature::ProspectOutreach->value)->allowed)
-            ->values()
-            ->all();
     }
 }

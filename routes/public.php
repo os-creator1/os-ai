@@ -172,3 +172,16 @@
      * match whatever font the active preset actually references.
      */
     Route::get('theme-font/{safeId}', 'Admin\PlatformThemeFontController@serveActive')->name('theme-font.active');
+
+    /*
+     * Agency AI Prospecting runtime pass — dedicated inbound webhook path,
+     * entirely separate from the legacy inbound/* -> DLRController
+     * pipeline above (never touches Contacts/ChatBox/Reports/
+     * LegacyBusinessResolver). The URL identifies an exact
+     * AgencyProspectingChannel by opaque uid plus an unguessable
+     * application-key-backed HMAC token (AgencyProspectingWebhookToken) —
+     * never a bare sequential database ID. See
+     * Prospecting\AgencyProspectingWebhookController.
+     */
+    Route::post('webhooks/prospecting/{channelUid}/{token}/twilio', 'Prospecting\AgencyProspectingWebhookController@twilio')->name('prospecting.webhooks.twilio');
+    Route::post('webhooks/prospecting/{channelUid}/{token}/telnyx', 'Prospecting\AgencyProspectingWebhookController@telnyx')->name('prospecting.webhooks.telnyx');
