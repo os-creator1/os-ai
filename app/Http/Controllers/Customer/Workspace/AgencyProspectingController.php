@@ -174,20 +174,28 @@ class AgencyProspectingController extends CustomerBaseController
      * so no membership is ever left contradicting its own prospect's
      * terminal state before the responder engine exists to reconcile it.
      * Memberships are updated, never deleted — attribution/history is
-     * preserved.
+     * preserved. Correction 3 — the prospect row is locked
+     * (lockWorkspaceProspect()) for the duration of this transaction, so
+     * this can never interleave with a concurrent markProspectBooked()/
+     * enrollProspect() call on the same row: STOP always wins regardless
+     * of which request reaches the lock first (see markProspectBooked()'s
+     * own Stopped check, evaluated only after it acquires this same
+     * lock).
      */
     public function stopProspect(string $workspaceUid, AgencyProspect $prospect): RedirectResponse
     {
         $workspace = $this->resolveEntitledWorkspace($workspaceUid);
         $this->resolveWorkspaceProspect($workspace, $prospect);
 
-        DB::transaction(function () use ($prospect): void {
-            $prospect->update([
+        DB::transaction(function () use ($workspace, $prospect): void {
+            $locked = $this->lockWorkspaceProspect($workspace, $prospect);
+
+            $locked->update([
                 'status' => AgencyProspectStatus::Stopped->value,
                 'stopped_at' => now(),
             ]);
 
-            $prospect->campaignMemberships()->update(['stage' => AgencyProspectStage::StoppedOptOut->value]);
+            $locked->campaignMemberships()->update(['stage' => AgencyProspectStage::StoppedOptOut->value]);
         });
 
         return redirect()
@@ -206,33 +214,41 @@ class AgencyProspectingController extends CustomerBaseController
      * Correction 2 — STOP/opt-out dominates: once a prospect is Stopped,
      * this action must refuse rather than reactivate it — a forged direct
      * POST must never be able to reverse an opt-out into a Booked state.
-     * This is a hard safety invariant, not a UI convenience, so it is
-     * enforced here server-side regardless of what the (already hidden,
-     * per the view) "Mark booked" control would normally submit.
+     * Correction 3 — that Stopped check is no longer made from the
+     * route-bound (possibly stale) model: lockWorkspaceProspect() re-reads
+     * the row under SELECT ... FOR UPDATE first, and the decision is made
+     * from that freshly-locked row, so a concurrent stopProspect() call
+     * can never race past this check — whichever request acquires the
+     * lock first determines the outcome, and STOP always wins either way
+     * (if mark-booked commits first, a subsequent STOP still overwrites
+     * it to Stopped/99; if STOP commits first, mark-booked's own locked
+     * read sees Stopped and refuses).
      */
     public function markProspectBooked(string $workspaceUid, AgencyProspect $prospect): RedirectResponse
     {
         $workspace = $this->resolveEntitledWorkspace($workspaceUid);
         $this->resolveWorkspaceProspect($workspace, $prospect);
 
-        if ($prospect->status === AgencyProspectStatus::Stopped) {
-            return redirect()
-                ->route('customer.workspaces.prospecting.prospects.show', [$workspaceUid, $prospect->uid])
-                ->with('flash_error', 'A stopped prospect cannot be marked as booked.');
-        }
+        return DB::transaction(function () use ($workspace, $workspaceUid, $prospect) {
+            $locked = $this->lockWorkspaceProspect($workspace, $prospect);
 
-        DB::transaction(function () use ($prospect): void {
-            $prospect->update([
+            if ($locked->status === AgencyProspectStatus::Stopped) {
+                return redirect()
+                    ->route('customer.workspaces.prospecting.prospects.show', [$workspaceUid, $locked->uid])
+                    ->with('flash_error', 'A stopped prospect cannot be marked as booked.');
+            }
+
+            $locked->update([
                 'status' => AgencyProspectStatus::Booked->value,
                 'booked_at' => now(),
             ]);
 
-            $prospect->campaignMemberships()->update(['stage' => AgencyProspectStage::Booked->value]);
-        });
+            $locked->campaignMemberships()->update(['stage' => AgencyProspectStage::Booked->value]);
 
-        return redirect()
-            ->route('customer.workspaces.prospecting.prospects.show', [$workspaceUid, $prospect->uid])
-            ->with('flash_success', 'Prospect marked as booked.');
+            return redirect()
+                ->route('customer.workspaces.prospecting.prospects.show', [$workspaceUid, $locked->uid])
+                ->with('flash_success', 'Prospect marked as booked.');
+        });
     }
 
     public function campaigns(string $workspaceUid): View|Factory|Application
@@ -308,7 +324,14 @@ class AgencyProspectingController extends CustomerBaseController
      * or Booked) must never be newly enrolled: the UI's own enrollable-
      * prospect chooser already filters to Active only, but that is
      * display convenience, not enforcement, so this is checked here
-     * server-side regardless of what was submitted.
+     * server-side regardless of what was submitted. Correction 3 — the
+     * Active-status check and the membership creation now both happen
+     * after lockWorkspaceProspect() acquires the same row lock
+     * stopProspect()/markProspectBooked() use, inside one transaction, so
+     * a concurrent STOP (or mark-booked) can never race a new membership
+     * into existence against a prospect that has just become non-Active:
+     * whichever request locks the row first wins, and a losing enrollment
+     * attempt sees the freshly-committed terminal status and refuses.
      */
     public function enrollProspect(Request $request, string $workspaceUid, AgencyProspectCampaign $campaign): RedirectResponse
     {
@@ -325,20 +348,24 @@ class AgencyProspectingController extends CustomerBaseController
             abort(404);
         }
 
-        if ($prospect->status !== AgencyProspectStatus::Active) {
+        return DB::transaction(function () use ($workspace, $workspaceUid, $campaign, $prospect) {
+            $locked = $this->lockWorkspaceProspect($workspace, $prospect);
+
+            if ($locked->status !== AgencyProspectStatus::Active) {
+                return redirect()
+                    ->route('customer.workspaces.prospecting.campaigns.show', [$workspaceUid, $campaign->uid])
+                    ->with('flash_error', 'Only active prospects can be enrolled.');
+            }
+
+            AgencyProspectCampaignMember::firstOrCreate(
+                ['campaign_id' => $campaign->id, 'prospect_id' => $locked->id],
+                ['workspace_id' => $workspace->id, 'enrolled_at' => now()],
+            );
+
             return redirect()
                 ->route('customer.workspaces.prospecting.campaigns.show', [$workspaceUid, $campaign->uid])
-                ->with('flash_error', 'Only active prospects can be enrolled.');
-        }
-
-        AgencyProspectCampaignMember::firstOrCreate(
-            ['campaign_id' => $campaign->id, 'prospect_id' => $prospect->id],
-            ['workspace_id' => $workspace->id, 'enrolled_at' => now()],
-        );
-
-        return redirect()
-            ->route('customer.workspaces.prospecting.campaigns.show', [$workspaceUid, $campaign->uid])
-            ->with('flash_success', 'Prospect enrolled.');
+                ->with('flash_success', 'Prospect enrolled.');
+        });
     }
 
     public function settings(string $workspaceUid): View|Factory|Application
@@ -443,6 +470,33 @@ class AgencyProspectingController extends CustomerBaseController
         abort_unless((int) $prospect->workspace_id === (int) $workspace->id, 404);
 
         return $prospect;
+    }
+
+    /**
+     * Correction 3 — the single row-locking seam for every action that
+     * determines or changes a prospect's terminal/enrollment state
+     * (stopProspect(), markProspectBooked(), enrollProspect()). Must
+     * always be called from inside an open DB::transaction() — a
+     * lockForUpdate() issued outside one releases its lock the instant
+     * the SELECT completes (MySQL autocommit), which would provide no
+     * serialization at all. Re-fetches by persistent identity, scoped to
+     * the already-resolved explicit Workspace (never Auth::id(), a
+     * Business, or any legacy resolver) — never trusts the possibly-stale
+     * $prospect model resolved before the transaction opened. A prospect
+     * that no longer exists, or no longer belongs to this Workspace, by
+     * the time the lock is acquired fails closed identically to an
+     * unknown one.
+     */
+    private function lockWorkspaceProspect(Workspace $workspace, AgencyProspect $prospect): AgencyProspect
+    {
+        $locked = AgencyProspect::where('id', $prospect->id)
+            ->where('workspace_id', $workspace->id)
+            ->lockForUpdate()
+            ->first();
+
+        abort_unless($locked !== null, 404);
+
+        return $locked;
     }
 
     private function resolveWorkspaceCampaign(Workspace $workspace, AgencyProspectCampaign $campaign): AgencyProspectCampaign

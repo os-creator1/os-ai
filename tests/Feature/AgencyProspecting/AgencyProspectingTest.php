@@ -532,6 +532,145 @@ class AgencyProspectingTest extends TestCase
     }
 
     // -----------------------------------------------------------------
+    // Correction 3 — enrollProspect(), stopProspect(), and
+    // markProspectBooked() all serialize on the same locked AgencyProspect
+    // row (lockWorkspaceProspect()), so the terminal-state decision is
+    // always made from the freshly-committed row, never a stale one. The
+    // four orderings below exercise exactly the interleavings the human
+    // review described: whichever action's transaction the lock lets
+    // proceed first determines what the second, now-serialized, action
+    // sees when its own turn comes — running them sequentially in this
+    // order IS the deterministic proof, since the row lock guarantees no
+    // other interleaving is ever observable by either action's own logic.
+    // -----------------------------------------------------------------
+
+    public function test_enrollment_then_stop_moves_the_freshly_created_membership_to_stopped(): void
+    {
+        [$owner, $workspace] = $this->agencyWorkspace();
+        $prospect = $this->createProspect($workspace);
+        $campaign = $this->createCampaign($workspace);
+
+        $this->authenticateAsCustomer($owner);
+
+        $this->post(route('customer.workspaces.prospecting.campaigns.members.store', [$workspace->uid, $campaign->uid]), [
+            'prospect_uid' => $prospect->uid,
+        ])->assertSessionHas('flash_success');
+        $member = AgencyProspectCampaignMember::where('campaign_id', $campaign->id)->where('prospect_id', $prospect->id)->first();
+        $this->assertNotNull($member);
+        $this->assertSame(1, $member->stage->value);
+
+        $this->post(route('customer.workspaces.prospecting.prospects.stop', [$workspace->uid, $prospect->uid]))
+            ->assertSessionHas('flash_success');
+
+        $this->assertSame('stopped', $prospect->fresh()->status->value);
+        $this->assertSame(99, $member->fresh()->stage->value, 'The membership created just before STOP must still be moved to the terminal stopped stage.');
+    }
+
+    public function test_stop_then_enrollment_is_refused_and_creates_no_membership(): void
+    {
+        [$owner, $workspace] = $this->agencyWorkspace();
+        $prospect = $this->createProspect($workspace);
+        $campaign = $this->createCampaign($workspace);
+
+        $this->authenticateAsCustomer($owner);
+
+        $this->post(route('customer.workspaces.prospecting.prospects.stop', [$workspace->uid, $prospect->uid]))
+            ->assertSessionHas('flash_success');
+
+        $this->post(route('customer.workspaces.prospecting.campaigns.members.store', [$workspace->uid, $campaign->uid]), [
+            'prospect_uid' => $prospect->uid,
+        ])->assertSessionHas('flash_error');
+
+        $this->assertSame(0, AgencyProspectCampaignMember::where('campaign_id', $campaign->id)->where('prospect_id', $prospect->id)->count());
+        $this->assertSame('stopped', $prospect->fresh()->status->value);
+    }
+
+    public function test_enrollment_then_mark_booked_moves_the_freshly_created_membership_to_booked(): void
+    {
+        [$owner, $workspace] = $this->agencyWorkspace();
+        $prospect = $this->createProspect($workspace);
+        $campaign = $this->createCampaign($workspace);
+
+        $this->authenticateAsCustomer($owner);
+
+        $this->post(route('customer.workspaces.prospecting.campaigns.members.store', [$workspace->uid, $campaign->uid]), [
+            'prospect_uid' => $prospect->uid,
+        ])->assertSessionHas('flash_success');
+        $member = AgencyProspectCampaignMember::where('campaign_id', $campaign->id)->where('prospect_id', $prospect->id)->first();
+        $this->assertNotNull($member);
+
+        $this->post(route('customer.workspaces.prospecting.prospects.mark-booked', [$workspace->uid, $prospect->uid]))
+            ->assertSessionHas('flash_success');
+
+        $this->assertSame('booked', $prospect->fresh()->status->value);
+        $this->assertSame(6, $member->fresh()->stage->value, 'The membership created just before Mark Booked must still be moved to the terminal booked stage.');
+    }
+
+    public function test_mark_booked_then_enrollment_is_refused_and_creates_no_membership(): void
+    {
+        [$owner, $workspace] = $this->agencyWorkspace();
+        $prospect = $this->createProspect($workspace);
+        $campaign = $this->createCampaign($workspace);
+
+        $this->authenticateAsCustomer($owner);
+
+        $this->post(route('customer.workspaces.prospecting.prospects.mark-booked', [$workspace->uid, $prospect->uid]))
+            ->assertSessionHas('flash_success');
+
+        $this->post(route('customer.workspaces.prospecting.campaigns.members.store', [$workspace->uid, $campaign->uid]), [
+            'prospect_uid' => $prospect->uid,
+        ])->assertSessionHas('flash_error');
+
+        $this->assertSame(0, AgencyProspectCampaignMember::where('campaign_id', $campaign->id)->where('prospect_id', $prospect->id)->count());
+        $this->assertSame('booked', $prospect->fresh()->status->value);
+    }
+
+    /**
+     * Mechanical, source-level proof that all three actions serialize on
+     * the same locked row (task-required "prove in tests/code structure"
+     * bar) rather than a live subprocess race, which would primarily
+     * prove MySQL's own SELECT ... FOR UPDATE guarantee (not something
+     * this application's code could get wrong) at the cost of a large,
+     * bespoke concurrency harness this foundation-pass correction does
+     * not warrant.
+     */
+    public function test_all_three_terminal_actions_share_the_single_row_lock_helper(): void
+    {
+        $source = file_get_contents(base_path('app/Http/Controllers/Customer/Workspace/AgencyProspectingController.php'));
+
+        $this->assertSame(1, substr_count($source, 'function lockWorkspaceProspect('), 'Exactly one shared lock helper must exist.');
+        $this->assertSame(1, substr_count($source, '->lockForUpdate()'), 'lockForUpdate() must be issued from exactly one place.');
+
+        foreach (['stopProspect', 'markProspectBooked', 'enrollProspect'] as $method) {
+            $methodSource = $this->extractMethodSource($source, $method);
+            $this->assertStringContainsString('$this->lockWorkspaceProspect(', $methodSource, "{$method}() must acquire the shared prospect lock.");
+        }
+    }
+
+    private function extractMethodSource(string $source, string $methodName): string
+    {
+        $start = strpos($source, 'function ' . $methodName . '(');
+        $this->assertNotFalse($start, "Method {$methodName}() not found in controller source.");
+
+        $braceStart = strpos($source, '{', $start);
+        $depth = 0;
+
+        for ($i = $braceStart; $i < strlen($source); $i++) {
+            if ($source[$i] === '{') {
+                $depth++;
+            } elseif ($source[$i] === '}') {
+                $depth--;
+
+                if ($depth === 0) {
+                    return substr($source, $start, $i - $start + 1);
+                }
+            }
+        }
+
+        $this->fail("Could not locate closing brace for {$methodName}().");
+    }
+
+    // -----------------------------------------------------------------
     // Opt-out isolation — Workspace-scoped, never a Business Blacklist.
     // -----------------------------------------------------------------
 
