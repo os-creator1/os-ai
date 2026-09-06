@@ -474,6 +474,64 @@ class AgencyProspectingTest extends TestCase
     }
 
     // -----------------------------------------------------------------
+    // Correction 2 — STOP/opt-out dominates every later non-opt-out
+    // state. Once Stopped, a prospect must never become Active or Booked
+    // through an ordinary prospecting action, even via a forged direct
+    // POST after the UI's own "Mark booked" control is hidden.
+    // -----------------------------------------------------------------
+
+    public function test_a_forged_mark_booked_request_after_stop_is_refused_and_changes_nothing(): void
+    {
+        [$owner, $workspace] = $this->agencyWorkspace();
+        $prospect = $this->createProspect($workspace);
+        $campaign = $this->createCampaign($workspace);
+        $member = AgencyProspectCampaignMember::create(['workspace_id' => $workspace->id, 'campaign_id' => $campaign->id, 'prospect_id' => $prospect->id, 'stage' => 1, 'enrolled_at' => now()]);
+
+        $this->authenticateAsCustomer($owner);
+
+        $this->post(route('customer.workspaces.prospecting.prospects.stop', [$workspace->uid, $prospect->uid]))
+            ->assertSessionHas('flash_success');
+        $this->assertSame('stopped', $prospect->fresh()->status->value);
+        $stoppedAt = $prospect->fresh()->stopped_at;
+
+        // Forged direct POST attempting to reverse the opt-out.
+        $this->post(route('customer.workspaces.prospecting.prospects.mark-booked', [$workspace->uid, $prospect->uid]))
+            ->assertSessionHas('flash_error');
+
+        $fresh = $prospect->fresh();
+        $this->assertSame('stopped', $fresh->status->value, 'A stopped prospect must never become booked.');
+        $this->assertNotNull($fresh->stopped_at);
+        $this->assertEquals($stoppedAt, $fresh->stopped_at);
+        $this->assertNull($fresh->booked_at);
+        $this->assertSame(99, $member->fresh()->stage->value, 'Membership must remain at the terminal stopped stage.');
+    }
+
+    public function test_stopping_an_already_booked_prospect_dominates_and_preserves_prior_booked_attribution(): void
+    {
+        [$owner, $workspace] = $this->agencyWorkspace();
+        $prospect = $this->createProspect($workspace);
+        $campaign = $this->createCampaign($workspace);
+        $member = AgencyProspectCampaignMember::create(['workspace_id' => $workspace->id, 'campaign_id' => $campaign->id, 'prospect_id' => $prospect->id, 'stage' => 1, 'enrolled_at' => now()]);
+
+        $this->authenticateAsCustomer($owner);
+
+        $this->post(route('customer.workspaces.prospecting.prospects.mark-booked', [$workspace->uid, $prospect->uid]))
+            ->assertSessionHas('flash_success');
+        $this->assertSame('booked', $prospect->fresh()->status->value);
+        $bookedAt = $prospect->fresh()->booked_at;
+        $this->assertNotNull($bookedAt);
+
+        $this->post(route('customer.workspaces.prospecting.prospects.stop', [$workspace->uid, $prospect->uid]))
+            ->assertSessionHas('flash_success');
+
+        $fresh = $prospect->fresh();
+        $this->assertSame('stopped', $fresh->status->value, 'STOP must dominate a prior Booked state.');
+        $this->assertSame(99, $member->fresh()->stage->value);
+        $this->assertNotNull($fresh->booked_at, 'Prior booked attribution must not be destroyed merely because the prospect later opted out.');
+        $this->assertEquals($bookedAt, $fresh->booked_at);
+    }
+
+    // -----------------------------------------------------------------
     // Opt-out isolation — Workspace-scoped, never a Business Blacklist.
     // -----------------------------------------------------------------
 

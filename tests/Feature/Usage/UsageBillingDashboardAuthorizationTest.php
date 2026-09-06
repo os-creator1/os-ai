@@ -255,4 +255,30 @@ class UsageBillingDashboardAuthorizationTest extends TestCase
         $freshAttemptB = app(BusinessFundingAttemptRepository::class)->findById($attemptB->id);
         $this->assertSame(FundingAttemptState::ProviderPending, $freshAttemptB->state, 'Business B\'s attempt must remain completely unchanged — confirmAttemptFromReturn() must never have run.');
     }
+
+    /**
+     * Correction 2 — ProspectOutreach has no owning Business at all
+     * (Workspace-scoped only), so it must never be a valid target for a
+     * Business's own feature-limit route — even on a genuinely
+     * Agency-tier Workspace, this must fail closed before any mutation,
+     * with the same 404 semantics as any other invalid feature key here.
+     */
+    public function test_feature_limit_route_rejects_prospect_outreach_on_an_agency_workspace(): void
+    {
+        $customer = $this->actingAsHttpCustomer();
+        $workspace = $this->createWorkspace($customer->user);
+        $admin = User::create([
+            'first_name' => 'M2Fixture', 'last_name' => 'Admin', 'email' => 'm2fixture' . uniqid() . '@example.test',
+            'status' => true, 'is_admin' => true, 'is_customer' => false, 'active_portal' => 'admin',
+        ]);
+        app(EntitlementManager::class)->assignFirstPlan($workspace, WorkspacePlanTier::Agency, $admin->id, 'Fixture.', true, 0);
+        $business = app(BusinessRepository::class)->createForCustomerInWorkspace($customer, $workspace->fresh(), $this->businessAttributes());
+        app(UsageWalletManager::class)->initializeWalletForNewBusiness($business->id);
+
+        $this->post(route('customer.workspaces.businesses.usage-billing.feature-limit', [$workspace->uid, $business->uid, 'prospect_outreach']), [
+            'monthly_limit_micro' => 2_000_000,
+        ])->assertNotFound();
+
+        $this->assertDatabaseMissing('business_feature_usage_limits', ['business_id' => $business->id, 'feature_key' => 'prospect_outreach']);
+    }
 }

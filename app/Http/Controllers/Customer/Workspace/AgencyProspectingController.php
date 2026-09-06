@@ -203,11 +203,23 @@ class AgencyProspectingController extends CustomerBaseController
      * Correction 1 — every existing campaign membership for this prospect
      * is synchronized to AgencyProspectStage::Booked in the same
      * transaction, mirroring stopProspect()'s discipline exactly.
+     * Correction 2 — STOP/opt-out dominates: once a prospect is Stopped,
+     * this action must refuse rather than reactivate it — a forged direct
+     * POST must never be able to reverse an opt-out into a Booked state.
+     * This is a hard safety invariant, not a UI convenience, so it is
+     * enforced here server-side regardless of what the (already hidden,
+     * per the view) "Mark booked" control would normally submit.
      */
     public function markProspectBooked(string $workspaceUid, AgencyProspect $prospect): RedirectResponse
     {
         $workspace = $this->resolveEntitledWorkspace($workspaceUid);
         $this->resolveWorkspaceProspect($workspace, $prospect);
+
+        if ($prospect->status === AgencyProspectStatus::Stopped) {
+            return redirect()
+                ->route('customer.workspaces.prospecting.prospects.show', [$workspaceUid, $prospect->uid])
+                ->with('flash_error', 'A stopped prospect cannot be marked as booked.');
+        }
 
         DB::transaction(function () use ($prospect): void {
             $prospect->update([

@@ -33,6 +33,7 @@ use App\Http\Requests\Customer\Workspace\TransferWorkspaceOwnershipRequest;
 use App\Http\Requests\Customer\Workspace\UpdateWorkspaceMemberAccessRequest;
 use App\Http\Requests\Customer\Workspace\UpdateWorkspaceMemberRoleRequest;
 use App\Library\Entitlement\EntitlementManager;
+use App\Library\Entitlement\PlatformFeatureRegistry;
 use App\Library\Workspace\WorkspaceManager;
 use App\Models\Business;
 use App\Models\User;
@@ -817,7 +818,12 @@ class WorkspaceController extends CustomerBaseController
         $workspace = $this->resolveAccessibleWorkspace($workspaceUid, $actorUserId);
         $feature = PlatformFeature::tryFrom($featureKey);
 
-        if ($feature === null) {
+        // Correction 2 — a Workspace-scoped feature (ProspectOutreach) is
+        // not a valid target for this Business-feature-toggle surface at
+        // all, and must fail identically to an unknown feature key —
+        // never a distinguishable response that would let this route be
+        // used as a scope-existence oracle.
+        if ($feature === null || ! PlatformFeatureRegistry::isBusinessScoped($feature->value)) {
             abort(404);
         }
 
@@ -851,7 +857,8 @@ class WorkspaceController extends CustomerBaseController
         $workspace = $this->resolveAccessibleWorkspace($workspaceUid, $actorUserId);
         $feature = PlatformFeature::tryFrom($featureKey);
 
-        if ($feature === null) {
+        // Correction 2 — same wrong-scope boundary as disableBusinessFeature().
+        if ($feature === null || ! PlatformFeatureRegistry::isBusinessScoped($feature->value)) {
             abort(404);
         }
 

@@ -125,7 +125,12 @@ class UsageBillingController extends CustomerBaseController
         $actorUserId = (int) Auth::id();
         $business = $this->resolveViewableBusiness($workspaceUid, $businessUid, $actorUserId);
 
-        if (! PlatformFeatureRegistry::isAvailable($featureKey)) {
+        // Correction 2 — a Workspace-scoped feature (ProspectOutreach) has
+        // no owning Business at all, so it is not a valid target for a
+        // Business feature limit; this fails identically to an
+        // unavailable feature — never a distinguishable response that
+        // would let this route be used as a scope-existence oracle.
+        if (! PlatformFeatureRegistry::isAvailable($featureKey) || ! PlatformFeatureRegistry::isBusinessScoped($featureKey)) {
             abort(404);
         }
 

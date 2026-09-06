@@ -1082,15 +1082,37 @@ final class EntitlementManager
     // =====================================================================
 
     /**
+     * Correction 2 — a Workspace-scoped feature (ProspectOutreach) can
+     * never be created/deleted through either Business-feature-toggle
+     * mutator, independently of decide()'s own wrong_feature_scope
+     * denial (Correction 1 relied solely on disableBusinessFeature()'s
+     * incidental call to decide() for this — enableBusinessFeature()
+     * never calls decide() at all, so a stale/manually-seeded toggle row
+     * for a Workspace-scoped feature could still be deleted through it).
+     * This single guard is called first by both mutators so the
+     * invariant cannot drift between them again.
+     */
+    private function assertFeatureIsBusinessScoped(PlatformFeature $feature): void
+    {
+        if (! PlatformFeatureRegistry::isBusinessScoped($feature->value)) {
+            throw new RuntimeException("Feature [{$feature->value}] is Workspace-scoped, not Business-scoped; it cannot be toggled for a Business.");
+        }
+    }
+
+    /**
      * Correction 1 — a Workspace-scoped feature (ProspectOutreach) can
      * never receive a business_feature_toggles row here: decide()'s own
      * wrong_feature_scope denial (never reaching the toggle-repository
      * write below) is the single, central scope authority this relies on
      * — never a separate, duplicated feature-key check that could drift
-     * from decide()'s own rule.
+     * from decide()'s own rule. Correction 2 adds
+     * assertFeatureIsBusinessScoped() as an explicit, independent guard
+     * on top — no longer relying solely on decide()'s incidental denial.
      */
     public function disableBusinessFeature(Business $business, PlatformFeature $feature, int $actorUserId, ?string $reason = null): BusinessFeatureToggle
     {
+        $this->assertFeatureIsBusinessScoped($feature);
+
         return DB::transaction(function () use ($business, $feature, $actorUserId, $reason) {
             [$lockedWorkspace, $lockedBusiness] = $this->lockWorkspaceAndBusinessForToggle($business);
 
@@ -1121,8 +1143,17 @@ final class EntitlementManager
         });
     }
 
+    /**
+     * Correction 2 — assertFeatureIsBusinessScoped() rejects a
+     * Workspace-scoped feature before any lock or repository read, so a
+     * stale/manually-seeded business_feature_toggles row for one (which
+     * should never exist, but this method must not assume that) can
+     * never be deleted through this path either.
+     */
     public function enableBusinessFeature(Business $business, PlatformFeature $feature, int $actorUserId): void
     {
+        $this->assertFeatureIsBusinessScoped($feature);
+
         DB::transaction(function () use ($business, $feature, $actorUserId) {
             [$lockedWorkspace, $lockedBusiness] = $this->lockWorkspaceAndBusinessForToggle($business);
 
