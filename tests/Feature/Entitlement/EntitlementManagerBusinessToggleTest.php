@@ -268,4 +268,71 @@ class EntitlementManagerBusinessToggleTest extends TestCase
 
         $this->assertNotNull($toggle->id);
     }
+
+    /**
+     * Correction 1 — ProspectOutreach is Workspace-scoped only. Even a
+     * genuine Workspace owner on an Agency-tier plan (truly entitled to
+     * ProspectOutreach at the Workspace level) must never be able to
+     * create a business_feature_toggles row for it — decide()'s own
+     * wrong_feature_scope denial rejects this before any toggle write,
+     * the same central authority every other feature relies on.
+     */
+    public function test_prospect_outreach_toggle_attempt_is_rejected_and_creates_no_row(): void
+    {
+        $owner = $this->createUser();
+        $workspace = Workspace::create(['name' => 'Agency Workspace', 'owner_user_id' => $owner->id, 'is_active' => true]);
+        app(EntitlementManager::class)->assignFirstPlan($workspace, WorkspacePlanTier::Agency, $this->createAdmin(), 'Fixture.', true, 0);
+        $customer = Customer::create(['user_id' => $owner->id]);
+        $business = app(BusinessRepository::class)->createForCustomerInWorkspace($customer, $workspace, [
+            'name' => 'Agency Test Business', 'industry' => 'photo_booth_service', 'country_code' => 'US', 'timezone' => 'America/New_York', 'currency_code' => 'USD',
+        ]);
+
+        $this->expectException(RuntimeException::class);
+
+        try {
+            app(EntitlementManager::class)->disableBusinessFeature($business->fresh(), PlatformFeature::ProspectOutreach, $workspace->owner_user_id);
+        } finally {
+            $this->assertDatabaseMissing('business_feature_toggles', ['business_id' => $business->id, 'feature_key' => 'prospect_outreach']);
+        }
+    }
+
+    /**
+     * Correction 2 — enableBusinessFeature() never called decide() at
+     * all, so it had no independent scope guard: a stale/manually-seeded
+     * business_feature_toggles row for a Workspace-scoped feature could
+     * previously be deleted through it. assertFeatureIsBusinessScoped()
+     * now rejects this before any repository read, so the malformed
+     * fixture row survives untouched and no event fires.
+     */
+    public function test_enabling_prospect_outreach_is_rejected_and_a_stale_malformed_toggle_row_survives_unchanged(): void
+    {
+        Event::fake([BusinessFeatureToggleChanged::class]);
+
+        $owner = $this->createUser();
+        $workspace = Workspace::create(['name' => 'Agency Workspace', 'owner_user_id' => $owner->id, 'is_active' => true]);
+        app(EntitlementManager::class)->assignFirstPlan($workspace, WorkspacePlanTier::Agency, $this->createAdmin(), 'Fixture.', true, 0);
+        $customer = Customer::create(['user_id' => $owner->id]);
+        $business = app(BusinessRepository::class)->createForCustomerInWorkspace($customer, $workspace, [
+            'name' => 'Agency Test Business', 'industry' => 'photo_booth_service', 'country_code' => 'US', 'timezone' => 'America/New_York', 'currency_code' => 'USD',
+        ]);
+
+        // Malformed/stale fixture — this row should never be creatable
+        // through the guarded API; seeded directly to prove enable()
+        // does not silently clean it up either.
+        $staleToggle = \App\Models\BusinessFeatureToggle::create([
+            'business_id' => $business->id,
+            'feature_key' => 'prospect_outreach',
+            'reason' => 'Stale fixture row predating scope enforcement.',
+            'created_by_user_id' => $workspace->owner_user_id,
+        ]);
+
+        $this->expectException(RuntimeException::class);
+
+        try {
+            app(EntitlementManager::class)->enableBusinessFeature($business->fresh(), PlatformFeature::ProspectOutreach, $workspace->owner_user_id);
+        } finally {
+            $this->assertDatabaseHas('business_feature_toggles', ['id' => $staleToggle->id, 'business_id' => $business->id, 'feature_key' => 'prospect_outreach']);
+            Event::assertNotDispatched(BusinessFeatureToggleChanged::class);
+        }
+    }
 }

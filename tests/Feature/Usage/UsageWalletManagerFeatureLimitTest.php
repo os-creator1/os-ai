@@ -3,6 +3,7 @@
 namespace Tests\Feature\Usage;
 
 use App\Exceptions\Usage\FeatureLimitExceedsPlatformSafetyLimitException;
+use App\Exceptions\Usage\NoActiveRateForFeatureException;
 use App\Library\Usage\UsageWalletManager;
 use App\Models\Currency;
 use App\Models\User;
@@ -36,6 +37,30 @@ class UsageWalletManagerFeatureLimitTest extends TestCase
 
         app(UsageWalletManager::class)->setFeatureLimit($business, 'crm', null, $actorId, 'Clear.');
         $this->assertDatabaseMissing('business_feature_usage_limits', ['business_id' => $business->id, 'feature_key' => 'crm']);
+    }
+
+    /**
+     * Correction 2 — ProspectOutreach has no owning Business at all
+     * (Workspace-scoped only), so it must never be able to receive a
+     * business_feature_usage_limits row — a direct programmatic call
+     * must reject it independently, exactly like an unavailable feature.
+     */
+    public function test_prospect_outreach_feature_limit_is_rejected_and_creates_no_row(): void
+    {
+        Currency::create(['name' => 'US Dollar', 'code' => 'USD', 'format' => '$', 'status' => true]);
+        $customer = $this->createCustomer();
+        $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
+        $business->loadMissing('workspace');
+        app(UsageWalletManager::class)->initializeWalletForNewBusiness($business->id);
+        $actorId = (int) $business->workspace->owner_user_id;
+
+        $this->expectException(NoActiveRateForFeatureException::class);
+
+        try {
+            app(UsageWalletManager::class)->setFeatureLimit($business, 'prospect_outreach', '2000000', $actorId, 'Should be rejected.');
+        } finally {
+            $this->assertDatabaseMissing('business_feature_usage_limits', ['business_id' => $business->id, 'feature_key' => 'prospect_outreach']);
+        }
     }
 
     public function test_settable_ahead_of_metering_activation(): void

@@ -120,6 +120,16 @@ final class EntitlementManager
             return new EntitlementDecision(false, 'platform_feature_unavailable');
         }
 
+        // Correction 1 — a Workspace-scoped feature (ProspectOutreach) has
+        // no owning Business at all; it must never be treated as an
+        // ordinary Business-entitled feature just because it is
+        // Available. This denies before the Business is even looked up,
+        // so a Workspace-scoped feature can never surface a Business-
+        // existence/mismatch exception either.
+        if (! PlatformFeatureRegistry::isBusinessScoped($feature->value)) {
+            return new EntitlementDecision(false, 'wrong_feature_scope');
+        }
+
         $currentBusiness = $this->businessRepository->findById($business->id);
 
         if ($currentBusiness === null) {
@@ -171,6 +181,81 @@ final class EntitlementManager
 
         if (! $usageResult->authorized) {
             return new EntitlementDecision(false, $usageResult->reason ?? 'usage_unauthorized');
+        }
+
+        return new EntitlementDecision(true, null);
+    }
+
+    /**
+     * Agency AI Prospecting foundation — decide()'s Business-independent
+     * subset, for a PlatformFeature that is Workspace-level and has no
+     * owning Business at all (unlike every feature decide() was written
+     * for). RFC-004 §14's decide() requires a Business to evaluate two of
+     * its eight steps: the per-Business feature toggle (step 8) and the
+     * Business-scoped usage-authorization-gateway check (step 11) — neither
+     * concept exists without a Business, so this method reproduces only
+     * the remaining, Business-independent precedence chain: known key
+     * (floor) → available (floor, never bypassable by an override) →
+     * Workspace plan assignment exists → Workspace override if present,
+     * else plan mapping → suspended/inactive status. It uses this class's
+     * own existing repositories exclusively — assignmentRepository,
+     * catalogRepository, overrideRepository, planFeatureRepository — never
+     * a parallel authority, and never mutates anything. Omitting the
+     * usage-authorization-gateway step is not a shortcut: RFC-005 keeps
+     * every PlatformFeature at is_metered=false through M5, so that step
+     * is already a behavioral no-op for every feature today, Business or
+     * not. This method is never called once a Business is in hand —
+     * decide() remains the sole authority whenever one is.
+     */
+    public function decideForWorkspace(Workspace $workspace, string $featureKey): EntitlementDecision
+    {
+        $feature = PlatformFeature::tryFrom($featureKey);
+
+        if ($feature === null) {
+            return new EntitlementDecision(false, 'platform_feature_unknown');
+        }
+
+        if (! PlatformFeatureRegistry::isAvailable($feature->value)) {
+            return new EntitlementDecision(false, 'platform_feature_unavailable');
+        }
+
+        // Correction 1 — this method exists solely for Workspace-scoped
+        // features with no owning Business (ProspectOutreach today). It
+        // must never become a generic bypass around decide() for an
+        // ordinary Business-scoped feature (Crm, Conversations,
+        // Automations, ...), which would silently skip decide()'s
+        // Business-toggle and usage-authorization steps.
+        if (! PlatformFeatureRegistry::isWorkspaceScoped($feature->value)) {
+            return new EntitlementDecision(false, 'wrong_feature_scope');
+        }
+
+        $assignment = $this->assignmentRepository->findByWorkspaceId((int) $workspace->id);
+
+        if ($assignment === null) {
+            return new EntitlementDecision(false, 'workspace_plan_unassigned');
+        }
+
+        $catalog = $this->catalogRepository->findById($assignment->workspace_plan_catalog_id);
+        $override = $this->overrideRepository->findByWorkspaceAndFeature((int) $workspace->id, $feature->value);
+
+        if ($override !== null) {
+            $workspaceEntitled = $override->state === WorkspaceEntitlementOverrideState::Allow;
+            $denialReasonIfNot = 'denied_by_workspace_override';
+        } else {
+            $workspaceEntitled = $catalog !== null && $this->planFeatureRepository->includesFeature($catalog, $feature->value);
+            $denialReasonIfNot = 'not_entitled_by_plan';
+        }
+
+        if (! $workspaceEntitled) {
+            return new EntitlementDecision(false, $denialReasonIfNot);
+        }
+
+        if ($assignment->status === WorkspacePlanAssignmentStatus::Suspended) {
+            return new EntitlementDecision(false, 'plan_suspended');
+        }
+
+        if ($assignment->status === WorkspacePlanAssignmentStatus::Inactive) {
+            return new EntitlementDecision(false, 'plan_inactive');
         }
 
         return new EntitlementDecision(true, null);
@@ -331,6 +416,15 @@ final class EntitlementManager
 
         foreach (PlatformFeature::cases() as $feature) {
             if (! PlatformFeatureRegistry::isAvailable($feature->value)) {
+                continue;
+            }
+
+            // Correction 1 — this API returns Business-addressable feature
+            // decisions only. A Workspace-scoped feature (ProspectOutreach)
+            // is never a Business's own feature to view, toggle, or
+            // disable, so it is excluded here entirely rather than
+            // appearing with a denied decision.
+            if (! PlatformFeatureRegistry::isBusinessScoped($feature->value)) {
                 continue;
             }
 
@@ -987,8 +1081,38 @@ final class EntitlementManager
     // Business feature toggles
     // =====================================================================
 
+    /**
+     * Correction 2 — a Workspace-scoped feature (ProspectOutreach) can
+     * never be created/deleted through either Business-feature-toggle
+     * mutator, independently of decide()'s own wrong_feature_scope
+     * denial (Correction 1 relied solely on disableBusinessFeature()'s
+     * incidental call to decide() for this — enableBusinessFeature()
+     * never calls decide() at all, so a stale/manually-seeded toggle row
+     * for a Workspace-scoped feature could still be deleted through it).
+     * This single guard is called first by both mutators so the
+     * invariant cannot drift between them again.
+     */
+    private function assertFeatureIsBusinessScoped(PlatformFeature $feature): void
+    {
+        if (! PlatformFeatureRegistry::isBusinessScoped($feature->value)) {
+            throw new RuntimeException("Feature [{$feature->value}] is Workspace-scoped, not Business-scoped; it cannot be toggled for a Business.");
+        }
+    }
+
+    /**
+     * Correction 1 — a Workspace-scoped feature (ProspectOutreach) can
+     * never receive a business_feature_toggles row here: decide()'s own
+     * wrong_feature_scope denial (never reaching the toggle-repository
+     * write below) is the single, central scope authority this relies on
+     * — never a separate, duplicated feature-key check that could drift
+     * from decide()'s own rule. Correction 2 adds
+     * assertFeatureIsBusinessScoped() as an explicit, independent guard
+     * on top — no longer relying solely on decide()'s incidental denial.
+     */
     public function disableBusinessFeature(Business $business, PlatformFeature $feature, int $actorUserId, ?string $reason = null): BusinessFeatureToggle
     {
+        $this->assertFeatureIsBusinessScoped($feature);
+
         return DB::transaction(function () use ($business, $feature, $actorUserId, $reason) {
             [$lockedWorkspace, $lockedBusiness] = $this->lockWorkspaceAndBusinessForToggle($business);
 
@@ -1019,8 +1143,17 @@ final class EntitlementManager
         });
     }
 
+    /**
+     * Correction 2 — assertFeatureIsBusinessScoped() rejects a
+     * Workspace-scoped feature before any lock or repository read, so a
+     * stale/manually-seeded business_feature_toggles row for one (which
+     * should never exist, but this method must not assume that) can
+     * never be deleted through this path either.
+     */
     public function enableBusinessFeature(Business $business, PlatformFeature $feature, int $actorUserId): void
     {
+        $this->assertFeatureIsBusinessScoped($feature);
+
         DB::transaction(function () use ($business, $feature, $actorUserId) {
             [$lockedWorkspace, $lockedBusiness] = $this->lockWorkspaceAndBusinessForToggle($business);
 

@@ -226,15 +226,47 @@ class EntitlementManagerDecisionTest extends TestCase
         $this->assertInstanceOf(\App\Library\Entitlement\RealUsageAuthorizationGateway::class, app(\App\Library\Entitlement\Contracts\UsageAuthorizationGateway::class));
     }
 
+    /**
+     * Correction 1 — ProspectOutreach is Available (a real implementation
+     * exists) but Workspace-scoped only. decide() must never treat it as
+     * an ordinary Business-entitled feature, even for a Business inside
+     * an Agency-tier Workspace that genuinely is entitled to it at the
+     * Workspace level.
+     */
+    public function test_workspace_scoped_feature_is_never_decided_as_business_entitled_even_on_agency(): void
+    {
+        $owner = User::create([
+            'first_name' => 'Owner', 'last_name' => 'User',
+            'email' => 'owner' . uniqid('', true) . '@example.test',
+            'status' => true, 'is_admin' => false, 'is_customer' => true, 'active_portal' => 'customer',
+        ]);
+        $customer = Customer::create(['user_id' => $owner->id]);
+        $workspace = Workspace::create(['name' => 'Agency Workspace', 'owner_user_id' => $owner->id, 'is_active' => true]);
+        $business = app(BusinessRepository::class)->createForCustomerInWorkspace($customer, $workspace, [
+            'name' => 'Agency Test Business', 'industry' => 'photo_booth_service',
+            'country_code' => 'US', 'timezone' => 'America/New_York', 'currency_code' => 'USD',
+        ]);
+        app(EntitlementManager::class)->assignFirstPlan($workspace, WorkspacePlanTier::Agency, $this->createAdmin(), 'Fixture assignment.', true, 0);
+
+        $decision = app(EntitlementManager::class)->decide($workspace->fresh(), $business->fresh(), PlatformFeature::ProspectOutreach->value, $this->createAdmin());
+
+        $this->assertFalse($decision->allowed);
+        $this->assertSame('wrong_feature_scope', $decision->reason);
+    }
+
     public function test_all_nine_denial_keys_are_individually_reachable(): void
     {
         $keys = [
             'platform_feature_unknown', 'platform_feature_unavailable', 'workspace_plan_unassigned',
             'not_entitled_by_plan', 'denied_by_workspace_override', 'disabled_for_business',
             'plan_inactive', 'plan_suspended', 'usage_unauthorized',
+            // Correction 1 — the tenth decide() denial reason, added for
+            // Agency AI Prospecting's Workspace-scoped feature check; see
+            // test_workspace_scoped_feature_is_never_decided_as_business_entitled_even_on_agency().
+            'wrong_feature_scope',
         ];
 
-        $this->assertCount(9, $keys);
-        $this->assertCount(9, array_unique($keys));
+        $this->assertCount(10, $keys);
+        $this->assertCount(10, array_unique($keys));
     }
 }

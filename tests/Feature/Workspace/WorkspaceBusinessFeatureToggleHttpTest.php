@@ -174,6 +174,37 @@ class WorkspaceBusinessFeatureToggleHttpTest extends TestCase
         $this->assertSame(0, BusinessFeatureToggle::where('business_id', $business->id)->count());
     }
 
+    /**
+     * Correction 2 — ProspectOutreach is now globally Available, so
+     * without an independent scope guard this route could otherwise
+     * reach the manager for it. Even on a genuinely Agency-tier Workspace
+     * (truly entitled to ProspectOutreach at the Workspace level), this
+     * Business-only surface must still 404 — identical to an unknown
+     * feature key, never a distinguishable response.
+     */
+    public function test_prospect_outreach_is_not_found_on_the_business_toggle_disable_route(): void
+    {
+        $customer = $this->actingAsHttpCustomer();
+        $workspace = $this->createWorkspace($customer->user);
+        app(EntitlementManager::class)->assignFirstPlan($workspace, WorkspacePlanTier::Agency, $this->fixtureAdminId(), 'Fixture assignment.', true, 0);
+        $business = $this->createBusinessForCustomer($customer->user->id, $workspace->fresh()->id);
+
+        $this->post(route('customer.workspaces.businesses.features.disable', [$workspace->uid, $business->uid, 'prospect_outreach']))
+            ->assertNotFound();
+        $this->assertSame(0, BusinessFeatureToggle::where('business_id', $business->id)->count());
+    }
+
+    public function test_prospect_outreach_is_not_found_on_the_business_toggle_enable_route(): void
+    {
+        $customer = $this->actingAsHttpCustomer();
+        $workspace = $this->createWorkspace($customer->user);
+        app(EntitlementManager::class)->assignFirstPlan($workspace, WorkspacePlanTier::Agency, $this->fixtureAdminId(), 'Fixture assignment.', true, 0);
+        $business = $this->createBusinessForCustomer($customer->user->id, $workspace->fresh()->id);
+
+        $this->post(route('customer.workspaces.businesses.features.enable', [$workspace->uid, $business->uid, 'prospect_outreach']))
+            ->assertNotFound();
+    }
+
     public function test_a_business_belonging_to_another_workspace_is_not_found(): void
     {
         $customer = $this->actingAsHttpCustomer();

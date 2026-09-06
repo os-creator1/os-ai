@@ -1224,7 +1224,12 @@ class UsageWalletManager
      */
     public function setFeatureLimit(Business $business, string $featureKey, ?string $limitMicro, int $actorUserId, string $reason): void
     {
-        if (! PlatformFeatureRegistry::isAvailable($featureKey)) {
+        // Correction 2 — a Workspace-scoped feature (ProspectOutreach) has
+        // no owning Business at all, so a direct programmatic call must
+        // independently reject it here too, exactly like an unavailable
+        // feature — the controller's own guard (UsageBillingController::
+        // updateFeatureLimit()) is not the only enforcement point.
+        if (! PlatformFeatureRegistry::isAvailable($featureKey) || ! PlatformFeatureRegistry::isBusinessScoped($featureKey)) {
             throw new NoActiveRateForFeatureException($featureKey);
         }
 
