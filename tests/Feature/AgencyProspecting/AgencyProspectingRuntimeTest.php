@@ -291,6 +291,157 @@ class AgencyProspectingRuntimeTest extends TestCase
     }
 
     // -----------------------------------------------------------------
+    // Campaign lifecycle.
+    // -----------------------------------------------------------------
+
+    public function test_draft_to_paused_forged_post_is_rejected(): void
+    {
+        [$owner, $workspace] = $this->agencyWorkspace();
+        $campaign = $this->createCampaign($workspace);
+        $this->authenticateAsCustomer($owner);
+
+        // 'paused' is itself a valid enum value in general (unlike
+        // 'draft' in the sibling tests, which the request validation
+        // rejects outright) — this is the controller's own Draft
+        // guard being exercised, not the request validation layer.
+        $this->post(route('customer.workspaces.prospecting.campaigns.status', [$workspace->uid, $campaign->uid]), [
+            'status' => 'paused',
+        ])->assertSessionHas('flash_error');
+
+        $this->assertSame('draft', $campaign->fresh()->status->value);
+    }
+
+    public function test_active_to_draft_forged_post_is_rejected(): void
+    {
+        [$owner, $workspace] = $this->agencyWorkspace();
+        $channel = $this->createChannel($workspace);
+        $campaign = $this->createCampaign($workspace, ['channel_id' => $channel->id, 'opening_message' => 'Hi', 'status' => 'active']);
+        $this->authenticateAsCustomer($owner);
+
+        $this->post(route('customer.workspaces.prospecting.campaigns.status', [$workspace->uid, $campaign->uid]), [
+            'status' => 'draft',
+        ])->assertSessionHasErrors('status');
+
+        $this->assertSame('active', $campaign->fresh()->status->value);
+    }
+
+    public function test_paused_to_draft_forged_post_is_rejected(): void
+    {
+        [$owner, $workspace] = $this->agencyWorkspace();
+        $channel = $this->createChannel($workspace);
+        $campaign = $this->createCampaign($workspace, ['channel_id' => $channel->id, 'opening_message' => 'Hi', 'status' => 'paused']);
+        $this->authenticateAsCustomer($owner);
+
+        $this->post(route('customer.workspaces.prospecting.campaigns.status', [$workspace->uid, $campaign->uid]), [
+            'status' => 'draft',
+        ])->assertSessionHasErrors('status');
+
+        $this->assertSame('paused', $campaign->fresh()->status->value);
+    }
+
+    public function test_active_to_paused_works(): void
+    {
+        [$owner, $workspace] = $this->agencyWorkspace();
+        $channel = $this->createChannel($workspace);
+        $campaign = $this->createCampaign($workspace, ['channel_id' => $channel->id, 'opening_message' => 'Hi', 'status' => 'active']);
+        $this->authenticateAsCustomer($owner);
+
+        $this->post(route('customer.workspaces.prospecting.campaigns.status', [$workspace->uid, $campaign->uid]), [
+            'status' => 'paused',
+        ])->assertSessionHas('flash_success');
+
+        $this->assertSame('paused', $campaign->fresh()->status->value);
+    }
+
+    public function test_paused_to_active_works(): void
+    {
+        [$owner, $workspace] = $this->agencyWorkspace();
+        $channel = $this->createChannel($workspace);
+        $campaign = $this->createCampaign($workspace, ['channel_id' => $channel->id, 'opening_message' => 'Hi', 'status' => 'paused']);
+        $this->authenticateAsCustomer($owner);
+
+        $this->post(route('customer.workspaces.prospecting.campaigns.status', [$workspace->uid, $campaign->uid]), [
+            'status' => 'active',
+        ])->assertSessionHas('flash_success');
+
+        $this->assertSame('active', $campaign->fresh()->status->value);
+    }
+
+    public function test_prospect_in_paused_campaign_blocks_start_of_another_campaign(): void
+    {
+        [$owner, $workspace] = $this->agencyWorkspace();
+        $channel = $this->createChannel($workspace);
+        $prospect = $this->createProspect($workspace);
+
+        $campaignA = $this->createCampaign($workspace, ['name' => 'A', 'channel_id' => $channel->id, 'opening_message' => 'Hi A', 'status' => 'paused']);
+        $this->enrollDirectly($workspace, $campaignA, $prospect);
+
+        $campaignB = $this->createCampaign($workspace, ['name' => 'B', 'channel_id' => $channel->id, 'opening_message' => 'Hi B']);
+        $this->enrollDirectly($workspace, $campaignB, $prospect);
+
+        $this->authenticateAsCustomer($owner);
+        $this->post(route('customer.workspaces.prospecting.campaigns.start', [$workspace->uid, $campaignB->uid]))
+            ->assertSessionHas('flash_error');
+
+        $this->assertSame('draft', $campaignB->fresh()->status->value);
+    }
+
+    // -----------------------------------------------------------------
+    // Campaign config is Draft-only.
+    // -----------------------------------------------------------------
+
+    public function test_draft_campaign_config_works(): void
+    {
+        [$owner, $workspace] = $this->agencyWorkspace();
+        $channel = $this->createChannel($workspace);
+        $campaign = $this->createCampaign($workspace);
+        $this->authenticateAsCustomer($owner);
+
+        $this->post(route('customer.workspaces.prospecting.campaigns.config', [$workspace->uid, $campaign->uid]), [
+            'channel_uid' => $channel->uid,
+            'opening_message' => 'Hi!',
+        ])->assertSessionHas('flash_success');
+
+        $this->assertSame($channel->id, $campaign->fresh()->channel_id);
+    }
+
+    public function test_active_campaign_config_tamper_is_rejected(): void
+    {
+        [$owner, $workspace] = $this->agencyWorkspace();
+        $channelA = $this->createChannel($workspace);
+        $channelB = $this->createChannel($workspace);
+        $campaign = $this->createCampaign($workspace, ['channel_id' => $channelA->id, 'opening_message' => 'Original', 'status' => 'active']);
+        $this->authenticateAsCustomer($owner);
+
+        $this->post(route('customer.workspaces.prospecting.campaigns.config', [$workspace->uid, $campaign->uid]), [
+            'channel_uid' => $channelB->uid,
+            'opening_message' => 'Tampered',
+        ])->assertSessionHas('flash_error');
+
+        $fresh = $campaign->fresh();
+        $this->assertSame($channelA->id, $fresh->channel_id);
+        $this->assertSame('Original', $fresh->opening_message);
+    }
+
+    public function test_paused_campaign_config_tamper_is_rejected(): void
+    {
+        [$owner, $workspace] = $this->agencyWorkspace();
+        $channelA = $this->createChannel($workspace);
+        $channelB = $this->createChannel($workspace);
+        $campaign = $this->createCampaign($workspace, ['channel_id' => $channelA->id, 'opening_message' => 'Original', 'status' => 'paused']);
+        $this->authenticateAsCustomer($owner);
+
+        $this->post(route('customer.workspaces.prospecting.campaigns.config', [$workspace->uid, $campaign->uid]), [
+            'channel_uid' => $channelB->uid,
+            'opening_message' => 'Tampered',
+        ])->assertSessionHas('flash_error');
+
+        $fresh = $campaign->fresh();
+        $this->assertSame($channelA->id, $fresh->channel_id);
+        $this->assertSame('Original', $fresh->opening_message);
+    }
+
+    // -----------------------------------------------------------------
     // One-open-conversation invariant.
     // -----------------------------------------------------------------
 
@@ -332,6 +483,63 @@ class AgencyProspectingRuntimeTest extends TestCase
             ->assertSessionHas('flash_success');
 
         $this->assertSame('active', $campaignB->fresh()->status->value);
+    }
+
+    /**
+     * Correction 2 — proves the locking structure itself, not just the
+     * pre-existing "already active" shortcut: both campaigns start as
+     * genuine Drafts sharing one prospect, and the real HTTP Start action
+     * is exercised on each. Whichever request's transaction commits first
+     * wins; the second re-evaluates the authoritative (now-committed)
+     * state under its own lock and is correctly rejected — proven here in
+     * BOTH orderings (A-then-B and, in the sibling test, B-then-A),
+     * rather than relying on a pre-transaction snapshot check that a
+     * genuinely concurrent request could still pass.
+     */
+    public function test_serialized_start_a_then_b_rejects_b(): void
+    {
+        [$owner, $workspace] = $this->agencyWorkspace();
+        $channel = $this->createChannel($workspace);
+        $prospect = $this->createProspect($workspace);
+
+        $campaignA = $this->createCampaign($workspace, ['name' => 'A', 'channel_id' => $channel->id, 'opening_message' => 'Hi A']);
+        $this->enrollDirectly($workspace, $campaignA, $prospect);
+
+        $campaignB = $this->createCampaign($workspace, ['name' => 'B', 'channel_id' => $channel->id, 'opening_message' => 'Hi B']);
+        $this->enrollDirectly($workspace, $campaignB, $prospect);
+
+        $this->authenticateAsCustomer($owner);
+
+        $this->post(route('customer.workspaces.prospecting.campaigns.start', [$workspace->uid, $campaignA->uid]))
+            ->assertSessionHas('flash_success');
+        $this->post(route('customer.workspaces.prospecting.campaigns.start', [$workspace->uid, $campaignB->uid]))
+            ->assertSessionHas('flash_error');
+
+        $this->assertSame('active', $campaignA->fresh()->status->value);
+        $this->assertSame('draft', $campaignB->fresh()->status->value);
+    }
+
+    public function test_serialized_start_b_then_a_rejects_a(): void
+    {
+        [$owner, $workspace] = $this->agencyWorkspace();
+        $channel = $this->createChannel($workspace);
+        $prospect = $this->createProspect($workspace);
+
+        $campaignA = $this->createCampaign($workspace, ['name' => 'A', 'channel_id' => $channel->id, 'opening_message' => 'Hi A']);
+        $this->enrollDirectly($workspace, $campaignA, $prospect);
+
+        $campaignB = $this->createCampaign($workspace, ['name' => 'B', 'channel_id' => $channel->id, 'opening_message' => 'Hi B']);
+        $this->enrollDirectly($workspace, $campaignB, $prospect);
+
+        $this->authenticateAsCustomer($owner);
+
+        $this->post(route('customer.workspaces.prospecting.campaigns.start', [$workspace->uid, $campaignB->uid]))
+            ->assertSessionHas('flash_success');
+        $this->post(route('customer.workspaces.prospecting.campaigns.start', [$workspace->uid, $campaignA->uid]))
+            ->assertSessionHas('flash_error');
+
+        $this->assertSame('active', $campaignB->fresh()->status->value);
+        $this->assertSame('draft', $campaignA->fresh()->status->value);
     }
 
     // -----------------------------------------------------------------
@@ -509,6 +717,119 @@ class AgencyProspectingRuntimeTest extends TestCase
 
         $this->assertSame(0, count($this->sender->sentMessages));
         $this->assertSame(0, count($this->aiClient->receivedMessages));
+    }
+
+    public function test_active_campaign_plus_draft_membership_resolves_to_active(): void
+    {
+        [$workspace, $member] = $this->activeConversation();
+        $channel = $member->campaign->channel;
+        $prospect = $member->prospect;
+
+        // A Draft enrollment for the same prospect on the same channel is
+        // intentionally legal and must never count as competing
+        // attribution — it is not a real, open conversation.
+        $draftCampaign = $this->createCampaign($workspace, ['name' => 'Draft', 'channel_id' => $channel->id, 'opening_message' => 'Hi']);
+        $this->enrollDirectly($workspace, $draftCampaign, $prospect);
+
+        $this->postTwilioInbound($channel, [
+            'From' => '+' . $prospect->phone, 'To' => '+' . $channel->sender_number, 'Body' => 'Tell me more', 'MessageSid' => 'SM-DRAFT-NOISE',
+        ])->assertOk();
+
+        $inbound = AgencyProspectMessage::where('provider_message_id', 'SM-DRAFT-NOISE')->first();
+        $this->assertNotNull($inbound);
+        $this->assertSame($member->id, $inbound->campaign_member_id);
+    }
+
+    public function test_inbound_on_channel_a_does_not_route_to_campaign_using_channel_b(): void
+    {
+        [, $workspace] = $this->agencyWorkspace();
+        $channelA = $this->createChannel($workspace);
+        $channelB = $this->createChannel($workspace);
+        $prospect = $this->createProspect($workspace);
+
+        // The prospect's only OPEN conversation is on Channel B.
+        $campaignB = $this->createCampaign($workspace, ['name' => 'B', 'channel_id' => $channelB->id, 'opening_message' => 'Hi', 'status' => 'active']);
+        $this->enrollDirectly($workspace, $campaignB, $prospect);
+
+        // An inbound message arrives on Channel A instead.
+        $this->postTwilioInbound($channelA, [
+            'From' => '+' . $prospect->phone, 'To' => '+' . $channelA->sender_number, 'Body' => 'Hello', 'MessageSid' => 'SM-WRONG-CHANNEL',
+        ])->assertOk();
+
+        $this->assertSame(0, AgencyProspectMessage::where('provider_message_id', 'SM-WRONG-CHANNEL')->count());
+        $this->assertSame(0, count($this->aiClient->receivedMessages));
+    }
+
+    public function test_paused_campaign_normal_inbound_is_recorded_with_no_ai_reply(): void
+    {
+        [$workspace, $member] = $this->activeConversation();
+        $member->campaign->update(['status' => 'paused']);
+        $channel = $member->campaign->channel;
+
+        $this->postTwilioInbound($channel, [
+            'From' => '+' . $member->prospect->phone, 'To' => '+' . $channel->sender_number, 'Body' => 'Still interested?', 'MessageSid' => 'SM-PAUSED-NORMAL',
+        ])->assertOk();
+
+        $this->assertSame(1, AgencyProspectMessage::where('provider_message_id', 'SM-PAUSED-NORMAL')->count());
+        $this->assertSame(0, count($this->aiClient->receivedMessages));
+        $this->assertSame(0, count($this->sender->sentMessages));
+    }
+
+    public function test_paused_campaign_stop_still_works(): void
+    {
+        [$workspace, $member] = $this->activeConversation();
+        $member->campaign->update(['status' => 'paused']);
+        $channel = $member->campaign->channel;
+
+        $this->postTwilioInbound($channel, [
+            'From' => '+' . $member->prospect->phone, 'To' => '+' . $channel->sender_number, 'Body' => 'STOP', 'MessageSid' => 'SM-PAUSED-STOP',
+        ])->assertOk();
+
+        $this->assertSame('stopped', $member->prospect->fresh()->status->value);
+        $this->assertSame(99, $member->fresh()->stage->value);
+    }
+
+    public function test_duplicate_webhook_delivery_does_not_trigger_a_second_ai_call(): void
+    {
+        [$workspace, $member] = $this->activeConversation();
+        $channel = $member->campaign->channel;
+        $this->aiClient->nextRawResponse = json_encode(['intent' => 'positive', 'reply' => 'Great!', 'next_stage' => 2, 'send_booking_link' => false, 'proposed_slot' => null]);
+
+        $payload = [
+            'From' => '+' . $member->prospect->phone, 'To' => '+' . $channel->sender_number, 'Body' => 'Tell me more', 'MessageSid' => 'SM-DUPE-DELIVERY',
+        ];
+
+        $this->postTwilioInbound($channel, $payload)->assertOk();
+        $this->postTwilioInbound($channel, $payload)->assertOk();
+
+        $this->assertSame(1, AgencyProspectMessage::where('provider_message_id', 'SM-DUPE-DELIVERY')->count());
+        $this->assertSame(1, count($this->aiClient->receivedMessages));
+        $this->assertSame(1, count($this->sender->sentMessages));
+    }
+
+    public function test_respond_job_rejects_an_inbound_message_belonging_to_a_different_member(): void
+    {
+        [$workspace, $memberA] = $this->activeConversation();
+        [, $memberB] = $this->activeConversation();
+
+        $foreignInbound = AgencyProspectMessage::create([
+            'workspace_id' => $memberB->workspace_id,
+            'campaign_member_id' => $memberB->id,
+            'direction' => AgencyProspectMessage::DIRECTION_INBOUND,
+            'provider_message_id' => 'SM-FOREIGN-BIND',
+            'body' => 'Hello',
+            'status' => AgencyProspectMessage::STATUS_RECEIVED,
+            'received_at' => now(),
+        ]);
+
+        $this->aiClient->nextRawResponse = json_encode(['intent' => 'positive', 'reply' => 'Hi', 'next_stage' => 2, 'send_booking_link' => false, 'proposed_slot' => null]);
+
+        // Forged/stale ids: memberA paired with memberB's own inbound row.
+        $this->runRespondForMessage($memberA->id, $foreignInbound->id);
+
+        $this->assertSame(0, count($this->sender->sentMessages));
+        $this->assertSame(0, count($this->aiClient->receivedMessages));
+        $this->assertSame(1, $memberA->fresh()->stage->value);
     }
 
     // -----------------------------------------------------------------
@@ -745,6 +1066,83 @@ class AgencyProspectingRuntimeTest extends TestCase
 
         $sentBody = $this->sender->sentMessages[0]['body'];
         $this->assertStringContainsString('https://real-booking.example.com/agency', $sentBody);
+        $this->assertStringNotContainsString('fake-ai-invented-url.example.com', $sentBody, 'The AI must never be able to smuggle its own URL into the outbound body.');
+    }
+
+    public function test_ordinary_ai_reply_cannot_smuggle_a_url(): void
+    {
+        [$workspace, $member] = $this->activeConversation();
+        $this->aiClient->nextRawResponse = json_encode([
+            'intent' => 'question', 'reply' => 'Check us out at https://sketchy-unauthorized.example.com for more info!',
+            'next_stage' => 2, 'send_booking_link' => false, 'proposed_slot' => null,
+        ]);
+
+        $this->runRespond($member->id, $workspace);
+
+        $sentBody = $this->sender->sentMessages[0]['body'];
+        $this->assertStringNotContainsString('sketchy-unauthorized.example.com', $sentBody);
+    }
+
+    public function test_send_booking_link_true_without_next_stage_4_is_invalid(): void
+    {
+        [$workspace, $member] = $this->activeConversation();
+        $member->update(['stage' => 3]);
+        AgencyProspectingSetting::updateOrCreate(['workspace_id' => $workspace->id], ['booking_url' => 'https://book.example.com']);
+        $this->aiClient->nextRawResponse = json_encode([
+            'intent' => 'booking', 'reply' => 'Here is a link', 'next_stage' => 2, 'send_booking_link' => true, 'proposed_slot' => null,
+        ]);
+
+        $this->runRespond($member->id, $workspace);
+
+        $this->assertSame(0, count($this->sender->sentMessages));
+        $this->assertSame(3, $member->fresh()->stage->value);
+    }
+
+    public function test_next_stage_4_without_send_booking_link_is_invalid(): void
+    {
+        [$workspace, $member] = $this->activeConversation();
+        $member->update(['stage' => 3]);
+        AgencyProspectingSetting::updateOrCreate(['workspace_id' => $workspace->id], ['booking_url' => 'https://book.example.com']);
+        $this->aiClient->nextRawResponse = json_encode([
+            'intent' => 'booking', 'reply' => 'Moving forward', 'next_stage' => 4, 'send_booking_link' => false, 'proposed_slot' => null,
+        ]);
+
+        $this->runRespond($member->id, $workspace);
+
+        $this->assertSame(0, count($this->sender->sentMessages));
+        $this->assertSame(3, $member->fresh()->stage->value);
+        $this->assertNull($member->fresh()->booking_link_sent_at);
+    }
+
+    public function test_send_booking_link_without_configured_url_is_invalid(): void
+    {
+        [$workspace, $member] = $this->activeConversation();
+        $member->update(['stage' => 3]);
+        // No booking_url configured for this Workspace at all.
+        $this->aiClient->nextRawResponse = json_encode([
+            'intent' => 'booking', 'reply' => 'Here is a link', 'next_stage' => 4, 'send_booking_link' => true, 'proposed_slot' => null,
+        ]);
+
+        $this->runRespond($member->id, $workspace);
+
+        $this->assertSame(0, count($this->sender->sentMessages));
+        $this->assertSame(3, $member->fresh()->stage->value);
+        $this->assertNull($member->fresh()->booking_link_sent_at);
+    }
+
+    public function test_next_stage_99_sends_nothing_and_stops_immediately(): void
+    {
+        [$workspace, $member] = $this->activeConversation();
+        $this->aiClient->nextRawResponse = json_encode([
+            'intent' => 'other', 'reply' => 'Some sales copy that must never be sent',
+            'next_stage' => 99, 'send_booking_link' => false, 'proposed_slot' => null,
+        ]);
+
+        $this->runRespond($member->id, $workspace);
+
+        $this->assertSame('stopped', $member->prospect->fresh()->status->value);
+        $this->assertSame(99, $member->fresh()->stage->value);
+        $this->assertSame(0, count($this->sender->sentMessages), 'next_stage=99 must stop before any outbound sales copy is sent.');
     }
 
     // -----------------------------------------------------------------
@@ -827,7 +1225,22 @@ class AgencyProspectingRuntimeTest extends TestCase
         $this->runFollowUp($member->id);
 
         $this->assertSame(0, count($this->sender->sentMessages));
-        $this->assertNotNull($member->fresh()->followup_sent_at, 'Must still be marked handled so it is never retried.');
+        // Correction 1 — followup_sent_at must mean ONLY "a provider send
+        // actually succeeded"; suppression because of a later inbound
+        // reply is recorded as cancelled, never falsely as sent.
+        $this->assertNull($member->fresh()->followup_sent_at);
+        $this->assertNotNull($member->fresh()->followup_cancelled_at, 'Must still be marked handled so it is never retried.');
+    }
+
+    public function test_cancelled_followup_is_never_retried(): void
+    {
+        [$workspace, $member] = $this->bookingLinkSentConversation();
+        $member->update(['last_inbound_at' => now()]);
+
+        $this->runFollowUp($member->id);
+        $this->runFollowUp($member->id);
+
+        $this->assertSame(0, count($this->sender->sentMessages));
     }
 
     public function test_successful_followup_records_an_outbound_ledger_row(): void
@@ -839,6 +1252,242 @@ class AgencyProspectingRuntimeTest extends TestCase
         $this->assertSame(1, AgencyProspectMessage::where('campaign_member_id', $member->id)
             ->where('direction', 'outbound')->where('status', 'sent')->count());
         $this->assertNotNull($member->fresh()->followup_sent_at);
+    }
+
+    // -----------------------------------------------------------------
+    // Outbound idempotency.
+    // -----------------------------------------------------------------
+
+    public function test_same_inbound_id_invoked_twice_sends_one_ai_reply(): void
+    {
+        [$workspace, $member] = $this->activeConversation();
+        $inbound = AgencyProspectMessage::create([
+            'workspace_id' => $member->workspace_id,
+            'campaign_member_id' => $member->id,
+            'channel_id' => $member->campaign->channel_id,
+            'direction' => AgencyProspectMessage::DIRECTION_INBOUND,
+            'provider_message_id' => 'SM-RETRY-BASIS',
+            'body' => 'Tell me more',
+            'status' => AgencyProspectMessage::STATUS_RECEIVED,
+            'received_at' => now(),
+        ]);
+        $this->aiClient->nextRawResponse = json_encode(['intent' => 'positive', 'reply' => 'Great!', 'next_stage' => 2, 'send_booking_link' => false, 'proposed_slot' => null]);
+
+        $this->runRespondForMessage($member->id, $inbound->id);
+        $this->runRespondForMessage($member->id, $inbound->id);
+
+        $this->assertSame(1, count($this->sender->sentMessages));
+        $this->assertSame(1, AgencyProspectMessage::where('operation_key', 'ai_reply:' . $inbound->id)->where('status', 'sent')->count());
+    }
+
+    public function test_initial_send_operation_key_unique_constraint_is_enforced_by_the_database(): void
+    {
+        [, $workspace] = $this->agencyWorkspace();
+        $channel = $this->createChannel($workspace);
+        $prospect = $this->createProspect($workspace);
+        $campaign = $this->createCampaign($workspace, ['channel_id' => $channel->id, 'opening_message' => 'Hi', 'status' => 'active']);
+        $member = $this->enrollDirectly($workspace, $campaign, $prospect);
+
+        AgencyProspectMessage::create([
+            'workspace_id' => $workspace->id,
+            'campaign_member_id' => $member->id,
+            'channel_id' => $channel->id,
+            'direction' => AgencyProspectMessage::DIRECTION_OUTBOUND,
+            'purpose' => AgencyProspectMessage::PURPOSE_INITIAL,
+            'operation_key' => 'initial:' . $member->id,
+            'body' => 'Existing claim',
+            'status' => AgencyProspectMessage::STATUS_PENDING,
+        ]);
+
+        $this->expectException(\Illuminate\Database\UniqueConstraintViolationException::class);
+
+        AgencyProspectMessage::create([
+            'workspace_id' => $workspace->id,
+            'campaign_member_id' => $member->id,
+            'channel_id' => $channel->id,
+            'direction' => AgencyProspectMessage::DIRECTION_OUTBOUND,
+            'purpose' => AgencyProspectMessage::PURPOSE_INITIAL,
+            'operation_key' => 'initial:' . $member->id,
+            'body' => 'Duplicate claim attempt',
+            'status' => AgencyProspectMessage::STATUS_PENDING,
+        ]);
+    }
+
+    public function test_failed_operation_does_not_automatically_duplicate_on_retry(): void
+    {
+        [, $workspace] = $this->agencyWorkspace();
+        $channel = $this->createChannel($workspace);
+        $prospect = $this->createProspect($workspace);
+        $campaign = $this->createCampaign($workspace, ['channel_id' => $channel->id, 'opening_message' => 'Hi', 'status' => 'active']);
+        $member = $this->enrollDirectly($workspace, $campaign, $prospect);
+
+        $this->sender->nextSendSucceeds = false;
+        $this->runInitialSend($member->id);
+
+        $this->sender->nextSendSucceeds = true;
+        $this->runInitialSend($member->id);
+
+        $this->assertSame(2, count($this->sender->sentMessages), 'A failed attempt remains retryable...');
+        $this->assertSame(1, AgencyProspectMessage::where('campaign_member_id', $member->id)->where('status', 'sent')->count(), '...but only one row is ever marked sent.');
+
+        // A THIRD invocation after a genuine success must never send again.
+        $this->runInitialSend($member->id);
+        $this->assertSame(2, count($this->sender->sentMessages));
+    }
+
+    // -----------------------------------------------------------------
+    // Soft negative — bounded repeated handling.
+    // -----------------------------------------------------------------
+
+    public function test_stage_1_first_soft_negative_may_queue_ai(): void
+    {
+        [$workspace, $member] = $this->activeConversation();
+        $channel = $member->campaign->channel;
+
+        $this->postTwilioInbound($channel, [
+            'From' => '+' . $member->prospect->phone, 'To' => '+' . $channel->sender_number, 'Body' => 'no thanks', 'MessageSid' => 'SM-SOFTNEG-1',
+        ])->assertOk();
+
+        $this->assertSame('active', $member->prospect->fresh()->status->value);
+        $this->assertSame(1, $member->fresh()->soft_negative_count);
+        $this->assertSame(1, count($this->aiClient->receivedMessages));
+    }
+
+    public function test_stage_1_second_soft_negative_stops_without_calling_ai(): void
+    {
+        [$workspace, $member] = $this->activeConversation();
+        $channel = $member->campaign->channel;
+
+        $this->postTwilioInbound($channel, [
+            'From' => '+' . $member->prospect->phone, 'To' => '+' . $channel->sender_number, 'Body' => 'no thanks', 'MessageSid' => 'SM-SOFTNEG-A',
+        ])->assertOk();
+
+        $this->postTwilioInbound($channel, [
+            'From' => '+' . $member->prospect->phone, 'To' => '+' . $channel->sender_number, 'Body' => 'no thank you', 'MessageSid' => 'SM-SOFTNEG-B',
+        ])->assertOk();
+
+        $this->assertSame('stopped', $member->prospect->fresh()->status->value);
+        $this->assertSame(99, $member->fresh()->stage->value);
+        $this->assertSame(1, count($this->aiClient->receivedMessages), 'Only the first soft negative may reach the AI.');
+    }
+
+    public function test_stage_3_soft_negative_stops_immediately(): void
+    {
+        [$workspace, $member] = $this->activeConversation();
+        $member->update(['stage' => 3]);
+        $channel = $member->campaign->channel;
+
+        $this->postTwilioInbound($channel, [
+            'From' => '+' . $member->prospect->phone, 'To' => '+' . $channel->sender_number, 'Body' => 'no thanks', 'MessageSid' => 'SM-SOFTNEG-STAGE3',
+        ])->assertOk();
+
+        $this->assertSame('stopped', $member->prospect->fresh()->status->value);
+        $this->assertSame(0, count($this->aiClient->receivedMessages));
+    }
+
+    // -----------------------------------------------------------------
+    // Pause / resume follow-up.
+    // -----------------------------------------------------------------
+
+    public function test_pause_suppresses_scheduled_followup(): void
+    {
+        [$workspace, $member] = $this->bookingLinkSentConversation();
+        $member->campaign->update(['status' => 'paused']);
+
+        $this->runFollowUp($member->id);
+
+        $this->assertSame(0, count($this->sender->sentMessages));
+        $this->assertNull($member->fresh()->followup_sent_at);
+    }
+
+    public function test_resume_restores_still_valid_pending_followup(): void
+    {
+        [$workspace, $member] = $this->bookingLinkSentConversation();
+        $member->campaign->update(['status' => 'paused']);
+        $owner = User::find($workspace->owner_user_id);
+        $this->authenticateAsCustomer($owner);
+
+        Queue::fake();
+        $this->post(route('customer.workspaces.prospecting.campaigns.status', [$workspace->uid, $member->campaign->uid]), [
+            'status' => 'active',
+        ])->assertSessionHas('flash_success');
+
+        Queue::assertPushed(AgencyProspectingFollowUpJob::class);
+    }
+
+    public function test_repeated_resume_cannot_duplicate_followup(): void
+    {
+        [$workspace, $member] = $this->bookingLinkSentConversation();
+        $member->campaign->update(['status' => 'paused']);
+        $owner = User::find($workspace->owner_user_id);
+        $this->authenticateAsCustomer($owner);
+
+        $this->post(route('customer.workspaces.prospecting.campaigns.status', [$workspace->uid, $member->campaign->uid]), ['status' => 'active']);
+        $this->runFollowUp($member->id);
+
+        $member->campaign->update(['status' => 'paused']);
+        $this->post(route('customer.workspaces.prospecting.campaigns.status', [$workspace->uid, $member->campaign->uid]), ['status' => 'active']);
+        $this->runFollowUp($member->id);
+
+        $this->assertSame(1, count($this->sender->sentMessages));
+    }
+
+    public function test_replied_prospect_remains_suppressed_across_resume(): void
+    {
+        [$workspace, $member] = $this->bookingLinkSentConversation();
+        $member->update(['last_inbound_at' => now()]);
+        $member->campaign->update(['status' => 'paused']);
+        $owner = User::find($workspace->owner_user_id);
+        $this->authenticateAsCustomer($owner);
+
+        $this->post(route('customer.workspaces.prospecting.campaigns.status', [$workspace->uid, $member->campaign->uid]), ['status' => 'active']);
+
+        $this->assertSame(0, count($this->sender->sentMessages));
+    }
+
+    // -----------------------------------------------------------------
+    // Analytics.
+    // -----------------------------------------------------------------
+
+    public function test_initial_message_metric_excludes_ai_and_followup_outbound_rows(): void
+    {
+        [$owner, $workspace] = $this->agencyWorkspace();
+        $channel = $this->createChannel($workspace);
+        $prospect = $this->createProspect($workspace);
+        $campaign = $this->createCampaign($workspace, ['channel_id' => $channel->id, 'opening_message' => 'Hi', 'status' => 'active']);
+        $member = $this->enrollDirectly($workspace, $campaign, $prospect);
+
+        AgencyProspectMessage::create(['workspace_id' => $workspace->id, 'campaign_member_id' => $member->id, 'channel_id' => $channel->id, 'direction' => 'outbound', 'purpose' => 'initial', 'operation_key' => 'initial:' . $member->id, 'body' => 'Opener', 'status' => 'sent', 'sent_at' => now()]);
+        AgencyProspectMessage::create(['workspace_id' => $workspace->id, 'campaign_member_id' => $member->id, 'channel_id' => $channel->id, 'direction' => 'outbound', 'purpose' => 'ai_reply', 'operation_key' => 'ai_reply:1', 'body' => 'AI reply', 'status' => 'sent', 'sent_at' => now()]);
+        AgencyProspectMessage::create(['workspace_id' => $workspace->id, 'campaign_member_id' => $member->id, 'channel_id' => $channel->id, 'direction' => 'outbound', 'purpose' => 'followup', 'operation_key' => 'followup:' . $member->id, 'body' => 'Followup', 'status' => 'sent', 'sent_at' => now()]);
+
+        $this->authenticateAsCustomer($owner);
+        $response = $this->get(route('customer.workspaces.prospecting.overview', $workspace->uid));
+
+        $response->assertOk();
+        $response->assertViewHas('initialMessagesSent', 1);
+    }
+
+    // -----------------------------------------------------------------
+    // Actor vs. owner identity.
+    // -----------------------------------------------------------------
+
+    public function test_active_admin_actor_is_recorded_as_channel_creator_not_provider_owner(): void
+    {
+        [$owner, $workspace] = $this->agencyWorkspace();
+        $admin = $this->createCustomerUser();
+        $this->makeMembership($workspace, $admin, WorkspaceMembershipRole::Admin, true);
+        $this->authenticateAsCustomer($admin);
+
+        $this->post(route('customer.workspaces.prospecting.channels.connect', [$workspace->uid, 'Twilio']), [
+            'sender_number' => '+12025559000',
+            'account_sid' => 'AC_TEST',
+            'auth_token' => 'token_test',
+        ])->assertSessionHas('flash_success');
+
+        $channel = AgencyProspectingChannel::where('workspace_id', $workspace->id)->first();
+        $this->assertSame($owner->id, $channel->sendingServer->user_id, 'SendingServer ownership stays bound to the Workspace owner.');
+        $this->assertSame($admin->id, $channel->created_by_user_id, 'created_by_user_id must record the actual acting Admin.');
     }
 
     // -----------------------------------------------------------------
@@ -1081,9 +1730,36 @@ class AgencyProspectingRuntimeTest extends TestCase
         $this->app->call([new AgencyProspectingInitialSendJob($memberId), 'handle']);
     }
 
+    /**
+     * Auto-creates a fresh inbound AgencyProspectMessage for the given
+     * member when the caller does not need to control which inbound
+     * message triggers the response (most AI-decision tests care only
+     * about the decision handling, not the inbound content) — keeps every
+     * existing `runRespond($id, $workspace)` call site working unchanged
+     * after AgencyProspectingRespondJob was bound to an exact inbound
+     * message id. `$workspace` is accepted but unused, exactly as before.
+     */
     private function runRespond(int $memberId, Workspace $workspace): void
     {
-        $this->app->call([new AgencyProspectingRespondJob($memberId), 'handle']);
+        $member = AgencyProspectCampaignMember::findOrFail($memberId);
+
+        $inbound = AgencyProspectMessage::create([
+            'workspace_id' => $member->workspace_id,
+            'campaign_member_id' => $memberId,
+            'channel_id' => $member->campaign?->channel_id,
+            'direction' => AgencyProspectMessage::DIRECTION_INBOUND,
+            'provider_message_id' => 'TEST-INBOUND-' . uniqid('', true),
+            'body' => 'Test inbound message',
+            'status' => AgencyProspectMessage::STATUS_RECEIVED,
+            'received_at' => now(),
+        ]);
+
+        $this->runRespondForMessage($memberId, $inbound->id);
+    }
+
+    private function runRespondForMessage(int $memberId, int $inboundMessageId): void
+    {
+        $this->app->call([new AgencyProspectingRespondJob($memberId, $inboundMessageId), 'handle']);
     }
 
     private function runFollowUp(int $memberId): void

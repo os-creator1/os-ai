@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Prospecting;
 
+use App\Enums\AgencyProspecting\AgencyProspectCampaignStatus;
 use App\Enums\AgencyProspecting\AgencyProspectStage;
 use App\Enums\AgencyProspecting\AgencyProspectStatus;
 use App\Enums\Entitlement\PlatformFeature;
@@ -17,6 +18,7 @@ use App\Models\AgencyProspectCampaignMember;
 use App\Models\AgencyProspectingChannel;
 use App\Models\AgencyProspectMessage;
 use App\Models\SendingServer;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\DB;
@@ -149,12 +151,6 @@ class AgencyProspectingWebhookController extends Controller
             return response('', 200);
         }
 
-        // Idempotency — a duplicate provider delivery of the exact same
-        // message must never be processed twice.
-        if (AgencyProspectMessage::where('provider_message_id', $providerMessageId)->exists()) {
-            return response('', 200);
-        }
-
         $normalizedFrom = AgencyProspectPhoneNormalizer::normalize($from);
         $normalizedTo = AgencyProspectPhoneNormalizer::normalize($to);
 
@@ -180,53 +176,109 @@ class AgencyProspectingWebhookController extends Controller
             return response('', 200);
         }
 
-        $activeMemberships = AgencyProspectCampaignMember::where('prospect_id', $prospect->id)
-            ->where('workspace_id', $workspace->id)
+        // Correction 1 — the candidate conversation must be open on THIS
+        // exact incoming channel, and a Draft enrollment (never sent,
+        // never a real conversation) must never count as competition for
+        // attribution. A Paused campaign still owns its conversation (it
+        // reserves the prospect for the one-open-conversation invariant)
+        // and inbound must still be attributable to it — sending an AI
+        // sales reply is what pause suppresses, never inbound capture.
+        $candidates = AgencyProspectCampaignMember::where('workspace_id', $workspace->id)
+            ->where('prospect_id', $prospect->id)
             ->whereNotIn('stage', [AgencyProspectStage::Booked->value, AgencyProspectStage::StoppedOptOut->value])
+            ->whereHas('campaign', function ($query) use ($channel): void {
+                $query->where('channel_id', $channel->id)
+                    ->whereIn('status', [
+                        AgencyProspectCampaignStatus::Active->value,
+                        AgencyProspectCampaignStatus::Paused->value,
+                    ]);
+            })
             ->get();
 
-        if ($activeMemberships->count() !== 1) {
-            // Zero or ambiguous (>1) active memberships — do not guess
-            // campaign attribution. Still return provider-safe 200.
-            Log::info('Agency Prospecting inbound message has no single active membership; no reply sent.', [
+        if ($candidates->count() !== 1) {
+            // Zero (wrong channel, or only a Draft/foreign-channel
+            // membership exists) or ambiguous (>1) open conversations on
+            // this exact channel — do not guess campaign attribution.
+            // Still return provider-safe 200.
+            Log::info('Agency Prospecting inbound message has no single open conversation on this channel; no reply sent.', [
                 'workspace_id' => $workspace->id,
                 'prospect_id' => $prospect->id,
-                'active_membership_count' => $activeMemberships->count(),
+                'channel_id' => $channel->id,
+                'candidate_count' => $candidates->count(),
             ]);
 
             return response('', 200);
         }
 
-        $member = $activeMemberships->first();
+        $member = $candidates->first();
+        $campaign = $member->campaign;
 
-        $message = AgencyProspectMessage::create([
-            'workspace_id' => $workspace->id,
-            'campaign_member_id' => $member->id,
-            'channel_id' => $channel->id,
-            'direction' => AgencyProspectMessage::DIRECTION_INBOUND,
-            'provider_message_id' => $providerMessageId,
-            'body' => $body,
-            'status' => AgencyProspectMessage::STATUS_RECEIVED,
-            'received_at' => now(),
-        ]);
+        // Correction 1 — atomic claim: a unique DB constraint on
+        // provider_message_id is the actual race-proof guarantee (the
+        // pre-check is only a fast path for the common non-racing case).
+        // A concurrent duplicate delivery loses the INSERT race and is
+        // still provider-safe (200), never a 500, never processed twice.
+        if (AgencyProspectMessage::where('provider_message_id', $providerMessageId)->exists()) {
+            return response('', 200);
+        }
+
+        try {
+            $message = AgencyProspectMessage::create([
+                'workspace_id' => $workspace->id,
+                'campaign_member_id' => $member->id,
+                'channel_id' => $channel->id,
+                'direction' => AgencyProspectMessage::DIRECTION_INBOUND,
+                'provider_message_id' => $providerMessageId,
+                'body' => $body,
+                'status' => AgencyProspectMessage::STATUS_RECEIVED,
+                'received_at' => now(),
+            ]);
+        } catch (UniqueConstraintViolationException) {
+            // Lost the race to a concurrent delivery of the exact same
+            // provider message — already recorded, never processed twice.
+            return response('', 200);
+        }
 
         DB::transaction(function () use ($member): void {
             AgencyProspectCampaignMember::where('id', $member->id)->update(['last_inbound_at' => now()]);
         });
 
         // Deterministic opt-out/negative detection — always before AI,
-        // never dependent on one.
-        $isHardStop = AgencyProspectStopDetector::isHardStop($body)
-            || ($member->stage->value >= 3 && AgencyProspectStopDetector::isSoftNegative($body));
+        // never dependent on one, and never blocked by a Paused campaign
+        // (unsubscribe must always be captured).
+        $stage = $member->stage->value;
+        $isHardStop = AgencyProspectStopDetector::isHardStop($body);
+        $isSoftNegative = ! $isHardStop && AgencyProspectStopDetector::isSoftNegative($body);
 
-        if ($isHardStop) {
+        if ($isHardStop || ($isSoftNegative && $stage >= 3)) {
             app(AgencyProspectStopAction::class)->apply($prospect);
 
             return response('', 200);
         }
 
+        if ($isSoftNegative) {
+            // Stage 1/2 — bounded repeated-soft-negative handling: the AI
+            // may respond at most once; a second soft negative at any
+            // later point stops the conversation before any further AI
+            // involvement. The count is never reset just because the AI
+            // replied.
+            if ($member->soft_negative_count >= 1) {
+                app(AgencyProspectStopAction::class)->apply($prospect);
+
+                return response('', 200);
+            }
+
+            AgencyProspectCampaignMember::where('id', $member->id)->increment('soft_negative_count');
+        }
+
+        // A Paused campaign still records inbound and still honors STOP
+        // above, but must never trigger an AI sales reply.
+        if ($campaign === null || $campaign->status !== AgencyProspectCampaignStatus::Active) {
+            return response('', 200);
+        }
+
         if ($prospect->status === AgencyProspectStatus::Active) {
-            AgencyProspectingRespondJob::dispatch($member->id);
+            AgencyProspectingRespondJob::dispatch($member->id, $message->id);
         }
 
         return response('', 200);

@@ -18,12 +18,18 @@ class AgencyProspectMessage extends Model
     public const STATUS_FAILED = 'failed';
     public const STATUS_RECEIVED = 'received';
 
+    public const PURPOSE_INITIAL = 'initial';
+    public const PURPOSE_AI_REPLY = 'ai_reply';
+    public const PURPOSE_FOLLOWUP = 'followup';
+
     protected $fillable = [
         'workspace_id',
         'campaign_member_id',
         'channel_id',
         'direction',
         'provider_message_id',
+        'purpose',
+        'operation_key',
         'body',
         'status',
         'sent_at',

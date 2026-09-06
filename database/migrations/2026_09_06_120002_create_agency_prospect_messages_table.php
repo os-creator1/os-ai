@@ -12,6 +12,15 @@
      * unique but nullable (an outbound row may briefly have none while a
      * send attempt is in flight or failed before the provider ever
      * assigned one). Never stores provider credentials.
+     *
+     * Correction 1 — `purpose` (initial/ai_reply/followup; null for
+     * inbound rows, where it does not apply) and `operation_key` (unique,
+     * nullable) give every OUTBOUND logical send a durable, deterministic
+     * identity independent of `provider_message_id` (which does not exist
+     * until the provider has actually accepted the send). This is what
+     * lets a job retry after a crash claim "this exact operation already
+     * has a row" atomically via the database's own unique constraint,
+     * rather than relying on transaction-timing assumptions.
      */
     return new class extends Migration {
         public function up(): void
@@ -24,6 +33,8 @@
                 $table->foreignId('channel_id')->nullable()->constrained('agency_prospecting_channels')->nullOnDelete();
                 $table->string('direction', 16);
                 $table->string('provider_message_id')->nullable();
+                $table->string('purpose', 16)->nullable();
+                $table->string('operation_key')->nullable();
                 $table->text('body');
                 $table->string('status', 16);
                 $table->timestamp('sent_at')->nullable();
@@ -33,6 +44,7 @@
                 $table->index('workspace_id');
                 $table->index('campaign_member_id');
                 $table->unique('provider_message_id');
+                $table->unique('operation_key');
             });
         }
 

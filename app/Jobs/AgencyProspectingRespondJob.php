@@ -14,27 +14,47 @@ use App\Library\Entitlement\EntitlementManager;
 use App\Models\AgencyProspectCampaignMember;
 use App\Models\AgencyProspectingSetting;
 use App\Models\AgencyProspectMessage;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\DB;
 
 /**
- * Runtime pass — the AI-driven reply for one inbound message, dispatched
- * only after the webhook has already committed the inbound message and
- * run deterministic STOP detection (this job is never reached for a
- * deterministic hard-stop — the webhook applies AgencyProspectStopAction
- * directly and never enqueues this job in that case). Every eligibility
- * condition is re-checked here against freshly-locked, current state —
- * never trusts anything true at webhook time, since this may run well
- * after the webhook responded.
+ * Runtime pass — the AI-driven reply for one EXACT inbound message,
+ * dispatched only after the webhook has already committed that inbound
+ * message and run deterministic STOP detection (this job is never reached
+ * for a deterministic hard-stop, nor for a Paused campaign — the webhook
+ * applies AgencyProspectStopAction directly, or simply never enqueues this
+ * job, in those cases). Every eligibility condition is re-checked here
+ * against freshly-locked, current state — never trusts anything true at
+ * webhook time, since this may run well after the webhook responded.
+ *
+ * Correction 1 — this job is bound to the exact inbound
+ * AgencyProspectMessage that caused it (never just "the conversation"),
+ * so a forged/stale/mismatched pair of ids can never bind to the wrong
+ * message. That same inbound-message identity anchors a durable
+ * `operation_key` ("ai_reply:{inboundMessageId}") on the AgencyProspectMessage
+ * table's own unique constraint — the actual race-proof idempotency
+ * guarantee against duplicate automatic sends, not a transaction-timing
+ * assumption. The external AI/provider calls are made OUTSIDE any open DB
+ * transaction; only the short claim-and-record steps around them are
+ * transactional.
  *
  * Free-form AI output never mutates state directly: AgencyProspectAiDecision
- * validates the shape, AgencyProspectStageTransitionGuard validates the
- * transition. Any invalid/unparseable/out-of-bounds result sends nothing
- * and advances nothing.
+ * validates the shape (including the send_booking_link <=> stage-4
+ * biconditional and unconditional URL-stripping of the AI's own reply
+ * text), AgencyProspectStageTransitionGuard validates the transition, and
+ * this job additionally refuses to honor send_booking_link unless a real
+ * booking_url is actually configured. Any invalid/unparseable/out-of-bounds
+ * result sends nothing and advances nothing. A validated decision
+ * requesting the terminal stage (or an explicit hard-negative intent) stops
+ * the conversation immediately — no outbound sales copy is ever sent after
+ * a stop decision.
  */
 class AgencyProspectingRespondJob extends Base
 {
-    public function __construct(private readonly int $campaignMemberId)
-    {
+    public function __construct(
+        private readonly int $campaignMemberId,
+        private readonly int $inboundMessageId,
+    ) {
     }
 
     public function handle(
@@ -43,96 +63,170 @@ class AgencyProspectingRespondJob extends Base
         EntitlementManager $entitlementManager,
         AgencyProspectStopAction $stopAction,
     ): void {
-        DB::transaction(function () use ($aiClient, $sender, $entitlementManager, $stopAction): void {
+        $inbound = AgencyProspectMessage::where('id', $this->inboundMessageId)
+            ->where('campaign_member_id', $this->campaignMemberId)
+            ->where('direction', AgencyProspectMessage::DIRECTION_INBOUND)
+            ->first();
+
+        if ($inbound === null) {
+            // The two ids do not bind to a real, matching inbound
+            // message — never guess/reply to a different conversation.
+            return;
+        }
+
+        $operationKey = 'ai_reply:' . $this->inboundMessageId;
+
+        if ($this->alreadySent($operationKey)) {
+            return;
+        }
+
+        $snapshot = DB::transaction(function () use ($entitlementManager) {
             $member = AgencyProspectCampaignMember::where('id', $this->campaignMemberId)->lockForUpdate()->first();
 
             if ($member === null || $member->isTerminal()) {
-                return;
+                return null;
             }
 
             $workspace = $member->workspace;
-            $campaign = $member->campaign;
-            $prospect = $member->prospect;
 
             if ($workspace === null || ! $workspace->is_active) {
-                return;
+                return null;
             }
 
             if (! $entitlementManager->decideForWorkspace($workspace, PlatformFeature::ProspectOutreach->value)->allowed) {
-                return;
+                return null;
             }
 
             // A paused campaign must never send an AI reply.
+            $campaign = $member->campaign;
+
             if ($campaign === null || $campaign->status !== AgencyProspectCampaignStatus::Active) {
-                return;
+                return null;
             }
 
             $channel = $campaign->channel;
 
             if ($channel === null || ! $channel->isActive() || $channel->sendingServer === null || ! $channel->sendingServer->status) {
-                return;
+                return null;
             }
+
+            $prospect = $member->prospect;
 
             if ($prospect === null || $prospect->status !== AgencyProspectStatus::Active) {
-                return;
+                return null;
             }
 
-            $settings = AgencyProspectingSetting::where('workspace_id', $workspace->id)->first();
-            $raw = $aiClient->complete($this->buildPromptMessages($settings, $campaign, $prospect, $member));
-            $decision = AgencyProspectAiDecision::fromRawJson($raw);
-
-            if ($decision === null) {
-                return;
-            }
-
-            if ($decision->isHardNegative()) {
-                $stopAction->apply($prospect);
-
-                return;
-            }
-
-            $nextStage = $decision->nextStage;
-
-            if ($nextStage !== null && ! AgencyProspectStageTransitionGuard::isAllowed($member->stage, $nextStage)) {
-                return;
-            }
-
-            $body = $decision->reply;
-
-            if ($decision->sendBookingLink && ! empty($settings?->booking_url)) {
-                $body = rtrim($body) . ' ' . $settings->booking_url;
-            }
-
-            $message = AgencyProspectMessage::create([
+            return [
                 'workspace_id' => $workspace->id,
-                'campaign_member_id' => $member->id,
-                'channel_id' => $channel->id,
-                'direction' => AgencyProspectMessage::DIRECTION_OUTBOUND,
-                'body' => $body,
-                'status' => AgencyProspectMessage::STATUS_PENDING,
-            ]);
+                'member' => $member,
+                'campaign' => $campaign,
+                'prospect' => $prospect,
+                'channel' => $channel,
+            ];
+        });
 
-            $result = $sender->send($channel, $channel->sender_number, $prospect->phone, $body);
+        if ($snapshot === null) {
+            return;
+        }
 
-            if (! $result->success) {
-                $message->update(['status' => AgencyProspectMessage::STATUS_FAILED]);
+        $settings = AgencyProspectingSetting::where('workspace_id', $snapshot['workspace_id'])->first();
+        $raw = $aiClient->complete($this->buildPromptMessages($settings, $snapshot['campaign'], $snapshot['prospect'], $snapshot['member']));
+        $decision = AgencyProspectAiDecision::fromRawJson($raw);
 
-                return;
+        if ($decision === null) {
+            return;
+        }
+
+        if ($decision->isHardNegative() || $decision->nextStage === 99) {
+            $stopAction->apply($snapshot['prospect']);
+
+            return;
+        }
+
+        if ($decision->nextStage !== null && ! AgencyProspectStageTransitionGuard::isAllowed($snapshot['member']->stage, $decision->nextStage)) {
+            return;
+        }
+
+        // The one cross-field check raw-JSON validation alone cannot make:
+        // whether a real booking_url is actually configured. Any other
+        // outcome sends nothing and advances nothing — never a partial
+        // stage-4 with no link.
+        if ($decision->sendBookingLink && empty($settings?->booking_url)) {
+            return;
+        }
+
+        $body = $decision->reply;
+
+        if ($decision->sendBookingLink) {
+            $body = rtrim($body) . ' ' . $settings->booking_url;
+        }
+
+        $claim = DB::transaction(function () use ($operationKey, $snapshot, $body) {
+            $member = AgencyProspectCampaignMember::where('id', $this->campaignMemberId)->lockForUpdate()->first();
+
+            if ($member === null || $member->isTerminal()) {
+                return null;
             }
 
-            $message->update([
+            if ($this->alreadySent($operationKey)) {
+                return null;
+            }
+
+            $existing = AgencyProspectMessage::where('operation_key', $operationKey)->first();
+
+            if ($existing !== null) {
+                // A prior attempt for this exact inbound message failed —
+                // reuse the same durable operation row for the retry
+                // rather than claiming a second one.
+                $existing->update(['status' => AgencyProspectMessage::STATUS_PENDING, 'body' => $body]);
+
+                return $existing;
+            }
+
+            try {
+                return AgencyProspectMessage::create([
+                    'workspace_id' => $snapshot['workspace_id'],
+                    'campaign_member_id' => $this->campaignMemberId,
+                    'channel_id' => $snapshot['channel']->id,
+                    'direction' => AgencyProspectMessage::DIRECTION_OUTBOUND,
+                    'purpose' => AgencyProspectMessage::PURPOSE_AI_REPLY,
+                    'operation_key' => $operationKey,
+                    'body' => $body,
+                    'status' => AgencyProspectMessage::STATUS_PENDING,
+                ]);
+            } catch (UniqueConstraintViolationException) {
+                // Lost the claim race to a concurrent attempt for this
+                // exact inbound message.
+                return null;
+            }
+        });
+
+        if ($claim === null) {
+            return;
+        }
+
+        $result = $sender->send($snapshot['channel'], $snapshot['channel']->sender_number, $snapshot['prospect']->phone, $body);
+
+        if (! $result->success) {
+            $claim->update(['status' => AgencyProspectMessage::STATUS_FAILED]);
+
+            return;
+        }
+
+        DB::transaction(function () use ($claim, $result, $decision, $settings): void {
+            $claim->update([
                 'status' => AgencyProspectMessage::STATUS_SENT,
                 'provider_message_id' => $result->providerMessageId,
                 'sent_at' => now(),
             ]);
 
-            if ($nextStage === 99) {
-                $member->update([
-                    'last_outbound_at' => now(),
-                    'last_provider_message_id' => $result->providerMessageId,
-                ]);
-                $stopAction->apply($prospect);
+            $member = AgencyProspectCampaignMember::where('id', $this->campaignMemberId)->lockForUpdate()->first();
 
+            if ($member === null || $member->isTerminal()) {
+                // The send genuinely happened (recorded above); the
+                // conversation became terminal in the meantime (e.g. a
+                // concurrent STOP) — never overwrite that with stale
+                // stage bookkeeping.
                 return;
             }
 
@@ -145,11 +239,11 @@ class AgencyProspectingRespondJob extends Base
                 $updates['proposed_slot'] = $decision->proposedSlot;
             }
 
-            if ($nextStage !== null) {
-                $updates['stage'] = $nextStage;
+            if ($decision->nextStage !== null) {
+                $updates['stage'] = $decision->nextStage;
             }
 
-            $bookingLinkJustSent = $decision->sendBookingLink && $nextStage === 4 && $member->booking_link_sent_at === null;
+            $bookingLinkJustSent = $decision->sendBookingLink && $decision->nextStage === 4 && $member->booking_link_sent_at === null;
 
             if ($bookingLinkJustSent) {
                 $updates['booking_link_sent_at'] = now();
@@ -162,6 +256,13 @@ class AgencyProspectingRespondJob extends Base
                 AgencyProspectingFollowUpJob::dispatch($member->id)->delay($updates['followup_at']);
             }
         });
+    }
+
+    private function alreadySent(string $operationKey): bool
+    {
+        return AgencyProspectMessage::where('operation_key', $operationKey)
+            ->where('status', AgencyProspectMessage::STATUS_SENT)
+            ->exists();
     }
 
     /**
@@ -199,6 +300,7 @@ class AgencyProspectingRespondJob extends Base
             . '"reply":"...","next_stage":null_or_one_of_2_3_4_5_99,"send_booking_link":true_or_false,"proposed_slot":null_or_string}. '
             . "You may never set next_stage to 6 — booking is confirmed manually, never by you. "
             . "You may never move a conversation backwards to a lower stage. "
+            . "send_booking_link and next_stage=4 must always be set together, never one without the other. "
             . "If the prospect is clearly not interested or hostile, set intent to hard_negative."
             . "\n\nContext:\n" . implode("\n", $context);
 

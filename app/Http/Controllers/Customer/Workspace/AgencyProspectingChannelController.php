@@ -19,6 +19,7 @@ use Illuminate\Contracts\View\Factory;
 use Illuminate\Contracts\View\View;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -150,6 +151,13 @@ class AgencyProspectingChannelController extends CustomerBaseController
             'user_id' => $workspace->owner_user_id,
         ]);
 
+        // Correction 1 — SendingServer.user_id stays bound to the
+        // Workspace's own legitimate owner identity (the tenant/provider
+        // ownership question this controller resolves above); an audit
+        // column named created_by_user_id must instead record the actual
+        // authenticated actor who performed this action (the owner, or an
+        // active Workspace Admin) — never silently conflated with the
+        // provider-owner identity.
         DB::transaction(function () use ($input, $workspace, $provider, $senderNumber): void {
             $sendingServer = $this->sendingServers->store($input);
 
@@ -159,7 +167,7 @@ class AgencyProspectingChannelController extends CustomerBaseController
                 'provider' => $provider,
                 'sender_number' => $senderNumber,
                 'status' => AgencyProspectingChannel::STATUS_ACTIVE,
-                'created_by_user_id' => $workspace->owner_user_id,
+                'created_by_user_id' => Auth::id(),
             ]);
         });
 

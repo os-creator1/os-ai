@@ -634,16 +634,36 @@ class AgencyProspectingTest extends TestCase
      * bespoke concurrency harness this foundation-pass correction does
      * not warrant.
      */
+    /**
+     * Correction 1 (runtime pass) — the assertion this test actually
+     * cares about is that stopProspect()/markProspectBooked()/
+     * enrollProspect() never bypass the shared prospect-lock helper with
+     * an ad-hoc lock of their own, and that the helper itself issues
+     * exactly one lockForUpdate() call. A file-wide "lockForUpdate()
+     * appears exactly once" count was a correct proxy for that ONLY
+     * because no other locking existed anywhere else in this file; the
+     * runtime pass legitimately added independent row-locking elsewhere
+     * (startCampaign()'s own campaign/prospect/conflict-check locks, for
+     * the unrelated Campaign-Start atomicity invariant) that a file-wide
+     * count can no longer distinguish from a real violation. Scoping the
+     * count to lockWorkspaceProspect()'s own body — plus asserting the
+     * three terminal actions never call lockForUpdate() directly — tests
+     * the same real invariant precisely, without depending on what does
+     * or does not exist elsewhere in the file.
+     */
     public function test_all_three_terminal_actions_share_the_single_row_lock_helper(): void
     {
         $source = file_get_contents(base_path('app/Http/Controllers/Customer/Workspace/AgencyProspectingController.php'));
 
         $this->assertSame(1, substr_count($source, 'function lockWorkspaceProspect('), 'Exactly one shared lock helper must exist.');
-        $this->assertSame(1, substr_count($source, '->lockForUpdate()'), 'lockForUpdate() must be issued from exactly one place.');
+
+        $lockHelperSource = $this->extractMethodSource($source, 'lockWorkspaceProspect');
+        $this->assertSame(1, substr_count($lockHelperSource, '->lockForUpdate()'), 'The shared prospect lock helper itself must issue exactly one lockForUpdate() call.');
 
         foreach (['stopProspect', 'markProspectBooked', 'enrollProspect'] as $method) {
             $methodSource = $this->extractMethodSource($source, $method);
             $this->assertStringContainsString('$this->lockWorkspaceProspect(', $methodSource, "{$method}() must acquire the shared prospect lock.");
+            $this->assertStringNotContainsString('->lockForUpdate()', $methodSource, "{$method}() must never issue its own lockForUpdate() outside the shared helper.");
         }
     }
 

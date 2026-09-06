@@ -11,6 +11,19 @@ use JsonException;
  * here is independently validated; any deviation returns null, which the
  * responder treats as "send nothing, advance nothing" (never a guess, never
  * a partial application).
+ *
+ * Correction 1 — `send_booking_link` and `next_stage === 4` are a strict
+ * biconditional: stage 4 means "a booking link was actually sent", so the
+ * AI can never request stage 4 without also requesting the link (and vice
+ * versa) — any other combination is an invalid decision, not a partially
+ * honored one. Whether a `booking_url` is actually configured is a
+ * Workspace-settings concern the raw JSON has no visibility into, so that
+ * half of the check is enforced by the caller (AgencyProspectingRespondJob),
+ * not here. The AI-authored `reply` also has every URL stripped
+ * unconditionally at construction time — the responder appends the one
+ * server-configured booking URL itself when authorized to; the AI can
+ * never smuggle a second (or, when unauthorized, a first) URL into the
+ * outbound body.
  */
 final class AgencyProspectAiDecision
 {
@@ -69,6 +82,12 @@ final class AgencyProspectAiDecision
             return null;
         }
 
+        $reply = trim(self::stripUrls(trim($reply)));
+
+        if ($reply === '') {
+            return null;
+        }
+
         $nextStage = $data['next_stage'] ?? null;
 
         if ($nextStage !== null && (! is_int($nextStage) || ! in_array($nextStage, self::ALLOWED_NEXT_STAGES, true))) {
@@ -81,17 +100,38 @@ final class AgencyProspectAiDecision
             return null;
         }
 
+        // Stage 4 ("booking link sent") and send_booking_link are the same
+        // fact from two angles — any AI decision claiming one without the
+        // other is internally inconsistent and must be rejected outright,
+        // never partially honored.
+        if ($sendBookingLink !== ($nextStage === 4)) {
+            return null;
+        }
+
         $proposedSlot = $data['proposed_slot'] ?? null;
 
         if ($proposedSlot !== null && (! is_string($proposedSlot) || trim($proposedSlot) === '')) {
             return null;
         }
 
-        return new self($intent, trim($reply), $nextStage, $sendBookingLink, $proposedSlot);
+        return new self($intent, $reply, $nextStage, $sendBookingLink, $proposedSlot);
     }
 
     public function isHardNegative(): bool
     {
         return $this->intent === 'hard_negative';
+    }
+
+    /**
+     * Removes every http(s) URL from AI-authored text. Deliberately
+     * simple/deterministic (no AI-controlled scheme/host is ever trusted)
+     * — the responder is the only party ever allowed to append a URL
+     * (the one server-configured booking_url, and only when authorized).
+     */
+    private static function stripUrls(string $text): string
+    {
+        $stripped = preg_replace('#https?://\S+#i', '', $text) ?? $text;
+
+        return trim(preg_replace('/\s{2,}/', ' ', $stripped) ?? $stripped);
     }
 }

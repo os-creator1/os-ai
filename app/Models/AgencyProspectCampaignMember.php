@@ -23,8 +23,10 @@ class AgencyProspectCampaignMember extends Model
         'booking_link_sent_at',
         'followup_at',
         'followup_sent_at',
+        'followup_cancelled_at',
         'proposed_slot',
         'last_provider_message_id',
+        'soft_negative_count',
     ];
 
     protected $casts = [
@@ -35,6 +37,8 @@ class AgencyProspectCampaignMember extends Model
         'booking_link_sent_at' => 'datetime',
         'followup_at' => 'datetime',
         'followup_sent_at' => 'datetime',
+        'followup_cancelled_at' => 'datetime',
+        'soft_negative_count' => 'integer',
     ];
 
     public function workspace(): BelongsTo
