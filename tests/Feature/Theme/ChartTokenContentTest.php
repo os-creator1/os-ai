@@ -21,7 +21,11 @@ class ChartTokenContentTest extends TestCase
         'resources/views/admin/Reports/overview.blade.php',
         'resources/views/admin/Reports/dashboard.blade.php',
         'resources/views/customer/Campaigns/overview.blade.php',
-        'resources/views/customer/Automations/overview.blade.php',
+        // customer/Automations/overview.blade.php was a chart-bearing view
+        // until B4 Business Automations replaced the legacy report page with
+        // a definition + execution-history view that renders no chart
+        // (docs/automation/B4-BUSINESS-AUTOMATIONS-CONTRACT.md §14); it is
+        // therefore no longer part of this inventory.
     ];
 
     public function test_theme_tokens_js_exposes_a_single_global_namespace(): void

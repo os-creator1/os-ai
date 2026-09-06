@@ -1,416 +1,89 @@
-@extends('layouts.contentLayoutMaster')
+@extends('layouts/contentLayoutMaster')
 
-@section('title', __('locale.menu.Overview'))
-
-@section('vendor-style')
-    <!-- vendor css files -->
-    <link rel="stylesheet" href="{{ asset(mix('vendors/css/tables/datatable/dataTables.bootstrap5.min.css')) }}">
-    <link rel="stylesheet" href="{{ asset(mix('vendors/css/tables/datatable/responsive.bootstrap5.min.css')) }}">
-    <link rel="stylesheet" href="{{ asset(mix('vendors/css/tables/datatable/buttons.bootstrap5.min.css')) }}">
-    <link rel="stylesheet" href="{{ asset(mix('vendors/css/extensions/sweetalert2.min.css')) }}">
-    <link rel="stylesheet" href="{{ asset(mix('vendors/css/charts/apexcharts.css')) }}">
-
-@endsection
-
-@section('page-style')
-    <!-- Page css files -->
-    <link rel="stylesheet" href="{{ asset(mix('css/base/plugins/charts/chart-apex.css')) }}">
-@endsection
+@section('title', $automation->name)
 
 @section('content')
-    <section class="campaign-overview">
-
-        <div class="row">
-            <div class="col-12">
-
-                <ul class="nav nav-pills mb-2" role="tablist">
-                    <!-- overview -->
-                    <li class="nav-item">
-                        <a class="nav-link active" id="account-tab" data-bs-toggle="tab" href="#overview" aria-controls="overview" role="tab" aria-selected="true">
-                            <i data-feather="pie-chart" class="font-medium-3 me-50"></i>
-                            <span class="fw-bold">{{__('locale.menu.Overview')}}</span>
-                        </a>
-                    </li>
-
-                    <!-- contacts -->
-                    <li class="nav-item">
-                        <a class="nav-link" id="contacts-tab" data-bs-toggle="tab" href="#contacts" aria-controls="contacts" role="tab" aria-selected="false">
-                            <i data-feather="bar-chart" class="font-medium-3 me-50"></i>
-                            <span class="fw-bold">{{ __('locale.menu.SMS History') }}</span>
-                        </a>
-                    </li>
-
-                </ul>
-
-
-                <div class="tab-content">
-
-                    <div class="tab-pane active" id="overview" aria-labelledby="overview-tab" role="tabpanel">
-                        @include('customer.Automations._overview')
-                    </div>
-
-                    <div class="tab-pane" id="contacts" aria-labelledby="contacts-tab" role="tabpanel">
-                        @include('customer.Automations._reports')
-                    </div>
-
-                </div>
-            </div>
+    <div class="row mb-2">
+        <div class="col-12 d-flex justify-content-between align-items-center">
+            <h4 class="mb-0">{{ $automation->name }}</h4>
+            <x-button variant="outline" size="sm" icon="arrow-left"
+                      :href="route('customer.workspaces.businesses.automations.index', [$workspaceUid, $businessUid])">
+                Back
+            </x-button>
         </div>
-    </section>
-@endsection
+    </div>
 
-@section('vendor-script')
-    <!-- vendor files -->
-    <script src="{{ asset(mix('vendors/js/tables/datatable/jquery.dataTables.min.js')) }}"></script>
-    <script src="{{ asset(mix('vendors/js/tables/datatable/dataTables.bootstrap5.min.js')) }}"></script>
-    <script src="{{ asset(mix('vendors/js/tables/datatable/dataTables.responsive.min.js')) }}"></script>
-    <script src="{{ asset(mix('vendors/js/tables/datatable/responsive.bootstrap5.min.js')) }}"></script>
-    <script src="{{ asset(mix('vendors/js/tables/datatable/datatables.checkboxes.min.js')) }}"></script>
-    <script src="{{ asset(mix('vendors/js/tables/datatable/datatables.buttons.min.js')) }}"></script>
-    <script src="{{ asset(mix('vendors/js/tables/datatable/buttons.html5.min.js')) }}"></script>
-    <script src="{{ asset(mix('vendors/js/tables/datatable/dataTables.rowGroup.min.js')) }}"></script>
+    <div class="row">
+        <div class="col-md-5 mb-2">
+            <x-card title="Definition" :padded="true">
+                <dl class="row mb-0">
+                    <dt class="col-sm-4">Status</dt>
+                    <dd class="col-sm-8">
+                        @if($automation->status === \App\Models\Automation::STATUS_ACTIVE)
+                            <x-badge variant="success">Active</x-badge>
+                        @elseif($automation->status === \App\Models\Automation::STATUS_ERROR)
+                            <x-badge variant="danger">Error</x-badge>
+                        @else
+                            <x-badge variant="neutral">Disabled</x-badge>
+                        @endif
+                    </dd>
 
-    <script src="{{ asset(mix('vendors/js/extensions/sweetalert2.all.min.js')) }}"></script>
-    <script src="{{ asset(mix('vendors/js/extensions/polyfill.min.js')) }}"></script>
-    <script src="{{ asset(mix('vendors/js/charts/apexcharts.min.js')) }}"></script>
+                    <dt class="col-sm-4">Trigger</dt>
+                    <dd class="col-sm-8">{{ $automation->triggerSummary() }}</dd>
 
-@endsection
+                    <dt class="col-sm-4">Action</dt>
+                    <dd class="col-sm-8">{{ $automation->actionSummary() }}</dd>
 
+                    <dt class="col-sm-4">Created</dt>
+                    <dd class="col-sm-8">{{ $automation->created_at?->format('Y-m-d H:i') }}</dd>
+                </dl>
 
-@section('page-script')
+                <div class="d-flex gap-2 mt-3 flex-wrap">
+                    <x-button variant="outline" size="sm" icon="edit-3"
+                              :href="route('customer.workspaces.businesses.automations.edit', [$workspaceUid, $businessUid, $automation->uid])">
+                        Edit
+                    </x-button>
 
-    <script>
-        $(document).ready(function () {
+                    @if($automation->status === \App\Models\Automation::STATUS_ACTIVE)
+                        <form method="post" action="{{ route('customer.workspaces.businesses.automations.disable', [$workspaceUid, $businessUid, $automation->uid]) }}">
+                            @csrf
+                            <x-button type="submit" variant="outline" size="sm">Disable</x-button>
+                        </form>
+                    @else
+                        <form method="post" action="{{ route('customer.workspaces.businesses.automations.enable', [$workspaceUid, $businessUid, $automation->uid]) }}">
+                            @csrf
+                            <x-button type="submit" variant="primary" size="sm">Enable</x-button>
+                        </form>
+                    @endif
 
-            $('#contacts-tab').on('click', function (e) {
-                $($.fn.dataTable.tables(true)).DataTable()
-                    .columns.adjust()
-                    .responsive.recalc();
-            });
+                    <form method="post" action="{{ route('customer.workspaces.businesses.automations.destroy', [$workspaceUid, $businessUid, $automation->uid]) }}"
+                          onsubmit="return confirm('Delete this automation and its execution history?');">
+                        @csrf
+                        <x-button type="submit" variant="outline" size="sm" icon="trash-2">Delete</x-button>
+                    </form>
+                </div>
+            </x-card>
+        </div>
 
-            $(window).on("load", function () {
-
-                let $success = PlatformTheme.chartPalette()[0],
-                    $strok_color = PlatformTheme.chartAxis();
-
-
-                // Customer Chart
-                // -----------------------------
-
-                let Delivered = "{{ $automation->readCache('DeliveredCount') }}";
-                let Failed = "{{ $automation->readCache('FailedDeliveredCount') }}";
-
-                let smsReports = {
-                    chart: {
-                        type: 'pie',
-                        height: 285,
-                        toolbar: {
-                            show: false
-                        }
-                    },
-                    labels: ["{{ __('locale.labels.delivered') }}", "{{ __('locale.labels.failed') }}"],
-                    series: [parseInt(Delivered), parseInt(Failed)],
-                    dataLabels: {
-                        enabled: false
-                    },
-                    legend: {show: false},
-                    stroke: {
-                        width: 4
-                    },
-                    colors: [PlatformTheme.primary(), '#EA5455'],
-                }
-
-                let customerChart = new ApexCharts(
-                    document.querySelector("#sms-reports"),
-                    smsReports
-                );
-
-                customerChart.render();
-
-
-                // Goal Overview  Chart
-                // -----------------------------
-
-                let goalChartoptions = {
-                    chart: {
-                        height: 245,
-                        type: 'radialBar',
-                        sparkline: {
-                            enabled: true,
-                        },
-                        dropShadow: {
-                            enabled: true,
-                            blur: 3,
-                            left: 1,
-                            top: 1,
-                            opacity: 0.1
-                        },
-                    },
-                    colors: [$success],
-                    plotOptions: {
-                        radialBar: {
-                            offsetY: -10,
-                            startAngle: -150,
-                            endAngle: 150,
-                            hollow: {
-                                size: '77%'
-                            },
-                            track: {
-                                background: $strok_color,
-                                strokeWidth: '50%',
-                            },
-                            dataLabels: {
-                                name: {
-                                    show: false
-                                },
-                                value: {
-                                    offsetY: 18,
-                                    color: $strok_color,
-                                    fontSize: '4rem'
-                                }
-                            }
-                        }
-                    },
-                    fill: {
-                        type: 'gradient',
-                        gradient: {
-                            shade: 'dark',
-                            type: 'horizontal',
-                            shadeIntensity: 0.5,
-                            gradientToColors: [PlatformTheme.chartPalette()[1]],
-                            inverseColors: true,
-                            opacityFrom: 1,
-                            opacityTo: 1,
-                            stops: [0, 100]
-                        },
-                    },
-                    series: [" {{ round($automation->readCache('DeliveredCount') / $automation->readCache('ContactCount') * 100)  }} "],
-                    stroke: {
-                        lineCap: 'round'
-                    },
-                    grid: {
-                        padding: {
-                            bottom: 30
-                        }
-                    }
-
-                }
-
-                let goalChart = new ApexCharts(
-                    document.querySelector("#goal-overview-chart"),
-                    goalChartoptions
-                );
-
-                goalChart.render();
-
-
-            });
-
-
-            //show response message
-            function showResponseMessage(data) {
-
-                if (data.status === 'success') {
-                    toastr['success'](data.message, '{{__('locale.labels.success')}}!!', {
-                        closeButton: true,
-                        positionClass: 'toast-top-right',
-                        progressBar: true,
-                        newestOnTop: true,
-                        rtl: isRtl
-                    });
-                    dataListView.draw(false);
-                } else if (data.status === 'error') {
-                    toastr['error'](data.message, '{{ __('locale.labels.opps') }}!', {
-                        closeButton: true,
-                        positionClass: 'toast-top-right',
-                        progressBar: true,
-                        newestOnTop: true,
-                        rtl: isRtl
-                    });
-                    dataListView.draw(false);
-                } else {
-                    toastr['warning']("{{__('locale.exceptions.something_went_wrong')}}", '{{ __('locale.labels.warning') }}!', {
-                        closeButton: true,
-                        positionClass: 'toast-top-right',
-                        progressBar: true,
-                        newestOnTop: true,
-                        rtl: isRtl
-                    });
-                }
-
-
-              // Fix: Replace icons after redraw
-              setTimeout(() => {
-                feather.replace();
-              }, 100); // slight delay to ensure DOM update completes
-            }
-
-            // init table dom
-            let Table = $("table");
-
-            // init list view datatable
-            let dataListView = $('.datatables-basic').DataTable({
-
-                "processing": true,
-                "serverSide": true,
-                "ajax": {
-                    "url": "{{ route('customer.automations.reports', $automation->uid) }}",
-                    "dataType": "json",
-                    "type": "POST",
-                    "data": {_token: "{{csrf_token()}}"}
-                },
-                "columns": [
-                    {"data": 'responsive_id', orderable: false, searchable: false},
-                    {"data": "to"},
-                    {"data": "action", orderable: false, searchable: false}
-                ],
-
-                searchDelay: 1500,
-                columnDefs: [
-                    {
-                        // For Responsive
-                        className: 'control',
-                        orderable: false,
-                        responsivePriority: 1,
-                        targets: 0
-                    },
-                    {
-                        // Actions
-                        targets: -1,
-                        title: '',
-                        orderable: false,
-                        render: function (data, type, full) {
-                            let $actions = '';
-
-                            if (full['triggered_at']) {
-                                $actions += '<span>' +
-                                    full['status'] +
-                                    '</span>'
-                            } else {
-                                $actions += '<span class="text-warning text-center">' +
-                                    full['pending'] +
-                                    '...</span>' +
-                                    '<br>' +
-                                    '<span class="action-send-now text-primary pe-1 cursor-pointer text-decoration-underline" data-id=' + full['uid'] + '>' +
-                                    full['send_now'] +
-                                    '</span>'
-                            }
-
-                            return (
-                                $actions
-                            );
-                        }
-                    }
-                ],
-                dom: '<"d-flex justify-content-between align-items-center mx-0 row"<"col-sm-12 col-md-6"l><"col-sm-12 col-md-6"f>>t<"d-flex justify-content-between mx-0 row"<"col-sm-12 col-md-6"i><"col-sm-12 col-md-6"p>>',
-
-                language: {
-                    paginate: {
-                        // remove previous & next text from pagination
-                        previous: '&nbsp;',
-                        next: '&nbsp;'
-                    },
-                    sLengthMenu: "_MENU_",
-                    sZeroRecords: "{{ __('locale.datatables.no_results') }}",
-                    sSearch: "{{ __('locale.datatables.search') }}",
-                    sProcessing: "{{ __('locale.datatables.processing') }}",
-                    sInfo: "{{ __('locale.datatables.showing_entries', ['start' => '_START_', 'end' => '_END_', 'total' => '_TOTAL_']) }}"
-                },
-
-                responsive: {
-                    details: {
-                        display: $.fn.dataTable.Responsive.display.modal({
-                            header: function (row) {
-                                let data = row.data();
-                                return 'Details of ' + data['uid'];
-                            }
-                        }),
-                        type: 'column',
-                        renderer: function (api, rowIdx, columns) {
-                            let data = $.map(columns, function (col) {
-                                return col.title !== '' // ? Do not show row in modal popup if title is blank (for check box)
-                                    ? '<tr data-dt-row="' +
-                                    col.rowIdx +
-                                    '" data-dt-column="' +
-                                    col.columnIndex +
-                                    '">' +
-                                    '<td>' +
-                                    col.title +
-                                    ':' +
-                                    '</td> ' +
-                                    '<td>' +
-                                    col.data +
-                                    '</td>' +
-                                    '</tr>'
-                                    : '';
-                            }).join('');
-
-                            return data ? $('<table class="table"/>').append('<tbody>' + data + '</tbody>') : false;
-                        }
-                    }
-                },
-                aLengthMenu: [[10, 20, 50, 100], [10, 20, 50, 100]],
-                order: [[1, "desc"]],
-                displayLength: 10,
-            });
-
-            // On Send Now
-            Table.delegate(".action-send-now ", "click", function (e) {
-                e.stopPropagation();
-                let id = $(this).data('id'),
-                    automation = "{{ $automation->uid }}";
-
-                Swal.fire({
-                    title: "{{ __('locale.labels.are_you_sure') }}",
-                    text: "{{ __('locale.automations.send_now') }}",
-                    icon: 'warning',
-                    showCancelButton: true,
-                    confirmButtonText: "{{ __('locale.buttons.confirm') }}",
-                    customClass: {
-                        confirmButton: 'btn btn-primary',
-                        cancelButton: 'btn btn-outline-danger ms-1'
-                    },
-                    buttonsStyling: false,
-                }).then(function (result) {
-                    if (result.value) {
-                        $.ajax({
-                            url: "{{ url('/automations')}}" + '/' + automation +'/'+ id + '/send',
-                            type: "POST",
-                            data: {
-                                _token: "{{csrf_token()}}"
-                            },
-                            success: function (data) {
-                                showResponseMessage(data);
-                            },
-                            error: function (reject) {
-                                if (reject.status === 422) {
-                                    let errors = reject.responseJSON.errors;
-                                    $.each(errors, function (key, value) {
-                                        toastr['warning'](value[0], "{{__('locale.labels.attention')}}", {
-                                            closeButton: true,
-                                            positionClass: 'toast-top-right',
-                                            progressBar: true,
-                                            newestOnTop: true,
-                                            rtl: isRtl
-                                        });
-                                    });
-                                } else {
-                                    toastr['warning']("{{ __('locale.labels.at_least_one_data') }}", "{{ __('locale.labels.attention') }}", {
-                                        closeButton: true,
-                                        positionClass: 'toast-top-right',
-                                        progressBar: true,
-                                        newestOnTop: true,
-                                        rtl: isRtl
-                                    });
-                                }
-                            }
-                        })
-                    }
-                })
-            });
-
-        });
-
-
-    </script>
+        <div class="col-md-7 mb-2">
+            <x-card title="Execution history" :padded="false">
+                @if($executions->isEmpty())
+                    <x-empty-state icon="clock" title="No executions yet"
+                                    description="Each time this automation fires for a contact, the outcome is recorded here." />
+                @else
+                    <x-table :headers="['When', 'Contact', 'Trigger', __('locale.labels.status'), 'Result']">
+                        @foreach($executions as $execution)
+                            <tr>
+                                <td>{{ $execution->created_at?->format('Y-m-d H:i') }}</td>
+                                <td>{{ $execution->contact?->getFullName($execution->contact?->phone ? '…' . substr((string) $execution->contact->phone, -4) : '—') }}</td>
+                                <td>{{ $execution->trigger_type?->label() }}</td>
+                                <td><x-badge :variant="$execution->status->badgeVariant()">{{ $execution->status->label() }}</x-badge></td>
+                                <td class="text-caption">{{ $execution->safe_result_summary ?? $execution->safe_error_summary ?? '—' }}</td>
+                            </tr>
+                        @endforeach
+                    </x-table>
+                @endif
+            </x-card>
+        </div>
+    </div>
 @endsection

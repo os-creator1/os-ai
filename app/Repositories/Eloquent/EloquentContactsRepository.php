@@ -3,6 +3,7 @@
     namespace App\Repositories\Eloquent;
 
     use App\Exceptions\GeneralException;
+    use App\Jobs\AutomationJob;
     use App\Library\Tool;
     use App\Models\Campaigns;
     use App\Models\ContactGroupFields;
@@ -252,6 +253,16 @@
                     ]);
 
                     if ($contact) {
+                        // B4 Business Automations, contract §6.B — one of the
+                        // two in-scope CONTACT_CREATED seams. Dispatched only
+                        // AFTER the outermost transaction commits (or
+                        // immediately when there is none), only for a Contact
+                        // with an explicit business_id, and always queued —
+                        // no action/provider work runs inside this request.
+                        if ($contact->business_id !== null) {
+                            dispatch(AutomationJob::forContactCreated((int) $contact->id))->afterCommit();
+                        }
+
 
                         $sendMessage = new EloquentCampaignRepository($campaign = new Campaigns());
 
@@ -694,6 +705,15 @@
             $subscriber->save();
 
             $subscriber->updateFields($input);
+
+            // B4 Business Automations, contract §6.B — the second in-scope
+            // CONTACT_CREATED seam. firstOrNew() above may have matched an
+            // EXISTING subscriber, so only a genuinely newly-created,
+            // Business-scoped Contact triggers; dispatch is deferred until
+            // after commit and always queued.
+            if ($subscriber->wasRecentlyCreated && $subscriber->business_id !== null) {
+                dispatch(AutomationJob::forContactCreated((int) $subscriber->id))->afterCommit();
+            }
 
             $contactGroups->updateCache();
 
