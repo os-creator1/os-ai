@@ -2,18 +2,55 @@
 
     namespace App\Repositories\Eloquent;
 
+    use App\Library\Settings\PlatformSettingsEnvWriter;
     use App\Models\AppConfig;
     use App\Repositories\Contracts\SettingsRepository;
     use Exception;
+    use Illuminate\Support\Arr;
 
     class EloquentSettingsRepository extends EloquentBaseRepository implements SettingsRepository
     {
         /**
+         * B3 Simplified Platform Settings §10 — the general/platform write
+         * path's own hard server-side allowlist. Enforced here, at the
+         * repository entry point, in addition to
+         * PostGeneralRequest::rules() bounding SettingsController::
+         * postGeneral()'s own $request->validated() call: neither the
+         * request layer nor the HTML form is ever the sole authorization
+         * for which app_config rows this method may touch (a caller that
+         * somehow passed an unfiltered array — e.g. a future refactor —
+         * still cannot write 'license', 'customer_permissions', or any
+         * other row outside this exact set).
+         *
+         * custom_script and footer_company_name/footer_copyright_text are
+         * genuine, allowed general-settings keys but are deliberately not
+         * listed here: custom_script has its own sanitize-then-write path
+         * (SettingsController::postGeneral()), and the footer fields are
+         * env-only (no matching app_config row exists to update), both
+         * unchanged from the pre-B3 code's own exclusion list.
+         */
+        private const GENERAL_ALLOWED_KEYS = [
+            'app_name',
+            'app_title',
+            'app_keyword',
+            'company_address',
+            'country',
+            'timezone',
+            'date_format',
+            'time_format',
+            'language',
+        ];
+
+        private PlatformSettingsEnvWriter $envWriter;
+
+        /**
          * EloquentSettingsRepository constructor.
          */
-        public function __construct(AppConfig $app_config)
+        public function __construct(AppConfig $app_config, PlatformSettingsEnvWriter $envWriter)
         {
             parent::__construct($app_config);
+
+            $this->envWriter = $envWriter;
         }
 
         /**
@@ -21,7 +58,7 @@
          */
         public function general(array $input): bool
         {
-            foreach ($input as $key => $value) {
+            foreach (Arr::only($input, self::GENERAL_ALLOWED_KEYS) as $key => $value) {
                 AppConfig::where('setting', $key)->update([
                     'value' => $value,
                 ]);
@@ -33,37 +70,42 @@
 
         /**
          * update system email settings
+         *
+         * B3 Simplified Platform Settings §5/§11 — routed through
+         * PlatformSettingsEnvWriter (exact-key, quoted/escaped .env write,
+         * config cache cleared, in-process config() refreshed) instead of
+         * the previous raw file_get_contents()/preg_grep() rewrite and
+         * AppConfig::setEnv() calls. A blank submitted password preserves
+         * the existing config('mail.mailers.smtp.password') value rather
+         * than ever clearing it (SystemEmailRequest no longer requires
+         * it), and the password is no longer mirrored into the app_config
+         * DB table at all -- it was never read back from there (only
+         * config('mail.*'), confirmed by search), so that was a second,
+         * unnecessary plaintext copy of the secret.
          */
         public function systemEmail(array $input): bool
         {
-            if ($input['driver'] == 'sendmail') {
-                AppConfig::setEnv('MAIL_DRIVER', 'sendmail');
+            if (($input['driver'] ?? null) === 'sendmail') {
+                $this->envWriter->set('MAIL_DRIVER', null, 'sendmail');
+                $this->envWriter->set('MAIL_MAILER', 'mail.default', 'sendmail');
             } else {
-
-                $smtpSetting = 'MAIL_DRIVER=smtp' . '
-MAIL_MAILER=smtp' . '
-MAIL_HOST=' . $input['host'] . '
-MAIL_PORT=' . $input['port'] . '
-MAIL_USERNAME=' . $input['username'] . '
-MAIL_ENCRYPTION=' . $input['encryption'] . '
-';
-                // @ignoreCodingStandard
-                $env        = file_get_contents(base_path('.env'));
-                $rows       = explode("\n", $env);
-                $unwanted   = 'MAIL_MAILER|MAIL_DRIVER|MAIL_HOST|MAIL_PORT|MAIL_USERNAME|MAIL_ENCRYPTION';
-                $cleanArray = preg_grep("/$unwanted/i", $rows, PREG_GREP_INVERT);
-
-                $cleanString = implode("\n", $cleanArray);
-                $env         = $cleanString . $smtpSetting;
-
-                file_put_contents(base_path('.env'), $env);
+                $this->envWriter->set('MAIL_DRIVER', null, 'smtp');
+                $this->envWriter->set('MAIL_MAILER', 'mail.default', 'smtp');
+                $this->envWriter->set('MAIL_HOST', 'mail.mailers.smtp.host', $input['host'] ?? '');
+                $this->envWriter->set('MAIL_PORT', 'mail.mailers.smtp.port', $input['port'] ?? '');
+                $this->envWriter->set('MAIL_USERNAME', 'mail.mailers.smtp.username', $input['username'] ?? '');
+                $this->envWriter->set('MAIL_ENCRYPTION', 'mail.mailers.smtp.encryption', $input['encryption'] ?? '');
             }
 
-            AppConfig::setEnv('MAIL_PASSWORD', $input['password']);
-            AppConfig::setEnv('MAIL_FROM_ADDRESS', $input['from_email']);
-            AppConfig::setEnv('MAIL_FROM_NAME', $input['from_name']);
+            $password = filled($input['password'] ?? null)
+                ? $input['password']
+                : (string) config('mail.mailers.smtp.password');
 
-            foreach ($input as $key => $value) {
+            $this->envWriter->set('MAIL_PASSWORD', 'mail.mailers.smtp.password', $password);
+            $this->envWriter->set('MAIL_FROM_ADDRESS', 'mail.from.address', $input['from_email']);
+            $this->envWriter->set('MAIL_FROM_NAME', 'mail.from.name', $input['from_name']);
+
+            foreach (Arr::only($input, ['driver', 'host', 'port', 'encryption', 'username', 'from_email', 'from_name']) as $key => $value) {
                 AppConfig::where('setting', $key)->update([
                     'value' => $value,
                 ]);
@@ -75,6 +117,25 @@ MAIL_ENCRYPTION=' . $input['encryption'] . '
 
         /**
          * update authentication settings
+         *
+         * B3 Simplified Platform Settings §6/§11 — routed through
+         * PlatformSettingsEnvWriter. Social provider client secrets and
+         * the captcha secret key are never rendered back into the form
+         * (AuthenticationRequest no longer requires any of them), so a
+         * blank submission always preserves the existing stored secret
+         * rather than overwriting it with an empty string -- the previous
+         * captcha_site_key/captcha_secret_key `!= null` guards already had
+         * this property (an empty string loosely equals null in PHP), but
+         * the four social client_secret writes did not, and would have
+         * blanked a saved secret the moment its provider's own toggle was
+         * merely resubmitted unchanged. client_can_create_subaccount/
+         * client_can_delete_subaccount are no longer first-class Sign-in
+         * & Security controls (§6 — the Sub-Accounts surface they gate is
+         * a documented delete-later candidate) but keep writing their
+         * exact same env keys from whatever the view submits (a hidden
+         * field carrying the current value, per AuthenticationRequest's
+         * own doc comment), so existing behavior is untouched until that
+         * retirement lands.
          */
         public function authentication(array $input): bool
         {
@@ -94,98 +155,116 @@ MAIL_ENCRYPTION=' . $input['encryption'] . '
             if ($input['two_factor'] == 1) {
                 $two_factor = 'true';
             }
-            AppConfig::setEnv('TWO_FACTOR', $two_factor);
+            // Written as the literal string 'true'/'false', matching the
+            // pre-B3 AppConfig::setEnv() calls below exactly -- Laravel's
+            // own env() helper (config/app.php: env('TWO_FACTOR', false))
+            // special-cases those exact string tokens into a real
+            // boolean on the next request's boot. Passing a native PHP
+            // bool here instead would write "1"/"" to the .env file
+            // (PHP's string-cast of true/false), which env() does NOT
+            // recognize as boolean tokens.
+            $this->envWriter->set('TWO_FACTOR', 'app.two_factor', $two_factor);
 
-            if ($input['captcha_site_key'] != null) {
-                AppConfig::setEnv('NOCAPTCHA_SITEKEY', $input['captcha_site_key']);
+            if (filled($input['captcha_site_key'] ?? null)) {
+                $this->envWriter->set('NOCAPTCHA_SITEKEY', 'no-captcha.sitekey', $input['captcha_site_key']);
             }
 
-            if ($input['captcha_secret_key'] != null) {
-                AppConfig::setEnv('NOCAPTCHA_SECRET', $input['captcha_secret_key']);
+            if (filled($input['captcha_secret_key'] ?? null)) {
+                $this->envWriter->set('NOCAPTCHA_SECRET', 'no-captcha.secret', $input['captcha_secret_key']);
             }
 
-            if ($input['two_factor_send_by'] != null) {
-                AppConfig::setEnv('AUTH_CODE_SEND_BY', $input['two_factor_send_by']);
+            if (filled($input['two_factor_send_by'] ?? null)) {
+                $this->envWriter->set('AUTH_CODE_SEND_BY', 'app.two_factor_send_by', $input['two_factor_send_by']);
             }
 
-            if ($input['captcha_in_login'] == 0) {
+            if (($input['captcha_in_login'] ?? 1) == 0) {
                 $captcha_login = 'false';
             }
 
-            if ($input['captcha_in_client_registration'] == 0) {
+            if (($input['captcha_in_client_registration'] ?? 1) == 0) {
                 $captcha_registration = 'false';
             }
 
-            if ($input['client_registration'] == 0) {
+            if (($input['client_registration'] ?? 1) == 0) {
                 $client_registration = 'false';
             }
 
-            if ($input['client_can_delete_account'] == 0) {
+            if (($input['client_can_delete_account'] ?? 1) == 0) {
                 $client_can_delete_account = 'false';
             }
 
-            if ($input['client_can_create_subaccount'] == 0) {
+            if (($input['client_can_create_subaccount'] ?? 1) == 0) {
                 $client_can_create_subaccount = 'false';
             }
 
-            if ($input['client_can_delete_subaccount'] == 0) {
+            if (($input['client_can_delete_subaccount'] ?? 1) == 0) {
                 $client_can_delete_subaccount = 'false';
             }
 
-            if ($input['registration_verification'] == 0) {
+            if (($input['registration_verification'] ?? 1) == 0) {
                 $registration_verification = 'false';
             }
 
-            if ($input['login_with_facebook'] == 1) {
+            if (($input['login_with_facebook'] ?? 0) == 1) {
                 $login_with_facebook = 'true';
                 $facebook_redirect   = config('app.url') . '/login/facebook/callback';
 
-                AppConfig::setEnv('FACEBOOK_CLIENT_ID', $input['facebook_client_id']);
-                AppConfig::setEnv('FACEBOOK_CLIENT_SECRET', $input['facebook_client_secret']);
-                AppConfig::setEnv('FACEBOOK_REDIRECT', $facebook_redirect);
+                if (filled($input['facebook_client_id'] ?? null)) {
+                    $this->envWriter->set('FACEBOOK_CLIENT_ID', 'services.facebook.client_id', $input['facebook_client_id']);
+                }
+                if (filled($input['facebook_client_secret'] ?? null)) {
+                    $this->envWriter->set('FACEBOOK_CLIENT_SECRET', 'services.facebook.client_secret', $input['facebook_client_secret']);
+                }
+                $this->envWriter->set('FACEBOOK_REDIRECT', 'services.facebook.redirect', $facebook_redirect);
             }
-            if ($input['login_with_twitter'] == 1) {
+            if (($input['login_with_twitter'] ?? 0) == 1) {
                 $login_with_twitter = 'true';
                 $twitter_redirect   = config('app.url') . '/login/twitter/callback';
 
-                AppConfig::setEnv('TWITTER_CLIENT_ID', $input['twitter_client_id']);
-                AppConfig::setEnv('TWITTER_CLIENT_SECRET', $input['twitter_client_secret']);
-                AppConfig::setEnv('TWITTER_REDIRECT', $twitter_redirect);
+                if (filled($input['twitter_client_id'] ?? null)) {
+                    $this->envWriter->set('TWITTER_CLIENT_ID', 'services.twitter.client_id', $input['twitter_client_id']);
+                }
+                if (filled($input['twitter_client_secret'] ?? null)) {
+                    $this->envWriter->set('TWITTER_CLIENT_SECRET', 'services.twitter.client_secret', $input['twitter_client_secret']);
+                }
+                $this->envWriter->set('TWITTER_REDIRECT', 'services.twitter.redirect', $twitter_redirect);
             }
-            if ($input['login_with_google'] == 1) {
+            if (($input['login_with_google'] ?? 0) == 1) {
                 $login_with_google = 'true';
                 $google_redirect   = config('app.url') . '/login/google/callback';
 
-                AppConfig::setEnv('GOOGLE_CLIENT_ID', $input['google_client_id']);
-                AppConfig::setEnv('GOOGLE_CLIENT_SECRET', $input['google_client_secret']);
-                AppConfig::setEnv('GOOGLE_REDIRECT', $google_redirect);
+                if (filled($input['google_client_id'] ?? null)) {
+                    $this->envWriter->set('GOOGLE_CLIENT_ID', 'services.google.client_id', $input['google_client_id']);
+                }
+                if (filled($input['google_client_secret'] ?? null)) {
+                    $this->envWriter->set('GOOGLE_CLIENT_SECRET', 'services.google.client_secret', $input['google_client_secret']);
+                }
+                $this->envWriter->set('GOOGLE_REDIRECT', 'services.google.redirect', $google_redirect);
             }
-            if ($input['login_with_github'] == 1) {
+            if (($input['login_with_github'] ?? 0) == 1) {
                 $login_with_github = 'true';
                 $github_redirect   = config('app.url') . '/login/github/callback';
 
-                AppConfig::setEnv('GITHUB_CLIENT_ID', $input['github_client_id']);
-                AppConfig::setEnv('GITHUB_CLIENT_SECRET', $input['github_client_secret']);
-                AppConfig::setEnv('GITHUB_REDIRECT', $github_redirect);
+                if (filled($input['github_client_id'] ?? null)) {
+                    $this->envWriter->set('GITHUB_CLIENT_ID', 'services.github.client_id', $input['github_client_id']);
+                }
+                if (filled($input['github_client_secret'] ?? null)) {
+                    $this->envWriter->set('GITHUB_CLIENT_SECRET', 'services.github.client_secret', $input['github_client_secret']);
+                }
+                $this->envWriter->set('GITHUB_REDIRECT', 'services.github.redirect', $github_redirect);
             }
 
-            AppConfig::setEnv('NOCAPTCHA_IN_LOGIN', $captcha_login);
-            AppConfig::setEnv('NOCAPTCHA_IN_REGISTRATION', $captcha_registration);
-            AppConfig::setEnv('SOCIALITE_FACEBOOK', $login_with_facebook);
-            AppConfig::setEnv('SOCIALITE_TWITTER', $login_with_twitter);
-            AppConfig::setEnv('SOCIALITE_GOOGLE', $login_with_google);
-            AppConfig::setEnv('SOCIALITE_GITHUB', $login_with_github);
-            AppConfig::setEnv('ACCOUNT_CAN_REGISTER', $client_registration);
-            AppConfig::setEnv('ACCOUNT_CAN_DELETE', $client_can_delete_account);
-            AppConfig::setEnv('ACCOUNT_VERIFICATION', $registration_verification);
-            AppConfig::setEnv('ACCOUNT_CREATE_SUBACCOUNT', $client_can_create_subaccount);
-            AppConfig::setEnv('ACCOUNT_DELETE_SUBACCOUNT', $client_can_delete_subaccount);
-
-            foreach ($input as $key => $value) {
-                AppConfig::where('setting', $key)->update([
-                    'value' => $value,
-                ]);
-            }
+            $this->envWriter->set('NOCAPTCHA_IN_LOGIN', 'no-captcha.login', $captcha_login);
+            $this->envWriter->set('NOCAPTCHA_IN_REGISTRATION', 'no-captcha.registration', $captcha_registration);
+            $this->envWriter->set('SOCIALITE_FACEBOOK', 'services.facebook.active', $login_with_facebook);
+            $this->envWriter->set('SOCIALITE_TWITTER', 'services.twitter.active', $login_with_twitter);
+            $this->envWriter->set('SOCIALITE_GOOGLE', 'services.google.active', $login_with_google);
+            $this->envWriter->set('SOCIALITE_GITHUB', 'services.github.active', $login_with_github);
+            $this->envWriter->set('ACCOUNT_CAN_REGISTER', 'account.can_register', $client_registration);
+            $this->envWriter->set('ACCOUNT_CAN_DELETE', 'account.can_delete', $client_can_delete_account);
+            $this->envWriter->set('ACCOUNT_VERIFICATION', 'account.verify_account', $registration_verification);
+            $this->envWriter->set('ACCOUNT_CREATE_SUBACCOUNT', 'account.create_subaccount', $client_can_create_subaccount);
+            $this->envWriter->set('ACCOUNT_DELETE_SUBACCOUNT', 'account.delete_subaccount', $client_can_delete_subaccount);
 
             return true;
 
@@ -298,17 +377,33 @@ BROADCAST_DRIVER=' . $driver . '
             return true;
         }
 
+        /**
+         * B3 Simplified Platform Settings §7 — the one canonical platform
+         * AI provider configuration path. Preserves the exact env keys
+         * (OPENAI_API_KEY/MODEL/ORGANIZATION/PROJECT/ROLE) and the exact
+         * config('services.openai.*') seam config/services.php already
+         * exposes -- both the existing CampaignController AI-generate
+         * feature and Lane A's Agency Prospecting runtime
+         * (OpenAiAgencyProspectingClient) read config('services.openai.
+         * active'|'api_key'|'model') directly, so neither the key names
+         * nor config/services.php itself may change here. The stored API
+         * key is never rendered back into the form (OpenAISettingsRequest
+         * no longer requires it), so a blank submission preserves the
+         * existing key rather than clearing it.
+         */
         public function aiSettings(array $input)
         {
+            $role = $input['role'] ?? 'user';
 
-            $role = $input['role'] ?? $input['role'] = 'user';
+            $apiKey = filled($input['api_key'] ?? null)
+                ? $input['api_key']
+                : (string) config('services.openai.api_key');
 
-
-            AppConfig::setEnv('OPENAI_API_KEY', $input['api_key']);
-            AppConfig::setEnv('OPENAI_MODEL', $input['model']);
-            AppConfig::setEnv('OPENAI_ORGANIZATION', $input['organization']);
-            AppConfig::setEnv('OPENAI_PROJECT', $input['project']);
-            AppConfig::setEnv('OPENAI_ROLE', $role);
+            $this->envWriter->set('OPENAI_API_KEY', 'services.openai.api_key', $apiKey);
+            $this->envWriter->set('OPENAI_MODEL', 'services.openai.model', $input['model']);
+            $this->envWriter->set('OPENAI_ORGANIZATION', 'services.openai.organization', $input['organization'] ?? '');
+            $this->envWriter->set('OPENAI_PROJECT', 'services.openai.project', $input['project'] ?? '');
+            $this->envWriter->set('OPENAI_ROLE', 'services.openai.role', $role);
 
             return true;
         }

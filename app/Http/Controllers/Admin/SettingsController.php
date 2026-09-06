@@ -11,53 +11,116 @@
     use App\Http\Requests\Settings\OpenAISettingsRequest;
     use App\Http\Requests\Settings\PostGeneralRequest;
     use App\Http\Requests\Settings\PusherRequest;
+    use App\Http\Requests\Settings\RemoveBrandingAssetRequest;
+    use App\Http\Requests\Settings\SendTestEmailRequest;
     use App\Http\Requests\Settings\SystemEmailRequest;
-    use App\Library\Tool;
+    use App\Library\Branding\BrandingUploadService;
+    use App\Library\Settings\PlatformSettingsEnvWriter;
+    use App\Mail\PlatformSettingsTestEmail;
     use App\Models\AppConfig;
     use App\Models\Customer;
     use App\Models\Language;
-    use App\Models\SendingServer;
-    use App\Models\User;
     use App\Notifications\MaintenanceEnded;
     use App\Repositories\Contracts\SettingsRepository;
-    use Exception;
     use Illuminate\Auth\Access\AuthorizationException;
     use Illuminate\Contracts\Foundation\Application;
     use Illuminate\Contracts\View\Factory;
     use Illuminate\Http\JsonResponse;
     use Illuminate\Http\RedirectResponse;
     use Illuminate\Http\Request;
+    use Illuminate\Support\Arr;
     use Illuminate\Support\Facades\Artisan;
     use Illuminate\Support\Facades\Config;
     use Illuminate\Support\Facades\DB;
-    use Illuminate\Support\Facades\File;
+    use Illuminate\Support\Facades\Mail;
     use Illuminate\Support\Facades\Notification;
     use Illuminate\View\View;
+    use Throwable;
 
+    /**
+     * B3 Simplified Platform Settings.
+     *
+     * Replaces the inherited 9-tab "All Settings" vendor screen with one
+     * page of six sections (Platform, Appearance, Email, Sign-in &
+     * Security, AI, Advanced). Every write endpoint below keeps its exact
+     * pre-B3 route name and env/DB key shapes so nothing outside the
+     * presentation layer (customer-facing config reads, Lane A's Agency
+     * Prospecting OpenAI seam, existing FormRequest abilities) is
+     * affected. See docs/automation for the B3 reconnaissance report this
+     * implementation follows.
+     */
     class SettingsController extends AdminBaseController
     {
         protected SettingsRepository $settings;
 
+        private PlatformSettingsEnvWriter $envWriter;
+
+        /**
+         * B3 §17/§4 — the only six branding fields BrandingUploadService
+         * knows how to store or remove. Shared by postGeneral() (store)
+         * and removeBrandingAsset() (delete); RemoveBrandingAssetRequest
+         * validates against the same key set independently.
+         */
+        private const BRANDING_FIELDS = [
+            'app_logo' => 'logo',
+            'app_favicon' => 'favicon',
+            'logo_compact' => 'logo_compact',
+            'logo_dark' => 'logo_dark',
+            'auth_illustration' => 'auth_illustration',
+            'installer_illustration' => 'installer_illustration',
+        ];
+
         /**
          * SettingsController constructor.
-         *
-         * @param SettingsRepository $settings
          */
-        public function __construct(SettingsRepository $settings)
+        public function __construct(SettingsRepository $settings, PlatformSettingsEnvWriter $envWriter)
         {
-            $this->settings = $settings;
+            $this->settings  = $settings;
+            $this->envWriter = $envWriter;
         }
 
         /**
-         * Update all system settings.
+         * B3 Simplified Platform Settings — the one settings page. Section
+         * visibility mirrors each section's own write ability, so a
+         * scoped admin never sees a tab whose form they could not submit
+         * — including one who holds only 'manage ai_settings' and none of
+         * the other abilities: the pre-B3 AI settings page was its own
+         * route gated solely by that ability, independent of 'general
+         * settings', and that independence is preserved here (the page
+         * itself requires at least one of the six section abilities, not
+         * 'general settings' specifically). Advanced is shown to anyone
+         * holding 'general settings' (custom script, diagnostics) or
+         * 'authentication settings' (default customer permissions,
+         * mirroring DefaultCustomerPermission's own ability — the pre-B3
+         * tab shell scoped that same sub-form to 'authentication
+         * settings', not 'general settings', and _advanced.blade.php
+         * keeps that per-block @can split).
          *
-         * @return Application|Factory|\Illuminate\Contracts\View\View|string
          * @throws AuthorizationException
          */
-        public function general(): \Illuminate\Contracts\View\View|Factory|string|Application
+        public function general(Request $request): \Illuminate\Contracts\View\View|Factory|string|Application
         {
+            $user = $request->user();
 
-            $this->authorize('general settings');
+            $sectionCandidates = [
+                'platform' => ['label' => 'Platform', 'ability' => 'general settings'],
+                'appearance' => ['label' => 'Appearance', 'ability' => 'general settings'],
+                'email' => ['label' => 'Email', 'ability' => 'system_email settings'],
+                'security' => ['label' => 'Sign-in & Security', 'ability' => 'authentication settings'],
+                'ai' => ['label' => 'AI', 'ability' => 'manage ai_settings'],
+                'advanced' => ['label' => 'Advanced', 'ability' => 'general settings|authentication settings'],
+            ];
+
+            $tabs = [];
+            foreach ($sectionCandidates as $key => $meta) {
+                if ($user->canAny(explode('|', $meta['ability']))) {
+                    $tabs[$key] = $meta['label'];
+                }
+            }
+
+            if ($tabs === []) {
+                throw new AuthorizationException();
+            }
 
             $breadcrumbs = [
                 ['link' => url(config('app.admin_path') . "/dashboard"), 'name' => __('locale.menu.Dashboard')],
@@ -65,61 +128,17 @@
                 ['name' => __('locale.menu.All Settings')],
             ];
 
-            $language        = Language::where('status', true)->get();
-            $sending_servers = SendingServer::where('status', true)->get();
+            $language = Language::where('status', true)->get();
 
-
-            // Suggestion paths
-            $paths = [
-                '/usr/bin/php',
-                '/usr/local/bin/php',
-                '/bin/php',
-                '/usr/bin/php81',
-                '/usr/bin/php8.1',
-                '/opt/plesk/php/8.1/bin/php',
-                '/opt/alt/php/8.1/bin/php',
-                '/opt/alt/php81/usr/bin/php',
-                '/usr/bin/php82',
-                '/usr/bin/php8.2',
-                '/opt/plesk/php/8.2/bin/php',
-                '/opt/alt/php/8.2/bin/php',
-                '/opt/alt/php82/usr/bin/php',
-                '/usr/bin/php83',
-                '/usr/bin/php8.3',
-                '/opt/plesk/php/8.3/bin/php',
-                '/opt/alt/php/8.3/bin/php',
-                '/opt/alt/php83/usr/bin/php',
-                '/usr/local/lsws/lsphp/bin/lsphp',
-                '/usr/local/lsws/lsphp81/bin/lsphp',
-                '/usr/local/lsws/lsphp82/bin/lsphp',
-                '/usr/local/lsws/lsphp83/bin/lsphp',
-            ];
-
-            // try to detect system's PHP CLI
-            if (Helper::exec_enabled()) {
-                try {
-                    $paths           = array_unique(array_merge($paths, explode(" ", exec("whereis php"))));
-                    $server_php_path = exec('which php');
-                    if ($server_php_path == "") {
-                        $server_php_path = Helper::app_config('php_bin_path');
-                    }
-                    $get_message = '';
-                } catch (Exception $e) {
-                    $server_php_path = Helper::app_config('php_bin_path');
-                    $get_message     = $e->getMessage();
-                }
-            } else {
-                $server_php_path = Helper::app_config('php_bin_path');
-                $get_message     = 'WARNING: Please enable PHP `exec` function to validate the cron job setting';
-            }
-
-            $paths = array_values(array_filter($paths, function ($path) {
-                try {
-                    return is_executable($path) && preg_match($path, "/php[0-9\.a-z]{0,3}$/i");
-                } catch (Exception $e) {
-                    return $e->getMessage();
-                }
-            }));
+            // B3 §8/§21 — a read-only diagnostic, not a live server scan.
+            // The previous implementation ran exec('whereis php') and
+            // exec('which php') on every render of this page and offered
+            // an editable-looking radio list that was never actually
+            // wired to any form (the radios sat outside any <form>, so a
+            // selection was never submitted anywhere). This shows the
+            // currently configured value only.
+            $phpBinPath = Helper::app_config('php_bin_path');
+            $execEnabled = Helper::exec_enabled();
 
             $categories = collect(config('customer-permissions'))->map(function ($value, $key) {
                 $value['name'] = $key;
@@ -127,19 +146,33 @@
                 return $value;
             })->groupBy('category');
 
-            $permissions = $categories->keys()->map(function ($key) use ($categories) {
+            $permissionGroups = $categories->keys()->map(function ($key) use ($categories) {
                 return [
                     'title'       => $key,
                     'permissions' => $categories[$key],
                 ];
             });
 
-            $existing_permission = json_decode(Customer::customerPermissions(), true);
+            $existingPermissions = json_decode(Customer::customerPermissions(), true);
 
-            return view('admin.settings.AllSettings.system_settings', compact('breadcrumbs', 'language', 'sending_servers', 'paths', 'get_message', 'server_php_path', 'permissions', 'existing_permission'));
+            // 'tab' arrives two ways: flashed old input after a POST
+            // redirect (withInput(['tab' => ...])), or a plain query
+            // string on a fresh GET -- e.g. the old aiSettings() route's
+            // own redirect to ?tab=ai, kept for previously bookmarked
+            // links.
+            $requestedTab = old('tab', $request->query('tab'));
 
+            return view('admin.settings.platform.index', [
+                'breadcrumbs' => $breadcrumbs,
+                'tabs' => $tabs,
+                'activeTab' => (is_string($requestedTab) && isset($tabs[$requestedTab])) ? $requestedTab : (array_key_first($tabs) ?? 'platform'),
+                'language' => $language,
+                'phpBinPath' => $phpBinPath,
+                'execEnabled' => $execEnabled,
+                'permissionGroups' => $permissionGroups,
+                'existingPermissions' => $existingPermissions,
+            ]);
         }
-
 
         /**
          * Sanitize a given string by removing any malicious script tags or attributes
@@ -161,16 +194,24 @@
         }
 
         /**
-         * update general settings
+         * update general/platform + appearance settings
+         *
+         * B3 §10 (GENERAL SETTINGS WRITE ALLOWLIST — security blocker).
+         * $request->validated() is already bounded by PostGeneralRequest::
+         * rules()'s own key set, so nothing outside those declared fields
+         * (a submitted 'license', 'password', 'customer_permissions',
+         * 'captcha_secret_key', etc.) is ever read here at all — closing
+         * the previous $request->except(...) exclusion-list defect, which
+         * let any submitted key reach EloquentSettingsRepository::
+         * general()'s own generic write loop (that method now also
+         * enforces its own independent allowlist; see its doc comment).
          *
          * @param PostGeneralRequest $request
          *
          * @return RedirectResponse
          */
-
         public function postGeneral(PostGeneralRequest $request): RedirectResponse
         {
-
             if (config('app.stage') == 'demo') {
                 return redirect()->route('admin.settings.general')->with([
                     'status'  => 'error',
@@ -178,6 +219,7 @@
                 ]);
             }
 
+            $validated = $request->validated();
 
             /*
              * Design System M2 Platform Branding contract §6.3/§11 items
@@ -187,88 +229,129 @@
              * AppConfig::uploadFile()'s client-extension-derived filename
              * is no longer used for any field.
              */
-            $brandingUploadService = app(\App\Library\Branding\BrandingUploadService::class);
+            $brandingUploadService = app(BrandingUploadService::class);
 
-            foreach (['app_logo' => 'logo', 'app_favicon' => 'favicon', 'logo_compact' => 'logo_compact', 'logo_dark' => 'logo_dark', 'auth_illustration' => 'auth_illustration', 'installer_illustration' => 'installer_illustration'] as $field => $configKey) {
+            foreach (self::BRANDING_FIELDS as $field => $configKey) {
                 if ($request->hasFile($field) && $request->file($field)->isValid()) {
                     $brandingUploadService->store($request->file($field), $configKey);
                 }
             }
 
-            if ($request->input('app_name') != config('app.name')) {
-                AppConfig::setEnv('APP_NAME', $request->input('app_name'));
+            $this->envWriter->set('APP_NAME', 'app.name', $validated['app_name']);
+            $this->envWriter->set('APP_TITLE', 'app.title', $validated['app_title']);
+            $this->envWriter->set('APP_COUNTRY', 'app.country', $validated['country']);
+            $this->envWriter->set('APP_TIMEZONE', 'app.timezone', $validated['timezone']);
+            $this->envWriter->set('APP_TIME_FORMAT', 'app.time_format', $validated['time_format']);
+            $this->envWriter->set('APP_DATE_FORMAT', 'app.date_format', $validated['date_format']);
+            // B3 Correction 1 — app_keyword/footer_company_name/
+            // footer_copyright_text are each owned by exactly one of the
+            // three independent forms that all post here (Platform owns
+            // app_keyword, Appearance owns the two footer fields).
+            // PostGeneralRequest declares each 'sometimes', so a form
+            // that never sent a given field leaves it entirely absent
+            // from $validated (array_key_exists() false) rather than
+            // present-as-null — the only way to tell "this section
+            // didn't send it, preserve the current value" apart from
+            // "this section explicitly cleared it" once
+            // ConvertEmptyStringsToNull has already turned a submitted
+            // '' into null upstream of validation.
+            if (array_key_exists('app_keyword', $validated)) {
+                $this->envWriter->set('APP_KEYWORD', 'app.keyword', (string) ($validated['app_keyword'] ?? ''));
             }
 
-            if ($request->input('app_title') != config('app.title')) {
-                AppConfig::setEnv('APP_TITLE', $request->input('app_title'));
+            if (array_key_exists('footer_company_name', $validated)) {
+                $this->envWriter->set('APP_FOOTER_COMPANY_NAME', 'app.footer_company_name', (string) ($validated['footer_company_name'] ?? ''));
             }
 
-            if ($request->input('country') != config('app.country')) {
-                AppConfig::setEnv('APP_COUNTRY', $request->input('country'));
+            if (array_key_exists('footer_copyright_text', $validated)) {
+                $this->envWriter->set('APP_FOOTER_COPYRIGHT_TEXT', 'app.footer_copyright_text', (string) ($validated['footer_copyright_text'] ?? ''));
             }
 
-            if ($request->input('timezone') != config('app.timezone')) {
-                AppConfig::setEnv('APP_TIMEZONE', $request->input('timezone'));
-                User::where('id', 1)->update([
-                    'timezone' => $request->input('timezone'),
-                ]);
+            if (! empty($validated['language'])) {
+                session(['locale' => $validated['language']]);
+                $this->envWriter->set('APP_LOCALE', 'app.locale', $validated['language']);
             }
 
-            if ($request->input('time_format') != config('app.time_format')) {
-                AppConfig::setEnv('APP_TIME_FORMAT', $request->input('time_format'));
+            // B3 §3 — the legacy side effect that silently mutated the
+            // hard-coded User id=1's own timezone column whenever the
+            // Platform timezone changed has been removed. No consumer
+            // depends on it: EloquentUserRepository/EloquentCustomerRepository
+            // already fall back to config('app.timezone') whenever a
+            // user's own timezone column is empty, so a Platform setting
+            // no longer reaches into a specific user's row at all. The
+            // global timezone remains exactly config('app.timezone').
+
+            // B3 Correction 1 — custom_script is owned solely by the
+            // Advanced form. array_key_exists() (not the previous
+            // null/empty check on the value alone) is what tells apart
+            // "the Platform/Appearance form submitted this request and
+            // never mentioned custom_script at all" (preserve) from "the
+            // Advanced form submitted it as an explicit empty string"
+            // (clear) -- both look identical as a bare value once
+            // ConvertEmptyStringsToNull has turned a submitted '' into
+            // null, so only key presence can distinguish them.
+            if (array_key_exists('custom_script', $validated)) {
+                $submittedCustomScript = (string) ($validated['custom_script'] ?? '');
+                $currentCustomScript   = (string) Helper::app_config('custom_script');
+
+                if ($submittedCustomScript === '') {
+                    if ($currentCustomScript !== '') {
+                        AppConfig::where('setting', 'custom_script')->update([
+                            'value' => '',
+                        ]);
+                    }
+                } elseif ($submittedCustomScript !== $currentCustomScript) {
+                    $script = $this->sanitizeScript($submittedCustomScript);
+
+                    AppConfig::where('setting', 'custom_script')->update([
+                        'value' => $script,
+                    ]);
+                }
             }
 
-            if ($request->input('language') != config('app.locale')) {
-                session(['locale' => $request->input('language')]);
-                AppConfig::setEnv('APP_LOCALE', $request->input('language'));
-            }
+            $this->settings->general(Arr::only($validated, [
+                'app_name',
+                'app_title',
+                'app_keyword',
+                'company_address',
+                'country',
+                'timezone',
+                'date_format',
+                'time_format',
+                'language',
+            ]));
 
-            if ($request->input('date_format') != config('app.date_format')) {
-                AppConfig::setEnv('APP_DATE_FORMAT', $request->input('date_format'));
-            }
-
-            if ($request->input('app_keyword') != config('app.app_keyword')) {
-                AppConfig::setEnv('APP_KEYWORD', $request->input('app_keyword'));
-            }
-
-            if ($request->input('footer_company_name') != config('app.footer_company_name')) {
-                AppConfig::setEnv('APP_FOOTER_COMPANY_NAME', (string) $request->input('footer_company_name'));
-            }
-
-            if ($request->input('footer_copyright_text') != config('app.footer_copyright_text')) {
-                AppConfig::setEnv('APP_FOOTER_COPYRIGHT_TEXT', (string) $request->input('footer_copyright_text'));
-            }
-
-            $checkCustomScript = Helper::app_config('custom_script');
-
-            if ($request->input('custom_script') != $checkCustomScript && $request->input('custom_script') != '') {
-
-                $script = $this->sanitizeScript($request->input('custom_script'));
-
-                AppConfig::where('setting', 'custom_script')->update([
-                    'value' => $script,
-                ]);
-
-            }
-
-            $this->settings->general($request->except(
-                '_token',
-                'app_logo',
-                'app_favicon',
-                'logo_compact',
-                'logo_dark',
-                'auth_illustration',
-                'installer_illustration',
-                'footer_company_name',
-                'footer_copyright_text',
-            ));
-
-            return redirect()->route('admin.settings.general')->withInput(['tab' => 'general'])->with([
+            return redirect()->route('admin.settings.general')->withInput(['tab' => 'platform'])->with([
                 'status'  => 'success',
                 'message' => __('locale.settings.settings_successfully_updated'),
             ]);
         }
 
+        /**
+         * B3 §4/§17 — remove one owner-configured branding asset,
+         * returning it to the M2 bundled/neutral fallback. Only the six
+         * allowlisted logical keys RemoveBrandingAssetRequest validates
+         * against are ever accepted; there is no way to pass an arbitrary
+         * env key or file path through this endpoint.
+         */
+        public function removeBrandingAsset(RemoveBrandingAssetRequest $request): RedirectResponse
+        {
+            if (config('app.stage') == 'demo') {
+                return redirect()->route('admin.settings.general')->withInput(['tab' => 'appearance'])->with([
+                    'status'  => 'error',
+                    'message' => 'Sorry! This option is not available in demo mode',
+                ]);
+            }
+
+            $field = $request->validated()['asset'];
+
+            app(BrandingUploadService::class)->delete(self::BRANDING_FIELDS[$field]);
+
+            return redirect()->route('admin.settings.general')->withInput(['tab' => 'appearance'])->with([
+                'status'  => 'success',
+                'message' => __('locale.settings.settings_successfully_updated'),
+            ]);
+        }
 
         /**
          * update system email settings
@@ -286,12 +369,42 @@
                 ]);
             }
 
+            $this->settings->systemEmail($request->validated());
 
-            $this->settings->systemEmail($request->except('_token'));
-
-            return redirect()->route('admin.settings.general')->withInput(['tab' => 'system_email'])->with([
+            return redirect()->route('admin.settings.general')->withInput(['tab' => 'email'])->with([
                 'status'  => 'success',
                 'message' => __('locale.settings.settings_successfully_updated'),
+            ]);
+        }
+
+        /**
+         * B3 §5/§18 — the minimal "Send test email" action. Never leaks
+         * SMTP host/username/password or the underlying exception message
+         * into the flash message; a failure is reported generically.
+         */
+        public function testEmail(SendTestEmailRequest $request): RedirectResponse
+        {
+            if (config('app.stage') == 'demo') {
+                return redirect()->route('admin.settings.general')->withInput(['tab' => 'email'])->with([
+                    'status'  => 'error',
+                    'message' => 'Sorry! This option is not available in demo mode',
+                ]);
+            }
+
+            $destination = $request->validated()['email'];
+
+            try {
+                Mail::to($destination)->send(new PlatformSettingsTestEmail());
+            } catch (Throwable) {
+                return redirect()->route('admin.settings.general')->withInput(['tab' => 'email'])->with([
+                    'status'  => 'error',
+                    'message' => __('locale.settings.test_email_failed'),
+                ]);
+            }
+
+            return redirect()->route('admin.settings.general')->withInput(['tab' => 'email'])->with([
+                'status'  => 'success',
+                'message' => __('locale.settings.test_email_sent'),
             ]);
         }
 
@@ -311,10 +424,9 @@
                 ]);
             }
 
+            $this->settings->authentication($request->validated());
 
-            $this->settings->authentication($request->except('_token'));
-
-            return redirect()->route('admin.settings.general')->withInput(['tab' => 'authentication'])->with([
+            return redirect()->route('admin.settings.general')->withInput(['tab' => 'security'])->with([
                 'status'  => 'success',
                 'message' => __('locale.settings.settings_successfully_updated'),
             ]);
@@ -323,6 +435,10 @@
 
         /**
          * update notifications settings
+         *
+         * B3 §9 — no longer a first-class Settings section; the backend,
+         * rows, and consumers are unchanged and this endpoint stays
+         * reachable (still gated by 'notifications settings').
          *
          * @param NotificationsRequest $request
          *
@@ -349,6 +465,9 @@
         /**
          * update pusher settings
          *
+         * B3 §9 — infrastructure only, no longer a Settings tab. Backend
+         * unchanged; still gated by 'pusher settings'.
+         *
          * @param PusherRequest $request
          *
          * @return RedirectResponse
@@ -372,31 +491,19 @@
 
         }
 
-        /**
-         * manage maintenance mode
-         *
-         * @return Application|Factory|View
-         * @throws AuthorizationException
-         */
-//    public function maintenanceMode(): Factory|View|Application
-//    {
-//
-//        $this->authorize('manage maintenance_mode');
-//
-//        $breadcrumbs = [
-//                ['link' => url(config('app.admin_path')."/dashboard"), 'name' => __('locale.menu.Dashboard')],
-//                ['link' => url(config('app.admin_path')."/dashboard"), 'name' => __('locale.menu.Settings')],
-//                ['name' => __('locale.menu.All Settings')],
-//        ];
-//
-//
-//        return view('admin.settings.system_settings', compact('breadcrumbs'));
-//    }
-
         /*Version 3.4*/
 
         /**
          * Update Default Customer Permissions
+         *
+         * B3 §8 — moved to the Advanced section. Fixes the persistence
+         * defect the reconnaissance found: the previous code stored the
+         * raw PHP array directly into app_config.value (a string column),
+         * while every reader (Customer::customerPermissions(), User model,
+         * CustomerController) calls json_decode() on it — now persisted as
+         * the JSON string the readers already expect. Demo mode is now
+         * enforced here too (previously the only settings writer without
+         * that guard).
          *
          * @param DefaultCustomerPermission $request
          *
@@ -404,20 +511,39 @@
          */
         public function permissions(DefaultCustomerPermission $request): RedirectResponse
         {
+            if (config('app.stage') == 'demo') {
+                return redirect()->route('admin.settings.general')->withInput(['tab' => 'advanced'])->with([
+                    'status'  => 'error',
+                    'message' => 'Sorry! This option is not available in demo mode',
+                ]);
+            }
+
+            // DefaultCustomerPermission::rules() only declares 'permissions'
+            // (array) and the fixed leaf 'permissions.access_backend' (always
+            // required) -- there is no permissions.* wildcard rule, because
+            // the actual set of checkbox names is dynamic
+            // (config('customer-permissions')). $request->validated() would
+            // therefore silently drop every OTHER submitted permission name,
+            // keeping only access_backend. $request->only(...) is correct
+            // here (unlike postGeneral()'s former use of except()): this
+            // endpoint only ever writes the single, fixed
+            // 'customer_permissions' row below, never an arbitrary
+            // request-controlled app_config key, so there is no allowlist
+            // gap to close by switching extraction methods.
             $permissions = array_values($request->only('permissions')['permissions']);
 
-            $app_config = AppConfig::where('setting', 'customer_permissions')->update([
-                'value' => $permissions,
+            $updated = AppConfig::where('setting', 'customer_permissions')->update([
+                'value' => json_encode($permissions),
             ]);
 
-            if ($app_config) {
-                return redirect()->route('admin.settings.general')->withInput(['tab' => 'permissions'])->with([
+            if ($updated) {
+                return redirect()->route('admin.settings.general')->withInput(['tab' => 'advanced'])->with([
                     'status'  => 'success',
                     'message' => __('locale.settings.settings_successfully_updated'),
                 ]);
             }
 
-            return redirect()->route('admin.settings.general')->withInput(['tab' => 'permissions'])->with([
+            return redirect()->route('admin.settings.general')->withInput(['tab' => 'advanced'])->with([
                 'status'  => 'error',
                 'message' => __('locale.exceptions.something_went_wrong'),
             ]);
@@ -426,11 +552,15 @@
 
         /*Version 3.5*/
 
+        /**
+         * B3 §9 — provider-specific vendor plumbing, no longer a Settings
+         * tab. Backend unchanged; still gated by 'general settings'.
+         */
         public function dlt(DLTRequest $request): RedirectResponse
         {
 
             if (config('app.stage') == 'demo') {
-                return redirect()->route('admin.settings.general')->withInput(['tab' => 'dlt'])->with([
+                return redirect()->route('admin.settings.general')->withInput(['tab' => 'advanced'])->with([
                     'status'  => 'error',
                     'message' => 'Sorry! This option is not available in demo mode',
                 ]);
@@ -439,7 +569,7 @@
 
             $this->settings->dlt($request->except('_token'));
 
-            return redirect()->route('admin.settings.general')->withInput(['tab' => 'dlt'])->with([
+            return redirect()->route('admin.settings.general')->withInput(['tab' => 'advanced'])->with([
                 'status'  => 'success',
                 'message' => __('locale.settings.settings_successfully_updated'),
             ]);
@@ -539,11 +669,17 @@
 
         /*Version 3.13*/
 
+        /**
+         * B3 §9 — legacy gateway-wise billing, already removed from
+         * presentation before B3 (its tab and permission are commented
+         * out on main). Backend kept exactly as-is until the RFC-005
+         * billing cutover; not a B3 concern.
+         */
         public function gatewayWiseBilling(GatewayWiseBillingRequest $request): RedirectResponse
         {
 
             if (config('app.stage') == 'demo') {
-                return redirect()->route('admin.settings.general')->withInput(['tab' => 'gateway_wise_billing'])->with([
+                return redirect()->route('admin.settings.general')->withInput(['tab' => 'advanced'])->with([
                     'status'  => 'error',
                     'message' => 'Sorry! This option is not available in demo mode',
                 ]);
@@ -552,7 +688,7 @@
 
             $this->settings->gatewayWiseBilling($request->except('_token'));
 
-            return redirect()->route('admin.settings.general')->withInput(['tab' => 'gateway_wise_billing'])->with([
+            return redirect()->route('admin.settings.general')->withInput(['tab' => 'advanced'])->with([
                 'status'  => 'success',
                 'message' => __('locale.settings.settings_successfully_updated'),
             ]);
@@ -578,6 +714,11 @@
 
         public function postMaintenanceMode(Request $request)
         {
+            // B3 §13 — the GET action already required 'manage
+            // maintenance_mode'; this destructive POST action (site-wide
+            // down/up) did not, so any 'access backend' account could
+            // toggle maintenance mode. Fixed here.
+            $this->authorize('manage maintenance_mode');
 
             if (config('app.stage') == 'demo') {
                 return redirect()->back()->with([
@@ -631,24 +772,27 @@
             ]);
         }
 
-        public function aiSettings()
+        /**
+         * B3 §7 — the AI section now lives inline on the main Settings
+         * page (admin.settings.general, 'ai' tab). This GET redirect keeps
+         * the old bookmarked/linked route working instead of a hard 404.
+         */
+        public function aiSettings(): RedirectResponse
         {
-
-            $breadcrumbs = [
-                ['link' => url(config('app.admin_path') . "/dashboard"), 'name' => __('locale.menu.Dashboard')],
-                ['link' => url(config('app.admin_path') . "/dashboard"), 'name' => __('locale.menu.Settings')],
-                ['name' => __('locale.menu.AI Settings')],
-            ];
-
-
             $this->authorize('manage ai_settings');
 
-            return view('admin.settings.AllSettings.ai-settings', compact('breadcrumbs'));
+            return redirect()->route('admin.settings.general', ['tab' => 'ai']);
         }
 
 
+        /**
+         * B3 §7 — fixed to require 'manage ai_settings' independently of
+         * generic backend access (the pre-B3 action had no authorization
+         * check at all beyond the route group's blanket 'access backend').
+         */
         public function toggleAiSettings(Request $request)
         {
+            $this->authorize('manage ai_settings');
 
             if (config('app.stage') == 'demo') {
                 return response()->json([
@@ -660,8 +804,7 @@
             if ($request->has('openai_enabled')) {
                 $openai_enabled = $request->input('openai_enabled');
 
-
-                AppConfig::setEnv('OPENAI_ACTIVE', $openai_enabled);
+                $this->envWriter->set('OPENAI_ACTIVE', 'services.openai.active', $openai_enabled);
 
                 return response()->json([
                     'status'  => 'success',
@@ -680,15 +823,15 @@
         public function postAiSettings(OpenAISettingsRequest $request)
         {
             if (config('app.stage') == 'demo') {
-                return redirect()->back()->with([
+                return redirect()->route('admin.settings.general')->withInput(['tab' => 'ai'])->with([
                     'status'  => 'error',
                     'message' => 'Sorry! This option is not available in demo mode',
                 ]);
             }
 
-            $this->settings->aiSettings($request->except('_token'));
+            $this->settings->aiSettings($request->validated());
 
-            return redirect()->back()->with([
+            return redirect()->route('admin.settings.general')->withInput(['tab' => 'ai'])->with([
                 'status'  => 'success',
                 'message' => __('locale.settings.settings_successfully_updated'),
             ]);
