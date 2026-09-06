@@ -5,10 +5,14 @@ Base SHA: `2425b9f1b4415a6b1dbeab99070191cc3d178b35` (the merged B3 Simplified
 Platform Settings result).
 Branch: `agent/b5-business-analytics-contract`.
 Predecessor: **B4 must merge before B5 product implementation begins** (§20).
+Revision: **Correction 1** — human review of the first draft; all three open
+decisions resolved (§22), the legacy route count corrected to 29 (§12.3), and
+the foreign-campaign test rule replaced with one that matches the contracted
+routes (§21).
 
 Every claim below is backed by mechanical inspection of the tree at the base
-SHA. Line numbers are post-B3 and were re-verified for this document. Where a
-decision was left open, the resolving evidence is cited inline.
+SHA. Line numbers are post-B3 and were re-verified for this document.
+**No product decision is left open** — §22 records all three as resolved.
 
 ---
 
@@ -20,7 +24,7 @@ claim was re-checked against `2425b9f`:
 
 | Recon claim | Status after B3 |
 |---|---|
-| `routes/customer.php` reports group | **Unchanged.** `git diff e7fad48 2425b9f -- routes/customer.php` is empty. Group is `:382-421`; `/view-charts` is `:422` (recon said `:423` — **corrected**). |
+| `routes/customer.php` reports group | **Unchanged.** `git diff e7fad48 2425b9f -- routes/customer.php` is empty. Group is `:382-420` (opener `:382`, closing `});` `:420`); `/view-charts` is `:422` (recon said `:423` — **corrected**). |
 | `Customer\ReportsController` | **Unchanged file.** `viewReports` `:174`, `destroy` `:185`, `campaignDelete` `:1444`, `analyze` `:1543`, `postAnalyze` `:1604`, `dlrReports` `:1653`. |
 | `User\UserController` (customer dashboard) | **Unchanged.** |
 | `Admin\AdminBaseController`, `Admin\ReportsController` | **Unchanged.** |
@@ -461,17 +465,29 @@ contact_created`.
 coding** — this section describes an unmerged branch and B4 may change before
 merge.
 
-### 9.1 Open item for the human — `automation_executions` index gap
+### 9.1 `automation_executions` index — RESOLVED, OWNED BY B4
 
-B4 indexes `business_id` alone and `(automation_id, created_at)`. It ships
-**no `(business_id, created_at)`**, which is exactly the shape A1–A4 need.
-This contract does **not** authorize adding it (it would mean B5 altering a
-B4 table). Options for the human, in order of preference:
+At the time of the read-only inspection, the B4 branch indexed `business_id`
+alone plus `(automation_id, created_at)`, and shipped no
+`(business_id, created_at)` — which is exactly the shape A1–A4 need.
 
-1. B4 adds `(business_id, created_at)` before merging.
-2. A separate follow-up migration after both merge.
-3. Accept `business_id` alone for v1 — acceptable while execution volumes are
-   small, and the §21 query-count test will surface the cost.
+**Human decision (Correction 1): B4 owns `automation_executions`, so B4
+supplies the index.** Lane A has been instructed to amend the B4 contract,
+the `automation_executions` migration, and the B4 schema test accordingly.
+
+Locked consequences for B5:
+
+- B5 **expects** the post-B4 `automation_executions` table to carry
+  `(business_id, created_at)`.
+- The B5 implementation pass **must mechanically re-verify** its presence
+  after B4 merges, before writing any A1–A4 query.
+- If B4 merges **without** that promised index, the B5 implementation
+  **STOPS and reports the predecessor-contract discrepancy**. It must not
+  silently add the index, and must not otherwise alter a B4-owned table —
+  doing so would contradict both this contract and §19.
+- B5's own migration remains **exactly the six indexes** in §11.1 on
+  `reports`, `campaigns`, `contacts` and `tracking_logs`.
+  **`automation_executions` is never added to the B5 migration.**
 
 ---
 
@@ -603,45 +619,96 @@ Placed as a sibling of B4's `Route::get('automations', 'AutomationsController@en
 
 ### 12.3 Removed — legacy customer Reports
 
-The entire group at `routes/customer.php:382-421` — 24 routes:
+**Exact count, mechanically enumerated at `2425b9f`.** The
+`Route::prefix('reports')` group at `routes/customer.php:382-420` contains
+**28 route declarations** — 25 `ReportsController` and 3
+`CampaignController` — and `routes/customer.php:422` carries one further
+legacy `ReportsController` route. **29 legacy customer reporting-path route
+declarations are removed in total.**
+
+**A. The 25 `ReportsController` routes inside the group**
 
 ```
-POST   /reports/{uid}/destroy                        ReportsController@destroy
-GET    /reports/all                                  @reports
-POST   /reports/{uid}/view                           @viewReports
-POST   /reports/export                               @export
-GET    /reports/export/sent                          @exportSent
-GET    /reports/export/receive                       @exportReceive
-GET    /reports/export/{campaign}                    @exportCampaign
-GET    /reports/received                             @received
-GET    /reports/sent                                 @sent
-GET    /reports/campaigns                            @campaigns
-POST   /reports/search                               @searchAllMessages
-POST   /reports/search/received                      @searchReceivedMessage
-POST   /reports/search/sent                          @searchSentMessage
-POST   /reports/search/campaigns                     @searchCampaigns
-POST   /reports/batch_action                         @batchAction
-GET    /reports/campaigns/{campaign}/edit            @editCampaign
-POST   /reports/campaigns/{campaign}/edit            @postEditCampaign
-GET    /reports/campaigns/{campaign}/overview        @campaignOverview
-POST   /reports/campaigns/{campaign}/reports         @campaignReports
-POST   /reports/campaigns/{campaign}/delete          @campaignDelete
-POST   /reports/campaign/batch_action                @campaignBatchAction
-GET    /reports/campaign/export                      @campaignExport
-GET    /reports/analyze                              @analyze
-POST   /reports/analyze                              @postAnalyze
-POST   /reports/{uid}/dlr                            @dlrReports
+ 1  POST   /reports/{uid}/destroy                     ReportsController@destroy
+ 2  GET    /reports/all                               @reports
+ 3  POST   /reports/{uid}/view                        @viewReports
+ 4  POST   /reports/export                            @export
+ 5  GET    /reports/export/sent                       @exportSent
+ 6  GET    /reports/export/receive                    @exportReceive
+ 7  GET    /reports/export/{campaign}                 @exportCampaign
+ 8  GET    /reports/received                          @received
+ 9  GET    /reports/sent                              @sent
+10  GET    /reports/campaigns                         @campaigns
+11  POST   /reports/search                            @searchAllMessages
+12  POST   /reports/search/received                   @searchReceivedMessage
+13  POST   /reports/search/sent                       @searchSentMessage
+14  POST   /reports/search/campaigns                  @searchCampaigns
+15  POST   /reports/batch_action                      @batchAction
+16  GET    /reports/campaigns/{campaign}/edit         @editCampaign
+17  POST   /reports/campaigns/{campaign}/edit         @postEditCampaign
+18  GET    /reports/campaigns/{campaign}/overview     @campaignOverview
+19  POST   /reports/campaigns/{campaign}/reports      @campaignReports
+20  POST   /reports/campaigns/{campaign}/delete       @campaignDelete
+21  POST   /reports/campaign/batch_action             @campaignBatchAction
+22  GET    /reports/campaign/export                   @campaignExport
+23  GET    /reports/analyze                           @analyze
+24  POST   /reports/analyze                           @postAnalyze
+25  POST   /reports/{uid}/dlr                         @dlrReports
 ```
 
-Plus `routes/customer.php:422` — `GET /view-charts` → `ReportsController@viewCharts`.
+**B. The 3 `CampaignController` routes inside the group — also removed**
 
-**Three routes in that group are NOT `ReportsController` and must be
-preserved** — `POST /reports/campaigns/{campaign}/{pause,restart,resend}` →
-`CampaignController@campaign{Pause,Restart,Resend}`. The implementation must
-either keep them at their current names or confirm B1's Business-scoped
-`businesses.outreach.campaigns.{pause,restart,resend}` fully supersedes them
-before removing them. **This is an explicit re-verification item, not a
-licence to delete them silently.**
+```
+26  POST   /reports/campaigns/{campaign}/pause        CampaignController@campaignPause
+27  POST   /reports/campaigns/{campaign}/restart      CampaignController@campaignRestart
+28  POST   /reports/campaigns/{campaign}/resend       CampaignController@campaignResend
+```
+
+**C. One further legacy route outside the group**
+
+```
+29  GET    /view-charts                               ReportsController@viewCharts   (routes/customer.php:422)
+```
+
+No route is counted twice: 25 + 3 = 28 inside the group, plus 1 at `:422`.
+
+#### 12.3.1 Why the three `CampaignController` routes are deleted — RESOLVED
+
+Human decision (Correction 1), on mechanical evidence at `2425b9f`: **B1
+already provides canonical Business-scoped replacements**, so the legacy
+routes are superseded, not merely duplicated.
+
+Replacements — `routes/customer.php:695-697`:
+
+```
+POST /workspaces/{workspaceUid}/businesses/{businessUid}/outreach/campaigns/{campaign}/pause    OutreachController@pause
+POST /workspaces/{workspaceUid}/businesses/{businessUid}/outreach/campaigns/{campaign}/restart  OutreachController@restart
+POST /workspaces/{workspaceUid}/businesses/{businessUid}/outreach/campaigns/{campaign}/resend   OutreachController@resend
+```
+
+Each of the three `OutreachController` methods — `pause()` (`:514`),
+`restart()` (`:528`), `resend()` (`:542`) — performs, in order:
+
+1. `resolveAccessibleBusiness($workspaceUid, $businessUid)` (`:645`) — the
+   full §2.2 Workspace → Business → `userCanAccessBusiness()` → `abort(404)`
+   chain;
+2. `resolveOwnedCampaign($campaign, $business)` (`:662`) —
+   `abort_unless($campaign->business_id === $business->id, 404)`;
+3. the same `config('app.stage') == 'demo'` restriction the legacy methods
+   carry;
+4. the identical `CampaignRepository::pause()`/`restart()`/`resend()` core.
+
+The legacy methods, by contrast, are **unscoped**:
+`CampaignController::campaignPause()` (`:1870`), `campaignRestart()`
+(`:1910`) and `campaignResend()` (`:1949`) each perform only the demo check
+and then call the repository on a route-model-bound `Campaigns` — **no
+`authorize()`, no `user_id` check, no `business_id` check**. Deleting them is
+therefore security-positive on the same grounds as S-3; they are recorded as
+S-16 in §15.2.
+
+**LOCKED: delete all three with the surrounding group. No preservation, no
+redirect, no compatibility shim, no renaming.** B5 does not modify
+`OutreachController` or `CampaignController`.
 
 ### 12.4 Removed — ghost analytics surfaces (`routes/web.php`)
 
@@ -747,9 +814,13 @@ in its own docblock and fabricates the columns through an ephemeral
 | Test (modify) | `tests/Feature/Dashboards/DashboardComponentAdoptionTest.php` |
 | Test (modify) | `tests/Feature/Dashboards/DashboardExistingBehaviorPreservedTest.php` |
 
-**Decision: DELETE all of the above as a clearly separated section of the B5
-PR.** They are customer surfaces mis-filed under `Admin\` and `/admin/` URLs,
-gated by the *customer* permission `can:access_backend` and the *customer*
+**Decision (Correction 1): DELETE all of the above, INSIDE the B5 product
+PR.** The human reviewed the scope and locked it there; it is **not** split
+into a separate cleanup PR. It remains a clearly labelled, self-contained
+section of the B5 change set, but it ships with B5.
+
+They are customer surfaces mis-filed under `Admin\` and `/admin/` URLs, gated
+by the *customer* permission `can:access_backend` and the *customer*
 capability `chat_box`, and they run on schema that does not exist in a freshly
 migrated database. Removing them also removes an unauthenticated route
 (`POST /admin/ai-variants/update`, `routes/web.php:26-27`) that has **no
@@ -807,6 +878,7 @@ Each of the following was found mechanically and is on a route B5 removes:
 | S-12 | Exports emit `from`, `to`, `message` verbatim into XLSX — spreadsheet formula injection. |
 | S-13 | `searchCampaigns()` (`:568`) — `$columns[$request->input('order.0.column')]` with no `??` fallback. |
 | S-14 | Five DataTables methods end in `echo json_encode(); exit();`, bypassing the response pipeline. |
+| S-16 | `POST /reports/campaigns/{campaign}/{pause,restart,resend}` → `CampaignController::campaignPause()` (`:1870`), `campaignRestart()` (`:1910`), `campaignResend()` (`:1949`) — **no `authorize()`, no `user_id` scope, no `business_id` scope**; only a demo-mode check before calling the repository on a route-model-bound campaign. Cross-tenant campaign control. `campaignResend()` is additionally destructive: `EloquentCampaignRepository::resend()` (`:2140-2144`) deletes every non-Delivered `Reports` and `TrackingLog` row for that campaign, so it is a cross-tenant **history destruction** IDOR of the same class as S-3. |
 
 ### 15.3 Export
 
@@ -982,8 +1054,10 @@ merge-base `e7fad48`, one commit, 39 files):
 3. Re-verify B4's **actually merged** `automation_executions` schema, status
    enum, and trigger enum before writing any A1–A4 query (§9).
 4. Re-verify that none of the six §11.1 indexes was already added by B4.
-5. Resolve §9.1 (the `automation_executions` `(business_id, created_at)` gap)
-   with the human before relying on A1–A4 performance.
+5. Re-verify that B4 shipped `automation_executions (business_id, created_at)`
+   as §9.1 requires. **If it is absent, STOP and report the
+   predecessor-contract discrepancy** — never add it to the B5 migration and
+   never alter a B4-owned table.
 
 ---
 
@@ -1004,9 +1078,32 @@ on a mismatch is 404, never 403.
 `business_access_scope = all` allowed · staff with `selected` and no
 assignment → 404 · inactive membership → 404.
 
-**Foreign campaign exclusion** — a foreign campaign uid on
-`/analytics/campaigns` and `/analytics/series` → 404 · the C3 table never
-lists a campaign whose `business_id` differs.
+**Foreign campaign exclusion** — corrected in Correction 1. The §12.1 routes
+carry **no `{campaign}` parameter**: `GET /analytics/campaigns` is a
+Business-scoped **list**, and `GET /analytics/series` returns aggregate chart
+data. There is no per-campaign B5 endpoint, so there is no campaign-id 404 to
+test. The coherent rules are exclusion rules, not authorization-of-an-id
+rules:
+
+- every campaign the page selects satisfies `campaigns.business_id = :b`;
+- the two grouped C3 aggregates over `reports` and `tracking_logs` are
+  **additionally** constrained by the same `business_id`, never by
+  `campaign_id` alone;
+- a campaign belonging to another Business must never appear, even if its id
+  is injected into internal or query input;
+- **no public campaign-id parameter is accepted anywhere in B5**, because the
+  contracted surface needs none.
+
+Tests: create campaigns for Business A and Business B under the same
+customer; render A's analytics campaign page; assert only A's campaigns
+appear; assert the C3 aggregate rows and the `/series` payload contain no row
+attributable to B; assert that injecting B's campaign id into any accepted
+request input changes nothing; and assert by route enumeration that **no B5
+route declares a `{campaign}` parameter**.
+
+**Adding a campaign-detail endpoint is out of scope.** If the implementation
+concludes a campaign filter is genuinely necessary, it **STOPS and reports**
+rather than inventing one outside this contract.
 
 **NULL-business exclusion** — a `reports` row with `business_id IS NULL`
 owned by the same customer is excluded from M1–M7 · the same for `contacts`
@@ -1089,37 +1186,68 @@ size, asserted by rendering a page of 25 campaigns and counting.
 empty state · the new chart view satisfies `ChartTokenContentTest` (references
 `PlatformTheme`, contains no `7367F0`).
 
-**Removed legacy Reports routes → 404** — all 24 §12.3 routes plus
-`/view-charts`, asserted individually for an authenticated customer holding
-`view_reports`.
+**Removed legacy Reports routes → 404** — **all 29 §12.3 declarations**,
+asserted individually for an authenticated customer holding `view_reports`:
+the 25 `ReportsController` routes (§12.3 A), the 3 `CampaignController`
+routes (§12.3 B), and `/view-charts` (§12.3 C).
 
 **Removed exports → 404** — `/reports/export`, `/reports/export/sent`,
 `/reports/export/receive`, `/reports/export/{campaign}`,
 `/reports/campaign/export`.
 
+**Removed legacy campaign controls → 404** — `POST /reports/campaigns/{campaign}/pause`,
+`/restart` and `/resend`, asserted for the campaign's **own** owner, so the
+test proves the route is gone rather than merely scoped.
+
+**Canonical Business-scoped campaign controls still work** — `POST` to
+`customer.workspaces.businesses.outreach.campaigns.{pause,restart,resend}`
+succeeds for an authorized actor on their own Business's campaign. Foreign
+Workspace / Business / campaign already fails closed through B1's existing
+coverage, `tests/Feature/Security/OutreachSecurityTest.php:348`
+(`test_campaign_show_pause_restart_resend_destroy_deny_a_different_business`),
+which B5 must leave passing and must not modify. **B5 does not modify
+`OutreachController` or `CampaignController`.**
+
 **Removed ghost routes → 404** — `/admin/ai-analytics`, `/admin/hot-leads`,
 `/admin/hot-leads/mark-called`, `/admin/ai-variants/update`,
 `/admin/ai-analytics/book/{id}`.
-
-**Preserved routes still work** — `POST /reports/campaigns/{campaign}/{pause,restart,resend}`
-per §12.3, or their B1 replacements, whichever the implementation confirms.
 
 **Full regression** — the complete suite after the focused set, per
 `AGENTS.md`.
 
 ---
 
-## 22. OPEN DECISIONS FOR THE HUMAN
+## 22. HUMAN DECISIONS — RESOLVED
 
-1. **`automation_executions` `(business_id, created_at)`** — §9.1. Preferred:
-   B4 adds it before merging.
-2. **`POST /reports/campaigns/{campaign}/{pause,restart,resend}`** — §12.3.
-   Confirm B1's Business-scoped equivalents fully supersede them before they
-   are removed with the surrounding group.
-3. **Ghost-surface cleanup scope** — §14 bundles ~740 lines of test deletion
-   and three test-file edits into the B5 PR. If the human prefers a smaller
-   B5, §14 lifts out cleanly into its own cleanup PR; the §12.4 route removals
-   and the §21 404 assertions move with it.
+All three decisions raised by the first draft were resolved by human review
+(Correction 1). **No product decision remains open.**
+
+1. **`automation_executions` `(business_id, created_at)`** — **B4 supplies
+   it.** B4 owns the table, so Lane A amends the B4 contract, migration and
+   schema test before B4 merges. B5 expects the index, must re-verify it
+   after B4 merges, and **stops and reports** if it is absent rather than
+   altering a B4-owned table. B5's own migration stays at exactly the six
+   indexes in §11.1. See §9.1.
+
+2. **`POST /reports/campaigns/{campaign}/{pause,restart,resend}`** —
+   **deleted with the surrounding group.** B1 already ships canonical
+   Business-scoped replacements at
+   `customer.workspaces.businesses.outreach.campaigns.{pause,restart,resend}`
+   (`routes/customer.php:695-697`), each running the full tenancy chain,
+   the same demo restriction and the same repository core, while the legacy
+   methods are entirely unscoped (S-16). No preservation, redirect or shim.
+   See §12.3.1.
+
+3. **Ghost-surface cleanup scope** — **stays inside the B5 product PR.** Not
+   split. The live producer defects in `EloquentCampaignRepository` and
+   `DLRController` remain out of B5 and stop-listed, and get their own future
+   contract; B5 must not touch those paths to accommodate them. See §14.
+
+The only thing the implementation pass must still confirm is the ordinary
+predecessor check: re-verify the **actually merged** B4 tree (§20) — its
+`automation_executions` schema, its status and trigger enums, its
+`routes/customer.php` shape, and that none of the six §11.1 indexes already
+exists.
 
 Nothing in this document authorizes implementation. B5 product work requires
 B4 to merge first and its own explicit human authorization.
