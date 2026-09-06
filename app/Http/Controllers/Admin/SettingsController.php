@@ -243,9 +243,29 @@
             $this->envWriter->set('APP_TIMEZONE', 'app.timezone', $validated['timezone']);
             $this->envWriter->set('APP_TIME_FORMAT', 'app.time_format', $validated['time_format']);
             $this->envWriter->set('APP_DATE_FORMAT', 'app.date_format', $validated['date_format']);
-            $this->envWriter->set('APP_KEYWORD', 'app.keyword', (string) ($validated['app_keyword'] ?? ''));
-            $this->envWriter->set('APP_FOOTER_COMPANY_NAME', 'app.footer_company_name', (string) ($validated['footer_company_name'] ?? ''));
-            $this->envWriter->set('APP_FOOTER_COPYRIGHT_TEXT', 'app.footer_copyright_text', (string) ($validated['footer_copyright_text'] ?? ''));
+            // B3 Correction 1 — app_keyword/footer_company_name/
+            // footer_copyright_text are each owned by exactly one of the
+            // three independent forms that all post here (Platform owns
+            // app_keyword, Appearance owns the two footer fields).
+            // PostGeneralRequest declares each 'sometimes', so a form
+            // that never sent a given field leaves it entirely absent
+            // from $validated (array_key_exists() false) rather than
+            // present-as-null — the only way to tell "this section
+            // didn't send it, preserve the current value" apart from
+            // "this section explicitly cleared it" once
+            // ConvertEmptyStringsToNull has already turned a submitted
+            // '' into null upstream of validation.
+            if (array_key_exists('app_keyword', $validated)) {
+                $this->envWriter->set('APP_KEYWORD', 'app.keyword', (string) ($validated['app_keyword'] ?? ''));
+            }
+
+            if (array_key_exists('footer_company_name', $validated)) {
+                $this->envWriter->set('APP_FOOTER_COMPANY_NAME', 'app.footer_company_name', (string) ($validated['footer_company_name'] ?? ''));
+            }
+
+            if (array_key_exists('footer_copyright_text', $validated)) {
+                $this->envWriter->set('APP_FOOTER_COPYRIGHT_TEXT', 'app.footer_copyright_text', (string) ($validated['footer_copyright_text'] ?? ''));
+            }
 
             if (! empty($validated['language'])) {
                 session(['locale' => $validated['language']]);
@@ -261,15 +281,32 @@
             // no longer reaches into a specific user's row at all. The
             // global timezone remains exactly config('app.timezone').
 
-            $submittedCustomScript = $validated['custom_script'] ?? null;
-            $currentCustomScript   = Helper::app_config('custom_script');
+            // B3 Correction 1 — custom_script is owned solely by the
+            // Advanced form. array_key_exists() (not the previous
+            // null/empty check on the value alone) is what tells apart
+            // "the Platform/Appearance form submitted this request and
+            // never mentioned custom_script at all" (preserve) from "the
+            // Advanced form submitted it as an explicit empty string"
+            // (clear) -- both look identical as a bare value once
+            // ConvertEmptyStringsToNull has turned a submitted '' into
+            // null, so only key presence can distinguish them.
+            if (array_key_exists('custom_script', $validated)) {
+                $submittedCustomScript = (string) ($validated['custom_script'] ?? '');
+                $currentCustomScript   = (string) Helper::app_config('custom_script');
 
-            if ($submittedCustomScript !== null && $submittedCustomScript !== '' && $submittedCustomScript !== $currentCustomScript) {
-                $script = $this->sanitizeScript($submittedCustomScript);
+                if ($submittedCustomScript === '') {
+                    if ($currentCustomScript !== '') {
+                        AppConfig::where('setting', 'custom_script')->update([
+                            'value' => '',
+                        ]);
+                    }
+                } elseif ($submittedCustomScript !== $currentCustomScript) {
+                    $script = $this->sanitizeScript($submittedCustomScript);
 
-                AppConfig::where('setting', 'custom_script')->update([
-                    'value' => $script,
-                ]);
+                    AppConfig::where('setting', 'custom_script')->update([
+                        'value' => $script,
+                    ]);
+                }
             }
 
             $this->settings->general(Arr::only($validated, [
