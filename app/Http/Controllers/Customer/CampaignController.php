@@ -272,7 +272,7 @@
                 ]);
             }
 
-            return redirect()->route('customer.reports.all')->with([
+            return redirect()->route('customer.analytics.entry')->with([
                 'status'  => 'success',
                 'message' => __('locale.campaigns.message_successfully_delivered'),
             ]);
@@ -453,7 +453,7 @@
             if (isset($data->getData()->status)) {
 
                 if ($data->getData()->status == 'success') {
-                    return redirect()->route('customer.reports.campaigns')->with([
+                    return redirect()->route('customer.analytics.entry')->with([
                         'status'  => 'success',
                         'message' => $data->getData()->message,
                     ]);
@@ -652,7 +652,7 @@
                 ]);
             }
 
-            return redirect()->route('customer.reports.campaigns')->with([
+            return redirect()->route('customer.analytics.entry')->with([
                 'status'  => $status,
                 'message' => $message,
             ]);
@@ -841,7 +841,7 @@
 
             $successMessage = implode(' ', $success);
 
-            return redirect()->route('customer.reports.all')->with([
+            return redirect()->route('customer.analytics.entry')->with([
                 'status'  => 'info',
                 'message' => $successMessage,
             ]);
@@ -951,7 +951,7 @@
             if (isset($data->getData()->status)) {
 
                 if ($data->getData()->status == 'success') {
-                    return redirect()->route('customer.reports.campaigns')->with([
+                    return redirect()->route('customer.analytics.entry')->with([
                         'status'  => 'success',
                         'message' => $data->getData()->message,
                     ]);
@@ -1246,7 +1246,7 @@
                 return $this->quickSendError('mms', implode(' ', $errors));
             }
 
-            return redirect()->route('customer.reports.all')->with([
+            return redirect()->route('customer.analytics.entry')->with([
                 'status'  => 'info',
                 'message' => implode(' ', $success),
             ]);
@@ -1330,7 +1330,7 @@
             if (isset($data->getData()->status)) {
 
                 if ($data->getData()->status == 'success') {
-                    return redirect()->route('customer.reports.campaigns')->with([
+                    return redirect()->route('customer.analytics.entry')->with([
                         'status'  => 'success',
                         'message' => $data->getData()->message,
                     ]);
@@ -1633,7 +1633,7 @@
 
             $successMessage = implode(' ', $success);
 
-            return redirect()->route('customer.reports.all')->with([
+            return redirect()->route('customer.analytics.entry')->with([
                 'status'  => 'info',
                 'message' => $successMessage,
             ]);
@@ -1717,7 +1717,7 @@
             if (isset($data->getData()->status)) {
 
                 if ($data->getData()->status == 'success') {
-                    return redirect()->route('customer.reports.campaigns')->with([
+                    return redirect()->route('customer.analytics.entry')->with([
                         'status'  => 'success',
                         'message' => $data->getData()->message,
                     ]);
@@ -2204,7 +2204,7 @@
                 ]);
             }
 
-            return redirect()->route('customer.reports.all')->with([
+            return redirect()->route('customer.analytics.entry')->with([
                 'status'  => 'info',
                 'message' => implode(' ', $success),
             ]);
@@ -2288,7 +2288,7 @@
             if (isset($data->getData()->status)) {
 
                 if ($data->getData()->status == 'success') {
-                    return redirect()->route('customer.reports.campaigns')->with([
+                    return redirect()->route('customer.analytics.entry')->with([
                         'status'  => 'success',
                         'message' => $data->getData()->message,
                     ]);
@@ -2610,7 +2610,7 @@
                 ]);
             }
 
-            return redirect()->route('customer.reports.all')->with([
+            return redirect()->route('customer.analytics.entry')->with([
                 'status'  => 'info',
                 'message' => implode(' ', $success),
             ]);
@@ -2709,7 +2709,7 @@
             if (isset($data->getData()->status)) {
 
                 if ($data->getData()->status == 'success') {
-                    return redirect()->route('customer.reports.campaigns')->with([
+                    return redirect()->route('customer.analytics.entry')->with([
                         'status'  => 'success',
                         'message' => $data->getData()->message,
                     ]);

@@ -9,6 +9,12 @@
         </div>
     </div>
 
+    {{-- Flash left by the legacy campaign actions, which redirect here now that the customer Reports product is gone. --}}
+    @if (session('status'))
+        <x-alert variant="{{ match (session('status')) { 'success' => 'success', 'warning' => 'warning', 'info' => 'accent', default => 'danger' } }}" icon="alert-circle" class="mb-2" data-role="flash-message">
+            {{ session('message') }}
+        </x-alert>
+    @endif
     @if(count($accessible) === 0)
         <x-card :padded="true">
             <x-empty-state icon="bar-chart-2" title="No Business available yet"

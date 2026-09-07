@@ -62,6 +62,11 @@ class AnalyticsController extends CustomerBaseController
         if (count($accessible) === 1) {
             [$workspace, $business] = $accessible[0];
 
+            // The legacy campaign actions (CampaignController) redirect here
+            // with a status/message flash; keep it alive across this second
+            // hop so the single-Business owner still sees it on the overview.
+            session()->reflash();
+
             return redirect()->route('customer.workspaces.businesses.analytics.overview', [$workspace->uid, $business->uid]);
         }
 

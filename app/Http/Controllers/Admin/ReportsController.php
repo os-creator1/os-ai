@@ -638,13 +638,6 @@
             }
 
 
-            if ( ! $campaign) {
-                return redirect()->route('customer.reports.campaigns')->with([
-                    'status'  => 'error',
-                    'message' => __('locale.exceptions.invalid_action'),
-                ]);
-            }
-
             $reportStatusCounts = Reports::where('campaign_id', $campaign->id)->selectRaw('
         COUNT(CASE WHEN customer_status = "Enroute" THEN 1 END) as enroute_count,
         COUNT(CASE WHEN customer_status = "Delivered" THEN 1 END) as delivered_count,
