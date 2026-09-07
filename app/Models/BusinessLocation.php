@@ -26,6 +26,16 @@ class BusinessLocation extends Model
         'public_address',
         'service_radius_km',
         'service_area_cities',
+        // Website Guided Generation contract §5.5 (Slice 1 allowlist
+        // correction -- see the implementation report): hours are a
+        // business_locations fact, never duplicated on the Business
+        // Knowledge Profile. Written exclusively by
+        // BusinessKnowledgeProfileManager::updateLocationHours().
+        'hours',
+        'hours_source',
+        'hours_verification_status',
+        'hours_verified_by_user_id',
+        'hours_verified_at',
     ];
 
     protected $casts = [
@@ -35,6 +45,8 @@ class BusinessLocation extends Model
         'service_area_cities' => 'array',
         'latitude' => 'decimal:7',
         'longitude' => 'decimal:7',
+        'hours' => 'array',
+        'hours_verified_at' => 'datetime',
     ];
 
     public function business(): BelongsTo
