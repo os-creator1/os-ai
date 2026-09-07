@@ -3,6 +3,16 @@
 Status: CONTRACT ONLY — no product code authorized by this document itself.
 Base SHA: `2d94c18fabe538cc711fd73822cbbd0d31387a44`
 Branch: `agent/b4-business-automations-contract`
+Revision: **Correction 1** (on `agent/b4-business-automations`, after
+merging main at `2425b9f1b4415a6b1dbeab99070191cc3d178b35`) — corrects
+§3/§3.1a/§3.6 (three authorized nullability relaxations), §4.1 (B4/B5
+`(business_id, created_at)` index coordination), §5.2 (stale-definition
+guard), §5.4 (execution-start claim), §6.B (bulk import evidence and
+policy), §7.B (definition-time group rule), §9, §18, §20.
+Revision: **Correction 2** (same branch, after merging main at
+`b2bedfc91848c90be2f1fc4e8e0ac440c6d4d892`, docs-only B5 contract) —
+§5.2 becomes an atomic locked claim checkpoint; new §5.5 post-start-claim
+final checkpoint; §9/§9.1 flow updated; §20 C7/C8 tests.
 
 Every claim in this contract is backed by a mechanical inspection of the
 tree at the base SHA. Where a decision was left open by the task, the
@@ -139,6 +149,15 @@ No destructive legacy-column change is authorized. Legacy columns may
 become unused but remain physically present, so every migration in B4 is
 rollback-safe.
 
+**"Additive" in B4 means exactly (Correction 1):**
+
+- no legacy column or legacy row is dropped, renamed, or deleted;
+- no legacy column is semantically repurposed;
+- the five new columns of §3.1 are added and are dropped again on rollback;
+- plus the **three explicitly documented compatibility relaxations of
+  §3.1a** — and no others. Any further constraint change requires a new
+  contract.
+
 **`running_pid` is explicitly RETAINED.** The reconnaissance recommended
 dropping it as proven-dead; this contract rejects that for B4 to keep the
 change additive. It stays physically present and permanently inert, and the
@@ -167,6 +186,32 @@ nullable column first, then index + `restrictOnDelete` FK named
 `json` is authorized (not `longText`) because MySQL 5.7+ is already assumed
 by existing `json` columns in the tree; if the implementation finds a
 concrete portability blocker it may use `longText` and record why.
+
+### 3.1a Authorized nullability relaxations — EXACTLY THREE (Correction 1)
+
+The implementation established mechanically that the legacy Birthday
+builder was the only writer of three `NOT NULL` columns, and that a B4
+definition cannot honestly populate them on every row (its audience,
+channel type and configuration live in `trigger_config`/`action_config`).
+Faking legacy values is forbidden. The same DDL migration therefore relaxes
+**these three columns, and only these three,** from `NOT NULL` to
+`NULL`:
+
+| Column | Was | Now | Notes |
+|---|---|---|---|
+| `automations.contact_list_id` | `NOT NULL`, FK → `contact_groups` | nullable, FK unchanged | Physically present, type unchanged, not repurposed. |
+| `automations.sms_type` | `NOT NULL` | nullable | Physically present, type unchanged, not repurposed. |
+| `automations.data` | `NOT NULL` | nullable | Physically present, type unchanged, not repurposed. |
+
+Locked semantics:
+
+- no legacy column is dropped or renamed;
+- the three columns remain physically present with their original types
+  (and `contact_list_id` keeps its FK);
+- B4 does not read, write, or repurpose them;
+- new B4 rows may legitimately leave all three `NULL`;
+- `down()` must **not** re-impose `NOT NULL` on them (§3.6);
+- no other constraint on `automations` may change.
 
 ### 3.2 Indexes
 
@@ -226,8 +271,13 @@ Its legacy cron path is also removed (§10), so it becomes inert-but-intact.
 ### 3.6 Rollback behaviour
 
 - `automations` migration `down()`: drop the FK, then the indexes, then the
-  five new columns. Legacy columns and all legacy rows are untouched, so
-  rolling back restores the pre-B4 schema exactly.
+  five new columns. Legacy columns and all legacy rows are untouched. The
+  three relaxed columns of §3.1a **stay nullable on rollback**: blindly
+  re-imposing `NOT NULL` would either fail or destructively invent values
+  once a valid B4-era row carries `NULL` there, and a nullable column is
+  strictly more permissive than the pre-B4 schema for every legacy row. So
+  rollback restores the pre-B4 column set exactly, with those three
+  documented relaxations retained.
 - The backfill migration is **data-only** and its `down()` is a documented
   no-op: it must not null out `business_id` (the column itself is dropped by
   the DDL migration's rollback), and it must never delete automation rows.
@@ -268,6 +318,16 @@ Adapted, not copied.
 
 Indexes: `business_id`, `automation_id`, `(automation_id, created_at)` for
 the history view, `status`. Unique: `idempotency_key`.
+
+**B4/B5 index coordination (Correction 1, human decision).** B5 Business
+Analytics will query this table by `business_id` plus a bounded
+`created_at` range. B4 owns the table, so B4 additionally creates the
+composite index `(business_id, created_at)`, explicitly named
+`automation_executions_business_id_created_at_index`, in the same
+`create_automation_executions` migration (the table drop in `down()`
+removes it). This is an index only: B4 adds no analytics code and no other
+analytics-oriented index. A narrow schema regression proves the composite
+index exists.
 
 ### 4.2 `attempt_number` is EXCLUDED — RESOLVED
 
@@ -334,6 +394,39 @@ may additionally lock the automation row for state re-checks.
 A pre-check (`where('idempotency_key', $key)->exists()`) is permitted as a
 fast path but is **never** the guarantee.
 
+**Stale-definition guard — atomic locked checkpoint (Correction 1,
+tightened in Correction 2).** A trigger evaluation can race an edit of the
+definition (evaluator observes `CONTACT_CREATED`; the definition is
+changed to `CONTACT_DATE_REACHED`; the stale evaluator then calls the claim
+with the old trigger identity while the current row is still "runnable").
+A plain re-read before the `INSERT` is itself a check-then-act window, so
+the claim is two-phased:
+
+1. **Lock-free phase** (may be slow): the automation is re-read and must be
+   active, Business-scoped and entitled (includes the
+   `EntitlementManager` call), and the Contact must belong to that
+   Business. No lock is held here.
+2. **Locked phase** — one short DB transaction, immediately before the
+   `INSERT`: re-read the Automation row with `lockForUpdate()`, re-read the
+   Contact row with `lockForUpdate()` (audience invariant), verify the
+   locked values, `INSERT` the unique-key execution row in the **same**
+   transaction, commit. Required, on the locked rows:
+   - Automation exists, `status = active`;
+   - `automation.business_id` equals the resolved Business;
+   - `automation.trigger_type` **exactly equals** the trigger being claimed;
+   - Contact exists and `contact.business_id` equals that Business;
+   - if the current `trigger_config.contact_group_id` is explicit,
+     `contact.group_id` equals it.
+
+Any failed check returns null with no row. A duplicate loses on the UNIQUE
+constraint: `UniqueConstraintViolationException` is caught around the
+transaction/insert and nothing else is masked. A definition edit cannot
+commit through the row lock between verification and `INSERT`; the claim
+row therefore reflects the definition that was atomically verified. No
+entitlement or provider/network call happens inside the locked phase, no
+lock is held across such calls, and there is no versioning engine and no
+retry.
+
 ### 5.3 DB-only actions
 
 `UPDATE_CONTACT_FIELD` (§7B) has no provider call, but takes the **same**
@@ -342,6 +435,62 @@ action, and an already-claimed key means no repeat write. The field write
 itself is naturally idempotent (setting a value to the configured value),
 but the claim must still be recorded so history is complete and a retry
 cannot produce a second execution record.
+
+### 5.4 Execution-start claim — the SAME row acts at most once (Correction 1)
+
+The `idempotency_key` UNIQUE constraint prevents duplicate execution
+**rows**. It does not prevent two workers from processing the **same** row:
+if a queue delivers one `executionId` twice, both can read `pending`, and
+without a further claim both could call the provider. That violates the
+at-most-once policy, so a second durable claim is required immediately
+before the action:
+
+- only a `pending` execution whose `started_at IS NULL` may acquire the
+  execution-start claim;
+- the claim sets `started_at` **exactly once**, atomically under a short
+  row lock (`lockForUpdate()`), in its own short transaction;
+- if `started_at` is already non-null, the worker returns immediately and
+  touches nothing;
+- once the start claim has committed, that row is never automatically
+  executed again — no reset of `started_at`, no automatic retry;
+- if the process dies after the start claim and before the provider call,
+  the action is lost by design (§5.1 rule 4) and the row may honestly
+  remain `pending`;
+- the provider/network call stays **outside** every DB transaction;
+- `UPDATE_CONTACT_FIELD` uses the identical one-start rule.
+
+The start claim lives in the same execution-claim service as §5.2, so there
+is exactly one place that may create or start an execution row.
+
+### 5.5 Post-start-claim FINAL checkpoint (Correction 2)
+
+The durable start claim (§5.4) must not be the last thing that happens
+before the action: a disable, an entitlement revocation, or a Business /
+Workspace / Contact change can land between an earlier eligibility check
+and the action. Therefore, **after** `claimStart()` succeeds and
+**immediately before** the action, the job performs ONE final fully
+authoritative re-read and re-check, and the action receives exactly the
+objects from that re-read — never anything loaded before the start claim.
+
+Required, all fresh from the database:
+
+- Automation still exists and is active;
+- `automation.business_id == execution.business_id`;
+- `automation.trigger_type == execution.trigger_type`;
+- Business still exists and is active;
+- Workspace still active;
+- Automations entitlement still allowed;
+- Contact still exists and still belongs to that Business;
+- if `trigger_config.contact_group_id` is explicit, the Contact still
+  belongs to that group.
+
+If any check fails: no dispatch; the already-started execution is finished
+as `skipped` with a safe bounded reason; it is never retried; `started_at`
+stays as claimed. If all pass, the bounded action handler then performs its
+own channel / SendingServer / sender / field checks. No provider/network
+call happens inside a DB transaction and no Automation/Business lock is
+held across the provider call: this is a checkpoint guarantee, not an
+attempt to make external revocation and provider I/O one atomic unit.
 
 ---
 
@@ -407,11 +556,28 @@ committed**.
    `app(LegacyBusinessResolver::class)->resolveForCustomer(...)`, i.e. a
    *resolved/guessed* Business. **OUT OF SCOPE — must not trigger B4.**
 
-There is **no bulk import path**: `app/Imports/` does not exist and there is
-no `Excel::import` / `ToCollection` / `WithHeadingRow` usage anywhere in
-`app/` (verified). The task's "import-created Contacts follow the same rule
-unless evidence proves unsafe" is therefore moot in v1; if an import path is
-added later it must be evaluated separately.
+**Bulk import — CORRECTED EVIDENCE (Correction 1).** The original claim
+that no bulk import path exists was wrong. There is one:
+`App\Models\ContactGroups::import()` (invoked by `App\Jobs\ImportContacts`)
+bulk-inserts Contacts through **raw SQL** (`INSERT INTO contacts ... SELECT
+... FROM __tmp_subscribers`), including `business_id`, and therefore
+traverses **neither** `storeContact()` nor `createContactFromRequest()`.
+
+**LOCKED V1 POLICY: CSV/bulk-import-created Contacts do NOT fire
+`CONTACT_CREATED` automations.** Reasons:
+
+- an import can create a large number of Contacts at once, and silently
+  fanning automated SMS/actions out of an import is unsafe and surprising;
+- B4 v1 has no explicit "run automations on imported contacts" consent or
+  import fan-out policy;
+- only the two explicitly enumerated interactive repository creation seams
+  (paths 1 and 2 above) fire `CONTACT_CREATED`;
+- DLR/resolver-derived creation (path 3) remains excluded as contracted.
+
+Consequently: no model `created` hook may be added, `ContactGroups::import()`
+must not be modified to dispatch automations, and no per-row jobs may be
+added to the import path. A regression must prove that import-created,
+Business-scoped Contacts enqueue and fire nothing.
 
 **Integration seam — LOCKED:** an explicit after-commit dispatch at the two
 in-scope repository methods (2 call sites), **not** an Eloquent
@@ -516,6 +682,26 @@ Updates exactly one Business-scoped Contact custom-field value.
   from config.
 - Deterministic and idempotent (§5.3).
 
+**Definition-time group rule (Correction 1).** A custom field belongs to
+exactly one contact group, so a definition whose field cannot match its
+audience is structurally impossible and must never be accepted:
+
+- for `action_type = update_contact_field` an explicit
+  `trigger_config.contact_group_id` is **required**;
+- the selected `field_id` must belong to **that exact** contact group;
+- that contact group must belong to the resolved Business;
+- phone fields remain forbidden;
+- for `CONTACT_DATE_REACHED` this is naturally the already-required
+  audience group;
+- for `CONTACT_CREATED`, "Any group" is **not** valid together with
+  `UPDATE_CONTACT_FIELD`; `CONTACT_CREATED` + `SEND_MESSAGE` may still use
+  "Any group".
+
+The runtime re-check (`field.contact_group_id === contact.group_id` and
+group → Business) stays as defense in depth. The form must make the group
+requirement understandable when this action is selected and must not
+present fields as if they were usable across groups.
+
 ### 7.C Explicitly excluded from v1
 
 Move opportunity, webhook, email, blacklist, booking, invoice, AI action,
@@ -568,25 +754,36 @@ TRIGGER FIRES
  → verify Automations entitlement for (Workspace, Business)
  → verify the Contact belongs to the SAME Business
  → compute the deterministic idempotency key (§6)
- → CLAIM: atomically insert the execution row (unique key; catch duplicate)
+ → CLAIM, one short transaction (§5.2): lock the Automation (+ Contact) row,
+   verify the CURRENT definition still describes this trigger — active, same
+   Business, same trigger_type, Contact still in the audience group — and
+   insert the execution row (unique key; catch duplicate); commit
  → dispatch the action job
- → ACTION JOB: re-fetch ALL authoritative state from the database
- → re-verify: automation still active, Business/Workspace still active,
-   entitlement still allowed, Contact still in Business, channel + underlying
-   SendingServer still active, action config still valid
+ → ACTION JOB: row must be pending and unstarted
+ → START CLAIM: set started_at exactly once under a row lock (§5.4);
+   a worker that loses this claim stops and touches nothing
+ → FINAL CHECKPOINT (§5.5): re-fetch ALL authoritative state fresh —
+   automation exists/active, same Business and trigger as the execution,
+   Business/Workspace still active, entitlement still allowed, Contact still
+   in Business and in the audience group; any failure → skipped, no action
+ → bounded action handler re-checks channel + underlying SendingServer,
+   sender, field, with the fresh objects from the final checkpoint
  → external provider call, OUTSIDE any DB transaction (SEND_MESSAGE only)
  → short transaction: record status + safe summaries + completed_at
 ```
 
 ### 9.1 Where pause/disable is re-checked
 
-Three points, all required:
+Four points, all required:
 
 1. At trigger evaluation (the sweep/hook only considers `status = active`).
-2. **Immediately before the claim**, under a fresh read of the automation
-   row — disabling an automation before the claim **must** prevent the send.
-3. **Inside the action job**, before the provider call, against re-fetched
-   state.
+2. **Immediately before the claim**, under a locked fresh read of the
+   automation row (§5.2) — disabling an automation before the claim
+   **must** prevent the send.
+3. **Inside the action job, after the start claim and before the action**
+   (§5.5), against fully re-fetched state.
+4. **Inside the bounded action handler**, for the action-specific
+   resources (channel, SendingServer, sender, field).
 
 ### 9.2 No stale snapshot may authorize execution
 
@@ -837,6 +1034,15 @@ Only these paths may change in the B4 implementation branch:
 
 **Tests**
 - `tests/Feature/Automations/**` *(new)*
+- `tests/Feature/Theme/ChartTokenContentTest.php` *(inventory entry only: the
+  replaced `customer/Automations/overview.blade.php` no longer bears a
+  chart, so it is removed from that test's chart-view list — no other
+  change)*
+
+**Contract (Correction 1 only)**
+- `docs/automation/B4-BUSINESS-AUTOMATIONS-CONTRACT.md` *(the corrections
+  recorded in the Revision line; the human-review correction task is the
+  authorization)*
 
 No unspecified broad refactor is authorized. Any file not listed here
 requires a new contract.
@@ -915,6 +1121,42 @@ Focused suite `tests/Feature/Automations/**`. Required coverage:
     entry never guesses a Business).
 23. Agency Prospecting separation: no `AgencyProspect*` row is created or
     mutated by any automation path.
+
+**Correction 1 additions (required)**
+- C1. Import policy (§6.B): Business-scoped Contacts created through
+  `ContactGroups::import()` enqueue and fire **no** `CONTACT_CREATED`
+  execution.
+- C2. Execution-start claim (§5.4): an execution already carrying
+  `started_at` cannot call the provider; one already carrying `started_at`
+  cannot perform `UPDATE_CONTACT_FIELD`; duplicate processing of the same
+  execution row yields exactly **one** side effect — proven with a
+  deterministic re-entrant hook, never a sleep.
+- C3. Stale-definition guard (§5.2): a `CONTACT_CREATED` candidate whose
+  definition is changed to the other trigger, or to an incompatible
+  audience group, before the claim yields no row, no action job, no
+  provider call.
+- C4. Definition-time group rule (§7.B): foreign-Business field rejected;
+  same-Business but different-group field rejected; `CONTACT_CREATED` +
+  `UPDATE_CONTACT_FIELD` without a group rejected; same-group configuration
+  accepted; the runtime same-group re-check remains covered.
+- C5. Existing pending/failed/succeeded/skipped idempotency (17) remains
+  covered after the start-claim change.
+- C6. Schema (§4.1): the composite index
+  `automation_executions_business_id_created_at_index` exists on exactly
+  `(business_id, created_at)`.
+- C7. Post-start-claim final checkpoint (§5.5, Correction 2): after the
+  execution row exists and the start claim is taken but before the action,
+  each of — automation disabled, entitlement denied, Business inactive,
+  Workspace inactive, Contact moved outside an explicit audience, trigger
+  type changed — yields `skipped` with zero provider calls; duplicate
+  processing of the same execution still performs exactly one side effect;
+  `started_at` is never cleared or rewritten.
+- C8. Atomic locked claim (§5.2, Correction 2), with deterministic row
+  locking and no sleeps: a concurrent definition edit from another
+  database session cannot commit through the row lock before the claim
+  decision, and the claim row reflects the atomically verified definition;
+  a definition edit committed before the lock is acquired makes the claim
+  return null with no row.
 
 **Regression (run, not re-authored)**
 24. B1 Outreach + B2 MessagingChannels.

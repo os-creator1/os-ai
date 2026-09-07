@@ -1,98 +1,116 @@
 <?php
 
-    namespace App\Jobs;
+namespace App\Jobs;
 
-    use App\Library\Tool;
-    use App\Library\Traits\Trackable;
-    use App\Models\Automation;
-    use App\Models\CustomerBasedPricingPlan;
-    use App\Models\PlansCoverageCountries;
-    use Illuminate\Support\Facades\Bus;
-    use libphonenumber\NumberParseException;
-    use libphonenumber\PhoneNumberUtil;
-    use Throwable;
+use App\Enums\Automation\AutomationTriggerType;
+use App\Library\Automation\AutomationEligibility;
+use App\Library\Automation\AutomationExecutionClaimService;
+use App\Library\Automation\AutomationTriggerEvaluator;
+use App\Models\Automation;
+use App\Models\AutomationExecution;
+use App\Models\Contacts;
+use Carbon\CarbonImmutable;
+use InvalidArgumentException;
 
-    class AutomationJob extends Base
-    {
-        use Trackable;
+/**
+ * B4 Business Automations — the TRIGGER-EVALUATION job (contract §9, §10).
+ * The class name is retained from the legacy worker pattern; its
+ * responsibility is now: for one trigger occurrence, determine the due
+ * Contacts, claim exactly one execution per (automation, contact,
+ * occurrence) through AutomationExecutionClaimService, and hand each
+ * claimed execution to the action job. It never calls a provider and
+ * never sends anything itself.
+ *
+ * Two entry modes, both on the existing `automation` queue:
+ *   - forDateSweep(automationId): dispatched by `automation:run` every
+ *     five minutes for each active, Business-scoped CONTACT_DATE_REACHED
+ *     automation.
+ *   - forContactCreated(contactId): dispatched (after commit) from the two
+ *     in-scope CRM creation seams for a freshly committed Business-scoped
+ *     Contact; evaluates every applicable CONTACT_CREATED automation.
+ */
+class AutomationJob extends Base
+{
+    public const MODE_DATE_SWEEP = 'date_sweep';
+    public const MODE_CONTACT_CREATED = 'contact_created';
 
-        protected Automation $automation;
-        protected            $contacts;
-
-        /**
-         * Create a new job instance.
-         */
-        public function __construct(Automation $automation, $contacts)
-        {
-            $this->automation = $automation;
-            $this->contacts   = $contacts;
-        }
-
-        /**
-         * @return void
-         * @throws NumberParseException
-         * @throws Throwable
-         */
-        public function handle()
-        {
-            $batchList = [];
-            $user      = $this->automation->user;
-
-            Tool::resetMaxExecutionTime();
-
-            $phoneUtil = PhoneNumberUtil::getInstance();
-
-            $this->contacts->each(function ($contact) use (&$batchList, $user, $phoneUtil) {
-                $phoneNumberObject = $phoneUtil->parse('+' . $contact->phone);
-                $countryCode       = $phoneNumberObject->getCountryCode();
-                $isoCode           = $phoneUtil->getRegionCodeForNumber($phoneNumberObject);
-
-                if ( ! empty($countryCode) && ! empty($isoCode)) {
-
-                    $coverage = CustomerBasedPricingPlan::where('user_id', $user->id)
-                        ->whereHas('country', function ($query) use ($countryCode, $isoCode) {
-                            $query->where('country_code', $countryCode)
-                                ->where('iso_code', $isoCode)
-                                ->where('status', 1);
-                        })
-                        ->with('sendingServer')
-                        ->first();
-
-                    if ( ! $coverage) {
-                        $coverage = PlansCoverageCountries::where(function ($query) use ($user, $countryCode, $isoCode) {
-                            $query->whereHas('country', function ($query) use ($countryCode, $isoCode) {
-                                $query->where('country_code', $countryCode)
-                                    ->where('iso_code', $isoCode)
-                                    ->where('status', 1);
-                            })->where('plan_id', $user->customer->activeSubscription()->plan_id);
-                        })
-                            ->with('sendingServer')
-                            ->first();
-                    }
-
-
-                    if ($coverage) {
-                        $priceOption = json_decode($coverage->options, true);
-
-                        if (isset($this->automation->sending_server_id)) {
-                            $sending_server = $this->automation->sendingServer;
-                        } else {
-                            $sending_server = $coverage->sendingServer;
-                        }
-
-                        $batchList[] = new SendAutomationMessage($this->automation, $contact, $sending_server, $user, $priceOption);
-                    }
-                }
-            });
-
-            $status = Bus::batch($batchList)
-                ->allowFailures(false)
-                ->onQueue('automation')
-                ->dispatch();
-
-            if ($status) {
-                $this->automation->updateCache();
-            }
-        }
-
+    private function __construct(
+        private readonly string $mode,
+        private readonly int $subjectId,
+    ) {
+        $this->onQueue('automation');
     }
+
+    public static function forDateSweep(int $automationId): self
+    {
+        return new self(self::MODE_DATE_SWEEP, $automationId);
+    }
+
+    public static function forContactCreated(int $contactId): self
+    {
+        return new self(self::MODE_CONTACT_CREATED, $contactId);
+    }
+
+    public function handle(
+        AutomationEligibility $eligibility,
+        AutomationTriggerEvaluator $evaluator,
+        AutomationExecutionClaimService $claims,
+    ): void {
+        match ($this->mode) {
+            self::MODE_DATE_SWEEP => $this->runDateSweep($eligibility, $evaluator, $claims),
+            self::MODE_CONTACT_CREATED => $this->runContactCreated($eligibility, $evaluator, $claims),
+            default => throw new InvalidArgumentException('Unknown AutomationJob mode.'),
+        };
+    }
+
+    private function runDateSweep(AutomationEligibility $eligibility, AutomationTriggerEvaluator $evaluator, AutomationExecutionClaimService $claims): void
+    {
+        // Checkpoint 1 (§9.1): fresh authoritative eligibility at
+        // evaluation time — a NULL-business or disabled automation stops
+        // here.
+        $resolved = $eligibility->resolve($this->subjectId);
+
+        if ($resolved === null || $resolved['automation']->trigger_type !== AutomationTriggerType::ContactDateReached) {
+            return;
+        }
+
+        $automation = $resolved['automation'];
+        $business = $resolved['business'];
+
+        foreach ($evaluator->dueForDateReached($automation, $business, CarbonImmutable::now()) as $due) {
+            /** @var Contacts $contact */
+            $contact = $due['contact'];
+            $key = AutomationExecutionClaimService::dateReachedKey($automation->id, $contact->id, $due['occurrence_year']);
+
+            $this->claimAndDispatch($claims, $automation, $contact, AutomationTriggerType::ContactDateReached, $key);
+        }
+    }
+
+    private function runContactCreated(AutomationEligibility $eligibility, AutomationTriggerEvaluator $evaluator, AutomationExecutionClaimService $claims): void
+    {
+        $contact = Contacts::query()->find($this->subjectId);
+
+        // A NULL-business Contact (legacy, or created through the
+        // out-of-scope DLR path) never triggers anything (§6.B).
+        if ($contact === null || $contact->business_id === null) {
+            return;
+        }
+
+        foreach ($evaluator->automationsForCreatedContact($contact) as $automation) {
+            $key = AutomationExecutionClaimService::contactCreatedKey($automation->id, $contact->id);
+
+            $this->claimAndDispatch($claims, $automation, $contact, AutomationTriggerType::ContactCreated, $key);
+        }
+    }
+
+    private function claimAndDispatch(AutomationExecutionClaimService $claims, Automation $automation, Contacts $contact, AutomationTriggerType $trigger, string $key): void
+    {
+        // Checkpoint 2 (§9.1) lives inside claim(): a fresh re-read of the
+        // automation immediately before the durable INSERT.
+        $execution = $claims->claim($automation->id, $contact, $trigger, $key);
+
+        if ($execution instanceof AutomationExecution) {
+            SendAutomationMessage::dispatch($execution->id);
+        }
+    }
+}

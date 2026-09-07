@@ -477,30 +477,19 @@
 
     /*
     |--------------------------------------------------------------------------
-    | Automations Module
+    | Automations entry (B4)
     |--------------------------------------------------------------------------
     |
-    | Send Birthday Message, Say Good bye to subscribers and all automations will discuss here
+    | Bare selector only — the actual Business-scoped product surface lives
+    | at customer.workspaces.businesses.automations.* (registered in the
+    | "workspaces" group below). Every legacy flat per-record / mutating
+    | route (search, create, say-happy-birthday, show, enable, disable,
+    | delete, batch_action, reports, sendNow, tags) is removed outright per
+    | the B4 contract §15.2 — none survives as a cross-tenant compatibility
+    | bypass. Never guesses a Business. See AutomationsController::entry().
     |
     */
-    Route::prefix('automations')->name('automations.')->group(function () {
-        Route::get('/', 'AutomationsController@index')->name('index');
-        Route::post('/search', 'AutomationsController@search')->name('search');
-        Route::get('/create', 'AutomationsController@create')->name('create');
-        Route::get('/say-happy-birthday', 'AutomationsController@sayHappyBirthday')->name('say.happy.birthday');
-        Route::post('/say-happy-birthday', 'AutomationsController@postSayHappyBirthday');
-
-        Route::get('/{automation}/show', 'AutomationsController@show')->name('show');
-        Route::post('/{automation}/disable', 'AutomationsController@disable')->name('disable');
-        Route::post('/{automation}/enable', 'AutomationsController@enable')->name('enable');
-        Route::post('/{automation}/delete', 'AutomationsController@delete')->name('delete');
-        Route::post('batch_action', 'AutomationsController@batchAction')->name('batch_action');
-        Route::post('/{automation}/reports', 'AutomationsController@reports')->name('reports');
-        Route::post('/{automation}/{subscriber}/send', 'AutomationsController@sendNow')->name('send');
-
-        /*Version 3.9*/
-        Route::post('tags/get-data/{id}', 'AutomationsController@getTags')->name('tags.get-data');
-    });
+    Route::get('automations', 'AutomationsController@entry')->name('automations.index');
 
 
     /*Version 3.13*/
@@ -672,6 +661,32 @@
         Route::post('{workspaceUid}/members/{memberUid}/access', 'Workspace\WorkspaceController@updateMemberAccess')->name('members.access');
         Route::post('{workspaceUid}/members/{memberUid}/deactivate', 'Workspace\WorkspaceController@deactivateMember')->name('members.deactivate');
         Route::post('{workspaceUid}/members/{memberUid}/reactivate', 'Workspace\WorkspaceController@reactivateMember')->name('members.reactivate');
+
+        /*
+        |----------------------------------------------------------------
+        | B4 — Business-scoped Automations
+        |----------------------------------------------------------------
+        |
+        | Canonical address per the B4 contract §2.1, mirroring the B1
+        | Outreach group shape. Every action runs Workspace → Business →
+        | userCanAccessBusiness() → Automations entitlement → Automation
+        | scoped to that Business. {automationUid} is a plain string
+        | resolved INSIDE the Business by the controller — deliberately
+        | not implicit model binding, so no unscoped lookup exists. See
+        | Business\AutomationsController.
+        |
+        */
+        Route::prefix('{workspaceUid}/businesses/{businessUid}/automations')->name('businesses.automations.')->group(function () {
+            Route::get('/', 'Business\AutomationsController@listing')->name('index');
+            Route::get('/create', 'Business\AutomationsController@create')->name('create');
+            Route::post('/', 'Business\AutomationsController@store')->name('store');
+            Route::get('/{automationUid}', 'Business\AutomationsController@show')->name('show');
+            Route::get('/{automationUid}/edit', 'Business\AutomationsController@edit')->name('edit');
+            Route::post('/{automationUid}', 'Business\AutomationsController@update')->name('update');
+            Route::post('/{automationUid}/enable', 'Business\AutomationsController@enable')->name('enable');
+            Route::post('/{automationUid}/disable', 'Business\AutomationsController@disable')->name('disable');
+            Route::post('/{automationUid}/delete', 'Business\AutomationsController@destroy')->name('destroy');
+        });
 
         /*
         |----------------------------------------------------------------
