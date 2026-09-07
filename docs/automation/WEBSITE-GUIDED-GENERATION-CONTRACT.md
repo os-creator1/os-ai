@@ -3,6 +3,7 @@
 **Status:** DRAFT — CONTRACT ONLY, NOT IMPLEMENTATION-AUTHORIZED
 **Lane:** Lane B (Website Generation + Hosting)
 **Verified base:** `origin/main` @ `0fc2818bb941b01d9fa6b510e017d12ca0d813c5` (PR #211, B5 Business Analytics, merged)
+**Correction pass:** this revision applies a surgical correction round over the original contract (atomicity, alt-text ownership, sensitive-fact exclusion, vertical/question-pack scalability, per-location multi-period hours, testimonial schema, financing/pricing separation, idempotency-key completeness, internal-link handling, and locked trial/tenancy/freshness/cap decisions). Every correction is called out inline where it changes prior text.
 **Depends on (read-only, not modified by this contract):** `docs/automation/WEBSITE-GENERATION-HOSTING-CONTRACT.md` (Slice A, implemented, merged PR #209), `docs/rfcs/RFC-002-OPPORTUNITY-ENGINE.md` (Opportunity Engine, implemented), `docs/rfcs/RFC-004-PLANS-AND-BUSINESS-FEATURE-ENTITLEMENTS.md` (entitlement, implemented), `docs/rfcs/RFC-005-BUSINESS-USAGE-BILLING-AND-WALLETS.md` (usage wallets, implemented through M6), `docs/automation/GOOGLE-BUSINESS-PROFILE-CONTRACT.md` (GBP, contract-only, PR #210 merged)
 
 This document is contract-only. It authorizes no code. Every claim below cites an exact file, class, method, column, enum case, or test. Where no such citation exists, the claim is marked `NOT FOUND` and recorded as a gap, never assumed.
@@ -17,8 +18,9 @@ Mechanically confirmed on this exact commit (`0fc2818`):
 - Website Slice A is present and fully merged: `app/Models/Website.php`, `app/Models/WebsitePage.php`, `app/Models/WebsiteRevision.php`, `app/Models/WebsiteAsset.php`, the 5 migrations under `database/migrations/2026_09_07_1300*.php`, `app/Http/Controllers/Customer/Business/WebsiteController.php`, `app/Http/Controllers/Public/WebsiteController.php`, and 16 test files under `tests/Feature/Website/`.
 - The GBP contract is present at `docs/automation/GOOGLE-BUSINESS-PROFILE-CONTRACT.md` (contract-only, no implementation code shipped — confirmed no `app/Models/*GoogleBusinessProfile*` or `business_google_connections`-shaped migration exists on this branch).
 - B5 Business Analytics is implemented: its only migration is `database/migrations/2026_09_08_120001_add_analytics_indexes_to_business_scoped_tables.php` — B5 adds indexes to existing tables and reuses the existing `view_reports` customer permission; it introduces **no new `PlatformFeature` case** (`docs/automation/B5-BUSINESS-ANALYTICS-CONTRACT.md` §2.5: *"`App\Enums\Entitlement\PlatformFeature` has no analytics case... B5 introduces no new PlatformFeature case and no entitlement gate of its own."*).
+- Rendering evidence re-verified for this correction pass: `resources/views/public/website/components/hero.blade.php` renders `background_image` as a CSS `background-image` on the `<section>` element (no `<img>` tag exists in that partial, so no HTML `alt` attribute is possible for it); `resources/views/public/website/components/image_text.blade.php` and `resources/views/public/website/components/services.blade.php` both render their image field as a real `<img src="{{ $assetsByUid[...]['url'] }}" alt="{{ $assetsByUid[...]['alt_text'] ?? '' }}">`, reading `alt_text` from the `assetsByUid` map — which is built, in both the preview and public render paths, from `WebsiteAsset` rows (`app/Http/Controllers/Customer/Business/WebsiteController.php::preview()`, `app/Library/Website/WebsiteSnapshotBuilder.php`), never from section JSON. Section JSON itself (`WebsiteSectionValidator`'s per-type rules, `app/Library/Website/WebsiteSectionValidator.php:75-130`) has no `alt_text` key on any of the 8 types. §13 corrects the contract's prior, mechanically false claim that a section "carries" alt text.
 
-Branch for this contract: `agent/website-guided-generation-contract`, created fresh from `origin/main` @ `0fc2818` (not rebased or reused from the merged `agent/website-generation-hosting` implementation branch).
+Branch for this contract: `agent/website-guided-generation-contract`, created fresh from `origin/main` @ `0fc2818` (not rebased or reused from the merged `agent/website-generation-hosting` implementation branch). This correction pass adds no new commit base and does not merge or rebase.
 
 ---
 
@@ -28,7 +30,7 @@ Website Slice A (merged) gives a Business exactly one flat, manually-edited webs
 
 This contract designs **Website Guided Generation**: a COO-guided, template-constrained generation product built strictly on top of Slice A's existing bounded component library, publish/rollback model, and entitlement gate — plus **one new, canonical, Business-scoped Business Knowledge Profile** that Website, and eventually SEO/GBP/COO/CRM/Ads/Automations, all read and write through the same seam, so no feature invents its own copy of "what is this business."
 
-It does not re-open, weaken, or duplicate any Slice A invariant. Where this contract needs to *extend* an existing bound (e.g., the page-count ceiling), it says so explicitly and cites exactly why (§3.4).
+It does not re-open, weaken, or duplicate any Slice A invariant. Where this contract needs to *extend* an existing bound (the page-count ceiling, §3.4) or *narrowly extend* an existing rule (internal-link acceptance in `WebsiteUrlRules`, §8.6), it says so explicitly, cites exactly why, and never claims the file is "unmodified" when it is not.
 
 ---
 
@@ -42,21 +44,22 @@ It does not re-open, weaken, or duplicate any Slice A invariant. Where this cont
 | Services | **EXISTS** | `app/Models/BusinessService.php:14-23` — `name`, `slug`, `description`, `starting_price`, `currency_code`, `status`, `sort_order`, `is_primary` |
 | Single active primary service invariant | **EXISTS** | `Business::primaryService()` (`app/Models/Business.php:67-72`, `where('is_primary', true)->where('status', BusinessServiceStatus::Active)`); enforced in `EloquentBusinessServiceRepository::resolvePrimary()`/`setPrimary()` |
 | Single primary location invariant | **EXISTS** | `Business::primaryLocation()` (`app/Models/Business.php:57-60`); enforced in `EloquentBusinessLocationRepository::upsertPrimary()`/`setPrimary()` |
-| Offers/packages, pricing method (fixed/hourly/quote/tiers) | **MISSING** | `BusinessService` has only `starting_price`/`currency_code` — no pricing-method enum, no bundled "offer/package" concept. `Offer`/`Product`/`Package` models: `NOT FOUND` anywhere in `app/Models/` |
+| Pricing method, financing availability | **MISSING** | `BusinessService` has only `starting_price`/`currency_code` — no pricing-method enum, no financing flag. `Offer`/`Product`/`Package` models: `NOT FOUND` anywhere in `app/Models/` |
 | Features/differentiators | **MISSING** | No column anywhere on `businesses`, `business_services`, or `customer_onboardings` |
 | Ideal customers / customer problems | **MISSING** | Not present anywhere |
 | Credentials, licenses, warranties, guarantees, years operating | **MISSING** | `NOT FOUND` as a column anywhere in `app/Models/` or `database/migrations/`; only unrelated matches (`AppConfig`'s software-license setting, SMS-gateway "credentials") |
 | Hours / availability | **MISSING** | Confirmed absent by the GBP contract's own evidence: *"Per-location opening hours do not exist on the platform. They are a general Business fact that Website, SEO and GBP all eventually need, and they belong on `business_locations`, not in a GBP table"* (`GOOGLE-BUSINESS-PROFILE-CONTRACT.md` §36.1.3) |
+| Vertical/specialty classification narrower than `BusinessIndustry` | **MISSING** | `BusinessIndustry` (`app/Enums/Business/BusinessIndustry.php:7-13`) has exactly 7 broad cases; no narrower "roofing"/"wedding photography"-style specialty concept exists anywhere. §7 defines a data-driven `vertical_key`, never a new enum case per trade. |
 | Primary marketing/growth goals | **PARTIAL** | `customer_onboardings.primary_goals` (JSON, max 2 of `BusinessGoal` enum: `lead_generation`, `local_seo`, `website_conversion`, `reputation`, `sales_followup`, `automation`) exists but is account-level onboarding intent, not a per-website conversion-journey field |
 | Website-specific primary conversion goal / booking journey | **MISSING** | No enum or column for "call vs quote vs consultation vs calendar vs external booking" exists anywhere |
 | Brand voice / prohibited claims | **MISSING** | Not present anywhere |
 | Reviews/testimonials (verified) | **MISSING** | No review/testimonial model exists (`NOT FOUND`); `WebsiteSectionType::Testimonials` is an AI-fabricated-copy section type only, never tied to a verified review record |
 | Priority services/locations for growth | **MISSING** | Not present; only unordered `primary_goals` at the account level |
-| Business-scoped image inventory / usage confirmation | **PARTIAL** | `WebsiteAsset` (`app/Models/WebsiteAsset.php`) exists but is strictly Website-scoped (cascade-deleted with the Website, no `purpose`/`usage_confirmed` concept, no cross-feature reuse) |
-| Business-scoped "Settings" write surface | **PARTIAL** | No controller literally named `*Settings*` exists, but `App\Http\Controllers\Customer\BusinessController@edit`/`@update` (routes `customer.business.edit`/`customer.business.update`, prefix `/business`) is the real identity-edit surface. It is **flat/V1**: it resolves only `BusinessRepository::findPrimaryByCustomer()` — i.e. **the customer's one "primary" Business**, not any Workspace/Business-uid-scoped Business the way Website Slice A's own tenancy chain (`WorkspaceManager::userCanAccessBusiness()`) supports multiple Businesses per Workspace. This is a real architectural gap between the two subsystems (§3.3). |
+| Business-scoped image inventory / usage confirmation | **PARTIAL** | `WebsiteAsset` (`app/Models/WebsiteAsset.php`) exists but is strictly Website-scoped (cascade-deleted with the Website, no `purpose`/`usage_confirmed` concept, no cross-feature reuse). It does own `alt_text` today, read into every render via `assetsByUid` (§0) — this contract's Business-scoped media inventory (§13, Slice 5) is the *source* alt text a `WebsiteAsset` copy inherits, never a duplicate storage location. |
+| Business-scoped "Settings" write surface | **PARTIAL** | No controller literally named `*Settings*` exists, but `App\Http\Controllers\Customer\BusinessController@edit`/`@update` (routes `customer.business.edit`/`customer.business.update`, prefix `/business`) is the real identity-edit surface. It is **flat/V1**: it resolves only `BusinessRepository::findPrimaryByCustomer()` — i.e. **the customer's one "primary" Business**, not any Workspace/Business-uid-scoped Business the way Website Slice A's own tenancy chain (`WorkspaceManager::userCanAccessBusiness()`) supports multiple Businesses per Workspace. **Locked (§22 decision 2):** this contract's Profile write surface is a new, narrow, Workspace/Business-uid-scoped path (Option A); the legacy flat `BusinessController` is not migrated here. |
 | Bounded 8-component Website library | **EXISTS, LOCKED** | `app/Enums/Website/WebsiteSectionType.php:14-21` (`Hero`, `Text`, `ImageText`, `Services`, `Testimonials`, `Faq`, `Cta`, `ContactDetails`); confirmed exactly 8 by `tests/Feature/Website/WebsiteBoundaryTest.php:48-62` |
 | Max sections per page (40) | **EXISTS, ENFORCED EVERYWHERE** | `WebsiteSectionValidator::MAX_SECTIONS_PER_PAGE = 40` (`app/Library/Website/WebsiteSectionValidator.php:20`), enforced on every `validate()` call site (draft save, publish-time re-validation, AI output validation) |
-| Max pages per Website (20) | **PARTIAL / MECHANICAL GAP** | `WebsiteAiDraftGenerator::MAX_PAGES = 20` (`app/Library/Website/WebsiteAiDraftGenerator.php:29`) bounds only a single AI-generation *batch*, checked once against `count($decoded['pages'])` — it is **not** a general ceiling on a Website's cumulative page count. `WebsiteDraftPageService::createPage()` performs no page-count check at all. The contract doc's own §7 claim ("max 20 pages per Website") is **not code-enforced** as a standing invariant today. This contract must decide whether to close that gap (§3.4). |
+| Max pages per Website (20) | **PARTIAL / MECHANICAL GAP** | `WebsiteAiDraftGenerator::MAX_PAGES = 20` (`app/Library/Website/WebsiteAiDraftGenerator.php:29`) bounds only a single AI-generation *batch*, checked once against `count($decoded['pages'])` — it is **not** a general ceiling on a Website's cumulative page count. `WebsiteDraftPageService::createPage()` performs no page-count check at all. This contract closes that gap (§3.4). |
 | AI generation seam | **EXISTS, LOCKED** | `App\Library\Website\WebsiteAiGenerationClient::complete()` reusing `config('services.openai.*')` exactly (`config/services.php:90-97`); fails closed on missing key/inactive/any `Throwable` |
 | Any AI model-routing / cheap-model-first policy | **MISSING** | `NOT FOUND` anywhere in `app/` — the only model reference in the whole codebase is the single hardcoded default `'gpt-4o'` in `config/services.php:93` |
 | Any AI-specific token/cost budget or rate limit | **MISSING** | `NOT FOUND` — see Usage Wallet evidence below; no `PlatformFeature` is currently metered |
@@ -65,7 +68,7 @@ It does not re-open, weaken, or duplicate any Slice A invariant. Where this cont
 | `PlatformFeature::WebsiteGeneration` availability/packaging | **EXISTS, Available, Core+Growth+Agency** | `app/Library/Entitlement/PlatformFeatureRegistry.php:49`; packaged into all three tiers by `database/migrations/2026_08_13_120007_seed_workspace_plan_catalog_and_features.php:91-102` |
 | `PlatformFeature::AiCooBasic`, `SeoBasicVisibility`, `SeoModule` | **EXISTS AS ENUM ONLY, Planned** | `app/Library/Entitlement/PlatformFeatureRegistry.php:52-55`; zero executable implementation (no controller/model/migration/route) for any of the three |
 | A general "AI COO" brain/controller | **MISSING (docs/enum only)** | `NOT FOUND` — the `PlatformFeature::AiCooBasic` case and its Core-tier packaging row are the only artifacts; no executable code exists |
-| A general recommendation/opportunity engine that a "Website worker" should plug into | **EXISTS, DESIGNED FOR EXACTLY THIS, UNUSED FOR WEBSITE** | RFC-002 Opportunity Engine (`docs/rfcs/RFC-002-OPPORTUNITY-ENGINE.md`), fully implemented: `App\Library\Opportunity\OpportunityProducer` interface (`app/Library/Opportunity/OpportunityProducer.php:17-25`, exactly `workerKey(): OpportunityWorkerKey` + `produce(Business $business): iterable`), `App\Enums\Opportunity\OpportunityWorkerKey` **already reserves** `case Website = 'website';` alongside `BusinessAdvisor`, `Seo`, `Content`, `Sales`, `Reputation` — but **no producer implementation exists for `Website`** (only `BusinessAdvisorOpportunityProducer` exists). RFC-002 §2 states verbatim: *"Enables: SEO, Content, Sales, Reputation, and Website workers (future RFCs)... It does not implement the SEO, Content, Sales, Reputation, or Website workers."* This is the exact, pre-designed seam a future Website-recommendation worker must use — never a new, competing engine. |
+| A general recommendation/opportunity engine that a "Website worker" should plug into | **EXISTS, DESIGNED FOR EXACTLY THIS, UNUSED FOR WEBSITE** | RFC-002 Opportunity Engine (`docs/rfcs/RFC-002-OPPORTUNITY-ENGINE.md`), fully implemented: `App\Library\Opportunity\OpportunityProducer` interface (`app/Library/Opportunity/OpportunityProducer.php:17-25`, exactly `workerKey(): OpportunityWorkerKey` + `produce(Business $business): iterable`), `App\Enums\Opportunity\OpportunityWorkerKey` **already reserves** `case Website = 'website';` alongside `BusinessAdvisor`, `Seo`, `Content`, `Sales`, `Reputation` — but **no producer implementation exists for `Website`** (only `BusinessAdvisorOpportunityProducer` exists). RFC-002 §2 states verbatim: *"Enables: SEO, Content, Sales, Reputation, and Website workers (future RFCs)... It does not implement the SEO, Content, Sales, Reputation, or Website workers."* This is the exact, pre-designed seam a future Website-recommendation worker must use — never a new, competing engine. **Locked (§22 decision 7): not implementation-authorized in this contract's near-term slices.** |
 | Calendar / booking model | **MISSING** | `PlatformFeature::Calendar` exists and is `Planned`; `NOT FOUND` as any executable model — every "schedul*"/"booking" hit in `app/Models/` is SMS-campaign-send scheduling or an external booking *URL* string on an unrelated AI-prospecting model |
 | Form-builder / survey model | **MISSING, AND CONTRACTUALLY FORBIDDEN IN WEBSITE** | `PlatformFeature::Forms` exists and is `Planned`; `tests/Feature/Website/WebsiteBoundaryTest.php` actively asserts no form-builder routes/tables/section-type exist in Website Slice A |
 | Offers/Products/Packages sellable-item model | **MISSING** | `NOT FOUND` anywhere |
@@ -75,7 +78,8 @@ It does not re-open, weaken, or duplicate any Slice A invariant. Where this cont
 | Generic audit-log/change-log package or model | **MISSING** | `NOT FOUND` (`spatie/laravel-activitylog` absent from `composer.json`; no `AuditLog`/`ActivityLog`/`ChangeLog` model). Established repository pattern is a **bespoke per-feature ledger table** — e.g. GBP's own `business_google_operations`, justified explicitly: *"is the audit table. No separate GBP events table is created; one would duplicate it"* (`GOOGLE-BUSINESS-PROFILE-CONTRACT.md` §27). This contract follows the same established pattern (§5.3) rather than inventing a generic mechanism. |
 | `WebsitePublished` event listeners | **ZERO, CONFIRMED** | `grep -rn "WebsitePublished" app/Providers/` returns nothing; matches the Slice A contract's own claim that it "ships zero listeners for this event" |
 | B5 Analytics / Website page-view data | **NOT INTEGRATED, KNOWN STALE DOC** | `docs/automation/B5-BUSINESS-ANALYTICS-CONTRACT.md:507` still reads *"Page views, site conversion \| Website Generation ships page-view data (`PlatformFeature::WebsiteGeneration` is `Planned`)"* — stale relative to Slice A's actual Available flip; not corrected by this contract (out of B5's lane, flagged only) |
-| GoHighLevel template exports/screenshots/assets | **ABSENT, CONFIRMED** | `grep -rli "gohighlevel"` across the repository (excluding `vendor`/`node_modules`) returns exactly two files, both prose: `docs/automation/PRODUCT-SURFACE-RETENTION-AUDIT.md` (one sentence positioning the *product*, not a template, against GoHighLevel as a competitor) and this contract's own reference in `docs/rfcs/RFC-003-WORKSPACE-AND-BUSINESS-ACCOUNT-CORE.md` (same kind of prose mention). No export file, screenshot, HTML/CSS bundle, or asset of any kind from GoHighLevel exists anywhere in the repository. §4 below defines the import boundary precisely because of this. |
+| GoHighLevel template exports/screenshots/assets | **ABSENT, CONFIRMED** | `grep -rli "gohighlevel"` across the repository (excluding `vendor`/`node_modules`) returns exactly two files, both prose: `docs/automation/PRODUCT-SURFACE-RETENTION-AUDIT.md` (one sentence positioning the *product*, not a template, against GoHighLevel as a competitor) and this contract's own reference in `docs/rfcs/RFC-003-WORKSPACE-AND-BUSINESS-ACCOUNT-CORE.md` (same kind of prose mention). No export file, screenshot, HTML/CSS bundle, or asset of any kind from GoHighLevel exists anywhere in the repository. §6 defines the import boundary precisely because of this. |
+| Root-relative internal path acceptance in URL validation | **MISSING, NARROWLY EXTENDED BY THIS CONTRACT** | `App\Library\Website\WebsiteUrlRules::isValid()` today accepts only `tel:`, `mailto:`, and `https://` (`app/Library/Website/WebsiteUrlRules.php`) — no relative/internal-path shape is accepted. §8.6 defines a narrow, cited extension for internal Website navigation only; this is **not** a claim that the file is left unmodified. |
 
 ---
 
@@ -87,26 +91,21 @@ Guided Generation is a mode of the *existing* Website Slice A resource, not a ne
 
 ### 3.2 Business Knowledge Profile tenancy
 
-The Business Knowledge Profile is **Business-scoped** (one row per `business_id`, unique), reachable only through the same `WorkspaceManager::userCanAccessBusiness()` chain used everywhere else in this codebase for Business-scoped data — it introduces **no** parallel authorization path. `SeoBasicVisibility`, `SeoModule`, `GoogleBusinessProfileModule`, `AiCooBasic`, `Automations`, and `Crm` are all already `PlatformFeature::Business`-scoped (default scope per `PlatformFeatureRegistry::SCOPE`, `app/Library/Entitlement/PlatformFeatureRegistry.php:70-72,87`) — so every consumer of the Profile shares the identical Business-scoped authorization primitive already in use platform-wide. Reading the Profile itself requires no new `PlatformFeature` gate (it is not a billable feature; it is shared data), but **writing** it always happens through one of two already-entitled surfaces: Business Settings (no feature gate today — see §3.3) or Website guided setup (gated by `PlatformFeature::WebsiteGeneration`, already Core+Growth+Agency).
+The Business Knowledge Profile is **Business-scoped** (one row per `business_id`, unique), reachable only through the same `WorkspaceManager::userCanAccessBusiness()` chain used everywhere else in this codebase for Business-scoped data — it introduces **no** parallel authorization path. `SeoBasicVisibility`, `SeoModule`, `GoogleBusinessProfileModule`, `AiCooBasic`, `Automations`, and `Crm` are all already `PlatformFeature::Business`-scoped (default scope per `PlatformFeatureRegistry::SCOPE`, `app/Library/Entitlement/PlatformFeatureRegistry.php:70-72,87`) — so every consumer of the Profile shares the identical Business-scoped authorization primitive already in use platform-wide. Reading the Profile itself requires no new `PlatformFeature` gate (it is not a billable feature; it is shared data), but **writing** it always happens through the entitled Website guided-setup surface (gated by `PlatformFeature::WebsiteGeneration`, already Core+Growth+Agency) via the new Profile write surface described in §3.3.
 
-### 3.3 The Business Settings tenancy gap — a human-review decision, not silently resolved
+### 3.3 Business Settings tenancy — LOCKED (Option A)
 
 `App\Http\Controllers\Customer\BusinessController@edit`/`@update` (`app/Http/Controllers/Customer/BusinessController.php:27-59`, routes `customer.business.edit`/`update`, `routes/customer.php:536-539`) is the only existing "Business Settings" surface, and it operates on `BusinessRepository::findPrimaryByCustomer()` — **the customer's single primary Business**, with no Workspace/Business-uid parameters at all. This predates RFC-003's multi-Business-per-Workspace tenancy model that Website Slice A, Automations, and every other B-lane feature already use.
 
-**This contract does not silently extend or replace that flat surface.** Two paths exist, and which one ships is a human-review decision (§23):
-
-- **Option A (recommended, smaller):** Business Knowledge Profile fields introduced by this contract (§4) get their own dedicated, Workspace/Business-uid-scoped write surface reusing the `resolveEntitledBusiness()` pattern exactly as Website Slice A does — i.e., a new, narrow controller action set under the existing Website guided-setup flow (§11) and/or a future dedicated `customer.workspaces.businesses.profile.*` route group, leaving the legacy flat `BusinessController` untouched.
-- **Option B (larger, out of this contract's slice order):** Migrate `BusinessController@edit`/`@update` itself onto the Workspace/Business-uid tenancy chain, unifying the "primary business" V1 concept with the multi-Business model. This is an RFC-003/RFC-001 boundary change and is **explicitly out of scope for this contract** — recorded here only so the gap is not silently worked around.
-
-This contract's implementation slices (§17) assume **Option A**.
+**§22 decision 2 locks Option A for this contract's slices:** Business Knowledge Profile fields get their own dedicated, Workspace/Business-uid-scoped write surface reusing the `resolveEntitledBusiness()` pattern exactly as Website Slice A does — a new, narrow controller action set under the Website guided-setup flow (§11) — leaving the legacy flat `BusinessController` completely untouched. Migrating `BusinessController@edit`/`@update` itself onto the Workspace/Business-uid tenancy chain (the larger, RFC-003/RFC-001-boundary "Option B") is **not part of this contract** and is not silently reconsidered.
 
 ### 3.4 Closing the page-count gap
 
-Because the merged §2 evidence shows the "20 pages per Website" bound is enforced only inside `WebsiteAiDraftGenerator`'s batch check, and Guided Generation will create multiple pages deterministically (not exclusively through the AI path), this contract requires (Slice 1, §17) adding an explicit `WebsitePage::count()` ceiling of 20 directly inside `WebsiteDraftPageService::createPage()` — the single seam every page-creation path (manual, AI-generated, guided-generation) already funnels through. This is a **narrow extension of an existing, already-locked bound**, not a new product decision, and requires no entitlement or contract change beyond stating it here. A regression test proving the general ceiling (not just the AI-batch ceiling) is required in Slice 1's test plan (§19).
+Because the merged §2 evidence shows the "20 pages per Website" bound is enforced only inside `WebsiteAiDraftGenerator`'s batch check, and Guided Generation will create multiple pages deterministically (not exclusively through the AI path), this contract requires (Slice 1, §16) adding an explicit `WebsitePage::count()` ceiling of 20 directly inside `WebsiteDraftPageService::createPage()` — the single seam every page-creation path (manual, AI-generated, guided-generation) already funnels through. This is a **narrow extension of an existing, already-locked bound**, not a new product decision, and requires no entitlement or contract change beyond stating it here. A regression test proving the general ceiling (not just the AI-batch ceiling) is required in Slice 1's test plan (§18).
 
 ### 3.5 What this contract explicitly does not touch
 
-Per the Slice A contract's own stop-list and this task's instructions: no change to `app/Library/Website/WebsiteSectionValidator.php`'s 8-type enum or its `match()` field rules beyond what §3.4 states; no new Website-facing form/survey/booking component; no B4 (Automations), B5 (Analytics), or Lane C (GBP) file is read as authoritative or modified; no Slice B custom-domain code.
+Per the Slice A contract's own stop-list and this task's instructions: no change to `app/Library/Website/WebsiteSectionValidator.php`'s 8-type enum or its `match()` field rules; no new Website-facing form/survey/booking component; no B4 (Automations), B5 (Analytics), or Lane C (GBP) file is read as authoritative or modified; no Slice B custom-domain code. The **one** narrow, cited exception to "no other Slice A file changes" is `App\Library\Website\WebsiteUrlRules::isValid()`, which gains a bounded internal-path acceptance rule for cross-page navigation only (§8.6) — stated honestly here rather than folded silently into an "unmodified" claim.
 
 ---
 
@@ -114,19 +113,19 @@ Per the Slice A contract's own stop-list and this task's instructions: no change
 
 ### 4.1 Ownership principle
 
-The canonical facts already living on `businesses`, `business_locations`, `business_services`, and `customer_onboardings` are **never duplicated**. The Business Knowledge Profile owns only the facts §2's evidence table marks `MISSING` or the specific sub-fields marked `PARTIAL`. Every consumer (Website, COO, SEO, GBP, CRM, Ads, Automations) reads identity/contact/location/service facts from their existing tables directly, and reads the *new* facts from the tables below. No feature is permitted to cache or fork a private copy of any of these facts (mirrors the existing repository convention already enforced for Branding: `app/Library/Branding/BrandingPresenter.php`'s own single `Cache::rememberForever` seam is the only place platform branding is read from).
+The canonical facts already living on `businesses`, `business_locations`, `business_services`, and `customer_onboardings` are **never duplicated**. The Business Knowledge Profile owns only the facts §2's evidence table marks `MISSING` or the specific sub-fields marked `PARTIAL`. Every consumer (Website, COO, SEO, GBP, CRM, Ads, Automations) reads identity/contact/location/service facts from their existing tables directly, and reads the *new* facts from the tables below. No feature is permitted to cache or fork a private copy of any of these facts (mirrors the existing repository convention already enforced for Branding: `app/Library/Branding/BrandingPresenter.php`'s own single `Cache::rememberForever` seam is the only place platform branding is read from). **Business media assets and per-location hours are described in §13 and §5.5 respectively, not here** — this section owns exactly the profile-row facts in §4.2.
 
-### 4.2 New tables
-
-**`business_knowledge_profiles`** (one row per Business, 1:1):
+### 4.2 `business_knowledge_profiles` (one row per Business, 1:1)
 
 | Column | Type | Notes |
 |---|---|---|
 | `id` | bigint PK | |
 | `uid` | uuid, unique | `HasUid` trait, `Str::uuid()` override (mirrors `Website::generateUid()`, `app/Models/Website.php:47-50`) |
 | `business_id` | FK → `businesses.id`, unique, cascade delete | one profile per Business |
-| `pricing_method` | string(24), nullable | enum-backed: `fixed`, `hourly`, `quote_only`, `package_tiers`, `financing_available` |
-| `offers` | json, nullable | bounded array, max 12 entries, each `{name: string≤80, description: string≤300, price_label: string≤40}` — copy-only, never a sellable/bookable entity (no `Offer` model exists or is created; §2) |
+| `vertical_key` | string(40), nullable | **Correction (§6):** an operator-catalog-controlled, customer-confirmed specialty tag (e.g. `roofing`) — never a free-text value, never a new `BusinessIndustry` enum case. Validated on write against `business_verticals.key` (§6.2). |
+| `pricing_method` | string(24), nullable | **Correction (§9):** enum-backed, exactly `fixed`, `hourly`, `quote_only`, `package_tiers`. `financing_available` is **not** a value of this enum (moved to its own field below). |
+| `financing_available` | boolean, nullable | **Correction (§9):** null = unasked, `true`/`false` once answered. Independent of `pricing_method` — a fixed-price business may still offer financing. |
+| `offers` | json, nullable | bounded array, max 12 entries, each `{name: string≤80, description: string≤300, price_label: string≤40, pricing_method_override: enum(same 4 values)|null}` — **Correction (§9):** the optional per-offer `pricing_method_override` lets one offer (e.g. "financing-eligible installation") diverge from the Business's general `pricing_method` without inventing a checkout/product entity. Copy-only, never a sellable/bookable entity (no `Offer` model exists or is created; §2). |
 | `differentiators` | json, nullable | bounded array of strings, max 6, each ≤120 chars |
 | `ideal_customers` | text, nullable | ≤500 chars |
 | `customer_problems` | json, nullable | bounded array of strings, max 6, each ≤160 chars |
@@ -134,83 +133,27 @@ The canonical facts already living on `businesses`, `business_locations`, `busin
 | `years_operating` | unsigned smallint, nullable | |
 | `warranties_guarantees` | text, nullable | ≤500 chars |
 | `primary_conversion_goal` | string(24), nullable | enum-backed: `call`, `quote_request`, `consultation_booking`, `calendar_booking`, `external_booking_link` |
-| `conversion_target` | string(255), nullable | a `tel:`, `mailto:`, or `https://` value, validated through the **existing** `App\Library\Website\WebsiteUrlRules::isValid()` (`app/Library/Website/WebsiteUrlRules.php`) — never a new URL-validation rule |
+| `conversion_target` | string(255), nullable | a `tel:`, `mailto:`, or `https://` value only, validated through the **existing, unmodified** `App\Library\Website\WebsiteUrlRules::isValid()` (`app/Library/Website/WebsiteUrlRules.php`) — a conversion target is always an outward call-to-action, never internal page navigation, so it is explicitly **excluded** from §8.6's internal-path extension |
 | `brand_voice` | text, nullable | ≤500 chars |
 | `prohibited_claims` | json, nullable | bounded array of strings, max 15, each ≤160 chars — hard-filtered out of every AI generation/rewrite request and re-checked in deterministic post-validation (§8.5) |
 | `growth_priority_service_ids` | json, nullable | ordered array of `business_services.id` values belonging to this Business only (validated on write) |
 | `growth_priority_location_ids` | json, nullable | ordered array of `business_locations.id` values belonging to this Business only |
-| `reviews_source` | string(16), default `'none'` | enum-backed: `none`, `manual_verified` — see §4.5; `gbp_future` is **not** a value this contract creates (would require the GBP contract's own future Slice C; recorded as a human-review decision, §23) |
+| `testimonials` | json, nullable | **Correction (§8, replacing the old bare `reviews_source` design):** bounded array, **max 5 entries**, each `{quote: string≤400, author_name: string≤80(required), author_title: string≤80|null}` — this shape is deliberately within `WebsiteSectionType::Testimonials`'s own outer limits (`items max:10`, `quote max:400`, `author_name max:80` required, `author_title max:80` nullable — `app/Library/Website/WebsiteSectionValidator.php`), so a fully-populated Profile can never itself produce an invalid Testimonials section. No rating/stars field exists. |
+| `reviews_source` | string(16), **derived, not independently writable** | `'none'` when `testimonials` is empty, `'manual_verified'` when it is not — computed by `BusinessKnowledgeProfileManager` itself on every write, never accepted as a direct input field. No `gbp_future` value exists (§22 decision 4 — locked, not reserved). |
 | `created_at`, `updated_at` | timestamps | |
 
-**`business_hours`** (new column set — recommended as an **addition to `business_locations`**, not a new table, per the GBP contract's own explicit recommendation quoted in §2): `hours` json, nullable, on `business_locations`. Shape: `{"monday": {"open": "09:00", "close": "17:00"} | null, ..., "sunday": ..., "notes": string≤200 nullable}`. This is a **foundational Business fact**, owned by `business_locations` (already the row Website's own `WebsiteSnapshotBuilder::formatAddress()` reads, `app/Library/Website/WebsiteSnapshotBuilder.php:112`), not by this contract's own tables — Website, SEO, and GBP all read it from the same place. Migration ownership: this contract's Slice 1 (§17) adds this column since no other merged or in-flight contract currently claims it (confirmed: GBP contract explicitly declined to own it and named `business_locations` as the correct owner).
+Every field above is tracked by `business_knowledge_profile_field_states` (§5.1) **except** `reviews_source` (derived, no independent provenance) and `vertical_key`/`testimonials`, which **are** tracked (a customer must confirm both explicitly, since both are sensitive/identity-adjacent facts per §8.4).
 
-**`business_knowledge_profile_field_states`** (per-field provenance/verification — see §5):
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | bigint PK | |
-| `business_knowledge_profile_id` | FK, cascade delete | |
-| `field_key` | string(64) | validated against a closed `BusinessKnowledgeProfileFieldKey` enum (§5.1) — never an arbitrary string |
-| `source` | string(24) | enum-backed: `onboarding`, `website_setup`, `manual_edit`, `imported` |
-| `verification_status` | string(24), default `'unverified'` | enum-backed: `unverified`, `customer_confirmed` |
-| `verified_by_user_id` | FK → `users.id`, nullable | |
-| `verified_at` | timestamp, nullable | |
-| `updated_at` | timestamp | |
-
-Unique composite index `(business_knowledge_profile_id, field_key)` — exactly one state row per tracked field per profile, upserted on every write (mirrors the existing single-row-per-key pattern already used by `platform_feature_usage_classifications`, one row per `PlatformFeature`).
-
-**`business_knowledge_profile_changes`** (append-only audit ledger — see §5.3, following the GBP contract's own established bespoke-ledger pattern rather than a generic package):
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | bigint PK | |
-| `business_id` | FK, cascade delete | denormalized for cheap tenant-scoped queries, mirrors `business_google_operations`' own shape |
-| `field_key` | string(64) | |
-| `old_value` | text, nullable | JSON-encoded, truncated to 2000 chars |
-| `new_value` | text, nullable | JSON-encoded, truncated to 2000 chars |
-| `source` | string(24) | same enum as `field_states.source` |
-| `actor_user_id` | FK → `users.id`, nullable | null for system-authored writes (e.g. onboarding backfill) |
-| `created_at` | timestamp | no `updated_at` — write-once, immutable (mirrors `WebsiteRevision`'s `const UPDATED_AT = null;`, `app/Models/WebsiteRevision.php:21`) |
-
-**`business_media_assets`** (Business-scoped image inventory — see §14; explicitly **not** a duplicate of `WebsiteAsset`):
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | bigint PK | |
-| `uid` | uuid, unique | |
-| `business_id` | FK, cascade delete | |
-| `disk`, `path`, `mime_type`, `size`, `width`, `height`, `content_hash` | same shapes as `website_assets` | reuses the identical magic-byte-validated upload pattern from `App\Library\Website\WebsiteAssetUploadService` (§14.1) — a new `BusinessMediaUploadService` mirrors it exactly, does not extend or modify it |
-| `purpose` | string(24) | enum-backed: `logo`, `hero`, `team`, `location`, `work_sample`, `other` |
-| `alt_text` | string(160), nullable | |
-| `usage_confirmed` | boolean, default false | customer must affirmatively confirm they own/are licensed to use the image before it becomes eligible for Website generation to reference it |
-| `usage_confirmed_by`, `usage_confirmed_at` | FK/timestamp, nullable | |
-| `created_at`, `updated_at` | timestamps | |
-
-A guided-generation page build references a `business_media_assets` row's **content** by re-uploading it through the existing, unmodified `WebsiteAssetUploadService::store()` at generation time (creating a normal `WebsiteAsset` row scoped to that Website) — never a cross-table foreign key from `website_pages.sections` into `business_media_assets`. This preserves Slice A's existing invariant that a `WebsiteAsset`'s lifecycle (including the permanent-once-published `first_published_at` retention rule, `app/Models/WebsiteAsset.php`) is entirely Website-scoped and untouched by this contract.
-
-### 4.3 Migration ownership and order
-
-Six new migrations, in this order (mirrors Slice A's own precedent of naming migrations by dependency, `WEBSITE-GENERATION-HOSTING-CONTRACT.md` §33):
-1. `create_business_knowledge_profiles_table`
-2. `add_hours_to_business_locations_table` (single nullable JSON column, no default, backward compatible)
-3. `create_business_knowledge_profile_field_states_table`
-4. `create_business_knowledge_profile_changes_table`
-5. `create_business_media_assets_table`
-6. `backfill_business_knowledge_profiles_for_existing_businesses` (one row per existing `Business`, all nullable fields empty, `reviews_source = 'none'` — mirrors the exact backfill-migration pattern already used for `platform_feature_usage_classifications`, `database/migrations/2026_08_16_120008_backfill_platform_feature_usage_classifications.php`)
-
-### 4.4 The single write seam
+### 4.3 The single write seam
 
 **`App\Library\Business\BusinessKnowledgeProfileManager`** (new class, mirrors `BusinessManager`'s existing shape exactly — `app/Library/Business/BusinessManager.php:57-192`) is the **only** code path permitted to write to `business_knowledge_profiles`, `business_knowledge_profile_field_states`, or `business_knowledge_profile_changes`. Its public surface:
 
-- `getOrCreate(Business $business): BusinessKnowledgeProfile` — idempotent, creates an empty row if none exists (covers Businesses created before this contract's backfill or via any future path).
-- `updateFields(Business $business, array $fields, string $source, int $actorUserId, bool $markVerified = false): BusinessKnowledgeProfile` — validates every key against the closed `BusinessKnowledgeProfileFieldKey` allowlist (§5.1), validates each value's shape (bounded array counts/string lengths per §4.2), writes the profile row, upserts one `field_states` row per changed key, and appends one `business_knowledge_profile_changes` row per changed key — all inside one `DB::transaction()` (mirrors `WebsiteDraftPageService::createPage()`'s transactional shape exactly).
-- `completenessCheck(Business $business): BusinessKnowledgeProfileCompleteness` — a plain read-side DTO (never persisted) computed by inspecting the canonical Business/Location/Service tables **and** the profile/field-state tables together, returning exactly which of the fixed set of tracked facts (§5.1) are missing, stale (§5.4), or present, so callers (Website guided setup, and later SEO/COO) never reimplement this check.
+- `getOrCreate(Business $business): BusinessKnowledgeProfile` — idempotent, creates an empty row if none exists.
+- `updateFields(Business $business, array $fields, string $source, int $actorUserId, bool $markVerified = false): BusinessKnowledgeProfile` — validates every key against the closed `BusinessKnowledgeProfileFieldKey` allowlist (§5.1) **excluding `hours`, which this method explicitly rejects** (hours writes go through the dedicated `updateLocationHours()`, §5.5, since hours is location-scoped, not profile-scoped); validates each value's shape (bounded array counts/string lengths per §4.2); writes the profile row; recomputes the derived `reviews_source` when `testimonials` changes; upserts one `field_states` row per changed key; and appends one `business_knowledge_profile_changes` row per changed key — all inside one `DB::transaction()` (mirrors `WebsiteDraftPageService::createPage()`'s transactional shape exactly).
+- `updateLocationHours(Business $business, BusinessLocation $location, array $hoursByDay, string $source, int $actorUserId, bool $markVerified = false): BusinessLocation` — §5.5.
+- `completenessCheck(Business $business, ?Website $website = null): BusinessKnowledgeProfileCompleteness` — a plain read-side DTO (never persisted) computed by inspecting the canonical Business/Location/Service tables **and** the profile/field-state/location-hours tables together, returning exactly which of the fixed set of tracked facts (§5.1) are missing, stale (§5.4), or present. When `$website` is supplied, location-scoped facts (hours) are evaluated **only for the locations that Website actually features** — for v1 this is exactly `Business::primaryLocation()`, matching the existing, unmodified `WebsiteSnapshotBuilder::formatAddress()` precedent (`app/Library/Website/WebsiteSnapshotBuilder.php:112`) of reading only the primary location; a future multi-location Website feature is not built here.
 
-No controller, job, or other service is authorized to `Model::create()`/`update()` these three tables directly — mirrors the exact seam discipline already established and mechanically tested for `WebsiteDraftPageService` (`tests/Feature/Website/WebsiteDraftPageServiceSeamTest.php`).
-
-### 4.5 Reviews — deliberately narrow, matching GBP's own deferral
-
-`reviews_source = 'manual_verified'` permits exactly one thing in this contract: a Business owner may, through `BusinessKnowledgeProfileManager::updateFields()`, attach a small number (max 5) of self-attested testimonial strings, each carrying `verification_status = 'customer_confirmed'` at the moment of entry (the same `field_states` mechanism governs this — no separate reviews table). This is **not** a public reviews platform, has no rating/star concept, and is never sourced from Google (GBP's own contract explicitly reserves durable review handling for an unbuilt future "Slice C" — this contract does not build toward that, does not read GBP tables, and does not create a `reviews` table). Website's `Testimonials` section type (already existing, `app/Enums/Website/WebsiteSectionType.php:18`) may render these strings verbatim (never AI-embellished) when present; when absent, AI-authored generic testimonial copy remains explicitly disallowed for this field (§8.5 — AI must never fabricate a review).
+No controller, job, or other service is authorized to `Model::create()`/`update()` these tables directly — mirrors the exact seam discipline already established and mechanically tested for `WebsiteDraftPageService` (`tests/Feature/Website/WebsiteDraftPageServiceSeamTest.php`).
 
 ---
 
@@ -218,40 +161,126 @@ No controller, job, or other service is authorized to `Model::create()`/`update(
 
 ### 5.1 `BusinessKnowledgeProfileFieldKey` — the closed allowlist
 
-A new PHP enum (`app/Enums/Business/BusinessKnowledgeProfileFieldKey.php`) with exactly the fields tracked in §4.2's `business_knowledge_profiles` table plus `hours` (tracked against its owning `business_locations` row, not the profile row, but sharing the same `field_states` provenance mechanism keyed by `business_id` — the `field_states` table's FK is nullable-flexible enough to record a location-owned fact; the exact composite key is `(business_knowledge_profile_id, field_key)` where `field_key = 'hours'` always resolves back to `Business::primaryLocation()`, never a secondary-location hours fact in v1). No other string is ever accepted as a `field_key` — `BusinessKnowledgeProfileManager::updateFields()` rejects any key not in this enum with a `ValidationException`, exactly mirroring `WebsiteSectionValidator`'s closed-enum rejection behavior for unknown section types.
+A new PHP enum (`app/Enums/Business/BusinessKnowledgeProfileFieldKey.php`) with one case per column in §4.2's `business_knowledge_profiles` table (excluding the derived `reviews_source`), plus `hours` — `hours` is a valid **question-pack and completeness-check** key (customers are asked about it, and its freshness is tracked) but is **not** a valid key for `BusinessKnowledgeProfileManager::updateFields()`; its write path is exclusively `updateLocationHours()` (§5.5), and `updateFields()` throws a `ValidationException` if `hours` is passed to it. No other string is ever accepted as a `field_key` anywhere — mirrors `WebsiteSectionValidator`'s closed-enum rejection behavior for unknown section types.
 
 ### 5.2 Verification status semantics
 
-- `unverified`: the value was written by AI inference, an import, or a system default — never shown to a customer as an established fact without a review prompt, and never quoted verbatim in AI-authored public copy without the completeness check first asking the customer to confirm it (§11 step 2-3).
-- `customer_confirmed`: the value was explicitly entered or affirmed by an authenticated Business-accessible user (`WorkspaceManager::userCanAccessBusiness()` — owner/admin/staff-with-scope, same population as everyone else in this codebase who can mutate Business data). Only `customer_confirmed` facts are eligible to be marked "verified" in generated copy claims (a direct requirement of §6/§7's product direction — SEO/AI must never fabricate credentials, warranties, years-operating, or reviews).
+- `unverified`: the value was written by AI inference, an import, or a system default — never shown to a customer as an established fact without a review prompt.
+- `customer_confirmed`: the value was explicitly entered or affirmed by an authenticated Business-accessible user (`WorkspaceManager::userCanAccessBusiness()` — owner/admin/staff-with-scope, same population as everyone else in this codebase who can mutate Business data).
+
+**Correction (§8): only `customer_confirmed` sensitive facts are ever sent to any AI call.** "Sensitive facts" are exactly: `credentials`, `years_operating`, `warranties_guarantees`, `testimonials`, `pricing_method`, `financing_available`, `offers`, `hours`, and any location/service-area claim. An `unverified` sensitive fact is **excluded entirely** from `GuidedWebsiteGenerationClient`'s context (§8.4) — it is never sent even labeled as unverified. Non-sensitive, lower-risk copy-direction facts (`differentiators`, `ideal_customers`, `customer_problems`, `brand_voice`, `primary_conversion_goal`, `conversion_target`, `vertical_key`) may be sent regardless of verification status, since they shape tone/direction rather than assert a checkable fact — but the completeness UI still surfaces their verification state to the customer (§11 step 3), and `vertical_key`/`testimonials` themselves are always tracked and shown for confirmation before first use (§4.2) even though they are not in the "excluded when unverified" sensitive list.
 
 ### 5.3 Audit/change-log behavior
 
-Every `BusinessKnowledgeProfileManager::updateFields()` call appends one `business_knowledge_profile_changes` row per changed `field_key`, following the exact established repository precedent (`business_google_operations`, quoted in §2) of a bespoke, append-only, per-domain ledger rather than a generic activity-log package (none exists in `composer.json`, confirmed). Admin inspection of this ledger is out of this contract's implementation slices (§17) — it exists to make the freshness/verification claims in §5.4 auditable later, not to ship an admin UI now.
+Every `BusinessKnowledgeProfileManager::updateFields()` and `updateLocationHours()` call appends one `business_knowledge_profile_changes` row per changed `field_key` (a location-scoped `hours` change additionally JSON-encodes the `business_location_id` inside `old_value`/`new_value`, since the table itself stays `business_id`-scoped, not `business_location_id`-scoped — no schema change needed for this), following the exact established repository precedent (`business_google_operations`, quoted in §2) of a bespoke, append-only, per-domain ledger rather than a generic activity-log package (none exists in `composer.json`, confirmed). Admin inspection of this ledger is out of this contract's implementation slices (§16).
 
-### 5.4 Freshness
+### 5.4 Freshness — field-sensitive, not plan-tier-sensitive (§22 decision 5, locked)
 
-No new polling/cron clock is introduced. Freshness is derived, at `completenessCheck()` time, from two things: (a) `field_states.verified_at` compared against a fixed `reconfirm_after_days` default of 180 days per field (a single constant on `BusinessKnowledgeProfileFieldKey`, not configurable per-Business in v1 — a human-review decision if per-tier tuning is wanted later, §23), and (b) whichever owning row's own `updated_at` is more recent (e.g., if `businesses.phone` changes after a website was generated, the completeness check surfaces that the underlying fact moved even though `field_states` doesn't track platform-native columns — the check reads `businesses`/`business_locations`/`business_services`' own timestamps directly for those, and only uses `field_states` for genuinely-new profile fields it owns).
+Freshness is a property of **which fact it is**, never of the Business's plan tier. Each `BusinessKnowledgeProfileFieldKey` case carries its own `reconfirmAfterDays()` constant (a fixed method on the enum, not configurable per-Business or per-tier in v1) reflecting how often that specific kind of fact realistically changes:
+
+| Field-key group | `reconfirmAfterDays()` default | Reasoning |
+|---|---|---|
+| `hours`, `offers`, `pricing_method`, `financing_available` | 90 | frequently-changing operational facts |
+| `credentials`, `years_operating`, `warranties_guarantees`, `testimonials` | 365 | slow-changing, higher-stakes claims |
+| `differentiators`, `ideal_customers`, `customer_problems`, `brand_voice`, `primary_conversion_goal`, `conversion_target`, `vertical_key`, `growth_priority_service_ids`, `growth_priority_location_ids` | 180 | identity/direction facts, moderate change rate |
+
+A human may retune these exact day-counts later (they are constants, not a schema decision) — see §23. **Core vs Growth/Agency only controls *when/how often* a completeness re-check runs** (§10.2's Growth-tier scheduled Opportunity-engine cadence); it never changes what counts as stale.
+
+Freshness is derived, at `completenessCheck()` time, from: (a) the relevant `verified_at` (either `field_states.verified_at` for profile-row facts, or `business_locations.hours_verified_at` for hours, §5.5) compared against that field-key's `reconfirmAfterDays()`, and (b) whichever owning row's own `updated_at` is more recent for platform-native columns the Profile doesn't itself track (e.g. `businesses.phone` — the check reads `businesses`/`business_locations`/`business_services`' own timestamps directly for those).
+
+### 5.5 Hours — owned per-location, multi-period, never duplicated on the Profile
+
+**Correction:** hours are a `business_locations` fact, not a `business_knowledge_profiles` fact, and support multiple daily periods (not one open/close pair). New columns on `business_locations` (added by Slice 1's migration, §16):
+
+| Column | Type | Notes |
+|---|---|---|
+| `hours` | json, nullable | `{"monday": [{"open": "HH:MM", "close": "HH:MM"}, ...], ..., "sunday": [...], "notes": string≤200|null}` — an **empty array** for a day means closed that day; a `null` top-level value means "not yet answered" (distinct from "closed every day," which is every day present as `[]`) |
+| `hours_source` | string(24), nullable | same enum as `field_states.source`: `onboarding`, `website_setup`, `manual_edit`, `imported` |
+| `hours_verification_status` | string(24), default `'unverified'` | same enum as `field_states.verification_status` |
+| `hours_verified_by_user_id` | FK → `users.id`, nullable | |
+| `hours_verified_at` | timestamp, nullable | |
+
+**Deterministic, documented period rules** (enforced by `BusinessKnowledgeProfileManager::updateLocationHours()`, never left to the customer's raw input unchecked):
+1. Each day accepts at most 4 periods (covers a split-shift/lunch-break business with room to spare).
+2. Within a day, periods must be sorted by `open` ascending and **non-overlapping**: for consecutive periods `i`, `i+1` in the sorted list, `periods[i].close <= periods[i+1].open` must hold, or the write is rejected.
+3. Within a single day, `close` must be **strictly greater than** `open` (`HH:MM` compared as same-day clock times) — **no overnight wraparound is represented within one day's array.** A business operating past midnight (e.g. a bar open 20:00–02:00) represents this as two entries: `{"open": "20:00", "close": "24:00"}` on the starting day, and `{"open": "00:00", "close": "02:00"}` on the following day. `"24:00"` is the one accepted sentinel meaning "end of day" as a `close` value; it is never a valid `open` value.
+4. Malformed time strings, a period where `open`/`close` fall outside `00:00`–`24:00`, or more than 4 periods for one day all fail closed with a `ValidationException` — zero periods are ever silently dropped or coerced.
+
+This is the same "validate the complete shape before writing anything" discipline `WebsiteSectionValidator` already applies to sections (§2) — `updateLocationHours()` validates every day's period list before writing any of them, inside one `DB::transaction()`.
+
+`completenessCheck()` (§4.3) evaluates hours-staleness per the specific location(s) a Website features (v1: `primaryLocation()` only, per §4.3's note) using `hours_verified_at`/`reconfirmAfterDays()` exactly as any other field, but reads/writes go through `business_locations`, never `business_knowledge_profile_field_states`.
 
 ---
 
-## 6. TEMPLATE MANIFEST AND RENDERER BOUNDARY
+## 6. VERTICAL/SPECIALTY CLASSIFICATION AND QUESTION-PACK DESIGN
 
-### 6.1 Four-template evidence status — explicit, not invented
+### 6.1 `business_verticals` — an operator-controlled catalog, not a PHP enum
 
-**Confirmed absent.** No GoHighLevel export, screenshot, HTML/CSS bundle, or design asset of any kind exists anywhere in this repository (§2 evidence row). This contract does **not** claim to have inspected, and does not describe the visual content of, the four templates the product direction references. Implementing the four templates is **blocked** until the human supplies the exact materials listed in §6.2.
+**Correction:** adding a new supported trade (e.g. "roofing," "hvac," "wedding-photography") must be a data-seeding operation, never a PHP enum case plus migration. New table:
 
-### 6.2 Required import materials (human-review deliverable, tracked in §23)
+| Column | Type | Notes |
+|---|---|---|
+| `id` | bigint PK | |
+| `key` | string(40), unique | e.g. `roofing`, `hvac`, `wedding_photography` — stable, lowercase, hyphen/underscore only |
+| `display_name` | string(80) | |
+| `broad_industry` | string(40), nullable | the `BusinessIndustry` enum value this vertical is typically associated with (for filtering an operator's or customer's picker UI) — informational only, not a hard constraint (a `HomeServices` business may still pick a vertical whose `broad_industry` says `ProfessionalServices` if that turns out to fit better) |
+| `is_active` | boolean, default true | |
+| `created_at`, `updated_at` | timestamps | |
+
+`business_knowledge_profiles.vertical_key` (§4.2) is validated on write against `business_verticals.key` (`is_active = true`) by `BusinessKnowledgeProfileManager::updateFields()` — an unknown or inactive key is rejected. Selecting a vertical is always an explicit, customer-confirmed action (never inferred/auto-set by AI), tracked via `field_states` like any other tracked profile field.
+
+### 6.2 `question_packs` — targets broad industry, vertical, or general
+
+| Column | Type | Notes |
+|---|---|---|
+| `id` | bigint PK | |
+| `key` | string(40) | e.g. `general_v1`, `home_services_v1`, `roofing_v1`, `photobooth_v1` |
+| `applies_to_industry` | string(40), nullable | a `BusinessIndustry` enum value, or null |
+| `applies_to_vertical_key` | string(40), nullable | a `business_verticals.key` value, or null — **at most one of `applies_to_industry`/`applies_to_vertical_key` is non-null per row**; a pack never targets both at once, keeping resolution order (§6.3) unambiguous |
+| `version` | unsigned int | packs are immutable once referenced by any completed generation; a new question or changed wording ships as a new `version` row under the same `key`, never an in-place edit — mirrors `WebsiteRevision`'s own immutability discipline |
+| `questions` | json | ordered array of `{field_key: BusinessKnowledgeProfileFieldKey value, prompt: string, input_type: 'text'|'textarea'|'select'|'multi_select'|'boolean', options: string[]|null, required: bool}` |
+| `is_active` | boolean | |
+| `created_at`, `updated_at` | timestamps | |
+
+Every `field_key` in a pack's `questions` array is validated at seed time against `BusinessKnowledgeProfileFieldKey` (§5.1) — a question pack can only ever collect facts the Profile already knows how to store.
+
+### 6.3 Pack resolution order — locked
+
+`BusinessKnowledgeProfileManager::completenessCheck()` resolves exactly one pack, in this order, each step filtered to `is_active = true` and taking the highest `version`:
+1. The pack where `applies_to_vertical_key === $profile->vertical_key` (only reachable once a vertical has been confirmed, §6.1).
+2. Else, the pack where `applies_to_industry === $business->industry`.
+3. Else, the `general_v1` pack (`applies_to_industry` and `applies_to_vertical_key` both null).
+
+This is a plain, deterministic lookup — no AI involved in pack selection.
+
+### 6.4 Worked examples (illustrative content only — not seeded by this contract; an operator authors the real copy)
+
+- **Roofing** (§22 decision 3, locked: stays under the existing `BusinessIndustry::HomeServices` case **plus** a confirmed `vertical_key = 'roofing'` — no new `BusinessIndustry` case is ever added): a `roofing_v1` question pack (`applies_to_vertical_key = 'roofing'`) targets `pricing_method`/`financing_available` separately (§9), `credentials` (license number, insurance), `offers` (repair/replacement/inspection as separate offer entries), `primary_conversion_goal` defaulting to `quote_request`, and location `hours` including an emergency-availability note in the `notes` field (§5.5) rather than inventing a new column.
+- **Photobooth** (`BusinessIndustry::PhotoBoothService`, already exists; no vertical key needed since the broad industry is already narrow): questions targeting `offers` (package tiers with `price_label`), `differentiators` (booth styles), `service_area_cities` (already exists on `business_locations`, reused not duplicated), `primary_conversion_goal` defaulting to `calendar_booking` or `external_booking_link`, deposit/travel-fee facts captured as `offers[].description` text rather than new columns.
+
+### 6.5 Extension cost
+
+Adding a fifth vertical is: one `business_verticals` catalog row plus one seeded `question_packs` row (or a version bump) — **zero PHP enum changes and zero migrations**, unless a genuinely new fact shape is needed (rare, and even then confined to `BusinessKnowledgeProfileFieldKey` plus one column). This is the "inexpensive to extend" property the product direction requires.
+
+---
+
+## 7. TEMPLATE MANIFEST AND RENDERER BOUNDARY
+
+### 7.1 Four-template evidence status — explicit, not invented
+
+**Confirmed absent.** No GoHighLevel export, screenshot, HTML/CSS bundle, or design asset of any kind exists anywhere in this repository (§2 evidence row). This contract does **not** claim to have inspected, and does not describe the visual content of, the four templates the product direction references. Implementing the four templates is **blocked** until the human supplies the exact materials listed in §7.2.
+
+### 7.2 Required import materials (blocking prerequisite, §21)
 
 For each of the four approved templates, the human must supply:
 1. A static export or a set of full-page screenshots (desktop + mobile breakpoint) of every distinct page type the template uses.
-2. The exact page list and, per page, the exact ordered list of visual sections it contains, each one mapped by a human (not inferred by this contract) onto one of Website Slice A's existing 8 `WebsiteSectionType` cases (§2) — or flagged as **unsupported and requiring a future, separately-contracted section-type extension** if no existing type fits. This contract does not invent a 9th section type to fit unseen material.
+2. The exact page list and, per page, the exact ordered list of visual sections it contains, each one mapped by a human (not inferred by this contract) onto one of Website Slice A's existing 8 `WebsiteSectionType` cases — or flagged as **unsupported and requiring a future, separately-contracted section-type extension** if no existing type fits. This contract does not invent a 9th section type to fit unseen material.
 3. The template's color palette, font pairing, and button/spacing conventions, translated into Slice A's existing bounded `websites.theme` JSON shape (`WEBSITE-GENERATION-HOSTING-CONTRACT.md` §18 — font-family allowlist, primary/secondary color, button style, content width, header/footer variant; no arbitrary CSS).
-4. Any imagery the template itself supplies as stock/placeholder art, with an explicit license/usage statement — this contract's own image policy (§14) never fabricates business imagery, so template-supplied stock art must be either (a) genuinely license-cleared for reuse across customers, or (b) excluded, with the missing-image checklist (§14.3) covering the gap per-customer.
+4. Any imagery the template itself supplies as stock/placeholder art, with an explicit license/usage statement — this contract's own image policy (§13) never fabricates business imagery, so template-supplied stock art must be either (a) genuinely license-cleared for reuse across customers, or (b) excluded, with the missing-image checklist (§13.4) covering the gap per-customer.
 
-### 6.3 Template manifest schema (once materials exist)
+### 7.3 Template manifest schema (once materials exist)
 
-**`website_templates`** (new table; deliberately not customer-editable — an operator/platform-seeded catalog, mirroring how `websites.theme` is already bounded and how `WebsiteSectionValidator`'s rules are code, not data):
+**`website_templates`** (new table; deliberately not customer-editable — an operator/platform-seeded catalog):
 
 | Column | Type | Notes |
 |---|---|---|
@@ -259,73 +288,46 @@ For each of the four approved templates, the human must supply:
 | `key` | string(40), unique | e.g. `template_a`, `template_b` — stable identifier, never the display name |
 | `display_name` | string(80) | |
 | `theme` | json | a value conforming exactly to Slice A's existing `websites.theme` shape — no new theme dimension |
-| `page_manifest` | json | ordered list of `{page_type: string, is_home: bool, allowed_section_types: string[8-enum-subset], default_section_order: string[]}` — every `allowed_section_types`/`default_section_order` entry **must** be one of the existing 8 `WebsiteSectionType` values; the manifest is validated against that enum at seed time, not at request time, so an invalid template can never reach a customer |
+| `page_manifest` | json | ordered list of `{page_type: string, is_home: bool, allowed_section_types: string[8-enum-subset], default_section_order: string[], image_slots: [{section_type, field, purpose: BusinessMediaAsset purpose value (§13.2), classification: 'informative'|'decorative'}]}` — every `allowed_section_types`/`default_section_order` entry **must** be one of the existing 8 `WebsiteSectionType` values; the manifest is validated against that enum at seed time, not at request time, so an invalid template can never reach a customer. **Correction (§13):** `image_slots` is new relative to the original draft — it is what lets the deterministic media-binding phase (§8.7) and the accessibility validator (§8.5) know, per image field, whether it is informative (requires alt text) or decorative (may be empty, explicitly, never silently). |
+| `manifest_version` | unsigned int, default 1 | **Correction (§10):** incremented by the operator whenever `page_manifest` or `theme` changes; a generation's idempotency key (§10.1) includes this value so an edited template never silently reuses a stale cached draft. |
 | `preview_image_path` | string(255), nullable | a platform-owned static asset, never customer-uploaded |
 | `is_active` | boolean, default true | operator-controlled retirement switch |
 | `created_at`, `updated_at` | timestamps | |
 
-### 6.4 Renderer boundary
+### 7.4 Renderer boundary
 
-The renderer (`resources/views/public/website/page.blade.php` and its 8 component partials — all pre-existing, unmodified) already accepts exactly the `{type, data}` section shape `WebsiteSectionValidator` validates. A template's `page_manifest` is consumed **only** at generation time (§8) to decide which pages/sections/order to create via the existing `WebsiteDraftPageService::createPage()` — it is never read at render time, and the renderer itself gains no new template-awareness. This keeps the render path exactly as narrow and already-tested as it is today (`tests/Feature/Website/Public/WebsitePublicRenderingTest.php`).
-
----
-
-## 7. QUESTION-PACK DESIGN
-
-### 7.1 General framework
-
-**`question_packs`** (new table, operator-seeded, versioned):
-
-| Column | Type | Notes |
-|---|---|---|
-| `id` | bigint PK | |
-| `key` | string(40) | e.g. `general_v1`, `roofing_v1`, `photobooth_v1` |
-| `applies_to_industry` | string(40), nullable | a `BusinessIndustry` enum value, or null for the general/base pack |
-| `version` | unsigned int | packs are immutable once referenced by any completed generation; a new question or changed wording ships as a new `version` row under the same `key`, never an in-place edit — mirrors `WebsiteRevision`'s own immutability discipline |
-| `questions` | json | ordered array of `{field_key: BusinessKnowledgeProfileFieldKey value, prompt: string, input_type: 'text'|'textarea'|'select'|'multi_select'|'boolean', options: string[] nullable, required: bool}` |
-| `is_active` | boolean | |
-| `created_at`, `updated_at` | timestamps | |
-
-Every `field_key` in a pack's `questions` array is validated at seed time against `BusinessKnowledgeProfileFieldKey` (§5.1) — a question pack can only ever collect facts the Profile already knows how to store; it cannot invent a new fact shape at question-authoring time. This is the mechanism that keeps industry variance (roofing vs. photobooth) cheap: **the field taxonomy is fixed and general; only the wording/options per industry vary.**
-
-### 7.2 Pack selection
-
-`BusinessKnowledgeProfileManager::completenessCheck()` selects: the pack where `applies_to_industry === $business->industry` and `is_active = true`, at the highest `version`; if none matches the Business's specific `BusinessIndustry`, falls back to the `general_v1` pack (`applies_to_industry = null`). This is a plain, deterministic lookup — no AI involved in pack selection.
-
-### 7.3 Worked examples (illustrative content only — not seeded by this contract; an operator authors the real copy)
-
-- **Roofing** (`BusinessIndustry::HomeServices` is the closest existing enum case — `roofing` itself is not a distinct `BusinessIndustry` value today; a human-review decision (§23) is whether to add a `Roofing` case or keep roofing questions under the general `HomeServices` pack): questions targeting `pricing_method` (financing available?), `credentials` (license number, insurance), `offers` (repair/replacement/inspection as separate offer entries), `primary_conversion_goal` defaulting to `quote_request`, emergency-availability captured via the new `business_locations.hours` "notes" field rather than inventing a new column.
-- **Photobooth** (`BusinessIndustry::PhotoBoothService`, already exists): questions targeting `offers` (package tiers with `price_label`), `differentiators` (booth styles), `service_area_cities` (already exists on `business_locations`, reused not duplicated), `primary_conversion_goal` defaulting to `calendar_booking` or `external_booking_link`, deposit/travel-fee facts captured as `offers[].description` text rather than new columns.
-
-### 7.4 Extension cost
-
-Adding a fifth industry pack is: one seeded `question_packs` row (or a version bump of an existing one) plus, only if genuinely new fact shapes are needed, a `BusinessKnowledgeProfileFieldKey` enum addition and a migration — never new code paths in the controller, generator, or validator. This is the "inexpensive to extend" property the product direction requires, achieved by keeping the field taxonomy fixed and industry variance confined to data (question wording) rather than code.
+The renderer (`resources/views/public/website/page.blade.php` and its 8 component partials — all pre-existing, unmodified) already accepts exactly the `{type, data}` section shape `WebsiteSectionValidator` validates. A template's `page_manifest` is consumed **only** at generation time (§8) to decide which pages/sections/order/image-slot-classification to create via the existing `WebsiteDraftPageService::createPage()` — it is never read at render time, and the renderer itself gains no new template-awareness. This keeps the render path exactly as narrow and already-tested as it is today (`tests/Feature/Website/Public/WebsitePublicRenderingTest.php`).
 
 ---
 
-## 8. GENERATION ARCHITECTURE, AI REQUEST/OUTPUT SCHEMAS, AND COST CONTROLS
+## 8. GENERATION ARCHITECTURE, AI REQUEST/OUTPUT SCHEMAS, AND ATOMICITY
 
 ### 8.1 The 80/20 split, mapped onto existing code
 
 | Owned by deterministic code (existing or narrow extension) | Owned by AI (bounded) |
 |---|---|
-| Allowed page/section structures — `website_templates.page_manifest` (§6.3) validated against the existing `WebsiteSectionType` enum | Draft copy for each section, from structured facts |
+| Allowed page/section structures — `website_templates.page_manifest` (§7.3) validated against the existing `WebsiteSectionType` enum | Draft copy for each section, from structured facts |
 | Responsive layout, heading hierarchy, CTA placement — existing Blade partials, unmodified | FAQ suggestions (bounded count, from `WebsiteSectionType::Faq`'s existing `items max:20` rule) |
 | Metadata constraints (`seo_title max:70`, `meta_description max:160` — `WebsiteDraftPageService::validateAttributes()`, unchanged) | Titles/meta descriptions within those existing limits |
 | Schema envelope — Slice A's existing snapshot/publish model, unmodified | Recommending which `primary_conversion_goal` fits the collected facts (a suggestion the customer confirms, never silently applied) |
-| Business identifiers/contact facts, map/location facts — read directly from `businesses`/`business_locations`, never AI-authored | One bounded final quality pass (§8.6) |
-| Accessibility/internal-link/technical-SEO validation (§8.5, new deterministic validators) | Targeted single-section rewrite on demand (§8.7) |
+| Business identifiers/contact facts, map/location facts — read directly from `businesses`/`business_locations`, never AI-authored | One bounded final quality pass (§8.8, deferred slice) |
+| Accessibility/internal-link/technical-SEO validation (§8.5) | Targeted single-section rewrite on demand (§8.9) |
 | Template styling/rendering — existing renderer, unmodified | |
+| **Deterministic media binding — asset selection, creation/reuse, alt-text assignment (§8.7)** | **Never touches images at all — the AI output contains no asset UID or alt-text field, ever (§8.3)** |
 
-### 8.2 One bounded structured generation request
+### 8.2 Full generation is atomic — corrected, single behavior
 
-**`App\Library\Website\GuidedGeneration\GuidedWebsiteGenerationClient`** (new class, deliberately mirroring `WebsiteAiGenerationClient`'s exact fail-closed shape — `app/Library/Website/WebsiteAiGenerationClient.php:21-43` — reusing the identical `config('services.openai.*')` seam, never a new config key) issues **one** request per generation attempt: a single chat completion with `response_format: {type: 'json_object'}`, containing the entire selected template's `page_manifest`, every `customer_confirmed` and `unverified`-but-present Profile fact (with `unverified` facts explicitly labeled as such in the prompt so the model never treats them as more certain than they are), and the `prohibited_claims` list as a hard instruction. This mirrors `WebsiteAiDraftGenerator::buildContext()`/`buildMessages()` exactly, extended to read from the Profile (§4) rather than only the five raw `Business` fields Slice A's own generator reads today.
+**Correction:** a full-generation attempt is **all-or-nothing**. The prior draft's claim that "the overall batch may partially succeed by omitting invalid pages" is removed and replaced with one rule: the complete output batch is validated first (§8.5); if any required page or section fails validation, exactly one bounded corrective retry (§8.4) is attempted against the whole batch; if the retry also fails, the attempt is marked `failed` and **zero pages are created**. No required template page is ever silently omitted. `warnings` (§8.3) may describe *intentionally optional* missing facts/assets (e.g. "no credentials confirmed; omitted from copy," or "no hero image available; rendered without one") — it may never be used to explain away a required page or section that failed validation, because that case never reaches persistence at all.
 
-### 8.3 Request/output schema
+### 8.3 One bounded structured generation request
 
-Request messages: `[{role: 'system', content: <fixed instruction text, ≤4000 tokens, includes the exact allowed section-type list, the field-length limits from §4.2, and the prohibited_claims list>}, {role: 'user', content: <JSON-encoded {template_key, pages: [{page_type, is_home}], facts: {field_key: value|null, verification: 'confirmed'|'unverified'}[]}>}]`.
+**`App\Library\Website\GuidedGeneration\GuidedWebsiteGenerationClient`** (new class, deliberately mirroring `WebsiteAiGenerationClient`'s exact fail-closed shape — `app/Library/Website/WebsiteAiGenerationClient.php:21-43` — reusing the identical `config('services.openai.*')` seam, never a new config key) issues **one** request per generation attempt (plus the one bounded retry, §8.4): a single chat completion with `response_format: {type: 'json_object'}`, containing the selected template's `page_manifest` (minus `image_slots`, which the AI never sees or acts on), every `customer_confirmed` non-sensitive-or-sensitive Profile fact per §5.2's exclusion rule, and the `prohibited_claims` list as a hard instruction. **The AI never receives any `business_media_assets` row, any `WebsiteAsset` uid, or any instruction to populate an image field** — `WebsiteSectionValidator::validate($sections, [], allowAssetReferences: false)` is the enforcement (identical `allowAssetReferences: false` discipline `WebsiteAiDraftGenerator` already enforces, §2), and the system prompt explicitly instructs the model never to emit `background_image`/`image` keys at all. Image population happens exclusively in the deterministic media-binding phase (§8.7), after AI output is committed.
 
-Expected output (schema-validated before any persistence, via a new `GuidedGenerationOutputValidator` that wraps the existing `WebsiteSectionValidator::validate($sections, $validAssetUids, allowAssetReferences: false)` call per page — identical `allowAssetReferences: false` discipline `WebsiteAiDraftGenerator` already enforces, §2):
+### 8.4 Request/output schema, retry
+
+Request messages: `[{role: 'system', content: <fixed instruction text, ≤4000 tokens, includes the exact allowed section-type list minus image fields, the field-length limits from §4.2, and the prohibited_claims list>}, {role: 'user', content: <JSON-encoded {template_key, pages: [{page_type, is_home}], facts: {field_key: value}[] — customer_confirmed-only for sensitive keys per §5.2}>}]`.
+
+Expected output:
 ```json
 {
   "pages": [
@@ -334,56 +336,78 @@ Expected output (schema-validated before any persistence, via a new `GuidedGener
       "is_home": true,
       "seo_title": "string ≤70",
       "meta_description": "string ≤160",
-      "sections": [{"type": "hero", "data": { /* exact existing WebsiteSectionType::Hero shape */ }}, ...]
+      "sections": [{"type": "hero", "data": { /* exact existing WebsiteSectionType::Hero shape, no image fields */ }}, ...]
     }
   ],
-  "warnings": ["string — e.g. 'no credentials confirmed; omitted from copy'"]
+  "warnings": ["string — describes only intentionally-omitted optional content, never a validation failure"]
 }
 ```
-`warnings` is a new, additive output field (not present in Slice A's own `WebsiteAiDraftGenerator` schema) — it is how the AI is required to surface, to the customer review step (§11 step 10), any fact it could not confidently use (e.g., an `unverified` credential it declined to state as fact). It is never used to bypass deterministic validation; a warning does not make otherwise-invalid output acceptable.
+Exactly one corrective retry on schema-validation failure (identical to `WebsiteAiDraftGenerator::generate()`'s existing "at most one bounded automatic retry," `app/Library/Website/WebsiteAiDraftGenerator.php`). If the retry's output also fails §8.5, the attempt is `failed` per §8.2 — no unbounded retry loop, and no partial commit.
 
-### 8.4 Idempotency, retries, ceilings
-
-- **Idempotency key**: `sha256(business_id . template_key . profile_updated_at . field_states_max_updated_at)` — a repeated generation request with unchanged inputs returns the previously-stored draft rather than issuing a new AI call (stored in a new `website_guided_generation_attempts` table, §8.8). This is the same "store generated results, never regenerate on page load" requirement as Slice A's own publish/revision model already enforces for published content — this contract extends the identical discipline to the *draft* generation step, which Slice A's `WebsiteAiDraftGenerator` does not currently need (it only ever runs once, before any page exists).
-- **Retry ceiling**: exactly one corrective retry on schema-validation failure, identical to `WebsiteAiDraftGenerator::generate()`'s existing "at most one bounded automatic retry" (`app/Library/Website/WebsiteAiDraftGenerator.php`, confirmed in §2). No unbounded retry loop is ever introduced.
-- **Token/output ceilings**: request-side, the system prompt is capped at a fixed ≤4000-token budget (enforced by truncating the least-recently-verified, lowest-priority Profile facts first if the full fact set would exceed it — deterministic truncation order, never AI-decided); response-side, `max_tokens` is set on the `OpenAI::client()->chat()->create()` call (a new parameter Slice A's own `WebsiteAiGenerationClient::complete()` call does not currently pass — this contract's client passes it explicitly, sized to the template's page count).
-- **Per-Business usage reservation and ledger integration**: every generation attempt calls `UsageWalletManager`-shaped reservation logic **once RFC-005's existing, currently-unactivated metering path is turned on for a new `PlatformFeature` this contract does not itself define** (see §9) — until then, generation attempts are recorded in `website_guided_generation_attempts` (§8.8) for count-based (not dollar-based) monthly caps, gated in application code, not through the wallet.
-- **Monthly caps and per-feature limits**: see §9.
-- **Cheap-model-first routing**: `config('services.openai.model')` remains the single configured model (no `NOT FOUND` model-tiering exists to build on, §2); this contract adds one new, narrowly-scoped config value `config('services.website_guided_generation.model')` defaulting to the same `env('OPENAI_MODEL', 'gpt-4o')` value, so an operator can point guided generation at a cheaper model independently of other AI seams **without inventing a general routing policy** — escalation (e.g., retry-on-a-stronger-model) is explicitly **not** built in this contract; the one retry (§8.4) reuses the same configured model.
-- **No standard AI-image generation**: confirmed nowhere in scope; §14 defines the missing-image checklist instead.
+Token/output ceilings: request-side, the system prompt is capped at a fixed ≤4000-token budget (enforced by truncating the lowest-priority Profile facts first, deterministic order, never AI-decided); response-side, `max_tokens` is passed explicitly on the `OpenAI::client()->chat()->create()` call, sized to the template's page count. **Cheap-model-first**: `config('services.website_guided_generation.model')` is a new, narrowly-scoped config value defaulting to `env('OPENAI_MODEL', 'gpt-4o')`, letting an operator point guided generation at a cheaper model independently of other AI seams **without inventing a general routing policy** — the one retry reuses the same configured model, never an escalation to a stronger one.
 
 ### 8.5 Deterministic post-validation (new, beyond Slice A's existing `WebsiteSectionValidator`)
 
-A new `GuidedGenerationOutputValidator` runs, in order, after schema validation and before any page is created:
+A new `GuidedGenerationOutputValidator` runs, in order, after the AI responds and before any page is created:
 1. Every `WebsiteSectionValidator::validate()` call (reused, unmodified) — malformed sections fail closed exactly as today.
-2. **Prohibited-claims scan**: case-insensitive substring match of every `prohibited_claims` entry against every generated string field; any match fails the attempt (counted toward the retry ceiling, §8.4).
-3. **Unverified-fact scan**: any generated copy that states a `credentials`, `years_operating`, `warranties_guarantees`, or `reviews_source` fact as settled truth when that field's `field_states.verification_status` is `unverified` fails the attempt — this is the concrete mechanical enforcement of §10's "never fabricate credentials/warranties" rule, checked in code, not trusted to prompt instructions alone.
-4. **Accessibility validation**: every image-bearing section (`hero.background_image`, `image_text.image`, `services.items[].image`) must carry non-empty `alt_text` sourced from `business_media_assets.alt_text` (§14) — a section referencing an asset with no `alt_text` fails closed rather than publishing with an empty `alt` attribute.
-5. **Internal-link validation**: any CTA URL that is a relative/internal-looking path must resolve to an actual page in the same generation batch (by `page_type`); a dangling internal link fails the attempt.
-6. **Technical SEO validation**: exactly one page per batch has `is_home = true` (reuses `WebsitePublisher::validateDraft()`'s existing exactly-one-homepage rule by construction — the batch is run through the same check before commit), and no two pages in the batch share a slug (reuses `WebsiteDraftPageService`'s existing per-Website slug-uniqueness check, since the batch is committed page-by-page through that exact seam, §8.6).
+2. **Prohibited-claims scan**: case-insensitive substring match of every `prohibited_claims` entry against every generated string field; any match fails the whole attempt (§8.2).
+3. **Confirmed-fact-allowlist check** — corrected from the prior, mechanically-unprovable "states as settled truth" claim: for the sensitive-fact categories that were actually sent (only `customer_confirmed` ones ever are, §5.2), the validator checks that any specific literal value appearing in the AI's output for that category (a credential label, a stated year count, an offer price label, a testimonial quote/author) is a **literal member of the confirmed set that was sent** — not a semantic judgment about certainty, a plain membership/substring check the code can actually prove. Testimonials specifically: any `testimonials`-type section item's `quote`/`author_name`/`author_title` must exact-string-match one of the confirmed `business_knowledge_profiles.testimonials` entries; the AI may select a subset and choose their order, but never paraphrase, embellish, or invent one.
+4. **No asset fields present** — the output must contain zero `background_image`/`image`/`items[].image` keys anywhere (enforced by `allowAssetReferences: false`, §8.3); their presence is itself a validation failure, not merely ignored.
+5. **Internal-link validation** — any CTA URL passes through the extended `WebsiteUrlRules::isValid()` (§8.6); an internal-path target must resolve to an actual `page_type` present in the same batch, or the attempt fails.
+6. **Technical SEO validation** — exactly one page per batch has `is_home = true` (reuses `WebsitePublisher::validateDraft()`'s existing exactly-one-homepage rule by construction), and no two pages in the batch share a slug (reuses `WebsiteDraftPageService`'s existing per-Website slug-uniqueness check).
 
-### 8.6 Commit path — reuses `WebsiteDraftPageService`, never bypasses it
+Any failure at any step is a **whole-attempt** failure subject to the one retry (§8.2/§8.4) — never a per-page omission.
 
-Once a batch passes §8.5, each page is created via `WebsiteDraftPageService::createPage()` (unmodified) exactly as `WebsiteAiDraftGenerator::generate()` already does today (§2) — Guided Generation adds no second way to write `website_pages`. The bounded final quality pass (a second, optional AI call reviewing the already-validated draft for tone/consistency only, never re-touching structure) is out of Slice 1/2's implementation order (§17) and, if built later, must run **before** commit, on the same validated batch, never as a post-commit mutation.
+### 8.6 Internal-link handling — a narrow, honest extension of `WebsiteUrlRules`
 
-### 8.7 Targeted section rewrite
+**Correction:** the prior draft claimed `WebsiteUrlRules` stays "unmodified" while also requiring internal-link validation — those are incompatible, since the existing rule (`app/Library/Website/WebsiteUrlRules.php`) accepts only `tel:`, `mailto:`, and `https://`. This contract makes one narrow, cited addition to `isValid()`:
 
-A customer may request a rewrite of exactly one existing, already-created section (identified by `website_pages.uid` + section index) through a new, narrow endpoint. The rewrite request reuses the identical `GuidedWebsiteGenerationClient`/`GuidedGenerationOutputValidator` pipeline scoped to one section's schema only, and commits through `WebsiteDraftPageService::updatePage()` (unmodified) — never a whole-site regeneration. This directly satisfies the "targeted rewrites, never mandatory whole-site regeneration" safeguard.
+- **Accepted internal shape**: a root-relative path matching `^/[a-z0-9]+(-[a-z0-9]+)*(/[a-z0-9]+(-[a-z0-9]+)*)*$` — lowercase, hyphenated path segments only, no trailing slash requirement.
+- **Forbidden, explicitly**: protocol-relative `//...`, any `..` path-traversal segment, control characters, backslashes, a `#` fragment or `?` query string anywhere in the value, and any scheme prefix other than the three already-accepted ones (`javascript:`, `data:`, `file:`, `vbscript:`, and bare `http://` remain rejected exactly as today).
+- **Scope of the extension**: this new shape is accepted **only** for CTA fields used for cross-page Website navigation (`hero.primary_cta.url`/`secondary_cta.url`, `cta.buttons[].url`) — it is never accepted for `business_knowledge_profiles.conversion_target` (§4.2, which stays exactly `tel:`/`mailto:`/`https://`, unchanged), and the platform never stores a platform-domain **absolute** URL for internal navigation (no `https://<platform-host>/sites/...` value is ever written by this contract — only the bare relative path).
+- **Validation against the batch**: `GuidedGenerationOutputValidator` (§8.5 step 5) resolves an internal-path target against the `page_type`/slug list of the current generation batch; a path that doesn't resolve to a real page in the batch fails the attempt.
 
-### 8.8 `website_guided_generation_attempts` (new table — the idempotency/retry/audit record)
+This is added to Slice 4's implementation allowlist (§16) as `app/Library/Website/WebsiteUrlRules.php` (narrow addition only, no removal of existing behavior), with its own regression test proving the three previously-accepted shapes are untouched.
+
+### 8.7 Deterministic media-binding phase — corrected alt-text ownership
+
+**Correction:** the prior draft incorrectly claimed a generated section "carries" `alt_text`. It does not, and cannot — confirmed against the actual renderer (§0). The corrected design:
+
+1. `BusinessMediaAsset` (§13.2) owns the **reusable source** `alt_text` a customer sets once per uploaded image.
+2. After §8.5's validation passes and §8.2's atomicity gate is satisfied (the AI-authored batch is known-good with zero image fields in it), a new **`App\Library\Website\GuidedGeneration\MediaBindingService`** runs, once, per successful attempt:
+   - For each `image_slots` entry in the template's `page_manifest` (§7.3) — each carrying a `purpose` and an `informative`/`decorative` classification — it selects the customer's confirmed (`usage_confirmed = true`) `business_media_assets` row matching that `purpose` (deterministic: most-recently-confirmed first if more than one matches; a customer-specified preference, when the setup UI offers one, wins).
+   - If an eligible asset exists: it is copied into Website scope by creating (or, if a `WebsiteAsset` with the identical `content_hash` already exists for this Website, reusing) a `WebsiteAsset` row via the **existing, unmodified** `WebsiteAssetUploadService::store()` — the created/reused `WebsiteAsset.alt_text` is set from the `business_media_assets.alt_text` at copy time (or left empty if the slot is explicitly `decorative`, §8.8).
+   - The resulting `WebsiteAsset.uid` is then written into the already-committed page's section JSON through **`WebsiteDraftPageService::updatePage()`** (the existing, unmodified seam) — never a direct write to `website_pages`.
+   - If no eligible asset exists, the slot is left empty (§13.4) and the omission is recorded as a `warnings` entry — never a validation failure, since image slots are never "required" in the same sense a template page/section is (§8.2).
+3. `MediaBindingService` performs no AI call and is fully deterministic — it is Slice 5 work (§16), since it depends on `business_media_assets` existing at all.
+
+### 8.8 Accessibility validation, corrected
+
+`GuidedGenerationOutputValidator`'s asset-related check (formerly, incorrectly, "sections must carry alt_text") is corrected to run **after** media-binding (§8.7), against the actually-referenced `WebsiteAsset` rows:
+- **Informative** image slots (per the template's `image_slots` classification, §7.3 — e.g. `image_text.image`, `services.items[].image`, both rendered as real `<img>` tags per §0's evidence) must resolve to a `WebsiteAsset` with non-empty `alt_text`, or the slot must be left empty (§13.4) — an informative `<img>` is never rendered with an empty `alt` attribute silently.
+- **Decorative** image slots — concretely, `hero.background_image` (§0: rendered as a CSS `background-image`, which has no HTML `alt` attribute at all; the hero section's required `heading`/`subheading` text already carries the informative content Slice A's renderer displays) — are explicitly classified `decorative` in the template manifest and are **exempt** from the non-empty-`alt_text` requirement; their `business_media_assets`/`WebsiteAsset` row may legitimately carry empty `alt_text`, and this is a documented, intentional classification, never a silently-skipped check.
+- This check is not "keyword-filled alt text" enforcement — an empty, explicitly-decorative alt text passes; a non-empty but present `alt_text` on an informative image passes; only an *informative* slot with *no* alt text at all fails.
+
+### 8.9 Targeted section rewrite
+
+A customer may request a rewrite of exactly one existing, already-created **text** section (identified by `website_pages.uid` + section index) through a new, narrow endpoint — image-bearing fields are never part of a rewrite request (media binding, §8.7, is never re-run by a rewrite). The rewrite reuses the identical `GuidedWebsiteGenerationClient`/`GuidedGenerationOutputValidator` pipeline scoped to one section's schema only, and commits through `WebsiteDraftPageService::updatePage()` (unmodified) — never a whole-site regeneration.
+
+### 8.10 `website_guided_generation_attempts` (new table — corrected idempotency/retry/lease fields, see §10)
 
 | Column | Type | Notes |
 |---|---|---|
 | `id` | bigint PK | |
 | `uid` | uuid | |
 | `website_id` | FK, cascade delete | |
-| `idempotency_key` | string(64), indexed | sha256 per §8.4 |
+| `idempotency_key` | string(64), indexed | sha256 of the canonical input object, §10.1 |
 | `attempt_type` | string(24) | `full_generation`, `section_rewrite`, `quality_pass` |
-| `status` | string(24) | `pending`, `succeeded`, `failed`, `retried` |
-| `warnings` | json, nullable | the `warnings` array from §8.3's output schema |
-| `failure_reason`, `created_at`, `completed_at` | | |
+| `status` | string(24) | **Correction (§10):** exactly `pending`, `succeeded`, `failed`, `cancelled` — `retried` is removed as a terminal status |
+| `retry_count` | unsigned tinyint, default 0 | **Correction (§10):** the bounded retry (§8.4) is data on the row, not a vague status value; capped at 1 |
+| `lease_expires_at` | timestamp | **Correction (§10):** set to `created_at + 5 minutes` at row creation; a `pending` row past this is treated as abandoned |
+| `warnings` | json, nullable | the `warnings` array from §8.4's output schema |
+| `failure_reason`, `created_at`, `completed_at` | | `failure_reason` includes `'lease_expired'`, `'cancelled'`, plus validation-failure reasons |
 
-No raw AI prompt/response body is stored here (mirrors Slice A's own AI seam, which stores no OpenAI transcript anywhere — confirmed by `WebsiteAiSeamUnchangedTest`'s existing no-secret-leakage assertion, §2) — only the bounded metadata needed for idempotency and count-based caps.
+No raw AI prompt/response body is stored here (mirrors Slice A's own AI seam, confirmed by `WebsiteAiSeamUnchangedTest`'s existing no-secret-leakage assertion, §2) — only the bounded metadata needed for idempotency, retry accounting, and count-based caps.
 
 ---
 
@@ -391,217 +415,283 @@ No raw AI prompt/response body is stored here (mirrors Slice A's own AI seam, wh
 
 ### 9.1 What exists and what this contract does with it
 
-RFC-005's usage wallet infrastructure (§2 evidence row) is real, generic, and keyed by `PlatformFeature` — but every feature remains `is_metered = false`, and the only activation command is hardcoded to `Conversations`. This contract does **not** activate metering for AI generation (that would require a new, separately-authorized `ActivateWebsiteGuidedGenerationUsageRate`-shaped command and a real numeric rate — an RFC-005 M5-style operator step, explicitly out of this contract's slice order). Instead:
+RFC-005's usage wallet infrastructure (§2 evidence row) is real, generic, and keyed by `PlatformFeature` — but every feature remains `is_metered = false`, and the only activation command is hardcoded to `Conversations`. This contract does **not** activate metering for AI generation (that would require a new, separately-authorized command and a real numeric rate — an RFC-005 M5-style operator step, explicitly out of this contract's slice order). Instead:
 
-- **v1 (this contract's implementation slices):** count-based caps only, enforced in application code by counting rows in `website_guided_generation_attempts` scoped to `business_id` and a rolling 30-day window, checked before issuing an AI request — no wallet, no dollar amount, no `UsageAuthorizationGateway` change.
-- **Future (explicitly not this contract):** once RFC-005 metering is genuinely activated for a `website_guided_generation` (or reused `ai_coo_basic`) feature classification, the count-based cap is replaced by a real `UsageWalletManager::evaluateCoarseCapacity()`-backed reservation, and `EntitlementManager::decide()`'s existing usage-authorization step (`app/Library/Entitlement/EntitlementManager.php:180-184`) starts returning real `usage_unauthorized` denials for this feature — no code path in this contract needs to change for that future flip; it is designed to be dormant-compatible from day one.
+- **v1 (this contract's implementation slices):** count-based caps only (§9.2), enforced in application code by counting rows in `website_guided_generation_attempts` — no wallet, no dollar amount, no `UsageAuthorizationGateway` change.
+- **Future (explicitly not this contract):** once RFC-005 metering is genuinely activated for a `website_guided_generation` (or reused `ai_coo_basic`) feature classification, the count-based cap is replaced by a real `UsageWalletManager::evaluateCoarseCapacity()`-backed reservation, and `EntitlementManager::decide()`'s existing usage-authorization step (`app/Library/Entitlement/EntitlementManager.php:180-184`) starts returning real `usage_unauthorized` denials for this feature — no code path in this contract needs to change for that future flip.
 
-### 9.2 Exact v1 caps (defaults — see §13 for the trial-specific numbers, and §23 for what remains a human decision)
+### 9.2 Exact v1 caps — corrected (§22 decision 6, locked)
 
-| Cap | Default | Enforced by |
+**Full generation is an initial-empty-Website operation, not a recurring monthly allowance.** The prior draft's "4/8/unlimited full generations per calendar month" row is removed entirely. `GuidedWebsiteGenerationClient`'s full-generation endpoint is only reachable while `$website->pages()->count() === 0` (the same restriction `WebsiteAiDraftGenerator::generate()` already enforces today, §2, now made explicit for Guided Generation too) — once any page exists, only §8.9's targeted rewrite or a future, separately-authorized "replace/rebuild" workflow (not designed here) apply.
+
+| Cap | Working default | Enforced by |
 |---|---|---|
-| Full generations per Business per calendar month | 4 (Core), 8 (Growth), unlimited-but-rate-limited at 1/hour (Agency) | count of `attempt_type = 'full_generation'` rows |
-| Section rewrites per Business per calendar month | 20 (Core), 40 (Growth), 100 (Agency) | count of `attempt_type = 'section_rewrite'` rows |
-| Concurrent in-flight attempts per Website | 1 | a `pending`-status row for the same `website_id` blocks a new attempt (returns a "generation already in progress" response, not a queue) |
-
-These are recorded as defaults this contract recommends, not permanently locked numbers — see §23 for the exact human-review framing (mirrors this contract's own trial-limits framing in §13).
+| Full generations per Website | exactly 1, ever (until pages are cleared by a future, separately-authorized rebuild workflow) | `$website->pages()->count() === 0` precondition, checked before any AI call |
+| Section rewrites per Business per rolling 30 days | **Core 20, Growth 40, Agency 100** (§22 decision 6, locked as working defaults, adjustable via config later) | count of `attempt_type = 'section_rewrite'` `succeeded`/`pending`-non-expired rows |
+| Concurrent in-flight attempts per Website | 1 | a non-expired `pending`-status row for the same `website_id` blocks a new attempt (§10.2) |
 
 ---
 
-## 10. COO AND SEO SAFETY BOUNDARY
+## 10. IDEMPOTENCY AND CONCURRENCY — CORRECTED
 
-### 10.1 No competing "Website Worker" — the exact existing seam to use instead
+### 10.1 Canonical idempotency key
 
-RFC-002's Opportunity Engine (§2 evidence row) already reserves `OpportunityWorkerKey::Website = 'website'` and already states its own intent (*"Enables: SEO, Content, Sales, Reputation, and Website workers (future RFCs)"*) precisely so that no future feature invents a second recommendation brain. This contract's Slice 3+ (§17) — explicitly **not** required for a functioning generation product and therefore deferred — is to implement `App\Library\Opportunity\WebsiteOpportunityProducer implements OpportunityProducer` (same interface Business Advisor already implements, `app/Library/Opportunity/OpportunityProducer.php:17-25`), reusing `BusinessKnowledgeProfileManager::completenessCheck()` as its fact source exactly the way `BusinessAdvisorOpportunityProducer` already reuses `InitialBusinessSnapshotBuilder` (`app/Library/Opportunity/BusinessAdvisorOpportunityProducer.php:59-89`). This is the "AI COO is the central brain" requirement satisfied with zero new orchestration engine — the COO, whenever `PlatformFeature::AiCooBasic` eventually ships real code, is expected to consume the same `Opportunity`/`OpportunityRun` rows every other worker produces, including this one.
+**Correction:** the prior key (`sha256(business_id . template_key . profile_updated_at . field_states_max_updated_at)`) omitted material inputs. The corrected key is `sha256()` of a canonically-ordered JSON object (keys recursively sorted before encoding, `JSON_UNESCAPED_SLASHES`) containing exactly:
 
-### 10.2 Core vs Growth/Agency behavior
+```
+{
+  "business_identity": {"name", "industry", "description", "phone", "email", "website_url", "updated_at"},
+  "selected_locations": [{"location_id", "updated_at", "hours", "hours_verified_at"} for every location the Website features — v1: primaryLocation() only, §4.3],
+  "active_services": [{"service_id", "updated_at"} for every Active business_service],
+  "confirmed_profile_facts": {field_key => {"value", "verified_at"} for every field with verification_status = customer_confirmed, sorted by field_key},
+  "vertical_key": "... or null",
+  "template_key": "...",
+  "template_manifest_version": <website_templates.manifest_version, §7.3>,
+  "question_pack_version": <the resolved pack's version, §6.3>,
+  "generator_schema_version": <a fixed constant on GuidedWebsiteGenerationClient, bumped whenever the request/output JSON schema itself changes>,
+  "model_policy_identifier": "config('services.website_guided_generation.model') value"
+}
+```
+
+A repeated request whose canonical object hashes identically to a **`succeeded`** prior attempt returns that stored draft rather than issuing a new AI call. **Correction:** a `failed` attempt never short-circuits a later request with the same key — the code looks up `where('idempotency_key', $key)->where('status', 'succeeded')->first()`; if none exists, a new attempt proceeds regardless of how many prior attempts with that key failed. This directly prevents "a failed attempt returns a nonexistent stored draft as a successful response."
+
+### 10.2 Concurrency and lease
+
+Before creating a new `pending` attempt row, the code locks the `Website` row (`Website::where('id', $website->id)->lockForUpdate()`, inside the same `DB::transaction()` that inserts the new attempt row) and checks for an existing `pending` attempt for that `website_id` whose `lease_expires_at` has not passed — exactly the same `lockForUpdate()`-inside-`DB::transaction()` discipline `WebsiteDraftPageService::clearExistingHomepage()` and `WebsitePublisher::publish()` already use (§2), applied here to prevent duplicate-attempt races rather than reusing a nonexistent unique-partial-index (not portable across this codebase's MySQL target).
+
+A `pending` row whose `lease_expires_at` (`created_at + 5 minutes`, fixed constant — one bounded AI call plus one retry never legitimately takes longer) has passed is treated as abandoned: the **next** request touching that Website transitions it to `failed` (`failure_reason = 'lease_expired'`) before evaluating whether a new attempt may start. No new cron job is introduced; this is a lazy check on next access, matching this codebase's existing preference for request-time invariant checks over background sweepers wherever one is sufficient.
+
+---
+
+## 11. COO AND SEO SAFETY BOUNDARY
+
+### 11.1 No competing "Website Worker" — the exact existing seam to use instead, deferred
+
+RFC-002's Opportunity Engine (§2 evidence row) already reserves `OpportunityWorkerKey::Website = 'website'` and already states its own intent (*"Enables: SEO, Content, Sales, Reputation, and Website workers (future RFCs)"*) precisely so that no future feature invents a second recommendation brain. **§22 decision 7 (locked): implementing `App\Library\Opportunity\WebsiteOpportunityProducer implements OpportunityProducer` is not authorized by this contract.** The seam is documented — reusing `BusinessKnowledgeProfileManager::completenessCheck()` as its fact source exactly the way `BusinessAdvisorOpportunityProducer` already reuses `InitialBusinessSnapshotBuilder` (`app/Library/Opportunity/BusinessAdvisorOpportunityProducer.php:59-89`) — so a future, separately-authorized contract can build it without re-deriving the integration point, but no code for it ships as part of this contract's slices (§16, Slice 6 is recorded as **not implementation-authorized**, not merely "deferred" in the sense of "later in this same authorization").
+
+### 11.2 Core vs Growth/Agency behavior
 
 | Tier | Website Guided Generation behavior |
 |---|---|
-| **Core** | Generation, correct bounded structure, basic metadata, accessibility checks (§8.5), bounded schema, publishing/revisions/rollback (all pre-existing Slice A), and on-demand single-section rewrite (§8.7). No scheduled/ongoing analysis. |
-| **Growth** | Everything in Core, plus: once `WebsiteOpportunityProducer` (§10.1) exists, its runs are scheduled (reusing whatever cron/queue mechanism RFC-002's existing `RunBusinessAdvisorOpportunityProducer` job pattern already establishes — `app/Jobs/Opportunity/RunBusinessAdvisorOpportunityProducer.php` — never a new scheduler). Opportunity types surfaced: missing/incomplete Profile facts affecting the live published Website, GBP/Website consistency (once GBP Slice A ships and only by comparing already-public facts — never by GBP reading Website tables, preserving GBP's own stated non-dependency, §2), and service/location content-gap opportunities (e.g., an active `business_service` with no corresponding Website page). |
-| **Agency** | Everything in Growth, at the higher rate-limits in §9.2, plus (out of this contract's slices, recorded for completeness) White Label consumption of the same generation pipeline for agency-managed sub-businesses — no new tenancy model, since Website Slice A's existing multi-Business-per-Workspace chain already supports this. |
+| **Core** | Generation, correct bounded structure, basic metadata, accessibility checks (§8.8), bounded schema, publishing/revisions/rollback (all pre-existing Slice A), and on-demand single-section rewrite (§8.9). No scheduled/ongoing analysis. |
+| **Growth** | Everything in Core, at the §9.2 rewrite-cap tier. Scheduled Opportunity-engine analysis (missing/incomplete Profile facts affecting the live published Website, GBP/Website consistency once GBP Slice A ships, service/location content-gap detection) becomes available **only once and if** a future, separately-authorized contract implements `WebsiteOpportunityProducer` (§11.1) — this row describes intended future behavior, not something this contract's slices activate. |
+| **Agency** | Everything in Growth, at the §9.2 Agency rewrite-cap tier, plus (recorded for completeness, not built here) White Label consumption of the same generation pipeline for agency-managed sub-businesses — no new tenancy model needed, since Website Slice A's existing multi-Business-per-Workspace chain already supports this. |
 
-This mapping is intentionally silent on packaging `PlatformFeature`s beyond what already exists (`WebsiteGeneration` — Core/Growth/Agency, `AiCooBasic`/`SeoBasicVisibility`/`SeoModule` — still `Planned`, unmodified by this contract). No new `PlatformFeatureRegistry` entry or packaging-migration change ships in this contract's slices; the Growth/Agency behaviors above become active only once `WebsiteOpportunityProducer` itself ships (Slice 3+, explicitly deferred).
+No new `PlatformFeatureRegistry` entry or packaging-migration change ships in this contract's slices.
 
-### 10.3 SEO boundary — draft-only, human-approved, never fabricated
+### 11.3 SEO boundary — draft-only, human-approved, never fabricated
 
-Everything this contract's AI touches produces a **draft** subject to the exact same human-approved publish gate Slice A already enforces (`WebsitePublisher::publish()`, requiring an explicit customer action — no code path in this contract calls `publish()` automatically). SEO-specific claims — rankings, reviews, credentials, prices, hours, locations, warranties, service areas — are never AI-fabricated: §8.5's deterministic validator (steps 2-3) is the concrete enforcement, not merely a prompt instruction. Page content, uploaded filenames, alt text, and any future imported template material (§6.2) are treated as **untrusted input** to any AI call — the existing `WebsiteSectionValidator`'s strict allowlist-per-type shape already prevents arbitrary content from reaching a prompt unvalidated; this contract's `GuidedWebsiteGenerationClient` never concatenates raw uploaded filenames or alt text into a prompt without the same validation pass. No silent auto-publishing exists anywhere in this design.
+Everything this contract's AI touches produces a **draft** subject to the exact same human-approved publish gate Slice A already enforces (`WebsitePublisher::publish()`, requiring an explicit customer action — no code path in this contract calls `publish()` automatically). SEO-specific claims — rankings, reviews, credentials, prices, hours, locations, warranties, service areas — are never AI-fabricated: they are either excluded from AI context entirely when unverified (§5.2) or checked against a literal confirmed-value allowlist (§8.5 step 3), never trusted to prompt wording alone. Page content, uploaded filenames, alt text, and any future imported template material (§7.2) are treated as **untrusted input** to any AI call. No silent auto-publishing exists anywhere in this design.
 
 ---
 
-## 11. GENERATION STATE MACHINE
+## 12. GENERATION STATE MACHINE
 
 1. **Select Business** — existing `resolveEntitledBusiness()` chain (§3.1); no change.
-2. **COO completeness evaluation** — `BusinessKnowledgeProfileManager::completenessCheck()` (§4.4) runs synchronously (it is a set of indexed reads, not an AI call) and returns the exact missing/stale fields.
-3. **Ask missing questions** — the selected `question_pack` (§7.2), filtered to only the fields `completenessCheck()` flagged; already-`customer_confirmed`, non-stale fields are never re-asked.
-4. **Request missing assets** — driven by the missing-image checklist (§14.3), never a blocking hard-stop; a customer may proceed without every image, accepting the deterministic fallback (§14.4).
-5. **Recommend/show four template choices** — reads `website_templates` (§6.3), filtered to `is_active = true`; if the templates do not yet exist (§6.1's current blocked state), this step cannot ship — recorded as a stop condition (§22).
-6. **Customer selects template** — a plain write of `website_id`/chosen `website_templates.key` reference (a new nullable `template_key` column on `websites`, the only Slice-A-table column this contract adds, since Slice A's own `websites` table has no template concept — everything else about `websites` is reused unmodified).
-7. **Generate structured draft** — §8.2-8.4.
+2. **COO completeness evaluation** — `BusinessKnowledgeProfileManager::completenessCheck()` (§4.3) runs synchronously (indexed reads only, no AI call).
+3. **Ask missing questions** — the resolved `question_pack` (§6.3), filtered to only the fields `completenessCheck()` flagged; already-`customer_confirmed`, non-stale fields are never re-asked; unverified sensitive facts are surfaced here specifically for confirmation, since §5.2 means they otherwise never reach generation at all.
+4. **Request missing assets** — driven by the missing-image checklist (§13.4), never a blocking hard-stop.
+5. **Recommend/show four template choices** — reads `website_templates` (§7.3), filtered to `is_active = true`; if the templates do not yet exist (§7.1's current blocked state), this step cannot ship (§21).
+6. **Customer selects template** — writes a new nullable `template_key` column on `websites` (the only Slice-A-table column this contract adds).
+7. **Generate structured draft** — one bounded AI request plus at most one retry (§8.3-8.4), atomic (§8.2).
 8. **Deterministic validation** — §8.5.
-9. **Optional bounded quality pass** — §8.6's second paragraph; deferred slice.
-10. **Customer reviews warnings and claims** — the `warnings` array (§8.3) and any `unverified`-fact omissions are surfaced in the existing page-form/preview UI (`resources/views/customer/business/website/page-form.blade.php`, unmodified structurally, extended with a warnings panel).
-11. **Preview** — Slice A's existing `WebsiteController::preview()`, unmodified.
-12. **Human-approved publish** — Slice A's existing `WebsitePublisher::publish()`, unmodified.
-13. **Immutable revision and rollback** — Slice A's existing `WebsiteRevision`/`WebsitePublisher::rollback()`, unmodified.
-14. **Later COO recommendations triggered only by meaningful events** — §10.1/§10.2; a "meaningful event" is defined narrowly as: a `WebsitePublished` dispatch (already exists, zero listeners today — this contract's Slice 3+ would be the first listener, and it would only *enqueue* an Opportunity-engine run, never mutate Website data itself), a `BusinessKnowledgeProfileManager::updateFields()` call that changes a fact referenced by the live published snapshot, or a new active `business_service`/`business_location` with no corresponding published page. No time-based "just check periodically for no reason" trigger is introduced beyond whatever cadence RFC-002's own existing worker-scheduling convention already uses for `BusinessAdvisor`.
+9. **Deterministic media binding** — §8.7 (new step relative to the original draft — this is where images actually get attached, entirely separate from the AI call).
+10. **Accessibility/technical validation of the bound media** — §8.8.
+11. **Optional bounded quality pass** — deferred slice (§8.1's table, second column, last row).
+12. **Customer reviews warnings and claims** — the `warnings` array (§8.4) surfaced in the existing page-form/preview UI, extended with a warnings panel.
+13. **Preview** — Slice A's existing `WebsiteController::preview()`, unmodified.
+14. **Human-approved publish** — Slice A's existing `WebsitePublisher::publish()`, unmodified.
+15. **Immutable revision and rollback** — Slice A's existing `WebsiteRevision`/`WebsitePublisher::rollback()`, unmodified.
+16. **Later COO recommendations triggered only by meaningful events** — §11.1; not activated by this contract's slices (documented seam only).
 
-### Failure, cancellation, retry, partial-generation, supersession, stale-data behavior
+### Failure, cancellation, retry, supersession, stale-data behavior — corrected for atomicity
 
-- **Failure** (AI fails closed, or the single retry also fails): the attempt is marked `failed` in `website_guided_generation_attempts`; zero pages are created (mirrors `WebsiteAiDraftGenerator::generate()`'s existing "returns false, never partial" behavior exactly — this contract's batch commit in §8.6 is likewise all-or-nothing per page but the OVERALL batch may partially succeed at the page level only after §8.5 validation passes for that page individually; a page that fails validation is simply omitted from the created set and reported in `warnings`, never silently invented).
-- **Cancellation**: a customer may abandon a `pending` attempt; it is marked `failed` with `failure_reason = 'cancelled'` on the next request for that Website (no background cancellation signal needed since generation is synchronous within one request per §8.2's single bounded call).
-- **Retry**: exactly the one bounded retry already described (§8.4); a customer-initiated "try again" after a terminal `failed` status is a **new** attempt with a **new** idempotency key (since retrying implies something about the input may need to change, even if it's just the customer's own edited answers).
-- **Partial generation**: see Failure above — page-level granularity, never silently fabricated content to "complete" a batch.
-- **Supersession**: a new `full_generation` attempt against a Website that already has draft pages is rejected by reusing `WebsiteAiDraftGenerator`'s existing "AI generation is only available before any pages exist on this Website" rule's *spirit* — but Guided Generation's own generator must explicitly check `$website->pages()->exists()` **only for the specific pages the new template would create** (a template swap after initial generation is an explicit, customer-visible "replace this page's content" action per page, going through §8.7's rewrite path, never a silent bulk supersession).
-- **Stale-Business-data**: if `completenessCheck()` detects a `field_states.verified_at` past the 180-day `reconfirm_after_days` threshold (§5.4) for a fact actually used in the *live published* snapshot, the next COO evaluation (state 2, on next visit, or the Growth-tier scheduled Opportunity run, §10.2) surfaces a "please confirm this hasn't changed" prompt — it never silently re-generates or silently re-publishes.
-
----
-
-## 12. TRIAL AND DOMAIN BOUNDARIES
-
-### 12.1 Domain rules — settled
-
-Bring-your-own-domain only. The customer owns and pays their own registrar. The platform never registers, purchases, renews, warehouses, or takes ownership of any domain. The customer only *connects* an owned domain to their generated Website. Ownership verification, routing, automatic SSL, detach, and expiry behavior all belong to a future custom-domain/hosting slice and are **not implemented here** — this matches Slice A's own already-locked §40 boundary (*"CUSTOM DOMAINS — SLICE B BOUNDARY (future contract, not designed here)"*) exactly; this contract adds nothing to that boundary and does not touch `routes/public.php`'s hostname-agnostic routing.
-
-### 12.2 Trial — recommended default, explicitly not settled
-
-The user has not approved exact numbers. This contract recommends the following **as a starting proposal for human review**, reasoned from the cost controls already defined in §8-9:
-
-| Trial parameter | Recommended default | Cost-control reasoning |
-|---|---|---|
-| Businesses | 1 | matches the existing one-Website-per-Business invariant exactly; no new tenancy concept needed for a trial |
-| Full generations | 1 | bounds AI spend to exactly one `full_generation` attempt (plus its one built-in retry, §8.4) — the single largest-token AI call in this whole design |
-| Generated pages | ≤6 | small enough that even a worst-case 40-section-per-page (§2, already-enforced ceiling) trial draft stays within a bounded, predictable token/output cost, while large enough to demonstrate a real multi-page site (home + 3-5 interior pages) |
-| Targeted rewrites | 3 | lets a trial customer meaningfully iterate without opening the door to unlimited AI spend per trial account |
-| Platform preview | temporary, tied to trial expiry | reuses Slice A's existing `preview()` action (§11 step 11) unmodified — no new preview mechanism |
-| Custom domain connection | at most 1, optional | reuses whatever domain-connection mechanism a future Slice B ships; this contract does not build it, and a trial account without a domain simply never exercises that step |
-| AI-generated images | 0 (none) | matches §14's platform-wide "no standard AI-image generation" rule exactly — this is not a trial-specific restriction, it applies to every tier |
-| Recurring/scheduled SEO monitoring | none | the Growth-tier scheduled Opportunity-engine behavior (§10.2) is explicitly not part of a trial, matching Core's own "no scheduled/ongoing analysis" row |
-| Expiry behavior | the draft (and any published revision) is retained; public serving stops (the existing `WebsitePublicEntitlementGate`, §2, already 404s any Business whose entitlement decision denies — a trial-expired Business is simply routed through the exact same `not_entitled_by_plan`/`plan_inactive` denial reasons `EntitlementManager::decide()` already returns, §2); restoration is immediate on payment because nothing was deleted, only entitlement-gated |
-
-This table is a **recommendation**, not a locked decision — see §23 item 1.
+- **Failure**: the attempt is marked `failed`; **zero pages are created**, with no exception (§8.2) — this replaces the prior, contradictory "partial success by omission" language entirely.
+- **Cancellation**: a customer may abandon a `pending` attempt; the **next** request for that Website transitions it to `failed` (`failure_reason = 'cancelled'`) per §10.2's lazy-lease-check pattern.
+- **Retry**: exactly the one bounded retry (§8.4), tracked via `retry_count`, never a new attempt row for the same triggering request; a customer-initiated "try again" **after** a terminal `failed` status is a genuinely new attempt with a freshly-computed idempotency key (§10.1) — which will differ from the failed one only if some input actually changed, otherwise it is identical and will simply attempt generation again (a failed attempt never blocks a retry, §10.1).
+- **Supersession**: not applicable to full generation in this contract's slices, since full generation is a one-time, zero-pages-only operation (§9.2) — there is nothing to supersede. A "replace this content" need is served exclusively by §8.9's per-section rewrite.
+- **Stale-Business-data**: if `completenessCheck()` detects a tracked field past its `reconfirmAfterDays()` (§5.4) for a fact actually used in the *live published* snapshot, the next completeness evaluation (state 2, on next visit) surfaces a "please confirm this hasn't changed" prompt — it never silently re-generates or silently re-publishes.
 
 ---
 
-## 13. IMAGE AND ALT-TEXT POLICY
+## 13. IMAGE AND ALT-TEXT POLICY (owns `business_media_assets` — Slice 5)
 
 ### 13.1 No standard AI-image generation
 
 Confirmed nowhere in scope (§2); this contract does not add an image-generation API call anywhere.
 
-### 13.2 Upload-first, license-aware
+### 13.2 `business_media_assets` — the Business-scoped upload inventory (Slice 5, deferred from Slice 1)
 
-`business_media_assets` (§4.2) is the customer's own upload inventory, using the exact magic-byte/content-hash security pattern already proven in `WebsiteAssetUploadService` (§2) via a new, narrowly-scoped `BusinessMediaUploadService` that mirrors it method-for-method (never modifying or extending the existing Website-scoped service). Every upload requires `usage_confirmed = true` before it becomes eligible for generation to reference — an unconfirmed upload is visible to the customer but invisible to `GuidedWebsiteGenerationClient`'s context-building step.
+**Correction:** this table, its model, and its upload service belong entirely to Slice 5, not Slice 1 — Slice 1 owns only the Business Knowledge Profile foundation (§16).
 
-### 13.3 Missing-image checklist
+| Column | Type | Notes |
+|---|---|---|
+| `id` | bigint PK | |
+| `uid` | uuid, unique | |
+| `business_id` | FK, cascade delete | |
+| `disk`, `path`, `mime_type`, `size`, `width`, `height`, `content_hash` | same shapes as `website_assets` | reuses the identical magic-byte-validated upload pattern from `App\Library\Website\WebsiteAssetUploadService` — a new, Slice-5-owned `BusinessMediaUploadService` mirrors it method-for-method, never modifying or extending the existing Website-scoped service |
+| `purpose` | string(24) | enum-backed: `logo`, `hero`, `team`, `location`, `work_sample`, `other` |
+| `alt_text` | string(160), nullable | **this is the one and only place reusable source alt text is authored** — copied into a `WebsiteAsset.alt_text` at media-binding time (§8.7), never stored a second time anywhere else |
+| `usage_confirmed` | boolean, default false | customer must affirmatively confirm ownership/license before the asset becomes eligible for generation to reference |
+| `usage_confirmed_by`, `usage_confirmed_at` | FK/timestamp, nullable | |
+| `created_at`, `updated_at` | timestamps | |
 
-`completenessCheck()` (§4.4) additionally computes, per selected template's `page_manifest` (§6.3), which image-bearing section slots (hero background, per-service image, team photo, etc.) have no eligible (`usage_confirmed = true`) `business_media_assets` row of the matching `purpose`. This checklist is surfaced at generation-journey step 4 (§11) as a plain list — never a fabricated placeholder image silently inserted without the customer's knowledge.
+### 13.3 The copy-to-WebsiteAsset seam (Slice 5) — never a cross-table reference
 
-### 13.4 Deterministic fallback when an image is genuinely missing
+A `business_media_assets` row's **content** is copied into Website scope by `MediaBindingService` (§8.7) calling the existing, unmodified `WebsiteAssetUploadService::store()` — creating a normal `WebsiteAsset` row scoped to that Website, or reusing one with a matching `content_hash`. There is **never** a foreign key from `website_pages.sections` (or any other Website-scoped table) into `business_media_assets` — this preserves Slice A's existing invariant that a `WebsiteAsset`'s lifecycle (including the permanent-once-published `first_published_at` retention rule, `app/Models/WebsiteAsset.php`) is entirely Website-scoped and untouched by this contract.
 
-A section whose manifest calls for an image but has none eligible is generated **without** that image field populated (the existing `WebsiteSectionValidator` rules already treat `background_image`/`image` as `nullable`, §2) — the deterministic renderer (unmodified) already handles an absent image gracefully (a themed background color/gradient, per the existing bounded `websites.theme`). No stock photo, no AI-generated image, no silently-substituted business imagery is ever inserted.
+### 13.4 Missing-image checklist and deterministic fallback
+
+`completenessCheck()` computes, per selected template's `page_manifest.image_slots` (§7.3), which slots have no eligible (`usage_confirmed = true`) `business_media_assets` row of the matching `purpose`. Surfaced at generation-journey step 4 (§12) as a plain list. A slot with no eligible asset is generated **without** that image field populated (§8.7 step "if no eligible asset exists") — the existing, unmodified renderer already handles an absent image gracefully (a themed background/gradient per the existing bounded `websites.theme`). No stock photo, no AI-generated image, no silently-substituted business imagery is ever inserted.
+
+### 13.5 Informative vs decorative — explicit classification, never inferred
+
+Per §8.8: every `image_slots` entry in a template's manifest is authored by the operator as either `informative` (requires non-empty alt text once bound) or `decorative` (may be empty, by design — concretely `hero.background_image`, which has no HTML `alt` attribute at all since it renders as a CSS background, §0). This classification lives in `website_templates.page_manifest`, never inferred at runtime from the image content itself.
 
 ---
 
 ## 14. EVENT/PUBLISH INTEGRATION
 
-No change to `WebsitePublished`'s payload (`app/Events/Website/WebsitePublished.php` — `websiteId`, `websiteRevisionId`, `businessId`, unmodified) or dispatch sites (`WebsitePublisher::publish()`/`rollback()`, unmodified). This contract's only event-integration work is the future, deferred (§10.1) `WebsiteOpportunityProducer` becoming the **first** listener of `WebsitePublished` — and even then, per RFC-002's own worker contract (`app/Library/Opportunity/OpportunityProducer.php:12-15`, *"performs no writes, no transactions, no repository calls, and no external I/O"*), that listener would only ever **enqueue an Opportunity-engine run**, never mutate Website or Business data directly.
+No change to `WebsitePublished`'s payload (`app/Events/Website/WebsitePublished.php` — `websiteId`, `websiteRevisionId`, `businessId`, unmodified) or dispatch sites (`WebsitePublisher::publish()`/`rollback()`, unmodified). Per §11.1 (locked), this contract does **not** register any listener for `WebsitePublished` — that remains a documented, future, separately-authorized seam, not work this contract's slices perform.
 
 ---
 
-## 15. IMPLEMENTATION SLICES AND DEPENDENCY ORDER
+## 15. TRIAL AND DOMAIN BOUNDARIES
+
+### 15.1 Domain rules — settled
+
+Bring-your-own-domain only. The customer owns and pays their own registrar. The platform never registers, purchases, renews, warehouses, or takes ownership of any domain. The customer only *connects* an owned domain to their generated Website. Ownership verification, routing, automatic SSL, detach, and expiry behavior all belong to a future custom-domain/hosting slice and are **not implemented here** — this matches Slice A's own already-locked §40 boundary (*"CUSTOM DOMAINS — SLICE B BOUNDARY (future contract, not designed here)"*) exactly; this contract adds nothing to that boundary and does not touch `routes/public.php`'s hostname-agnostic routing.
+
+### 15.2 Trial policy — LOCKED (§22 decision 1)
+
+| Trial parameter | Locked value | Cost-control reasoning |
+|---|---|---|
+| Duration | 14 days | bounds exposure to a fixed, predictable window |
+| Businesses | 1 | matches the existing one-Website-per-Business invariant exactly |
+| Full generations | 1 (matches §9.2's general rule — full generation is a one-time, initial-empty-Website operation for every tier, not a trial-specific restriction) | bounds AI spend to exactly one attempt plus its one built-in retry — the single largest-token AI call in this whole design |
+| Generated pages | ≤6 | small enough that even a worst-case 40-section-per-page trial draft stays within a bounded, predictable token/output cost, while large enough to demonstrate a real multi-page site |
+| Targeted rewrites | 3 | lets a trial customer meaningfully iterate without opening the door to unlimited AI spend per trial account |
+| Platform preview | one temporary preview, tied to trial expiry | reuses Slice A's existing `preview()` action unmodified |
+| Custom domain connection | optional, at most 1, only once a future domain slice exists | this contract does not build domain connection; a trial account simply never exercises that step until it does |
+| AI-generated images | 0 (none) | matches §13.1's platform-wide rule — not trial-specific, applies to every tier |
+| Recurring/scheduled SEO monitoring | none | matches §11.1's locked non-authorization of the Opportunity-engine seam — not activated for any tier by this contract |
+| Expiry behavior | the draft (and any published revision) is retained; public serving stops via the existing `EntitlementManager`/`WebsitePublicEntitlementGate` denial chain (§2); restoration is immediate on payment because nothing was deleted, only entitlement-gated | zero data-recovery engineering needed — this is a direct, free consequence of Slice A's existing entitlement design |
+
+This table is now a locked working policy for this contract's slices, not an open recommendation.
+
+---
+
+## 16. IMPLEMENTATION SLICES AND DEPENDENCY ORDER — CORRECTED
 
 | Slice | Scope | Depends on | Allowlist |
 |---|---|---|---|
-| **Slice 1 — Business Knowledge Profile foundation** | 6 migrations (§4.3), `BusinessKnowledgeProfile`/`BusinessKnowledgeProfileFieldState`/`BusinessKnowledgeProfileChange` models, `BusinessKnowledgeProfileManager` (§4.4), `BusinessKnowledgeProfileFieldKey` enum (§5.1), the §3.4 page-count-ceiling fix inside `WebsiteDraftPageService::createPage()` | none (pure additive schema + one narrow existing-file extension) | `database/migrations/*business_knowledge_profile*`, `database/migrations/*add_hours_to_business_locations*`, `app/Models/BusinessKnowledgeProfile*.php`, `app/Library/Business/BusinessKnowledgeProfileManager.php`, `app/Enums/Business/BusinessKnowledgeProfileFieldKey.php`, `app/Library/Website/WebsiteDraftPageService.php` (page-count check only) |
-| **Slice 2 — Question packs + completeness UI** | `question_packs` table/model, `completenessCheck()`, the guided-setup controller actions/views (Option A, §3.3) | Slice 1 | new controller under `app/Http/Controllers/Customer/Business/`, new views under `resources/views/customer/business/website/`, `database/migrations/*question_packs*` |
-| **Slice 3 — Template manifest + selection** | `website_templates` table/model, template-selection UI, `websites.template_key` column | Slice 2, **and** §6.2's human-supplied import materials (blocked otherwise) | `database/migrations/*website_templates*`, `database/migrations/*add_template_key_to_websites*` |
-| **Slice 4 — Generation pipeline** | `GuidedWebsiteGenerationClient`, `GuidedGenerationOutputValidator`, `website_guided_generation_attempts` table, full-generation + section-rewrite endpoints, §9.2 count-based caps | Slice 3 | `app/Library/Website/GuidedGeneration/*.php`, `database/migrations/*guided_generation_attempts*`, narrow additions to `app/Http/Controllers/Customer/Business/WebsiteController.php` for the two new actions |
-| **Slice 5 (deferred, separately contracted) — Business media assets** | `business_media_assets` table, `BusinessMediaUploadService`, missing-image checklist | Slice 1 | `database/migrations/*business_media_assets*`, `app/Library/Business/BusinessMediaUploadService.php` |
-| **Slice 6 (deferred, separately contracted) — Opportunity Engine integration** | `WebsiteOpportunityProducer`, its job, `WebsitePublished` listener | Slice 4 | `app/Library/Opportunity/WebsiteOpportunityProducer.php`, `app/Jobs/Opportunity/RunWebsiteOpportunityProducer.php`, `app/Providers/EventServiceProvider.php` (one new listener registration only) |
+| **Slice 1 — Business Knowledge Profile foundation** | **5 migrations** (`create_business_knowledge_profiles_table`, `add_hours_and_provenance_to_business_locations_table`, `create_business_knowledge_profile_field_states_table`, `create_business_knowledge_profile_changes_table`, `backfill_business_knowledge_profiles_for_existing_businesses`); `BusinessKnowledgeProfile`/`BusinessKnowledgeProfileFieldState`/`BusinessKnowledgeProfileChange` models; `BusinessKnowledgeProfileManager` (§4.3, §5.5) including `updateLocationHours()`; `BusinessKnowledgeProfileFieldKey` enum (§5.1); the §3.4 page-count-ceiling fix inside `WebsiteDraftPageService::createPage()`. **Correction: `business_media_assets` is not part of Slice 1 — it is Slice 5, §13.** | none (pure additive schema + one narrow existing-file extension) | `database/migrations/*business_knowledge_profile*`, `database/migrations/*add_hours*business_locations*`, `app/Models/BusinessKnowledgeProfile*.php`, `app/Library/Business/BusinessKnowledgeProfileManager.php`, `app/Enums/Business/BusinessKnowledgeProfileFieldKey.php`, `app/Library/Website/WebsiteDraftPageService.php` (page-count check only) |
+| **Slice 2 — Verticals + question packs + completeness UI** | `business_verticals` and `question_packs` tables/models (§6); `completenessCheck()`; the guided-setup controller actions/views (Option A, §3.3, locked) | Slice 1 | `database/migrations/*business_verticals*`, `database/migrations/*question_packs*`, new controller under `app/Http/Controllers/Customer/Business/`, new views under `resources/views/customer/business/website/` |
+| **Slice 3 — Template manifest + selection** | `website_templates` table/model (including `manifest_version`, §7.3), template-selection UI, `websites.template_key` column | Slice 2, **and** §7.2's human-supplied import materials (blocked otherwise) | `database/migrations/*website_templates*`, `database/migrations/*add_template_key_to_websites*` |
+| **Slice 4 — Generation pipeline** | `GuidedWebsiteGenerationClient`, `GuidedGenerationOutputValidator`, `website_guided_generation_attempts` table (with `retry_count`/`lease_expires_at`, §8.10), full-generation + section-rewrite endpoints, §9.2 count-based caps, §10's idempotency/concurrency logic, **the narrow `WebsiteUrlRules::isValid()` internal-path extension (§8.6) and its regression test** | Slice 3 | `app/Library/Website/GuidedGeneration/*.php`, `database/migrations/*guided_generation_attempts*`, narrow additions to `app/Http/Controllers/Customer/Business/WebsiteController.php` for the two new actions, `app/Library/Website/WebsiteUrlRules.php` (narrow addition only) |
+| **Slice 5 — Business media assets and media binding** | `business_media_assets` table/model, `BusinessMediaUploadService`, `MediaBindingService` (§8.7), the missing-image checklist (§13.4), accessibility validation's asset-lookup half (§8.8) | Slice 1 (Profile), Slice 4 (generation attempts to bind media into) | `database/migrations/*business_media_assets*`, `app/Library/Business/BusinessMediaUploadService.php`, `app/Library/Website/GuidedGeneration/MediaBindingService.php` |
+| **Slice 6 (documented seam only — NOT implementation-authorized, §22 decision 7)** | `WebsiteOpportunityProducer`, its job, `WebsitePublished` listener | Slice 4 | none — this contract authorizes no files for Slice 6 |
 
-No slice touches `app/Http/Controllers/Public/WebsiteController.php`, `app/Library/Website/WebsitePublisher.php`, `app/Library/Website/WebsiteSnapshotBuilder.php`, `app/Library/Website/WebsitePublicEntitlementGate.php`, `app/Enums/Website/WebsiteSectionType.php`'s case list, or any B3/B4/B5/GBP file.
-
----
-
-## 16. ACCEPTANCE CRITERIA
-
-1. A Business with an empty Knowledge Profile completes `completenessCheck()` and receives exactly the industry-appropriate question set, never a generic unbounded prompt.
-2. Answering questions writes through `BusinessKnowledgeProfileManager::updateFields()` only, verified by a mechanical seam test (mirroring `WebsiteDraftPageServiceSeamTest`) asserting no other code path writes the three new profile tables.
-3. Selecting a template and generating produces a Website whose every page/section passes the exact existing `WebsiteSectionValidator` rules, with zero new section types introduced.
-4. A generation batch containing an unverified credential/warranty/years-operating claim is rejected by §8.5 step 3, not merely discouraged by prompt wording.
-5. A repeated generation request with unchanged inputs returns the stored draft, never a second AI call (idempotency, §8.4).
-6. Publishing a guided-generated Website behaves identically, under test, to publishing a manually-built one — same `WebsitePublisher`, same revision/rollback guarantees.
-7. A trial Business past its expiry is denied publicly by the existing `EntitlementManager`/`WebsitePublicEntitlementGate` chain, with its draft and any prior published revision intact and immediately restorable.
-8. No test, migration, or code path in this contract's slices references a domain-registration API, a `website_domains` table, or any DNS/TLS/ACME concept.
+No slice touches `app/Http/Controllers/Public/WebsiteController.php`, `app/Library/Website/WebsitePublisher.php`, `app/Library/Website/WebsiteSnapshotBuilder.php`, `app/Library/Website/WebsitePublicEntitlementGate.php`, `app/Enums/Website/WebsiteSectionType.php`'s case list, or any B3/B4/B5/GBP file. `app/Library/Website/WebsiteUrlRules.php` (Slice 4) and `app/Library/Website/WebsiteDraftPageService.php` (Slice 1, page-count check only) are the two narrow, cited exceptions to "no other Slice A file changes."
 
 ---
 
-## 17. FOCUSED TEST PLAN
+## 17. ACCEPTANCE CRITERIA
 
-- **Profile seam**: mechanical grep-style test proving only `BusinessKnowledgeProfileManager` writes the three new tables (mirrors `WebsiteDraftPageServiceSeamTest`).
+1. A Business with an empty Knowledge Profile completes `completenessCheck()` and receives exactly the vertical/industry-appropriate question set (§6.3's resolution order), never a generic unbounded prompt.
+2. Answering questions writes through `BusinessKnowledgeProfileManager::updateFields()`/`updateLocationHours()` only, verified by a mechanical seam test asserting no other code path writes the tracked tables.
+3. Selecting a template and generating produces a Website whose every page/section passes the exact existing `WebsiteSectionValidator` rules, with zero new section types introduced, and **zero asset/alt-text fields present in the AI-authored output itself** (§8.3).
+4. A full-generation batch that fails validation for any required page/section creates **zero pages**, after exactly one retry — never a partial set (§8.2).
+5. A generation batch referencing an unverified sensitive fact never happens, because unverified sensitive facts are never sent to the AI at all (§5.2) — this is verified by inspecting the exact request payload in a test, not by inferring intent from output.
+6. A repeated generation request whose canonical idempotency inputs (§10.1) are unchanged returns the stored `succeeded` draft, never a second AI call; a repeated request after a `failed` attempt always tries again.
+7. Publishing a guided-generated Website behaves identically, under test, to publishing a manually-built one — same `WebsitePublisher`, same revision/rollback guarantees.
+8. A trial Business past its 14-day expiry (§15.2) is denied publicly by the existing `EntitlementManager`/`WebsitePublicEntitlementGate` chain, with its draft and any prior published revision intact and immediately restorable.
+9. An informative image slot bound to an asset with no alt text fails the accessibility check; a decorative slot with no alt text does not (§8.8).
+10. A testimonial rendered in generated output exact-string-matches a confirmed Profile testimonial entry; no invented or paraphrased testimonial content ever appears (§8.5 step 3).
+11. No test, migration, or code path in this contract's slices references a domain-registration API, a `website_domains` table, a form-builder table/route, a calendar/booking table, an `Offer`/`Product` sellable-item table, a new `BusinessIndustry` enum case, or a `WebsiteOpportunityProducer` implementation.
+
+---
+
+## 18. FOCUSED TEST PLAN
+
+- **Profile seam**: mechanical test proving only `BusinessKnowledgeProfileManager` writes the tracked tables, and that `updateFields()` rejects `hours` as a key.
 - **Field-key allowlist**: an unknown `field_key` is rejected; every `BusinessKnowledgeProfileFieldKey` case round-trips correctly.
-- **Completeness check**: fixtures with fully-populated, partially-populated, and empty profiles each return the exact expected missing/stale field set; a fact past `reconfirm_after_days` is flagged stale even when technically present.
-- **Page-count ceiling** (Slice 1 fix, §3.4): the 21st manual `pages.store` call is rejected with the same error shape as the existing AI-batch ceiling; a regression test proves this without touching the AI generator.
-- **Question pack selection**: industry-specific pack wins when present; falls back to `general_v1` otherwise; an inactive/older-version pack is never selected.
-- **Template manifest validation**: seeding a `website_templates` row with a section type outside the 8-enum allowlist fails at seed/migration time, never silently reaching a customer.
-- **Generation idempotency**: two identical requests within the same idempotency window produce exactly one `website_guided_generation_attempts` row and one set of pages.
-- **Retry ceiling**: a schema-invalid AI response triggers exactly one retry, then a `failed` attempt with zero pages created.
-- **Deterministic validation — prohibited claims**: a `prohibited_claims` entry appearing anywhere in generated output fails the attempt.
-- **Deterministic validation — unverified facts**: an `unverified` credential stated as settled fact in generated copy fails the attempt; the same fact once `customer_confirmed` passes.
-- **Accessibility**: an image-bearing section referencing an asset with empty `alt_text` fails closed.
-- **Section rewrite**: rewriting one section never touches any other section or page; commits through `WebsiteDraftPageService::updatePage()` only.
-- **Cost caps**: the (N+1)th full generation within the monthly window for a given tier is rejected before any AI call is made.
-- **Concurrency**: a second full-generation request while one is `pending` for the same Website is rejected without creating a second attempt row.
-- **Business media assets**: an unconfirmed (`usage_confirmed = false`) upload is never included in `GuidedWebsiteGenerationClient`'s context; confirming it makes it eligible.
-- **Missing-image checklist**: a template requiring a hero image with zero eligible uploads surfaces exactly that gap, and generation proceeds with the image field empty rather than fabricated.
-- **Trial expiry**: a trial-tier Business past its recommended limits (§12.2) is denied via the existing entitlement chain, and republishing after upgrade requires no data restoration step (nothing was deleted).
-- **Boundary regression**: a `WebsiteBoundaryTest`-shaped test proving this contract introduces no form-builder, no calendar/booking table, no `Offer`/`Product` sellable-item table, no reviews/ratings table beyond the narrow `reviews_source`/self-attested-testimonial mechanism in §4.5, and no domain-registration code.
+- **Financing/pricing separation**: `pricing_method = 'fixed'` and `financing_available = true` coexist without validation conflict; `financing_available` is never accepted as a `pricing_method` value.
+- **Hours — multi-period validation**: 4 non-overlapping periods on one day pass; a 5th is rejected; overlapping periods are rejected; a period with `close <= open` within the same day is rejected; an overnight business's two-entry (`24:00` sentinel + next-day `00:00`) representation round-trips correctly; hours provenance/freshness is read from `business_locations`, never from `business_knowledge_profile_field_states`.
+- **Vertical/question-pack resolution**: an active vertical-targeted pack wins over a broad-industry pack, which wins over `general_v1`; an inactive/older-version pack is never selected; adding a new vertical requires zero PHP/migration changes (a pure-data test).
+- **Completeness check**: fixtures with fully-populated, partially-populated, and empty profiles each return the exact expected missing/stale field set; a fact past its field-specific `reconfirmAfterDays()` is flagged stale even when technically present; tier does not affect staleness.
+- **Page-count ceiling** (Slice 1 fix, §3.4): the 21st manual `pages.store` call is rejected with the same error shape as the existing AI-batch ceiling.
+- **Template manifest validation**: seeding a `website_templates` row with a section type outside the 8-enum allowlist fails at seed time; `image_slots` classification (`informative`/`decorative`) is required per slot.
+- **Idempotency**: two identical canonical-input requests produce exactly one `succeeded` attempt and one set of pages; changing any one input (a service, a location's hours, the template, the model policy) produces a different idempotency key and a fresh attempt; a `failed` attempt never short-circuits a subsequent identical request.
+- **Concurrency**: a second full-generation request while a non-expired `pending` attempt exists for the same Website is rejected without creating a second row; a `pending` attempt past its 5-minute lease is transitioned to `failed` on the next request and a new attempt is then allowed.
+- **Atomicity**: a batch where one required page fails validation results in zero pages created after the one retry also fails — never a partial set.
+- **Sensitive-fact exclusion**: constructing the AI request payload for a Business with unconfirmed credentials/warranties/hours/offers/testimonials never includes them in any form (not even labeled unverified); confirming them makes them eligible.
+- **Confirmed-fact-allowlist check**: a generated credential/year/price value not present in the confirmed set fails; the same value once actually confirmed passes.
+- **Testimonial verbatim check**: a generated testimonial section item matching a confirmed entry exactly passes; any deviation (reworded quote, altered author name) fails.
+- **Accessibility**: an informative slot bound to an asset with empty `alt_text` fails; a decorative slot (hero background) with empty `alt_text` passes explicitly.
+- **Media binding**: an unconfirmed (`usage_confirmed = false`) upload is never selected; confirming it makes it eligible; a repeat binding for the same content reuses an existing `WebsiteAsset` by `content_hash` rather than duplicating it.
+- **Internal link extension**: the three previously-accepted `WebsiteUrlRules` shapes (`tel:`, `mailto:`, `https://`) remain accepted unchanged; a valid root-relative path resolving to a real batch page is accepted; `//`, `..`, backslashes, fragments, and non-allowlisted schemes are all rejected; `conversion_target` never accepts the new internal-path shape.
+- **Rewrite caps**: the 21st Core-tier rewrite within a rolling 30 days is rejected; Growth/Agency use their own locked ceilings (§9.2).
+- **Trial expiry**: a trial-tier Business past 14 days is denied via the existing entitlement chain; nothing is deleted; restoration after payment requires no data-recovery step.
+- **Boundary regression**: proves this contract introduces no form-builder, no calendar/booking table, no `Offer`/`Product` sellable-item table, no reviews/ratings table beyond the bounded `testimonials` field, no new `BusinessIndustry` case, no domain-registration code, and no `WebsiteOpportunityProducer` implementation.
 - **Cross-lane regression**: full existing `tests/Feature/Website/**`, `tests/Feature/Entitlement/**`, and `tests/Feature/Business/**` suites remain green with zero modification required to any existing test file.
 
 ---
 
-## 18. MIGRATION/ROLLBACK PLAN
+## 19. MIGRATION/ROLLBACK PLAN
 
-All six Slice 1 migrations (§4.3) are purely additive (new tables, one new nullable column on `business_locations`) — every `down()` drops exactly what its `up()` created, in reverse dependency order, mirroring Slice A's own proven migrate/rollback discipline (`tests/Feature/Website/WebsiteMigrationsTest.php`'s pattern). The backfill migration (item 6) is idempotent (`firstOrCreate`-shaped) and safe to re-run. No existing table's existing column is altered, renamed, or dropped anywhere in this contract's slices. Later slices (`question_packs`, `website_templates`, `website_guided_generation_attempts`, `business_media_assets`) follow the identical additive-only discipline.
+Slice 1's **five** migrations (§16) are purely additive (new tables, new columns on `business_locations`) — every `down()` drops exactly what its `up()` created, in reverse dependency order, mirroring Slice A's own proven migrate/rollback discipline (`tests/Feature/Website/WebsiteMigrationsTest.php`'s pattern). The backfill migration is idempotent and safe to re-run. No existing table's existing column is altered, renamed, or dropped anywhere in this contract's slices. Later slices' migrations (`business_verticals`, `question_packs`, `website_templates` + `manifest_version`, `add_template_key_to_websites`, `website_guided_generation_attempts`, `business_media_assets`) follow the identical additive-only discipline, each owned by the exact slice named in §16.
 
 ---
 
-## 19. EXPLICIT EXCLUSIONS
+## 20. EXPLICIT EXCLUSIONS
 
-- Custom domains, DNS, TLS/ACME, CDN, `website_domains` table (§12.1) — Slice B, not this contract.
+- Custom domains, DNS, TLS/ACME, CDN, `website_domains` table (§15.1) — Slice B, not this contract.
 - A generic free-canvas editor, arbitrary HTML/JSON-LD, or arbitrary scripts anywhere in the customer-facing editing surface.
-- A blog CMS or a native form/lead-capture component (Website's own `WebsiteBoundaryTest` already forbids this and this contract adds nothing that would violate it).
-- A calendar/booking/appointment engine — conversion journeys resolve to an external `tel:`/`mailto:`/`https://` target only (§4.2's `conversion_target`), never an internal booking system.
-- An `Offer`/`Product`/`Package` sellable-item/checkout model — `offers` in §4.2 is copy-only text for website generation, never a cart/checkout/booking entity.
-- A public reviews platform or any GBP-review ingestion (§4.5).
-- Standard AI image generation (§14.1).
+- A blog CMS or a native form/lead-capture component.
+- A calendar/booking/appointment engine — conversion journeys resolve to an external `tel:`/`mailto:`/`https://` target only (`conversion_target`, unchanged, §4.2); internal navigation links (a genuinely different field/purpose) may use the narrow root-relative extension in §8.6, never a booking system.
+- An `Offer`/`Product`/`Package` sellable-item/checkout model — `offers` in §4.2 is copy-only text, never a cart/checkout/booking entity.
+- A public reviews platform, a rating/stars concept, or any GBP-review ingestion — `testimonials` (§4.2, §13) is a small, bounded, self-attested, verbatim-rendered field only.
+- Standard AI image generation (§13.1).
 - A generic AI model-routing/escalation policy beyond the single narrow config override in §8.4.
-- Real RFC-005 usage-wallet metering activation for AI generation (§9.1) — count-based caps only in this contract's slices.
+- Real RFC-005 usage-wallet metering activation for AI generation (§9.1) — count-based caps only.
+- A new `BusinessIndustry` enum case for any vertical/trade (§6) — verticals are catalog data.
+- A `WebsiteOpportunityProducer` implementation, its job, or its `WebsitePublished` listener (§11.1, §16 Slice 6) — documented seam only, not implementation-authorized.
 - Any modification to `app/Http/Controllers/Public/WebsiteController.php`, the render path, or the 8-type component enum's case list.
 - Any B3 (Platform Settings), B4 (Automations), B5 (Analytics), or GBP (Lane C) file.
+- Recurring/monthly full-generation allowances of any kind (§9.2) — full generation is a one-time, initial-empty-Website operation.
 
 ---
 
-## 20. STOP CONDITIONS
+## 21. STOP CONDITIONS
 
 - If `origin/main` advances with product code (not documentation) touching `app/Models/Website*.php`, `app/Library/Website/*.php`, or the entitlement/usage files this contract cites, before implementation begins, re-verify every cited line number and evidence claim before proceeding — do not assume staleness is cosmetic.
-- If the four template import materials (§6.2) are not supplied, Slice 3 (and therefore Slice 4's template-dependent context) cannot begin; Slices 1-2 may still proceed independently since they do not depend on template content.
-- If a human decides Option B (§3.3) instead of Option A, this contract's Slice 2 controller/route design must be revisited before implementation — do not silently default to Option A once told otherwise.
+- If the four template import materials (§7.2) are not supplied, Slice 3 (and therefore Slice 4's template-dependent context) cannot begin; Slices 1-2 may still proceed independently since they do not depend on template content.
 - If any implementation step would require weakening `WebsiteSectionValidator`, introducing a 9th section type, or lifting the 40-section/20-page ceilings rather than merely closing the existing enforcement gap (§3.4), stop and treat that as a new contract decision, not an in-flight adjustment.
+- If any implementation step would widen `WebsiteUrlRules`'s internal-path acceptance beyond the exact shape in §8.6 (e.g. accepting query strings, fragments, or protocol-relative URLs), stop — that is a new security decision, not part of this contract.
+- If any implementation step would send an unverified sensitive fact to an AI call, or allow a section to carry its own `alt_text` field, stop — both are corrected, locked behaviors in this document (§5.2, §8.7), not open to silent reinterpretation.
 
 ---
 
-## 21. HUMAN-REVIEW DECISIONS
+## 22. LOCKED DECISIONS (this correction pass)
 
-1. **Trial limits (§12.2)** — the exact numbers in that table are a costed recommendation, not an approved policy. A human must approve (or adjust) them before Slice 4 ships trial-gating logic.
-2. **Business Settings tenancy (§3.3)** — Option A (new, narrow, Workspace/Business-uid-scoped write surface for Profile fields only) vs. Option B (migrate the legacy flat `BusinessController` onto the multi-Business tenancy model). This contract assumes Option A; a human must confirm.
-3. **`Roofing` as a distinct `BusinessIndustry` enum case** (§7.3) vs. folding roofing questions under the existing `HomeServices` case — either is cheap under this design; a human should pick one before Slice 2's question-pack seeding.
-4. **`reviews_source = 'gbp_future'`** (§4.5) — whether to reserve this enum value now for a later GBP-reviews integration, or add it only when that future contract actually exists. This contract does not add it today.
-5. **Per-tier `reconfirm_after_days` tuning** (§5.4) — currently one fixed 180-day constant for all tiers; a human may want Growth/Agency to reconfirm more frequently given their scheduled-analysis behavior (§10.2).
-6. **§9.2's exact monthly generation/rewrite caps** — recommended defaults, not locked; a human should approve before Slice 4.
-7. **Whether `WebsiteOpportunityProducer` (Slice 6) is authorized at all in the near term**, given it is the first-ever `WebsitePublished` listener and the first real code behind `OpportunityWorkerKey::Website` — this contract designs the seam but does not assume permission to build it.
+The following were open human-review items in the prior draft and are now settled for this contract's implementation slices:
+
+1. **Trial policy** — the exact 14-day/1-Business/1-generation/≤6-page/3-rewrite/1-preview/optional-1-domain/0-images/no-scheduled-SEO/retain-and-restore policy in §15.2 is locked, not a recommendation.
+2. **Business Settings tenancy** — Option A is approved (§3.3): a new, narrow, Workspace/Business-scoped Profile write surface; the legacy flat `BusinessController` is not touched by this contract.
+3. **Roofing** stays under the existing `BusinessIndustry::HomeServices` case, classified further by the new, confirmed `vertical_key = 'roofing'` (§6) — no new `BusinessIndustry` enum case is added, now or by implication later, for any single trade.
+4. **`gbp_future`** is not reserved as a `reviews_source`/testimonial-source value now. A later GBP reviews contract must add its own authorized source behavior from scratch if it ever ships.
+5. **Freshness is field-sensitive, not plan-tier-sensitive** (§5.4) — each `BusinessKnowledgeProfileFieldKey` carries its own `reconfirmAfterDays()`; Growth/Agency only controls *when* a scheduled check runs (§11.2), never the staleness definition itself.
+6. **Full generation is a one-time, initial-empty-Website operation**, not a recurring monthly allowance (§9.2) — the prior "4/8/unlimited full generations per month" language is removed. Targeted rewrite caps are locked as working defaults: Core 20, Growth 40, Agency 100 per rolling 30 days.
+7. **`WebsiteOpportunityProducer` is not implementation-authorized** in this contract's slices (§11.1, §16 Slice 6) — the seam is documented for a future, separately-authorized contract, and nothing more.
+
+---
+
+## 23. HUMAN-REVIEW DECISIONS (genuinely remaining after §22)
+
+1. **The four template import materials (§7.2)** — a hard blocking prerequisite for Slice 3/4, not merely a preference. Slices 1-2 can proceed without it.
+2. **Exact per-field `reconfirmAfterDays()` day-counts (§5.4)** — the 90/180/365-day defaults are this contract's reasoned starting values, not independently re-approved per field; an operator may retune the constants later without a schema change.
+3. **Whether to seed real `business_verticals`/`question_packs`/`website_templates` catalog *content*** (the actual question wording, vertical list, template copy) is an editorial/operational task for whoever runs Slices 2-3, not a decision this contract makes — it only fixes the schema and resolution rules those seeds must conform to.
 
 ---
 
