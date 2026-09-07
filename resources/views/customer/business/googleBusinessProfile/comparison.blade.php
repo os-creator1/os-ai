@@ -24,6 +24,14 @@
         </div>
     </div>
 
+    @if($ephemeral ?? false)
+        <x-alert variant="info" class="mb-2">
+            This is a live view of what Google returned just now. Google data is not
+            retained between requests on this deployment, so reopening this page will
+            ask you to refresh again.
+        </x-alert>
+    @endif
+
     @unless($mirrorIsFresh)
         <x-alert variant="warning" class="mb-2">
             Google data is not available or has passed its 30-day retention window. Refresh to compare.

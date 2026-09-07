@@ -97,7 +97,7 @@ class GoogleBusinessProfileTenancyTest extends TestCase
 
         DB::table('workspaces')->where('id', $workspace->id)->update(['is_active' => false]);
 
-        foreach (['index', 'comparison', 'settings', 'connect', 'locations'] as $name) {
+        foreach (['index', 'comparison', 'settings', 'locations'] as $name) {
             $this->get(route('customer.workspaces.businesses.gbp.' . $name, [$workspace->uid, $business->uid]))
                 ->assertNotFound();
         }
@@ -190,15 +190,13 @@ class GoogleBusinessProfileTenancyTest extends TestCase
 
         $this->get(route('customer.workspaces.businesses.gbp.index', $args))->assertOk();
 
-        $this->get(route('customer.workspaces.businesses.gbp.connect', $args))->assertStatus(401);
-        $this->get(route('customer.workspaces.businesses.gbp.callback', $args))->assertStatus(401);
+        $this->post(route('customer.workspaces.businesses.gbp.connect', $args))->assertStatus(401);
         $this->get(route('customer.workspaces.businesses.gbp.locations', $args))->assertStatus(401);
         $this->post(route('customer.workspaces.businesses.gbp.refresh', $args))->assertStatus(401);
         $this->post(route('customer.workspaces.businesses.gbp.disconnect', $args))->assertStatus(401);
         $this->post(route('customer.workspaces.businesses.gbp.unbind', $args), ['binding_uid' => 'x'])->assertStatus(401);
         $this->post(route('customer.workspaces.businesses.gbp.bind', $args), [
-            'provider_account_resource_name' => 'accounts/A1',
-            'provider_location_resource_name' => 'locations/L1',
+            'candidate_token' => 'irrelevant',
             'business_location_uid' => 'x',
         ])->assertStatus(401);
 

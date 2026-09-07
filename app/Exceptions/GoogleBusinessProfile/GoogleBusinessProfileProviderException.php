@@ -57,13 +57,27 @@ final class GoogleBusinessProfileProviderException extends RuntimeException
     }
 
     /**
+     * Correction pass item 6 — OUR per-Business hourly budget refused the
+     * request. Zero outbound requests were made, so this is deferrable in
+     * exactly the same way a 429 is, but it is a distinct classification:
+     * Google did not throttle us.
+     */
+    public static function budgetExhausted(): self
+    {
+        return new self(BusinessGoogleOperation::FAILURE_BUDGET_EXHAUSTED);
+    }
+
+    /**
      * Contract §24.5 — a rate-limited call is recorded as `deferred`, not
      * `failed`, and leaves last_synced_at unchanged so the next sweep
      * naturally retries.
      */
     public function isDeferrable(): bool
     {
-        return $this->classification === BusinessGoogleOperation::FAILURE_RATE_LIMITED;
+        return in_array($this->classification, [
+            BusinessGoogleOperation::FAILURE_RATE_LIMITED,
+            BusinessGoogleOperation::FAILURE_BUDGET_EXHAUSTED,
+        ], true);
     }
 
     /**
@@ -98,6 +112,7 @@ final class GoogleBusinessProfileProviderException extends RuntimeException
             BusinessGoogleOperation::FAILURE_RATE_LIMITED => 'Google is rate limiting requests right now. Please try again shortly.',
             BusinessGoogleOperation::FAILURE_PROVIDER_UNAVAILABLE => 'Google Business Profile is temporarily unavailable.',
             BusinessGoogleOperation::FAILURE_TIMEOUT => 'The request to Google timed out. Its outcome is unknown; please try again shortly.',
+            BusinessGoogleOperation::FAILURE_BUDGET_EXHAUSTED => 'This business has reached its hourly limit for Google requests. Please try again later.',
             default => 'Google returned an unexpected response.',
         };
     }

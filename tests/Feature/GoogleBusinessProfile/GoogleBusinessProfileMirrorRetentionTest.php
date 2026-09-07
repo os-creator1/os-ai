@@ -47,6 +47,19 @@ class GoogleBusinessProfileMirrorRetentionTest extends TestCase
             app(GoogleBusinessProfileMirrorService::class)->refresh($binding, $binding->connection);
             $binding->refresh();
 
+            if ($configured > GoogleBusinessProfileRetention::MAX_MIRROR_RETENTION_DAYS) {
+                // Correction pass item 8 — an above-ceiling value fails
+                // CLOSED to a zero TTL, and a zero TTL persists no reusable
+                // Content at all. There is therefore no window to measure,
+                // which is the strongest possible form of "not more than
+                // 30 days".
+                $this->assertNull($binding->mirror_fetched_at, "A configured retention of {$configured} must persist nothing.");
+                $this->assertNull($binding->mirror_expires_at);
+                $this->assertNull($binding->profile_mirror);
+
+                continue;
+            }
+
             $this->assertNotNull($binding->mirror_fetched_at);
             $this->assertNotNull($binding->mirror_expires_at);
 
@@ -58,6 +71,42 @@ class GoogleBusinessProfileMirrorRetentionTest extends TestCase
                 "A configured retention of {$configured} produced a {$days}-day window.",
             );
         }
+    }
+
+    /**
+     * Correction pass item 8 — with a ZERO effective TTL nothing reusable
+     * is persisted by ANY path, including bind, and the refresh result
+     * reports that it was not persisted so the caller can render it
+     * ephemerally.
+     */
+    public function test_a_zero_ttl_persists_no_reusable_google_content(): void
+    {
+        config(['google_business_profile.mirror.retention_days' => null]);
+
+        $binding = $this->boundLocation();
+
+        $result = app(GoogleBusinessProfileMirrorService::class)->refresh($binding, $binding->connection);
+
+        $this->assertFalse($result->persisted);
+
+        // The fetched Content exists ONLY in the returned result.
+        $this->assertNotNull($result->mirror()['title']);
+
+        $binding->refresh();
+
+        $this->assertNull($binding->profile_mirror);
+        $this->assertNull($binding->mirror_fetched_at);
+        $this->assertNull($binding->mirror_expires_at);
+        $this->assertNull($binding->bound_title_snapshot);
+        $this->assertFalse($binding->mirrorIsFresh());
+
+        // Non-Content operational state IS still recorded.
+        $this->assertNotNull($binding->last_synced_at);
+        $this->assertNotNull($binding->verification_state);
+
+        // ...and nothing in the ledger carries the Content.
+        $ledger = (string) json_encode(DB::table('business_google_operations')->get());
+        $this->assertStringNotContainsString('Snap Booth Co', $ledger);
     }
 
     /**
@@ -338,6 +387,89 @@ class GoogleBusinessProfileMirrorRetentionTest extends TestCase
     }
 
     // -----------------------------------------------------------------
+
+    /**
+     * CORRECTION PASS ITEM 8 — with a zero effective TTL, the manual
+     * refresh RESPONSE renders the freshly fetched data, and the following
+     * GET correctly asks for a refresh again.
+     *
+     * Previously the refresh stored an already-expired mirror and then
+     * redirected, so the redirected request could never show what had been
+     * fetched — the documented default made the feature unusable.
+     */
+    public function test_a_zero_ttl_manual_refresh_renders_fresh_data_but_the_next_request_does_not(): void
+    {
+        config(['google_business_profile.mirror.retention_days' => null]);
+
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $location = $this->createLocation($business, true);
+        $connection = $this->activeConnection($business);
+        $this->fakeGoogleWithLocation(['title' => 'Ephemeral Only Co']);
+
+        BusinessGoogleLocation::create([
+            'business_google_connection_id' => $connection->id,
+            'business_id' => $business->id,
+            'business_location_id' => $location->id,
+            'provider_account_resource_name' => 'accounts/A1',
+            'provider_location_resource_name' => 'locations/L1',
+        ]);
+
+        $this->authenticateAsCustomer($customer);
+
+        $refresh = $this->post(route('customer.workspaces.businesses.gbp.refresh', [$workspace->uid, $business->uid]));
+
+        $refresh->assertOk();
+        $refresh->assertSee('Ephemeral Only Co', false);
+        $refresh->assertSee('live view of what Google returned just now', false);
+
+        // Nothing reusable was written...
+        $this->assertNull(DB::table('business_google_locations')->where('business_id', $business->id)->value('profile_mirror'));
+
+        // ...and nothing carried it out of band either.
+        $this->assertNull(session('message'));
+        $ledger = (string) json_encode(DB::table('business_google_operations')->get());
+        $this->assertStringNotContainsString('Ephemeral Only Co', $ledger);
+
+        // The NEXT request asks for a refresh again.
+        $next = $this->get(route('customer.workspaces.businesses.gbp.comparison', [$workspace->uid, $business->uid]));
+
+        $next->assertOk();
+        $next->assertDontSee('Ephemeral Only Co', false);
+        $next->assertSee('Refresh to compare', false);
+    }
+
+    /**
+     * Item 8 — with a POSITIVE TTL the manual refresh still redirects, and
+     * the following request renders the stored mirror normally.
+     */
+    public function test_a_positive_ttl_manual_refresh_still_redirects_and_persists(): void
+    {
+        config(['google_business_profile.mirror.retention_days' => 7]);
+
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $location = $this->createLocation($business, true);
+        $connection = $this->activeConnection($business);
+        $this->fakeGoogleWithLocation(['title' => 'Persisted Co']);
+
+        BusinessGoogleLocation::create([
+            'business_google_connection_id' => $connection->id,
+            'business_id' => $business->id,
+            'business_location_id' => $location->id,
+            'provider_account_resource_name' => 'accounts/A1',
+            'provider_location_resource_name' => 'locations/L1',
+        ]);
+
+        $this->authenticateAsCustomer($customer);
+
+        $this->post(route('customer.workspaces.businesses.gbp.refresh', [$workspace->uid, $business->uid]))
+            ->assertRedirect(route('customer.workspaces.businesses.gbp.index', [$workspace->uid, $business->uid]));
+
+        $this->assertNotNull(DB::table('business_google_locations')->where('business_id', $business->id)->value('profile_mirror'));
+
+        $this->get(route('customer.workspaces.businesses.gbp.comparison', [$workspace->uid, $business->uid]))
+            ->assertOk()
+            ->assertSee('Persisted Co', false);
+    }
 
     /**
      * provider_location_resource_name is UNIQUE PLATFORM-WIDE (C-3), so a

@@ -5,17 +5,21 @@ namespace App\Http\Requests\GoogleBusinessProfile;
 use Illuminate\Foundation\Http\FormRequest;
 
 /**
- * GBP Slice A contract §18.2 — SHAPE validation only.
+ * GBP Slice A contract §18.2 / §19.2 — SHAPE validation only.
  *
- * authorize() returns true deliberately: a FormRequest cannot see the
- * resolved Business, so AUTHORIZATION IS THE CONTROLLER'S §15 CHAIN. The
- * business_location_uid is resolved INSIDE the already-resolved Business
- * by the controller, and a foreign or unknown uid is a 404.
+ * CORRECTION PASS ITEM 5. This request no longer accepts caller-supplied
+ * provider resource names at all. Regex validation proved only that a
+ * string was well shaped, and a successful locations.get proved only that
+ * the grant could read SOME location — neither proved the account/location
+ * pair was ever offered to this actor for this connection.
  *
- * VALIDATION NEVER PROVES OWNERSHIP: a syntactically valid
- * locations/{id} that the grant cannot actually read passes here and then
- * fails at the provider call, recorded as a failed operation rather than
- * a binding (contract §19.2 step 5).
+ * Instead the caller returns the short-lived HMAC candidate token that was
+ * issued alongside the rendered candidate. The controller derives BOTH
+ * resource names from that verified token, so there is deliberately no
+ * parallel raw field here that could be trusted or substituted.
+ *
+ * authorize() returns true: AUTHORIZATION IS THE CONTROLLER'S §15 CHAIN,
+ * because a FormRequest cannot see the resolved Business.
  */
 class GoogleBusinessProfileBindRequest extends FormRequest
 {
@@ -30,8 +34,7 @@ class GoogleBusinessProfileBindRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'provider_account_resource_name' => ['required', 'string', 'max:191', 'regex:/^accounts\/[A-Za-z0-9_-]+$/'],
-            'provider_location_resource_name' => ['required', 'string', 'max:191', 'regex:/^locations\/[A-Za-z0-9_-]+$/'],
+            'candidate_token' => ['required', 'string', 'max:1024'],
             'business_location_uid' => ['required', 'string', 'max:64'],
         ];
     }

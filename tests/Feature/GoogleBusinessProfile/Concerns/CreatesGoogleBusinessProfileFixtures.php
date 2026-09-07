@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\GoogleBusinessProfile\Concerns;
 
+use App\DTO\GoogleBusinessProfile\GoogleLocationCandidate;
 use App\Enums\Business\BusinessServiceMode;
 use App\Enums\Business\BusinessStatus;
 use App\Enums\Entitlement\WorkspacePlanTier;
@@ -11,6 +12,9 @@ use App\Enums\Workspace\WorkspaceMembershipRole;
 use App\Library\Entitlement\EntitlementManager;
 use App\Library\GoogleBusinessProfile\Contracts\GoogleBusinessProfileReadClient;
 use App\Library\GoogleBusinessProfile\FakeGoogleBusinessProfileReadClient;
+use App\Library\GoogleBusinessProfile\GoogleBusinessProfileCallBudget;
+use App\Library\GoogleBusinessProfile\GoogleBusinessProfileCandidateTokenSigner;
+use App\Library\GoogleBusinessProfile\GoogleBusinessProfileOAuthConfig;
 use App\Models\AppConfig;
 use App\Models\Business;
 use App\Models\BusinessGoogleConnection;
@@ -44,10 +48,33 @@ trait CreatesGoogleBusinessProfileFixtures
 
     protected function bindFakeGoogleClient(): FakeGoogleBusinessProfileReadClient
     {
-        $this->fakeGoogle = new FakeGoogleBusinessProfileReadClient();
+        // The budget is a container SINGLETON: the Fake must share the very
+        // instance the services set their reservation context on, exactly
+        // as the real client does (correction item 6).
+        $this->fakeGoogle = new FakeGoogleBusinessProfileReadClient(app(GoogleBusinessProfileCallBudget::class));
         $this->app->instance(GoogleBusinessProfileReadClient::class, $this->fakeGoogle);
 
+        $this->configureValidOAuthCredentials();
+
         return $this->fakeGoogle;
+    }
+
+    /**
+     * Correction pass item 7 — OAuth configuration is now validated before
+     * any connect writes state, so the default fixture must supply a
+     * COMPLETE and MATCHING configuration. The redirect must equal the one
+     * fixed callback URL exactly, which is what production must register
+     * with Google.
+     *
+     * The dedicated configuration-failure tests override these afterwards.
+     */
+    protected function configureValidOAuthCredentials(): void
+    {
+        config([
+            'services.google_business_profile.client_id' => 'test-client-id',
+            'services.google_business_profile.client_secret' => 'test-client-secret',
+            'services.google_business_profile.redirect' => route(GoogleBusinessProfileOAuthConfig::CALLBACK_ROUTE),
+        ]);
     }
 
     /**
@@ -217,6 +244,33 @@ trait CreatesGoogleBusinessProfileFixtures
             $default = collect((new AppConfig())->defaultSettings())->firstWhere('setting', 'customer_permissions');
             AppConfig::create($default);
         }
+    }
+
+    /**
+     * Correction pass item 5 — a valid candidate token, as the chooser
+     * would have issued it. Binding accepts nothing else, so every bind
+     * test goes through this (or deliberately corrupts it).
+     */
+    protected function candidateTokenFor(
+        Business $business,
+        BusinessGoogleConnection $connection,
+        int $actorUserId,
+        string $accountResourceName = 'accounts/A1',
+        string $locationResourceName = 'locations/L1',
+    ): string {
+        return app(GoogleBusinessProfileCandidateTokenSigner::class)->issue(
+            $business,
+            $connection,
+            $actorUserId,
+            new GoogleLocationCandidate(
+                resourceName: $locationResourceName,
+                accountResourceName: $accountResourceName,
+                title: null,
+                storeCode: null,
+                localityHint: null,
+                regionCode: null,
+            ),
+        );
     }
 
     /**

@@ -31,6 +31,7 @@ final class GoogleBusinessProfileEnumerator
         private readonly GoogleBusinessProfileConnectionManager $connections,
         private readonly GoogleBusinessProfileReadMask $readMask,
         private readonly GoogleBusinessProfileOperationLedger $ledger,
+        private readonly GoogleBusinessProfileCallBudget $budget,
     ) {
     }
 
@@ -41,10 +42,9 @@ final class GoogleBusinessProfileEnumerator
      */
     public function enumerate(Business $business, BusinessGoogleConnection $connection, ?int $actorUserId): array
     {
-        // Contract §24.9 — the token exchange and every provider call
-        // happen outside any transaction. Nothing here opens one at all.
-        $accessToken = $this->connections->accessTokenFor($connection);
-
+        // Correction pass item 6 — the operation row is opened FIRST so
+        // every outbound request it causes, including the token exchange
+        // inside accessTokenFor(), is charged to the Business budget.
         $accountsOperation = $this->ledger->open(
             businessId: (int) $business->id,
             type: GoogleOperationType::AccountsEnumerated,
@@ -54,7 +54,18 @@ final class GoogleBusinessProfileEnumerator
         );
 
         try {
-            $accounts = $this->client->listAccounts($accessToken);
+            // Contract §24.9 — the token exchange and every provider call
+            // happen outside any transaction. Nothing here opens one; the
+            // budget's own reservation transaction closes before the call.
+            [$accessToken, $accounts] = $this->budget->withinOperation(
+                $connection,
+                $accountsOperation,
+                function () use ($connection): array {
+                    $token = $this->connections->accessTokenFor($connection);
+
+                    return [$token, $this->client->listAccounts($token)];
+                },
+            );
         } catch (GoogleBusinessProfileProviderException $exception) {
             $this->ledger->fail($accountsOperation, $exception, 'Listing accessible Google accounts');
 
@@ -79,11 +90,21 @@ final class GoogleBusinessProfileEnumerator
         $candidates = [];
 
         try {
-            foreach ($accounts as $account) {
-                foreach ($this->client->listLocations($accessToken, $account->resourceName, $mask, $addressPermitted) as $candidate) {
-                    $candidates[] = $candidate;
-                }
-            }
+            $candidates = $this->budget->withinOperation(
+                $connection,
+                $locationsOperation,
+                function () use ($accounts, $accessToken, $mask, $addressPermitted): array {
+                    $found = [];
+
+                    foreach ($accounts as $account) {
+                        foreach ($this->client->listLocations($accessToken, $account->resourceName, $mask, $addressPermitted) as $candidate) {
+                            $found[] = $candidate;
+                        }
+                    }
+
+                    return $found;
+                },
+            );
         } catch (GoogleBusinessProfileProviderException $exception) {
             $this->ledger->fail($locationsOperation, $exception, 'Listing Google locations');
 

@@ -61,7 +61,7 @@ class EntitlementEnumsTest extends TestCase
         $this->assertSame($expected, $actual);
     }
 
-    public function test_platform_feature_has_exactly_fifteen_cases_matching_rfc_004(): void
+    public function test_platform_feature_has_exactly_sixteen_cases_matching_rfc_004_and_slice_a(): void
     {
         $expected = [
             'crm',
@@ -75,6 +75,7 @@ class EntitlementEnumsTest extends TestCase
             'ads_basic_visibility',
             'seo_module',
             'google_ads_module',
+            'google_business_profile_module',
             'meta_ads_module',
             'white_label',
             'agency_package_capabilities',
@@ -83,7 +84,7 @@ class EntitlementEnumsTest extends TestCase
 
         $actual = array_map(fn ($case) => $case->value, PlatformFeature::cases());
 
-        $this->assertCount(15, PlatformFeature::cases());
+        $this->assertCount(16, PlatformFeature::cases());
         $this->assertSame($expected, $actual);
     }
 

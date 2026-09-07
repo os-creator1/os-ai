@@ -35,6 +35,7 @@ final class GoogleBusinessProfileBindingManager
         private readonly GoogleBusinessProfileReadMask $readMask,
         private readonly GoogleBusinessProfileMirrorService $mirror,
         private readonly GoogleBusinessProfileOperationLedger $ledger,
+        private readonly GoogleBusinessProfileCallBudget $budget,
     ) {
     }
 
@@ -76,9 +77,14 @@ final class GoogleBusinessProfileBindingManager
             // syntactically valid resource name the grant cannot reach
             // fails here and is recorded as a failed operation, never as a
             // binding.
-            $accessToken = $this->connections->accessTokenFor($connection);
-            $profile = $this->client->getLocation($accessToken, $locationResourceName, $mask, $addressPermitted);
-            $state = $this->client->getVoiceOfMerchantState($accessToken, $locationResourceName);
+            [$profile, $state] = $this->budget->withinOperation($connection, $operation, function () use ($connection, $locationResourceName, $mask, $addressPermitted): array {
+                $accessToken = $this->connections->accessTokenFor($connection);
+
+                return [
+                    $this->client->getLocation($accessToken, $locationResourceName, $mask, $addressPermitted),
+                    $this->client->getVoiceOfMerchantState($accessToken, $locationResourceName),
+                ];
+            });
         } catch (GoogleBusinessProfileProviderException $exception) {
             $this->ledger->fail($operation, $exception, 'Binding ' . $locationResourceName);
 

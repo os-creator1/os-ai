@@ -64,9 +64,11 @@
                 </x-alert>
 
                 @can('manage_google_business_profile')
-                    <a class="btn btn-primary" href="{{ route('customer.workspaces.businesses.gbp.connect', [$workspaceUid, $businessUid]) }}">
-                        Connect Google account
-                    </a>
+                    {{-- Item 9: initiation mutates state, so it is a POST. --}}
+                    <form method="POST" action="{{ route('customer.workspaces.businesses.gbp.connect', [$workspaceUid, $businessUid]) }}">
+                        @csrf
+                        <button type="submit" class="btn btn-primary">Connect Google account</button>
+                    </form>
                 @else
                     {{-- Contract §25 — permission denial is communicated,
                          not hidden behind a broken control. --}}
@@ -81,9 +83,10 @@
             <x-empty-state icon="alert-triangle" title="Google access needs to be reconnected"
                            description="Google has revoked or expired this authorization. Your linked location has been kept — reconnect to resume reading the profile." />
             @can('manage_google_business_profile')
-                <a class="btn btn-primary" href="{{ route('customer.workspaces.businesses.gbp.connect', [$workspaceUid, $businessUid]) }}">
-                    Reconnect Google account
-                </a>
+                <form method="POST" action="{{ route('customer.workspaces.businesses.gbp.connect', [$workspaceUid, $businessUid]) }}">
+                    @csrf
+                    <button type="submit" class="btn btn-primary">Reconnect Google account</button>
+                </form>
             @endcan
         </x-card>
     @endif

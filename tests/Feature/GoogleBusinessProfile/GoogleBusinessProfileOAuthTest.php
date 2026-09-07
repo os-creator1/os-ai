@@ -4,6 +4,7 @@ namespace Tests\Feature\GoogleBusinessProfile;
 
 use App\Enums\GoogleBusinessProfile\GoogleConnectionState;
 use App\Exceptions\GoogleBusinessProfile\GoogleBusinessProfileProviderException;
+use App\Library\GoogleBusinessProfile\GoogleBusinessProfileOAuthConfig;
 use App\Library\GoogleBusinessProfile\GoogleOAuthStateSigner;
 use App\Models\BusinessGoogleConnection;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -12,13 +13,21 @@ use Tests\Feature\GoogleBusinessProfile\Concerns\CreatesGoogleBusinessProfileFix
 use Tests\TestCase;
 
 /**
- * GBP Slice A contract §9 / §32.3 — the OAuth lifecycle and secret
- * handling. Security criteria G-2, G-3, G-4.
+ * GBP Slice A contract §9 / §32.3 — OAuth lifecycle and secret handling.
+ * Security criteria G-2, G-3, G-4.
  *
- * The recurring assertion in this file is
- * `callCount('exchangeAuthorizationCode') === 0`: contract §9.5 requires
- * that a missing, altered, expired, replayed, foreign-Business or
- * inaccessible state 404s BEFORE ANY TOKEN EXCHANGE.
+ * CORRECTION PASS ITEM 1 — the callback is now ONE FIXED, TENANT-FREE
+ * ROUTE (`customer.gbp.oauth.callback`), because Google matches
+ * redirect_uri exactly against a registered URI and a per-tenant path can
+ * never be registered. Every test here drives that single URL.
+ *
+ * CORRECTION PASS ITEM 9 — connect initiation is a CSRF-protected POST,
+ * because it mutates connection state, the nonce, actor attribution and
+ * the ledger.
+ *
+ * The recurring assertion remains
+ * `callCount('exchangeAuthorizationCode') === 0`: every failure before
+ * exchange must produce zero token-exchange calls.
  */
 class GoogleBusinessProfileOAuthTest extends TestCase
 {
@@ -31,12 +40,46 @@ class GoogleBusinessProfileOAuthTest extends TestCase
         $this->bindFakeGoogleClient();
     }
 
+    /**
+     * Item 1 — the fixed callback exists, carries no tenant parameters, and
+     * is exactly what the configured redirect must equal.
+     */
+    public function test_the_callback_route_is_fixed_and_tenant_free(): void
+    {
+        $url = route(GoogleBusinessProfileOAuthConfig::CALLBACK_ROUTE);
+
+        $this->assertStringEndsWith('/gbp/oauth/callback', $url);
+        $this->assertStringNotContainsString('workspace', $url);
+        $this->assertStringNotContainsString('business', parse_url($url, PHP_URL_PATH) === null ? '' : substr((string) parse_url($url, PHP_URL_PATH), 0, -19));
+
+        // It is the URL the config validator demands.
+        $this->assertSame($url, app(GoogleBusinessProfileOAuthConfig::class)->expectedCallbackUrl());
+    }
+
+    /** Item 9 — a plain navigation GET can no longer create OAuth state. */
+    public function test_connect_is_not_reachable_by_get(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->authenticateAsCustomer($customer);
+
+        // The application's exception handler renders a method mismatch as
+        // 404 rather than 405; either is a refusal. What matters is that
+        // the GET creates no OAuth state and makes no provider call.
+        $this->assertContains(
+            $this->get(route('customer.workspaces.businesses.gbp.connect', [$workspace->uid, $business->uid]))->getStatusCode(),
+            [404, 405],
+        );
+
+        $this->assertDatabaseCount('business_google_connections', 0);
+        $this->assertSame(0, $this->fakeGoogle->callCount('authorizationUrl'));
+    }
+
     public function test_connect_creates_a_pending_connection_and_redirects_to_google(): void
     {
         [$customer, $business, $workspace] = $this->entitledTenant();
         $this->authenticateAsCustomer($customer);
 
-        $response = $this->get(route('customer.workspaces.businesses.gbp.connect', [$workspace->uid, $business->uid]));
+        $response = $this->post(route('customer.workspaces.businesses.gbp.connect', [$workspace->uid, $business->uid]));
 
         $response->assertRedirect();
         $this->assertStringStartsWith('https://accounts.google.test/authorize', $response->headers->get('Location'));
@@ -45,18 +88,39 @@ class GoogleBusinessProfileOAuthTest extends TestCase
 
         $this->assertSame(GoogleConnectionState::Pending, $connection->state);
         $this->assertNotNull($connection->oauth_state_nonce);
-        $this->assertNotNull($connection->oauth_state_expires_at);
         $this->assertNull($connection->refresh_token_encrypted);
 
-        // Contract §9.3 — a brand-new connection forces consent, because
-        // Google returns a refresh token only on the first exchange.
+        // Item 2 — the initiating actor is recorded on the attempt.
+        $this->assertSame($customer->user_id, (int) $connection->connected_by_user_id);
+
+        // Item 4 — consent is ALWAYS forced: every reachable starting state
+        // holds no usable refresh token.
         $this->assertTrue($this->fakeGoogle->callsTo('authorizationUrl')[0]['force_consent']);
 
-        // Contract §27 — the ledger row exists before the redirect.
         $this->assertDatabaseHas('business_google_operations', [
             'business_id' => $business->id,
             'operation_type' => 'connect_initiated',
         ]);
+    }
+
+    /**
+     * Item 4 — there is no "reconnect a healthy connection" path. It is
+     * refused with NO state change and NO provider call.
+     */
+    public function test_connecting_an_already_active_connection_is_refused_without_state_change(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $connection = $this->activeConnection($business);
+        $this->authenticateAsCustomer($customer);
+
+        $before = DB::table('business_google_connections')->where('id', $connection->id)->first();
+
+        $this->post(route('customer.workspaces.businesses.gbp.connect', [$workspace->uid, $business->uid]))
+            ->assertRedirect();
+
+        $this->assertSame('error', session('status'));
+        $this->assertEquals($before, DB::table('business_google_connections')->where('id', $connection->id)->first());
+        $this->assertSame(0, $this->fakeGoogle->callCount('authorizationUrl'));
     }
 
     /** T-OAUTH-1 — missing state. */
@@ -64,9 +128,9 @@ class GoogleBusinessProfileOAuthTest extends TestCase
     {
         [$customer, $business, $workspace] = $this->entitledTenant();
         $this->authenticateAsCustomer($customer);
-        $this->get(route('customer.workspaces.businesses.gbp.connect', [$workspace->uid, $business->uid]));
+        $this->post(route('customer.workspaces.businesses.gbp.connect', [$workspace->uid, $business->uid]));
 
-        $this->get(route('customer.workspaces.businesses.gbp.callback', [$workspace->uid, $business->uid]) . '?code=abc')
+        $this->get(route(GoogleBusinessProfileOAuthConfig::CALLBACK_ROUTE) . '?code=abc')
             ->assertNotFound();
 
         $this->assertSame(0, $this->fakeGoogle->callCount('exchangeAuthorizationCode'));
@@ -75,13 +139,13 @@ class GoogleBusinessProfileOAuthTest extends TestCase
     /** T-OAUTH-2 — tampered signature. */
     public function test_callback_with_a_tampered_state_is_not_found_and_exchanges_nothing(): void
     {
-        [$customer, $business, $workspace] = $this->entitledTenant();
+        [$customer, $business] = $this->entitledTenant();
         $this->authenticateAsCustomer($customer);
 
-        $state = $this->issueStateFor($business->id);
+        $state = $this->issueStateFor($business->id, $customer->user_id);
         $tampered = substr($state, 0, -1) . (str_ends_with($state, 'a') ? 'b' : 'a');
 
-        $this->getCallback($workspace->uid, $business->uid, $tampered)->assertNotFound();
+        $this->getCallback($tampered)->assertNotFound();
 
         $this->assertSame(0, $this->fakeGoogle->callCount('exchangeAuthorizationCode'));
     }
@@ -89,77 +153,70 @@ class GoogleBusinessProfileOAuthTest extends TestCase
     /** T-OAUTH-3 — expired state. */
     public function test_expired_state_is_not_found_and_exchanges_nothing(): void
     {
-        [$customer, $business, $workspace] = $this->entitledTenant();
+        [$customer, $business] = $this->entitledTenant();
         $this->authenticateAsCustomer($customer);
 
-        $state = $this->issueStateFor($business->id);
+        $state = $this->issueStateFor($business->id, $customer->user_id);
 
         $this->travel(11)->minutes();
 
-        $this->getCallback($workspace->uid, $business->uid, $state)->assertNotFound();
+        $this->getCallback($state)->assertNotFound();
 
         $this->assertSame(0, $this->fakeGoogle->callCount('exchangeAuthorizationCode'));
 
         $this->travelBack();
     }
 
-    /**
-     * T-OAUTH-4 — REPLAY. The first callback succeeds; the second, with
-     * the identical state, 404s and performs no second exchange.
-     */
+    /** T-OAUTH-4 — REPLAY. */
     public function test_a_replayed_nonce_is_rejected(): void
     {
-        [$customer, $business, $workspace] = $this->entitledTenant();
+        [$customer, $business] = $this->entitledTenant();
         $this->authenticateAsCustomer($customer);
 
-        $state = $this->issueStateFor($business->id);
+        $state = $this->issueStateFor($business->id, $customer->user_id);
 
-        $this->getCallback($workspace->uid, $business->uid, $state)->assertRedirect();
+        $this->getCallback($state)->assertRedirect();
         $this->assertSame(1, $this->fakeGoogle->callCount('exchangeAuthorizationCode'));
 
-        $this->getCallback($workspace->uid, $business->uid, $state)->assertNotFound();
+        $this->getCallback($state)->assertNotFound();
         $this->assertSame(1, $this->fakeGoogle->callCount('exchangeAuthorizationCode'));
     }
 
-    /**
-     * T-OAUTH-5 — a state naming a Business the actor cannot access. The
-     * state is genuinely signed, but for someone else's Business.
-     */
+    /** T-OAUTH-5 — a state naming a Business the actor cannot access. */
     public function test_state_for_an_inaccessible_business_is_not_found(): void
     {
-        [$customer, $business, $workspace] = $this->entitledTenant();
-        [, $otherBusiness] = $this->entitledTenant();
+        [$customer] = $this->entitledTenant();
+        [$otherCustomer, $otherBusiness] = $this->entitledTenant();
+
+        $foreignState = $this->issueStateFor($otherBusiness->id, $otherCustomer->user_id);
 
         $this->authenticateAsCustomer($customer);
 
-        $foreignState = $this->issueStateFor($otherBusiness->id);
-
-        $this->getCallback($workspace->uid, $business->uid, $foreignState)->assertNotFound();
+        $this->getCallback($foreignState)->assertNotFound();
 
         $this->assertSame(0, $this->fakeGoogle->callCount('exchangeAuthorizationCode'));
     }
 
     /**
      * T-OAUTH-6 — a Business identifier supplied by GOOGLE in the callback
-     * payload is ignored entirely. Only the signed state selects the
-     * Business.
+     * payload is ignored. Only the signed state selects the Business, and
+     * the fixed route has no tenant parameter to spoof in the first place.
      */
     public function test_a_business_id_supplied_by_google_is_ignored(): void
     {
-        [$customer, $business, $workspace] = $this->entitledTenant();
+        [$customer, $business] = $this->entitledTenant();
         [, $otherBusiness] = $this->entitledTenant();
 
         $this->authenticateAsCustomer($customer);
-        $state = $this->issueStateFor($business->id);
+        $state = $this->issueStateFor($business->id, $customer->user_id);
 
-        $url = route('customer.workspaces.businesses.gbp.callback', [$workspace->uid, $business->uid])
+        $this->get(
+            route(GoogleBusinessProfileOAuthConfig::CALLBACK_ROUTE)
             . '?code=auth-code&state=' . urlencode($state)
             . '&business_id=' . $otherBusiness->id
-            . '&business=' . $otherBusiness->uid;
+            . '&business=' . $otherBusiness->uid,
+        )->assertRedirect();
 
-        $this->get($url)->assertRedirect();
-
-        // The connection landed on OUR Business, not the one Google named.
         $this->assertDatabaseHas('business_google_connections', [
             'business_id' => $business->id,
             'state' => 'active',
@@ -170,41 +227,34 @@ class GoogleBusinessProfileOAuthTest extends TestCase
         ]);
     }
 
-    /**
-     * T-OAUTH-8 / T-OAUTH-9 / security criterion G-3 — the callback never
-     * authenticates, never creates a User, and never touches
-     * email_verified_at.
-     */
+    /** T-OAUTH-8 / T-OAUTH-9 / G-3. */
     public function test_callback_never_creates_a_user_or_touches_verification(): void
     {
-        [$customer, $business, $workspace] = $this->entitledTenant();
+        [$customer, $business] = $this->entitledTenant();
         $this->authenticateAsCustomer($customer);
 
         $usersBefore = DB::table('users')->count();
         $verifiedBefore = DB::table('users')->where('id', $customer->user_id)->value('email_verified_at');
         $authenticatedIdBefore = auth()->id();
 
-        $state = $this->issueStateFor($business->id);
-        $this->getCallback($workspace->uid, $business->uid, $state)->assertRedirect();
+        $state = $this->issueStateFor($business->id, $customer->user_id);
+        $this->getCallback($state)->assertRedirect();
 
-        $this->assertSame($usersBefore, DB::table('users')->count(), 'The OAuth callback must never create a User.');
+        $this->assertSame($usersBefore, DB::table('users')->count());
         $this->assertSame($verifiedBefore, DB::table('users')->where('id', $customer->user_id)->value('email_verified_at'));
         $this->assertSame($authenticatedIdBefore, auth()->id());
     }
 
-    /**
-     * T-SEC-1 / security criterion G-4 — a RAW database read of the token
-     * column must not equal the plaintext.
-     */
+    /** T-SEC-1 / G-4 — encrypted at rest, and the model round-trips it. */
     public function test_the_refresh_token_is_encrypted_at_rest(): void
     {
-        [$customer, $business, $workspace] = $this->entitledTenant();
+        [$customer, $business] = $this->entitledTenant();
         $this->authenticateAsCustomer($customer);
 
         $this->fakeGoogle->refreshTokenToIssue = 'super-secret-refresh-token';
 
-        $state = $this->issueStateFor($business->id);
-        $this->getCallback($workspace->uid, $business->uid, $state)->assertRedirect();
+        $state = $this->issueStateFor($business->id, $customer->user_id);
+        $this->getCallback($state)->assertRedirect();
 
         $raw = DB::table('business_google_connections')->where('business_id', $business->id)->value('refresh_token_encrypted');
 
@@ -212,24 +262,23 @@ class GoogleBusinessProfileOAuthTest extends TestCase
         $this->assertNotSame('super-secret-refresh-token', $raw);
         $this->assertStringNotContainsString('super-secret-refresh-token', (string) $raw);
 
-        // ...and the cast still round-trips it for the application.
+        // Item 3 — the token is written by a query-builder conditional
+        // update, so this round trip also proves that write stays
+        // compatible with the model's `encrypted` cast.
         $connection = BusinessGoogleConnection::query()->where('business_id', $business->id)->firstOrFail();
         $this->assertSame('super-secret-refresh-token', $connection->refresh_token_encrypted);
     }
 
-    /**
-     * T-SEC-2 — the token, the authorization code and the raw state appear
-     * in no response body and no ledger row.
-     */
+    /** T-SEC-2 — no secret in any response, view or ledger row. */
     public function test_no_secret_reaches_a_response_or_the_ledger(): void
     {
         [$customer, $business, $workspace] = $this->entitledTenant();
         $this->authenticateAsCustomer($customer);
 
         $this->fakeGoogle->refreshTokenToIssue = 'super-secret-refresh-token';
-        $state = $this->issueStateFor($business->id);
+        $state = $this->issueStateFor($business->id, $customer->user_id);
 
-        $this->getCallback($workspace->uid, $business->uid, $state);
+        $this->getCallback($state);
 
         $overview = $this->get(route('customer.workspaces.businesses.gbp.index', [$workspace->uid, $business->uid]))->getContent();
         $settings = $this->get(route('customer.workspaces.businesses.gbp.settings', [$workspace->uid, $business->uid]))->getContent();
@@ -247,10 +296,7 @@ class GoogleBusinessProfileOAuthTest extends TestCase
         $this->assertStringNotContainsString($state, (string) $ledger);
     }
 
-    /**
-     * T-SEC-3 — invalid_grant transitions to revoked with EXACTLY ONE
-     * provider attempt: no retry storm.
-     */
+    /** T-SEC-3 — invalid_grant revokes with exactly one attempt. */
     public function test_invalid_grant_revokes_without_a_retry_storm(): void
     {
         [$customer, $business, $workspace] = $this->entitledTenant();
@@ -268,12 +314,14 @@ class GoogleBusinessProfileOAuthTest extends TestCase
         $this->assertSame(GoogleConnectionState::Revoked, $connection->state);
         $this->assertSame('invalid_grant', $connection->failure_classification);
         $this->assertSame(1, $this->fakeGoogle->callCount('exchangeRefreshToken'));
+
+        // Item 4 — revocation DESTROYS the stored token, so a later
+        // reconnect can never reactivate on a token Google already killed.
+        $this->assertNull($connection->refresh_token_encrypted);
+        $this->assertNull(DB::table('business_google_connections')->where('id', $connection->id)->value('refresh_token_encrypted'));
     }
 
-    /**
-     * Contract §9.3 — a reconnect of a REVOKED connection forces consent,
-     * because a fresh refresh token is needed.
-     */
+    /** Item 4 — a reconnect from revoked forces consent. */
     public function test_reconnecting_a_revoked_connection_forces_consent(): void
     {
         [$customer, $business, $workspace] = $this->entitledTenant();
@@ -284,13 +332,13 @@ class GoogleBusinessProfileOAuthTest extends TestCase
         ]);
         $this->authenticateAsCustomer($customer);
 
-        $this->get(route('customer.workspaces.businesses.gbp.connect', [$workspace->uid, $business->uid]))
+        $this->post(route('customer.workspaces.businesses.gbp.connect', [$workspace->uid, $business->uid]))
             ->assertRedirect();
 
         $this->assertTrue($this->fakeGoogle->callsTo('authorizationUrl')[0]['force_consent']);
     }
 
-    /** Contract §13.5 / T-DEL-1 — disconnect destroys authorization material. */
+    /** Contract §13.5 / T-DEL-1. */
     public function test_disconnect_destroys_the_stored_authorization(): void
     {
         [$customer, $business, $workspace] = $this->entitledTenant();
@@ -318,12 +366,8 @@ class GoogleBusinessProfileOAuthTest extends TestCase
         $this->assertNull($connection->google_account_email);
         $this->assertNull(DB::table('business_google_connections')->where('id', $connection->id)->value('refresh_token_encrypted'));
 
-        // The bindings went with it.
         $this->assertSame(0, DB::table('business_google_locations')->where('business_id', $business->id)->count());
 
-        // T-AUDIT-3 — the disconnect ledger row SURVIVES the disconnect
-        // that deleted the connection (business_id is denormalized with no
-        // foreign key, contract §11.3.1).
         $this->assertDatabaseHas('business_google_operations', [
             'business_id' => $business->id,
             'operation_type' => 'disconnected',
@@ -333,20 +377,23 @@ class GoogleBusinessProfileOAuthTest extends TestCase
 
     // -----------------------------------------------------------------
 
-    private function issueStateFor(int $businessId): string
+    private function issueStateFor(int $businessId, int $actorUserId): string
     {
         $connection = BusinessGoogleConnection::query()->firstOrCreate(
             ['business_id' => $businessId],
             ['state' => GoogleConnectionState::Pending],
         );
 
-        return app(GoogleOAuthStateSigner::class)->issue($connection);
+        // Item 2 — the attempt is bound to its initiating actor.
+        $connection->forceFill(['connected_by_user_id' => $actorUserId])->save();
+
+        return app(GoogleOAuthStateSigner::class)->issue($connection->refresh());
     }
 
-    private function getCallback(string $workspaceUid, string $businessUid, string $state, string $code = 'auth-code'): \Illuminate\Testing\TestResponse
+    private function getCallback(string $state, string $code = 'auth-code'): \Illuminate\Testing\TestResponse
     {
         return $this->get(
-            route('customer.workspaces.businesses.gbp.callback', [$workspaceUid, $businessUid])
+            route(GoogleBusinessProfileOAuthConfig::CALLBACK_ROUTE)
             . '?code=' . urlencode($code) . '&state=' . urlencode($state),
         );
     }

@@ -42,7 +42,24 @@ final class GoogleBusinessProfileComparator
             return $this->unavailableRows($business, $location);
         }
 
-        $mirror = $binding->freshMirror();
+        return $this->compareWithMirror($business, $location, $binding->freshMirror(), $binding->open_status);
+    }
+
+    /**
+     * Correction pass item 8 — compares against an EXPLICITLY SUPPLIED
+     * bounded mirror rather than the persisted one, so a zero-TTL manual
+     * refresh can render what it just fetched without storing anything
+     * reusable. Identical rules either way; only the source differs.
+     *
+     * @param  array<string, mixed>  $mirror
+     * @return array<int, GoogleComparisonRow>
+     */
+    public function compareWithMirror(Business $business, BusinessLocation $location, array $mirror, ?string $openStatus = null): array
+    {
+        if ($mirror === []) {
+            return $this->unavailableRows($business, $location);
+        }
+
         $addressPermitted = $this->readMask->addressPermittedForLocation($location);
 
         return [
@@ -180,7 +197,11 @@ final class GoogleBusinessProfileComparator
             new GoogleComparisonRow(
                 field: 'Open status',
                 platformValue: null,
-                googleValue: $this->openStatusLabel($mirror['open_status'] ?? $binding->open_status),
+                // open_status is a COLUMN, not a mirror key, so it is
+                // supplied explicitly — the persisted value on the normal
+                // path, and the freshly-fetched one on the zero-TTL
+                // ephemeral path (correction item 8).
+                googleValue: $this->openStatusLabel($openStatus),
                 status: GoogleComparisonStatus::NotComparable,
                 reason: 'Display only; the platform has no equivalent field.',
             ),

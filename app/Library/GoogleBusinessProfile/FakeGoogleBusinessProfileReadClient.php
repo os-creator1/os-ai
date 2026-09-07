@@ -35,6 +35,18 @@ use App\Library\GoogleBusinessProfile\Contracts\GoogleBusinessProfileReadClient;
  */
 final class FakeGoogleBusinessProfileReadClient implements GoogleBusinessProfileReadClient
 {
+    public function __construct(private readonly GoogleBusinessProfileCallBudget $budget)
+    {
+    }
+
+    /**
+     * Correction pass item 6 — how many PAGES a list call should simulate.
+     * Each page reserves one outbound request against the Business budget,
+     * exactly as the real client does in its paging loop, so pagination
+     * accounting is testable without real HTTP.
+     */
+    public int $pagesPerListCall = 1;
+
     /** @var array<int, array<string, mixed>> */
     public array $calls = [];
 
@@ -77,6 +89,13 @@ final class FakeGoogleBusinessProfileReadClient implements GoogleBusinessProfile
 
     public function exchangeAuthorizationCode(string $code): GoogleTokenGrant
     {
+        // Correction pass item 6 — reserve BEFORE the call is recorded,
+        // exactly as the real client reserves before it opens a socket. An
+        // exhausted budget must produce ZERO provider calls, not a
+        // recorded-then-refused one. An OAuth token exchange is a real
+        // outbound request and is accounted like any other.
+        $this->budget->reserve();
+
         $this->calls[] = ['method' => 'exchangeAuthorizationCode'];
 
         if ($this->failCodeExchangeWith !== null) {
@@ -95,6 +114,8 @@ final class FakeGoogleBusinessProfileReadClient implements GoogleBusinessProfile
 
     public function exchangeRefreshToken(string $refreshToken): GoogleAccessGrant
     {
+        $this->budget->reserve();
+
         $this->calls[] = ['method' => 'exchangeRefreshToken'];
 
         if ($this->failRefreshWith !== null) {
@@ -108,6 +129,8 @@ final class FakeGoogleBusinessProfileReadClient implements GoogleBusinessProfile
 
     public function listAccounts(string $accessToken): array
     {
+        $this->reservePages();
+
         $this->calls[] = ['method' => 'listAccounts'];
         $this->consumeOneOffFailure();
 
@@ -116,6 +139,8 @@ final class FakeGoogleBusinessProfileReadClient implements GoogleBusinessProfile
 
     public function listLocations(string $accessToken, string $accountResourceName, array $readMask, bool $addressPermitted): array
     {
+        $this->reservePages();
+
         $this->calls[] = [
             'method' => 'listLocations',
             'account' => $accountResourceName,
@@ -150,6 +175,8 @@ final class FakeGoogleBusinessProfileReadClient implements GoogleBusinessProfile
 
     public function getLocation(string $accessToken, string $locationResourceName, array $readMask, bool $addressPermitted): GoogleLocationProfile
     {
+        $this->budget->reserve();
+
         $this->calls[] = [
             'method' => 'getLocation',
             'location' => $locationResourceName,
@@ -176,6 +203,8 @@ final class FakeGoogleBusinessProfileReadClient implements GoogleBusinessProfile
 
     public function getVoiceOfMerchantState(string $accessToken, string $locationResourceName): GoogleVoiceOfMerchantState
     {
+        $this->budget->reserve();
+
         $this->calls[] = ['method' => 'getVoiceOfMerchantState', 'location' => $locationResourceName];
 
         $this->consumeOneOffFailure();
@@ -264,6 +293,19 @@ final class FakeGoogleBusinessProfileReadClient implements GoogleBusinessProfile
         $this->failNextWith = null;
         $this->failCodeExchangeWith = null;
         $this->failRefreshWith = null;
+    }
+
+    /**
+     * One reservation per simulated page, matching the real client's
+     * per-page getJson() reservation (correction pass item 6).
+     */
+    private function reservePages(): void
+    {
+        $pages = max(1, $this->pagesPerListCall);
+
+        for ($page = 0; $page < $pages; $page++) {
+            $this->budget->reserve();
+        }
     }
 
     private function consumeOneOffFailure(): void

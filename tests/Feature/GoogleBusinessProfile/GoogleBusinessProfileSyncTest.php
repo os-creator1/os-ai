@@ -119,8 +119,7 @@ class GoogleBusinessProfileSyncTest extends TestCase
         // (bind opens a transaction to persist, after fetching).
         $this->get(route('customer.workspaces.businesses.gbp.locations', [$workspace->uid, $business->uid]));
         $this->post(route('customer.workspaces.businesses.gbp.bind', [$workspace->uid, $business->uid]), [
-            'provider_account_resource_name' => 'accounts/A1',
-            'provider_location_resource_name' => 'locations/L1',
+            'candidate_token' => $this->candidateTokenFor($business, $connection, $customer->user_id),
             'business_location_uid' => $location->uid,
         ]);
         $this->post(route('customer.workspaces.businesses.gbp.refresh', [$workspace->uid, $business->uid]));

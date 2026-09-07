@@ -149,14 +149,18 @@ class GoogleBusinessProfileEntitlementTest extends TestCase
 
         $args = [$workspace->uid, $business->uid];
 
-        foreach (['index', 'comparison', 'settings', 'connect', 'callback', 'locations'] as $name) {
+        // Correction item 1 — the OAuth callback is no longer in this
+        // group; it is one fixed, tenant-free route (covered separately).
+        // Correction item 9 — connect is a POST.
+        foreach (['index', 'comparison', 'settings', 'locations'] as $name) {
             $this->get(route('customer.workspaces.businesses.gbp.' . $name, $args))
                 ->assertNotFound();
         }
 
+        $this->post(route('customer.workspaces.businesses.gbp.connect', $args))->assertNotFound();
+
         $this->post(route('customer.workspaces.businesses.gbp.bind', $args), [
-            'provider_account_resource_name' => 'accounts/A1',
-            'provider_location_resource_name' => 'locations/L1',
+            'candidate_token' => 'irrelevant',
             'business_location_uid' => 'whatever',
         ])->assertNotFound();
 
@@ -172,7 +176,7 @@ class GoogleBusinessProfileEntitlementTest extends TestCase
         [$customer, $business, $workspace] = $this->coreTenant();
         $this->authenticateAsCustomer($customer);
 
-        $this->get(route('customer.workspaces.businesses.gbp.connect', [$workspace->uid, $business->uid]))
+        $this->post(route('customer.workspaces.businesses.gbp.connect', [$workspace->uid, $business->uid]))
             ->assertNotFound();
 
         $this->assertDatabaseCount('business_google_connections', 0);

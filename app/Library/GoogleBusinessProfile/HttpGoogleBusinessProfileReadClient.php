@@ -73,6 +73,10 @@ final class HttpGoogleBusinessProfileReadClient implements GoogleBusinessProfile
      */
     private const MAX_PAGES = 50;
 
+    public function __construct(private readonly GoogleBusinessProfileCallBudget $budget)
+    {
+    }
+
     public function authorizationUrl(string $signedState, bool $forceConsent): string
     {
         $query = [
@@ -89,9 +93,13 @@ final class HttpGoogleBusinessProfileReadClient implements GoogleBusinessProfile
         ];
 
         if ($forceConsent) {
-            // Contract §9.3 — only when there is no stored refresh token,
-            // or the connection is revoked. A reconnect of a healthy
-            // connection does not force consent.
+            // Contract §9.3, as corrected by item 4: every reachable
+            // starting state (none / pending / revoked / disconnected)
+            // holds no usable refresh token, and Google returns one only
+            // on a fresh consent — so the manager always passes true here.
+            // There is deliberately no "reconnect a healthy connection"
+            // path that could skip consent and then reactivate on an old
+            // token.
             $query['prompt'] = 'consent';
         }
 
@@ -292,6 +300,13 @@ final class HttpGoogleBusinessProfileReadClient implements GoogleBusinessProfile
      */
     private function getJson(string $url, array $query, string $accessToken): array
     {
+        // Correction pass item 6 — reserve ONE outbound request against the
+        // Business budget before dialling out. getJson() is called once per
+        // PAGE, so pagination is counted page by page, exactly as the
+        // contract requires. reserve() throws before any socket is opened,
+        // so an exhausted budget makes zero provider calls.
+        $this->budget->reserve();
+
         try {
             $response = Http::withToken($accessToken)
                 ->accept('application/json')
@@ -318,6 +333,10 @@ final class HttpGoogleBusinessProfileReadClient implements GoogleBusinessProfile
      */
     private function postToken(array $form): array
     {
+        // An OAuth token exchange is a real outbound request and is
+        // budget-accounted like any other (item 6).
+        $this->budget->reserve();
+
         try {
             $response = Http::asForm()
                 ->accept('application/json')

@@ -45,6 +45,15 @@ class BusinessGoogleOperation extends Model
     public const FAILURE_UNEXPECTED_RESPONSE = 'unexpected_response';
 
     /**
+     * Correction pass item 6 — the per-Business hourly provider-call
+     * budget refused this request. Deliberately DISTINCT from
+     * rate_limited: Google did not throttle us, we throttled ourselves,
+     * and zero outbound requests were made. Deferrable, so the ledger
+     * records "deferred" rather than "failed".
+     */
+    public const FAILURE_BUDGET_EXHAUSTED = 'budget_exhausted';
+
+    /**
      * @var array<int, string>
      */
     public const FAILURE_CLASSIFICATIONS = [
@@ -54,6 +63,7 @@ class BusinessGoogleOperation extends Model
         self::FAILURE_PROVIDER_UNAVAILABLE,
         self::FAILURE_TIMEOUT,
         self::FAILURE_UNEXPECTED_RESPONSE,
+        self::FAILURE_BUDGET_EXHAUSTED,
     ];
 
     protected $fillable = [
@@ -63,6 +73,7 @@ class BusinessGoogleOperation extends Model
         'operation_type',
         'local_operation_key',
         'request_fingerprint',
+        'provider_call_count',
         'provider_operation_reference',
         'status',
         'actor_user_id',
@@ -75,6 +86,7 @@ class BusinessGoogleOperation extends Model
     protected $casts = [
         'operation_type' => GoogleOperationType::class,
         'status' => GoogleOperationStatus::class,
+        'provider_call_count' => 'integer',
         'started_at' => 'datetime',
         'completed_at' => 'datetime',
     ];

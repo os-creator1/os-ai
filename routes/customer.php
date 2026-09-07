@@ -395,6 +395,31 @@
 
     /*
     |--------------------------------------------------------------------------
+    | Google Business Profile OAuth callback — ONE FIXED, TENANT-FREE URI
+    |--------------------------------------------------------------------------
+    |
+    | Correction pass item 1. Google matches `redirect_uri` EXACTLY against
+    | the client's registered authorized redirect URIs, so a callback nested
+    | under /{workspaceUid}/businesses/{businessUid}/... could never be
+    | registered: every tenant would need its own registered URI. This is
+    | the single URI that GOOGLE_BUSINESS_PROFILE_REDIRECT must equal, and
+    | GoogleBusinessProfileOAuthConfig refuses to start a flow unless it
+    | does.
+    |
+    | It carries NO Workspace and NO Business parameter. The Business is
+    | resolved exclusively from the signed state, its Workspace is looked up
+    | from the database, and the ENTIRE tenancy/entitlement/permission chain
+    | is re-run before the nonce is consumed or any code exchanged. It stays
+    | GET because Google redirects the browser here; it is authenticated
+    | like every other customer route.
+    |
+    */
+    Route::get('gbp/oauth/callback', 'Business\GoogleBusinessProfileController@callback')
+        ->middleware('throttle:20,1')
+        ->name('gbp.oauth.callback');
+
+    /*
+    |--------------------------------------------------------------------------
     | Reports module — REMOVED by B5 Business Analytics
     |--------------------------------------------------------------------------
     |
@@ -718,8 +743,13 @@
             Route::get('/', 'Business\GoogleBusinessProfileController@overview')->name('index');
             Route::get('/comparison', 'Business\GoogleBusinessProfileController@comparison')->name('comparison');
             Route::get('/settings', 'Business\GoogleBusinessProfileController@settings')->name('settings');
-            Route::get('/connect', 'Business\GoogleBusinessProfileController@connect')->middleware('throttle:10,1')->name('connect');
-            Route::get('/callback', 'Business\GoogleBusinessProfileController@callback')->middleware('throttle:20,1')->name('callback');
+            // Correction pass item 9 — connect initiation MUTATES state
+            // (connection row, nonce, actor attribution, ledger), so it is
+            // a CSRF-protected POST. A plain navigation GET must never be
+            // able to create or alter OAuth state. The callback itself
+            // stays GET and lives outside this group at the one fixed URI
+            // Google can be registered against (item 1).
+            Route::post('/connect', 'Business\GoogleBusinessProfileController@connect')->middleware('throttle:10,1')->name('connect');
             Route::get('/locations', 'Business\GoogleBusinessProfileController@candidates')->middleware('throttle:20,1')->name('locations');
             Route::post('/bind', 'Business\GoogleBusinessProfileController@bind')->middleware('throttle:20,1')->name('bind');
             Route::post('/unbind', 'Business\GoogleBusinessProfileController@unbind')->name('unbind');

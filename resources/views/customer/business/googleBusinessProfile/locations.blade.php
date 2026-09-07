@@ -39,7 +39,7 @@
         </x-alert>
     @endif
 
-    @if(count($candidates) === 0)
+    @if(count($offers) === 0)
         <x-card :padded="true">
             <x-empty-state icon="search" title="No Google locations found"
                            description="The connected Google account does not manage any Business Profile locations that this platform can read." />
@@ -75,13 +75,16 @@
 
                 <p class="text-section-heading mb-1">Choose the matching Google location</p>
                 <div class="list-group mb-2">
-                    @foreach($candidates as $candidate)
+                    @foreach($offers as $offer)
+                        @php($candidate = $offer['candidate'])
                         <label class="list-group-item d-flex align-items-start gap-1">
                             {{-- Deliberately never `checked`: the user
                                  chooses, always (contract §8.5). --}}
-                            <input class="form-check-input mt-1" type="radio" name="provider_location_resource_name"
-                                   value="{{ $candidate->resourceName }}" required
-                                   data-account="{{ $candidate->accountResourceName }}">
+                            {{-- Item 5: the VALUE is the signed candidate token, not a
+                                 raw resource name. Both provider names are derived
+                                 server-side from it, so there is nothing to substitute. --}}
+                            <input class="form-check-input mt-1" type="radio" name="candidate_token"
+                                   value="{{ $offer['token'] }}" required>
                             <span>
                                 <strong>{{ $candidate->displayTitle() }}</strong>
                                 @if($candidate->matchScore >= 50)
@@ -98,24 +101,12 @@
                     @endforeach
                 </div>
 
-                {{-- The account is carried alongside the chosen location
-                     because every future Google surface addresses
-                     accounts/{a}/locations/{l} (contract §8.4). Populated
-                     from the chosen radio on submit; validated server-side
-                     against ^accounts/[A-Za-z0-9_-]+$ regardless. --}}
-                <input type="hidden" name="provider_account_resource_name" id="provider_account_resource_name"
-                       value="{{ $candidates[0]->accountResourceName ?? '' }}">
+                {{-- Item 5: there is deliberately NO hidden raw account or
+                     location field. Both are inside the signed candidate token
+                     above, so a tampered or substituted pair cannot be posted. --}}
 
                 <button type="submit" class="btn btn-primary">Link this location</button>
             </form>
         </x-card>
-
-        <script>
-            document.querySelectorAll('input[name="provider_location_resource_name"]').forEach(function (input) {
-                input.addEventListener('change', function () {
-                    document.getElementById('provider_account_resource_name').value = this.dataset.account || '';
-                });
-            });
-        </script>
     @endif
 @endsection

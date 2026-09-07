@@ -135,6 +135,8 @@ class GoogleBusinessProfilePrivacyTest extends TestCase
      */
     public function test_an_address_returned_despite_the_mask_is_discarded(): void
     {
+        config(['google_business_profile.mirror.retention_days' => 7]);
+
         [$customer, $business, $workspace] = $this->entitledTenant();
         $location = $this->createLocation($business, false);
         $connection = $this->activeConnection($business);
@@ -149,8 +151,7 @@ class GoogleBusinessProfilePrivacyTest extends TestCase
 
         $this->authenticateAsCustomer($customer);
         $this->post(route('customer.workspaces.businesses.gbp.bind', [$workspace->uid, $business->uid]), [
-            'provider_account_resource_name' => 'accounts/A1',
-            'provider_location_resource_name' => 'locations/L1',
+            'candidate_token' => $this->candidateTokenFor($business, $connection, $customer->user_id),
             'business_location_uid' => $location->uid,
         ])->assertRedirect();
 
@@ -183,8 +184,7 @@ class GoogleBusinessProfilePrivacyTest extends TestCase
 
         $this->authenticateAsCustomer($customer);
         $this->post(route('customer.workspaces.businesses.gbp.bind', [$workspace->uid, $business->uid]), [
-            'provider_account_resource_name' => 'accounts/A1',
-            'provider_location_resource_name' => 'locations/L1',
+            'candidate_token' => $this->candidateTokenFor($business, $connection, $customer->user_id),
             'business_location_uid' => $location->uid,
         ]);
 
@@ -306,6 +306,8 @@ class GoogleBusinessProfilePrivacyTest extends TestCase
      */
     public function test_google_supplied_content_is_escaped(): void
     {
+        config(['google_business_profile.mirror.retention_days' => 7]);
+
         [$customer, $business, $workspace] = $this->entitledTenant();
         $location = $this->createLocation($business, true);
         $connection = $this->activeConnection($business);
@@ -314,8 +316,7 @@ class GoogleBusinessProfilePrivacyTest extends TestCase
 
         $this->authenticateAsCustomer($customer);
         $this->post(route('customer.workspaces.businesses.gbp.bind', [$workspace->uid, $business->uid]), [
-            'provider_account_resource_name' => 'accounts/A1',
-            'provider_location_resource_name' => 'locations/L1',
+            'candidate_token' => $this->candidateTokenFor($business, $connection, $customer->user_id),
             'business_location_uid' => $location->uid,
         ]);
 

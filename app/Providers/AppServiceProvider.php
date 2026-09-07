@@ -202,6 +202,14 @@
                 $this->app->bind($interface, $implementation);
             }
 
+            // Google Business Profile Slice A (correction pass item 6).
+            // The call budget MUST be a singleton: withinOperation() sets
+            // the reservation context on it, and the provider client — a
+            // separately resolved object — calls reserve() on the same
+            // instance. A per-resolution binding would give the client a
+            // context-free copy and every reservation would fail closed.
+            $this->app->singleton(\App\Library\GoogleBusinessProfile\GoogleBusinessProfileCallBudget::class);
+
             $this->app->singleton(HookManager::class, fn() => new HookManager());
         }
 

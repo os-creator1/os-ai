@@ -3,6 +3,7 @@
 namespace App\Library\GoogleBusinessProfile;
 
 use App\DTO\GoogleBusinessProfile\GoogleLocationProfile;
+use App\DTO\GoogleBusinessProfile\GoogleMirrorRefreshResult;
 use App\DTO\GoogleBusinessProfile\GoogleVoiceOfMerchantState;
 use App\Enums\GoogleBusinessProfile\GoogleLocationHealth;
 use App\Enums\GoogleBusinessProfile\GoogleOperationType;
@@ -35,6 +36,7 @@ final class GoogleBusinessProfileMirrorService
         private readonly GoogleBusinessProfileReadMask $readMask,
         private readonly GoogleBusinessProfileRetention $retention,
         private readonly GoogleBusinessProfileOperationLedger $ledger,
+        private readonly GoogleBusinessProfileCallBudget $budget,
     ) {
     }
 
@@ -45,7 +47,7 @@ final class GoogleBusinessProfileMirrorService
      *
      * @throws GoogleBusinessProfileProviderException
      */
-    public function refresh(BusinessGoogleLocation $binding, BusinessGoogleConnection $connection, ?int $actorUserId = null): BusinessGoogleLocation
+    public function refresh(BusinessGoogleLocation $binding, BusinessGoogleConnection $connection, ?int $actorUserId = null): GoogleMirrorRefreshResult
     {
         $location = $binding->businessLocation;
 
@@ -69,9 +71,16 @@ final class GoogleBusinessProfileMirrorService
         );
 
         try {
-            $accessToken = $this->connections->accessTokenFor($connection);
-            $profile = $this->client->getLocation($accessToken, (string) $binding->provider_location_resource_name, $mask, $addressPermitted);
-            $state = $this->client->getVoiceOfMerchantState($accessToken, (string) $binding->provider_location_resource_name);
+            // Correction pass item 6 — the token exchange and both reads
+            // are charged to this operation and to the Business budget.
+            [$profile, $state] = $this->budget->withinOperation($connection, $operation, function () use ($connection, $binding, $mask, $addressPermitted): array {
+                $accessToken = $this->connections->accessTokenFor($connection);
+
+                return [
+                    $this->client->getLocation($accessToken, (string) $binding->provider_location_resource_name, $mask, $addressPermitted),
+                    $this->client->getVoiceOfMerchantState($accessToken, (string) $binding->provider_location_resource_name),
+                ];
+            });
         } catch (GoogleBusinessProfileProviderException $exception) {
             // Contract §24.5 — a rate-limited call leaves last_synced_at
             // unchanged so the next sweep naturally retries. The ledger
@@ -82,13 +91,23 @@ final class GoogleBusinessProfileMirrorService
             throw $exception;
         }
 
+        // Correction pass item 8 — with an effective TTL of zero, nothing
+        // reusable may be written. Only non-Content operational state is
+        // persisted, and the fetched profile travels back to the caller
+        // for ephemeral rendering inside this same request.
+        $persisted = $this->retention->mirrorRetentionDays() > 0;
+
         $this->store($binding, $profile, $state);
 
+        // The ledger summary names the operation only — never a Google
+        // Content value (contract §11.3.4).
         $this->ledger->succeed($operation, 'Mirror refreshed');
 
         GoogleBusinessProfileMirrorRefreshed::dispatch((int) $binding->business_id, (int) $binding->id);
 
-        return $binding->refresh();
+        $binding->refresh();
+
+        return new GoogleMirrorRefreshResult($profile, $state, $persisted);
     }
 
     /**
@@ -98,6 +117,17 @@ final class GoogleBusinessProfileMirrorService
      */
     public function store(BusinessGoogleLocation $binding, GoogleLocationProfile $profile, GoogleVoiceOfMerchantState $state): void
     {
+        // Correction pass item 8 — with an effective TTL of zero, nothing
+        // reusable may be written AT ALL. Branching here rather than in
+        // refresh() means every caller (refresh AND bind) obeys the rule,
+        // so a zero-TTL deployment cannot leak Content through the bind
+        // path.
+        if ($this->retention->mirrorRetentionDays() < 1) {
+            $this->storeWithoutContent($binding, $profile, $state);
+
+            return;
+        }
+
         $fetchedAt = now();
 
         DB::transaction(function () use ($binding, $profile, $state, $fetchedAt) {
@@ -116,6 +146,33 @@ final class GoogleBusinessProfileMirrorService
                 'mirror_fetched_at' => $fetchedAt,
                 'mirror_expires_at' => $this->retention->mirrorExpiresAt($fetchedAt),
                 'last_synced_at' => $fetchedAt,
+            ])->save();
+        });
+    }
+
+    /**
+     * Correction pass item 8 — the zero-TTL write. Persists ONLY the
+     * non-Content operational state that §13.2's purge itself preserves
+     * (verification/location state and last_synced_at), and explicitly
+     * clears every Content column, so nothing reusable survives the
+     * request. The next read correctly reports "refresh required".
+     */
+    private function storeWithoutContent(BusinessGoogleLocation $binding, GoogleLocationProfile $profile, GoogleVoiceOfMerchantState $state): void
+    {
+        DB::transaction(function () use ($binding, $profile, $state) {
+            $binding->forceFill([
+                'profile_mirror' => null,
+                'bound_title_snapshot' => null,
+                'bound_locality_snapshot' => null,
+                'bound_region_code_snapshot' => null,
+                'duplicate_of_resource_name' => null,
+                'mirror_fetched_at' => null,
+                'mirror_expires_at' => null,
+                'verification_state' => $this->deriveHealth($profile, $state),
+                'has_voice_of_merchant' => $state->hasVoiceOfMerchant ?? $profile->hasVoiceOfMerchant,
+                'has_pending_edits' => $profile->hasPendingEdits,
+                'open_status' => $profile->openStatus,
+                'last_synced_at' => now(),
             ])->save();
         });
     }

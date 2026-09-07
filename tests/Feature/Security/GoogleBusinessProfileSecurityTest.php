@@ -209,7 +209,9 @@ class GoogleBusinessProfileSecurityTest extends TestCase
 
         $evil = 'https://evil.test/steal';
 
-        $response = $this->get(
+        // Correction item 9 — connect is a POST now; the caller-supplied
+        // redirect parameters must still be ignored entirely.
+        $response = $this->post(
             route('customer.workspaces.businesses.gbp.connect', [$workspace->uid, $business->uid])
             . '?redirect_to=' . urlencode($evil) . '&return=' . urlencode($evil) . '&next=' . urlencode($evil),
         );
@@ -236,7 +238,9 @@ class GoogleBusinessProfileSecurityTest extends TestCase
             fn ($route) => str_starts_with((string) $route->getName(), 'customer.workspaces.businesses.gbp.'),
         );
 
-        $this->assertCount(10, $gbpRoutes, 'The GBP group must expose exactly the ten contracted routes.');
+        // Correction item 1 — the OAuth callback moved OUT of this group to
+        // one fixed, tenant-free URI, leaving nine Business-scoped routes.
+        $this->assertCount(9, $gbpRoutes, 'The GBP group must expose exactly the nine contracted Business-scoped routes.');
 
         foreach ($gbpRoutes as $route) {
             $middleware = $route->gatherMiddleware();
@@ -262,7 +266,7 @@ class GoogleBusinessProfileSecurityTest extends TestCase
     {
         $expected = [
             'customer.workspaces.businesses.gbp.connect' => 'throttle:10,1',
-            'customer.workspaces.businesses.gbp.callback' => 'throttle:20,1',
+            'customer.gbp.oauth.callback' => 'throttle:20,1',
             'customer.workspaces.businesses.gbp.locations' => 'throttle:20,1',
             'customer.workspaces.businesses.gbp.bind' => 'throttle:20,1',
             'customer.workspaces.businesses.gbp.refresh' => 'throttle:10,1',
@@ -293,15 +297,21 @@ class GoogleBusinessProfileSecurityTest extends TestCase
         $this->authenticateAsCustomer($customer);
         $args = [$workspace->uid, $business->uid];
 
-        $this->get(route('customer.workspaces.businesses.gbp.connect', $args));
+        // Correction item 9 — connect is a POST.
+        $this->post(route('customer.workspaces.businesses.gbp.connect', $args));
 
         $connection = \App\Models\BusinessGoogleConnection::query()->where('business_id', $business->id)->firstOrFail();
         $state = app(\App\Library\GoogleBusinessProfile\GoogleOAuthStateSigner::class)->issue($connection);
 
-        $this->get(route('customer.workspaces.businesses.gbp.callback', $args) . '?code=secret-auth-code&state=' . urlencode($state));
+        // Correction item 1 — the one fixed, tenant-free callback.
+        $this->get(
+            route(\App\Library\GoogleBusinessProfile\GoogleBusinessProfileOAuthConfig::CALLBACK_ROUTE)
+            . '?code=secret-auth-code&state=' . urlencode($state),
+        );
+
+        // Correction item 5 — binding goes through a signed candidate token.
         $this->post(route('customer.workspaces.businesses.gbp.bind', $args), [
-            'provider_account_resource_name' => 'accounts/A1',
-            'provider_location_resource_name' => 'locations/L1',
+            'candidate_token' => $this->candidateTokenFor($business, $connection->refresh(), $customer->user_id),
             'business_location_uid' => $location->uid,
         ]);
         $this->post(route('customer.workspaces.businesses.gbp.refresh', $args));

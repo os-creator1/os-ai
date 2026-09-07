@@ -2,8 +2,11 @@
 
 namespace App\Http\Controllers\Customer\Business;
 
+use App\Enums\Business\BusinessServiceMode;
 use App\Enums\Business\BusinessStatus;
 use App\Enums\Entitlement\PlatformFeature;
+use App\Exceptions\GoogleBusinessProfile\GoogleBusinessProfileConcurrencyException;
+use App\Exceptions\GoogleBusinessProfile\GoogleBusinessProfileConfigurationException;
 use App\Exceptions\GoogleBusinessProfile\GoogleBusinessProfileProviderException;
 use App\Exceptions\GoogleBusinessProfile\GoogleLocationAlreadyClaimedException;
 use App\Exceptions\Workspace\BusinessWorkspaceMismatchException;
@@ -13,6 +16,7 @@ use App\Http\Requests\GoogleBusinessProfile\GoogleBusinessProfileBindRequest;
 use App\Http\Requests\GoogleBusinessProfile\GoogleBusinessProfileUnbindRequest;
 use App\Library\Entitlement\EntitlementManager;
 use App\Library\GoogleBusinessProfile\GoogleBusinessProfileBindingManager;
+use App\Library\GoogleBusinessProfile\GoogleBusinessProfileCandidateTokenSigner;
 use App\Library\GoogleBusinessProfile\GoogleBusinessProfileComparator;
 use App\Library\GoogleBusinessProfile\GoogleBusinessProfileConnectionManager;
 use App\Library\GoogleBusinessProfile\GoogleBusinessProfileEnumerator;
@@ -23,6 +27,7 @@ use App\Library\Workspace\WorkspaceManager;
 use App\Models\Business;
 use App\Models\BusinessGoogleConnection;
 use App\Models\BusinessLocation;
+use App\Models\Workspace;
 use App\Repositories\Contracts\BusinessGoogleConnectionRepository;
 use App\Repositories\Contracts\BusinessGoogleLocationRepository;
 use App\Repositories\Contracts\BusinessGoogleOperationRepository;
@@ -33,31 +38,30 @@ use Illuminate\Contracts\View\View;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Gate;
+use LogicException;
 
 /**
  * Google Business Profile Slice A — the Business-scoped, READ-ONLY
  * management surface (contract §17, §18).
  *
- * Every action, without exception, runs the mandatory chain (§15.1):
+ * Every Business-scoped action runs the mandatory chain (§15.1):
  * Workspace by UID → Business inside that Workspace →
  * WorkspaceManager::userCanAccessBusiness() → active Business →
- * Business-scoped EntitlementManager::decide() for
+ * EntitlementManager::decide() for
  * PlatformFeature::GoogleBusinessProfileModule → the connection/binding
- * resolved INSIDE that Business. A foreign Workspace, foreign Business,
- * foreign connection or foreign binding fails closed as 404 exactly like a
- * nonexistent one — never 403 (§15.2). Auth::id() appears only as the
- * capability subject and the audit actor, never as tenant identity; there
- * is no primary-Business inference and no LegacyBusinessResolver.
+ * resolved INSIDE that Business. Every tenancy failure is 404, never 403.
+ * Auth::id() is only ever the capability subject and the audit actor.
  *
- * THE LISTING METHOD IS NAMED overview(), NOT index():
- * CustomerBaseController::index() takes zero parameters, so an
- * index(string, string) override is a fatal LSP error (the same reason B4
- * names its listing listing()).
+ * THE OAUTH CALLBACK IS DIFFERENT AND DELIBERATELY SO (correction item 1).
+ * Google matches redirect_uri exactly against a registered URI, so the
+ * callback is ONE FIXED, TENANT-FREE ROUTE. It therefore cannot start from
+ * route parameters: it starts from the signed state, resolves the Business
+ * and its Workspace from the database, and only then re-runs the entire
+ * chain. Every failure there is 404 so it never reveals whether a Business
+ * exists.
  *
- * SLICE A WRITES NOTHING TO GOOGLE. There is no edit, publish, reply,
- * verification, photo-upload or any other mutation action here, and the
- * provider interface this controller depends on declares no method that
- * could perform one (§14.2).
+ * SLICE A WRITES NOTHING TO GOOGLE.
  */
 class GoogleBusinessProfileController extends CustomerBaseController
 {
@@ -75,16 +79,14 @@ class GoogleBusinessProfileController extends CustomerBaseController
         private readonly GoogleBusinessProfileComparator $comparator,
         private readonly GoogleBusinessProfileReadMask $readMask,
         private readonly GoogleOAuthStateSigner $stateSigner,
+        private readonly GoogleBusinessProfileCandidateTokenSigner $candidateTokens,
     ) {
     }
 
     /**
      * Contract §17.1 — the bare /gbp entry/selector. NEVER guesses a
-     * Business: zero accessible show an empty state, exactly one redirects
-     * straight through, several show a chooser.
-     *
-     * "Accessible" here means the Business passed the FULL §15 chain,
-     * entitlement included, so a Core-tier Business never appears.
+     * Business. "Accessible" includes entitlement, so a Core-tier Business
+     * never appears.
      */
     public function entry(): View|Factory|Application|RedirectResponse
     {
@@ -114,9 +116,7 @@ class GoogleBusinessProfileController extends CustomerBaseController
     }
 
     /**
-     * Contract §22 / §13.3 — the comparison, computed AT READ TIME from
-     * live platform models plus a non-expired mirror. It is never
-     * persisted and never cached.
+     * Contract §22 / §13.3 — computed AT READ TIME, never persisted.
      */
     public function comparison(string $workspaceUid, string $businessUid): View|Factory|Application|RedirectResponse
     {
@@ -137,6 +137,7 @@ class GoogleBusinessProfileController extends CustomerBaseController
             'location' => $binding->businessLocation,
             'rows' => $this->comparator->compare($business, $binding->businessLocation, $binding),
             'mirrorIsFresh' => $binding->mirrorIsFresh(),
+            'ephemeral' => false,
         ]);
     }
 
@@ -152,8 +153,13 @@ class GoogleBusinessProfileController extends CustomerBaseController
     }
 
     /**
-     * Contract §9.3 — connect initiation. Redirects AWAY to Google with a
-     * signed, single-use, expiring state.
+     * Contract §9.3 — connect initiation.
+     *
+     * Correction item 9: this is a CSRF-protected POST because it mutates
+     * connection state, the nonce, actor attribution and the ledger.
+     * Correction item 7: configuration is validated inside beginConnect()
+     * BEFORE any of that state is written, so a misconfigured deployment
+     * leaves nothing behind.
      */
     public function connect(string $workspaceUid, string $businessUid): RedirectResponse
     {
@@ -164,40 +170,62 @@ class GoogleBusinessProfileController extends CustomerBaseController
             return $demo;
         }
 
-        $url = $this->connections->beginConnect($business, (int) Auth::id());
+        // Correction item 4 — there is no "reconnect a healthy connection"
+        // path. Refusing here means no state change and no provider call.
+        $existing = $this->connectionRepository->findForBusiness($business);
+
+        if ($existing !== null && $existing->isActive()) {
+            return $this->redirectWithError($workspaceUid, $businessUid, 'This business is already connected to Google. Disconnect first to connect a different account.');
+        }
+
+        try {
+            $url = $this->connections->beginConnect($business, (int) Auth::id());
+        } catch (GoogleBusinessProfileConfigurationException $exception) {
+            return $this->redirectWithError($workspaceUid, $businessUid, $exception->userMessage());
+        } catch (GoogleBusinessProfileConcurrencyException $exception) {
+            return $this->redirectWithError($workspaceUid, $businessUid, $exception->userMessage());
+        } catch (LogicException) {
+            return $this->redirectWithError($workspaceUid, $businessUid, 'This business is already connected to Google.');
+        }
 
         return redirect()->away($url);
     }
 
     /**
-     * Contract §9.5 — the OAuth callback. Registered INSIDE the
-     * authenticated Business-scoped group, so it inherits
-     * ['web','auth','can:access_backend','ValidProduct','twofactor'].
+     * Contract §9.5, as corrected by item 1 — THE ONE FIXED, TENANT-FREE
+     * OAUTH CALLBACK.
      *
-     * THE TWELVE REVALIDATION STEPS RUN IN ORDER AND EVERY FAILURE IS 404
-     * BEFORE ANY TOKEN EXCHANGE. The Business comes only from our signed
-     * state; the route parameter must agree with it, and nothing Google
-     * returns is ever used to select a Business.
+     * Validation order, all failures 404 with ZERO token exchange and no
+     * disclosure of whether a Business exists:
      *
-     * This method never authenticates a user, never creates one, never
-     * touches email_verified_at and never calls findOrCreateSocial().
+     *   1. signed state present, signature valid, not expired
+     *   2. Business resolved EXCLUSIVELY from the signed identifier;
+     *      connection resolved from that Business
+     *   3. that Business's Workspace resolved from the database
+     *   4. active Workspace, Business inside it, userCanAccessBusiness(),
+     *      active Business, entitlement, manage permission
+     *   5. the callback actor is the actor who initiated THIS attempt
+     *      (item 2)
+     *   6. only then is the nonce consumed, atomically and once
+     *   7. only after successful consumption is the code exchanged
+     *   8. redirect using the canonical Workspace/Business UIDs
+     *
+     * This method never authenticates a user, never creates one, and never
+     * touches email_verified_at.
      */
-    public function callback(Request $request, string $workspaceUid, string $businessUid): RedirectResponse
+    public function callback(Request $request): RedirectResponse
     {
-        // Steps 5-7, 9-12 (authenticated actor, Workspace, Business,
-        // access, active, entitlement) plus the manage permission.
-        $this->authorize('manage_google_business_profile');
-        [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
-
-        // Steps 1-3: state present, signature valid, not expired.
+        // 1 — state first, before any tenant data is touched.
         $payload = $this->stateSigner->verify($request->query('state'));
 
         if ($payload === null) {
             abort(404);
         }
 
-        // Step 8: the Business comes ONLY from our signed state.
-        if ($payload['b'] !== (int) $business->id) {
+        // 2 — Business and connection come ONLY from the signed state.
+        $business = Business::query()->find($payload['b']);
+
+        if ($business === null) {
             abort(404);
         }
 
@@ -207,32 +235,96 @@ class GoogleBusinessProfileController extends CustomerBaseController
             abort(404);
         }
 
-        // Step 4: ATOMIC single-use nonce consumption. A replay affects
-        // zero rows and 404s here — still before any token exchange.
+        // 3 — the Workspace is looked up, never supplied by the caller.
+        if ($business->workspace_id === null) {
+            abort(404);
+        }
+
+        $workspace = Workspace::query()->find($business->workspace_id);
+
+        // 4 — the complete chain, re-run from scratch.
+        if ($workspace === null || ! $workspace->is_active) {
+            abort(404);
+        }
+
+        if ($this->workspaceRepository->businessesForWorkspace($workspace)->firstWhere('uid', $business->uid) === null) {
+            abort(404);
+        }
+
+        if (! $this->workspaceManager->userCanAccessBusiness((int) Auth::id(), $business)) {
+            abort(404);
+        }
+
+        if ($business->status !== BusinessStatus::Active) {
+            abort(404);
+        }
+
+        try {
+            $decision = $this->entitlementManager->decide(
+                $workspace,
+                $business,
+                PlatformFeature::GoogleBusinessProfileModule->value,
+                (int) Auth::id(),
+            );
+        } catch (WorkspaceBusinessNotFoundException|BusinessWorkspaceMismatchException) {
+            abort(404);
+        }
+
+        if (! $decision->allowed) {
+            abort(404);
+        }
+
+        // Deliberately 404 rather than the usual 401: this route has no
+        // tenant parameters, so a permission-shaped response would itself
+        // disclose that the signed Business exists and is reachable.
+        if (Gate::denies('manage_google_business_profile')) {
+            abort(404);
+        }
+
+        // 5 — item 2: the callback actor must be the one who started THIS
+        // attempt. Checked BEFORE consumption, so a mismatched actor
+        // cannot burn the rightful actor's still-valid nonce.
+        if (! $this->connections->attemptBelongsToActor($connection, (int) Auth::id())) {
+            abort(404);
+        }
+
+        // 6 — atomic, single-use consumption.
         if (! $this->stateSigner->consume((int) $business->id, $payload['n'])) {
             abort(404);
         }
 
+        $workspaceUid = (string) $workspace->uid;
+        $businessUid = (string) $business->uid;
+
         if ($request->query('error') !== null || $request->query('code') === null) {
-            // Google declined or the user cancelled. A neutral state, not
-            // an exception page, and the provider payload is never echoed.
             return $this->redirectWithError($workspaceUid, $businessUid, 'Google did not complete the connection.');
         }
 
+        // 7 — only now.
         try {
             $this->connections->completeConnect($connection, (string) $request->query('code'), (int) Auth::id());
+        } catch (GoogleBusinessProfileConfigurationException $exception) {
+            return $this->redirectWithError($workspaceUid, $businessUid, $exception->userMessage());
+        } catch (GoogleBusinessProfileConcurrencyException $exception) {
+            return $this->redirectWithError($workspaceUid, $businessUid, $exception->userMessage());
         } catch (GoogleBusinessProfileProviderException $exception) {
             return $this->redirectWithError($workspaceUid, $businessUid, $exception->userMessage());
         }
 
+        // 8 — canonical UIDs, resolved server-side.
         return redirect()
             ->route('customer.workspaces.businesses.gbp.locations', [$workspaceUid, $businessUid])
             ->with(['status' => 'success', 'message' => 'Google account connected. Choose the location to link.']);
     }
 
     /**
-     * Contract §8.3 — REQUEST-SCOPED candidate enumeration. Nothing here
-     * is persisted, and nothing is pre-selected.
+     * Contract §8.3 — REQUEST-SCOPED enumeration. Nothing is persisted and
+     * nothing is pre-selected.
+     *
+     * Correction item 5: each rendered candidate carries a short-lived
+     * HMAC token binding it to this Business, connection, actor and
+     * account/location pair. The bind POST returns that token instead of
+     * raw resource names.
      */
     public function candidates(string $workspaceUid, string $businessUid): View|Factory|Application|RedirectResponse
     {
@@ -251,12 +343,21 @@ class GoogleBusinessProfileController extends CustomerBaseController
             return $this->redirectWithError($workspaceUid, $businessUid, $exception->userMessage());
         }
 
+        $offers = [];
+
+        foreach ($result['candidates'] as $candidate) {
+            $offers[] = [
+                'candidate' => $candidate,
+                'token' => $this->candidateTokens->issue($business, $connection, (int) Auth::id(), $candidate),
+            ];
+        }
+
         return view('customer.business.googleBusinessProfile.locations', [
             'workspaceUid' => $workspaceUid,
             'businessUid' => $businessUid,
             'business' => $business,
             'accounts' => $result['accounts'],
-            'candidates' => $result['candidates'],
+            'offers' => $offers,
             'locations' => BusinessLocation::query()
                 ->where('business_id', $business->id)
                 ->orderByDesc('is_primary')
@@ -267,9 +368,13 @@ class GoogleBusinessProfileController extends CustomerBaseController
     }
 
     /**
-     * Contract §19.2 — binding is an EXPLICIT POST carrying the user's
-     * chosen provider_location_resource_name. Nothing is ever
-     * auto-selected or auto-bound.
+     * Contract §19.2 — binding is an EXPLICIT POST.
+     *
+     * Correction item 5: BOTH provider resource names are derived
+     * exclusively from the verified candidate token. There is no parallel
+     * raw resource-name field to trust, so a tampered, expired,
+     * wrong-actor, wrong-Business, wrong-connection or substituted pair is
+     * rejected BEFORE any provider read and before any write.
      */
     public function bind(GoogleBusinessProfileBindRequest $request, string $workspaceUid, string $businessUid): RedirectResponse
     {
@@ -288,8 +393,21 @@ class GoogleBusinessProfileController extends CustomerBaseController
 
         $validated = $request->validated();
 
-        // Contract §18.2 — the BusinessLocation is resolved INSIDE the
-        // already-resolved Business; a foreign or unknown uid is a 404.
+        $pair = $this->candidateTokens->verify(
+            $validated['candidate_token'],
+            $business,
+            $connection,
+            (int) Auth::id(),
+        );
+
+        if ($pair === null) {
+            return $this->redirectWithError(
+                $workspaceUid,
+                $businessUid,
+                'That Google location selection is no longer valid. Choose the location again.',
+            );
+        }
+
         $location = BusinessLocation::query()
             ->where('business_id', $business->id)
             ->where('uid', $validated['business_location_uid'])
@@ -302,8 +420,8 @@ class GoogleBusinessProfileController extends CustomerBaseController
                 $business,
                 $connection,
                 $location,
-                $validated['provider_account_resource_name'],
-                $validated['provider_location_resource_name'],
+                $pair['account'],
+                $pair['location'],
                 (int) Auth::id(),
             );
         } catch (GoogleLocationAlreadyClaimedException $exception) {
@@ -318,9 +436,8 @@ class GoogleBusinessProfileController extends CustomerBaseController
     }
 
     /**
-     * Contract §39.4 — unbind runs the §15 chain WITHOUT the entitlement
-     * step, so a Business whose plan was downgraded can still remove its
-     * own binding. It makes no provider call.
+     * Contract §39.4 — unbind skips the ENTITLEMENT step so a downgraded
+     * Business can still remove its own binding. It makes no provider call.
      */
     public function unbind(GoogleBusinessProfileUnbindRequest $request, string $workspaceUid, string $businessUid): RedirectResponse
     {
@@ -343,10 +460,9 @@ class GoogleBusinessProfileController extends CustomerBaseController
     }
 
     /**
-     * Contract §13.5 / §39.4 — disconnect DESTROYS stored authorization,
-     * and like unbind it deliberately skips the entitlement step so
-     * credentials can never be trapped by a downgrade. It makes no
-     * provider call.
+     * Contract §13.5 / §39.4 — disconnect DESTROYS stored authorization
+     * and, like unbind, skips the entitlement step so credentials can never
+     * be trapped by a downgrade. It makes no provider call.
      */
     public function disconnect(string $workspaceUid, string $businessUid): RedirectResponse
     {
@@ -363,7 +479,11 @@ class GoogleBusinessProfileController extends CustomerBaseController
             return redirect()->route('customer.workspaces.businesses.gbp.index', [$workspaceUid, $businessUid]);
         }
 
-        $this->connections->disconnect($connection, (int) Auth::id());
+        try {
+            $this->connections->disconnect($connection, (int) Auth::id());
+        } catch (GoogleBusinessProfileConcurrencyException $exception) {
+            return $this->redirectWithError($workspaceUid, $businessUid, $exception->userMessage());
+        }
 
         return redirect()
             ->route('customer.workspaces.businesses.gbp.index', [$workspaceUid, $businessUid])
@@ -371,11 +491,16 @@ class GoogleBusinessProfileController extends CustomerBaseController
     }
 
     /**
-     * Contract §24.1 — manual refresh, the primary mechanism. Throttled,
-     * ledger-recorded, concurrency-claimed, and always outside a
-     * transaction.
+     * Contract §24.1 — manual refresh, the primary mechanism.
+     *
+     * Correction item 8: with an effective TTL of ZERO nothing reusable is
+     * persisted, so redirecting would show the user nothing. In that case
+     * this action RENDERS the freshly-fetched comparison directly, in this
+     * same response, from the in-memory result — no session flash, no
+     * cache, no queue payload and no ledger field carries the Content, and
+     * the next GET correctly reports "refresh required".
      */
-    public function refresh(string $workspaceUid, string $businessUid): RedirectResponse
+    public function refresh(string $workspaceUid, string $businessUid): View|Factory|Application|RedirectResponse
     {
         $this->authorize('manage_google_business_profile');
         [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
@@ -396,23 +521,38 @@ class GoogleBusinessProfileController extends CustomerBaseController
             return $this->redirectWithError($workspaceUid, $businessUid, 'Link a Google location first.');
         }
 
-        // Contract §24.3 — per-connection concurrency of one. A concurrent
-        // refresh returns immediately without a provider call and without
-        // an error.
         if (! $this->connections->claimRefresh($connection)) {
             return redirect()
                 ->route('customer.workspaces.businesses.gbp.index', [$workspaceUid, $businessUid])
                 ->with(['status' => 'success', 'message' => 'A refresh is already running for this business.']);
         }
 
+        $lastResult = null;
+        $lastBinding = null;
+
         try {
             foreach ($bindings as $binding) {
-                $this->mirror->refresh($binding, $connection, (int) Auth::id());
+                $lastResult = $this->mirror->refresh($binding, $connection, (int) Auth::id());
+                $lastBinding = $binding;
             }
         } catch (GoogleBusinessProfileProviderException $exception) {
             return $this->redirectWithError($workspaceUid, $businessUid, $exception->userMessage());
         } finally {
             $this->connections->releaseRefreshClaim($connection);
+        }
+
+        if ($lastResult !== null && ! $lastResult->persisted && $lastBinding?->businessLocation !== null) {
+            // Ephemeral render — the only place this Content exists.
+            return view('customer.business.googleBusinessProfile.comparison', [
+                'workspaceUid' => $workspaceUid,
+                'businessUid' => $businessUid,
+                'business' => $business,
+                'binding' => $lastBinding->fresh(),
+                'location' => $lastBinding->businessLocation,
+                'rows' => $this->comparator->compareWithMirror($business, $lastBinding->businessLocation, $lastResult->mirror(), $lastResult->profile->openStatus),
+                'mirrorIsFresh' => true,
+                'ephemeral' => true,
+            ]);
         }
 
         return redirect()
@@ -444,26 +584,22 @@ class GoogleBusinessProfileController extends CustomerBaseController
             // Contract §23.6 — the storefront/consent contradiction is
             // SURFACED, never silently resolved.
             'addressContradiction' => $location !== null
-                && $location->service_mode === \App\Enums\Business\BusinessServiceMode::Storefront
+                && $location->service_mode === BusinessServiceMode::Storefront
                 && $location->public_address !== true,
             'addressPermitted' => $location !== null && $this->readMask->addressPermittedForLocation($location),
         ];
     }
 
     /**
-     * Contract §15.1 — the mandatory chain, mirroring
-     * Business\AutomationsController::resolveEntitledBusiness() and
-     * Business\WebsiteController::resolveEntitledBusiness() exactly.
+     * Contract §15.1 — the mandatory chain.
      *
-     * @return array{0: \App\Models\Workspace, 1: Business}
+     * @return array{0: Workspace, 1: Business}
      */
     private function resolveEntitledBusiness(string $workspaceUid, string $businessUid): array
     {
         [$workspace, $business] = $this->resolveAccessibleBusiness($workspaceUid, $businessUid);
 
         try {
-            // (int) Auth::id() is the audit/actor argument the decision
-            // signature requires — never a tenancy decision.
             $decision = $this->entitlementManager->decide(
                 $workspace,
                 $business,
@@ -483,10 +619,9 @@ class GoogleBusinessProfileController extends CustomerBaseController
 
     /**
      * Contract §39.4 — the same chain WITHOUT the entitlement step, used
-     * ONLY by disconnect() and unbind() so stored credentials can never be
-     * trapped by a plan downgrade. Neither makes a provider call.
+     * ONLY by disconnect() and unbind().
      *
-     * @return array{0: \App\Models\Workspace, 1: Business}
+     * @return array{0: Workspace, 1: Business}
      */
     private function resolveAccessibleBusiness(string $workspaceUid, string $businessUid): array
     {
@@ -511,9 +646,9 @@ class GoogleBusinessProfileController extends CustomerBaseController
 
     /**
      * Contract §17.1 — every Business the actor can reach that is ALSO
-     * entitled. A Core-tier Business never appears in the chooser.
+     * entitled.
      *
-     * @return array<int, array{0: \App\Models\Workspace, 1: Business}>
+     * @return array<int, array{0: Workspace, 1: Business}>
      */
     private function entitledBusinesses(): array
     {
