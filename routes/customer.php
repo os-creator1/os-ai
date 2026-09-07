@@ -380,54 +380,20 @@
 
     /*
     |--------------------------------------------------------------------------
-    | Reports module
+    | Reports module — REMOVED by B5 Business Analytics
     |--------------------------------------------------------------------------
     |
-    |
+    | The legacy customer `reports` group (25 ReportsController routes and
+    | the 3 unscoped CampaignController pause/restart/resend routes) and
+    | the flat `/view-charts` route — 29 declarations — are removed
+    | outright per docs/automation/B5-BUSINESS-ANALYTICS-CONTRACT.md §12.3
+    | and §15. No redirect, no compatibility shim. The replacement is the
+    | Business-scoped Analytics surface registered inside the `workspaces`
+    | group below (customer.workspaces.businesses.analytics.*) with its
+    | bare chooser at `GET /analytics`; the canonical campaign controls
+    | are B1's customer.workspaces.businesses.outreach.campaigns.*.
     |
     */
-
-    Route::prefix('reports')->name('reports.')->group(function () {
-        Route::post('/{uid}/destroy', 'ReportsController@destroy');
-        Route::get('/all', 'ReportsController@reports')->name('all');
-        Route::post('/{uid}/view', 'ReportsController@viewReports');
-        Route::post('/export', 'ReportsController@export')->name('export.all');
-        Route::get('/export/sent', 'ReportsController@exportSent')->name('export.sent');
-        Route::get('/export/receive', 'ReportsController@exportReceive')->name('export.receive');
-        Route::get('/export/{campaign}', 'ReportsController@exportCampaign')->name('export.campaign');
-        Route::get('/received', 'ReportsController@received')->name('received');
-        Route::get('/sent', 'ReportsController@sent')->name('sent');
-        Route::get('/campaigns', 'ReportsController@campaigns')->name('campaigns');
-        Route::post('/search', 'ReportsController@searchAllMessages')->name('search.all');
-        Route::post('/search/received', 'ReportsController@searchReceivedMessage')->name('search.received');
-        Route::post('/search/sent', 'ReportsController@searchSentMessage')->name('search.sent');
-        Route::post('/search/campaigns', 'ReportsController@searchCampaigns')->name('search.campaigns');
-        Route::post('batch_action', 'ReportsController@batchAction')->name('batch_action');
-
-        Route::get('/campaigns/{campaign}/edit', 'ReportsController@editCampaign')->name('campaign.edit');
-        Route::post('/campaigns/{campaign}/edit', 'ReportsController@postEditCampaign');
-
-        Route::get('/campaigns/{campaign}/overview', 'ReportsController@campaignOverview')->name('campaign.overview');
-        Route::post('/campaigns/{campaign}/reports', 'ReportsController@campaignReports')->name('campaign.reports');
-        Route::post('/campaigns/{campaign}/delete', 'ReportsController@campaignDelete')->name('campaign.delete');
-        Route::post('/campaign/batch_action', 'ReportsController@campaignBatchAction')->name('campaign.batch_action');
-        Route::get('/campaign/export', 'ReportsController@campaignExport')->name('campaign.export');
-
-        //Version 3.5
-        Route::post('/campaigns/{campaign}/pause', 'CampaignController@campaignPause')->name('campaign.pause');
-        Route::post('/campaigns/{campaign}/restart', 'CampaignController@campaignRestart')->name('campaign.restart');
-        Route::post('/campaigns/{campaign}/resend', 'CampaignController@campaignResend')->name('campaign.resend');
-
-        //Version 3.7
-        Route::get('/analyze', 'ReportsController@analyze')->name('analyze');
-        Route::post('/analyze', 'ReportsController@postAnalyze');
-
-
-        Route::post('/{uid}/dlr', 'ReportsController@dlrReports');
-
-    });
-
-    Route::get('/view-charts', 'ReportsController@viewCharts')->name('view.charts');
 
     /*
     |--------------------------------------------------------------------------
@@ -498,6 +464,15 @@
     |
     */
     Route::get('automations', 'AutomationsController@entry')->name('automations.index');
+
+    /*
+    |--------------------------------------------------------------------------
+    | B5 Business Analytics — bare entry (contract §2.4, §12.2)
+    |--------------------------------------------------------------------------
+    | Sibling of the B4 automations entry: 0 accessible Businesses → empty
+    | state, exactly 1 → redirect, more → chooser. Never guesses a Business.
+    */
+    Route::get('analytics', 'Business\AnalyticsController@entry')->name('analytics.entry');
 
 
     /*Version 3.13*/
@@ -684,6 +659,20 @@
         | Business\AutomationsController.
         |
         */
+        /*
+        |----------------------------------------------------------------------
+        | B5 Business Analytics (contract §12.1) — one Business-scoped,
+        | read-only surface. No {campaign} parameter exists anywhere in it,
+        | no export, no per-metric API; `/series` is the bounded chart
+        | payload, throttled like the other polling routes.
+        |----------------------------------------------------------------------
+        */
+        Route::prefix('{workspaceUid}/businesses/{businessUid}/analytics')->name('businesses.analytics.')->group(function () {
+            Route::get('/', 'Business\AnalyticsController@overview')->name('overview');
+            Route::get('/campaigns', 'Business\AnalyticsController@campaigns')->name('campaigns');
+            Route::get('/series', 'Business\AnalyticsController@series')->name('series')->middleware('throttle:60,1');
+        });
+
         Route::prefix('{workspaceUid}/businesses/{businessUid}/automations')->name('businesses.automations.')->group(function () {
             Route::get('/', 'Business\AutomationsController@listing')->name('index');
             Route::get('/create', 'Business\AutomationsController@create')->name('create');

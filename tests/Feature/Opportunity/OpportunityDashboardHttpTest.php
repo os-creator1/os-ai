@@ -303,7 +303,12 @@ class OpportunityDashboardHttpTest extends TestCase
         $response = $this->get(route('user.home'));
 
         $response->assertOk();
-        $response->assertSee('id="sms-reports"', false);
+        // The pre-existing "current plan" card is untouched by the
+        // Opportunity panel. (The legacy `#sms-reports` pie this test once
+        // used as its marker was removed by B5 Business Analytics — contract
+        // §18.4/§18.5 — so it is asserted absent here instead.)
+        $response->assertSee(route('customer.subscriptions.index'), false);
+        $response->assertDontSee('id="sms-reports"', false);
     }
 
     private function actingAsCustomerWithBusiness(): Business

@@ -3,14 +3,9 @@
 
 @section('title', __('locale.menu.Dashboard'))
 
-@section('vendor-style')
-    {{-- vendor css files --}}
-    <link rel="stylesheet" href="{{ asset(mix('vendors/css/charts/apexcharts.css')) }}">
-@endsection
 @section('page-style')
     {{-- Page css files --}}
     <link rel="stylesheet" href="{{ asset(mix('css/base/pages/dashboard-ecommerce.css')) }}">
-    <link rel="stylesheet" href="{{ asset(mix('css/base/plugins/charts/chart-apex.css')) }}">
 @endsection
 
 @section('content')
@@ -165,18 +160,17 @@
                 </div>
             </div>
 
-            <div class="col-lg-3 col-sm-6 col-12">
-                <div class="card">
-                    <div class="card-header d-flex justify-content-between align-items-end">
-                        <h4 class="card-title text-uppercase">{{ __('locale.labels.sms_reports') }}</h4>
-                    </div>
-                    <div class="card-content">
-                        <div class="card-body p-0">
-                            <div id="sms-reports" class="my-2"></div>
-                        </div>
-                    </div>
+            @can('view_reports')
+                {{-- B5 Business Analytics (contract §18.5): the legacy
+                     user-scoped SMS pie is replaced by the entry point to
+                     the Business-scoped Analytics surface. --}}
+                <div class="col-lg-3 col-sm-6 col-12">
+                    <x-card title="Analytics" data-role="analytics-entry-card">
+                        <p class="text-caption mb-2">Messages, campaigns, contacts and automations for each Business, grouped by day in the Business's own timezone.</p>
+                        <x-button variant="primary" size="sm" icon="bar-chart-2" :href="route('customer.analytics.entry')">Open Analytics</x-button>
+                    </x-card>
                 </div>
-            </div>
+            @endcan
 
         </div>
 
@@ -230,7 +224,7 @@
                                 / {{ $totalCamp }}</h2>
                             <p class="card-text">{{ str_plural(__('locale.menu.Campaigns')) }}</p>
                         </div>
-                        <a href="{{route('customer.reports.campaigns')}}">
+                        <a href="{{ route('customer.analytics.entry') }}">
                             <div class="avatar bg-light-info p-50 m-0">
                                 <div class="avatar-content">
                                     <x-ds-icon name="pie-chart" class="text-info font-medium-5" />
@@ -241,47 +235,10 @@
                 </div>
             </div>
 
-            <div class="col-lg-3 col-sm-6 col-12">
-                <div class="card">
-                    <div class="card-header">
-                        <div>
-                            <h2 class="fw-bolder mb-0">
-
-                                <sup>{{ $deliveredCount }}</sup>
-                                / {{ $total_sms_sent }}</h2>
-                            <p class="card-text">{{ __('locale.labels.delivered') }}</p>
-                        </div>
-                        <a href="{{route('customer.reports.all')}}">
-                            <div class="avatar bg-light-success p-50 m-0">
-                                <div class="avatar-content">
-                                    <x-ds-icon name="phone-outgoing" class="text-success font-medium-5" />
-                                </div>
-                            </div>
-                        </a>
-                    </div>
-                </div>
-            </div>
-
-            <div class="col-lg-3 col-sm-6 col-12">
-                <div class="card">
-                    <div class="card-header">
-                        <div>
-                            <h2 class="fw-bolder mb-0">
-
-                                <sup>{{ $undeliveredCount }}</sup>
-                                / {{ $total_sms_sent }}</h2>
-                            <p class="card-text">{{ __('locale.labels.failed') }}</p>
-                        </div>
-                        <a href="{{route('customer.reports.all')}}">
-                            <div class="avatar bg-light-danger p-50 m-0">
-                                <div class="avatar-content">
-                                    <x-ds-icon name="x-square" class="text-danger font-medium-5" />
-                                </div>
-                            </div>
-                        </a>
-                    </div>
-                </div>
-            </div>
+            {{-- The legacy "delivered / failed" cards (user-scoped, `%Delivered%`
+                 contains-match) are removed by B5 Business Analytics; provider
+                 acceptance and confirmed failures are reported per Business in
+                 the Analytics overview. --}}
 
             <div class="col-lg-3 col-sm-6 col-12">
                 <div class="card">
@@ -395,148 +352,19 @@
         </div>
 
 
-        @canany(['quick_send', 'sms_campaign_builder', 'sms_bulk_messages'])
-            <div class="row match-height">
-                <div class="col-12">
-                    <div class="card">
-                        <div class="card-header d-flex justify-content-between align-items-center">
-                            <h4 class="card-title text-uppercase">{{ __('locale.labels.sms_statistics', ['sms_type' => __('locale.labels.plain_sms')]) }}</h4>
-                        </div>
-                        <div class="card-body">
-                            <div id="plain_sms_data"></div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <div class="row match-height">
-                <div class="col-12">
-                    <div class="card">
-                        <div class="card-header d-flex justify-content-between align-items-center">
-                            <h4 class="card-title text-uppercase">{{ __('locale.labels.sms_statistics', ['sms_type' => __('locale.labels.unicode_sms')]) }}</h4>
-                        </div>
-                        <div class="card-body">
-                            <div id="unicode_sms_data"></div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        @endcanany
-
-        @canany(['voice_campaign_builder', 'voice_quick_send', 'voice_bulk_messages'])
-            <div class="row match-height">
-                <div class="col-12">
-                    <div class="card">
-                        <div class="card-header d-flex justify-content-between align-items-center">
-                            <h4 class="card-title text-uppercase">{{ __('locale.labels.sms_statistics', ['sms_type' => __('locale.labels.voice_sms')]) }}</h4>
-                        </div>
-                        <div class="card-body">
-                            <div id="voice_sms_data"></div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        @endcanany
-
-
-        @canany(['mms_campaign_builder', 'mms_quick_send', 'mms_bulk_messages'])
-            <div class="row match-height">
-                <div class="col-12">
-                    <div class="card">
-                        <div class="card-header d-flex justify-content-between align-items-center">
-                            <h4 class="card-title text-uppercase">{{ __('locale.labels.sms_statistics', ['sms_type' => __('locale.labels.mms_sms')]) }}</h4>
-                        </div>
-                        <div class="card-body">
-                            <div id="mms_sms_data"></div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        @endcanany
-
-
-        @canany(['whatsapp_campaign_builder', 'whatsapp_quick_send', 'whatsapp_bulk_messages'])
-            <div class="row match-height">
-                <div class="col-12">
-                    <div class="card">
-                        <div class="card-header d-flex justify-content-between align-items-center">
-                            <h4 class="card-title text-uppercase">{{ __('locale.labels.sms_statistics', ['sms_type' => __('locale.labels.whatsapp_sms')]) }}</h4>
-                        </div>
-                        <div class="card-body">
-                            <div id="whatsapp_sms_data"></div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        @endcanany
-
-
-        @canany(['viber_campaign_builder', 'viber_quick_send', 'viber_bulk_messages'])
-            <div class="row match-height">
-                <div class="col-12">
-                    <div class="card">
-                        <div class="card-header d-flex justify-content-between align-items-center">
-                            <h4 class="card-title text-uppercase">{{ __('locale.labels.sms_statistics', ['sms_type' => __('locale.labels.viber_sms')]) }}</h4>
-                        </div>
-                        <div class="card-body">
-                            <div id="viber_sms_data"></div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        @endcanany
-
-
-        @canany(['otp_campaign_builder', 'otp_quick_send', 'otp_bulk_messages'])
-            <div class="row match-height">
-                <div class="col-12">
-                    <div class="card">
-                        <div class="card-header d-flex justify-content-between align-items-center">
-                            <h4 class="card-title text-uppercase">{{ __('locale.labels.sms_statistics', ['sms_type' => __('locale.labels.otp_sms')]) }}</h4>
-                        </div>
-                        <div class="card-body">
-                            <div id="otp_sms_data"></div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-        @endcanany
-
+        {{-- The seven per-SMS-type monthly charts are removed by B5 Business
+             Analytics (contract §18.4/§18.5): message volume is charted per
+             Business, in the Business timezone, in the Analytics overview. --}}
 
     </section>
     <!-- Dashboard Analytics end -->
 @endsection
 
 
-@section('vendor-script')
-    {{--     Vendor js files --}}
-    <script src="{{ asset(mix('vendors/js/charts/apexcharts.min.js')) }}"></script>
-@endsection
-
-
 @section('page-script')
 
     <script>
-      function percentage(partialValue, totalValue) {
-        return (100 * partialValue) / totalValue;
-      }
-
       $(window).on("load", function() {
-
-        let $strok_color = PlatformTheme.chartPalette()[0];
-        let $label_color = PlatformTheme.chartGrid();
-        let $purple = PlatformTheme.secondary();
-        let $textMutedColor = PlatformTheme.chartAxis();
-        let $stroke_color_2 = PlatformTheme.chartPalette()[1];
-
-        let $plainSmsData = document.querySelector("#plain_sms_data");
-        let $unicodeSmsData = document.querySelector("#unicode_sms_data");
-        let $voiceSmsData = document.querySelector("#voice_sms_data");
-        let $mmsSmsData = document.querySelector("#mms_sms_data");
-        let $whatsappSmsData = document.querySelector("#whatsapp_sms_data");
-        let $viberSmsData = document.querySelector("#viber_sms_data");
-        let $otpSmsData = document.querySelector("#otp_sms_data");
-
 
         $(".mark_read").on("click", function(e) {
           e.stopPropagation();
@@ -572,139 +400,6 @@
           });
 
         });
-
-        function createChartOptions(height, xAxis, dataSet) {
-          return {
-            chart: {
-              height: height,
-              toolbar: { show: false },
-              zoom: { enabled: false },
-              type: "line",
-              offsetX: -10
-            },
-            stroke: {
-              curve: "smooth",
-              dashArray: [0, 5, 12],
-              width: [5, 7, 5]
-            },
-            grid: {
-              borderColor: $label_color,
-              padding: {
-                top: -20,
-                bottom: -10,
-                left: 20
-              }
-            },
-            legend: {
-              show: false
-            },
-            colors: [$stroke_color_2, $strok_color, $purple],
-            fill: {
-              type: "gradient",
-              gradient: {
-                shade: "dark",
-                inverseColors: false,
-                gradientToColors: [window.colors.solid.primary, $strok_color, $stroke_color_2],
-                shadeIntensity: 1,
-                type: "horizontal",
-                opacityFrom: 1,
-                opacityTo: 1,
-                stops: [0, 100, 100, 100]
-              }
-            },
-            markers: {
-              size: 0,
-              hover: {
-                size: 5
-              }
-            },
-            xaxis: {
-              labels: {
-                style: {
-                  colors: $textMutedColor,
-                  fontSize: "1rem"
-                }
-              },
-              axisTicks: {
-                show: false
-              },
-              categories: xAxis,
-              axisBorder: {
-                show: false
-              },
-              tickPlacement: "on"
-            },
-            yaxis: {
-              tickAmount: 5,
-              labels: {
-                style: {
-                  colors: $textMutedColor,
-                  fontSize: "1rem"
-                },
-                formatter: function(val) {
-                  return val > 999 ? (val / 1000).toFixed(0) + "k" : val;
-                }
-              }
-            },
-            tooltip: {
-              x: { show: false }
-            },
-            series: dataSet
-          };
-        }
-
-        // Instantiate the charts
-        let plainSmsData = new ApexCharts($plainSmsData, createChartOptions(240, {!! $charts['plain']->xAxis() !!}, {!! $charts['plain']->dataSet() !!}));
-        plainSmsData.render();
-
-        let unicodeSmsData = new ApexCharts($unicodeSmsData, createChartOptions(240, {!! $charts['unicode']->xAxis() !!}, {!! $charts['unicode']->dataSet() !!}));
-        unicodeSmsData.render();
-
-        let voiceSmsData = new ApexCharts($voiceSmsData, createChartOptions(240, {!! $charts['voice']->xAxis() !!}, {!! $charts['voice']->dataSet() !!}));
-        voiceSmsData.render();
-
-        let mmsSmsData = new ApexCharts($mmsSmsData, createChartOptions(240, {!! $charts['mms']->xAxis() !!}, {!! $charts['mms']->dataSet() !!}));
-        mmsSmsData.render();
-
-        let whatsappSmsData = new ApexCharts($whatsappSmsData, createChartOptions(240, {!! $charts['whatsapp']->xAxis() !!}, {!! $charts['whatsapp']->dataSet() !!}));
-        whatsappSmsData.render();
-
-        let viberSmsData = new ApexCharts($viberSmsData, createChartOptions(240, {!! $charts['viber']->xAxis() !!}, {!! $charts['viber']->dataSet() !!}));
-        viberSmsData.render();
-
-        let otpSmsData = new ApexCharts($otpSmsData, createChartOptions(240, {!! $charts['otp']->xAxis() !!}, {!! $charts['otp']->dataSet() !!}));
-        otpSmsData.render();
-
-
-        // sms history Chart
-        // -----------------------------
-
-        let smsHistoryChartoptions = {
-          chart: {
-            type: "pie",
-            height: 180,
-            toolbar: {
-              show: false
-            }
-          },
-          labels: ["{{ __('locale.labels.delivered') }}", "{{ __('locale.labels.failed') }}"],
-          series: {!! $sms_history->dataSet() !!},
-          dataLabels: {
-            enabled: false
-          },
-          legend: { show: false },
-          stroke: {
-            width: 4
-          },
-          colors: [PlatformTheme.primary(), PlatformTheme.color('color-chart-negative')]
-        };
-
-        let smsHistoryChart = new ApexCharts(
-          document.querySelector("#sms-reports"),
-          smsHistoryChartoptions
-        );
-
-        smsHistoryChart.render();
 
       });
 

@@ -750,7 +750,10 @@
 
                     $nestedData['show']             = CrmRouting::route('contact.edit', ['contact' => $contact->uid, 'contact_id' => $singleContact->uid]);
                     $nestedData['show_label']       = __('locale.buttons.edit');
-                    $nestedData['conversion']       = route('customer.reports.all', ['recipient' => $singleContact->phone]);
+                    // B5 Business Analytics removed the legacy customer
+                    // Reports message log this "view conversation" action
+                    // linked to; the conversation surface is ChatBox.
+                    $nestedData['conversion']       = route('customer.chatbox.index');
                     $nestedData['conversion_label'] = __('locale.contacts.view_conversion');
                     $nestedData['send_sms']         = route('customer.sms.quick_send', ['recipient' => $singleContact->phone]);
                     $nestedData['send_sms_label']   = __('locale.contacts.send_message');

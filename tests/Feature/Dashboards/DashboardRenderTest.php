@@ -3,11 +3,8 @@
 namespace Tests\Feature\Dashboards;
 
 use App\Models\AppConfig;
-use App\Models\Customer;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Schema;
 use Tests\Feature\Business\Concerns\CreatesBusinessTestData;
 use Tests\TestCase;
 
@@ -15,44 +12,34 @@ use Tests\TestCase;
  * Design System M2 Slice 3 contract §8 item 1 — proves the actor genuinely
  * authorized on this Slice 3 implementation's own pinned post-remediation
  * baseline (dashboard-security remediation merge
- * 1059112d343f7cf3029e5d13ca8db065f98cdfd0) receives HTTP 200 from all five
- * in-scope routes. The actor model is read directly from the merged
- * security remediation, not re-invented: Hot Leads/AI Analytics require an
- * authenticated customer holding `chat_box`; the platform AI settings
- * surface requires an authenticated admin holding `manage ai_settings`
- * (and `general settings`, since B3 folded it into the one Settings
- * page); user.home/admin.home are unchanged by the remediation (§17 of
- * that contract), reached by an ordinary customer/admin respectively.
+ * 1059112d343f7cf3029e5d13ca8db065f98cdfd0) receives HTTP 200 from the
+ * in-scope routes. user.home/admin.home are unchanged by the remediation
+ * (§17 of that contract), reached by an ordinary customer/admin
+ * respectively; the platform AI settings surface requires an
+ * authenticated admin holding `manage ai_settings` (and `general
+ * settings`, since B3 folded it into the one Settings page).
  *
- * B3 Simplified Platform Settings (2026-09) retargeted the fifth route
- * from the orphan `/admin/ai-brain` surface (deleted outright) to the
- * canonical admin/settings AI section — see
+ * B3 Simplified Platform Settings (2026-09) retargeted the AI settings
+ * route from the orphan `/admin/ai-brain` surface (deleted outright) to
+ * the canonical admin/settings AI section — see
  * test_ai_settings_returns_200_for_authorized_admin() below.
  *
- * chat_boxes.ai_stage/called/website_sent_at/followup_sent/followup_at/
- * ai_replied and the ai_box_campaign_map table have no tracked migration
- * (established by the merged security remediation's own audit) and are
- * absent from a freshly migrated ultimatesms_testing. This file
- * reproduces the same test-only, self-cleaning ephemeral-schema fixture
- * approach already merged in tests/Feature/Security/*SecurityTest —
- * created once per class via a separate `security_test_ddl` connection
- * so its DDL never touches the default connection's RefreshDatabase
- * transaction, and dropped once at true PHP process shutdown.
+ * B5 Business Analytics (2026-09, contract §14, §18.7) deleted the ghost
+ * Hot Leads and AI Analytics surfaces — they ran on chat_boxes columns and
+ * an ai_box_campaign_map table with no tracked migration — so their two
+ * render cases and the ephemeral `security_test_ddl` schema fixture that
+ * fabricated that schema are gone from this file. The customer dashboard
+ * no longer renders the `#sms-reports` pie; it links to the Business-
+ * scoped Analytics surface instead.
  */
 class DashboardRenderTest extends TestCase
 {
     use RefreshDatabase;
     use CreatesBusinessTestData;
 
-    private static array $addedChatBoxColumns = [];
-    private static bool $createdAiBoxCampaignMapTable = false;
-    private static bool $ephemeralSchemaEnsured = false;
-
     protected function setUp(): void
     {
         parent::setUp();
-
-        $this->ensureEphemeralSchema();
 
         // Consume users.id === 1 (repository-wide inherited super-admin Gate
         // bypass, EloquentAccountRepository::hasPermission()) so this file's
@@ -69,20 +56,22 @@ class DashboardRenderTest extends TestCase
         ]);
     }
 
-    public function test_customer_home_returns_200_and_retains_sms_reports_id(): void
+    public function test_customer_home_returns_200_and_links_to_business_analytics(): void
     {
         $this->ensureRequiredAppConfigRowsExist();
         $customer = $this->createCustomer();
         $customer->user->email_verified_at = now();
         $customer->user->save();
 
-        $this->withSession(['permissions' => collect(['access_backend'])]);
+        $this->withSession(['permissions' => collect(['access_backend', 'view_reports'])]);
         $this->actingAs($customer->user);
 
         $response = $this->get(route('user.home'));
 
         $response->assertOk();
-        $response->assertSee('id="sms-reports"', false);
+        $response->assertSee(route('customer.analytics.entry'), false);
+        $response->assertDontSee('id="sms-reports"', false);
+        $response->assertDontSee('apexcharts', false);
     }
 
     public function test_admin_home_returns_200(): void
@@ -91,36 +80,6 @@ class DashboardRenderTest extends TestCase
         $this->actingAsAdmin(['access backend']);
 
         $response = $this->get(route('admin.home'));
-
-        $response->assertOk();
-    }
-
-    public function test_hot_leads_returns_200_for_authorized_customer(): void
-    {
-        $this->ensureRequiredAppConfigRowsExist();
-        $customer = $this->createCustomer();
-        $customer->user->email_verified_at = now();
-        $customer->user->save();
-
-        $this->withSession(['permissions' => collect(['access_backend', 'chat_box'])]);
-        $this->actingAs($customer->user);
-
-        $response = $this->get('/admin/hot-leads');
-
-        $response->assertOk();
-    }
-
-    public function test_ai_analytics_returns_200_for_authorized_customer(): void
-    {
-        $this->ensureRequiredAppConfigRowsExist();
-        $customer = $this->createCustomer();
-        $customer->user->email_verified_at = now();
-        $customer->user->save();
-
-        $this->withSession(['permissions' => collect(['access_backend', 'chat_box'])]);
-        $this->actingAs($customer->user);
-
-        $response = $this->get('/admin/ai-analytics');
 
         $response->assertOk();
     }
@@ -159,97 +118,6 @@ class DashboardRenderTest extends TestCase
         $this->actingAs($admin);
 
         return $admin;
-    }
-
-    /**
-     * §14.1-equivalent ephemeral schema fixture, reproduced here per the
-     * merged Slice-3 contract's own "may reproduce the established,
-     * self-cleaning test-only fixture approach" allowance. Runs on a
-     * separate named connection so its DDL never interacts with the
-     * default connection's RefreshDatabase transaction. Adds only the
-     * specific legacy chat_boxes columns / ai_box_campaign_map /
-     * ai_settings columns the existing, unmodified controllers actually
-     * read/write, only when genuinely absent, once for the whole class
-     * run. Cleanup runs once, at true PHP process shutdown, via a raw PDO
-     * connection captured while the app is still available.
-     */
-    private function ephemeralSchema(): \Illuminate\Database\Schema\Builder
-    {
-        config(['database.connections.security_test_ddl' => config('database.connections.mysql')]);
-
-        return Schema::connection('security_test_ddl');
-    }
-
-    private function ensureEphemeralSchema(): void
-    {
-        if (self::$ephemeralSchemaEnsured) {
-            return;
-        }
-
-        self::$ephemeralSchemaEnsured = true;
-
-        $schema = $this->ephemeralSchema();
-
-        $columns = [
-            'ai_stage' => fn ($table) => $table->unsignedTinyInteger('ai_stage')->default(0),
-            'called' => fn ($table) => $table->boolean('called')->default(false),
-            'website_sent_at' => fn ($table) => $table->timestamp('website_sent_at')->nullable(),
-            'followup_sent' => fn ($table) => $table->boolean('followup_sent')->default(false),
-            'followup_at' => fn ($table) => $table->timestamp('followup_at')->nullable(),
-            'ai_replied' => fn ($table) => $table->boolean('ai_replied')->default(false),
-        ];
-
-        foreach ($columns as $column => $definer) {
-            if (! $schema->hasColumn('chat_boxes', $column)) {
-                $schema->table('chat_boxes', function ($table) use ($definer) {
-                    $definer($table);
-                });
-                self::$addedChatBoxColumns[] = $column;
-            }
-        }
-
-        if (! $schema->hasTable('ai_box_campaign_map')) {
-            $schema->create('ai_box_campaign_map', function ($table) {
-                $table->id();
-                $table->unsignedBigInteger('box_id');
-                $table->unsignedBigInteger('campaign_id');
-            });
-            self::$createdAiBoxCampaignMapTable = true;
-        }
-
-        if (self::$addedChatBoxColumns === [] && ! self::$createdAiBoxCampaignMapTable) {
-            return;
-        }
-
-        $columnsToDrop = self::$addedChatBoxColumns;
-        $dropCampaignMapTable = self::$createdAiBoxCampaignMapTable;
-        $dsn = 'mysql:host=' . config('database.connections.mysql.host')
-            . ';port=' . config('database.connections.mysql.port')
-            . ';dbname=' . config('database.connections.mysql.database')
-            . ';charset=' . config('database.connections.mysql.charset', 'utf8mb4');
-        $username = config('database.connections.mysql.username');
-        $password = config('database.connections.mysql.password');
-
-        register_shutdown_function(function () use ($dsn, $username, $password, $columnsToDrop, $dropCampaignMapTable) {
-            try {
-                $pdo = new \PDO($dsn, $username, $password, [\PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION]);
-
-                foreach ($columnsToDrop as $column) {
-                    $exists = $pdo->query(
-                        "SELECT COUNT(*) FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = 'chat_boxes' AND column_name = " . $pdo->quote($column)
-                    )->fetchColumn();
-                    if ($exists) {
-                        $pdo->exec('ALTER TABLE `chat_boxes` DROP COLUMN `' . $column . '`');
-                    }
-                }
-
-                if ($dropCampaignMapTable) {
-                    $pdo->exec('DROP TABLE IF EXISTS `ai_box_campaign_map`');
-                }
-            } catch (\Throwable $e) {
-                // Best-effort cleanup at process shutdown; nothing further can be reported here.
-            }
-        });
     }
 
     private function ensureRequiredAppConfigRowsExist(): void

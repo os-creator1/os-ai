@@ -1071,7 +1071,7 @@
 
             if (isset($input['advanced']) && $input['advanced'] == 'true') {
                 if (isset($input['send_copy']) && $input['send_copy'] == 'true') {
-                    $user->notify(new SendCampaignCopy($input['message'], route('customer.reports.campaign.edit', $new_campaign->uid)));
+                    $user->notify(new SendCampaignCopy($input['message'], $this->campaignCopyLink($new_campaign)));
                 }
                 // if advanced set true then work with send copy to email and create template
                 if (isset($input['create_template']) && $input['create_template'] == 'true') {
@@ -2869,4 +2869,27 @@
             return null;
         }
 
+
+        /**
+         * The campaign-copy e-mail (SendCampaignCopy) used to link to the legacy
+         * customer report editor, customer.reports.campaign.edit, which B5
+         * Business Analytics removed together with the rest of the customer
+         * Reports product. The link now targets B1's canonical Business-scoped
+         * campaign page, and its tenant identifiers are derived only from the
+         * campaign's persisted Business and that Business's owning Workspace —
+         * never from request input or a guessed primary Business. A campaign
+         * without a persisted Business links to the bare Outreach chooser,
+         * which carries no tenant identifiers at all.
+         */
+        public function campaignCopyLink(Campaigns $campaign): string
+        {
+            $business  = $campaign->business_id !== null ? $campaign->business()->first() : null;
+            $workspace = $business?->workspace()->first();
+
+            if ($business === null || $workspace === null) {
+                return route('customer.outreach.index');
+            }
+
+            return route('customer.workspaces.businesses.outreach.campaigns.show', [$workspace->uid, $business->uid, $campaign->uid]);
+        }
     }

@@ -8,23 +8,16 @@
     use App\Http\Controllers\Debug\DebugController;
     use App\Http\Controllers\LanguageController;
     use App\Http\Controllers\MaintenanceNotifyController;
-    use App\Http\Controllers\Admin\HotLeadController;
-    use App\Http\Controllers\Admin\AiAnalyticsController;
 
-Route::get('/admin/ai-analytics', [AiAnalyticsController::class, 'index'])
-    ->middleware(['auth', 'can:access_backend', 'ValidProduct', 'twofactor']);
-
-
-Route::get('/admin/hot-leads', [HotLeadController::class, 'index'])
-    ->middleware(['auth', 'can:access_backend', 'ValidProduct', 'twofactor']);
-Route::post('/admin/hot-leads/mark-called', [HotLeadController::class, 'markCalled'])
-    ->middleware(['auth', 'can:access_backend', 'ValidProduct', 'twofactor']);
-
-
-
-
-Route::post('/admin/ai-variants/update', [App\Http\Controllers\Admin\AiAnalyticsController::class, 'updateVariants'])
-    ->name('admin.ai_variants.update');
+    // B5 Business Analytics §14 — the ghost "AI Analytics" / "Hot Leads"
+    // surfaces (AiAnalyticsController, HotLeadController, their views,
+    // request and routes) are removed: they ran on chat_boxes columns and
+    // an ai_box_campaign_map table that no migration in this repository
+    // creates, and one of their routes (POST /admin/ai-variants/update)
+    // carried no middleware at all and pointed at a method that did not
+    // exist. The live producers of that untracked schema in
+    // EloquentCampaignRepository and DLRController are stop-listed for B5
+    // and are deliberately untouched (a separate contract).
 
 
     /*
@@ -63,17 +56,6 @@ Route::post('/inbound/telnyx', [DLRController::class, 'inboundTelnyx']);
     Route::get('remove-contacts', [DebugController::class, 'removeContacts'])->name('remove.contacts');
     Route::get('cache-clear', [DebugController::class, 'cacheClear'])->name('cache.clear');
     Route::get('update-campaign-cache/{campaign}/{number}', [DebugController::class, 'updateCampaignCache'])->name('update.campaign.cache');
-    
-    
-    Route::post('/admin/ai-analytics/book/{id}', [\App\Http\Controllers\Admin\AiAnalyticsController::class, 'markBooked'])
-    ->name('admin.ai.booked')
-    ->middleware(['auth', 'can:access_backend', 'ValidProduct', 'twofactor']);
-
-
-
-
-
-
 
     if (config('app.stage') == 'local') {
         Route::get('debug', [DebugController::class, 'index'])->name('debug');
