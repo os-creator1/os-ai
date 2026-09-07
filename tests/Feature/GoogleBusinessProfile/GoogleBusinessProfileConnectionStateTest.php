@@ -361,6 +361,114 @@ class GoogleBusinessProfileConnectionStateTest extends TestCase
     }
 
     // -----------------------------------------------------------------
+    // Multi-location correction pass — the first-connect race
+    // -----------------------------------------------------------------
+
+    /**
+     * REQUIRED TEST 11 — two concurrent first-time connect requests cannot
+     * produce two connection rows, and the loser never surfaces a raw
+     * database exception.
+     *
+     * Made deterministic rather than probabilistic: a `creating` listener
+     * inserts a RIVAL row for the same Business at exactly the moment the
+     * real code is between its own SELECT (which found nothing) and its
+     * INSERT. That is precisely the interleaving two real requests can
+     * hit, and it drives the INSERT into the genuine MySQL
+     * `bgc_business_unique` constraint — the constraint is exercised for
+     * real, not mocked away.
+     */
+    public function test_a_concurrent_first_connect_creates_one_row_without_a_database_error(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->authenticateAsCustomer($customer);
+
+        $rivalActorId = $this->addSecondManageUser($workspace)->id;
+        $inserted = false;
+
+        BusinessGoogleConnection::creating(function () use ($business, $rivalActorId, &$inserted) {
+            if ($inserted) {
+                return;
+            }
+
+            $inserted = true;
+
+            // The rival request wins the INSERT race.
+            DB::table('business_google_connections')->insert([
+                'uid' => (string) \Illuminate\Support\Str::uuid(),
+                'business_id' => $business->id,
+                'state' => GoogleConnectionState::Pending->value,
+                'connected_by_user_id' => $rivalActorId,
+                'lock_version' => 0,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        });
+
+        try {
+            $response = $this->post(route('customer.workspaces.businesses.gbp.connect', [$workspace->uid, $business->uid]));
+        } finally {
+            BusinessGoogleConnection::flushEventListeners();
+        }
+
+        // No 500 and no raw database message: the loser continues into the
+        // normal authorization redirect.
+        $response->assertRedirect();
+        $this->assertStringStartsWith('https://accounts.google.test/', (string) $response->headers->get('Location'));
+
+        // The one-connection-per-Business constraint still holds.
+        $rows = DB::table('business_google_connections')->where('business_id', $business->id)->get();
+        $this->assertCount(1, $rows, 'A first-connect race must never produce two connection rows.');
+
+        $connection = BusinessGoogleConnection::query()->where('business_id', $business->id)->firstOrFail();
+
+        // One current actor/nonce pair — the losing request re-stamped the
+        // winner's row THROUGH the optimistic lock rather than around it,
+        // so lock_version advanced exactly once.
+        $this->assertSame($customer->user_id, (int) $connection->connected_by_user_id);
+        $this->assertNotNull($connection->oauth_state_nonce);
+        $this->assertSame(1, (int) $connection->lock_version);
+        $this->assertSame(GoogleConnectionState::Pending, $connection->state);
+
+        // The state actually issued belongs to this actor's attempt.
+        $this->assertSame(
+            $connection->oauth_state_nonce,
+            $this->payloadNonce($this->stateFromRedirect($response)),
+        );
+    }
+
+    /**
+     * The absorbed race is narrow: only the business_id collision, and
+     * only when a row is genuinely present afterwards. A unique violation
+     * on any OTHER key still propagates rather than being swallowed.
+     */
+    public function test_the_one_connection_per_business_constraint_is_still_enforced(): void
+    {
+        [, $business] = $this->entitledTenant();
+
+        $this->activeConnection($business);
+
+        $this->expectException(\Illuminate\Database\UniqueConstraintViolationException::class);
+
+        DB::table('business_google_connections')->insert([
+            'uid' => (string) \Illuminate\Support\Str::uuid(),
+            'business_id' => $business->id,
+            'state' => GoogleConnectionState::Pending->value,
+            'lock_version' => 0,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
+    // -----------------------------------------------------------------
+
+    private function payloadNonce(string $state): string
+    {
+        $payload = app(GoogleOAuthStateSigner::class)->verify($state);
+
+        $this->assertNotNull($payload, 'The issued state must verify.');
+
+        return (string) $payload['n'];
+    }
 
     private function assertNonActiveHoldsNoToken(BusinessGoogleConnection $connection): void
     {

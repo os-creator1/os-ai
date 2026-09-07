@@ -32,46 +32,65 @@
         </x-alert>
     @endif
 
-    @unless($mirrorIsFresh)
+    {{-- MULTI-LOCATION CORRECTION — a refresh that could not reach Google
+         for some bindings says so explicitly, and never lets the bindings
+         it DID refresh imply that all of them succeeded. --}}
+    @foreach($failures ?? [] as $failure)
         <x-alert variant="warning" class="mb-2">
-            Google data is not available or has passed its 30-day retention window. Refresh to compare.
+            {{ $failure['location'] ?? 'One linked location' }}: {{ $failure['message'] }}
         </x-alert>
-    @endunless
+    @endforeach
 
-    <x-card :padded="true">
-        <p class="text-caption mb-2">
-            This is a read-only comparison. Nothing here changes your Google listing, and nothing here changes the details stored on this platform.
-        </p>
+    {{-- One table per binding. This view renders a COLLECTION in every
+         case — the binding-addressed comparison route passes exactly one,
+         and a zero-retention refresh passes every binding it refreshed —
+         so no code path can silently show only the first or the last. --}}
+    @foreach($comparisons as $comparison)
+        <x-card :padded="true" class="mb-2">
+            <p class="text-section-heading mb-1">
+                {{ $comparison['location']?->name ?? $comparison['binding']->provider_location_resource_name }}
+            </p>
 
-        <div class="table-responsive">
-            <table class="table">
-                <thead>
-                    <tr>
-                        <th scope="col">Field</th>
-                        <th scope="col">Platform value</th>
-                        <th scope="col">Google value</th>
-                        <th scope="col">Status</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    @foreach($rows as $row)
+            @unless($comparison['mirrorIsFresh'])
+                <x-alert variant="warning" class="mb-2">
+                    Google data is not available or has passed its 30-day retention window. Refresh to compare.
+                </x-alert>
+            @endunless
+
+            <p class="text-caption mb-2">
+                This is a read-only comparison. Nothing here changes your Google listing, and nothing here changes the details stored on this platform.
+            </p>
+
+            <div class="table-responsive">
+                <table class="table">
+                    <thead>
                         <tr>
-                            <td>{{ $row->field }}</td>
-                            <td>{{ $row->platformValue ?? '—' }}</td>
-                            <td>{{ $row->googleValue ?? '—' }}</td>
-                            <td>
-                                @php($status = $row->status->value)
-                                <x-badge :variant="$status === 'match' ? 'success' : ($status === 'mismatch' ? 'warning' : 'secondary')">
-                                    {{ $row->status->label() }}
-                                </x-badge>
-                                @if($row->reason)
-                                    <span class="text-caption d-block">{{ $row->reason }}</span>
-                                @endif
-                            </td>
+                            <th scope="col">Field</th>
+                            <th scope="col">Platform value</th>
+                            <th scope="col">Google value</th>
+                            <th scope="col">Status</th>
                         </tr>
-                    @endforeach
-                </tbody>
-            </table>
-        </div>
-    </x-card>
+                    </thead>
+                    <tbody>
+                        @foreach($comparison['rows'] as $row)
+                            <tr>
+                                <td>{{ $row->field }}</td>
+                                <td>{{ $row->platformValue ?? '—' }}</td>
+                                <td>{{ $row->googleValue ?? '—' }}</td>
+                                <td>
+                                    @php($status = $row->status->value)
+                                    <x-badge :variant="$status === 'match' ? 'success' : ($status === 'mismatch' ? 'warning' : 'secondary')">
+                                        {{ $row->status->label() }}
+                                    </x-badge>
+                                    @if($row->reason)
+                                        <span class="text-caption d-block">{{ $row->reason }}</span>
+                                    @endif
+                                </td>
+                            </tr>
+                        @endforeach
+                    </tbody>
+                </table>
+            </div>
+        </x-card>
+    @endforeach
 @endsection

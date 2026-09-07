@@ -14,6 +14,7 @@ use App\Library\GoogleBusinessProfile\Contracts\GoogleBusinessProfileReadClient;
 use App\Models\Business;
 use App\Models\BusinessGoogleConnection;
 use App\Models\BusinessGoogleOperation;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\DB;
 use LogicException;
@@ -95,12 +96,19 @@ final class GoogleBusinessProfileConnectionManager
         }
 
         if ($connection === null) {
-            $connection = BusinessGoogleConnection::create([
-                'business_id' => $business->id,
-                'state' => GoogleConnectionState::Pending,
-                'connected_by_user_id' => $actorUserId,
-            ]);
-        } else {
+            $connection = $this->createFirstConnection($business, $actorUserId);
+
+            // Lost the create race — another request inserted the single
+            // permitted row between our SELECT and our INSERT. Re-apply
+            // the very check we made above against the winner's row, then
+            // fall through to the ordinary re-stamp so this attempt still
+            // goes THROUGH lock_version rather than around it.
+            if (! $connection->wasRecentlyCreated && $connection->isActive()) {
+                throw new LogicException('Google Business Profile connection is already active; disconnect before reconnecting.');
+            }
+        }
+
+        if (! $connection->wasRecentlyCreated) {
             // Item 2 + item 4 — re-stamp the actor even when the row is
             // ALREADY pending (the previous implementation skipped this,
             // leaving a stale actor bound), and null any authorization
@@ -125,6 +133,48 @@ final class GoogleBusinessProfileConnectionManager
         );
 
         return $this->client->authorizationUrl($signedState, true);
+    }
+
+    /**
+     * MULTI-LOCATION CORRECTION PASS — the first-connect race.
+     *
+     * business_google_connections.business_id is UNIQUE (constraint C-1),
+     * so exactly one row per Business can ever exist. Two concurrent
+     * first-connect requests can both observe no row, and the loser's
+     * INSERT then violates that constraint — previously surfacing as an
+     * unhandled QueryException, i.e. a 500 carrying a database message.
+     *
+     * The constraint is NOT weakened and no row is ever overwritten. The
+     * loser simply re-reads the winner's row and continues through the
+     * ordinary lock_version-guarded transition, so the outcome is
+     * identical to having arrived second: at most one row, one current
+     * actor/nonce pair, and no bypass of optimistic locking. If the winner
+     * transitions again in between, transition() reports zero affected
+     * rows and the caller gets the safe retry message.
+     *
+     * ONLY the business_id race is absorbed. UniqueConstraintViolation-
+     * Exception is re-thrown untouched when no row is present afterwards,
+     * because that means a DIFFERENT unique key collided (uid, or the
+     * OAuth state nonce) and swallowing it would hide a real defect.
+     * Nothing here catches a generic QueryException.
+     */
+    private function createFirstConnection(Business $business, int $actorUserId): BusinessGoogleConnection
+    {
+        try {
+            return BusinessGoogleConnection::create([
+                'business_id' => $business->id,
+                'state' => GoogleConnectionState::Pending,
+                'connected_by_user_id' => $actorUserId,
+            ]);
+        } catch (UniqueConstraintViolationException $exception) {
+            $winner = $this->findForBusiness($business);
+
+            if ($winner === null) {
+                throw $exception;
+            }
+
+            return $winner;
+        }
     }
 
     /**

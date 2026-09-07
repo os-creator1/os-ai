@@ -188,8 +188,18 @@ class GoogleBusinessProfilePrivacyTest extends TestCase
             'business_location_uid' => $location->uid,
         ]);
 
-        foreach (['index', 'comparison', 'settings', 'locations'] as $name) {
-            $body = (string) $this->get(route('customer.workspaces.businesses.gbp.' . $name, [$workspace->uid, $business->uid]))->getContent();
+        $binding = BusinessGoogleLocation::query()->where('business_id', $business->id)->firstOrFail();
+
+        $urls = [
+            'index' => route('customer.workspaces.businesses.gbp.index', [$workspace->uid, $business->uid]),
+            'settings' => route('customer.workspaces.businesses.gbp.settings', [$workspace->uid, $business->uid]),
+            'locations' => route('customer.workspaces.businesses.gbp.locations', [$workspace->uid, $business->uid]),
+            // Binding-addressed after the multi-location correction.
+            'comparison' => route('customer.workspaces.businesses.gbp.comparison', [$workspace->uid, $business->uid, $binding->uid]),
+        ];
+
+        foreach ($urls as $name => $url) {
+            $body = (string) $this->get($url)->getContent();
 
             $this->assertStringNotContainsString(self::SECRET_ADDRESS, $body, "The {$name} view leaked a private address.");
             $this->assertStringNotContainsString('10001', $body, "The {$name} view leaked a private postal code.");

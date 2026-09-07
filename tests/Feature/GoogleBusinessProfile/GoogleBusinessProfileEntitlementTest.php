@@ -152,10 +152,16 @@ class GoogleBusinessProfileEntitlementTest extends TestCase
         // Correction item 1 — the OAuth callback is no longer in this
         // group; it is one fixed, tenant-free route (covered separately).
         // Correction item 9 — connect is a POST.
-        foreach (['index', 'comparison', 'settings', 'locations'] as $name) {
+        foreach (['index', 'settings', 'locations'] as $name) {
             $this->get(route('customer.workspaces.businesses.gbp.' . $name, $args))
                 ->assertNotFound();
         }
+
+        // The comparison is binding-addressed after the multi-location
+        // correction. Entitlement is decided before the binding uid is
+        // ever resolved, so an unentitled Business is 404 either way.
+        $this->get(route('customer.workspaces.businesses.gbp.comparison', [$workspace->uid, $business->uid, 'any-binding-uid']))
+            ->assertNotFound();
 
         $this->post(route('customer.workspaces.businesses.gbp.connect', $args))->assertNotFound();
 

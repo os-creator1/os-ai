@@ -117,15 +117,24 @@ class GoogleBusinessProfileController extends CustomerBaseController
 
     /**
      * Contract §22 / §13.3 — computed AT READ TIME, never persisted.
+     *
+     * MULTI-LOCATION CORRECTION — addressed by BINDING, not by Business.
+     * $bindingUid is resolved strictly inside the already-resolved
+     * Business (§15.3), so a valid binding uid owned by another Business
+     * or Workspace is a 404 exactly like an unknown one. There is no
+     * implicit route-model binding: the uid never reaches the database
+     * without the Business in the same query.
      */
-    public function comparison(string $workspaceUid, string $businessUid): View|Factory|Application|RedirectResponse
+    public function comparison(string $workspaceUid, string $businessUid, string $bindingUid): View|Factory|Application|RedirectResponse
     {
         $this->authorize('view_google_business_profile');
         [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
 
-        $binding = $this->bindingRepository->findForBusiness($business);
+        $binding = $this->bindingRepository->findByUidForBusiness($business, $bindingUid);
 
-        if ($binding === null || $binding->businessLocation === null) {
+        abort_unless($binding !== null, 404);
+
+        if ($binding->businessLocation === null) {
             return redirect()->route('customer.workspaces.businesses.gbp.index', [$workspaceUid, $businessUid]);
         }
 
@@ -133,10 +142,13 @@ class GoogleBusinessProfileController extends CustomerBaseController
             'workspaceUid' => $workspaceUid,
             'businessUid' => $businessUid,
             'business' => $business,
-            'binding' => $binding,
-            'location' => $binding->businessLocation,
-            'rows' => $this->comparator->compare($business, $binding->businessLocation, $binding),
-            'mirrorIsFresh' => $binding->mirrorIsFresh(),
+            'comparisons' => [[
+                'binding' => $binding,
+                'location' => $binding->businessLocation,
+                'rows' => $this->comparator->compare($business, $binding->businessLocation, $binding),
+                'mirrorIsFresh' => $binding->mirrorIsFresh(),
+            ]],
+            'failures' => [],
             'ephemeral' => false,
         ]);
     }
@@ -363,7 +375,12 @@ class GoogleBusinessProfileController extends CustomerBaseController
                 ->orderByDesc('is_primary')
                 ->orderBy('id')
                 ->get(),
-            'binding' => $this->bindingRepository->findForBusiness($business),
+            // MULTI-LOCATION CORRECTION — the COMPLETE existing binding
+            // set, keyed by local business_locations.id. The chooser uses
+            // it to mark each platform location as already bound or still
+            // bindable; one existing binding never prevents another
+            // eligible BusinessLocation from being bound.
+            'boundByLocationId' => $this->bindingRepository->allForBusinessKeyedByLocationId($business),
         ]);
     }
 
@@ -527,37 +544,88 @@ class GoogleBusinessProfileController extends CustomerBaseController
                 ->with(['status' => 'success', 'message' => 'A refresh is already running for this business.']);
         }
 
-        $lastResult = null;
-        $lastBinding = null;
+        // MULTI-LOCATION CORRECTION — every binding is refreshed
+        // INDEPENDENTLY, and every ephemeral result is collected rather
+        // than overwritten. The previous implementation kept only the most
+        // recent result and its binding, so a Business with several
+        // bindings saw exactly one comparison and silently lost the rest.
+        $comparisons = [];
+        $failures = [];
+        $ephemeral = false;
+        $succeeded = 0;
 
         try {
             foreach ($bindings as $binding) {
-                $lastResult = $this->mirror->refresh($binding, $connection, (int) Auth::id());
-                $lastBinding = $binding;
+                $locationName = $binding->businessLocation?->name;
+
+                try {
+                    $result = $this->mirror->refresh($binding, $connection, (int) Auth::id());
+                } catch (GoogleBusinessProfileProviderException $exception) {
+                    // Contract §24.5/§24.10 — one binding's provider
+                    // failure is recorded against ITS OWN ledger operation
+                    // and leaves the other bindings' already-completed,
+                    // independent read outcomes exactly as they are. We
+                    // never claim the failed one refreshed.
+                    $failures[] = [
+                        'location' => $locationName,
+                        'message' => $exception->userMessage(),
+                    ];
+
+                    continue;
+                }
+
+                $succeeded++;
+
+                if ($result->persisted || $binding->businessLocation === null) {
+                    continue;
+                }
+
+                // Effective TTL zero — this object is the ONLY place the
+                // Content exists. It is rendered below in this same
+                // response and never flashed, cached, logged, queued or
+                // written to a ledger field.
+                $ephemeral = true;
+
+                $comparisons[] = [
+                    'binding' => $binding->fresh(),
+                    'location' => $binding->businessLocation,
+                    'rows' => $this->comparator->compareWithMirror(
+                        $business,
+                        $binding->businessLocation,
+                        $result->mirror(),
+                        $result->profile->openStatus,
+                    ),
+                    'mirrorIsFresh' => true,
+                ];
             }
-        } catch (GoogleBusinessProfileProviderException $exception) {
-            return $this->redirectWithError($workspaceUid, $businessUid, $exception->userMessage());
         } finally {
             $this->connections->releaseRefreshClaim($connection);
         }
 
-        if ($lastResult !== null && ! $lastResult->persisted && $lastBinding?->businessLocation !== null) {
-            // Ephemeral render — the only place this Content exists.
+        if ($ephemeral) {
             return view('customer.business.googleBusinessProfile.comparison', [
                 'workspaceUid' => $workspaceUid,
                 'businessUid' => $businessUid,
                 'business' => $business,
-                'binding' => $lastBinding->fresh(),
-                'location' => $lastBinding->businessLocation,
-                'rows' => $this->comparator->compareWithMirror($business, $lastBinding->businessLocation, $lastResult->mirror(), $lastResult->profile->openStatus),
-                'mirrorIsFresh' => true,
+                'comparisons' => $comparisons,
+                'failures' => $failures,
                 'ephemeral' => true,
             ]);
         }
 
+        if ($succeeded === 0) {
+            return $this->redirectWithError(
+                $workspaceUid,
+                $businessUid,
+                $failures[0]['message'] ?? 'Google could not be reached for any linked location.',
+            );
+        }
+
         return redirect()
             ->route('customer.workspaces.businesses.gbp.index', [$workspaceUid, $businessUid])
-            ->with(['status' => 'success', 'message' => 'Google profile refreshed.']);
+            ->with($failures === []
+                ? ['status' => 'success', 'message' => 'Refreshed all ' . $succeeded . ' linked Google ' . ($succeeded === 1 ? 'location' : 'locations') . '.']
+                : ['status' => 'error', 'message' => 'Refreshed ' . $succeeded . ' of ' . ($succeeded + count($failures)) . ' linked Google locations. ' . $failures[0]['message']]);
     }
 
     // -----------------------------------------------------------------
@@ -565,29 +633,72 @@ class GoogleBusinessProfileController extends CustomerBaseController
     // -----------------------------------------------------------------
 
     /**
+     * MULTI-LOCATION CORRECTION — the overview and settings surfaces now
+     * carry EVERY binding the Business owns, never a single inferred one.
+     *
+     * The schema permits one binding per BusinessLocation and therefore
+     * many per Business, so the previous singular $binding/$location pair
+     * silently rendered only the lowest-id row and made every other
+     * binding invisible and unreachable. Nothing here infers a "primary"
+     * GBP binding and nothing collapses the collection: each row carries
+     * its own local location, provider identifiers, freshness, comparison
+     * availability, health metadata and its own scoped action URLs.
+     *
      * @return array<string, mixed>
      */
     private function overviewData(string $workspaceUid, string $businessUid, Business $business): array
     {
         $connection = $this->connectionRepository->findForBusiness($business);
-        $binding = $this->bindingRepository->findForBusiness($business);
-        $location = $binding?->businessLocation;
 
         return [
             'workspaceUid' => $workspaceUid,
             'businessUid' => $businessUid,
             'business' => $business,
             'connection' => $connection,
-            'binding' => $binding,
-            'location' => $location,
-            'mirrorIsFresh' => $binding?->mirrorIsFresh() ?? false,
-            // Contract §23.6 — the storefront/consent contradiction is
-            // SURFACED, never silently resolved.
-            'addressContradiction' => $location !== null
-                && $location->service_mode === BusinessServiceMode::Storefront
-                && $location->public_address !== true,
-            'addressPermitted' => $location !== null && $this->readMask->addressPermittedForLocation($location),
+            'bindings' => $this->bindingViewModels($workspaceUid, $businessUid, $business),
         ];
+    }
+
+    /**
+     * One presentation row per binding, in a stable oldest-first order.
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    private function bindingViewModels(string $workspaceUid, string $businessUid, Business $business): array
+    {
+        $models = [];
+
+        foreach ($this->bindingRepository->allForBusiness($business) as $binding) {
+            $location = $binding->businessLocation;
+
+            $models[] = [
+                'binding' => $binding,
+                'location' => $location,
+                // Provider identifiers are resource names, not Google
+                // Content and not personal data — BusinessGoogleLocation
+                // structurally has no address column at all (§23.4), so
+                // showing them discloses nothing the private-address
+                // invariant protects.
+                'providerAccountResourceName' => $binding->provider_account_resource_name,
+                'providerLocationResourceName' => $binding->provider_location_resource_name,
+                'mirrorIsFresh' => $binding->mirrorIsFresh(),
+                // A binding whose local location row has gone is still
+                // listed (so it can be unlinked) but has no comparison.
+                'comparisonAvailable' => $location !== null,
+                'comparisonUrl' => $location === null ? null : route(
+                    'customer.workspaces.businesses.gbp.comparison',
+                    [$workspaceUid, $businessUid, $binding->uid],
+                ),
+                // Contract §23.6 — the storefront/consent contradiction is
+                // SURFACED per location, never silently resolved.
+                'addressContradiction' => $location !== null
+                    && $location->service_mode === BusinessServiceMode::Storefront
+                    && $location->public_address !== true,
+                'addressPermitted' => $location !== null && $this->readMask->addressPermittedForLocation($location),
+            ];
+        }
+
+        return $models;
     }
 
     /**

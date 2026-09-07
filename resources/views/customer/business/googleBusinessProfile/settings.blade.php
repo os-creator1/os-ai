@@ -60,29 +60,52 @@
         @endif
     </x-card>
 
-    @if($binding)
+    {{-- MULTI-LOCATION CORRECTION — every binding this Business owns gets
+         its own card, its own identifiers, its own freshness line and its
+         own unlink form scoped to that exact binding uid. Unlinking one
+         leaves the others untouched. --}}
+    @foreach($bindings as $item)
+        @php($binding = $item['binding'])
         <x-card :padded="true" class="mb-2">
             <p class="text-section-heading mb-1">Linked location</p>
             <dl class="row mb-2">
                 <dt class="col-sm-4">Google location</dt>
-                <dd class="col-sm-8">{{ $binding->provider_location_resource_name }}</dd>
+                <dd class="col-sm-8">{{ $item['providerLocationResourceName'] }}</dd>
 
                 <dt class="col-sm-4">Google account</dt>
-                <dd class="col-sm-8">{{ $binding->provider_account_resource_name }}</dd>
+                <dd class="col-sm-8">{{ $item['providerAccountResourceName'] }}</dd>
 
                 <dt class="col-sm-4">Platform location</dt>
-                <dd class="col-sm-8">{{ $location?->name ?? '—' }}</dd>
+                <dd class="col-sm-8">{{ $item['location']?->name ?? '—' }}</dd>
+
+                <dt class="col-sm-4">Verification</dt>
+                <dd class="col-sm-8">{{ $binding->verification_state?->label() ?? 'Unknown' }}</dd>
+
+                <dt class="col-sm-4">Google data</dt>
+                <dd class="col-sm-8">
+                    @if($item['mirrorIsFresh'] && $binding->mirror_fetched_at)
+                        Refreshed {{ $binding->mirror_fetched_at->toDayDateTimeString() }}
+                    @else
+                        Refresh required
+                    @endif
+                </dd>
             </dl>
 
-            @can('manage_google_business_profile')
-                <form method="POST" action="{{ route('customer.workspaces.businesses.gbp.unbind', [$workspaceUid, $businessUid]) }}">
-                    @csrf
-                    <input type="hidden" name="binding_uid" value="{{ $binding->uid }}">
-                    <button type="submit" class="btn btn-outline-secondary">Unlink this location</button>
-                </form>
-            @endcan
+            <div class="d-flex gap-1 flex-wrap">
+                @if($item['comparisonAvailable'])
+                    <a class="btn btn-outline-primary" href="{{ $item['comparisonUrl'] }}">View comparison</a>
+                @endif
+
+                @can('manage_google_business_profile')
+                    <form method="POST" action="{{ route('customer.workspaces.businesses.gbp.unbind', [$workspaceUid, $businessUid]) }}">
+                        @csrf
+                        <input type="hidden" name="binding_uid" value="{{ $binding->uid }}">
+                        <button type="submit" class="btn btn-outline-secondary">Unlink this location</button>
+                    </form>
+                @endcan
+            </div>
         </x-card>
-    @endif
+    @endforeach
 
     @if($connection && $connection->state->value !== 'disconnected')
         <x-card :padded="true" class="mb-2">

@@ -39,11 +39,6 @@ final class GoogleBusinessProfileBindingManager
     ) {
     }
 
-    public function findForBusiness(Business $business): ?BusinessGoogleLocation
-    {
-        return BusinessGoogleLocation::query()->where('business_id', $business->id)->first();
-    }
-
     /**
      * Contract §19.2 steps 5-9.
      *

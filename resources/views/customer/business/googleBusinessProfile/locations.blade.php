@@ -61,22 +61,39 @@
             <form method="POST" action="{{ route('customer.workspaces.businesses.gbp.bind', [$workspaceUid, $businessUid]) }}">
                 @csrf
 
+                {{-- MULTI-LOCATION CORRECTION — the COMPLETE existing binding
+                     set arrives keyed by local business_locations.id, so each
+                     platform location is shown as already bound or still
+                     bindable. One existing binding never prevents another
+                     eligible BusinessLocation from being bound: only the
+                     locations that are actually taken are disabled, and a
+                     Business may hold one binding per location. --}}
                 <div class="mb-2">
                     <label class="form-label" for="business_location_uid">Link to this platform location</label>
                     <select class="form-select" id="business_location_uid" name="business_location_uid" required>
                         <option value="">Choose one&hellip;</option>
                         @foreach($locations as $platformLocation)
-                            <option value="{{ $platformLocation->uid }}">
+                            @php($existing = $boundByLocationId[$platformLocation->id] ?? null)
+                            <option value="{{ $platformLocation->uid }}" @disabled($existing !== null)>
                                 {{ $platformLocation->name }}@if($platformLocation->is_primary) (primary)@endif
+                                @if($existing)
+                                    &mdash; already linked to {{ $existing->provider_location_resource_name }}
+                                @endif
                             </option>
                         @endforeach
                     </select>
+                    <span class="text-caption d-block">{{ $boundByLocationId->count() }} of {{ $locations->count() }} {{ $locations->count() === 1 ? 'location is' : 'locations are' }} already linked to Google.</span>
+                    <span class="text-caption d-block">
+                        Unlink one from connection settings to link it to a different Google location.
+                    </span>
                 </div>
 
                 <p class="text-section-heading mb-1">Choose the matching Google location</p>
+                @php($claimedProviderNames = $boundByLocationId->pluck('provider_location_resource_name')->all())
                 <div class="list-group mb-2">
                     @foreach($offers as $offer)
                         @php($candidate = $offer['candidate'])
+                        @php($alreadyClaimed = in_array($candidate->resourceName, $claimedProviderNames, true))
                         <label class="list-group-item d-flex align-items-start gap-1">
                             {{-- Deliberately never `checked`: the user
                                  chooses, always (contract §8.5). --}}
@@ -84,10 +101,12 @@
                                  raw resource name. Both provider names are derived
                                  server-side from it, so there is nothing to substitute. --}}
                             <input class="form-check-input mt-1" type="radio" name="candidate_token"
-                                   value="{{ $offer['token'] }}" required>
+                                   value="{{ $offer['token'] }}" @disabled($alreadyClaimed) required>
                             <span>
                                 <strong>{{ $candidate->displayTitle() }}</strong>
-                                @if($candidate->matchScore >= 50)
+                                @if($alreadyClaimed)
+                                    <x-badge variant="secondary">Already linked</x-badge>
+                                @elseif($candidate->matchScore >= 50)
                                     <x-badge variant="info">Likely match</x-badge>
                                 @endif
                                 <span class="text-caption d-block">

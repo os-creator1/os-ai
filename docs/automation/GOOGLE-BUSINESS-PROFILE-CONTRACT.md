@@ -392,6 +392,15 @@ Most Businesses have a single `is_primary` location, so the experience
 collapses to 1:1. **The schema must not.** Relaxing a unique constraint on a
 provider identity later is a painful migration; tightening the UI is not.
 
+**Nor may the UI (multi-location correction).** "The experience collapses to
+1:1" describes the *common case*, and the original implementation read it as
+a licence to render only one binding — which made every additional binding
+of a multi-location Business invisible and its comparison unreachable. A
+Business owning several bindings is a fully supported state, not a
+degenerate one: every customer surface must render the complete collection,
+and no code path may infer a "primary" GBP binding. See §18.1b, §24.10 and
+§25.
+
 ### 8.3 Enumeration is request-scoped
 
 Candidate accounts and candidate locations are fetched, ranked, rendered and
@@ -469,27 +478,65 @@ the user is sent to Google.
 
 ### 9.3 Connect initiation
 
-`GET /workspaces/{workspaceUid}/businesses/{businessUid}/gbp/connect`
-(§17), authenticated, running the full §15 chain plus
+`POST /workspaces/{workspaceUid}/businesses/{businessUid}/gbp/connect`
+(§17.2 — a **POST** since correction item 9, because it mutates state),
+authenticated, running the full §15 chain plus
 `manage_google_business_profile`. It:
 
-1. Generates a nonce with `Str::uuid()`. **`uniqid()` is forbidden.**
+0. **Validates OAuth configuration first (correction item 7).** Nothing
+   below runs — no connection row, no nonce, no ledger row — unless the
+   client id, client secret and redirect are all present and the redirect
+   equals the one fixed callback URI exactly (§28.3).
+1. Refuses outright if the connection is already `active` (correction item
+   4). There is no "reconnect a healthy connection" path, so consent is
+   **unconditionally forced** and step 4 below always applies.
+2. Generates a nonce with `Str::uuid()`. **`uniqid()` is forbidden.**
    `App\Library\Traits\HasUid::generateUid()` uses `uniqid()` and is
    therefore not usable for a security nonce; `Workspace` and
    `PlatformThemePreset` already override it with `Str::uuid()`, which is
    the house precedent this follows.
-2. Persists the nonce as a single-use, short-lived record (§9.4).
-3. Builds the authorization URL with `access_type=offline`,
+3. Persists the nonce as a single-use, short-lived record (§9.4), and
+   re-stamps `connected_by_user_id` on **every** newly issued attempt
+   (§9.4b) through the `lock_version`-guarded conditional update (§10.1b).
+4. Builds the authorization URL with `access_type=offline`,
    `include_granted_scopes=false`, `scope=https://www.googleapis.com/auth/business.manage`,
-   `state=<signed state>` and the configured `redirect`.
-4. Sends `prompt=consent` **only** when this Business has no stored refresh
-   token, or when its connection is in state `revoked`. A reconnect of a
-   healthy connection does not force consent. (Google returns a refresh
-   token "only… the first time that your application exchanges an
-   authorization code for tokens" under `access_type=offline`; forcing
-   consent on every connect is unnecessary noise, and never forcing it makes
-   an intentional reconnect unable to recover a lost token.)
+   `prompt=consent`, `state=<signed state>` and the configured `redirect`.
+   Consent is always forced because completing a connection **requires** a
+   newly returned refresh token (§10.1b), and under `access_type=offline`
+   Google returns one only on fresh consent.
 5. Writes a `connect_initiated` ledger row (§27) **before** redirecting.
+
+### 9.3b The first-connect race — CORRECTED (multi-location correction pass)
+
+`business_google_connections` carries `UNIQUE(business_id)` (C-1), so
+exactly one row per Business can ever exist. Two concurrent first-time
+connect requests can nonetheless both observe no row at step 1, after which
+the loser's `INSERT` violates that constraint. The original implementation
+performed a plain create, so the loser surfaced an **unhandled
+`QueryException` — a 500 carrying a database message**.
+
+**Required behaviour, and none of it weakens C-1:**
+
+* At most one connection row per Business, always. The constraint is
+  enforced by the database and is never relaxed, deferred or replaced by an
+  application-level check.
+* No raw database exception and no 500 ever reaches the user.
+* Exactly one *current* actor/nonce pair afterwards.
+* The losing request **re-fetches the winner's row and re-applies §9.3
+  step 1 against it**, then issues a newer attempt through the ordinary
+  `lock_version`-guarded transition of §10.1b. It does **not** bypass
+  optimistic locking, and it does not overwrite the row with a blind
+  update. If the winner transitions again in between, the conditional
+  update reports zero affected rows and the caller receives the safe
+  concurrency retry message instead.
+* Configuration validation (step 0) still happens **before** any of this,
+  so a misconfigured deployment never reaches the race at all.
+
+**Only the `business_id` collision may be absorbed.** The implementation
+catches `Illuminate\Database\UniqueConstraintViolationException` — never a
+generic `QueryException` — and re-throws it untouched unless a row for that
+Business is genuinely present afterwards. A violation of any other unique
+key (`uid`, `oauth_state_nonce`) is a real defect and must keep surfacing.
 
 ### 9.4 Signed state — exact contents
 
@@ -976,6 +1023,14 @@ feature unusable. The corrected behaviour is:
 * **The manual refresh RESPONSE renders the freshly fetched comparison
   ephemerally**, in that same response, from the in-memory result. It does
   not redirect.
+* **EVERY refreshed binding is rendered, not just the last one
+  (multi-location correction).** The refresh collects every ephemeral
+  result in memory and the response carries one comparison table per
+  Business-owned binding. Returning only the final iteration of the loop —
+  the original behaviour — made a multi-location Business's remaining
+  bindings unviewable at a zero TTL, since nothing was persisted for them
+  either. The following GET must show **every** binding as requiring a
+  refresh again.
 * **The following request correctly reports "refresh required"**, because
   nothing was stored.
 * The purge and read-time rules are unchanged.
@@ -1330,7 +1385,7 @@ group, placed immediately after the B4 automations group:
 ```php
 Route::prefix('{workspaceUid}/businesses/{businessUid}/gbp')->name('businesses.gbp.')->group(function () {
     Route::get('/',            'Business\GoogleBusinessProfileController@overview')->name('index');
-    Route::get('/comparison',  'Business\GoogleBusinessProfileController@comparison')->name('comparison');
+    Route::get('/locations/{bindingUid}/comparison', 'Business\GoogleBusinessProfileController@comparison')->name('comparison');
     Route::get('/settings',    'Business\GoogleBusinessProfileController@settings')->name('settings');
     Route::post('/connect',    'Business\GoogleBusinessProfileController@connect')->middleware('throttle:10,1')->name('connect');
     Route::get('/locations',   'Business\GoogleBusinessProfileController@candidates')->middleware('throttle:20,1')->name('locations');
@@ -1343,7 +1398,7 @@ Route::prefix('{workspaceUid}/businesses/{businessUid}/gbp')->name('businesses.g
 
 Resulting names: `customer.workspaces.businesses.gbp.{index,comparison,settings,connect,locations,bind,unbind,disconnect,refresh}` — **nine** Business-scoped routes, plus the bare `customer.gbp.index` chooser and the one fixed `customer.gbp.oauth.callback`.
 
-**Two corrections to this contract's original route table:**
+**Three corrections to this contract's original route table:**
 
 * **`connect` is a POST, not a GET (correction item 9).** It mutates
   connection state, the OAuth nonce, actor attribution and the ledger, so it
@@ -1353,6 +1408,19 @@ Resulting names: `customer.workspaces.businesses.gbp.{index,comparison,settings,
 * **`callback` is no longer in this group** — see §17.1b. It is one fixed,
   tenant-free route, because Google matches the registered `redirect_uri`
   exactly.
+* **`comparison` is addressed by BINDING, not by Business (multi-location
+  correction).** Its URI is
+  `/workspaces/{workspaceUid}/businesses/{businessUid}/gbp/locations/{bindingUid}/comparison`.
+  §8.2 permits one binding per `BusinessLocation` and therefore **many per
+  Business**, so a Business-addressed comparison had no unambiguous subject:
+  it resolved the lowest-id binding and left every other binding of the same
+  Business permanently unreachable. `{bindingUid}` is resolved strictly
+  inside the already-resolved Business via
+  `findByUidForBusiness()` (§15.3), so a valid binding uid owned by another
+  Business or Workspace returns **404**, indistinguishable from an unknown
+  uid. There is no implicit route-model binding: the uid never reaches the
+  database without the Business in the same query. **Every Business-owned
+  binding has its own reachable comparison.**
 
 `comparison` and `settings` are stated explicitly here; the original table
 omitted their routes even though §25.6 and §25.8 require both surfaces.
@@ -1389,7 +1457,9 @@ same namespace as `AutomationsController` and `MessagingChannelsController`.
 | Method | Route | Permission | Behaviour |
 |---|---|---|---|
 | `entry()` | `customer.gbp.index` | view | 0/1/many chooser (§17.1) |
-| `overview(string $workspaceUid, string $businessUid)` | `.index` | view | Connection state, binding state, comparison (§25) |
+| `overview(string $workspaceUid, string $businessUid)` | `.index` | view | Connection state and **every** binding (§18.1b, §25) |
+| `comparison(string $workspaceUid, string $businessUid, string $bindingUid)` | `.comparison` | view | The comparison for **that one binding** (§17.2, §22) |
+| `settings(string $workspaceUid, string $businessUid)` | `.settings` | view | Connection, **every** binding, recent operations (§25.8, §27) |
 | `connect(...)` | `.connect` | manage | §9.3, then `redirect()->away($authorizationUrl)` |
 | `callback(...)` | `.callback` | manage | §9.5 |
 | `disconnect(...)` | `.disconnect` | manage | §13.5 |
@@ -1406,6 +1476,44 @@ error.
 Each mutating action carries the same demo guard as B4
 (`config('app.stage') !== 'demo'` → proceed; otherwise redirect back with an
 error), so demo installations cannot initiate a real OAuth flow.
+
+### 18.1b The controller is MULTI-LOCATION — CORRECTED (multi-location correction)
+
+§8.2 has always permitted **one binding per `BusinessLocation` and therefore
+many bindings per Business**. The original controller nevertheless collapsed
+that collection at four separate points, and the schema and the product
+consequently told different truths:
+
+| Site | Original behaviour | Effect |
+|---|---|---|
+| `comparison()` | `findForBusiness()` → lowest-id row | Every binding but the first had no reachable comparison |
+| `overviewData()` | one `$binding` / `$location` pair | Every binding but the first was invisible on the overview and in settings |
+| `candidates()` | one `$binding` | The chooser could not say which local locations were already taken |
+| `refresh()` | looped all bindings, rendered `$last…` only | A zero-TTL refresh showed exactly one comparison and silently discarded the rest |
+
+**Corrected behaviour, and now mandatory:**
+
+* `overviewData()` returns a `bindings` **collection**, one presentation row
+  per binding, each carrying its own local `BusinessLocation`, its provider
+  account and location resource names, read-time freshness, comparison
+  availability and URL, verification/health metadata, and actions scoped to
+  that exact binding uid. **No "primary" GBP binding is inferred anywhere**
+  and the collection is never collapsed.
+* `comparison()` takes `$bindingUid` and resolves it with
+  `findByUidForBusiness()` (§15.3).
+* `candidates()` receives the **complete** existing binding set keyed by
+  local `business_location_id`, so the chooser distinguishes already-bound
+  local locations, still-bindable ones, and the exact Google candidate being
+  selected. One existing binding never prevents another eligible
+  `BusinessLocation` from being bound.
+* `refresh()` processes **every** Business-owned binding independently and
+  collects every result — see §24.10.
+
+Provider account and location resource names are shown on these surfaces.
+They are identifiers, not Google Content and not personal data, and
+`business_google_locations` structurally has **no address column at all**
+(§23.4 point 4), so surfacing them discloses nothing the private-address
+invariant protects. §13.7's conservative treatment is unchanged.
 
 ### 18.2 FormRequests
 
@@ -1511,6 +1619,28 @@ BusinessGoogleLocationRepository, BusinessGoogleOperationRepository}` with
 `AppServiceProvider`'s existing binding array. Every finder takes a
 `Business` or a `business_id` — **there is no `findByUid($uid)` without a
 Business** anywhere in these repositories.
+
+**`BusinessGoogleLocationRepository` exposes exactly three methods
+(multi-location correction):**
+
+```php
+public function allForBusiness(Business $business): Collection;
+public function allForBusinessKeyedByLocationId(Business $business): Collection;
+public function findByUidForBusiness(Business $business, string $uid): ?BusinessGoogleLocation;
+```
+
+`findForBusiness(Business)` has been **removed, not deprecated**. With many
+bindings per Business it had no unambiguous meaning: it silently returned
+the lowest-id row and was the direct cause of every collapse listed in
+§18.1b. Removing it makes the regression impossible to reintroduce by
+accident rather than merely discouraged, and T-MULTI-10 asserts its
+absence by reflection. The identically-named dead method on
+`GoogleBusinessProfileBindingManager` was removed with it.
+
+`BusinessGoogleConnectionRepository::findForBusiness()` **is retained.**
+Its semantics are genuinely unambiguous: `business_google_connections`
+carries `UNIQUE(business_id)` (C-1), so at most one row can ever exist per
+Business.
 
 ### 19.4 Jobs (`app/Jobs/GoogleBusinessProfile/`)
 
@@ -1853,8 +1983,9 @@ satisfy `public_address` — its semantics are undocumented ("Output only.").
 ### 24.1 Manual refresh is primary
 
 The refresh button is the main mechanism. It runs one bounded refresh for
-the Business's bindings, throttled to `throttle:10,1`, always through the
-ledger, and always outside a transaction.
+**every** one of the Business's bindings, throttled to `throttle:10,1`,
+always through the ledger, and always outside a transaction. See §24.10 for
+per-binding independence and partial-failure reporting.
 
 ### 24.2 Background refresh — at most daily, staggered
 
@@ -1992,6 +2123,39 @@ Absolute. Asserted by T-SYNC-3, which fails the test if a provider call is
 observed while `DB::transactionLevel() > 0`. This mirrors the payments
 docblock rule already established in this repository.
 
+### 24.10 Refresh is per binding, and independent — CORRECTED (multi-location correction)
+
+A manual or scheduled refresh iterates **every** binding the Business owns
+and refreshes each one **independently**. Each binding gets its own ledger
+operation, its own idempotency fingerprint, its own budget reservations and
+its own outcome. A refresh claim is taken once for the connection and
+released once, in a `finally`, whatever happens.
+
+**Partial failure is reported truthfully and never silently absorbed.**
+When one binding's provider read fails:
+
+* that binding's failure is recorded against **its own** ledger operation,
+  with the existing §24.5/§24.6 classification (`deferred` for rate limits,
+  `unknown` for timeouts, `failed` otherwise). Its `last_synced_at` and its
+  mirror are left exactly as they were, so the next sweep retries it
+  naturally;
+* the loop **continues** to the remaining bindings;
+* the already-completed reads of the other bindings are **preserved**. This
+  is explicitly permitted: §24.4 makes each binding's refresh an
+  independent, separately-fingerprinted operation, and §21.4 forbids any
+  cross-binding aggregation, so one binding's failure carries no
+  information about another's result and discarding those results would
+  destroy correct data for no benefit;
+* the user-facing message states the true counts — *"Refreshed N of M
+  linked Google locations"* plus the first safe failure message. **It must
+  never claim that every binding refreshed.** Only when *no* binding
+  succeeded does the action redirect with a pure error.
+
+At a zero effective TTL the same rule applies to the ephemeral response:
+every binding that succeeded is rendered, and every binding that failed is
+reported above the tables. Failure messages are the normalized user
+messages of §9.8 — never a raw provider message, and never Google Content.
+
 ---
 
 ## 25. UI STATES — LOCKED
@@ -2007,15 +2171,21 @@ matching `customer/business/MessagingChannels/`.
 |---|---|---|---|
 | 25.1 | Business chooser | `entry.blade.php` | 0 → "no eligible business" copy; 1 → redirect (never rendered); many → list |
 | 25.2 | Not connected | `index.blade.php` | What connecting does, what Slice A reads, §25.9 consent disclosure, **Connect** button |
-| 25.3 | Connected, not bound | `index.blade.php` | Connected Google account email, **Choose location** action |
-| 25.4 | Location chooser | `locations.blade.php` | Grouped by Google account, showing account name, `Account.role`, location title, store code, locality hint (§23.3), a non-binding "likely match" hint, and an explicit radio + confirm |
-| 25.5 | Connected and bound | `index.blade.php` | Google location health (§21.3), `has_pending_edits`, `open_status`, duplicate notice, links to `mapsUri` / `newReviewUri` |
-| 25.6 | Comparison | `comparison.blade.php` | The four-column §22 table |
-| 25.7 | Revoked / reconnect | `index.blade.php` | Plain explanation, **Reconnect** action. The binding is retained and shown |
-| 25.8 | Connection settings | `settings.blade.php` | Connected account, granted scopes (display only), `connected_at`, `last_refreshed_at`, recent operations (§27), **Disconnect** and **Unbind** |
+| 25.3 | Connected, no bindings | `index.blade.php` | Connected Google account email, **Choose location** action |
+| 25.4 | Location chooser | `locations.blade.php` | Grouped by Google account, showing account name, `Account.role`, location title, store code, locality hint (§23.3), a non-binding "likely match" hint, and an explicit radio + confirm. **Receives the complete existing binding set keyed by local `business_location_id`** and marks each local location as already bound or still bindable, and each Google candidate as already linked or selectable |
+| 25.5 | Connected and bound | `index.blade.php` | **One card per binding**, each with its local location, provider identifiers, Google location health (§21.3), `has_pending_edits`, `open_status`, duplicate notice, its own refresh status and its own **View comparison** link |
+| 25.6 | Comparison | `comparison.blade.php` | One four-column §22 table **per rendered binding** |
+| 25.7 | Revoked / reconnect | `index.blade.php` | Plain explanation, **Reconnect** action. Every binding is retained and shown |
+| 25.8 | Connection settings | `settings.blade.php` | Connected account, granted scopes (display only), `connected_at`, `last_refreshed_at`, recent operations (§27), **Disconnect**, and **one card per binding** each with its own **Unlink** form scoped to that binding uid |
 | 25.9 | Consent disclosure | shown before every Connect | See below |
 | 25.10 | Refresh status | inline | "Last refreshed <time>", or "Refresh required" when the mirror is absent or expired (§13.3) |
 | 25.11 | Safe error | inline alert | One of the closed `failure_classification` values, mapped to plain language. **Never a raw provider message** |
+
+**Every one of these surfaces is multi-location (multi-location
+correction).** No view may infer a "primary" GBP binding, and no view may
+render only the first or the last of a Business's bindings. Where a state
+above says "one card per binding", a Business holding three bindings shows
+three cards, each with actions addressed to that binding's own uid.
 
 ### 25.9 Required consent disclosure — exact obligation
 
@@ -2594,6 +2764,35 @@ The review corrections add four families, all proved with the Fake client:
 | T-EPH-1 | with a zero TTL the manual refresh RESPONSE renders the fetched data, nothing reusable is written, the session carries nothing, and the NEXT request asks for a refresh |
 | T-EPH-2 | with a positive TTL the manual refresh still redirects and the next request renders the stored mirror |
 
+### 32.7b Multi-location surface and the first-connect race (multi-location correction)
+
+Fixture: **one Business, three local `BusinessLocation` rows, three
+bindings.** Two bindings cannot distinguish "renders the first" from
+"renders the last" from "renders them all", so three is the minimum
+meaningful fixture and is mandatory for this family.
+
+| ID | Assertion |
+|---|---|
+| T-MULTI-1 | the overview renders EVERY binding — each local location, each provider resource name, and a comparison link addressed to that binding's own uid |
+| T-MULTI-2 | settings renders EVERY binding, each with its own unlink form carrying that binding's uid |
+| T-MULTI-3 | each binding-addressed comparison route renders THAT binding's Google values and none of the others' |
+| T-MULTI-4 | a valid binding uid owned by another Business returns 404, indistinguishably from an unknown uid |
+| T-MULTI-5 | binding a second local location adds a row rather than overwriting or hiding the first; both remain visible, and the chooser reports both local locations as already linked |
+| T-MULTI-6 | unbinding one binding leaves the others intact and still rendered |
+| T-MULTI-7 | a persisted refresh reads every binding from Google exactly once and persists a mirror for every one of them |
+| T-MULTI-8 | a zero-TTL refresh renders EVERY ephemeral comparison in the one response, persists nothing reusable for any of them, and leaks none of the Content into the session or the ledger |
+| T-MULTI-9 | the next GET after a zero-TTL refresh reuses none of them: every binding again reports "refresh required" |
+| T-MULTI-10 | no first/last-binding shortcut remains — `findForBusiness()` is absent from both the binding repository interface and the binding manager, the interface exposes only the three §19.3 methods, and the controller source carries no last-result shortcut |
+| T-MULTI-11 | one binding failing reports the true counts, preserves the other bindings' completed read outcomes, and never claims that every binding refreshed (§24.10) |
+| T-RACE-1 | a concurrent first-connect produces exactly ONE connection row, no 500 and no raw database message, one current actor/nonce pair, and a `lock_version` advanced exactly once through the optimistic path |
+| T-RACE-2 | the one-connection-per-Business constraint is still enforced by the database — a second row for the same Business still raises `UniqueConstraintViolationException` |
+
+T-RACE-1 is made **deterministic**, not probabilistic: a `creating` listener
+inserts a rival row for the same Business at exactly the interleaving point
+two real requests would collide on, driving the real `INSERT` into the real
+MySQL `bgc_business_unique` constraint. The constraint is exercised for
+real; nothing is mocked away.
+
 ### 32.8 Audit, cache, notifications and regression
 
 | ID | Assertion |
@@ -2983,10 +3182,13 @@ Slice A is done when **all** of the following are true:
 
 ## APPENDIX C — POST-IMPLEMENTATION REVIEW CORRECTIONS
 
-Nine defects were found in review AFTER the Slice A implementation landed.
-Some originated in this contract itself; those sections have been corrected
-in place above, and are indexed here so the document and the product tell
-the same truth.
+Eleven defects were found in review AFTER the Slice A implementation
+landed — nine in the first pass (C.1) and two in a second pass (C.2). Some
+originated in this contract itself; those sections have been corrected in
+place above, and are indexed here so the document and the product tell the
+same truth.
+
+### C.1 — First review pass
 
 | # | Defect | Origin | Corrected in |
 |---|---|---|---|
@@ -2999,6 +3201,22 @@ the same truth.
 | 7 | Incomplete or mismatched OAuth configuration was discovered only after state had been written. | Implementation, and a contract silence | §28.3 |
 | 8 | A zero effective mirror TTL stored an expired mirror and redirected, so the fetched data could never be shown — the documented default was unusable. | **This contract** (§13.4) | §13.4 |
 | 9 | Connect initiation was a GET even though it mutates connection state, the nonce, actor attribution and the ledger. | **This contract** (§17.2) | §17.2 |
+
+### C.2 — Second review pass: the multi-location contradiction and the first-connect race
+
+Two further defects were found in a later review of the same slice.
+
+| # | Defect | Origin | Corrected in |
+|---|---|---|---|
+| 10 | **The schema and the product told different truths about cardinality.** §8.2 permits one binding per `BusinessLocation` and therefore many per Business, but the implementation collapsed the collection at four points: `comparison()` used the singular `findForBusiness()` and always resolved the lowest-id row; `overviewData()` exposed one `$binding`/`$location`; the chooser received one `$binding`; and a zero-TTL refresh looped every binding but rendered only the last. Every binding except the first or the last was invisible or unreachable. | **This contract** (§17.2 named a Business-addressed `comparison` route with no binding parameter; §25's UI table described a single "Connected and bound" state) and implementation | §17.2, §18.1b, §19.3, §24.10, §25, §13.4, §32.7b |
+| 11 | `beginConnect()` performed a plain create when no connection was found. Two concurrent first-connect requests could both observe no row, after which the loser hit `UNIQUE(business_id)` and surfaced an unhandled `QueryException` — a 500 carrying a database message. | Implementation, and a contract silence | §9.3b, §32.7b |
+
+The ambiguous singular accessor was **removed rather than deprecated**
+(§19.3), so the collapse cannot be reintroduced by accident. The
+one-connection-per-Business constraint was **not** weakened to fix the race
+(§9.3b): only the specific `business_id` unique violation is absorbed, and
+the losing request continues through the ordinary `lock_version`-guarded
+transition.
 
 ---
 

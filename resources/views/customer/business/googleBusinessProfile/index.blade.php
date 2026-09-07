@@ -110,7 +110,7 @@
             </div>
         </x-card>
 
-        @if(! $binding)
+        @if(count($bindings) === 0)
             {{-- Contract §25.3 — connected but not bound. --}}
             <x-card :padded="true">
                 <x-empty-state icon="link" title="No Google location linked yet"
@@ -122,67 +122,84 @@
                 @endcan
             </x-card>
         @else
-            {{-- Contract §25.5 — connected and bound. --}}
-            <x-card :padded="true" class="mb-2">
-                <div class="d-flex justify-content-between align-items-start flex-wrap">
-                    <div>
-                        <p class="text-section-heading mb-1">Linked Google location</p>
-                        <p class="mb-1"><strong>{{ $binding->bound_title_snapshot ?? $binding->provider_location_resource_name }}</strong></p>
-                        <p class="text-caption mb-1">Linked to platform location: {{ $location?->name }}</p>
-                        <p class="text-caption mb-0">
-                            {{-- Contract §25.10 — refresh status. --}}
-                            @if($mirrorIsFresh && $binding->mirror_fetched_at)
-                                Last refreshed {{ $binding->mirror_fetched_at->diffForHumans() }}.
-                            @else
-                                Refresh required &mdash; Google data is not available or has passed its retention window.
+            {{-- Contract §25.5 — connected and bound. EVERY binding this
+                 Business owns is listed; no "primary" binding is inferred
+                 and the collection is never collapsed to one row. --}}
+            @foreach($bindings as $item)
+                @php($binding = $item['binding'])
+                <x-card :padded="true" class="mb-2">
+                    <div class="d-flex justify-content-between align-items-start flex-wrap">
+                        <div>
+                            <p class="text-section-heading mb-1">Linked Google location</p>
+                            <p class="mb-1"><strong>{{ $binding->bound_title_snapshot ?? $item['providerLocationResourceName'] }}</strong></p>
+                            <p class="text-caption mb-1">Linked to platform location: {{ $item['location']?->name ?? '—' }}</p>
+                            <p class="text-caption mb-1">
+                                {{ $item['providerLocationResourceName'] }} &middot; {{ $item['providerAccountResourceName'] }}
+                            </p>
+                            <p class="text-caption mb-0">
+                                {{-- Contract §25.10 — refresh status, per binding. --}}
+                                @if($item['mirrorIsFresh'] && $binding->mirror_fetched_at)
+                                    Last refreshed {{ $binding->mirror_fetched_at->diffForHumans() }}.
+                                @else
+                                    Refresh required &mdash; Google data is not available or has passed its retention window.
+                                @endif
+                            </p>
+                        </div>
+                        <div class="text-end">
+                            @if($binding->verification_state)
+                                <x-badge :variant="$binding->verification_state->value === 'verified' ? 'success' : 'warning'">
+                                    {{ $binding->verification_state->label() }}
+                                </x-badge>
                             @endif
-                        </p>
+                        </div>
                     </div>
-                    <div class="text-end">
-                        @if($binding->verification_state)
-                            <x-badge :variant="$binding->verification_state->value === 'verified' ? 'success' : 'warning'">
-                                {{ $binding->verification_state->label() }}
-                            </x-badge>
-                        @endif
-                    </div>
-                </div>
 
-                @if($binding->has_pending_edits)
-                    <x-alert variant="info" class="mt-2 mb-0">This Google listing has edits pending review.</x-alert>
-                @endif
+                    @if($binding->has_pending_edits)
+                        <x-alert variant="info" class="mt-2 mb-0">This Google listing has edits pending review.</x-alert>
+                    @endif
 
-                @if($binding->duplicate_of_resource_name)
-                    <x-alert variant="warning" class="mt-2 mb-0">
-                        Google reports this listing as a duplicate of another location. Resolve it in Google; this platform never merges listings.
-                    </x-alert>
-                @endif
+                    @if($binding->duplicate_of_resource_name)
+                        <x-alert variant="warning" class="mt-2 mb-0">
+                            Google reports this listing as a duplicate of another location. Resolve it in Google; this platform never merges listings.
+                        </x-alert>
+                    @endif
 
-                @if($binding->open_status && $binding->open_status !== 'OPEN')
-                    <x-alert variant="warning" class="mt-2 mb-0">
-                        Google shows this location as
-                        {{ $binding->open_status === 'CLOSED_PERMANENTLY' ? 'permanently closed' : 'temporarily closed' }}.
-                    </x-alert>
-                @endif
+                    @if($binding->open_status && $binding->open_status !== 'OPEN')
+                        <x-alert variant="warning" class="mt-2 mb-0">
+                            Google shows this location as
+                            {{ $binding->open_status === 'CLOSED_PERMANENTLY' ? 'permanently closed' : 'temporarily closed' }}.
+                        </x-alert>
+                    @endif
 
-                {{-- Contract §23.6 — the storefront/consent contradiction is
-                     SURFACED, never silently resolved in either direction. --}}
-                @if($addressContradiction)
-                    <x-alert variant="warning" class="mt-2 mb-0">
-                        This location is marked as a storefront, but its address is set to stay private.
-                        The address is not sent to or read from Google while that is the case.
-                    </x-alert>
-                @endif
-            </x-card>
+                    {{-- Contract §23.6 — the storefront/consent contradiction is
+                         SURFACED, never silently resolved in either direction. --}}
+                    @if($item['addressContradiction'])
+                        <x-alert variant="warning" class="mt-2 mb-0">
+                            This location is marked as a storefront, but its address is set to stay private.
+                            The address is not sent to or read from Google while that is the case.
+                        </x-alert>
+                    @endif
+
+                    {{-- The comparison action is scoped to THIS binding. --}}
+                    @if($item['comparisonAvailable'])
+                        <a class="btn btn-primary mt-2" href="{{ $item['comparisonUrl'] }}">
+                            View comparison
+                        </a>
+                    @endif
+                </x-card>
+            @endforeach
 
             <div class="d-flex gap-1 flex-wrap">
-                <a class="btn btn-primary" href="{{ route('customer.workspaces.businesses.gbp.comparison', [$workspaceUid, $businessUid]) }}">
-                    View comparison
-                </a>
                 @can('manage_google_business_profile')
                     <form method="POST" action="{{ route('customer.workspaces.businesses.gbp.refresh', [$workspaceUid, $businessUid]) }}">
                         @csrf
-                        <button type="submit" class="btn btn-outline-primary">Refresh from Google</button>
+                        <button type="submit" class="btn btn-outline-primary">
+                            Refresh {{ count($bindings) === 1 ? 'from Google' : 'all ' . count($bindings) . ' locations from Google' }}
+                        </button>
                     </form>
+                    <a class="btn btn-outline-primary" href="{{ route('customer.workspaces.businesses.gbp.locations', [$workspaceUid, $businessUid]) }}">
+                        Link another location
+                    </a>
                 @endcan
                 <a class="btn btn-outline-secondary" href="{{ route('customer.workspaces.businesses.gbp.settings', [$workspaceUid, $businessUid]) }}">
                     Connection settings

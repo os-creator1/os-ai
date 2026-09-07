@@ -406,7 +406,7 @@ class GoogleBusinessProfileMirrorRetentionTest extends TestCase
         $connection = $this->activeConnection($business);
         $this->fakeGoogleWithLocation(['title' => 'Ephemeral Only Co']);
 
-        BusinessGoogleLocation::create([
+        $binding = BusinessGoogleLocation::create([
             'business_google_connection_id' => $connection->id,
             'business_id' => $business->id,
             'business_location_id' => $location->id,
@@ -431,7 +431,7 @@ class GoogleBusinessProfileMirrorRetentionTest extends TestCase
         $this->assertStringNotContainsString('Ephemeral Only Co', $ledger);
 
         // The NEXT request asks for a refresh again.
-        $next = $this->get(route('customer.workspaces.businesses.gbp.comparison', [$workspace->uid, $business->uid]));
+        $next = $this->get(route('customer.workspaces.businesses.gbp.comparison', [$workspace->uid, $business->uid, $binding->uid]));
 
         $next->assertOk();
         $next->assertDontSee('Ephemeral Only Co', false);
@@ -451,7 +451,7 @@ class GoogleBusinessProfileMirrorRetentionTest extends TestCase
         $connection = $this->activeConnection($business);
         $this->fakeGoogleWithLocation(['title' => 'Persisted Co']);
 
-        BusinessGoogleLocation::create([
+        $binding = BusinessGoogleLocation::create([
             'business_google_connection_id' => $connection->id,
             'business_id' => $business->id,
             'business_location_id' => $location->id,
@@ -466,7 +466,7 @@ class GoogleBusinessProfileMirrorRetentionTest extends TestCase
 
         $this->assertNotNull(DB::table('business_google_locations')->where('business_id', $business->id)->value('profile_mirror'));
 
-        $this->get(route('customer.workspaces.businesses.gbp.comparison', [$workspace->uid, $business->uid]))
+        $this->get(route('customer.workspaces.businesses.gbp.comparison', [$workspace->uid, $business->uid, $binding->uid]))
             ->assertOk()
             ->assertSee('Persisted Co', false);
     }

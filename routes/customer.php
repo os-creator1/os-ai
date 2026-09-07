@@ -741,7 +741,16 @@
         */
         Route::prefix('{workspaceUid}/businesses/{businessUid}/gbp')->name('businesses.gbp.')->group(function () {
             Route::get('/', 'Business\GoogleBusinessProfileController@overview')->name('index');
-            Route::get('/comparison', 'Business\GoogleBusinessProfileController@comparison')->name('comparison');
+            // Multi-location correction — the comparison is addressed by the
+            // BINDING, not by the Business. A Business may hold one binding
+            // per BusinessLocation, so a Business-addressed comparison could
+            // only ever have shown the first one and left every other binding
+            // unreachable. {bindingUid} is resolved strictly INSIDE the
+            // already-resolved Business (findByUidForBusiness), so a valid
+            // binding uid belonging to another Business or Workspace is a 404
+            // exactly like an unknown one. There is deliberately no implicit
+            // route-model binding anywhere in this group.
+            Route::get('/locations/{bindingUid}/comparison', 'Business\GoogleBusinessProfileController@comparison')->name('comparison');
             Route::get('/settings', 'Business\GoogleBusinessProfileController@settings')->name('settings');
             // Correction pass item 9 — connect initiation MUTATES state
             // (connection row, nonce, actor attribution, ledger), so it is

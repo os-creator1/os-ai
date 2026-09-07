@@ -97,10 +97,16 @@ class GoogleBusinessProfileTenancyTest extends TestCase
 
         DB::table('workspaces')->where('id', $workspace->id)->update(['is_active' => false]);
 
-        foreach (['index', 'comparison', 'settings', 'locations'] as $name) {
+        foreach (['index', 'settings', 'locations'] as $name) {
             $this->get(route('customer.workspaces.businesses.gbp.' . $name, [$workspace->uid, $business->uid]))
                 ->assertNotFound();
         }
+
+        // The comparison is binding-addressed after the multi-location
+        // correction, so it is exercised with a binding uid. The Workspace
+        // is refused before the uid is ever looked up.
+        $this->get(route('customer.workspaces.businesses.gbp.comparison', [$workspace->uid, $business->uid, 'any-binding-uid']))
+            ->assertNotFound();
 
         // Even disconnect/unbind — which skip the ENTITLEMENT step by
         // design (contract §39.4) — still require an active Workspace.

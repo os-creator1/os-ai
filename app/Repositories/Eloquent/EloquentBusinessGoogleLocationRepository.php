@@ -9,15 +9,6 @@ use Illuminate\Support\Collection;
 
 class EloquentBusinessGoogleLocationRepository implements BusinessGoogleLocationRepository
 {
-    public function findForBusiness(Business $business): ?BusinessGoogleLocation
-    {
-        return BusinessGoogleLocation::query()
-            ->where('business_id', $business->id)
-            ->with('businessLocation')
-            ->orderBy('id')
-            ->first();
-    }
-
     public function allForBusiness(Business $business): Collection
     {
         return BusinessGoogleLocation::query()
@@ -25,6 +16,16 @@ class EloquentBusinessGoogleLocationRepository implements BusinessGoogleLocation
             ->with('businessLocation')
             ->orderBy('id')
             ->get();
+    }
+
+    /**
+     * business_google_locations.business_location_id is UNIQUE, so keying
+     * by it is lossless — no binding can be dropped by the re-key.
+     */
+    public function allForBusinessKeyedByLocationId(Business $business): Collection
+    {
+        return $this->allForBusiness($business)
+            ->keyBy(fn (BusinessGoogleLocation $binding) => (int) $binding->business_location_id);
     }
 
     /**
