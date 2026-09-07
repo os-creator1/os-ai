@@ -1005,6 +1005,20 @@
                         'icon'   => 'link',
                         'access' => 'view_numbers',
                     ],
+                    // Google Business Profile Slice A (contract §26): ONE
+                    // narrow entry, placed beside Channels because both
+                    // are "connect an external provider" surfaces. `access`
+                    // hides the link; it authorizes nothing — every GBP
+                    // route enforces the §15 tenancy chain, entitlement and
+                    // permission independently.
+                    [
+                        'url'    => url('gbp'),
+                        'slug'   => 'gbp',
+                        'name'   => 'Google Business Profile',
+                        'i18n'   => 'Google Business Profile',
+                        'icon'   => 'map-pin',
+                        'access' => 'view_google_business_profile',
+                    ],
                     [
                         'url'    => url('prospecting'),
                         'slug'   => 'prospecting',

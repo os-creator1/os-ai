@@ -208,19 +208,29 @@ class WorkspaceEntitlementSchemaTest extends TestCase
         ];
         sort($expectedCore);
 
-        $expectedGrowth = array_merge($expectedCore, ['google_ads_module', 'meta_ads_module', 'seo_module']);
+        // Google Business Profile Slice A (its contract §2.1) added
+        // google_business_profile_module to GROWTH and AGENCY ONLY, via
+        // 2026_09_09_120004_seed_google_business_profile_plan_packaging.php.
+        // CORE is deliberately excluded, which is exactly what the
+        // unchanged $expectedCore below still asserts.
+        $expectedGrowth = array_merge($expectedCore, [
+            'google_ads_module', 'meta_ads_module', 'seo_module', 'google_business_profile_module',
+        ]);
         sort($expectedGrowth);
 
         $expectedAgency = array_merge($expectedGrowth, ['agency_package_capabilities', 'prospect_outreach', 'white_label']);
         sort($expectedAgency);
 
         $this->assertCount(9, $expectedCore);
-        $this->assertCount(12, $expectedGrowth);
-        $this->assertCount(15, $expectedAgency);
+        $this->assertCount(13, $expectedGrowth);
+        $this->assertCount(16, $expectedAgency);
 
         $this->assertSame($expectedCore, $coreKeys, 'Core feature-key set mismatch.');
-        $this->assertSame($expectedGrowth, $growthKeys, 'Growth feature-key set mismatch (must equal exact Core + 3).');
+        $this->assertSame($expectedGrowth, $growthKeys, 'Growth feature-key set mismatch (must equal exact Core + 4).');
         $this->assertSame($expectedAgency, $agencyKeys, 'Agency feature-key set mismatch (must equal exact Growth + 3).');
+
+        // Core must NEVER receive the Google Business Profile module.
+        $this->assertNotContains('google_business_profile_module', $coreKeys);
     }
 
     public function test_planned_feature_prospect_outreach_still_receives_an_agency_packaging_row(): void

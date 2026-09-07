@@ -22,6 +22,7 @@ enum PlatformFeature: string
     case AdsBasicVisibility = 'ads_basic_visibility';
     case SeoModule = 'seo_module';
     case GoogleAdsModule = 'google_ads_module';
+    case GoogleBusinessProfileModule = 'google_business_profile_module';
     case MetaAdsModule = 'meta_ads_module';
     case WhiteLabel = 'white_label';
     case AgencyPackageCapabilities = 'agency_package_capabilities';

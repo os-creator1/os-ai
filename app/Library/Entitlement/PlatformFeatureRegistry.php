@@ -47,6 +47,19 @@ final class PlatformFeatureRegistry
         // before this flip (2026_08_13_120007_seed_workspace_plan_catalog_and_features.php),
         // seeded independently of this availability lock.
         PlatformFeature::WebsiteGeneration->value => PlatformFeatureAvailability::Available,
+        // Google Business Profile Slice A implementation pass (contract
+        // §2.2): registered Available on arrival, meeting the exact
+        // evidentiary bar ProspectOutreach and WebsiteGeneration were each
+        // held to — a real, executable, Business-scoped controller/routes/
+        // persistence now exists (App\Http\Controllers\Customer\Business\
+        // GoogleBusinessProfileController and its
+        // business_google_connections / business_google_locations /
+        // business_google_operations schema). Unlike WebsiteGeneration,
+        // this feature also needs NEW plan packaging: it is Growth +
+        // Agency only, seeded by
+        // 2026_09_09_120004_seed_google_business_profile_plan_packaging.php,
+        // and Core is deliberately excluded.
+        PlatformFeature::GoogleBusinessProfileModule->value => PlatformFeatureAvailability::Available,
         PlatformFeature::Calendar->value => PlatformFeatureAvailability::Planned,
         PlatformFeature::Forms->value => PlatformFeatureAvailability::Planned,
         PlatformFeature::AiCooBasic->value => PlatformFeatureAvailability::Planned,

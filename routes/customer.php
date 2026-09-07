@@ -380,6 +380,46 @@
 
     /*
     |--------------------------------------------------------------------------
+    | Google Business Profile entry (Slice A, contract §17.1)
+    |--------------------------------------------------------------------------
+    |
+    | Bare selector only — the actual read-only connection/mirror surface
+    | lives at customer.workspaces.businesses.gbp.*. Never guesses a
+    | Business: zero accessible show an empty state, exactly one redirects
+    | through, several show a chooser. "Accessible" here also means
+    | ENTITLED, so a Core-tier Business never appears. See
+    | Business\GoogleBusinessProfileController::entry().
+    |
+    */
+    Route::get('gbp', 'Business\GoogleBusinessProfileController@entry')->name('gbp.index');
+
+    /*
+    |--------------------------------------------------------------------------
+    | Google Business Profile OAuth callback — ONE FIXED, TENANT-FREE URI
+    |--------------------------------------------------------------------------
+    |
+    | Correction pass item 1. Google matches `redirect_uri` EXACTLY against
+    | the client's registered authorized redirect URIs, so a callback nested
+    | under /{workspaceUid}/businesses/{businessUid}/... could never be
+    | registered: every tenant would need its own registered URI. This is
+    | the single URI that GOOGLE_BUSINESS_PROFILE_REDIRECT must equal, and
+    | GoogleBusinessProfileOAuthConfig refuses to start a flow unless it
+    | does.
+    |
+    | It carries NO Workspace and NO Business parameter. The Business is
+    | resolved exclusively from the signed state, its Workspace is looked up
+    | from the database, and the ENTIRE tenancy/entitlement/permission chain
+    | is re-run before the nonce is consumed or any code exchanged. It stays
+    | GET because Google redirects the browser here; it is authenticated
+    | like every other customer route.
+    |
+    */
+    Route::get('gbp/oauth/callback', 'Business\GoogleBusinessProfileController@callback')
+        ->middleware('throttle:20,1')
+        ->name('gbp.oauth.callback');
+
+    /*
+    |--------------------------------------------------------------------------
     | Reports module — REMOVED by B5 Business Analytics
     |--------------------------------------------------------------------------
     |
@@ -671,6 +711,59 @@
             Route::get('/', 'Business\AnalyticsController@overview')->name('overview');
             Route::get('/campaigns', 'Business\AnalyticsController@campaigns')->name('campaigns');
             Route::get('/series', 'Business\AnalyticsController@series')->name('series')->middleware('throttle:60,1');
+        });
+
+        /*
+        |----------------------------------------------------------------------
+        | Google Business Profile Slice A (contract §17.2) — the
+        | Business-scoped, READ-ONLY connection and profile-mirror surface.
+        |
+        | Every action runs Workspace -> Business -> userCanAccessBusiness()
+        | -> active Business -> GoogleBusinessProfileModule entitlement ->
+        | connection/binding resolved INSIDE that Business. Every failure is
+        | 404, never 403.
+        |
+        | The OAuth callback is registered HERE, inside the authenticated
+        | group, so it inherits ['web','auth','can:access_backend',
+        | 'ValidProduct','twofactor']. It is deliberately NOT in
+        | routes/auth.php: it must never authenticate or create a User.
+        |
+        | No route accepts a redirect_to/return/next/url parameter — there
+        | is no open redirect anywhere in GBP. Throttles follow the house
+        | inline-middleware convention: connect/refresh consume Google
+        | project quota (10/min), callback/locations/bind are cheap but
+        | security-sensitive (20/min).
+        |
+        | disconnect and unbind deliberately skip the ENTITLEMENT step
+        | (contract §39.4) so stored credentials can never be trapped by a
+        | plan downgrade; neither makes a provider call.
+        |----------------------------------------------------------------------
+        */
+        Route::prefix('{workspaceUid}/businesses/{businessUid}/gbp')->name('businesses.gbp.')->group(function () {
+            Route::get('/', 'Business\GoogleBusinessProfileController@overview')->name('index');
+            // Multi-location correction — the comparison is addressed by the
+            // BINDING, not by the Business. A Business may hold one binding
+            // per BusinessLocation, so a Business-addressed comparison could
+            // only ever have shown the first one and left every other binding
+            // unreachable. {bindingUid} is resolved strictly INSIDE the
+            // already-resolved Business (findByUidForBusiness), so a valid
+            // binding uid belonging to another Business or Workspace is a 404
+            // exactly like an unknown one. There is deliberately no implicit
+            // route-model binding anywhere in this group.
+            Route::get('/locations/{bindingUid}/comparison', 'Business\GoogleBusinessProfileController@comparison')->name('comparison');
+            Route::get('/settings', 'Business\GoogleBusinessProfileController@settings')->name('settings');
+            // Correction pass item 9 — connect initiation MUTATES state
+            // (connection row, nonce, actor attribution, ledger), so it is
+            // a CSRF-protected POST. A plain navigation GET must never be
+            // able to create or alter OAuth state. The callback itself
+            // stays GET and lives outside this group at the one fixed URI
+            // Google can be registered against (item 1).
+            Route::post('/connect', 'Business\GoogleBusinessProfileController@connect')->middleware('throttle:10,1')->name('connect');
+            Route::get('/locations', 'Business\GoogleBusinessProfileController@candidates')->middleware('throttle:20,1')->name('locations');
+            Route::post('/bind', 'Business\GoogleBusinessProfileController@bind')->middleware('throttle:20,1')->name('bind');
+            Route::post('/unbind', 'Business\GoogleBusinessProfileController@unbind')->name('unbind');
+            Route::post('/disconnect', 'Business\GoogleBusinessProfileController@disconnect')->name('disconnect');
+            Route::post('/refresh', 'Business\GoogleBusinessProfileController@refresh')->middleware('throttle:10,1')->name('refresh');
         });
 
         Route::prefix('{workspaceUid}/businesses/{businessUid}/automations')->name('businesses.automations.')->group(function () {

@@ -33,6 +33,24 @@
             'category'     => 'Website',
             'default'      => true,
         ],
+        //google business profile (contract §16.1)
+        // view defaults TRUE, following the existing safe view-capability
+        // precedent (view_reports / view_contact / view_numbers /
+        // view_sender_id / view_blacklist are all true). manage defaults
+        // FALSE: there is no existing administrator/owner precedent in
+        // this repository that would require granting a management
+        // capability by default, so the conservative default stands and a
+        // Workspace owner grants it explicitly.
+        'view_google_business_profile'   => [
+            'display_name' => 'read_google_business_profile',
+            'category'     => 'Google Business Profile',
+            'default'      => true,
+        ],
+        'manage_google_business_profile' => [
+            'display_name' => 'manage_google_business_profile',
+            'category'     => 'Google Business Profile',
+            'default'      => false,
+        ],
         //contacts module
         'view_contact_group'        => [
             'display_name' => 'read_contact_group',

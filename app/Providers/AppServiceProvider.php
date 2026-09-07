@@ -187,11 +187,28 @@
                 \App\Repositories\Contracts\PlatformThemeFontRepository::class => \App\Repositories\Eloquent\EloquentPlatformThemeFontRepository::class,
                 \App\Library\AgencyProspecting\Contracts\AgencyProspectingAiClient::class => \App\Library\AgencyProspecting\OpenAiAgencyProspectingClient::class,
                 \App\Library\AgencyProspecting\Contracts\AgencyProspectingMessageSender::class => \App\Library\AgencyProspecting\ProviderAgencyProspectingMessageSender::class,
+                // Google Business Profile Slice A (contract §30.14). The
+                // provider seam is bound to the READ-ONLY HTTP client;
+                // tests swap FakeGoogleBusinessProfileReadClient in via
+                // app()->instance(), exactly as the Usage and
+                // AgencyProspecting suites do.
+                \App\Library\GoogleBusinessProfile\Contracts\GoogleBusinessProfileReadClient::class => \App\Library\GoogleBusinessProfile\HttpGoogleBusinessProfileReadClient::class,
+                \App\Repositories\Contracts\BusinessGoogleConnectionRepository::class => \App\Repositories\Eloquent\EloquentBusinessGoogleConnectionRepository::class,
+                \App\Repositories\Contracts\BusinessGoogleLocationRepository::class => \App\Repositories\Eloquent\EloquentBusinessGoogleLocationRepository::class,
+                \App\Repositories\Contracts\BusinessGoogleOperationRepository::class => \App\Repositories\Eloquent\EloquentBusinessGoogleOperationRepository::class,
             ];
 
             foreach ($bindings as $interface => $implementation) {
                 $this->app->bind($interface, $implementation);
             }
+
+            // Google Business Profile Slice A (correction pass item 6).
+            // The call budget MUST be a singleton: withinOperation() sets
+            // the reservation context on it, and the provider client — a
+            // separately resolved object — calls reserve() on the same
+            // instance. A per-resolution binding would give the client a
+            // context-free copy and every reservation would fail closed.
+            $this->app->singleton(\App\Library\GoogleBusinessProfile\GoogleBusinessProfileCallBudget::class);
 
             $this->app->singleton(HookManager::class, fn() => new HookManager());
         }
