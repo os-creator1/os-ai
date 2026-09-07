@@ -24,6 +24,15 @@ use Illuminate\Validation\ValidationException;
  */
 final class WebsiteDraftPageService
 {
+    /**
+     * Website Guided Generation contract §3.4 -- the general page-count
+     * ceiling. WebsiteAiDraftGenerator::MAX_PAGES only ever bounds a
+     * single AI-generation batch starting from zero pages, so it can
+     * never itself trigger this ceiling; this is a separate, general
+     * invariant enforced on every createPage() call regardless of caller.
+     */
+    private const MAX_PAGES = 20;
+
     public function __construct(
         private readonly WebsiteSectionValidator $sectionValidator,
     ) {
@@ -37,6 +46,21 @@ final class WebsiteDraftPageService
         $validated = $this->validateAttributes($website, $attributes, null);
 
         return DB::transaction(function () use ($website, $validated) {
+            // Locks the Website row itself (mirrors WebsitePublisher::
+            // publish()'s and clearExistingHomepage()'s existing
+            // lockForUpdate() discipline) so a concurrent createPage()
+            // call for the same Website blocks until this transaction
+            // commits, at which point its own count() reflects this
+            // page — preventing two concurrent requests from both
+            // reading a count of 19 and both creating a 21st page.
+            Website::where('id', $website->id)->lockForUpdate()->first();
+
+            if ($website->pages()->count() >= self::MAX_PAGES) {
+                throw ValidationException::withMessages([
+                    'pages' => ['A Website may not have more than ' . self::MAX_PAGES . ' pages.'],
+                ]);
+            }
+
             if ($validated['is_home']) {
                 $this->clearExistingHomepage($website);
             }
