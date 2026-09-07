@@ -263,7 +263,15 @@ class EntitlementManagerPresentationTest extends TestCase
         // Planned -> Available, so it now joins Crm/Conversations/
         // Automations in this Business-scoped map.
         $this->assertArrayHasKey(PlatformFeature::WebsiteGeneration->value, $result);
-        $this->assertCount(4, $result);
+
+        // Google Business Profile Slice A: GoogleBusinessProfileModule is
+        // registered Available and Business-scoped, and this fixture's
+        // Workspace is on Agency — the tier it is packaged into alongside
+        // Growth (Core is deliberately excluded, so a Core Workspace would
+        // still not see it here).
+        $this->assertArrayHasKey(PlatformFeature::GoogleBusinessProfileModule->value, $result);
+
+        $this->assertCount(5, $result);
     }
 
     /**
