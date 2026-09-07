@@ -20,6 +20,8 @@
     use App\Console\Commands\UpdateImartGroupDLR;
     use App\Console\Commands\VisionUpInboundMessage;
     use App\Console\Commands\WarmDashboardCache;
+    use App\Jobs\GoogleBusinessProfile\PurgeExpiredGoogleBusinessProfileMirrors;
+    use App\Jobs\GoogleBusinessProfile\SweepGoogleBusinessProfileRefreshes;
     use App\Jobs\Usage\ExpireStaleUsageReservations;
     use App\Jobs\Usage\FinalizeSlotAgreementCancellation;
     use App\Jobs\Usage\InitiateSlotAgreementRenewal;
@@ -115,6 +117,21 @@
             // idempotent/row-locked, so cadence affects only latency,
             // never domain semantics.
             $schedule->job(new ExpireStaleUsageReservations())->everyFiveMinutes();
+
+            // Google Business Profile Slice A (contract §13.2, §24.2).
+            //
+            // The purge is HOURLY and is the enforcement half of Google's
+            // 30-calendar-day cap on stored Content — it must run far more
+            // often than the retention window it enforces, mirroring
+            // PurgeExpiredWebhookPayloads above.
+            //
+            // The refresh sweep is DAILY and nothing faster: it only
+            // dispatches per-binding jobs on a deterministic stagger, and
+            // Google denies quota increases to applications showing "a
+            // highly spiky request pattern rather than a smooth
+            // distribution". Manual refresh remains the primary mechanism.
+            $schedule->job(new PurgeExpiredGoogleBusinessProfileMirrors())->hourly();
+            $schedule->job(new SweepGoogleBusinessProfileRefreshes())->daily();
         }
 
         /**

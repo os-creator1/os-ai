@@ -74,6 +74,33 @@
             'redirect'      => env('GOOGLE_REDIRECT'),
         ],
 
+        /*
+        |--------------------------------------------------------------------------
+        | Google Business Profile — Slice A (contract §9.1)
+        |--------------------------------------------------------------------------
+        |
+        | A DEDICATED OAuth client, deliberately separate from the
+        | `google` Socialite block above, which is platform SIGN-IN only
+        | and must never be widened or reused: its callback authenticates a
+        | session and can create a User, it requests no scopes, and it
+        | obtains no refresh token.
+        |
+        | Google exposes exactly one Business Profile scope,
+        | https://www.googleapis.com/auth/business.manage, for both reads
+        | and writes; there is no read-only variant. Slice A's read-only
+        | behaviour is therefore enforced structurally by
+        | App\Library\GoogleBusinessProfile\Contracts\GoogleBusinessProfileReadClient,
+        | not by the scope.
+        |
+        | Laravel Socialite is NOT used for this client.
+        |
+        */
+        'google_business_profile' => [
+            'client_id'     => env('GOOGLE_BUSINESS_PROFILE_CLIENT_ID'),
+            'client_secret' => env('GOOGLE_BUSINESS_PROFILE_CLIENT_SECRET'),
+            'redirect'      => env('GOOGLE_BUSINESS_PROFILE_REDIRECT'),
+        ],
+
         'github' => [
             'active'        => env('SOCIALITE_GITHUB'),
             'client_id'     => env('GITHUB_CLIENT_ID'),
