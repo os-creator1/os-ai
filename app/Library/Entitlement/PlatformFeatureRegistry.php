@@ -37,9 +37,18 @@ final class PlatformFeatureRegistry
         PlatformFeature::Conversations->value => PlatformFeatureAvailability::Available,
         PlatformFeature::Automations->value => PlatformFeatureAvailability::Available,
         PlatformFeature::ProspectOutreach->value => PlatformFeatureAvailability::Available,
+        // Website Generation + Hosting Slice A implementation pass:
+        // flipped Planned -> Available, mirroring the exact evidentiary
+        // bar ProspectOutreach was already held to (a real, executable,
+        // Business-scoped controller/routes/persistence now exists —
+        // App\Http\Controllers\Customer\Business\WebsiteController and
+        // its websites/website_pages/website_revisions/website_assets
+        // schema). Plan packaging for this feature already existed
+        // before this flip (2026_08_13_120007_seed_workspace_plan_catalog_and_features.php),
+        // seeded independently of this availability lock.
+        PlatformFeature::WebsiteGeneration->value => PlatformFeatureAvailability::Available,
         PlatformFeature::Calendar->value => PlatformFeatureAvailability::Planned,
         PlatformFeature::Forms->value => PlatformFeatureAvailability::Planned,
-        PlatformFeature::WebsiteGeneration->value => PlatformFeatureAvailability::Planned,
         PlatformFeature::AiCooBasic->value => PlatformFeatureAvailability::Planned,
         PlatformFeature::SeoBasicVisibility->value => PlatformFeatureAvailability::Planned,
         PlatformFeature::AdsBasicVisibility->value => PlatformFeatureAvailability::Planned,

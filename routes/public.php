@@ -185,3 +185,33 @@
      */
     Route::post('webhooks/prospecting/{channelUid}/{token}/twilio', 'Prospecting\AgencyProspectingWebhookController@twilio')->name('prospecting.webhooks.twilio');
     Route::post('webhooks/prospecting/{channelUid}/{token}/telnyx', 'Prospecting\AgencyProspectingWebhookController@telnyx')->name('prospecting.webhooks.telnyx');
+
+    /*
+     * Website Generation + Hosting Slice A (contract §3.3/§31.2). The
+     * ONLY public identifier is Website.public_id — a dedicated,
+     * independently generated UUID, never Business.uid (contract §3.1
+     * found Business.uid unsafe: it is generated via uniqid(), not a
+     * real UUID, despite its column type). {website:public_id} binds
+     * Laravel's implicit route-model-binding to that column specifically
+     * (never the model's default uid route key); whereUuid() additionally
+     * constrains the route parameter itself before any query runs. The
+     * sitemap route is deliberately extensionless — the root .htaccess
+     * rewrites any *.xml request straight to a public/ static-file
+     * lookup before Laravel's router ever runs (contract §21).
+     *
+     * Each route's own ->missing() callback fires when implicit
+     * {website} route-model binding fails to resolve a row, letting it
+     * abort(404) directly instead of letting the unresolved
+     * ModelNotFoundException reach the global exception Handler (which
+     * maps that exception to a 500 response outside the local
+     * environment, per its own pre-existing, unmodified behavior —
+     * mirroring routes/admin.php's identical {business} precedent).
+     */
+    Route::prefix('sites')->group(function () {
+        Route::get('{website:public_id}', 'Public\WebsiteController@home')->whereUuid('website')->name('public.website.home')
+            ->missing(fn () => abort(404));
+        Route::get('{website:public_id}/sitemap', 'Public\WebsiteController@sitemap')->whereUuid('website')->name('public.website.sitemap')
+            ->missing(fn () => abort(404));
+        Route::get('{website:public_id}/{slug}', 'Public\WebsiteController@page')->whereUuid('website')->name('public.website.page')
+            ->missing(fn () => abort(404));
+    });

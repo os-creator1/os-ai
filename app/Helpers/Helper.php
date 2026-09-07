@@ -1044,6 +1044,14 @@
                     // resolves through the Business chooser at /analytics.
                     // Customer menu only — the admin menu is untouched.
                     [
+                        'url'    => url('website'),
+                        'slug'   => 'website',
+                        'name'   => 'Website',
+                        'i18n'   => 'Website',
+                        'icon'   => 'globe',
+                        'access' => 'website',
+                    ],
+                    [
                         'url'    => url('analytics'),
                         'slug'   => 'analytics',
                         'name'   => 'Analytics',

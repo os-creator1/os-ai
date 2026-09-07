@@ -13,11 +13,12 @@ use Tests\TestCase;
  */
 class PlatformFeatureRegistryTest extends TestCase
 {
-    public function test_available_features_are_exactly_crm_conversations_automations_prospect_outreach(): void
+    public function test_available_features_are_exactly_crm_conversations_automations_website_generation_prospect_outreach(): void
     {
         $this->assertTrue(PlatformFeatureRegistry::isAvailable(PlatformFeature::Crm->value));
         $this->assertTrue(PlatformFeatureRegistry::isAvailable(PlatformFeature::Conversations->value));
         $this->assertTrue(PlatformFeatureRegistry::isAvailable(PlatformFeature::Automations->value));
+        $this->assertTrue(PlatformFeatureRegistry::isAvailable(PlatformFeature::WebsiteGeneration->value));
         $this->assertTrue(PlatformFeatureRegistry::isAvailable(PlatformFeature::ProspectOutreach->value));
     }
 
@@ -26,7 +27,6 @@ class PlatformFeatureRegistryTest extends TestCase
         $planned = [
             PlatformFeature::Calendar,
             PlatformFeature::Forms,
-            PlatformFeature::WebsiteGeneration,
             PlatformFeature::AiCooBasic,
             PlatformFeature::SeoBasicVisibility,
             PlatformFeature::AdsBasicVisibility,
@@ -37,7 +37,7 @@ class PlatformFeatureRegistryTest extends TestCase
             PlatformFeature::AgencyPackageCapabilities,
         ];
 
-        $this->assertCount(11, $planned);
+        $this->assertCount(10, $planned);
 
         foreach ($planned as $feature) {
             $this->assertFalse(

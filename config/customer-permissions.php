@@ -27,6 +27,12 @@
             'category'     => 'Automations',
             'default'      => true,
         ],
+        //website generation (contract §28)
+        'website'                   => [
+            'display_name' => 'website',
+            'category'     => 'Website',
+            'default'      => true,
+        ],
         //contacts module
         'view_contact_group'        => [
             'display_name' => 'read_contact_group',
