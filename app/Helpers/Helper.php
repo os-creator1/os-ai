@@ -1058,6 +1058,14 @@
                         'access' => 'automations',
                     ],
                     [
+                        'url'    => url('website'),
+                        'slug'   => 'website',
+                        'name'   => 'Website',
+                        'i18n'   => 'Website',
+                        'icon'   => 'globe',
+                        'access' => 'website',
+                    ],
+                    [
                         'url'     => '',
                         'name'    => 'Reports',
                         'i18n'    => 'Reports',
