@@ -163,7 +163,7 @@ class WebsiteDomainModelTest extends TestCase
     public function test_non_ascii_slugs_are_rejected_outright_never_transliterated(): void
     {
         [$customer, $business, $workspace] = $this->entitledTenant();
-        $this->createWebsite($business);
+        $website = $this->createWebsite($business);
         $this->authenticateAsCustomer($customer);
 
         $params = [$workspace->uid, $business->uid];
@@ -185,8 +185,6 @@ class WebsiteDomainModelTest extends TestCase
             $this->assertDatabaseMissing('website_pages', ['slug' => $slug]);
         }
 
-        $this->assertSame(0, WebsitePage::where('website_id', function ($query) use ($business) {
-            $query->select('id')->from('websites')->where('business_id', $business->id);
-        })->count());
+        $this->assertSame(0, WebsitePage::where('website_id', $website->id)->count());
     }
 }

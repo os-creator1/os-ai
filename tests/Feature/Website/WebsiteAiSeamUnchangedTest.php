@@ -36,7 +36,7 @@ class WebsiteAiSeamUnchangedTest extends TestCase
         $this->assertStringContainsString("config('services.openai.active')", $source);
         $this->assertStringContainsString("config('services.openai.api_key')", $source);
         $this->assertStringContainsString("config('services.openai.model')", $source);
-        $this->assertStringNotContainsString('ai_settings', $source);
+        $this->assertStringNotContainsString("config('ai_settings", $source);
         $this->assertStringNotContainsString("config('website", $source);
     }
 

@@ -198,9 +198,20 @@
      * sitemap route is deliberately extensionless — the root .htaccess
      * rewrites any *.xml request straight to a public/ static-file
      * lookup before Laravel's router ever runs (contract §21).
+     *
+     * Each route's own ->missing() callback fires when implicit
+     * {website} route-model binding fails to resolve a row, letting it
+     * abort(404) directly instead of letting the unresolved
+     * ModelNotFoundException reach the global exception Handler (which
+     * maps that exception to a 500 response outside the local
+     * environment, per its own pre-existing, unmodified behavior —
+     * mirroring routes/admin.php's identical {business} precedent).
      */
     Route::prefix('sites')->group(function () {
-        Route::get('{website:public_id}', 'Public\WebsiteController@home')->whereUuid('website')->name('public.website.home');
-        Route::get('{website:public_id}/sitemap', 'Public\WebsiteController@sitemap')->whereUuid('website')->name('public.website.sitemap');
-        Route::get('{website:public_id}/{slug}', 'Public\WebsiteController@page')->whereUuid('website')->name('public.website.page');
+        Route::get('{website:public_id}', 'Public\WebsiteController@home')->whereUuid('website')->name('public.website.home')
+            ->missing(fn () => abort(404));
+        Route::get('{website:public_id}/sitemap', 'Public\WebsiteController@sitemap')->whereUuid('website')->name('public.website.sitemap')
+            ->missing(fn () => abort(404));
+        Route::get('{website:public_id}/{slug}', 'Public\WebsiteController@page')->whereUuid('website')->name('public.website.page')
+            ->missing(fn () => abort(404));
     });

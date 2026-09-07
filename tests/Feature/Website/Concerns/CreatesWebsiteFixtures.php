@@ -123,6 +123,7 @@ trait CreatesWebsiteFixtures
         return Website::create(array_merge([
             'business_id' => $business->id,
             'name' => 'Test Website',
+            'status' => \App\Enums\Website\WebsiteStatus::Draft,
         ], $overrides));
     }
 

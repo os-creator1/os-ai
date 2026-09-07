@@ -12,9 +12,11 @@ use Throwable;
  * App\Library\AgencyProspecting\OpenAiAgencyProspectingClient — no new
  * config keys, no new package, no ai_settings table. Fails closed,
  * never throws: a missing/inactive API key, or any provider exception,
- * returns null rather than fabricating a reply.
+ * returns null rather than fabricating a reply. Deliberately not
+ * `final` (unlike its sibling Library\Website services) so tests can
+ * bind a Mockery mock in place of a real provider call.
  */
-final class WebsiteAiGenerationClient
+class WebsiteAiGenerationClient
 {
     public function complete(array $messages): ?string
     {

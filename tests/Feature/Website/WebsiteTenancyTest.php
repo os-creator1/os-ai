@@ -307,7 +307,7 @@ class WebsiteTenancyTest extends TestCase
             $workspace,
             PlatformFeature::WebsiteGeneration,
             WorkspaceEntitlementOverrideState::Deny,
-            $workspace->owner_user_id,
+            $this->platformAdminId(),
             'test'
         );
 
@@ -325,7 +325,7 @@ class WebsiteTenancyTest extends TestCase
         app(EntitlementManager::class)->changePlanStatus(
             $workspace,
             WorkspacePlanAssignmentStatus::Suspended,
-            $workspace->owner_user_id,
+            $this->platformAdminId(),
             'test'
         );
 
