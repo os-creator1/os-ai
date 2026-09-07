@@ -57,7 +57,10 @@ class DashboardDesignSystemContentTest extends TestCase
 
         $this->assertStringNotContainsString('data-feather', $source);
         $this->assertStringContainsString('<x-ds-icon', $source);
-        $this->assertSame(15, substr_count($source, '<x-ds-icon'));
+        // 13 since B5 Business Analytics removed the two legacy
+        // "delivered / failed" stat cards (and their icons) from the
+        // customer dashboard (B5 contract §18.5).
+        $this->assertSame(13, substr_count($source, '<x-ds-icon'));
     }
 
     public function test_admin_dashboard_has_zero_data_feather_and_genuine_ds_icon_adoption(): void
@@ -110,12 +113,19 @@ class DashboardDesignSystemContentTest extends TestCase
         $this->assertStringNotContainsString("PlatformTheme.color('--", $adminSource);
     }
 
-    public function test_platform_theme_remains_used_in_both_dashboard_chart_files(): void
+    /**
+     * B5 Business Analytics (contract §18.4/§18.5) removed every chart from
+     * the customer dashboard — its message figures now live in the
+     * Business-scoped Analytics overview, which ChartTokenContentTest
+     * covers — so the customer dashboard is no longer a chart file and
+     * only the admin dashboard is asserted here.
+     */
+    public function test_platform_theme_remains_used_in_the_admin_dashboard_chart_file(): void
     {
         $customerSource = file_get_contents(resource_path('views/customer/dashboard.blade.php'));
         $adminSource = file_get_contents(resource_path('views/admin/dashboard.blade.php'));
 
-        $this->assertStringContainsString("PlatformTheme.color('color-chart-negative')", $customerSource);
+        $this->assertStringNotContainsString('ApexCharts', $customerSource, 'The customer dashboard bears no chart since B5.');
         $this->assertStringContainsString("PlatformTheme.color('color-chart-negative')", $adminSource);
         $this->assertStringContainsString("PlatformTheme.color('color-chart-6')", $adminSource);
         $this->assertStringContainsString("PlatformTheme.color('color-status-danger-border')", $adminSource);

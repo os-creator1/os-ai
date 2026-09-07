@@ -1029,26 +1029,6 @@
                         'icon'   => 'slack',
                         'access' => 'chat_box',
                     ],
-                 [
-    'url'    => url('admin/hot-leads'),
-    'slug'   => 'hot-leads',
-    'name'   => 'Hot Leads',
-    'i18n'   => 'Hot Leads',
-    'icon'   => 'phone-call',
-    'access' => 'chat_box',
-],
-
-[
-    'url'    => url('admin/ai-analytics'),
-    'slug'   => 'ai-analytics',
-    'name'   => 'AI Analytics',
-    'i18n'   => 'AI Analytics',
-    'icon'   => 'bar-chart-2',
-    'access' => 'chat_box',
-],
-
-
-
                     [
                         'url'    => url('automations'),
                         'slug'   => 'automations',
@@ -1057,37 +1037,19 @@
                         'icon'   => 'cpu',
                         'access' => 'automations',
                     ],
+                    // B5 Business Analytics (contract §18.3): the legacy
+                    // customer Reports submenu (Analyze / All Messages /
+                    // Campaigns) and the ghost Hot Leads / AI Analytics
+                    // entries are replaced by one Analytics entry that
+                    // resolves through the Business chooser at /analytics.
+                    // Customer menu only — the admin menu is untouched.
                     [
-                        'url'     => '',
-                        'name'    => 'Reports',
-                        'i18n'    => 'Reports',
-                        'icon'    => 'bar-chart-2',
-                        'access'  => 'view_reports|sms_campaign_builder|voice_campaign_builder|mms_campaign_builder|whatsapp_campaign_builder|otp_campaign_builder|viber_campaign_builder',
-                        'submenu' => [
-                            [
-                                'url'    => url('reports/analyze'),
-                                'slug'   => 'reports/analyze',
-                                'name'   => 'Analyze',
-                                'i18n'   => 'Analyze',
-                                'access' => 'view_reports',
-                                'icon'   => 'activity',
-                            ], [
-                                'url'    => url('reports/all'),
-                                'slug'   => 'reports/all',
-                                'name'   => 'All Messages',
-                                'i18n'   => 'All Messages',
-                                'access' => 'view_reports',
-                                'icon'   => 'bar-chart-2',
-                            ],
-                            [
-                                'url'    => url('reports/campaigns'),
-                                'slug'   => 'reports/campaigns',
-                                'name'   => 'Campaigns',
-                                'i18n'   => 'Campaigns',
-                                'access' => 'sms_campaign_builder',
-                                'icon'   => 'pie-chart',
-                            ],
-                        ],
+                        'url'    => url('analytics'),
+                        'slug'   => 'analytics',
+                        'name'   => 'Analytics',
+                        'i18n'   => 'Analytics',
+                        'icon'   => 'bar-chart-2',
+                        'access' => 'view_reports',
                     ],
                     [
                         'url'    => url('developers'),

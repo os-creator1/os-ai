@@ -15,12 +15,18 @@ class ChartTokenContentTest extends TestCase
 {
     private const CHART_VIEWS = [
         'resources/views/admin/dashboard.blade.php',
-        'resources/views/customer/dashboard.blade.php',
-        'resources/views/customer/Reports/charts.blade.php',
-        'resources/views/customer/Reports/analyze.blade.php',
+        // customer/dashboard.blade.php, customer/Reports/charts.blade.php
+        // and customer/Reports/analyze.blade.php left this inventory with
+        // B5 Business Analytics (docs/automation/B5-BUSINESS-ANALYTICS-
+        // CONTRACT.md §13.3, §18): the two Reports views are deleted with
+        // the legacy customer Reports product, and the customer dashboard
+        // no longer bears a chart — its seven per-SMS-type charts and the
+        // delivered/undelivered pie were removed in favour of the
+        // Business-scoped Analytics overview added below.
         'resources/views/admin/Reports/overview.blade.php',
         'resources/views/admin/Reports/dashboard.blade.php',
         'resources/views/customer/Campaigns/overview.blade.php',
+        'resources/views/customer/business/analytics/overview.blade.php',
         // customer/Automations/overview.blade.php was a chart-bearing view
         // until B4 Business Automations replaced the legacy report page with
         // a definition + execution-history view that renders no chart
