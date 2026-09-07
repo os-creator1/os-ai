@@ -52,6 +52,80 @@ class BusinessKnowledgeProfileCompletenessTest extends TestCase
         $this->assertFalse($result->isComplete());
     }
 
+    /**
+     * Genuinely read-only: starting with NO Profile row at all,
+     * snapshots every table completenessCheck() could conceivably touch
+     * (row counts and, for the Business/Location, their own updated_at),
+     * calls completenessCheck() several times in a row, and proves
+     * nothing changed -- no Profile row was created, no field-state or
+     * change row appeared, no timestamp moved.
+     */
+    public function test_completeness_check_creates_no_profile_row_and_is_write_free_when_none_exists(): void
+    {
+        [$business] = $this->profileFixtureBusinessWithPrimaryLocation();
+
+        $this->assertSame(0, \App\Models\BusinessKnowledgeProfile::where('business_id', $business->id)->count());
+
+        $before = [
+            'profiles' => \App\Models\BusinessKnowledgeProfile::count(),
+            'field_states' => \App\Models\BusinessKnowledgeProfileFieldState::count(),
+            'changes' => \App\Models\BusinessKnowledgeProfileChange::count(),
+            'business_updated_at' => $business->fresh()->updated_at?->timestamp,
+            'location_updated_at' => $business->primaryLocation()->first()->updated_at?->timestamp,
+        ];
+
+        $firstResult = $this->manager->completenessCheck($business);
+        $this->manager->completenessCheck($business);
+        $thirdResult = $this->manager->completenessCheck($business);
+
+        $after = [
+            'profiles' => \App\Models\BusinessKnowledgeProfile::count(),
+            'field_states' => \App\Models\BusinessKnowledgeProfileFieldState::count(),
+            'changes' => \App\Models\BusinessKnowledgeProfileChange::count(),
+            'business_updated_at' => $business->fresh()->updated_at?->timestamp,
+            'location_updated_at' => $business->primaryLocation()->first()->updated_at?->timestamp,
+        ];
+
+        $this->assertSame($before, $after);
+        $this->assertSame(0, \App\Models\BusinessKnowledgeProfile::where('business_id', $business->id)->count());
+
+        // Repeated calls are not just side-effect-free, they are also
+        // result-stable.
+        $this->assertEquals($firstResult, $thirdResult);
+        $this->assertContains('brand_voice', $firstResult->missingFieldKeys);
+    }
+
+    /**
+     * The same write-free guarantee holds once a Profile row DOES exist
+     * (populated by updateFields()/updateLocationHours() beforehand,
+     * never by completenessCheck() itself) -- repeated reads still touch
+     * nothing.
+     */
+    public function test_completeness_check_is_write_free_when_a_profile_already_exists(): void
+    {
+        [$business] = $this->profileFixtureBusinessWithPrimaryLocation();
+        $this->manager->updateFields($business, ['brand_voice' => 'Friendly'], 'manual_edit', $this->actorUserId(), markVerified: true);
+
+        $before = [
+            'profiles' => \App\Models\BusinessKnowledgeProfile::count(),
+            'field_states' => \App\Models\BusinessKnowledgeProfileFieldState::count(),
+            'changes' => \App\Models\BusinessKnowledgeProfileChange::count(),
+            'profile_updated_at' => \App\Models\BusinessKnowledgeProfile::where('business_id', $business->id)->first()->updated_at?->timestamp,
+        ];
+
+        $this->manager->completenessCheck($business);
+        $this->manager->completenessCheck($business);
+
+        $after = [
+            'profiles' => \App\Models\BusinessKnowledgeProfile::count(),
+            'field_states' => \App\Models\BusinessKnowledgeProfileFieldState::count(),
+            'changes' => \App\Models\BusinessKnowledgeProfileChange::count(),
+            'profile_updated_at' => \App\Models\BusinessKnowledgeProfile::where('business_id', $business->id)->first()->updated_at?->timestamp,
+        ];
+
+        $this->assertSame($before, $after);
+    }
+
     public function test_a_fully_populated_and_confirmed_profile_reports_every_field_present_except_the_permanently_unconfirmable_vertical_key(): void
     {
         [$business] = $this->profileFixtureBusinessWithPrimaryLocation();

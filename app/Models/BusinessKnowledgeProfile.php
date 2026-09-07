@@ -2,6 +2,8 @@
 
 namespace App\Models;
 
+use App\Enums\Business\BusinessPricingMethod;
+use App\Enums\Business\BusinessPrimaryConversionGoal;
 use App\Library\Traits\HasUid;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -40,12 +42,14 @@ class BusinessKnowledgeProfile extends Model
     ];
 
     protected $casts = [
+        'pricing_method' => BusinessPricingMethod::class,
         'financing_available' => 'boolean',
         'offers' => 'array',
         'differentiators' => 'array',
         'customer_problems' => 'array',
         'credentials' => 'array',
         'years_operating' => 'integer',
+        'primary_conversion_goal' => BusinessPrimaryConversionGoal::class,
         'prohibited_claims' => 'array',
         'growth_priority_service_ids' => 'array',
         'growth_priority_location_ids' => 'array',

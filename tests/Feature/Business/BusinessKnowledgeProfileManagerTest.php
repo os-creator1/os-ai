@@ -2,6 +2,8 @@
 
 namespace Tests\Feature\Business;
 
+use App\Enums\Business\BusinessPricingMethod;
+use App\Enums\Business\BusinessPrimaryConversionGoal;
 use App\Library\Business\BusinessKnowledgeProfileManager;
 use App\Models\BusinessKnowledgeProfile;
 use App\Models\BusinessKnowledgeProfileChange;
@@ -56,17 +58,91 @@ class BusinessKnowledgeProfileManagerTest extends TestCase
         );
     }
 
-    public function test_get_or_create_is_race_safe_against_the_unique_constraint(): void
+    public function test_get_or_create_resolves_to_one_profile_when_a_row_already_exists(): void
     {
         [$business] = $this->profileFixtureBusiness();
 
-        // Simulate a concurrent creator winning the race first.
+        // Simulate a concurrent creator that already won and committed.
         BusinessKnowledgeProfile::create(['business_id' => $business->id, 'reviews_source' => 'none']);
 
         $profile = $this->manager->getOrCreate($business);
 
         $this->assertSame(1, BusinessKnowledgeProfile::where('business_id', $business->id)->count());
         $this->assertSame($business->id, $profile->business_id);
+    }
+
+    /**
+     * Exercises the actual race window (the getOrCreate()'s own initial
+     * lookup finds nothing, then the create() itself collides) rather
+     * than only the fast path above: a genuinely concurrent insert
+     * cannot be interleaved deterministically inside one PHPUnit
+     * process/connection, so this pre-creates the "winning" row (as if
+     * it committed between the lookup and the insert) and then invokes
+     * the private createProfileRaceSafe() step directly via reflection
+     * -- the exact method getOrCreate() falls through to once its own
+     * lookup has already returned null. This proves the catch block
+     * itself resolves the 1062 duplicate-key error to the existing row,
+     * never a second one.
+     */
+    public function test_get_or_create_resolves_a_genuine_insert_time_race_to_one_profile(): void
+    {
+        [$business] = $this->profileFixtureBusiness();
+
+        $winner = BusinessKnowledgeProfile::create(['business_id' => $business->id, 'reviews_source' => 'none']);
+
+        $method = new \ReflectionMethod(BusinessKnowledgeProfileManager::class, 'createProfileRaceSafe');
+        $method->setAccessible(true);
+        $resolved = $method->invoke($this->manager, $business);
+
+        $this->assertSame($winner->id, $resolved->id);
+        $this->assertSame(1, BusinessKnowledgeProfile::where('business_id', $business->id)->count());
+    }
+
+    /**
+     * An unrelated database failure (here: a foreign-key violation,
+     * MySQL error 1452, because $business->id references no real row --
+     * Laravel classifies this as a plain QueryException, never
+     * UniqueConstraintViolationException, per MySqlConnection::
+     * isUniqueConstraintError()'s own 1062-only check) must never be
+     * reinterpreted as "someone else already created the Profile." It
+     * propagates unchanged, and no Profile row is left behind.
+     */
+    public function test_get_or_create_does_not_swallow_an_unrelated_database_error(): void
+    {
+        $phantomBusiness = new \App\Models\Business();
+        $phantomBusiness->id = 999999999;
+
+        $this->expectException(\Illuminate\Database\QueryException::class);
+        $this->expectExceptionMessageMatches('/1452|foreign key constraint/i');
+
+        try {
+            $this->manager->getOrCreate($phantomBusiness);
+        } finally {
+            $this->assertSame(0, BusinessKnowledgeProfile::where('business_id', 999999999)->count());
+        }
+    }
+
+    /**
+     * A UniqueConstraintViolationException IS caught, but only resolved
+     * to an existing row when the violated constraint is genuinely
+     * business_id's own unique index -- confirmed here by asserting the
+     * exact constraint name the narrowing check depends on is still the
+     * one actually enforced by migration 1's schema (a schema/migration
+     * rename that silently broke this string match would otherwise pass
+     * every other test in this suite while quietly widening or
+     * disabling the race-safety check).
+     */
+    public function test_the_narrow_race_check_names_the_actual_enforced_constraint(): void
+    {
+        [$business] = $this->profileFixtureBusiness();
+        BusinessKnowledgeProfile::create(['business_id' => $business->id, 'reviews_source' => 'none']);
+
+        try {
+            BusinessKnowledgeProfile::create(['business_id' => $business->id, 'reviews_source' => 'none']);
+            $this->fail('Expected a UniqueConstraintViolationException.');
+        } catch (\Illuminate\Database\UniqueConstraintViolationException $e) {
+            $this->assertStringContainsString('business_knowledge_profiles_business_id_unique', $e->getMessage());
+        }
     }
 
     // -----------------------------------------------------------------
@@ -113,17 +189,32 @@ class BusinessKnowledgeProfileManagerTest extends TestCase
     // Field validation — every JSON/text/enum field
     // -----------------------------------------------------------------
 
-    public function test_pricing_method_accepts_only_its_four_contracted_values(): void
+    public function test_pricing_method_accepts_only_its_four_contracted_values_and_casts_to_the_enum(): void
     {
         [$business] = $this->profileFixtureBusiness();
 
-        foreach (['fixed', 'hourly', 'quote_only', 'package_tiers'] as $valid) {
-            $profile = $this->manager->updateFields($business, ['pricing_method' => $valid], 'manual_edit', $this->actorUserId());
-            $this->assertSame($valid, $profile->pricing_method);
+        foreach (BusinessPricingMethod::cases() as $case) {
+            $profile = $this->manager->updateFields($business, ['pricing_method' => $case->value], 'manual_edit', $this->actorUserId());
+            $this->assertInstanceOf(BusinessPricingMethod::class, $profile->pricing_method);
+            $this->assertSame($case, $profile->pricing_method);
+
+            $raw = \Illuminate\Support\Facades\DB::table('business_knowledge_profiles')->where('business_id', $business->id)->value('pricing_method');
+            $this->assertSame($case->value, $raw);
         }
 
         $this->expectException(ValidationException::class);
         $this->manager->updateFields($business, ['pricing_method' => 'financing_available'], 'manual_edit', $this->actorUserId());
+    }
+
+    public function test_pricing_method_hydrates_as_an_enum_instance_after_a_fresh_fetch(): void
+    {
+        [$business] = $this->profileFixtureBusiness();
+
+        $this->manager->updateFields($business, ['pricing_method' => 'fixed'], 'manual_edit', $this->actorUserId());
+
+        $reloaded = BusinessKnowledgeProfile::where('business_id', $business->id)->first();
+        $this->assertInstanceOf(BusinessPricingMethod::class, $reloaded->pricing_method);
+        $this->assertSame(BusinessPricingMethod::Fixed, $reloaded->pricing_method);
     }
 
     public function test_financing_available_is_independent_of_pricing_method(): void
@@ -135,21 +226,55 @@ class BusinessKnowledgeProfileManagerTest extends TestCase
             'financing_available' => true,
         ], 'manual_edit', $this->actorUserId());
 
-        $this->assertSame('fixed', $profile->pricing_method);
+        $this->assertSame(BusinessPricingMethod::Fixed, $profile->pricing_method);
         $this->assertTrue($profile->financing_available);
     }
 
-    public function test_primary_conversion_goal_accepts_only_its_five_contracted_values(): void
+    public function test_primary_conversion_goal_accepts_only_its_five_contracted_values_and_casts_to_the_enum(): void
     {
         [$business] = $this->profileFixtureBusiness();
 
-        foreach (['call', 'quote_request', 'consultation_booking', 'calendar_booking', 'external_booking_link'] as $valid) {
-            $profile = $this->manager->updateFields($business, ['primary_conversion_goal' => $valid], 'manual_edit', $this->actorUserId());
-            $this->assertSame($valid, $profile->primary_conversion_goal);
+        foreach (BusinessPrimaryConversionGoal::cases() as $case) {
+            $profile = $this->manager->updateFields($business, ['primary_conversion_goal' => $case->value], 'manual_edit', $this->actorUserId());
+            $this->assertInstanceOf(BusinessPrimaryConversionGoal::class, $profile->primary_conversion_goal);
+            $this->assertSame($case, $profile->primary_conversion_goal);
+
+            $raw = \Illuminate\Support\Facades\DB::table('business_knowledge_profiles')->where('business_id', $business->id)->value('primary_conversion_goal');
+            $this->assertSame($case->value, $raw);
         }
 
         $this->expectException(ValidationException::class);
         $this->manager->updateFields($business, ['primary_conversion_goal' => 'other'], 'manual_edit', $this->actorUserId());
+    }
+
+    public function test_primary_conversion_goal_rejects_a_non_string_value(): void
+    {
+        [$business] = $this->profileFixtureBusiness();
+
+        $this->expectException(ValidationException::class);
+        $this->manager->updateFields($business, ['primary_conversion_goal' => 123], 'manual_edit', $this->actorUserId());
+    }
+
+    public function test_pricing_method_no_op_detection_works_with_the_enum_cast_and_creates_no_false_change_row(): void
+    {
+        [$business] = $this->profileFixtureBusiness();
+        $actorId = $this->actorUserId();
+
+        $this->manager->updateFields($business, ['pricing_method' => 'fixed'], 'manual_edit', $actorId);
+        $countAfterFirstWrite = BusinessKnowledgeProfileChange::where('business_id', $business->id)->where('field_key', 'pricing_method')->count();
+        $this->assertSame(1, $countAfterFirstWrite);
+
+        // Re-submitting the identical contracted string is a true no-op
+        // once cast back to the same enum instance -- no second change
+        // row, no spurious "changed" detection caused by the cast.
+        $this->manager->updateFields($business, ['pricing_method' => 'fixed'], 'manual_edit', $actorId);
+        $countAfterNoOp = BusinessKnowledgeProfileChange::where('business_id', $business->id)->where('field_key', 'pricing_method')->count();
+        $this->assertSame(1, $countAfterNoOp);
+
+        // A genuine change still produces exactly one more row.
+        $this->manager->updateFields($business, ['pricing_method' => 'hourly'], 'manual_edit', $actorId);
+        $countAfterRealChange = BusinessKnowledgeProfileChange::where('business_id', $business->id)->where('field_key', 'pricing_method')->count();
+        $this->assertSame(2, $countAfterRealChange);
     }
 
     public function test_conversion_target_only_accepts_tel_mailto_https(): void

@@ -3,6 +3,8 @@
 namespace App\Library\Business;
 
 use App\Enums\Business\BusinessKnowledgeProfileFieldKey;
+use App\Enums\Business\BusinessPricingMethod;
+use App\Enums\Business\BusinessPrimaryConversionGoal;
 use App\Library\Website\WebsiteUrlRules;
 use App\Models\Business;
 use App\Models\BusinessKnowledgeProfile;
@@ -11,7 +13,7 @@ use App\Models\BusinessKnowledgeProfileFieldState;
 use App\Models\BusinessLocation;
 use App\Models\BusinessService;
 use App\Models\Website;
-use Illuminate\Database\QueryException;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -33,9 +35,12 @@ final class BusinessKnowledgeProfileManager
 
     private const VALID_SOURCES = ['onboarding', 'website_setup', 'manual_edit', 'imported'];
 
-    private const PRICING_METHODS = ['fixed', 'hourly', 'quote_only', 'package_tiers'];
-
-    private const CONVERSION_GOALS = ['call', 'quote_request', 'consultation_booking', 'calendar_booking', 'external_booking_link'];
+    /**
+     * business_knowledge_profiles' unique index on business_id
+     * (migration 1), by its exact, mechanically-verified Laravel-
+     * convention name.
+     */
+    private const BUSINESS_ID_UNIQUE_CONSTRAINT = 'business_knowledge_profiles_business_id_unique';
 
     /**
      * Idempotent and race-safe against the unique business_id constraint
@@ -46,16 +51,33 @@ final class BusinessKnowledgeProfileManager
     {
         $profile = BusinessKnowledgeProfile::where('business_id', $business->id)->first();
 
-        if ($profile !== null) {
-            return $profile;
-        }
+        return $profile ?? $this->createProfileRaceSafe($business);
+    }
 
+    /**
+     * Catches ONLY the narrow, framework-classified
+     * UniqueConstraintViolationException (Laravel dispatches this exact
+     * subtype for a MySQL 1062 "Duplicate entry" error,
+     * MySqlConnection::isUniqueConstraintError() -- never for an
+     * unrelated failure such as a foreign-key violation, which raises a
+     * plain QueryException instead) -- and only when the violated
+     * constraint is genuinely business_id's own unique index, confirmed
+     * by name. Any other exception, or a UniqueConstraintViolationException
+     * naming a different constraint, propagates unchanged: it is never
+     * treated as "someone else already created it."
+     */
+    private function createProfileRaceSafe(Business $business): BusinessKnowledgeProfile
+    {
         try {
             return BusinessKnowledgeProfile::create([
                 'business_id' => $business->id,
                 'reviews_source' => 'none',
             ]);
-        } catch (QueryException $e) {
+        } catch (UniqueConstraintViolationException $e) {
+            if (! str_contains($e->getMessage(), self::BUSINESS_ID_UNIQUE_CONSTRAINT)) {
+                throw $e;
+            }
+
             $profile = BusinessKnowledgeProfile::where('business_id', $business->id)->first();
 
             if ($profile !== null) {
@@ -190,16 +212,20 @@ final class BusinessKnowledgeProfileManager
     }
 
     /**
-     * Read-side only -- computes and returns a DTO, never persists
-     * derived completeness/freshness. v1 (§4.3): hours are evaluated
-     * against Business::primaryLocation() only, whether or not $website
-     * is supplied -- Website is the only consumer of "which location(s)
+     * Genuinely read-only -- a plain query, never getOrCreate(). If the
+     * Business has no Profile row at all, every Profile-owned fact is
+     * simply "missing" (an absent row cannot itself carry any confirmed
+     * fact); this method creates, updates, and deletes no row, and
+     * changes no timestamp, in either case. Repeated calls are entirely
+     * write-free. v1 (§4.3): hours are evaluated against
+     * Business::primaryLocation() only, whether or not $website is
+     * supplied -- Website is the only consumer of "which location(s)
      * this Business features" in this contract's slices, and the
      * platform already enforces a single Website per Business.
      */
     public function completenessCheck(Business $business, ?Website $website = null): BusinessKnowledgeProfileCompleteness
     {
-        $profile = $this->getOrCreate($business);
+        $profile = BusinessKnowledgeProfile::where('business_id', $business->id)->first();
 
         $fieldStates = BusinessKnowledgeProfileFieldState::where('business_id', $business->id)
             ->get()
@@ -212,6 +238,12 @@ final class BusinessKnowledgeProfileManager
 
         foreach (BusinessKnowledgeProfileFieldKey::cases() as $case) {
             if ($case === BusinessKnowledgeProfileFieldKey::Hours) {
+                continue;
+            }
+
+            if ($profile === null) {
+                $missing[] = $case->value;
+
                 continue;
             }
 
@@ -308,7 +340,7 @@ final class BusinessKnowledgeProfileManager
     {
         return match ($key) {
             'vertical_key' => $this->normalizeVerticalKey($value),
-            'pricing_method' => $this->normalizeEnum($value, self::PRICING_METHODS, 'pricing_method'),
+            'pricing_method' => $this->normalizePricingMethod($value),
             'financing_available' => $this->normalizeNullableBool($value, 'financing_available'),
             'offers' => $this->normalizeOffers($value),
             'differentiators' => $this->normalizeStringList($value, 6, 120, 'differentiators'),
@@ -317,7 +349,7 @@ final class BusinessKnowledgeProfileManager
             'credentials' => $this->normalizeCredentials($value),
             'years_operating' => $this->normalizeYearsOperating($value),
             'warranties_guarantees' => $this->normalizeNullableString($value, 500, 'warranties_guarantees'),
-            'primary_conversion_goal' => $this->normalizeEnum($value, self::CONVERSION_GOALS, 'primary_conversion_goal'),
+            'primary_conversion_goal' => $this->normalizePrimaryConversionGoal($value),
             'conversion_target' => $this->normalizeConversionTarget($value),
             'brand_voice' => $this->normalizeNullableString($value, 500, 'brand_voice'),
             'prohibited_claims' => $this->normalizeStringList($value, 15, 160, 'prohibited_claims'),
@@ -344,17 +376,34 @@ final class BusinessKnowledgeProfileManager
         throw new InvalidArgumentException('vertical_key cannot be set until the vertical catalog (Slice 2) exists.');
     }
 
-    private function normalizeEnum(mixed $value, array $allowed, string $field): ?string
+    private function normalizePricingMethod(mixed $value): ?BusinessPricingMethod
     {
         if ($value === null) {
             return null;
         }
 
-        if (! is_string($value) || ! in_array($value, $allowed, true)) {
-            throw new InvalidArgumentException("Invalid {$field} value.");
+        $enum = is_string($value) ? BusinessPricingMethod::tryFrom($value) : null;
+
+        if ($enum === null) {
+            throw new InvalidArgumentException('Invalid pricing_method value.');
         }
 
-        return $value;
+        return $enum;
+    }
+
+    private function normalizePrimaryConversionGoal(mixed $value): ?BusinessPrimaryConversionGoal
+    {
+        if ($value === null) {
+            return null;
+        }
+
+        $enum = is_string($value) ? BusinessPrimaryConversionGoal::tryFrom($value) : null;
+
+        if ($enum === null) {
+            throw new InvalidArgumentException('Invalid primary_conversion_goal value.');
+        }
+
+        return $enum;
     }
 
     private function normalizeNullableBool(mixed $value, string $field): ?bool
@@ -443,8 +492,24 @@ final class BusinessKnowledgeProfileManager
 
             $override = $item['pricing_method_override'] ?? null;
 
-            if ($override !== null && ! in_array($override, self::PRICING_METHODS, true)) {
-                throw new InvalidArgumentException('offers.pricing_method_override is invalid.');
+            if ($override !== null) {
+                $overrideEnum = is_string($override) ? BusinessPricingMethod::tryFrom($override) : null;
+
+                if ($overrideEnum === null) {
+                    throw new InvalidArgumentException('offers.pricing_method_override is invalid.');
+                }
+
+                // Stored as the enum's plain string value, not the enum
+                // instance itself: `offers` is a JSON blob column (no
+                // per-element Eloquent cast), so a decoded round-trip
+                // from the database always yields a plain string here.
+                // Normalizing the freshly-validated value to the same
+                // plain-string shape keeps old-vs-new comparisons for
+                // no-op/change detection (updateFields()) type-consistent
+                // -- an enum instance would otherwise never equal the
+                // string produced by a prior read, causing every write to
+                // look like a spurious change.
+                $override = $overrideEnum->value;
             }
 
             $normalized[] = [
