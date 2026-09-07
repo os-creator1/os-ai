@@ -259,7 +259,11 @@ class EntitlementManagerPresentationTest extends TestCase
         // not, allowed or not.
         $this->assertArrayNotHasKey(PlatformFeature::ProspectOutreach->value, $result);
 
-        $this->assertCount(3, $result);
+        // Website Generation + Hosting Slice A: WebsiteGeneration flipped
+        // Planned -> Available, so it now joins Crm/Conversations/
+        // Automations in this Business-scoped map.
+        $this->assertArrayHasKey(PlatformFeature::WebsiteGeneration->value, $result);
+        $this->assertCount(4, $result);
     }
 
     /**

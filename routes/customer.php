@@ -360,6 +360,14 @@
 
     /*
     |--------------------------------------------------------------------------
+    | Website Generation + Hosting Slice A — bare /website entry route.
+    | Never guesses a Business. See Business\WebsiteController::entry().
+    |
+    */
+    Route::get('website', 'Business\WebsiteController@entry')->name('website.index');
+
+    /*
+    |--------------------------------------------------------------------------
     | Agency AI Prospecting entry
     |--------------------------------------------------------------------------
     |
@@ -796,6 +804,41 @@
         | registry. See MessagingChannelsController.
         |
         */
+        /*
+        |----------------------------------------------------------------
+        | Website Generation + Hosting — Slice A (contract §2.1/§31.1)
+        |----------------------------------------------------------------
+        |
+        | Business-scoped, one Website per Business. Every action runs
+        | Workspace -> Business -> userCanAccessBusiness() ->
+        | WebsiteGeneration entitlement -> Website scoped to that
+        | Business. See Business\WebsiteController.
+        |
+        */
+        Route::prefix('{workspaceUid}/businesses/{businessUid}/website')->name('businesses.website.')->group(function () {
+            Route::get('/', 'Business\WebsiteController@show')->name('show');
+            Route::get('/setup', 'Business\WebsiteController@setup')->name('setup');
+            Route::post('/', 'Business\WebsiteController@store')->name('store');
+
+            Route::get('/pages', 'Business\WebsiteController@pages')->name('pages.index');
+            Route::get('/pages/create', 'Business\WebsiteController@createPage')->name('pages.create');
+            Route::post('/pages', 'Business\WebsiteController@storePage')->name('pages.store');
+            Route::get('/pages/{pageUid}/edit', 'Business\WebsiteController@editPage')->name('pages.edit');
+            Route::put('/pages/{pageUid}', 'Business\WebsiteController@updatePage')->name('pages.update');
+            Route::delete('/pages/{pageUid}', 'Business\WebsiteController@destroyPage')->name('pages.destroy');
+
+            Route::get('/preview/{pageUid?}', 'Business\WebsiteController@preview')->name('preview');
+
+            Route::post('/generate', 'Business\WebsiteController@generate')->name('generate');
+            Route::post('/publish', 'Business\WebsiteController@publish')->name('publish');
+
+            Route::get('/history', 'Business\WebsiteController@history')->name('history');
+            Route::post('/history/{revisionUid}/rollback', 'Business\WebsiteController@rollback')->name('history.rollback');
+
+            Route::post('/assets', 'Business\WebsiteController@storeAsset')->name('assets.store');
+            Route::delete('/assets/{assetUid}', 'Business\WebsiteController@destroyAsset')->name('assets.destroy');
+        });
+
         Route::prefix('{workspaceUid}/businesses/{businessUid}/channels')->name('businesses.channels.')->group(function () {
             Route::get('/', 'Business\MessagingChannelsController@channels')->name('index');
             Route::get('/connect/{provider}', 'Business\MessagingChannelsController@connect')->name('connect');
