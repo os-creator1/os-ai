@@ -16,9 +16,16 @@ class BrandingPresenter
 {
     public const CACHE_KEY = 'platform_branding:resolved';
 
+    /**
+     * Customer Experience Slice 2 (contract §9.1): the authentication
+     * surface has NO bundled illustration fallback any more. When the
+     * owner has configured none, `src` is null and the branding
+     * illustration component renders the neutral AI Business OS
+     * typographic panel — never the inherited login-v2*.svg files.
+     */
     private const AUTH_ILLUSTRATION_FALLBACK = [
-        'light' => 'images/pages/login-v2.svg',
-        'dark' => 'images/pages/login-v2-dark.svg',
+        'light' => null,
+        'dark' => null,
     ];
 
     private const INSTALLER_ILLUSTRATION_FALLBACK = [
@@ -80,10 +87,12 @@ class BrandingPresenter
 
     /**
      * §6.4: $surface is 'auth' or 'installer'. Owner-configured value,
-     * else the appropriate existing bundled Vuexy illustration for that
-     * exact surface — never a broken reference.
+     * else the surface's fallback: null for 'auth' (Customer Experience
+     * Slice 2 — the neutral typographic panel takes over, so no inherited
+     * Vuexy file is ever referenced), the bundled installer illustration
+     * for 'installer'. Never a broken reference either way.
      *
-     * @return array{src: string, alt: string}
+     * @return array{src: ?string, alt: string}
      */
     public function illustration(string $surface, string $background = 'light'): array
     {

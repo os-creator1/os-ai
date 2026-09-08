@@ -486,6 +486,12 @@
             'subscription_warning'                  => 'Subscription Warning',
             'new_conversion'                        => 'New Conversion',
             'welcome_to'                            => 'Welcome To',
+
+            /* Customer Experience Slice 2 — shared shell and empty-state foundation (contract §9.2, §17.3) */
+            'skip_to_main_content'                  => 'Skip to main content',
+            'empty_state_empty'                     => 'Nothing here yet',
+            'empty_state_unconfigured'              => 'Not set up yet',
+            'empty_state_locked'                    => 'Not included in your plan',
             'welcome_to_docs'                       => 'Welcome To :brandname docs',
             'submitted'                             => 'Submitted',
             'finished'                              => 'Finished',
@@ -816,7 +822,8 @@
             'Invoices'            => 'Invoices',
             'SMS History'         => 'SMS History',
             'Block Message'       => 'Block Message',
-            'Logout'              => 'Logout',
+            // Customer Experience Slice 2 (brief §6): the user menu reads "Sign out".
+            'Logout'              => 'Sign out',
             'View Charts'         => 'View Charts',
             'Contacts'            => 'Contacts',
             'SMS'                 => 'SMS',
@@ -898,6 +905,37 @@
             'Menu Manage'         => 'Menu Manage',
             '404 Settings'        => '404 Settings',
             'Topbar Settings'     => 'Topbar Settings',
+
+            /*
+             * Customer Experience Slice 2 (contract §17.1, T-I18N-2): every
+             * label App\Library\Navigation\CustomerMenuBuilder emits has an
+             * English entry keyed by the builder's own human label, so the
+             * sidebar never has to fall back to it (the fallback still
+             * exists for a missing key, and never renders a key path).
+             */
+            'Home'                    => 'Home',
+            'Advisor'                 => 'Advisor',
+            'Conversations'           => 'Conversations',
+            'Website'                 => 'Website',
+            'Google Business Profile' => 'Google Business Profile',
+            'Business details'        => 'Business details',
+            'Blocked numbers'         => 'Blocked numbers',
+            'Usage & billing'         => 'Usage & billing',
+            'Team & account'          => 'Team & account',
+            'Team & agency account'   => 'Team & agency account',
+            'Plan & subscription'     => 'Plan & subscription',
+            'Advanced'                => 'Advanced',
+            'Messaging provider'      => 'Messaging provider',
+            'Sender IDs'              => 'Sender IDs',
+            'Choose an account'       => 'Choose an account',
+            'Business'                => 'Business',
+            'Businesses'              => 'Businesses',
+            'Client account'          => 'Client account',
+            'Client accounts'         => 'Client accounts',
+            'Prospecting'             => 'Prospecting',
+            'Accounts'                => 'Accounts',
+            'Profile'                 => 'Profile',
+            'Sign out'                => 'Sign out',
         ],
 
         'currencies' => [
@@ -1977,6 +2015,23 @@ on ',
             'personal'                       => 'Personal',
             'account_information'            => 'Account Information',
             'insert_required_fields'         => 'Insert required fields',
+
+            /* Customer Experience Slice 2 — shared authentication screens (contract §9.1, §17.1) */
+            'show_password'                  => 'Show password',
+            'hide_password'                  => 'Hide password',
+            'continue_with'                  => 'Continue with :provider',
+            'brand_panel_areas_label'        => 'What you can manage',
+            'did_not_receive_email'          => 'Didn\'t receive the email? Check your spam folder, or request another link.',
+            'request_another_link'           => 'Send me another verification link',
+            'two_factor_code_sent_to_email'  => 'We sent a verification code to your email address. Enter it below to continue.',
+            'enter_security_code'            => 'Your 6-digit security code',
+            'did_not_get_code'               => 'Didn\'t get the code?',
+            'resend_code'                    => 'Send it again',
+            'or_lowercase'                   => 'or',
+            'backup_code_help'               => 'If you can\'t reach your email, enter one of the backup codes you saved when you turned on two-factor authentication.',
+            'enter_backup_code'              => 'Your backup code',
+            'verify_with_email_code'         => 'Use the code from your email instead',
+            'reset_link_invalid'             => 'This password reset link is no longer valid. Request a new one from the sign-in page.',
 
             'socialite'                       => [
                 'unacceptable' => ':provider is not an acceptable login type.',

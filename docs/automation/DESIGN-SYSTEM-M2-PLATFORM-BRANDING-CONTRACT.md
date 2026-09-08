@@ -298,6 +298,21 @@ a representative sample):
 
 ### 3.8 Inline SVG auth/installer illustrations — already neutral, already reusable as the safe fallback
 
+> **Superseded for the authentication surface by Customer Experience Slice 2
+> (2026-09, `docs/automation/CUSTOMER-EXPERIENCE-SLICE-2-AUTH-SHELL.md`).**
+> The "remain the platform's own bundled fallback" decision below no longer
+> applies to `login`, `register`, forgot/reset password, email verification,
+> two-factor/backup and invitation screens: with no owner-configured
+> `auth_illustration`, `BrandingPresenter::illustration('auth')` now returns
+> `src: null` and `<x-branding-illustration surface="auth">` renders the
+> neutral AI Business OS typographic panel (Customer Experience contract
+> §9.1, §21.1, §28.6). No `login-v2*.svg`, `create-account.svg`,
+> `forgot-password-v2*.svg`, `reset-password-v2*.svg`,
+> `two-steps-verification-illustration*.svg` or `not-authorized*.svg` is
+> referenced by any authentication view any more. The installer branch of
+> the presenter is unchanged (its views were removed by the legacy-deletion
+> sweep).
+
 `login-v2.svg`, `create-account.svg`, `forgot-password-v2.svg`,
 `two-steps-verification-illustration.svg`, `reset-password-v2.svg`,
 `not-authorized.svg` (and each file's `-dark` variant), all under
@@ -567,11 +582,13 @@ exactly once per new Blade component's own constructor, matching how
   at all, never an `<img>` with an empty or missing `src`.
 - `favicon(): string` — the configured favicon path, or §6.1's bundled
   default; never empty.
-- `illustration(string $surface): array{src: string, alt: string}` —
+- `illustration(string $surface): array{src: ?string, alt: string}` —
   `$surface` is `'auth'` or `'installer'`; owner-configured value, else
-  the appropriate existing bundled Vuexy illustration (§3.8) for that
-  exact surface — never a broken reference, since a real, already-
-  shipped file is always the floor.
+  the surface's fallback. **Amended by Customer Experience Slice 2:** for
+  `'auth'` the fallback is `null` (the component renders the neutral
+  typographic panel, never an inherited Vuexy file); for `'installer'`
+  it remains the bundled illustration (§3.8). Never a broken reference
+  either way.
 - `footerCompanyName(): string` — configured value, else
   `config('app.name')` (never empty, since `config('app.name')` itself
   always has a real value per §5).
