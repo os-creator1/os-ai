@@ -16,6 +16,8 @@ Merging the future RFC-004 design PR does **not** automatically authorize implem
 
 **v1.3 revision note:** this revision corrects one genuine repository-vs-RFC contradiction found during Milestone 2's own mandatory pre-implementation audit (required by this RFC's and RFC-003's shared discipline of verifying repository reality before locking an implementation contract) — not a discretionary redesign. v1.2 (§17, §24) stated that `WorkspaceManager::createBusinessInWorkspace()` is "the sole Business-creation orchestration entry point" and therefore the only site needing a slot-capacity assertion. Direct inspection of the actual M1-era repository found that statement false: `BusinessManager::applyIdentity()`'s legacy onboarding path calls `WorkspaceManager::resolveLegacyOnboardingWorkspace()` and then `BusinessRepository::createForCustomerInWorkspace()` directly, bypassing `createBusinessInWorkspace()` entirely; `WorkspaceManager::createWorkspace()` accepts an optional `WorkspaceFirstBusinessInput` and can itself insert a Business; and `WorkspaceManager::reassignBusiness()` increases the destination Workspace's Business-row count on a real cross-Workspace move. §17 and §24 are corrected to state the general invariant this RFC actually requires — every Business-count-increasing operation, not only `createBusinessInWorkspace()`, must evaluate capacity while holding the destination Workspace's row lock and before its count-increasing write — and to enumerate every current such operation by name. §17 additionally locks a narrowly-scoped, evidence-based compatibility rule for the legacy onboarding path (never previously slot-gated) and for a brand-new Workspace the legacy resolver may itself provision (which, post-M1-backfill, has no plan assignment and would otherwise be denied immediately by M2's fail-closed algorithm). Direct inspection also found `WorkspaceController::store()` is the only production caller of `createWorkspace()`, and it never supplies `WorkspaceFirstBusinessInput` — no production caller supplies one — so §17/§24 also retire that optional parameter as dead capability rather than leaving it as an uncovered capacity-enforcement gap; Workspace creation becomes tenancy-only going forward, exactly as it is already used in production.
 
+**v1.4 revision note:** this revision resolves an authorized product correction, not a discretionary redesign. v1.0–v1.3 §2 stated the capacity goal as "Enforce **Business/location** slot capacity (3 included, an explicit paid allocation step for 4 and 5, 6+ requires Agency)". That single phrase conflated two genuinely different entities — a **Business/client account** (a `businesses` row: its own CRM, website, conversations, billing attribution and settings) and a **physical location** (a `business_locations` row: a storefront, branch or service area *inside* one Business). Milestone 1 resolved the ambiguity toward Business slots and seeded `workspace_plan_catalog` accordingly (`business_slot_included = 3`, `business_slot_max = 5`, `additional_business_slot_price_ratio = 0.5000` for Core and Growth). The product owner has now explicitly authorized the other reading: **Core = 1 Business, Growth = 1 Business, Agency = unlimited Businesses**, while the 3-included / 4-and-5-at-50% / 6+-requires-Agency rule governs **physical `BusinessLocation` records**. §2's goal is corrected in place and the full amendment — including which existing catalog columns keep which meaning, the additive representation physical-location entitlement requires, the migration/backfill posture, and the grandfathering rule — is §33. The already-merged M1 seed migration is historical and is **not** edited; §33 contracts an additive migration instead. §13's allocation-gated slot mechanism, its concurrency boundary and its audit requirements are unchanged in shape and are reused for both capacities.
+
 **The major architecture is unchanged and remains valid**: universal Workspace tenancy, a distinct RFC-004 domain fully separate from legacy SMS Plan/Subscription, Core/Growth/Agency tiers, six authoritative tables, the feature-identity-vs-availability split, Workspace-level plan assignment, feature entitlements, Workspace overrides, Business feature toggles, the allocation-gated Business-slot model, the RFC-005 usage/billing boundary, and four implementation milestones.
 
 ---
@@ -35,7 +37,7 @@ RFC-004 does **not** implement billing execution, usage metering, wallets, or St
 - Formalize Core/Growth/Agency as data-driven commercial tiers assigned to a Workspace, never a separate tenancy model.
 - Introduce one authoritative platform feature registry with stable, code-defined machine keys, and a separate, also code-backed, implementation-availability distinction so a planned-but-unbuilt feature can never become executable through a plan mapping or an admin override.
 - Define a deterministic, precedence-ordered effective-access-decision algorithm: platform support → implementation availability → Workspace assignment resolved → Workspace plan entitlement/override → Business feature toggle → billing/operational state → (RFC-005) usage authorization.
-- Enforce Business/location slot capacity (3 included, an explicit paid allocation step for 4 and 5, 6+ requires Agency) at the same transactional boundary RFC-003 already uses for Business creation, safely under concurrency, with the allocation quantity itself an authoritative, auditable, admin-controlled mutation, and with deterministic, same-transaction slot normalization whenever the tier itself changes.
+- Enforce **Business/client-account slot capacity** at the same transactional boundary RFC-003 already uses for Business creation, safely under concurrency, with the allocation quantity itself an authoritative, auditable, admin-controlled mutation, and with deterministic, same-transaction slot normalization whenever the tier itself changes. **(Amended by v1.4 — see §33. This goal originally read "Business/location slot capacity (3 included, an explicit paid allocation step for 4 and 5, 6+ requires Agency)", which conflated two distinct entities. `workspace_plan_catalog`'s `business_slot_*` columns govern Business/client-account capacity only. Physical `BusinessLocation` capacity is a separate, additively-represented entitlement defined in §33, and the authorized Business figures are Core = 1, Growth = 1, Agency = unlimited.)**
 - Give the platform admin an explicit, durably audited complimentary-assignment mechanism, including for the platform owner's own Workspace, and an equally durably audited operational status-change mechanism.
 - Preserve RFC-003's authorization boundary exactly: plan entitlement is an additional gate layered on top of Workspace/Business authorization, never a replacement for it, and never a way to bypass it.
 - Leave a clean, minimal, already-satisfiable seam for RFC-005 so usage-authorization can be added later without reshaping anything RFC-004 ships.
@@ -943,3 +945,213 @@ Two items are deliberately left to the *implementation* milestones that will act
 
 1. **The exact per-key `PlatformFeatureRegistry` availability values** (§11) — this RFC's own table is explicitly illustrative and caveated, and in this revision defaults `ProspectOutreach` conservatively to `Planned` (§5 finding 9) rather than asserting an unverified `Available`; M1 must re-verify every value, including this one, against actual repository modules before shipping it.
 2. **Whether an existing bounded white-label capability actually exists in this repository today** (§26, §29 M3) — the design rule (gate an existing capability, don't build a new one; and if gating, first run the §26 compatibility pass) is fully decided; only the underlying fact is left to M3's own contract-drafting inspection.
+
+---
+
+## 33. Amendment 3 — Business/client-account capacity versus physical-location capacity
+
+**Status:** Authorized product correction (v1.4). Supersedes the conflated
+capacity phrasing in §2 wherever it appears. Nothing else in this RFC changes.
+
+### 33.1 The two capacities are separate and must never be conflated again
+
+| | **Business / client account** | **Physical location** |
+|---|---|---|
+| Row | `businesses` | `business_locations` |
+| Model | `App\Models\Business` | `App\Models\BusinessLocation` |
+| Meaning | One client company: its own CRM, website, conversations, automations, billing attribution and settings | A storefront, branch or service area **inside** one Business |
+| Tenancy boundary | **Yes** | **Never** |
+| Authorization boundary | **Yes** (`WorkspaceManager::userCanAccessBusiness()`) | **Never** |
+| Payer / wallet boundary | **Yes** (RFC-005 attributes a wallet per Business) | **Never** |
+| Account-switcher level | Yes | **Never** |
+
+`BusinessLocation` remains only a physical branch/service-area record. It must
+never become an account-switcher level, tenancy boundary, payer boundary, wallet
+boundary or authorization boundary. This is a blocking invariant.
+
+### 33.2 Authorized limits
+
+| Tier | Businesses / client accounts | Physical locations included | Locations 4 and 5 | Location 6+ |
+|---|---|---|---|---|
+| Core | **1** | 3 | 50% of the relevant plan price each | Requires Agency |
+| Growth | **1** | 3 | 50% of the relevant plan price each | Requires Agency |
+| Agency | **Unlimited** | **Unlimited** | n/a | n/a |
+
+Agency is $497/month with white-label. **Core and Growth retail prices remain
+undecided** and are not invented here; the 50% location charge is therefore
+expressed as a ratio against the tier price and cannot be collected until that
+price exists. Unlimited Agency Businesses do not create any free variable-usage
+allowance — RFC-005 metering and funding are unchanged.
+
+### 33.3 Which existing catalog columns mean what — stated precisely, not reinterpreted
+
+`workspace_plan_catalog` (migration `2026_08_13_120001_create_workspace_plan_catalog_table.php`)
+has these capacity columns:
+
+| Column | Meaning **after** this amendment | Changed? |
+|---|---|---|
+| `business_slot_included` | Included **Business/client-account** capacity | Meaning unchanged; the seeded Core/Growth *value* becomes wrong (§33.5) |
+| `business_slot_max` | Maximum **Business/client-account** capacity | as above |
+| `unlimited_business_slots` | Unlimited **Businesses**; already `true` for Agency and correct | No |
+| `additional_business_slot_price_ratio` | Price ratio for an additional **Business** slot | Meaning unchanged; Core/Growth no longer offer additional Business slots, so the value becomes inapplicable rather than reinterpreted |
+
+**No existing column is silently repurposed.** In particular
+`business_slot_included` is *not* redefined to mean locations. Physical-location
+entitlement requires a **new, additive representation** (§33.4).
+
+### 33.4 Required additive representation
+
+Physical-location entitlement needs, at minimum:
+
+* `workspace_plan_catalog.location_slot_included` — included physical locations
+  per Business (Core 3, Growth 3);
+* `workspace_plan_catalog.location_slot_max` — maximum per Business
+  (Core 5, Growth 5, Agency `null`);
+* `workspace_plan_catalog.unlimited_location_slots` — boolean (Agency `true`);
+* `workspace_plan_catalog.additional_location_slot_price_ratio` — `0.5000` for
+  Core and Growth, `null` for Agency;
+* a per-Business allocation counter for paid locations 4 and 5
+  (`businesses.additional_location_slots`), held at the **Business** level (not
+  the Workspace level, because the location limit is per Business), with the
+  same authoritative, auditable, admin-controlled mutation discipline §13
+  already requires for Business slots;
+* a per-Business **complimentary grandfathered** counter
+  (`businesses.grandfathered_location_slots`), kept separate from the paid
+  counter because the two behave differently under archiving (§33.9 rule 8);
+* a **lifecycle state** on `business_locations`, because capacity counts active
+  locations and no such column exists today (§33.9);
+* a durable transition type for location-allocation changes, added to the
+  existing `workspace_entitlement_transitions` vocabulary rather than a new
+  audit table.
+
+All of these are **additive**. Every column is nullable or carries a default —
+the lifecycle column defaults to `active`, so every existing row keeps exactly
+its present meaning — and the additive migration cannot fail on existing rows.
+
+### 33.5 Migration and backfill posture — the merged migration is historical
+
+`database/migrations/2026_08_13_120007_seed_workspace_plan_catalog_and_features.php`
+is **merged history and must not be edited**. It correctly records what was
+seeded at that time. The correction is delivered as a **new additive
+migration** that:
+
+1. adds the §33.4 columns with safe defaults;
+2. sets Core and Growth `location_slot_included = 3`, `location_slot_max = 5`,
+   `additional_location_slot_price_ratio = 0.5000`; Agency
+   `unlimited_location_slots = true`, `location_slot_max = null`;
+3. sets Core and Growth `business_slot_included = 1`;
+4. **grandfathers existing data** (§33.6) before any tightening takes effect;
+5. writes one durable `workspace_entitlement_transitions` row per affected
+   Workspace recording the corrected capacity, with system provenance, exactly
+   as `WorkspaceEntitlementBackfillV1` does, whose immutable payload names every
+   affected Business and its exact grandfathered count.
+
+**Migration semantics, stated in exact Laravel terms.** A migration runs **once**
+under the `migrations` table; this amendment does **not** claim the whole `up()`
+is re-runnable, and its `Schema::table()` steps would fail on a second
+execution. What must be idempotent is the **backfill logic** in step 4/5, so it
+is safe if invoked again by a repair command or after a rollback-and-reapply.
+
+Its `down()` drops the columns this migration added and restores the Core/Growth
+Business-capacity values **conditionally**: `workspace_plan_catalog` is
+operator-editable (§12.5), so `down()` restores `business_slot_included = 3` /
+`business_slot_max = 5` only if the current values are still exactly the ones
+this migration wrote, and otherwise **aborts the rollback** rather than
+overwriting a later deliberate operator change. If any location is in the
+`archived` lifecycle state, `down()` likewise fails closed rather than silently
+resurrecting archived locations as active. Full rules are in
+`docs/automation/CUSTOMER-EXPERIENCE-MANAGED-MESSAGING-AUTOMATIONS-CONTRACT.md`
+§23.3.
+
+### 33.6 Grandfathering — no existing Business or location may become inaccessible
+
+Tightening Core/Growth Business capacity from 3-included/5-max to 1 would
+otherwise strand real data. Therefore:
+
+* **No existing `businesses` row is deleted, deactivated, hidden or made
+  unreachable by this amendment.** A Workspace already holding more Businesses
+  than its corrected capacity becomes **grandfathered-over-capacity**, exactly
+  as §25.4 and the M1 backfill already define that state: every existing
+  Business keeps working, and only *new* Business creation is denied with
+  `business_slot_limit_exceeded` until the Workspace upgrades to Agency.
+* The same rule applies to physical locations: an existing Business already
+  holding more than its corrected location capacity keeps every location, and
+  only *new* location creation and *reactivation* are denied.
+* Grandfathered allocation is complimentary and must never be interpreted later
+  as unpaid recurring debt.
+
+**Business capacity** is evaluated as a `COUNT` of existing `businesses` rows
+(§13), and RFC-003 provides no Business-deletion mechanism, so no path can
+"recover" Business capacity. That is unchanged.
+
+**Physical-location capacity is different, and deliberately so (§33.9).** It
+counts **active** locations, and archiving genuinely frees a slot. A closed
+branch must not consume paid capacity forever.
+
+### 33.7 Downgrade behaviour
+
+A Workspace downgrading from Agency to Core/Growth, or a plan change that lowers
+location capacity, follows §17.1's existing same-transaction normalization
+discipline:
+
+* existing Businesses and locations are **retained** and remain fully accessible;
+* the Workspace/Business becomes grandfathered-over-capacity;
+* new creation is denied until the count falls below capacity or the tier is
+  raised;
+* the change is durably audited.
+
+Downgrade never silently deletes a Business, a location, a wallet, a phone
+number or any Google Business Profile binding.
+
+### 33.8 Enforcement boundary
+
+Physical-location capacity is asserted at **every active-location-count-increasing
+operation — creation *and* reactivation (§33.9) —** while holding the Business
+row lock, before the count-increasing
+write — the same general invariant §17/§24 (as corrected in v1.3) already state
+for Business creation. At the time of writing, `upsertPrimary()` in
+`app/Repositories/Eloquent/EloquentBusinessLocationRepository.php` is the only
+location writer and can only ever produce **one** location, so no enforcement
+gap exists today. The moment a second-location creation path is added, that path
+must carry the assertion in the same change (see
+`docs/automation/CUSTOMER-EXPERIENCE-MANAGED-MESSAGING-AUTOMATIONS-CONTRACT.md`
+§21, Slice 1A, which contracts exactly that atomicity requirement).
+
+Enforcement lives behind **one canonical service boundary** that every
+customer-reachable create and reactivate path delegates to; a source-boundary
+inventory test guards that set. That test guards repository architecture — it
+does not, and this amendment does not claim it does, mathematically prevent
+future code from writing to `business_locations` directly. See the Lane C
+contract §7.3b.
+
+### 33.9 Physical-location lifecycle and reusable paid capacity
+
+Physical-location add-ons are **reusable subscription capacity**, not a
+permanent purchase bound to one database row.
+
+1. Capacity counts locations in the **active** lifecycle state, not every
+   historical row.
+2. Removing a location from active use **archives** it. All history is retained
+   — the row, its Google binding, analytics, website references and audit trail.
+   Archiving is a state change, never a delete.
+3. Archiving frees exactly one active-location slot.
+4. A paid 4th/5th-location allocation is **reusable** for a replacement location
+   while that allocation remains subscribed.
+5. Archiving does **not** auto-cancel the paid allocation.
+6. Cancelling a paid allocation is permitted only when the active-location count
+   fits the post-cancellation capacity at the effective date.
+7. **Reactivation** runs the same capacity assertion as creation.
+8. Complimentary **grandfathered** excess is **not** reusable: archiving a
+   grandfathered excess location consumes that complimentary allowance rather
+   than yielding a transferable free slot. Paid allocations behave the opposite
+   way, by design — that is the distinction between the two.
+
+`business_locations` carries no lifecycle column today (verified at
+`database/migrations/2026_07_18_120002_create_business_locations_table.php`),
+so the additive migration of §33.5 adds one, defaulting every existing row to
+`active`. The four capacity kinds — included, paid, complimentary grandfathered,
+and archived — must each be separately computable from durable per-Business
+state, never re-derived by inference. Full mechanics, including the per-Business
+counters and the archive/reactivate matrix, are in
+`docs/automation/CUSTOMER-EXPERIENCE-MANAGED-MESSAGING-AUTOMATIONS-CONTRACT.md`
+§7.3a, §7.5.1–§7.5.3 and §23.2.

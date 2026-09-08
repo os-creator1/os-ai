@@ -70,13 +70,30 @@ DDL (migrations 1–6) and data operations (7–8) are kept separate, matching R
 
 ## 6. Catalog and feature-matrix seeding
 
-Migration 7 seeds exactly three `workspace_plan_catalog` rows:
+Migration 7 seeds exactly three `workspace_plan_catalog` rows. **Every value in
+this table is a `business_slot_*` value — that is, Business/client-account
+capacity, not physical-location capacity** (see the amendment note below):
 
-| Tier | Slots included | Slot max | Unlimited | Additional-slot ratio |
+| Tier | **Business** slots included | **Business** slot max | Unlimited **Businesses** | Additional-**Business**-slot ratio |
 |---|---|---|---|---|
 | `core` | 3 | 5 | no | `0.5000` |
 | `growth` | 3 | 5 | no | `0.5000` |
 | `agency` | 3 | `null` | yes | `null` |
+
+> **Amendment note (RFC-004 v1.4, §33).** These are the values M1 actually
+> seeded and this guide correctly records them; the migration is merged history
+> and is **not** edited. The product owner has since authorized the corrected
+> reading of RFC-004 §2's conflated "Business/location slot capacity" phrase:
+> **Core = 1 Business, Growth = 1 Business, Agency = unlimited Businesses**,
+> with 3-included / 4-and-5-at-50% / 6+-requires-Agency applying to **physical
+> `BusinessLocation` records** instead. The Core/Growth `3` and `5` above are
+> therefore superseded for Business capacity, and physical-location capacity
+> requires new additive columns that do not exist in this migration. Both are
+> delivered by a **separate additive migration** contracted in RFC-004 §33.4–§33.6,
+> which also grandfathers every existing Workspace so no Business or location
+> already in use becomes inaccessible. Until that additive migration ships, the
+> values above remain the deployed reality and this guide's smoke checks below
+> describe the deployed behaviour, not the corrected target.
 
 **All three rows are seeded with `price` and `currency_id` left `null`** — RFC-004 does not invent commercial prices at implementation time (§9 below documents the operational consequence of this).
 
@@ -186,7 +203,7 @@ Behind the existing `EnsureUserIsAdministrator` boundary, with the two new permi
 Exercise directly against a test Workspace (never production data) before considering this deploy fully verified:
 
 1. Assign a first plan (Core, complimentary) to an unassigned Workspace — succeeds, writes one `plan_assigned` transition row.
-2. Attempt to create a 4th Business without an additional-slot allocation — denied with `business_slot_allocation_required`. Allocate one additional slot; the 4th Business now succeeds.
+2. Attempt to create a 4th Business without an additional-slot allocation — denied with `business_slot_allocation_required`. Allocate one additional slot; the 4th Business now succeeds. **(Describes the deployed M1/M2 behaviour. Under RFC-004 §33 the corrected Core/Growth Business capacity is 1, so once the §33.5 additive migration ships this check becomes "attempt to create a 2nd Business — denied with `business_slot_limit_exceeded`, because Core/Growth no longer offer additional Business slots", and the 3/4/5 allocation drill moves to physical locations. Do not run this check against a deployment that already carries the §33.5 migration.)**
 3. Change the Workspace's status to `suspended` — every feature-gated `decide()` call for that Workspace now denies with `plan_suspended`, and a `plan_status_changed` transition row is written with the correct `from_status`/`to_status`. Restore to `active`.
 4. Create a Workspace `deny` override for `crm` (an already-included, base-packaged `Available` feature on every seeded tier) — `decide()` now returns `denied_by_workspace_override` for `crm` on that Workspace instead of the plan-derived allow. Revert the override — the decision returns to the plan-mapping-derived allowed state. Confirm the corresponding `entitlement_override_denied`/`entitlement_override_reverted` rows were written to `workspace_entitlement_transitions`. **(An `allow`-override-outside-base-plan smoke check is not operationally possible against a normally-seeded deployment:** with the seeded catalog (§6), `crm`/`conversations`/`automations` — the only three currently-`Available` features — are already packaged into every tier, including Core, so there is no `Available` feature outside base-plan packaging for a real deployed Workspace to demonstrate an `allow` override against. That specific behavior is proven in the automated test suite's own isolated fixture instead, by `EntitlementManagerPresentationTest::test_override_outside_base_plan_packaging_is_still_returned`, which removes Core's `crm` packaging row inside that one test's own transaction only — never in a real deployment's production catalog data.)
 5. Change the Workspace's tier from Core to Growth — `additional_business_slots` is preserved unchanged; change from Growth to Agency — it resets to `0` atomically in the same operation, with both a `plan_changed` and an `additional_business_slots_changed` transition row written.
