@@ -14,10 +14,12 @@
 
 **The isolation requirement is corrected to match what the launch mechanism can actually deliver, honestly, rather than overclaiming.** §11.2 of the messaging contract previously stated an unqualified guarantee ("a compromise or suspension of one Business's provider resources must not disable another Business") that no single-Telnyx-account mechanism can satisfy at the account level. §11.2 is amended (in the same commit as this document) into two explicit levels:
 
-1. **Application/resource-level isolation (mandatory at launch):** one Messaging Profile per Business, one authoritative number-to-Business mapping, Business-scoped wallet/usage/kill-switch, fail-closed webhook routing, no customer-accessible platform credentials. This is fully achievable under Candidate B and is what this document designs against (§7, §9).
+1. **Application/resource-level isolation (mandatory for Slice 3 completion):** one Messaging Profile per Business, one authoritative number-to-Business mapping, Business-scoped wallet/usage/kill-switch, fail-closed webhook routing, no customer-accessible platform credentials. This is **architecturally achievable under Candidate B** — nothing about the chosen mechanism prevents it — but it is a Slice 3 build requirement, not something this document, or the current repository, already provides (§7, §14's audit findings).
 2. **Platform-provider failure domain (explicitly accepted for launch):** a suspension, KYC issue, balance failure, credential compromise, or Telnyx enforcement action against the **shared** platform Telnyx account can affect every managed Business at once. This risk is real, is not eliminated by any application-level control, and is accepted by the owner for launch in exchange for avoiding the Managed-Account commit-plan cost. It is mitigated operationally (§7), never claimed away.
 
 **Gate status:** §28.3 is resolved for launch. The launch mechanism requires **no** Telnyx commercial commitment and **no** Telnyx approval — Slice 3's real (non-fake) provider foundation may be built against it now, with actual outbound Telnyx calls remaining inert until real platform credentials are deliberately supplied. Slice 4 remains blocked exactly as originally contracted (§28.4, §28.1, Slice 5) — the Managed-Account commit-plan/approval question is now correctly scoped as a **future migration precondition**, not a Slice 3 or Slice 4 blocker. See §19 for the full, corrected gate statement.
+
+**Correction Round 2 (2026-09-08).** Two further corrections, applied throughout §7, §8, §12, and §15: (a) every place that read as if Slice 3's isolation controls already existed is restated as an approved, mandatory *requirement* the current repository does not yet meet (§14's audit is the evidence); and (b) the launch identity schema (§8) no longer includes any Managed-Account-specific column, dormant or otherwise — a future dedicated-account mode adds its own genuinely provider-neutral column via its own additive migration, only if and when that future slice is authorized.
 
 ---
 
@@ -150,7 +152,7 @@ Retained as a concrete, non-trivial, non-automatic future migration, evaluated b
 4. **Recreate or transfer the Business's A2P brand/campaign relationship** as Telnyx's process requires — not assumed to be a simple copy; §18 Q2 is the open question on whether a direct transfer exists at all.
 5. **Transfer, port, or reassign the Business's number(s)** only through an officially supported process (port within Telnyx, or the standard number-to-profile reassignment API, §4B) — never an unsupported workaround.
 6. **Rotate the Business's `BusinessMessagingIdentity` to the new Managed-Account credentials**, issued and stored exactly as the platform's shared-secret model already requires (§6), scoped now to one Business instead of shared.
-7. **Update the provider-neutral Business identity atomically** — the `provider_mode` field (§8) flips from the shared-account mode to the Managed-Account mode in the same transaction that records the new provider identifiers; no window where the record is ambiguous about which mode is authoritative.
+7. **Add the new dedicated-account column(s) via an ordinary additive migration** (§8) — e.g. a genuinely provider-neutral `provider_account_reference` column, never named after Telnyx's "Managed Accounts" product — before any Business is cut over, so the column exists platform-wide before it is ever populated. **Then, per migrated Business, flip `provider_mode` to the new dedicated-account case and populate that Business's new column(s) atomically**, in the same transaction that records the new provider identifiers; no window where the record is ambiguous about which mode is authoritative.
 8. **Verify webhook routing** against the new Managed Account/Messaging Profile identifiers before cutting outbound traffic over — the fail-closed chain (§9) is re-proven against real values, not assumed to carry over from the fake/shared-account configuration.
 9. **Drain in-flight events from the old (shared-account) profile** before fully decommissioning that profile's association with the migrated Business, so no event is lost mid-cutover.
 10. **Retain immutable historical attribution** — every ledger/audit row written under the shared-account period keeps its original provider identifiers; migration never rewrites history (mirrors the messaging contract's own migration discipline, §23 of that contract).
@@ -180,18 +182,27 @@ Retained as a concrete, non-trivial, non-automatic future migration, evaluated b
 
 **Corrected 2026-09-08 (Correction Round 1) — the honest two-level model, matching the corrected §11.2 of the messaging contract exactly.**
 
-### 7.1 Application/resource-level isolation — mandatory at launch, achieved in full under Candidate B
+### 7.1 Application/resource-level isolation — architecturally achievable under Candidate B, mandatory for Slice 3 completion
+
+**Implementation status, stated precisely so this section is never mistaken for a completion report:**
+
+- **What is approved by this decision:** the architecture (Candidate B) and the isolation *requirements* below. Nothing about Candidate B prevents any of them from being built.
+- **What Slice 3 must implement:** every bullet below. None of them exist yet — this document specifies what Slice 3 has to build, not what already runs.
+- **What the repository audit found missing today (§14):** there is no `BusinessMessagingIdentity` model, no Messaging-Profile-per-Business assignment, no Business-scoped kill switch, and no fail-closed webhook attribution. The legacy `DLRController::inboundTelnyx()` does the opposite of the required mapping — it defaults an unmatched number to user id `1` rather than rejecting — which is the concrete, present-day gap this section's requirements replace, not extend.
+- **What verifies completion:** T-PROV-1/2 and the wider §24 test matrix, run against Slice 3's actual implementation (real adapter or fake, §9's closing note) before Slice 3 is declared complete per the messaging contract's own §21.1 exit criteria.
+
+**Requirements Slice 3 must implement:**
 
 - **One Messaging Profile per Business**, never shared, created and owned by the platform.
-- **One authoritative number-to-Business mapping** — `BusinessMessagingIdentity` (§8) is the single source of truth; no code path is authorized to infer a Business from a number any other way (the audit's finding that legacy `DLRController` defaults an unmatched number to user id `1`, §14, is exactly the failure mode this mapping exists to eliminate going forward).
-- **Business-scoped wallet and usage records** — every reservation/settlement (RFC-005) attributes to exactly one Business via the internal identity, independent of the fact that the underlying Telnyx account is shared (§10).
+- **One authoritative number-to-Business mapping** — `BusinessMessagingIdentity` (§8) must be built as the single source of truth; no code path may be authorized to infer a Business from a number any other way.
+- **Business-scoped wallet and usage records** — every reservation/settlement (RFC-005) must attribute to exactly one Business via the internal identity, independent of the fact that the underlying Telnyx account is shared (§10).
 - **Business-scoped kill switch** — the platform must be able to pause one Business's sending (e.g. on a compliance signal, §12) without touching any other Business's Messaging Profile or numbers.
 - **Fail-closed webhook routing** keyed to the internal identity, never to a shared discriminator alone (§9).
-- **No customer-accessible platform credentials** — satisfies §11.2's "Support boundary" row: the platform, not the customer, holds the one Telnyx relationship; customers never receive a Telnyx login.
-- **Per-Business rate/volume controls** — enforced at the application layer (message velocity limits, §12) since the underlying Telnyx throughput tier is shared, not per-Business (§4B).
+- **No customer-accessible platform credentials** — satisfies §11.2's "Support boundary" row once built: the platform, not the customer, holds the one Telnyx relationship; customers must never receive a Telnyx login.
+- **Per-Business rate/volume controls** — to be enforced at the application layer (message velocity limits, §12) since the underlying Telnyx throughput tier is shared, not per-Business (§4B).
 - **Fail-closed conflict detection** on every inbound event (§9).
 
-A compromise, configuration error, single number's suspension, a single 10DLC campaign's suspension, or a Business-level pause is contained to that Business by these controls, exactly as §11.2's application-level row now requires.
+Once Slice 3 implements every item above, a compromise, configuration error, single number's suspension, a single 10DLC campaign's suspension, or a Business-level pause will be contained to that Business — this is the acceptance bar §11.2's application-level row states, and T-PROV-1/2 (§24 of the messaging contract) is how the platform proves it, not something true of the repository as it stands today.
 
 ### 7.2 Platform-provider failure domain — explicitly accepted for launch, not eliminated
 
@@ -216,25 +227,28 @@ Because every Business shares one Telnyx account, Candidate B genuinely **cannot
 
 ## 8. Number ownership
 
-**Corrected 2026-09-08 (Correction Round 1) — the identity model is now provider-neutral and does not hardcode Managed Accounts as required launch infrastructure.** Recommended internal record (new, Slice 3-owned): **`BusinessMessagingIdentity`**, one row per Business's default messaging identity, holding only opaque, non-secret provider identifiers (§11.3: "admin-visible only"), never a credential (§6):
+**Corrected 2026-09-08 (Correction Round 2) — the launch schema now stores only what Candidate B's shared-account implementation actually needs. No dormant, future-facing, or Managed-Account-specific field is added merely to avoid a later migration; a later additive migration is normal, safe schema evolution, not something the launch schema needs to pre-empt.** Recommended internal record (new, Slice 3-owned): **`BusinessMessagingIdentity`**, one row per Business's default messaging identity, holding only opaque, non-secret provider identifiers (§11.3: "admin-visible only"), never a credential (§6):
 
-| Column | Purpose | Required at launch? |
-|---|---|---|
-| `business_id` | FK, unique per active identity (§10.4: at most one active default identity per Business) | Yes |
-| `provider` | closed enum, `telnyx` only at launch | Yes |
-| `provider_mode` | closed enum: `managed_shared` (Candidate B, the launch mode) or `byo` (§13); a future `managed_dedicated` value is reserved for the Candidate A migration (§5.2) but is **not added until that migration is actually built** | Yes |
-| `provider_messaging_profile_id` | the platform account's Messaging Profile `id` dedicated to this Business (opaque) | Yes |
-| `provider_phone_number_id` | the assigned number's Telnyx-side id (opaque) | Yes |
-| `phone_number` | the E.164 number itself (customer-visible, "your business phone") | Yes |
-| `webhook_route_token` | an opaque internal UID (never a Telnyx identifier) embedded in this Business's webhook URL path — the primary routing key, §9 | Yes |
-| `provider_brand_id`, `provider_campaign_id` | the Business's own 10DLC brand/campaign (opaque, admin-visible only) — required by A2P regardless of account architecture (§11) | Yes |
-| `provider_managed_account_id` | the Business's Managed Account `id`, if and only if `provider_mode = managed_dedicated` after a future migration (opaque) | **No — nullable, unused, and never populated at launch.** Exists in the schema only so the column doesn't need to be added later without a migration; it carries no meaning under `provider_mode = managed_shared` and must never be read by launch-era code. |
-| `status` | activation state machine value (§10.1 step 1, §7.7 of the messaging contract) | Yes |
-| `created_at`/`updated_at`, audit fields | | Yes |
+| Column | Purpose |
+|---|---|
+| `business_id` | FK, unique per active identity (§10.4: at most one active default identity per Business) |
+| `provider` | closed enum, `telnyx` only at launch |
+| `provider_mode` | closed enum with exactly two cases at launch: `managed_shared` (Candidate B, the launch mode) or `byo` (§13). No third case is pre-declared or reserved (§5.2) |
+| `provider_messaging_profile_id` | the platform account's Messaging Profile `id` dedicated to this Business (opaque) |
+| `provider_phone_number_id` | the assigned number's Telnyx-side id (opaque) |
+| `phone_number` | the E.164 number itself (customer-visible, "your business phone") |
+| `webhook_route_token` | an opaque internal UID (never a Telnyx identifier) embedded in this Business's webhook URL path — the primary routing key, §9 |
+| `provider_brand_id`, `provider_campaign_id` | the Business's own 10DLC brand/campaign (opaque, admin-visible only) — required by A2P regardless of account architecture (§11) |
+| `status` | activation state machine value (§10.1 step 1, §7.7 of the messaging contract) |
+| `created_at`/`updated_at`, audit fields | |
 
-**Explicitly, per this correction:** `provider_managed_account_id` is **not** a required field for launch, is **nullable**, is named provider-neutrally (not `telnyx_managed_account_id`), is **never used for Candidate B launch routing** (§9 does not reference it), and is **never customer-visible** under any mode. No Telnyx identifier of any kind is ever rendered to a customer; the `phone_number` field alone is customer-visible, exactly matching §10.2's forbidden-fields list.
+**No Managed-Account identifier of any kind — dedicated, nullable, or otherwise — is part of the launch schema.** A dormant column that exists only "so a migration isn't needed later" is itself a misleading artifact: it implies a capability (dedicated-account support) that is not built, is not authorized by this document, and may never be built at all. Additive migrations are a normal, low-risk, well-understood Laravel operation (the messaging contract's own §23 migration discipline already assumes exactly this pattern for every other slice) — there is no real cost being avoided by adding the field early, only a real cost being incurred (a column every reader has to understand the meaning, or lack of meaning, of).
 
-This record is the single join point the webhook router (§9) and `SendMessageAction` (§10.4 of the messaging contract) both resolve through, under either `provider_mode`. The provider adapter (§6) is written against `provider_mode` from day one specifically so a future migration (§5.2) changes one column's value and populates two more, atomically, without any caller of `SendMessageAction` or the webhook router needing to change — satisfying the task's own requirement that the wallet, conversation, automation, and customer-facing layers never need rewriting for this migration.
+**If a future slice implements dedicated provider accounts** (§5.2), that slice adds what it needs through its own ordinary additive migration at that time: a new `provider_mode` enum case, and a new column using genuinely provider-neutral terminology — e.g. **`provider_account_reference`**, never `managed_account_id`, `telnyx_managed_account_id`, or any name tied to Telnyx's "Managed Accounts" product specifically, since a different future provider or provider capability could reuse the same seam. That migration is additive only: it adds a column and a case, it does not rewrite `BusinessMessagingIdentity`'s existing columns, and (per the requirement below) it does not require rewriting the wallet, conversation, automation, or customer-facing layers.
+
+No Telnyx identifier of any kind is ever rendered to a customer; the `phone_number` field alone is customer-visible, exactly matching §10.2's forbidden-fields list.
+
+This record is the single join point the webhook router (§9) and `SendMessageAction` (§10.4 of the messaging contract) both resolve through, under either `provider_mode` case that exists at any given time. The provider adapter (§6) is written against `provider_mode` and the interface in `app/Library/Messaging/Contracts/**` (§15) — not against any specific column set — specifically so a future migration can add a new mode and its own new column(s) without any caller of `SendMessageAction` or the webhook router needing to change. That is what makes the future migration additive rather than a rewrite; it does not require this document to add the future column now.
 
 ---
 
@@ -325,15 +339,15 @@ This record is the single join point the webhook router (§9) and `SendMessageAc
 
 ## 12. Suspension and compliance containment
 
-**Corrected 2026-09-08 (Correction Round 1) — five distinct failure modes, kept explicitly separate so the platform never confuses a narrow, Business-scoped issue with the one genuinely shared risk.**
+**Corrected 2026-09-08 (Correction Round 1) — five distinct failure modes, kept explicitly separate so the platform never confuses a narrow, Business-scoped issue with the one genuinely shared risk.** As with §7.1, the "Business-scoped" column below states the **target property Slice 3 must build and preserve**, not a property the current, pre-Slice-3 repository already exhibits — §14's audit confirms none of the underlying isolation mechanisms (per-Business Messaging Profile, `BusinessMessagingIdentity`, the kill switch) exist yet.
 
-| Failure mode | Scope | Isolation under launch (Candidate B) |
+| Failure mode | Scope | Required isolation once Slice 3 is built (Candidate B) |
 |---|---|---|
-| **Individual number suspension/flagging** (e.g. a single number flagged for spam by a carrier) | One phone number | Business-scoped — only the Business owning that number is affected; the platform reassigns or replaces the number within that Business's Messaging Profile |
-| **Individual 10DLC campaign suspension** (15-day dormancy rule, §3 #16) | One Business's brand/campaign | Business-scoped — reactivation is the documented two-step number reassignment (§3 #16), and does not touch any other Business's campaign |
-| **Messaging Profile configuration failure** (e.g. a misconfigured webhook URL on one profile) | One Business's Messaging Profile | Business-scoped — one Profile's misconfiguration does not affect another Profile's delivery |
-| **Business-level AI Business OS pause** (the platform's own kill switch for one Business, §7.1) | One Business, applied by the platform itself | Business-scoped by design — this is the platform's own control, not a Telnyx-side event |
-| **Platform Telnyx account suspension** (KYC re-review, payment-method failure, AUP enforcement against the shared account, §3 #18/#19) | The entire shared platform account | **Not isolated — every Business is affected.** This is the accepted platform-provider failure domain (§1, §7.2), not eliminated by Candidate B, and not falsely claimed to be. |
+| **Individual number suspension/flagging** (e.g. a single number flagged for spam by a carrier) | One phone number | Must be Business-scoped — only the Business owning that number is affected; the platform reassigns or replaces the number within that Business's Messaging Profile |
+| **Individual 10DLC campaign suspension** (15-day dormancy rule, §3 #16) | One Business's brand/campaign | Must be Business-scoped — reactivation is the documented two-step number reassignment (§3 #16), and must not touch any other Business's campaign |
+| **Messaging Profile configuration failure** (e.g. a misconfigured webhook URL on one profile) | One Business's Messaging Profile | Must be Business-scoped — one Profile's misconfiguration must not affect another Profile's delivery |
+| **Business-level AI Business OS pause** (the platform's own kill switch for one Business, §7.1) | One Business, applied by the platform itself | Must be Business-scoped by design — this is the platform's own control to build, not a Telnyx-side event |
+| **Platform Telnyx account suspension** (KYC re-review, payment-method failure, AUP enforcement against the shared account, §3 #18/#19) | The entire shared platform account | **Cannot be isolated — every Business is affected.** This is the accepted platform-provider failure domain (§1, §7.2), not eliminated by Candidate B and not something any amount of Slice 3 engineering closes. |
 
 **The first four must remain, and under Candidate B do remain, Business-scoped wherever Telnyx's own mechanisms permit** (number-level, campaign-level, and profile-level actions are all independently scoped by Telnyx itself, §3 #10/#16; the Business-level pause is the platform's own control, not Telnyx's). **The fifth is the one genuinely shared, accepted risk** — no application-level design closes it; only the §5.2 migration to Managed Accounts does, at its commercial cost.
 
@@ -378,13 +392,13 @@ Unaffected by this correction. §11.4/§11.5 of the messaging contract already d
 
 - `app/Library/Messaging/**` (new) — the provider-agnostic interface (send, number search, number order, registration submit, status callback) in **platform** vocabulary, per §21.2, with `BusinessMessagingIdentity` as its central resolved record (§8 above) and `provider_mode` as the seam the future §5.2 migration turns on.
 - `app/Library/Messaging/Contracts/**` (new) — the interface itself. Slice 3 implements both a deterministic fake (mirroring `FakeGoogleBusinessProfileReadClient`, for tests) **and** the real Telnyx-backed adapter against the shared platform account (§6) — the real adapter no longer needs to wait on any external gate; it only needs real credentials deliberately supplied before it is ever actually invoked against Telnyx.
-- `app/Models/BusinessMessagingIdentity.php` (new) — exactly the shape in §8, with `provider_managed_account_id` present but nullable and unused at launch.
+- `app/Models/BusinessMessagingIdentity.php` (new) — exactly the shape in §8; no Managed-Account-specific column of any kind, not even a dormant nullable one, is part of this launch migration.
 - `app/Http/Controllers/Customer/Business/MessagingChannelsController.php` (existing) — repositioned to the BYO/Advanced path per §13, not rewritten.
 - `app/Enums/Messaging/**` (new) — a closed provider enum (`telnyx` only at launch), a `provider_mode` enum (`managed_shared`, `byo` at launch), and an identity-status enum.
 - `resources/views/customer/business/MessagingChannels/**` and `resources/views/customer/settings/advanced/**` (new) — the relocated BYO surface.
 - `config/services.php`, `config/messaging.php` (new) — no live Telnyx credential belongs in either file per §11.3; `config/messaging.php` should hold only the closed provider list, the `provider_mode` default (`managed_shared`), and non-secret defaults.
 
-**Nothing about the allowlist's paths changes as a result of this correction — it is confirmation, not a new allowlist.** What changes is how far Slice 3 may go against those paths: real (non-fake) implementation against Candidate B is now in-scope, not blocked. Per §21.2 (already locked, and unaffected by this correction), the forbidden list stands: no *assumed* Managed-Account-specific structure — no mandatory `provider_managed_account_id`, no per-Managed-Account credential model, no migration that hardcodes a future account structure Telnyx hasn't confirmed the shape of — is encoded anywhere the launch identity is used, precisely so §5.2's later migration stays possible without a rewrite.
+**Nothing about the allowlist's paths changes as a result of this correction — it is confirmation, not a new allowlist.** What changes is how far Slice 3 may go against those paths: real (non-fake) implementation against Candidate B is now in-scope, not blocked. Per §21.2 (already locked, and unaffected by this correction), the forbidden list stands: no *assumed* Managed-Account-specific structure of any kind — no Managed-Account identifier column (dormant, nullable, or otherwise), no per-Managed-Account credential model, no migration that hardcodes a future account structure Telnyx hasn't confirmed the shape of — is encoded anywhere the launch identity is used. §8's later, genuinely-additive migration (adding a provider-neutral `provider_account_reference` column, only if and when that future slice is authorized) is what keeps §5.2's migration possible without a rewrite — not anything added to the schema now.
 
 ---
 
