@@ -12,6 +12,7 @@ use App\Exceptions\Workspace\UnauthorizedWorkspaceManagementException;
 use App\Http\Controllers\Customer\CustomerBaseController;
 use App\Http\Requests\Business\ArchiveBusinessLocationRequest;
 use App\Http\Requests\Business\StoreBusinessLocationRequest;
+use App\Http\Requests\Business\UpsertBusinessLocationRequest;
 use App\Library\Business\BusinessLocationManager;
 use App\Library\Entitlement\EntitlementManager;
 use App\Library\Workspace\WorkspaceManager;
@@ -78,6 +79,24 @@ class BusinessLocationsController extends CustomerBaseController
         }
 
         return $this->back($workspaceUid, $businessUid, 'success', 'Location added.');
+    }
+
+    /**
+     * Edit an existing location's details. Not count-increasing, so no
+     * capacity assertion applies — but it still goes through the canonical
+     * boundary so every location write has one owner.
+     */
+    public function update(UpsertBusinessLocationRequest $request, string $workspaceUid, string $businessUid, string $locationUid): RedirectResponse
+    {
+        [, $business] = $this->resolveManageableBusiness($workspaceUid, $businessUid);
+
+        $location = $this->locations->findLocation($business, $locationUid);
+
+        abort_unless($location !== null, 404);
+
+        $this->locations->updateLocation($business, $location, $request->validated());
+
+        return $this->back($workspaceUid, $businessUid, 'success', 'Location details saved.');
     }
 
     public function archive(ArchiveBusinessLocationRequest $request, string $workspaceUid, string $businessUid): RedirectResponse

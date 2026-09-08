@@ -180,29 +180,63 @@ class BusinessLocationBoundaryTest extends TestCase
     }
 
     /**
-     * T-LOC-10 — the legacy onboarding location step, migrated onto the
-     * boundary (§7.3b point 2). Its creating case must now pass through the
-     * capacity assertion.
+     * The legacy onboarding location step is documented HONESTLY, not
+     * claimed to be behind the boundary.
+     *
+     * Contract §7.3b point 2 asks for
+     * `BusinessOnboardingController::storeLocation()` to be migrated onto
+     * the boundary. The real call chain is
+     * `storeLocation()` → `OnboardingManager::saveLocationStep()` →
+     * `BusinessManager::upsertPrimaryLocation()` →
+     * `EloquentBusinessLocationRepository::upsertPrimary()`, and neither
+     * `OnboardingManager` nor `BusinessManager` is inside the §22 Slice 1A
+     * allowlist. Rather than silently widen that allowlist, this slice
+     * leaves the chain untouched and reports the blocker.
+     *
+     * That is SAFE today, and this test proves why: `upsertPrimary()` only
+     * ever creates a row when the Business has no primary location, which
+     * is the Business's first location and therefore always inside the
+     * three included on every tier. It can never oversubscribe capacity.
      */
-    public function test_the_onboarding_location_step_delegates_to_the_boundary(): void
+    public function test_the_onboarding_upsert_path_can_only_ever_create_the_first_location(): void
     {
-        [$customer, $business] = $this->locationTenant();
+        [, $business] = $this->locationTenant();
 
-        // No primary yet: this is the count-increasing case.
-        $location = app(\App\Library\Business\BusinessManager::class)
-            ->upsertPrimaryLocation($customer, $business, $this->locationPayload(['name' => 'Onboarded']));
+        $repository = app(\App\Repositories\Contracts\BusinessLocationRepository::class);
 
-        $this->assertSame(BusinessLocationLifecycleState::Active, $location->lifecycle_state);
-        $this->assertTrue((bool) $location->is_primary);
+        // No primary yet — the only creating case.
+        $first = $repository->upsertPrimary($business, $this->locationPayload(['name' => 'Onboarded']));
+
+        $this->assertSame(BusinessLocationLifecycleState::Active, $first->lifecycle_state, 'A row created through the legacy path is active.');
+        $this->assertTrue((bool) $first->is_primary);
         $this->assertSame(1, $this->activeLocationCount($business));
 
-        // Editing the existing primary is NOT count-increasing and stays on
-        // the ordinary upsert path.
-        $updated = app(\App\Library\Business\BusinessManager::class)
-            ->upsertPrimaryLocation($customer, $business, $this->locationPayload(['name' => 'Renamed']));
+        // Every later call UPDATES that same primary — it never adds a row,
+        // so the legacy path cannot increase the active count again.
+        foreach (['Renamed once', 'Renamed twice'] as $name) {
+            $updated = $repository->upsertPrimary($business, $this->locationPayload(['name' => $name]));
 
-        $this->assertSame((int) $location->id, (int) $updated->id);
-        $this->assertSame(1, $this->activeLocationCount($business));
+            $this->assertSame((int) $first->id, (int) $updated->id);
+            $this->assertSame(1, $this->activeLocationCount($business));
+        }
+
+        // And a Business always retains a primary while it has any active
+        // location, because archiving the primary requires reassignment and
+        // the last active location cannot be archived at all — so the
+        // creating branch above is unreachable a second time.
+        $this->manager()->createLocation($business, $this->locationPayload(['name' => 'Second']));
+        $this->manager()->archiveLocation($business, $first, (string) $business->refresh()->locations()->where('name', 'Second')->first()->uid);
+
+        $this->assertSame(
+            1,
+            (int) $business->refresh()->locations()->where('is_primary', true)->where('lifecycle_state', BusinessLocationLifecycleState::Active->value)->count(),
+            'A Business with active locations always has exactly one active primary.'
+        );
+    }
+
+    private function manager(): \App\Library\Business\BusinessLocationManager
+    {
+        return app(\App\Library\Business\BusinessLocationManager::class);
     }
 
     /**

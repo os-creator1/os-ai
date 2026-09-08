@@ -199,6 +199,33 @@ final class BusinessLocationManager
     }
 
     /**
+     * Edit an existing location's details.
+     *
+     * Deliberately NOT capacity-asserted: editing changes no count, so it
+     * is not an active-location-count-increasing operation. It still runs
+     * through this boundary so that every customer-reachable location
+     * write has exactly one owner, and it refuses to touch the lifecycle
+     * state or primary flag — those move only through archive/reactivate
+     * and their own explicit reassignment.
+     */
+    public function updateLocation(Business $business, BusinessLocation $location, array $attributes): BusinessLocation
+    {
+        return DB::transaction(function () use ($business, $location, $attributes) {
+            $locked = $this->lockBusiness($business);
+
+            $target = $this->locationRepository->findByUidForBusiness($locked, (string) $location->uid);
+
+            if ($target === null) {
+                throw new WorkspaceBusinessNotFoundException((int) $locked->id);
+            }
+
+            $this->locationRepository->updateDetails($target, $attributes);
+
+            return $target->refresh();
+        });
+    }
+
+    /**
      * Read-time capacity for presentation (contract §7.5.1). Pure read.
      */
     public function capacityFor(Business $business): LocationSlotCapacityDecision

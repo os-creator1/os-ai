@@ -765,6 +765,10 @@
             Route::post('/reactivate', 'Business\BusinessLocationsController@reactivate')->name('reactivate');
             Route::post('/allocations', 'Business\BusinessLocationsController@allocate')->name('allocations.store');
             Route::post('/allocations/cancel', 'Business\BusinessLocationsController@cancelAllocation')->name('allocations.cancel');
+            // Declared LAST: a wildcard {locationUid} would otherwise
+            // shadow the static /archive, /reactivate and /allocations
+            // paths above.
+            Route::post('/{locationUid}', 'Business\BusinessLocationsController@update')->name('update');
         });
 
         Route::prefix('{workspaceUid}/businesses/{businessUid}/gbp')->name('businesses.gbp.')->group(function () {

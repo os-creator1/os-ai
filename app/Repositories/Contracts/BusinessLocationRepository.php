@@ -49,4 +49,11 @@ interface BusinessLocationRepository extends BaseRepository
      * only; archived rows consume nothing.
      */
     public function countActiveForBusiness(Business $business): int;
+
+    /**
+     * Slice 1A — edit an existing location's details. Never touches
+     * lifecycle_state, is_primary or business_id: those move only through
+     * the canonical boundary's archive/reactivate/primary paths.
+     */
+    public function updateDetails(BusinessLocation $location, array $attributes): BusinessLocation;
 }

@@ -78,6 +78,19 @@ class EloquentBusinessLocationRepository extends EloquentBaseRepository implemen
     }
 
     /**
+     * Slice 1A — edit details only. lifecycle_state, is_primary and
+     * business_id are stripped, so an edit can never change capacity
+     * consumption or move a location between Businesses.
+     */
+    public function updateDetails(BusinessLocation $location, array $attributes): BusinessLocation
+    {
+        $location->fill(Arr::except($attributes, ['business_id', 'is_primary', 'lifecycle_state', 'archived_at']));
+        $location->save();
+
+        return $location->refresh();
+    }
+
+    /**
      * The capacity COUNT (contract §7.3) — active rows only.
      */
     public function countActiveForBusiness(Business $business): int

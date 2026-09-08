@@ -115,7 +115,26 @@
                     <tbody>
                         @foreach($activeLocations as $location)
                             <tr>
-                                <td>{{ $location->name }}</td>
+                                <td>
+                                    {{-- Edit in place: name and town. Not
+                                         count-increasing, so no capacity
+                                         check applies. --}}
+                                    <form method="POST" action="{{ route('customer.workspaces.businesses.locations.update', [$workspaceUid, $businessUid, $location->uid]) }}" class="d-flex align-items-end gap-1">
+                                        @csrf
+                                        <input type="hidden" name="service_mode" value="{{ $location->service_mode->value }}">
+                                        <input type="hidden" name="country_code" value="{{ $location->country_code }}">
+                                        <input type="hidden" name="public_address" value="{{ $location->public_address ? 1 : 0 }}">
+                                        <div>
+                                            <label class="form-label text-label" for="name-{{ $location->uid }}">Name</label>
+                                            <input type="text" class="form-control" id="name-{{ $location->uid }}" name="name" value="{{ $location->name }}" required>
+                                        </div>
+                                        <div>
+                                            <label class="form-label text-label" for="city-{{ $location->uid }}">Town or city</label>
+                                            <input type="text" class="form-control" id="city-{{ $location->uid }}" name="city" value="{{ $location->city }}">
+                                        </div>
+                                        <button type="submit" class="btn btn-outline-secondary">Save</button>
+                                    </form>
+                                </td>
                                 <td>{{ $location->city ?? '—' }}</td>
                                 <td>@if($location->is_primary)<x-badge variant="success">Main location</x-badge>@endif</td>
                                 <td class="text-end">
