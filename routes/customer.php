@@ -949,6 +949,28 @@
             Route::delete('/assets/{assetUid}', 'Business\WebsiteController@destroyAsset')->name('assets.destroy');
         });
 
+        /*
+        |----------------------------------------------------------------
+        | Website Guided Generation — Slice 2 (contract §3.3 Option A,
+        | §16 Slice 2)
+        |----------------------------------------------------------------
+        |
+        | The Business Knowledge Profile / completeness experience. A
+        | dedicated, narrow, Workspace/Business-uid-scoped surface
+        | reusing the identical Workspace -> Business ->
+        | userCanAccessBusiness() -> WebsiteGeneration entitlement chain
+        | as businesses.website.* above -- never the legacy flat
+        | Customer\BusinessController. See
+        | Business\BusinessKnowledgeProfileController.
+        |
+        */
+        Route::prefix('{workspaceUid}/businesses/{businessUid}/knowledge-profile')->name('businesses.knowledge-profile.')->group(function () {
+            Route::get('/', 'Business\BusinessKnowledgeProfileController@show')->name('show');
+            Route::get('/edit', 'Business\BusinessKnowledgeProfileController@edit')->name('edit');
+            Route::put('/', 'Business\BusinessKnowledgeProfileController@update')->name('update');
+            Route::put('/locations/{locationUid}/hours', 'Business\BusinessKnowledgeProfileController@updateHours')->name('locations.hours');
+        });
+
         Route::prefix('{workspaceUid}/businesses/{businessUid}/channels')->name('businesses.channels.')->group(function () {
             Route::get('/', 'Business\MessagingChannelsController@channels')->name('index');
             Route::get('/connect/{provider}', 'Business\MessagingChannelsController@connect')->name('connect');
