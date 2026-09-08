@@ -102,17 +102,16 @@ class CustomerContextSecurityTest extends TestCase
         $this->switchTo($workspace, $businessB)->assertNotFound();
         $this->startViewAs($workspace, $businessB)->assertNotFound();
 
-        // The shell never leads a client to the Agency's account surface:
-        // no Team/Account or Client-accounts entry, no link to the
-        // Workspace page. (The Workspace overview route itself remains
-        // reachable by any active member today — RFC-003 Milestone 3
-        // behaviour owned by WorkspaceController, outside Slice 1B's
-        // allowlist; recorded as deferred work in the slice document.)
+        // The shell never leads a client to the Agency's account surface,
+        // and (Correction Round 1) the account surface itself refuses a
+        // client by direct URL: 404, never the Agency name, plan or staff.
         $keys = $this->menuKeys($home->getContent());
         $this->assertNotContains('team', $keys);
         $this->assertNotContains('accounts', $keys);
         $this->assertNotContains(route('customer.workspaces.show', $workspace->uid), $this->menuLinks($home->getContent()));
         $this->assertNotContains(route('customer.workspaces.index'), $this->menuLinks($home->getContent()));
+        $this->get(route('customer.workspaces.show', $workspace->uid))->assertNotFound();
+        $this->assertStringNotContainsString('Northwind Agency', $this->get(route('customer.workspaces.index'))->assertOk()->getContent());
     }
 
     /**

@@ -179,28 +179,107 @@ Implementation: `app/Library/Navigation/**` (new), `app/Library/ViewAs/**`
 (new), `routes/customer.php`,
 `database/migrations/2026_09_10_140001_create_view_as_sessions_table.php` (new).
 
+Correction Round 1 additions: `app/Library/ViewAs/{ViewAsRouteClass,ViewAsRouteClassification}.php`
+(new), `app/Http/Controllers/Customer/Workspace/WorkspaceController.php`
+(account-frame gate only), `resources/views/customer/workspaces/{index,show}.blade.php`
+(account vocabulary only), and the two narrowly allowlisted Analytics tests.
+
 Tests: `tests/Feature/Workspace/Concerns/CreatesCustomerContextFixtures.php`,
-`tests/Feature/Workspace/{CustomerContextResolutionTest,ViewAsClientTest}.php`,
-`tests/Feature/Security/CustomerContextSecurityTest.php`,
-`tests/Feature/DesignSystem/CustomerShellNavigationTest.php`.
+`tests/Feature/Workspace/{CustomerContextResolutionTest,ViewAsClientTest,ViewAsAccessLossTest}.php`,
+`tests/Feature/Security/{CustomerContextSecurityTest,ViewAsRouteBoundaryTest,WorkspaceAccountFrameAccessTest}.php`,
+`tests/Feature/DesignSystem/CustomerShellNavigationTest.php`,
+`tests/Feature/Analytics/{AnalyticsCampaignTest,AnalyticsViewTest}.php` (two
+assertions, narrowly allowlisted); Correction Round 1 also brought the
+pre-existing `tests/Feature/Workspace/WorkspaceBusinessListHttpTest.php`
+(five selected-scope cases),
+`tests/Feature/Workspace/WorkspaceBusinessReassignmentHttpTest.php` (one),
+`tests/Feature/Workspace/WorkspaceMemberManagementHttpTest.php` (two) and
+`tests/Feature/DesignSystem/WorkspaceBusinessComponentAdoptionTest.php` (two
+source needles) in line with the account-frame rule and the templated noun.
 
 Documentation: this file and the parent contract's Appendix B.
 
-## 8a. Two B5 Analytics assertions outside this slice's allowlist
+## 8a. Two B5 Analytics assertions — corrected in Correction Round 1
 
-Two assertions in `tests/Feature/Analytics/**` encode the pre-1B static
-navigation and fail on this branch. Both files are outside the Slice 1B test
-allowlist (parent §22.1), so they are **not edited here**; each needs a
-one-line update by the owner of that suite:
+Two assertions in `tests/Feature/Analytics/**` encoded the pre-1B static
+navigation. The parent contract's Slice 1B test allowlist was amended
+narrowly (§22.1, "Correction Round 1") to permit exactly these two files, and
+both were corrected:
 
-| Test | Why it fails now | Required correction |
-|---|---|---|
-| `AnalyticsCampaignTest::test_pagination_is_25_per_page_with_disjoint_pages_and_two_aggregate_queries` | Its per-page budget (`≤ 8` statements naming tenancy or analytics tables) had zero headroom; the shell's single `CustomerContextSnapshot` statement makes it 9. The overview budget of 12 still holds. | Raise the campaign-page bound to 9 with a comment naming the shell snapshot. |
-| `AnalyticsViewTest::test_customer_nav_offers_analytics_and_no_legacy_reports_or_ghost_entries` | Asserts the literal bare URL `url('analytics')` in the rendered overview. The Business-frame menu now links Analytics directly to the canonical `customer.workspaces.businesses.analytics.overview` for the selected Business. | Assert the canonical route URL for the fixture's Workspace/Business instead of `url('analytics')`. |
+| Test | Correction |
+|---|---|
+| `AnalyticsCampaignTest::test_pagination_is_25_per_page_with_disjoint_pages_and_two_aggregate_queries` | Campaign-page bound raised from 8 to exactly 9, the single additional statement being the canonical `CustomerContextSnapshot` query of the authenticated customer shell; a companion assertion requires exactly one such statement. Every aggregate and pagination assertion is retained; the overview budget of 12 is untouched. |
+| `AnalyticsViewTest::test_customer_nav_offers_analytics_and_no_legacy_reports_or_ghost_entries` | The stale literal `url('analytics')` is replaced by the canonical `customer.workspaces.businesses.analytics.overview` URL for the fixture's Workspace and Business; every legacy-Reports and ghost-entry rejection is retained. |
 
-The legacy-removal half of the second assertion (no `reports/*`, no ghost
-admin entries) still holds and is additionally covered by
-`CustomerShellNavigationTest`.
+## 8b. Correction Round 1 — security corrections
+
+**Account-frame direct-route leak (Correction 2).** `WorkspaceController::index()`
+and `show()` now grant the account frame only to the Workspace owner, active
+Admins and Agency-wide staff (`business_access_scope = all`). A
+selected-scope membership — a client or Business-scoped staff member —
+receives 404 on the overview and on the Agency prospecting page, and sees no
+Agency identity on the account list (contract §5.2, §5.4, §6); the
+additional-slot page was already owner-only (`resolveOwnedWorkspace()`,
+unchanged). The gate is `show()`'s alone (`effectiveRoleKey(...,
+accountFrameOnly: true)`) and `index()`'s row filter; every mutation action
+(rename, reassign, members, ownership, features) keeps its pre-existing
+authorization, so an assigned selected-scope Admin still reassigns or
+changes access exactly as before — by POST, never through the overview.
+Pre-existing tests that read the overview as a selected-scope member were
+brought in line: the five selected-scope cases of
+`tests/Feature/Workspace/WorkspaceBusinessListHttpTest.php` now prove the
+RFC-003 §14.1 "never widens" rule on the Businesses themselves (assigned
+Business 200, unassigned sibling 404, overview 404); one case in
+`tests/Feature/Workspace/WorkspaceBusinessReassignmentHttpTest.php` and two
+in `tests/Feature/Workspace/WorkspaceMemberManagementHttpTest.php` assert
+404 on the overview (the form-level guards they inspected are never
+rendered for such an Admin; the positive case proves the access change on
+the POST instead); the two source needles in
+`tests/Feature/DesignSystem/WorkspaceBusinessComponentAdoptionTest.php`
+follow the templated noun. The
+two account views read their vocabulary from the context that
+`ResolveCustomerContext` stores on the request (not from a view composer, so
+the controller's exact view-data shape is unchanged): a Core/Growth owner
+reads "Account overview", "Rename account", "Create account"; Agency and
+not-yet-assigned accounts keep the established Workspace wording.
+Tests: `tests/Feature/Security/WorkspaceAccountFrameAccessTest.php`.
+
+**View-as ends when access is lost (Correction 3).** `ViewAsManager::current()`
+re-validates the authoritative chain on every request — Workspace active,
+Business active and still inside that Workspace, actor still owner or active
+Admin, actor still passing `WorkspaceManager::userCanAccessBusiness()` — and
+on any loss ends the row as `access_lost`, clears the session key, returns no
+context and restores the actor's own frame. No zombie session ever keeps
+applying restrictions. Tests: `tests/Feature/Workspace/ViewAsAccessLossTest.php`
+(membership deactivated, role reduced, Business access revoked, Workspace
+deactivated, Business made non-active, Business moved).
+
+**View-as narrows every route (Correction 4).** `ViewAsRouteClassification`
+places every authenticated customer route (457 at this base, `logout` included) in exactly one
+closed class: *Prohibited* (refused, audited), *Safe* (an explicit list of
+account-independent routes: the actor's own profile, notifications,
+announcements, verification, the landing page, Exit and sign-out — `logout`
+must stay reachable because it is how the view ends), *RedirectToViewed* (the
+six bare module entries, redirected into the viewed Business),
+*BusinessScoped* (`businessUid` routes, allowed only for the viewed
+Workspace/Business pair) and *Denied* (legacy user-scoped surfaces,
+Workspace-frame pages, Business-resolving global pages, provider surfaces →
+404). Safety is never inferred from a URL shape; anything not listed is
+*Unclassified* and fails `tests/Feature/Security/ViewAsRouteBoundaryTest.php`.
+The menu applies the same classification while viewing, so it offers only
+routes reachable inside the viewed Business.
+
+**Prohibited-action inventory (Correction 5).** `ViewAsProhibitedActions` is
+a closed inventory of exact names, prefixes, unnamed-route controller actions
+and deleting verbs covering payer/funding (including the actor's own top-up
+and every payment callback), Workspace staff and ownership, plan and slots
+(Business slots, subscriptions, and the Slice 1A
+`customer.workspaces.businesses.locations.allocations.*` family ahead of its
+arrival), phone/keyword purchase and release, provider credentials (channels,
+prospecting channels, GBP connect/bind/refresh/OAuth, developer API/server/
+webhook), every deletion, identity switching and any further view-as/context
+switch. The boundary test enumerates every route in those families and fails
+if one is left out.
 
 ## 9. Deliberately left for later slices
 
@@ -213,12 +292,5 @@ admin entries) still holds and is additionally covered by
 * Moving the BYO provider form itself into Settings → Advanced — Slice 3/9;
   this slice only relocates the *navigation entry* (Agency owner/admin).
 * A Business-rooted URL alias (parent §8.5) — explicitly out of scope.
-* **Pre-existing finding, not fixed here:** `customer.workspaces.show` (the
-  Workspace overview) answers 200 to *any* active member of the Workspace,
-  including a selected-scope client, so a client who types that URL can
-  observe the Agency's name, plan and staff list (parent §5.4). The route and
-  page belong to `app/Http/Controllers/Customer/Workspace/**` and
-  `resources/views/customer/workspaces/**`, outside this slice's allowlist.
-  Slice 1B removes every navigation path a client has to that page and
-  records the exposure here for the owning slice; the Workspace page needs a
-  role gate (owner/admin) or a client-safe rendering.
+* The account-frame direct-route exposure found in the first round was
+  closed in Correction Round 1 (§8b); nothing about it remains deferred.

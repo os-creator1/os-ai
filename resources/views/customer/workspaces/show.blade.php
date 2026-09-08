@@ -1,12 +1,25 @@
 @extends('layouts/contentLayoutMaster')
 
-@section('title', 'Workspace overview')
+@php
+    // Customer Experience Slice 1B (Correction Round 1, contract §5.3): a
+    // Core/Growth owner reaches this page as "Team & account" and never
+    // reads the word Workspace; Agency and unassigned accounts keep the
+    // established Workspace wording. The resolved context is the one
+    // App\Http\Middleware\ResolveCustomerContext stores on the request, so
+    // the controller's view data keeps its exact key shape.
+    $resolvedCustomerContext = request()->attributes->get('customerContext');
+    $accountVocabulary = $resolvedCustomerContext instanceof \App\Library\Navigation\CustomerContext && $resolvedCustomerContext->usesBusinessVocabulary();
+    $accountNoun = $accountVocabulary ? 'account' : 'Workspace';
+    $accountNounPlural = $accountVocabulary ? 'accounts' : 'Workspaces';
+@endphp
+
+@section('title', $accountVocabulary ? 'Account overview' : 'Workspace overview')
 
 @section('content')
     <section id="workspace-overview">
         <div class="row">
             <div class="col-12">
-                <a href="{{ route('customer.workspaces.index') }}">Back to Workspaces</a>
+                <a href="{{ route('customer.workspaces.index') }}">Back to {{ $accountNounPlural }}</a>
             </div>
 
             <div class="col-12">
@@ -50,7 +63,7 @@
                             @csrf
 
                             <div class="mb-1">
-                                <label class="form-label" for="workspace-rename">Rename Workspace</label>
+                                <label class="form-label" for="workspace-rename">Rename {{ $accountNoun }}</label>
                                 <input type="text" class="form-control" id="workspace-rename" name="name" value="{{ old('name', $workspace['name']) }}" required>
                             </div>
 
@@ -63,13 +76,13 @@
                             <form method="POST" data-workspace-action="deactivate" class="mt-1">
                                 @csrf
 
-                                <button type="submit" class="btn btn-outline-danger">Deactivate Workspace</button>
+                                <button type="submit" class="btn btn-outline-danger">Deactivate {{ $accountNoun }}</button>
                             </form>
                         @else
                             <form method="POST" data-workspace-action="reactivate" class="mt-1">
                                 @csrf
 
-                                <button type="submit" class="btn btn-outline-success">Reactivate Workspace</button>
+                                <button type="submit" class="btn btn-outline-success">Reactivate {{ $accountNoun }}</button>
                             </form>
                         @endif
 
@@ -241,7 +254,7 @@
                         @endif
 
                         @if (empty($businesses))
-                            <x-empty-state icon="inbox" title="No Businesses are accessible in this Workspace." />
+                            <x-empty-state icon="inbox" title="No Businesses are accessible in this {{ $accountNoun }}." />
                         @else
                             <x-table :headers="['Name']">
                                 @foreach ($businesses as $business)
@@ -363,7 +376,7 @@
                         </form>
 
                         @if (empty($directory))
-                            <x-empty-state icon="inbox" title="This Workspace has no members." />
+                            <x-empty-state icon="inbox" title="This {{ $accountNoun }} has no members." />
                         @else
                             @php
                                 $manageableBusinessUids = collect($manageableBusinesses ?? [])->pluck('uid')->all();

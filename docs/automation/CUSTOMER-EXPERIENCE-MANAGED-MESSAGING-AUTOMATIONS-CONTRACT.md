@@ -1411,7 +1411,7 @@ own acceptance criteria demand is a defect; §22.2 records the reconciliation.
 | Slice | Implementation paths | Test paths | Documentation paths |
 |---|---|---|---|
 | **1A** | `app/Library/Entitlement/EntitlementManager.php` (**additive location-capacity methods only** — existing `decide()`/`decideBusinessSlotCapacity()` semantics unchanged), `app/DTO/Entitlement/**`, `app/Enums/Entitlement/**`, `app/Enums/Business/BusinessLocationLifecycleState.php` (new), `app/Models/{WorkspacePlanCatalog,Business,BusinessLocation}.php`, `app/Repositories/Contracts/BusinessLocationRepository.php`, `app/Repositories/Eloquent/EloquentBusinessLocationRepository.php`, `app/Http/Controllers/Customer/Business/BusinessLocationsController.php` (new), `app/Http/Controllers/Customer/BusinessOnboardingController.php` (delegate onto the §7.3b boundary only), `app/Library/Business/BusinessLocationManager.php` (new), `app/Http/Requests/Business/UpsertBusinessLocationRequest.php`, `app/Http/Requests/Business/StoreBusinessLocationRequest.php` (new), `app/Http/Requests/Business/ArchiveBusinessLocationRequest.php` (new), `app/Exceptions/Entitlement/**`, `app/Events/Entitlement/**`, `resources/views/customer/business/locations/**` (new), `routes/customer.php`, `database/migrations/**` (additive only — see §23.2) | `tests/Feature/Entitlement/**`, `tests/Unit/Entitlement/**`, `tests/Feature/Business/**` | `docs/rfcs/RFC-004-PLANS-AND-BUSINESS-FEATURE-ENTITLEMENTS.md`, `docs/rfcs/RFC-004-PLANS-AND-BUSINESS-FEATURE-ENTITLEMENTS-DEPLOYMENT.md`, `docs/automation/CUSTOMER-EXPERIENCE-MANAGED-MESSAGING-AUTOMATIONS-CONTRACT.md`, the slice's own contract under `docs/automation/**` |
-| **1B** | `app/Library/Navigation/**` (new), `app/Library/ViewAs/**` (new), `app/Providers/{MenuServiceProvider,AppServiceProvider}.php`, `app/Helpers/Helper.php` (customer menu branch only), `app/Http/Middleware/**` (context resolution, view-as), `app/Http/Kernel.php` (middleware registration only), `app/Models/ViewAsSession.php` (new), `app/Policies/**`, `resources/views/panels/{sidebar,submenu,navbar,breadcrumb}.blade.php`, `resources/views/components/**`, `routes/customer.php`, `database/migrations/**` (view-as audit table) | `tests/Feature/Workspace/**`, `tests/Feature/Security/**`, `tests/Feature/DesignSystem/**` | `docs/automation/CUSTOMER-EXPERIENCE-MANAGED-MESSAGING-AUTOMATIONS-CONTRACT.md`, the slice's own contract |
+| **1B** | `app/Library/Navigation/**` (new), `app/Library/ViewAs/**` (new), `app/Providers/{MenuServiceProvider,AppServiceProvider}.php`, `app/Helpers/Helper.php` (customer menu branch only), `app/Http/Middleware/**` (context resolution, view-as), `app/Http/Kernel.php` (middleware registration only), `app/Models/ViewAsSession.php` (new), `app/Policies/**`, `resources/views/panels/{sidebar,submenu,navbar,breadcrumb}.blade.php`, `resources/views/components/**`, `routes/customer.php`, `database/migrations/**` (view-as audit table); **Correction Round 1 (narrow):** `app/Http/Controllers/Customer/Workspace/WorkspaceController.php` (account-frame access gate for `index()`/`show()` only) and `resources/views/customer/workspaces/{index,show}.blade.php` (account vocabulary only) — the direct-route leak fix of §5.4 | `tests/Feature/Workspace/**`, `tests/Feature/Security/**`, `tests/Feature/DesignSystem/**`; **Correction Round 1 (narrow):** exactly `tests/Feature/Analytics/AnalyticsCampaignTest.php` and `tests/Feature/Analytics/AnalyticsViewTest.php` (the two assertions that encoded the pre-1B static navigation; no other `tests/Feature/Analytics/**` path) | `docs/automation/CUSTOMER-EXPERIENCE-MANAGED-MESSAGING-AUTOMATIONS-CONTRACT.md`, the slice's own contract |
 | **2** | `resources/views/auth/**`, `resources/views/layouts/**`, `resources/views/components/branding-illustration.blade.php`, `app/Library/Branding/**`, `resources/lang/en/locale.php`, `public/images/branding/**` (new assets), `resources/sass/**` | `tests/Feature/Auth/**`, `tests/Feature/Branding/**`, `tests/Feature/Theme/**` | `docs/automation/DESIGN-SYSTEM-M2-*`, the slice's own contract |
 | **3** | `app/Library/Messaging/**` (new), `app/Library/Messaging/Contracts/**` (new), `app/Models/BusinessMessagingIdentity.php` (new), `app/Http/Controllers/Customer/Business/MessagingChannelsController.php`, `app/Enums/Messaging/**` (new), `resources/views/customer/business/MessagingChannels/**`, `resources/views/customer/settings/advanced/**` (new), `config/services.php`, `config/messaging.php` (new), `app/Providers/AppServiceProvider.php` (binding only), `database/migrations/**` | `tests/Feature/Messaging/**` (new), `tests/Feature/Security/**`, `tests/Feature/Usage/**` | the slice's own contract; **restate the superseded B2 docblock rules** (§27 C-5) |
 | **4** | `app/Library/Telephony/**` (new), `app/Http/Controllers/Customer/Business/BusinessPhoneController.php` (new), `app/Http/Requests/Customer/Business/**`, `app/Jobs/Telephony/**` (new), `app/Notifications/**`, `app/Console/Commands/**` (renewal sweep), `app/Enums/Telephony/**` (new), `resources/views/customer/business/phone/**` (new), `database/migrations/**` | `tests/Feature/Telephony/**` (new), `tests/Feature/Usage/**` | the slice's own contract |
@@ -1880,5 +1880,32 @@ visiting an account page records it as the navigation preference. (4) View-as
 requires Workspace owner or active Admin (the §5.5 entry rule); the interface
 offers it only on the Agency tier. (5) The View-as TTL is the §28.2 default,
 60 minutes.
+
+**Correction Round 1 (recorded).** (a) The Slice 1B allowlist is amended
+narrowly (§22.1): `WorkspaceController::index()/show()` and the two account
+views, for the §5.4 direct-route fix and §5.3 vocabulary only, and exactly
+`tests/Feature/Analytics/{AnalyticsCampaignTest,AnalyticsViewTest}.php`, whose
+stale static-navigation assertions were corrected (campaign-page budget 9,
+with the single extra statement named as the shell's `CustomerContextSnapshot`
+query; canonical Business-scoped Analytics URL). (b) A selected-scope member
+(client or Business-scoped staff) can no longer reach the account frame by
+direct URL: 404 on the overview and on Agency prospecting (the slot page was
+already owner-only); no Agency identity on the account list. Owner, active
+Admin and Agency-wide staff keep it; mutation actions keep their existing
+authorization (the gate is the overview's and the account list's only). The
+pre-existing selected-scope cases of
+`tests/Feature/Workspace/{WorkspaceBusinessListHttpTest,WorkspaceBusinessReassignmentHttpTest,WorkspaceMemberManagementHttpTest}.php`
+and two source needles in
+`tests/Feature/DesignSystem/WorkspaceBusinessComponentAdoptionTest.php` (all
+already inside the 1B test allowlist) were brought in line. A
+Core/Growth owner reads "account", never "Workspace", on those pages.
+(c) View-as re-validates the authoritative access chain on every request and
+ends itself as `access_lost` when any link breaks. (d) View-as narrowing is a
+closed classification of every authenticated customer route
+(`ViewAsRouteClassification`: Prohibited / Safe / RedirectToViewed /
+BusinessScoped / Denied), enforced by the middleware and mirrored by the menu;
+an unclassified route fails `ViewAsRouteBoundaryTest`. (e) The prohibited
+inventory is complete for every current capability family and already names
+the Slice 1A `customer.workspaces.businesses.locations.allocations.*` family.
 
 **END OF CONTRACT**

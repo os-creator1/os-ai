@@ -2,6 +2,7 @@
 
 namespace App\Library\Navigation;
 
+use App\Enums\Entitlement\WorkspacePlanTier;
 use App\Library\ViewAs\ViewAsContext;
 
 /**
@@ -115,6 +116,20 @@ final class CustomerContext
     public function showsWorkspaceVocabulary(): bool
     {
         return $this->isAgency();
+    }
+
+    /**
+     * True when the frame Workspace is on the Core or Growth tier: those
+     * customers must read "account", never "Workspace", on the account
+     * pages (contract §5.3, T-CTX-2). Agency and not-yet-assigned accounts
+     * keep the established Workspace wording.
+     */
+    public function usesBusinessVocabulary(): bool
+    {
+        $workspace = $this->frameWorkspace();
+
+        return $workspace !== null
+            && in_array($workspace->tier, [WorkspacePlanTier::Core, WorkspacePlanTier::Growth], true);
     }
 
     public function businessNoun(): string

@@ -2,6 +2,7 @@
 
 namespace App\Library\Navigation;
 
+use App\Library\ViewAs\ViewAsRouteClassification;
 use App\Models\User;
 use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\Route;
@@ -35,11 +36,23 @@ final class CustomerMenuBuilder
     private const BLACKLIST_PERMISSIONS = ['view_blacklist', 'create_blacklist', 'update_blacklist', 'delete_blacklist'];
 
     /**
+     * While a View-as-client session is active only entries whose route is
+     * reachable inside the viewed Business are rendered (Correction Round 1):
+     * the same closed classification the middleware enforces.
+     */
+    private bool $viewingAsClient = false;
+
+    public function __construct(private readonly ViewAsRouteClassification $viewAsRoutes)
+    {
+    }
+
+    /**
      * @return array<int, MenuItem>
      */
     public function build(CustomerContext $context, User $user): array
     {
         $current = (string) Route::currentRouteName();
+        $this->viewingAsClient = $context->isViewingAsClient();
 
         return $context->isBusinessFrame()
             ? $this->businessFrame($context, $user, $current)
@@ -265,6 +278,13 @@ final class CustomerMenuBuilder
         }
 
         if (! Gate::forUser($user)->any($permissions)) {
+            return null;
+        }
+
+        if ($this->viewingAsClient && ! $this->viewAsRoutes->allowsMenuEntry($routeName)) {
+            // Legacy user-scoped and account-level surfaces are outside the
+            // viewed Business; the middleware would 404 them, so they are
+            // not offered (T-NAV-2 holds while viewing).
             return null;
         }
 

@@ -117,7 +117,16 @@ final class ViewAsManager
             return null;
         }
 
-        if ($session->business === null || $session->workspace === null) {
+        // Correction Round 1 — every request re-validates the authoritative
+        // access chain, not merely row existence: the Workspace is active,
+        // the Business is active and still inside that Workspace, the actor
+        // is still the Workspace owner or an active Admin, and the actor
+        // can still reach the Business through the canonical RFC-003 §14.1
+        // decision. Any loss ends the durable row atomically as
+        // access_lost, forgets the session key and restores the actor's
+        // normal context — never a zombie session that keeps applying
+        // prohibited-action restrictions, never a widening.
+        if (! $this->accessChainStillHolds($session, $actor)) {
             $this->end($session, ViewAsSession::END_REASON_ACCESS_LOST);
             session()->forget(self::SESSION_KEY);
 
@@ -184,6 +193,41 @@ final class ViewAsManager
 
         $session->refusals = $refusals;
         $session->save();
+    }
+
+    /**
+     * The authoritative view-as access chain, re-evaluated from persisted
+     * rows on every read (Correction Round 1):
+     *  1. the Workspace row exists and is active;
+     *  2. the Business row exists, is active, and still belongs to the
+     *     session's Workspace (a moved Business ends the view);
+     *  3. the actor is still the Workspace owner or an ACTIVE Admin member
+     *     (a deactivated or demoted membership ends the view);
+     *  4. the actor can still reach the Business through
+     *     WorkspaceManager::userCanAccessBusiness() (a revoked assignment
+     *     ends the view).
+     */
+    private function accessChainStillHolds(ViewAsSession $session, User $actor): bool
+    {
+        $workspace = $this->workspaceRepository->findById((int) $session->workspace_id);
+
+        if ($workspace === null || ! $workspace->is_active) {
+            return false;
+        }
+
+        $business = $session->business;
+
+        if ($business === null
+            || (int) $business->workspace_id !== (int) $workspace->id
+            || $business->status !== BusinessStatus::Active) {
+            return false;
+        }
+
+        if (! $this->actorMayView((int) $actor->id, $workspace)) {
+            return false;
+        }
+
+        return $this->workspaceManager->userCanAccessBusiness((int) $actor->id, $business);
     }
 
     /**

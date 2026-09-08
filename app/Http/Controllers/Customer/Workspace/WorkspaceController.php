@@ -106,7 +106,10 @@ class WorkspaceController extends CustomerBaseController
         }
 
         $userId = (int) Auth::id();
-        $roleKey = $this->effectiveRoleKey($workspace, $userId);
+        // Slice 1B Correction Round 1: the overview is the account frame, so
+        // a selected-scope membership resolves to no role here (404) while
+        // every mutation keeps its own, unchanged authorization.
+        $roleKey = $this->effectiveRoleKey($workspace, $userId, accountFrameOnly: true);
 
         if ($roleKey === null) {
             abort(404);
@@ -905,8 +908,14 @@ class WorkspaceController extends CustomerBaseController
      * Same owner-wins-over-membership precedence as presentationRow(), but
      * returns only the role key (no uid/name row shape) since show() needs
      * just the effective role to decide access and directory visibility.
+     *
+     * With `$accountFrameOnly` (show() only — Slice 1B Correction Round 1)
+     * a selected-scope membership resolves to null as well, because the
+     * overview is the account frame (see membershipSeesTheAccountFrame()).
+     * Every other caller — the mutation actions and their
+     * resolveAccessibleWorkspace() — keeps the pre-existing semantics.
      */
-    private function effectiveRoleKey(Workspace $workspace, int $userId): ?string
+    private function effectiveRoleKey(Workspace $workspace, int $userId, bool $accountFrameOnly = false): ?string
     {
         if ((int) $workspace->owner_user_id === $userId) {
             return 'owner';
@@ -918,7 +927,27 @@ class WorkspaceController extends CustomerBaseController
             return null;
         }
 
+        if ($accountFrameOnly && ! $this->membershipSeesTheAccountFrame($membership)) {
+            return null;
+        }
+
         return $membership->role === WorkspaceMembershipRole::Admin ? 'admin' : 'staff';
+    }
+
+    /**
+     * Customer Experience contract §5.2/§5.4/§6 (Slice 1B Correction 1):
+     * the Account/Workspace frame belongs to the Workspace owner, active
+     * Admins and Agency-wide staff (`business_access_scope = all`). A member
+     * whose access is limited to selected Businesses is a client or
+     * Business-scoped staff member and must never observe the account
+     * frame — its name, plan, staff or sibling Businesses — so such a
+     * membership grants no overview access and is 404 like a stranger
+     * (existence-disclosure rule). Business routes are unaffected: RFC-003
+     * §14.1 access to the assigned Businesses is evaluated elsewhere.
+     */
+    private function membershipSeesTheAccountFrame(WorkspaceMembership $membership): bool
+    {
+        return $membership->business_access_scope === WorkspaceBusinessAccessScope::All;
     }
 
     /**
@@ -995,6 +1024,12 @@ class WorkspaceController extends CustomerBaseController
         $membership = $this->membershipRepository->findByWorkspaceAndUser($workspace, $userId);
 
         if ($membership === null || ! $membership->is_active) {
+            return null;
+        }
+
+        if (! $this->membershipSeesTheAccountFrame($membership)) {
+            // A selected-scope (client / Business-scoped) member never sees
+            // the account list either — Slice 1B Correction 1, contract §5.4.
             return null;
         }
 

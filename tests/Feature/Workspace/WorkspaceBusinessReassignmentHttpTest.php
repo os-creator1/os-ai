@@ -188,11 +188,15 @@ class WorkspaceBusinessReassignmentHttpTest extends TestCase
         ]);
         WorkspaceMembershipBusiness::create(['workspace_membership_id' => $membership->id, 'business_id' => $assignedBusiness->id]);
 
-        $showResponse = $this->get(route('customer.workspaces.show', $workspace->uid))->assertOk();
-        $manageableUids = collect($showResponse->original->getData()['manageableBusinesses'])->pluck('uid')->all();
-
-        $this->assertContains($assignedBusiness->uid, $manageableUids);
-        $this->assertNotContains($unassignedBusiness->uid, $manageableUids);
+        // Customer Experience Slice 1B, Correction Round 1 (contract §5.2,
+        // §5.4): a selected-scope Admin never reads the overview — the
+        // account frame — by direct URL, so no source list is offered at
+        // all. The manager stays authoritative: the crafted POST for the
+        // unassigned Business is proven 404 by
+        // test_crafted_post_by_selected_scope_admin_for_an_unassigned_business_is_not_found().
+        $this->get(route('customer.workspaces.show', $workspace->uid))->assertNotFound();
+        $this->assertSame($workspace->id, $assignedBusiness->fresh()->workspace_id);
+        $this->assertSame($workspace->id, $unassignedBusiness->fresh()->workspace_id);
     }
 
     // --- Denial: HTTP visibility precedence ---------------------------------

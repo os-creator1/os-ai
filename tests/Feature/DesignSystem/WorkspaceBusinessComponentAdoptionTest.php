@@ -153,7 +153,9 @@ class WorkspaceBusinessComponentAdoptionTest extends TestCase
         // one empty-state copy stays native rather than adopting x-empty-state.
         $contents = file_get_contents(base_path('resources/views/customer/workspaces/index.blade.php'));
 
-        $this->assertStringContainsString('<p class="mb-0">You don\'t have access to any Workspaces yet.</p>', $contents);
+        // Customer Experience Slice 1B, Correction Round 1 (contract §5.3):
+        // the noun is templated so a Core/Growth owner reads "accounts".
+        $this->assertStringContainsString('<p class="mb-0">You don\'t have access to any {{ $accountNounPlural }} yet.</p>', $contents);
         $this->assertSame(0, substr_count($contents, '<x-empty-state'));
     }
 
@@ -230,8 +232,9 @@ class WorkspaceBusinessComponentAdoptionTest extends TestCase
         $contents = file_get_contents(base_path('resources/views/customer/workspaces/show.blade.php'));
 
         foreach ([
-            '<button type="submit" class="btn btn-outline-danger">Deactivate Workspace</button>',
-            '<button type="submit" class="btn btn-outline-success">Reactivate Workspace</button>',
+            // Slice 1B Correction Round 1 (contract §5.3): templated noun.
+            '<button type="submit" class="btn btn-outline-danger">Deactivate {{ $accountNoun }}</button>',
+            '<button type="submit" class="btn btn-outline-success">Reactivate {{ $accountNoun }}</button>',
             '<button type="submit" class="btn btn-outline-warning">Transfer ownership</button>',
             '<button type="submit" class="btn btn-sm btn-outline-danger">Deactivate</button>',
             '<button type="submit" class="btn btn-sm btn-outline-success">Reactivate</button>',

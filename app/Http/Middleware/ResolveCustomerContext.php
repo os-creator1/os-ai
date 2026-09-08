@@ -7,6 +7,8 @@ use App\Library\Navigation\CustomerContextResolver;
 use App\Library\Navigation\CustomerShellComposer;
 use App\Library\ViewAs\ViewAsManager;
 use App\Library\ViewAs\ViewAsProhibitedActions;
+use App\Library\ViewAs\ViewAsRouteClass;
+use App\Library\ViewAs\ViewAsRouteClassification;
 use App\Models\User;
 use Closure;
 use Illuminate\Contracts\Container\Container;
@@ -36,6 +38,7 @@ class ResolveCustomerContext
         private readonly CustomerContextResolver $resolver,
         private readonly ViewAsManager $viewAs,
         private readonly ViewAsProhibitedActions $prohibited,
+        private readonly ViewAsRouteClassification $classification,
     ) {
     }
 
@@ -50,25 +53,54 @@ class ResolveCustomerContext
         $viewAs = $this->viewAs->current($user);
 
         if ($viewAs !== null) {
-            if ($this->prohibited->isProhibited($request)) {
-                $this->viewAs->refuse($viewAs, $request);
+            $route = $request->route();
 
-                if ($request->expectsJson()) {
-                    return response()->json(['status' => 'error', 'message' => $this->prohibited->refusalMessage()], 403);
-                }
+            // Correction Round 1: every authenticated customer route is
+            // placed in a closed class (ViewAsRouteClassification). Nothing
+            // is inferred from the URL shape; an unclassified route is
+            // treated exactly like a denied one.
+            $class = $route === null
+                ? ViewAsRouteClass::Denied
+                : $this->classification->classify($route, $request->getMethod());
 
-                return redirect()->route('user.home')->with([
-                    'status' => 'warning',
-                    'message' => $this->prohibited->refusalMessage(),
-                ]);
-            }
+            switch ($class) {
+                case ViewAsRouteClass::Prohibited:
+                    $this->viewAs->refuse($viewAs, $request);
 
-            $routeBusinessUid = $request->route()?->parameter('businessUid');
+                    if ($request->expectsJson()) {
+                        return response()->json(['status' => 'error', 'message' => $this->prohibited->refusalMessage()], 403);
+                    }
 
-            if (is_string($routeBusinessUid) && $routeBusinessUid !== '' && $routeBusinessUid !== $viewAs->businessUid) {
-                // Narrowing rule: while viewing one client, every other
-                // Business is as unreachable as a foreign one (T-VIEW-4).
-                abort(404);
+                    return redirect()->route('user.home')->with([
+                        'status' => 'warning',
+                        'message' => $this->prohibited->refusalMessage(),
+                    ]);
+
+                case ViewAsRouteClass::BusinessScoped:
+                    // Narrowing rule: while viewing one client, every other
+                    // Workspace/Business pair is as unreachable as a foreign
+                    // one (T-VIEW-4). The route's own tenancy check still runs.
+                    if ($route?->parameter('businessUid') !== $viewAs->businessUid
+                        || $route?->parameter('workspaceUid') !== $viewAs->workspaceUid) {
+                        abort(404);
+                    }
+                    break;
+
+                case ViewAsRouteClass::RedirectToViewed:
+                    $target = $this->classification->redirectTargetFor((string) $route?->getName());
+
+                    if ($target !== null) {
+                        return redirect()->route($target, [$viewAs->workspaceUid, $viewAs->businessUid]);
+                    }
+
+                    abort(404);
+
+                case ViewAsRouteClass::Safe:
+                    break;
+
+                default:
+                    // Denied or Unclassified: outside the viewed Business.
+                    abort(404);
             }
         }
 
