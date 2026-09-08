@@ -135,7 +135,7 @@ class NoFakePaymentControlsRenderedTest extends TestCase
 
         $response->assertDontSee('Payment methods and top-ups are not yet configured.');
         $response->assertSee('Set up payment method');
-        $response->assertSee('Initiate top-up');
-        $response->assertSee('Enable auto-recharge');
+        $response->assertSee('Add funds');
+        $response->assertSee('Turn on automatic top-up');
     }
 }

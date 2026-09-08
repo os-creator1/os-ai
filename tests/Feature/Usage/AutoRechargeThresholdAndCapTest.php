@@ -88,7 +88,7 @@ class AutoRechargeThresholdAndCapTest extends TestCase
 
     public function test_crossing_the_configured_threshold_triggers_a_successful_recharge(): void
     {
-        [, $business] = $this->businessWithAutoRechargeConfigured('2000000', '3000000', null);
+        [, $business] = $this->businessWithAutoRechargeConfigured('2000000', '5000000', null);
 
         DB::table('business_usage_wallets')->where('business_id', $business->id)
             ->update(['available_balance_micro' => '1000000']);
@@ -96,13 +96,13 @@ class AutoRechargeThresholdAndCapTest extends TestCase
         EvaluateBusinessAutoRecharge::dispatch((int) $business->id);
 
         $wallet = app(BusinessUsageWalletRepository::class)->findByBusinessId((int) $business->id);
-        $this->assertSame('4000000', (string) $wallet->available_balance_micro);
-        $this->assertSame('3000000', (string) $wallet->recharged_this_period_micro);
+        $this->assertSame('6000000', (string) $wallet->available_balance_micro);
+        $this->assertSame('5000000', (string) $wallet->recharged_this_period_micro);
     }
 
     public function test_balance_at_or_above_threshold_does_not_trigger_a_recharge(): void
     {
-        [, $business] = $this->businessWithAutoRechargeConfigured('2000000', '3000000', null);
+        [, $business] = $this->businessWithAutoRechargeConfigured('2000000', '5000000', null);
 
         DB::table('business_usage_wallets')->where('business_id', $business->id)
             ->update(['available_balance_micro' => '2000000']);
@@ -116,13 +116,13 @@ class AutoRechargeThresholdAndCapTest extends TestCase
 
     public function test_a_recharge_that_would_exceed_the_monthly_cap_is_denied(): void
     {
-        [, $business] = $this->businessWithAutoRechargeConfigured('2000000', '3000000', '4000000');
+        [, $business] = $this->businessWithAutoRechargeConfigured('2000000', '5000000', '6000000');
 
         DB::table('business_usage_wallets')->where('business_id', $business->id)
             ->update(['available_balance_micro' => '1000000', 'recharged_this_period_micro' => '2000000']);
 
-        // recharged_this_period_micro (2,000,000) + amount (3,000,000) =
-        // 5,000,000, which exceeds the configured 4,000,000 cap.
+        // recharged_this_period_micro (2,000,000) + amount (5,000,000) =
+        // 7,000,000, which exceeds the configured 4,000,000 cap.
         EvaluateBusinessAutoRecharge::dispatch((int) $business->id);
 
         $wallet = app(BusinessUsageWalletRepository::class)->findByBusinessId((int) $business->id);
@@ -132,7 +132,7 @@ class AutoRechargeThresholdAndCapTest extends TestCase
 
     public function test_a_recharge_within_the_monthly_cap_still_succeeds(): void
     {
-        [, $business] = $this->businessWithAutoRechargeConfigured('2000000', '3000000', '5000000');
+        [, $business] = $this->businessWithAutoRechargeConfigured('2000000', '5000000', '7000000');
 
         DB::table('business_usage_wallets')->where('business_id', $business->id)
             ->update(['available_balance_micro' => '1000000', 'recharged_this_period_micro' => '2000000']);
@@ -140,13 +140,13 @@ class AutoRechargeThresholdAndCapTest extends TestCase
         EvaluateBusinessAutoRecharge::dispatch((int) $business->id);
 
         $wallet = app(BusinessUsageWalletRepository::class)->findByBusinessId((int) $business->id);
-        $this->assertSame('4000000', (string) $wallet->available_balance_micro);
-        $this->assertSame('5000000', (string) $wallet->recharged_this_period_micro);
+        $this->assertSame('6000000', (string) $wallet->available_balance_micro);
+        $this->assertSame('7000000', (string) $wallet->recharged_this_period_micro);
     }
 
     public function test_a_real_reservation_below_threshold_triggers_auto_recharge_end_to_end(): void
     {
-        [, $business] = $this->businessWithAutoRechargeConfigured('2000000', '3000000', null);
+        [, $business] = $this->businessWithAutoRechargeConfigured('2000000', '5000000', null);
 
         // Activate a real, disposable metered feature so a genuine
         // UsageWalletManager::reserve() call — never a direct
@@ -177,11 +177,11 @@ class AutoRechargeThresholdAndCapTest extends TestCase
 
         $wallet = app(BusinessUsageWalletRepository::class)->findByBusinessId((int) $business->id);
 
-        // 2,500,000 - 1,000,000 (reservation) + 3,000,000 (auto-recharge,
+        // 2,500,000 - 1,000,000 (reservation) + 5,000,000 (auto-recharge,
         // triggered inline by this single reserve() call, QUEUE_CONNECTION=sync)
-        // = 4,500,000 — a direct, traceable result of the reservation
+        // = 6,500,000 — a direct, traceable result of the reservation
         // itself, never a manually-invoked job.
-        $this->assertSame('4500000', (string) $wallet->available_balance_micro);
-        $this->assertSame('3000000', (string) $wallet->recharged_this_period_micro);
+        $this->assertSame('6500000', (string) $wallet->available_balance_micro);
+        $this->assertSame('5000000', (string) $wallet->recharged_this_period_micro);
     }
 }

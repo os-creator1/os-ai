@@ -65,12 +65,14 @@ class CrossBusinessPaymentIsolationTest extends TestCase
         $workspace = $this->entitledWorkspace($ownerA->user);
         $businessA = app(BusinessRepository::class)->createForCustomerInWorkspace($ownerA, $workspace, $this->businessAttributes());
         app(UsageWalletManager::class)->initializeWalletForNewBusiness($businessA->id);
-        app(BillingProfileManager::class)->changePayer($businessA, PayerType::Business, $ownerA->user_id, 'Test.');
+        // Customer Experience Slice 5: a Business user can no longer set the payer; the "Business pays" fixture is written directly.
+        \Illuminate\Support\Facades\DB::table('business_payer_assignments')->updateOrInsert(['business_id' => $businessA->id], ['payer_type' => 'business', 'effective_payment_instrument_id' => null, 'created_at' => now(), 'updated_at' => now()]);
 
         $ownerB = $this->createCustomer();
         $businessB = app(BusinessRepository::class)->createForCustomerInWorkspace($ownerB, $workspace, $this->businessAttributes());
         app(UsageWalletManager::class)->initializeWalletForNewBusiness($businessB->id);
-        app(BillingProfileManager::class)->changePayer($businessB, PayerType::Business, $ownerB->user_id, 'Test.');
+        // Customer Experience Slice 5: a Business user can no longer set the payer; the "Business pays" fixture is written directly.
+        \Illuminate\Support\Facades\DB::table('business_payer_assignments')->updateOrInsert(['business_id' => $businessB->id], ['payer_type' => 'business', 'effective_payment_instrument_id' => null, 'created_at' => now(), 'updated_at' => now()]);
 
         $instrumentManager = app(PaymentInstrumentManager::class);
         $setupIntent = $instrumentManager->createSetupIntent($businessA, $ownerA->user_id);

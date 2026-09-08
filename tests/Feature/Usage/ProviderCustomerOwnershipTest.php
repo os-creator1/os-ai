@@ -77,8 +77,10 @@ class ProviderCustomerOwnershipTest extends TestCase
         $businessB = app(BusinessRepository::class)->createForCustomerInWorkspace($customer, $workspace, $this->businessAttributes(['name' => 'B']));
         app(UsageWalletManager::class)->initializeWalletForNewBusiness($businessA->id);
         app(UsageWalletManager::class)->initializeWalletForNewBusiness($businessB->id);
-        app(BillingProfileManager::class)->changePayer($businessA, PayerType::Business, $customer->user_id, 'Test.');
-        app(BillingProfileManager::class)->changePayer($businessB, PayerType::Business, $customer->user_id, 'Test.');
+        // Customer Experience Slice 5: a Business user can no longer set the payer; the "Business pays" fixture is written directly.
+        \Illuminate\Support\Facades\DB::table('business_payer_assignments')->updateOrInsert(['business_id' => $businessA->id], ['payer_type' => 'business', 'effective_payment_instrument_id' => null, 'created_at' => now(), 'updated_at' => now()]);
+        // Customer Experience Slice 5: a Business user can no longer set the payer; the "Business pays" fixture is written directly.
+        \Illuminate\Support\Facades\DB::table('business_payer_assignments')->updateOrInsert(['business_id' => $businessB->id], ['payer_type' => 'business', 'effective_payment_instrument_id' => null, 'created_at' => now(), 'updated_at' => now()]);
 
         $instrumentManager = app(PaymentInstrumentManager::class);
         $customerA = $instrumentManager->resolveProviderCustomer($businessA, $customer->user_id);

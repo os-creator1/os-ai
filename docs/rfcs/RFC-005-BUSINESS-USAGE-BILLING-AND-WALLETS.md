@@ -1350,3 +1350,58 @@ No area in the merged contract's §5 A–L, and no human product requirement, is
 ---
 
 *End of RFC-005 design document. Every milestone named in §36 requires its own separate, human-reviewed, merged implementation contract before any code, migration, test, route, view, or Stripe/provider change may be written.*
+
+## 41. Amendment — Customer Experience Slice 5 (parent contract §27 C-3)
+
+Applied by `docs/automation/CUSTOMER-EXPERIENCE-SLICE-5-WALLET-PAYER-UX.md`
+on branch `agent/customer-experience-slice-5-wallet-payer-ux`. Where this
+section and an earlier section disagree, this section wins; nothing above
+is rewritten.
+
+1. **Minimum manual top-up is $5.00** (5 000 000 micro-units of the wallet
+   currency), enforced by `InitiateTopUpRequest` and by
+   `UsageWalletManager::manualTopUpDenialReason()` in front of
+   `UsageBillingCheckoutManager::initiateTopUp()`. §18's free-form minimum
+   is superseded.
+2. **Automatic top-up amounts are the four fixed presets** $5 / $10 / $25 /
+   $50 (`UsageWalletManager::AUTO_RECHARGE_PRESETS_MICRO`); a custom amount
+   is refused at the request and at `configureAutoRecharge()`. The custom
+   range remains owner-gated (parent §28.9) and is not implemented.
+   Automatic top-up is **off by default** and records explicit consent
+   (`auto_recharge_consented_at/_by_user_id`) only when the payer enables
+   it; §19's trigger, single-outstanding-attempt rule and failure counter
+   are unchanged. Every failed attempt additionally notifies the billing
+   contact (`AutoRechargeFailedNotification`).
+3. **Workspace aggregate caps.** `workspace_usage_controls` adds, per
+   Workspace, a monthly aggregate spending limit and a monthly aggregate
+   automatic top-up ceiling covering every Business the Workspace pays for.
+   The spending limit is evaluated inside `reserve()` after the Business
+   monthly cap, under a `SELECT … FOR UPDATE` on the Workspace row taken
+   after the wallet row (fixed lock order). §15's evaluation order becomes:
+   billing_status → outstanding_debt → per-feature limit → Business spend
+   cap → **Workspace aggregate cap** → platform safety limit → balance,
+   preceded by the two emergency stops of item 4.
+4. **Emergency kill switch.** A Business stop
+   (`business_usage_wallets.paid_activity_paused_at`) and a Workspace stop
+   (`workspace_usage_controls.paid_activity_paused_at`), customer-set and
+   audited in `usage_control_transitions`, refuse every new reservation
+   first, before any meter or provider work; open reservations keep their
+   §13 lifecycle; the ledger is never modified.
+5. **Payer no-op rule.** `BillingProfileManager::assignPayer()`: submitting
+   the currently-assigned payer performs no update, writes no
+   `business_payer_transitions` row, dispatches no `BusinessPayerChanged`
+   and returns `changed=false`; §16's "repeated call still records a
+   transition" resolution is withdrawn. Authority to change responsibility
+   is the Agency owner's or an Agency-wide active Admin's, on the Agency
+   tier only (parent §12.4); §16's direct-owner → 'business' consent path
+   is superseded. Charge-causing consent (§16, corrected round) is
+   unchanged.
+6. **Telecom meters as first-class meters.** SMS/MMS transport, number
+   acquisition, rental and compliance fees are `usage_meters` like any
+   other; no retail telecom rate is activated by this amendment (parent
+   §28.1a) and none is invented in tests.
+7. **Measurement versus wallet debit** (parent §11.5). A metered event
+   never implies a debit: BYO transport is measured but takes no
+   reservation and no debit; managed transport and every paid
+   non-transport service reserve and debit through `reserve()/commit()`.
+   No code path may assume that recording usage creates a charge.

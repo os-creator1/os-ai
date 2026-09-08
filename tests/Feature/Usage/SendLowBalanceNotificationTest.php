@@ -253,7 +253,7 @@ class SendLowBalanceNotificationTest extends TestCase
         ]);
         $ownerUserId = (int) $business->workspace->owner_user_id;
 
-        app(UsageWalletManager::class)->configureAutoRecharge($business, true, '2000000', '3000000', null, $ownerUserId);
+        app(UsageWalletManager::class)->configureAutoRecharge($business, true, '2000000', '5000000', null, $ownerUserId);
 
         $wallet = DB::table('business_usage_wallets')->where('business_id', $business->id)->first();
         $this->assertNotNull($wallet->low_balance_notified_at, 'Re-enabling alone must not clear the marker — only an actual balance recovery does.');

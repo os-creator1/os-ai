@@ -127,7 +127,7 @@ class FundingAttemptTerminalEventDispatchTest extends TestCase
         ));
         app(PaymentInstrumentManager::class)->confirmSetupIntentAndAttach($business, $customer->user_id, $setupIntent->providerSetupIntentId);
 
-        app(UsageWalletManager::class)->configureAutoRecharge($business, true, '2000000', '3000000', null, $customer->user_id);
+        app(UsageWalletManager::class)->configureAutoRecharge($business, true, '2000000', '5000000', null, $customer->user_id);
         DB::table('business_usage_wallets')->where('business_id', $business->id)->update(['available_balance_micro' => '1000000']);
 
         return [(int) $business->id, (int) $customer->user_id];

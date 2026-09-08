@@ -177,7 +177,7 @@ class AutoRechargeFailedPaymentRetryTest extends TestCase
         ));
         $instrumentManager->confirmSetupIntentAndAttach($business, $ownerId, $setupIntent->providerSetupIntentId);
 
-        app(UsageWalletManager::class)->configureAutoRecharge($business, true, '2000000', '3000000', null, $ownerId);
+        app(UsageWalletManager::class)->configureAutoRecharge($business, true, '2000000', '5000000', null, $ownerId);
 
         return [$businessId, $ownerId];
     }
@@ -224,7 +224,7 @@ class AutoRechargeFailedPaymentRetryTest extends TestCase
 
         $wallet = app(BusinessUsageWalletRepository::class)->findByBusinessId($businessId);
         $this->assertSame(0, $wallet->consecutive_recharge_failures);
-        $this->assertSame('4000000', (string) $wallet->available_balance_micro);
+        $this->assertSame('6000000', (string) $wallet->available_balance_micro);
     }
 
     /**
@@ -308,7 +308,7 @@ class AutoRechargeFailedPaymentRetryTest extends TestCase
         $wallet = app(BusinessUsageWalletRepository::class)->findByBusinessId($businessId);
         $this->assertFalse((bool) $wallet->auto_recharge_enabled);
         $this->assertSame('2000000', (string) $wallet->auto_recharge_threshold_micro);
-        $this->assertSame('3000000', (string) $wallet->auto_recharge_amount_micro);
+        $this->assertSame('5000000', (string) $wallet->auto_recharge_amount_micro);
     }
 
     /**
@@ -345,7 +345,7 @@ class AutoRechargeFailedPaymentRetryTest extends TestCase
         DB::table('business_usage_wallets')->where('business_id', $businessId)
             ->update(['consecutive_recharge_failures' => 3, 'auto_recharge_enabled' => false]);
 
-        app(UsageWalletManager::class)->configureAutoRecharge($business, true, '2000000', '3000000', null, $ownerId);
+        app(UsageWalletManager::class)->configureAutoRecharge($business, true, '2000000', '5000000', null, $ownerId);
 
         $wallet = app(BusinessUsageWalletRepository::class)->findByBusinessId($businessId);
         $this->assertSame(0, $wallet->consecutive_recharge_failures);

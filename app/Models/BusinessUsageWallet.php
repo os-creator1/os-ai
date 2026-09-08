@@ -34,6 +34,13 @@ class BusinessUsageWallet extends Model
         'consecutive_recharge_failures',
         'low_balance_notified_at',
         'billing_status',
+        // Customer Experience Slice 5 — emergency stop, explicit automatic
+        // top-up consent, once-per-period spending alert marker.
+        'paid_activity_paused_at',
+        'paid_activity_paused_by_user_id',
+        'auto_recharge_consented_at',
+        'auto_recharge_consented_by_user_id',
+        'spending_limit_alert_period_key',
     ];
 
     protected $casts = [
@@ -56,7 +63,20 @@ class BusinessUsageWallet extends Model
         'consecutive_recharge_failures' => 'integer',
         'low_balance_notified_at' => 'datetime',
         'billing_status' => WalletBillingStatus::class,
+        'paid_activity_paused_at' => 'datetime',
+        'paid_activity_paused_by_user_id' => 'integer',
+        'auto_recharge_consented_at' => 'datetime',
+        'auto_recharge_consented_by_user_id' => 'integer',
     ];
+
+    /**
+     * Customer Experience Slice 5 — the Business-level emergency stop is on
+     * while paid_activity_paused_at is set.
+     */
+    public function isPaidActivityPaused(): bool
+    {
+        return $this->paid_activity_paused_at !== null;
+    }
 
     public function business(): BelongsTo
     {
