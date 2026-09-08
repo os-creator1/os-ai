@@ -41,7 +41,12 @@ class EntitlementEnumsTest extends TestCase
         $this->assertCount(2, WorkspaceEntitlementOverrideState::cases());
     }
 
-    public function test_workspace_entitlement_transition_type_has_exactly_nine_cases(): void
+    /**
+     * Nine RFC-004 types plus the two PHYSICAL-LOCATION types added by
+     * Customer Experience Slice 1A (contract §23.2 step 6), which extend
+     * this existing vocabulary rather than introducing a new audit table.
+     */
+    public function test_workspace_entitlement_transition_type_has_exactly_eleven_cases(): void
     {
         $expected = [
             'plan_assigned',
@@ -53,11 +58,13 @@ class EntitlementEnumsTest extends TestCase
             'entitlement_override_allowed',
             'entitlement_override_denied',
             'entitlement_override_reverted',
+            'additional_location_slots_changed',
+            'location_capacity_grandfathered',
         ];
 
         $actual = array_map(fn ($case) => $case->value, WorkspaceEntitlementTransitionType::cases());
 
-        $this->assertCount(9, WorkspaceEntitlementTransitionType::cases());
+        $this->assertCount(11, WorkspaceEntitlementTransitionType::cases());
         $this->assertSame($expected, $actual);
     }
 

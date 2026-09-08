@@ -22,6 +22,9 @@ use App\Exceptions\Entitlement\ComplimentaryWorkspaceCannotAllocatePaidSlotsExce
 use App\Exceptions\Entitlement\InactiveWorkspacePlanException;
 use App\Exceptions\Entitlement\InvalidAdditionalBusinessSlotsException;
 use App\Exceptions\Entitlement\InvalidPaymentAllocationEvidenceException;
+use App\Exceptions\Entitlement\LocationAllocationCancellationRefusedException;
+use App\Exceptions\Entitlement\LocationSlotAllocationRequiredException;
+use App\Exceptions\Entitlement\LocationSlotLimitExceededException;
 use App\Exceptions\Entitlement\PaymentAllocationIdempotencyConflictException;
 use App\Exceptions\Entitlement\PaymentAllocationWorkspaceMismatchException;
 use App\Exceptions\Entitlement\PlanCatalogPricingInUseException;
@@ -301,6 +304,110 @@ final class EntitlementManager
         }
 
         return new BusinessSlotCapacityDecision($currentCount, $included, $additional, $effectiveCapacity, false, false, 'business_slot_allocation_required');
+    }
+
+    /**
+     * Customer Experience Slice 1A — PHYSICAL-LOCATION capacity for one
+     * Business (contract §7.3, §7.5.1).
+     *
+     * Deliberately a sibling of decideBusinessSlotCapacity(), never a
+     * modification of it. A `businesses` row is a client account; a
+     * `business_locations` row is a physical branch inside one. The two
+     * capacities are separate and must never be conflated again (RFC-004
+     * §33.1), so this method reads only the location_* catalog columns and
+     * the two per-Business location counters, and never touches
+     * business_slot_* or additional_business_slots.
+     *
+     * Capacity counts ACTIVE locations only — archived rows consume
+     * nothing (§7.3a rule 1).
+     *
+     *     capacity = unlimited ? INF
+     *              : location_slot_included
+     *              + additional_location_slots     (paid, reusable)
+     *              + grandfathered_location_slots  (complimentary, not reusable)
+     *
+     * Pure read. Callers that mutate hold the Business row lock first.
+     */
+    public function decideLocationSlotCapacity(Business $business): LocationSlotCapacityDecision
+    {
+        $activeCount = $this->businessRepository->countActiveLocations($business);
+        $additional = (int) ($business->additional_location_slots ?? 0);
+        $grandfathered = (int) ($business->grandfathered_location_slots ?? 0);
+
+        $workspaceId = $business->workspace_id;
+        $assignment = $workspaceId === null ? null : $this->assignmentRepository->findByWorkspaceId((int) $workspaceId);
+
+        if ($assignment === null) {
+            return new LocationSlotCapacityDecision($activeCount, 0, $additional, $grandfathered, 0, 0, false, false, 'workspace_plan_unassigned');
+        }
+
+        if ($assignment->status === WorkspacePlanAssignmentStatus::Suspended) {
+            return new LocationSlotCapacityDecision($activeCount, 0, $additional, $grandfathered, 0, 0, false, false, 'plan_suspended');
+        }
+
+        if ($assignment->status === WorkspacePlanAssignmentStatus::Inactive) {
+            return new LocationSlotCapacityDecision($activeCount, 0, $additional, $grandfathered, 0, 0, false, false, 'plan_inactive');
+        }
+
+        $catalog = $this->catalogRepository->findById($assignment->workspace_plan_catalog_id);
+
+        // Agency short-circuits before any counting (§7.3).
+        if ($catalog !== null && $catalog->unlimited_location_slots) {
+            return new LocationSlotCapacityDecision($activeCount, (int) $catalog->location_slot_included, $additional, $grandfathered, null, null, true, true, null);
+        }
+
+        $included = (int) ($catalog?->location_slot_included ?? 0);
+        $hardMaximum = $catalog?->location_slot_max;
+        $hardMaximum = $hardMaximum === null ? null : (int) $hardMaximum;
+
+        // Grandfathered complimentary excess raises the effective capacity
+        // for the locations it was granted for, and may legitimately sit
+        // above the tier's hard maximum — an existing over-capacity
+        // Business must keep every location it already has (§7.5).
+        $effectiveCapacity = $included + $additional + $grandfathered;
+
+        if ($hardMaximum !== null) {
+            $effectiveCapacity = max($effectiveCapacity, $included + $grandfathered);
+            $effectiveCapacity = min($effectiveCapacity, max($hardMaximum, $included + $grandfathered));
+        }
+
+        if ($activeCount < $effectiveCapacity) {
+            return new LocationSlotCapacityDecision($activeCount, $included, $additional, $grandfathered, $effectiveCapacity, $hardMaximum, false, true, null);
+        }
+
+        // At or above the tier ceiling: no allocation can raise it, only
+        // Agency can (§7.3).
+        if ($hardMaximum !== null && $activeCount >= max($hardMaximum, $included + $grandfathered)) {
+            return new LocationSlotCapacityDecision($activeCount, $included, $additional, $grandfathered, $effectiveCapacity, $hardMaximum, false, false, 'location_slot_limit_exceeded');
+        }
+
+        return new LocationSlotCapacityDecision($activeCount, $included, $additional, $grandfathered, $effectiveCapacity, $hardMaximum, false, false, 'location_slot_allocation_required');
+    }
+
+    /**
+     * Slice 1A — the assertion every active-location-count-increasing
+     * operation runs (create AND reactivate, §7.3).
+     *
+     * Locks nothing itself: BusinessLocationManager already holds the
+     * Business row lock, mirroring how assertCanCreateAnotherBusiness()
+     * trusts its caller's Workspace lock.
+     */
+    public function assertCanActivateAnotherLocation(Business $business): void
+    {
+        $decision = $this->decideLocationSlotCapacity($business);
+
+        if ($decision->allowed) {
+            return;
+        }
+
+        match ($decision->denialReason) {
+            'workspace_plan_unassigned' => throw new WorkspacePlanUnassignedException((int) ($business->workspace_id ?? 0)),
+            'plan_inactive' => throw new InactiveWorkspacePlanException((int) ($business->workspace_id ?? 0)),
+            'plan_suspended' => throw new SuspendedWorkspacePlanException((int) ($business->workspace_id ?? 0)),
+            'location_slot_allocation_required' => throw new LocationSlotAllocationRequiredException((int) $business->id),
+            'location_slot_limit_exceeded' => throw new LocationSlotLimitExceededException((int) $business->id),
+            default => throw new RuntimeException("Unexpected location capacity denial reason [{$decision->denialReason}] for Business [{$business->id}]."),
+        };
     }
 
     /**
@@ -848,6 +955,156 @@ final class EntitlementManager
 
             return $updated;
         });
+    }
+
+    /**
+     * Customer Experience Slice 1A — the authority required to change a
+     * Business's physical locations or its paid location allocations.
+     *
+     * Deliberately REUSES the existing Workspace owner-or-active-Admin
+     * authority that already guards every other Business-level entitlement
+     * mutation (disableBusinessFeature, setAdditionalBusinessSlots). No new
+     * permission key and no parallel authorization mechanism is introduced:
+     * an ordinary Workspace member with Business access may VIEW locations
+     * but may not create, archive, reactivate, allocate or cancel.
+     *
+     * @throws UnauthorizedWorkspaceManagementException
+     */
+    public function assertBusinessLocationManagementAuthority(Business $business, int $actorUserId): void
+    {
+        $workspaceId = $business->workspace_id;
+
+        if ($workspaceId === null) {
+            throw new UnauthorizedWorkspaceManagementException($actorUserId, 0);
+        }
+
+        $workspace = $this->workspaceRepository->findById((int) $workspaceId);
+
+        if ($workspace === null) {
+            throw new UnauthorizedWorkspaceManagementException($actorUserId, (int) $workspaceId);
+        }
+
+        $this->assertWorkspaceOwnerOrActiveAdmin($actorUserId, $workspace);
+    }
+
+    /**
+     * Customer Experience Slice 1A — allocate one paid additional
+     * PHYSICAL-LOCATION slot to a Business (contract §7.3a rule 4).
+     *
+     * Slice 1A stores the capacity model and the contracted 0.5000 ratio
+     * but DELIBERATELY COLLECTS NOTHING: retail activation stays behind
+     * the owner price gate (§28.1), and no Stripe, wallet or provider call
+     * is made here. A later slice adds collection on top of this.
+     *
+     * Holds the Business row lock for the whole transaction so an
+     * allocation and a location creation cannot race into an invalid
+     * state.
+     */
+    public function allocateAdditionalLocationSlot(Business $business, int $actorUserId, ?string $reason = null): Business
+    {
+        return DB::transaction(function () use ($business, $actorUserId, $reason) {
+            $locked = $this->businessRepository->findForUpdate((int) $business->id);
+
+            if ($locked === null) {
+                throw new WorkspaceBusinessNotFoundException((int) $business->id);
+            }
+
+            $decision = $this->decideLocationSlotCapacity($locked);
+
+            if ($decision->unlimited) {
+                // Agency needs no allocation; a no-op rather than an error,
+                // and deliberately unaudited because nothing changed.
+                return $locked;
+            }
+
+            $from = (int) $locked->additional_location_slots;
+            $hardMaximum = $decision->hardMaximum;
+            $ceiling = $hardMaximum === null ? $from + 1 : max(0, $hardMaximum - $decision->includedSlots);
+
+            if ($from >= $ceiling) {
+                throw new LocationSlotLimitExceededException((int) $locked->id);
+            }
+
+            $to = $from + 1;
+
+            $locked->forceFill(['additional_location_slots' => $to])->save();
+
+            $this->recordLocationSlotTransition($locked, $from, $to, $actorUserId, $reason ?? 'Additional physical-location allocation added.');
+
+            return $locked->refresh();
+        });
+    }
+
+    /**
+     * Slice 1A — cancel one paid additional physical-location allocation
+     * (contract §7.3a rule 6).
+     *
+     * Permitted ONLY when the Business's active-location count fits the
+     * post-cancellation capacity. A refused cancellation is a complete
+     * no-op: no counter change, no transition row, no event.
+     *
+     * No refund is issued and no payment is reversed — Slice 1A implements
+     * no collection, so there is nothing to refund (§9 exclusions).
+     */
+    public function cancelAdditionalLocationSlot(Business $business, int $actorUserId, ?string $reason = null): Business
+    {
+        return DB::transaction(function () use ($business, $actorUserId, $reason) {
+            $locked = $this->businessRepository->findForUpdate((int) $business->id);
+
+            if ($locked === null) {
+                throw new WorkspaceBusinessNotFoundException((int) $business->id);
+            }
+
+            $from = (int) $locked->additional_location_slots;
+
+            if ($from === 0) {
+                // Nothing to cancel — a true no-op, never a false success
+                // audit row.
+                return $locked;
+            }
+
+            $decision = $this->decideLocationSlotCapacity($locked);
+            $capacityAfter = $decision->includedSlots + ($from - 1) + $decision->grandfatheredSlots;
+
+            if (! $decision->unlimited && $decision->activeLocationCount > $capacityAfter) {
+                throw new LocationAllocationCancellationRefusedException(
+                    (int) $locked->id,
+                    $decision->activeLocationCount,
+                    $capacityAfter,
+                );
+            }
+
+            $to = $from - 1;
+
+            $locked->forceFill(['additional_location_slots' => $to])->save();
+
+            $this->recordLocationSlotTransition($locked, $from, $to, $actorUserId, $reason ?? 'Additional physical-location allocation cancelled.');
+
+            return $locked->refresh();
+        });
+    }
+
+    /**
+     * One durable, immutable audit row per allocation change, on the
+     * EXISTING workspace_entitlement_transitions table (contract §23.2
+     * step 6 — no new audit table). The payload names the Business and
+     * both counts, because the transition table's own
+     * from/to_additional_business_slots columns are for BUSINESS slots and
+     * must never be reused for locations.
+     */
+    private function recordLocationSlotTransition(Business $business, int $from, int $to, int $actorUserId, string $reason): void
+    {
+        $this->transitionRepository->create([
+            'workspace_id' => $business->workspace_id,
+            'transition_type' => WorkspaceEntitlementTransitionType::AdditionalLocationSlotsChanged,
+            'actor_user_id' => $actorUserId,
+            'reason' => $reason,
+            'payload' => [
+                'business_id' => (int) $business->id,
+                'from_additional_location_slots' => $from,
+                'to_additional_location_slots' => $to,
+            ],
+        ]);
     }
 
     /**

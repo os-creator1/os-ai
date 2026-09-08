@@ -2,10 +2,12 @@
 
 namespace App\Repositories\Eloquent;
 
+use App\Enums\Business\BusinessLocationLifecycleState;
 use App\Models\Business;
 use App\Models\BusinessLocation;
 use App\Repositories\Contracts\BusinessLocationRepository;
 use Illuminate\Support\Arr;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
 class EloquentBusinessLocationRepository extends EloquentBaseRepository implements BusinessLocationRepository
@@ -42,6 +44,47 @@ class EloquentBusinessLocationRepository extends EloquentBaseRepository implemen
 
             return $location->refresh();
         });
+    }
+
+    /**
+     * Slice 1A — create one ACTIVE location. Primary status is never
+     * inferred here; BusinessLocationManager decides it explicitly.
+     */
+    public function createActive(Business $business, array $attributes): BusinessLocation
+    {
+        $attributes = Arr::except($attributes, ['business_id', 'is_primary', 'lifecycle_state', 'archived_at']);
+
+        $location = $business->locations()->create($attributes);
+
+        $location->forceFill([
+            'lifecycle_state' => BusinessLocationLifecycleState::Active,
+            'archived_at' => null,
+        ])->save();
+
+        return $location->refresh();
+    }
+
+    /**
+     * Active AND archived, oldest first. Archived rows are never hidden.
+     */
+    public function allForBusiness(Business $business): Collection
+    {
+        return $business->locations()->orderBy('id')->get();
+    }
+
+    public function findByUidForBusiness(Business $business, string $uid): ?BusinessLocation
+    {
+        return $business->locations()->where('uid', $uid)->first();
+    }
+
+    /**
+     * The capacity COUNT (contract §7.3) — active rows only.
+     */
+    public function countActiveForBusiness(Business $business): int
+    {
+        return (int) $business->locations()
+            ->where('lifecycle_state', BusinessLocationLifecycleState::Active->value)
+            ->count();
     }
 
     public function setPrimary(BusinessLocation $location): BusinessLocation

@@ -53,62 +53,49 @@ class EntitlementManagerBusinessSlotCapacityTest extends TestCase
         }
     }
 
-    public function test_first_second_third_business_succeed_with_zero_allocation(): void
+    /**
+     * CX Slice 1A / RFC-004 §33 — Core and Growth now hold exactly ONE
+     * Business/client account. The 3-included / 4-and-5-at-50% rule that
+     * these tests previously asserted was the CONFLATED reading of RFC-004
+     * §2; it now governs PHYSICAL LOCATIONS instead, and is covered by
+     * tests/Feature/Business/BusinessLocationCapacityTest.
+     */
+    public function test_the_first_business_succeeds_on_core_and_growth(): void
     {
-        [$workspace] = $this->assignedWorkspace(slots: 0);
+        foreach ([WorkspacePlanTier::Core, WorkspacePlanTier::Growth] as $tier) {
+            [$workspace, $customer] = $this->assignedWorkspace($tier, 0);
 
-        for ($i = 0; $i < 3; $i++) {
             app(EntitlementManager::class)->assertCanCreateAnotherBusiness($workspace);
-            app(BusinessRepository::class)->createForCustomerInWorkspace(
-                Customer::where('user_id', $workspace->owner_user_id)->first() ?? Customer::create(['user_id' => $workspace->owner_user_id]),
-                $workspace,
-                ['name' => "B{$i}", 'industry' => 'photo_booth_service', 'country_code' => 'US', 'timezone' => 'America/New_York', 'currency_code' => 'USD'],
-            );
+            $this->createNBusinesses($workspace, $customer, 1);
+
+            $this->assertSame(1, (int) \Illuminate\Support\Facades\DB::table('businesses')->where('workspace_id', $workspace->id)->count());
         }
-
-        $this->assertDatabaseCount('businesses', 3);
     }
 
-    public function test_fourth_business_requires_allocation(): void
+    public function test_a_second_business_is_denied_on_core_and_growth(): void
     {
-        [$workspace, $customer] = $this->assignedWorkspace(slots: 0);
-        $this->createNBusinesses($workspace, $customer, 3);
+        foreach ([WorkspacePlanTier::Core, WorkspacePlanTier::Growth] as $tier) {
+            [$workspace, $customer] = $this->assignedWorkspace($tier, 0);
+            $this->createNBusinesses($workspace, $customer, 1);
 
-        $this->expectException(BusinessSlotAllocationRequiredException::class);
-        app(EntitlementManager::class)->assertCanCreateAnotherBusiness($workspace->fresh());
+            try {
+                app(EntitlementManager::class)->assertCanCreateAnotherBusiness($workspace->fresh());
+                $this->fail("{$tier->value} must refuse a second Business.");
+            } catch (BusinessSlotLimitExceededException $exception) {
+                // The ceiling is 1 and no allocation can raise it.
+                $this->assertSame((int) $workspace->id, $exception->workspaceId);
+            }
+        }
     }
 
-    public function test_fourth_business_succeeds_with_slot_one(): void
+    /**
+     * No additional-Business-slot allocation can raise the Core/Growth
+     * ceiling any more: business_slot_max is 1, so the only path is Agency.
+     */
+    public function test_no_allocation_can_raise_the_core_growth_business_ceiling(): void
     {
-        [$workspace, $customer] = $this->assignedWorkspace(slots: 1);
-        $this->createNBusinesses($workspace, $customer, 3);
-
-        app(EntitlementManager::class)->assertCanCreateAnotherBusiness($workspace->fresh());
-        $this->assertTrue(true);
-    }
-
-    public function test_fifth_business_requires_slot_two_denied_with_only_slot_one(): void
-    {
-        [$workspace, $customer] = $this->assignedWorkspace(slots: 1);
-        $this->createNBusinesses($workspace, $customer, 4);
-
-        $this->expectException(BusinessSlotAllocationRequiredException::class);
-        app(EntitlementManager::class)->assertCanCreateAnotherBusiness($workspace->fresh());
-    }
-
-    public function test_fifth_business_succeeds_with_slot_two(): void
-    {
-        [$workspace, $customer] = $this->assignedWorkspace(slots: 2);
-        $this->createNBusinesses($workspace, $customer, 4);
-
-        app(EntitlementManager::class)->assertCanCreateAnotherBusiness($workspace->fresh());
-        $this->assertTrue(true);
-    }
-
-    public function test_sixth_business_always_denied_regardless_of_allocation(): void
-    {
-        [$workspace, $customer] = $this->assignedWorkspace(slots: 2);
-        $this->createNBusinesses($workspace, $customer, 5);
+        [$workspace, $customer] = $this->assignedWorkspace(WorkspacePlanTier::Growth, 2);
+        $this->createNBusinesses($workspace, $customer, 1);
 
         $this->expectException(BusinessSlotLimitExceededException::class);
         app(EntitlementManager::class)->assertCanCreateAnotherBusiness($workspace->fresh());
@@ -126,20 +113,27 @@ class EntitlementManagerBusinessSlotCapacityTest extends TestCase
     public function test_inactive_business_rows_still_consume_slots(): void
     {
         [$workspace, $customer] = $this->assignedWorkspace(slots: 0);
-        $this->createNBusinesses($workspace, $customer, 3, BusinessStatus::Inactive);
+        $this->createNBusinesses($workspace, $customer, 1, BusinessStatus::Inactive);
 
-        $this->expectException(BusinessSlotAllocationRequiredException::class);
+        $this->expectException(BusinessSlotLimitExceededException::class);
         app(EntitlementManager::class)->assertCanCreateAnotherBusiness($workspace->fresh());
     }
 
+    /**
+     * A Workspace that already held several Businesses when the corrected
+     * capacity landed keeps every one of them; only NEW creation is denied
+     * (RFC-004 §33.6).
+     */
     public function test_grandfathered_over_capacity_keeps_every_business_and_still_denies_further_creation(): void
     {
-        [$workspace, $customer] = $this->assignedWorkspace(slots: 2);
+        // Created while on Agency (unlimited), then downgraded — the same
+        // shape as a real pre-correction Workspace.
+        [$workspace, $customer] = $this->assignedWorkspace(WorkspacePlanTier::Agency, 0);
         $this->createNBusinesses($workspace, $customer, 5);
-        // Downgrade allocation after the fact — existing Businesses remain.
-        app(EntitlementManager::class)->setAdditionalBusinessSlots($workspace->fresh(), 0, $this->createAdmin());
 
-        $this->assertDatabaseCount('businesses', 5);
+        app(EntitlementManager::class)->changePlan($workspace->fresh(), WorkspacePlanTier::Growth, $this->createAdmin(), 'Downgrade.');
+
+        $this->assertSame(5, (int) \Illuminate\Support\Facades\DB::table('businesses')->where('workspace_id', $workspace->id)->count());
 
         $this->expectException(BusinessSlotLimitExceededException::class);
         app(EntitlementManager::class)->assertCanCreateAnotherBusiness($workspace->fresh());

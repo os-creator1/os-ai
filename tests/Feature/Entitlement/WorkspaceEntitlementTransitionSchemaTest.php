@@ -47,6 +47,12 @@ class WorkspaceEntitlementTransitionSchemaTest extends TestCase
             'from_status' => 'YES',
             'to_status' => 'YES',
             'reason' => 'YES',
+            // Customer Experience Slice 1A — additive, nullable,
+            // machine-readable payload beside the human-readable `reason`.
+            // Carries the per-Business counts the physical-location
+            // transitions need, which the BUSINESS-slot columns above must
+            // never be reused for (contract §7.5.2).
+            'payload' => 'YES',
             'payment_idempotency_key' => 'YES',
             'created_at' => 'NO',
         ];

@@ -32,6 +32,13 @@ interface BusinessRepository extends BaseRepository
      */
     public function findForUpdate(int $id): ?Business;
 
+    /**
+     * Slice 1A — COUNT of this Business's ACTIVE physical locations, the
+     * figure EntitlementManager::decideLocationSlotCapacity() evaluates
+     * against (contract §7.3). Archived rows consume nothing.
+     */
+    public function countActiveLocations(Business $business): int;
+
     public function findOwnedByCustomer(int $businessId, int $customerId): ?Business;
 
     public function findPrimaryByCustomer(int $customerId): ?Business;

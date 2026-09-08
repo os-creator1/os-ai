@@ -739,6 +739,34 @@
         | plan downgrade; neither makes a provider call.
         |----------------------------------------------------------------------
         */
+        /*
+        |----------------------------------------------------------------
+        | Physical locations & service areas (CX Slice 1A)
+        |----------------------------------------------------------------
+        |
+        | A location is a physical branch, storefront, office or service
+        | area INSIDE one Business — never another account, never a
+        | Workspace, and never an account-switcher level. These routes live
+        | under Business Settings, exactly like every other Business-scoped
+        | surface, and are resolved through the same two-uid tenancy chain.
+        |
+        | Every count-increasing action (store, reactivate) delegates to
+        | BusinessLocationManager, the one canonical capacity boundary, so
+        | capacity is asserted under the Business row lock before the write.
+        |
+        */
+        Route::prefix('{workspaceUid}/businesses/{businessUid}/locations')->name('businesses.locations.')->group(function () {
+            // Named overview(), not index(): CustomerBaseController::index()
+            // takes zero parameters, so an index(string, string) override is
+            // a fatal LSP error. Same house precedent as B4 and GBP.
+            Route::get('/', 'Business\BusinessLocationsController@overview')->name('index');
+            Route::post('/', 'Business\BusinessLocationsController@store')->name('store');
+            Route::post('/archive', 'Business\BusinessLocationsController@archive')->name('archive');
+            Route::post('/reactivate', 'Business\BusinessLocationsController@reactivate')->name('reactivate');
+            Route::post('/allocations', 'Business\BusinessLocationsController@allocate')->name('allocations.store');
+            Route::post('/allocations/cancel', 'Business\BusinessLocationsController@cancelAllocation')->name('allocations.cancel');
+        });
+
         Route::prefix('{workspaceUid}/businesses/{businessUid}/gbp')->name('businesses.gbp.')->group(function () {
             Route::get('/', 'Business\GoogleBusinessProfileController@overview')->name('index');
             // Multi-location correction — the comparison is addressed by the

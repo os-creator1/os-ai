@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Enums\Business\BusinessLocationLifecycleState;
 use App\Enums\Business\BusinessServiceMode;
 use App\Library\Traits\HasUid;
 use Illuminate\Database\Eloquent\Model;
@@ -40,6 +41,8 @@ class BusinessLocation extends Model
 
     protected $casts = [
         'service_mode' => BusinessServiceMode::class,
+        'lifecycle_state' => BusinessLocationLifecycleState::class,
+        'archived_at' => 'datetime',
         'public_address' => 'boolean',
         'is_primary' => 'boolean',
         'service_area_cities' => 'array',
@@ -52,5 +55,24 @@ class BusinessLocation extends Model
     public function business(): BelongsTo
     {
         return $this->belongsTo(Business::class);
+    }
+
+    /**
+     * Slice 1A (contract §7.3a). Only active locations consume the
+     * Business's physical-location capacity; archived rows are retained in
+     * full and remain readable everywhere — history, GBP bindings, billing
+     * evidence, reactivation and audit.
+     *
+     * `lifecycle_state` is deliberately NOT in $fillable: it is written
+     * only by BusinessLocationManager, the canonical capacity boundary.
+     */
+    public function isActive(): bool
+    {
+        return $this->lifecycle_state === BusinessLocationLifecycleState::Active;
+    }
+
+    public function isArchived(): bool
+    {
+        return $this->lifecycle_state === BusinessLocationLifecycleState::Archived;
     }
 }

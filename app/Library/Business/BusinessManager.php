@@ -45,6 +45,10 @@ class BusinessManager
         private readonly UrlNormalizer $urlNormalizer,
         private readonly WorkspaceManager $workspaceManager,
         private readonly EntitlementManager $entitlementManager,
+        // Slice 1A — the canonical physical-location capacity boundary
+        // (contract §7.3b). Every count-increasing location write from this
+        // class delegates to it.
+        private readonly BusinessLocationManager $locationManager,
         private readonly ?WorkspaceRepository $workspaceRepository = null,
     ) {
     }
@@ -156,9 +160,29 @@ class BusinessManager
      * Upsert the business's single primary location. Delegates the
      * one-primary invariant entirely to BusinessLocationRepository.
      */
+    /**
+     * Customer Experience Slice 1A (contract §7.3b point 2) — this path is
+     * migrated onto the canonical BusinessLocationManager boundary.
+     *
+     * Onboarding calls this to save the location step. It is
+     * count-increasing ONLY when the Business has no primary location yet;
+     * editing an existing primary changes no count and therefore needs no
+     * capacity assertion. Routing the creating case through the boundary
+     * keeps every customer-reachable active-location-count-increasing
+     * write behind the same row-locked capacity check.
+     */
     public function upsertPrimaryLocation(Customer $customer, Business $business, array $attributes): BusinessLocation
     {
         $this->assertOwnership($customer, $business);
+
+        $existingPrimary = $this->locationRepository->findPrimary($business);
+
+        if ($existingPrimary === null) {
+            // Count-increasing: goes through the canonical boundary, which
+            // asserts capacity under the Business row lock and sets primary
+            // status (and dispatches BusinessPrimaryLocationUpdated) itself.
+            return $this->locationManager->createLocation($business, $attributes);
+        }
 
         $location = DB::transaction(fn () => $this->locationRepository->upsertPrimary($business, $attributes));
 

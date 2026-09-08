@@ -98,8 +98,16 @@ class WorkspaceEntitlementSchemaTest extends TestCase
         $this->assertNull($row->price);
         $this->assertNull($row->currency_id);
         $this->assertSame('monthly', $row->billing_cycle);
-        $this->assertSame(3, (int) $row->business_slot_included);
-        $this->assertSame(5, (int) $row->business_slot_max);
+        // CX Slice 1A / RFC-004 §33: Core and Growth hold exactly ONE
+        // Business/client account. The 3/5 figures these assertions once
+        // carried were the conflated reading of RFC-004 §2; 3-included /
+        // 5-max now governs PHYSICAL LOCATIONS, asserted just below.
+        $this->assertSame(1, (int) $row->business_slot_included);
+        $this->assertSame(1, (int) $row->business_slot_max);
+        $this->assertSame(3, (int) $row->location_slot_included);
+        $this->assertSame(5, (int) $row->location_slot_max);
+        $this->assertSame(0, (int) $row->unlimited_location_slots);
+        $this->assertSame('0.5000', $row->additional_location_slot_price_ratio);
         $this->assertSame(0, (int) $row->unlimited_business_slots);
         $this->assertSame('0.5000', $row->additional_business_slot_price_ratio);
         $this->assertSame(1, (int) $row->is_active);

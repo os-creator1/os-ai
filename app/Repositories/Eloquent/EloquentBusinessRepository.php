@@ -2,6 +2,7 @@
 
 namespace App\Repositories\Eloquent;
 
+use App\Enums\Business\BusinessLocationLifecycleState;
 use App\Enums\Business\BusinessStatus;
 use App\Models\Business;
 use App\Models\Customer;
@@ -39,6 +40,17 @@ class EloquentBusinessRepository extends EloquentBaseRepository implements Busin
     public function countForWorkspace(Workspace $workspace): int
     {
         return $this->query()->where('workspace_id', $workspace->id)->count();
+    }
+
+    /**
+     * Slice 1A — the physical-location capacity COUNT (contract §7.3).
+     * Active rows only; archived rows are retained but consume nothing.
+     */
+    public function countActiveLocations(Business $business): int
+    {
+        return (int) $business->locations()
+            ->where('lifecycle_state', BusinessLocationLifecycleState::Active->value)
+            ->count();
     }
 
     /**

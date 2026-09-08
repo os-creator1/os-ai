@@ -39,6 +39,11 @@ class WorkspaceEntitlementTransition extends Model
         'to_status',
         'reason',
         'payment_idempotency_key',
+        // Slice 1A: additive machine-readable audit payload. Used by the
+        // physical-location capacity transitions, whose per-Business counts
+        // cannot be expressed by the BUSINESS-slot columns above and must
+        // never reuse them.
+        'payload',
     ];
 
     protected $casts = [
@@ -50,6 +55,7 @@ class WorkspaceEntitlementTransition extends Model
         'to_additional_business_slots' => 'integer',
         'from_status' => WorkspacePlanAssignmentStatus::class,
         'to_status' => WorkspacePlanAssignmentStatus::class,
+        'payload' => 'array',
         'created_at' => 'datetime',
     ];
 
