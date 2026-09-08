@@ -5,6 +5,8 @@ namespace Tests\Feature\Business\Concerns;
 use App\Models\Business;
 use App\Models\BusinessLocation;
 use App\Models\BusinessService;
+use App\Models\BusinessVertical;
+use App\Models\QuestionPack;
 use App\Models\User;
 
 /**
@@ -87,6 +89,37 @@ trait CreatesBusinessKnowledgeProfileFixtures
             'name' => 'Test Service ' . uniqid('', true),
             'slug' => 'test-service-' . uniqid('', true),
             'status' => 'active',
+        ], $overrides));
+    }
+
+    protected function createVertical(array $overrides = []): BusinessVertical
+    {
+        return BusinessVertical::create(array_merge([
+            'key' => 'test_vertical_' . uniqid('', true),
+            'display_name' => 'Test Vertical',
+            'broad_industry' => null,
+            'is_active' => true,
+        ], $overrides));
+    }
+
+    /**
+     * @param  array<int, array<string, mixed>>  $questions
+     */
+    protected function createQuestionPack(array $overrides = [], array $questions = []): QuestionPack
+    {
+        if ($questions === []) {
+            $questions = [
+                ['field_key' => 'brand_voice', 'prompt' => 'How would you describe your brand?', 'input_type' => 'textarea', 'options' => null, 'required' => false],
+            ];
+        }
+
+        return QuestionPack::create(array_merge([
+            'key' => 'test_pack_' . uniqid('', true),
+            'applies_to_industry' => null,
+            'applies_to_vertical_key' => null,
+            'version' => 1,
+            'questions' => $questions,
+            'is_active' => true,
         ], $overrides));
     }
 }

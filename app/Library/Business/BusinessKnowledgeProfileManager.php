@@ -12,6 +12,8 @@ use App\Models\BusinessKnowledgeProfileChange;
 use App\Models\BusinessKnowledgeProfileFieldState;
 use App\Models\BusinessLocation;
 use App\Models\BusinessService;
+use App\Models\BusinessVertical;
+use App\Models\QuestionPack;
 use App\Models\Website;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Carbon;
@@ -277,7 +279,50 @@ final class BusinessKnowledgeProfileManager
             $stale[] = BusinessKnowledgeProfileFieldKey::Hours->value;
         }
 
-        return new BusinessKnowledgeProfileCompleteness($missing, $stale, $present);
+        $questionPack = $this->resolveQuestionPack($business, $profile?->vertical_key);
+
+        return new BusinessKnowledgeProfileCompleteness($missing, $stale, $present, $questionPack);
+    }
+
+    /**
+     * §6.3, locked resolution order -- a plain, deterministic,
+     * read-only lookup, no AI involved: (1) the pack targeting the
+     * Business's own confirmed vertical, if any; (2) else the pack
+     * targeting the Business's broad industry; (3) else the general
+     * fallback pack (both applies_to_* columns null). Each step is
+     * filtered to is_active = true and takes the highest version. The
+     * general-fallback step matches by shape (both columns null) rather
+     * than a hardcoded `key = 'general_v1'` string, since that key name
+     * is only an illustrative example in §6.2, never a contracted
+     * literal.
+     */
+    private function resolveQuestionPack(Business $business, ?string $verticalKey): ?QuestionPack
+    {
+        if ($verticalKey !== null) {
+            $pack = QuestionPack::where('applies_to_vertical_key', $verticalKey)
+                ->where('is_active', true)
+                ->orderByDesc('version')
+                ->first();
+
+            if ($pack !== null) {
+                return $pack;
+            }
+        }
+
+        $pack = QuestionPack::where('applies_to_industry', $business->industry?->value)
+            ->where('is_active', true)
+            ->orderByDesc('version')
+            ->first();
+
+        if ($pack !== null) {
+            return $pack;
+        }
+
+        return QuestionPack::whereNull('applies_to_industry')
+            ->whereNull('applies_to_vertical_key')
+            ->where('is_active', true)
+            ->orderByDesc('version')
+            ->first();
     }
 
     // -----------------------------------------------------------------
@@ -361,11 +406,9 @@ final class BusinessKnowledgeProfileManager
     }
 
     /**
-     * Slice 1 behavior (documented, tested): business_verticals (Slice 2)
-     * does not exist yet, so a non-null vertical_key can never be
-     * validated against an active catalog entry -- it fails safely here
-     * rather than writing an unvalidated value or querying a table that
-     * does not exist. A null value (clearing/never-set) is always valid.
+     * §6.1: validated on write against business_verticals.key
+     * (is_active = true) -- an unknown or inactive key is rejected. A
+     * null value (clearing/never-set) is always valid.
      */
     private function normalizeVerticalKey(mixed $value): ?string
     {
@@ -373,7 +416,11 @@ final class BusinessKnowledgeProfileManager
             return null;
         }
 
-        throw new InvalidArgumentException('vertical_key cannot be set until the vertical catalog (Slice 2) exists.');
+        if (! is_string($value) || ! BusinessVertical::where('key', $value)->where('is_active', true)->exists()) {
+            throw new InvalidArgumentException('vertical_key must reference an active business_verticals entry.');
+        }
+
+        return $value;
     }
 
     private function normalizePricingMethod(mixed $value): ?BusinessPricingMethod

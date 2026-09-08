@@ -420,7 +420,14 @@ class BusinessKnowledgeProfileManagerTest extends TestCase
         $this->manager->updateFields($business, ['prohibited_claims' => array_fill(0, 16, 'x')], 'manual_edit', $this->actorUserId());
     }
 
-    public function test_vertical_key_cannot_be_set_until_the_catalog_exists_slice_1_behavior(): void
+    /**
+     * §6.1 (Slice 2): vertical_key is validated against the
+     * business_verticals catalog -- null is always valid (clearing /
+     * never-set); a value naming no active catalog entry is rejected.
+     * See BusinessVerticalAssignmentTest for the full catalog-validation
+     * matrix (unknown/inactive/malformed values, field-state provenance).
+     */
+    public function test_vertical_key_is_validated_against_the_business_verticals_catalog(): void
     {
         [$business] = $this->profileFixtureBusiness();
 
@@ -428,9 +435,7 @@ class BusinessKnowledgeProfileManagerTest extends TestCase
         $profile = $this->manager->updateFields($business, ['vertical_key' => null], 'manual_edit', $this->actorUserId());
         $this->assertNull($profile->vertical_key);
 
-        // business_verticals does not exist in Slice 1 -- any non-null
-        // value fails safely rather than writing an unvalidated value.
-        $this->assertFalse(\Illuminate\Support\Facades\Schema::hasTable('business_verticals'));
+        $this->assertTrue(\Illuminate\Support\Facades\Schema::hasTable('business_verticals'));
 
         $this->expectException(ValidationException::class);
         $this->manager->updateFields($business, ['vertical_key' => 'roofing'], 'manual_edit', $this->actorUserId());
