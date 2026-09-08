@@ -23,9 +23,17 @@ below was read at that commit.
 **Authority:** This contract governs customer-visible information architecture,
 account context, managed messaging onboarding, telecommunications funding, and
 the guided automation experience. Where it corrects an earlier contract, §27
-names the correction explicitly. Where repository evidence contradicts a locked
-decision given to this lane, §7.1 records the contradiction verbatim rather than
-resolving it silently.
+names the correction explicitly.
+
+**Revision — Correction Round 1.** The product owner has authorized the C-1/C-2
+capacity interpretation. RFC-004 and its deployment guide are amended in this
+same branch (§27), §7.1 now records the resolution rather than an open
+contradiction, and six further corrections are applied: an atomicity rule that
+makes it impossible to ship location creation without location capacity (§7.6);
+executable per-slice allowlists carrying test and documentation paths (§22);
+explicit dependency and human-decision gates (§21, §21.1, §21.2); the BYO
+measurement-versus-charging distinction (§11.5); removal of premature
+voice/calling claims (§10.5); and one owning slice for every test (§24.1).
 
 **Non-authority:** This document does not change RFC-003 tenancy, RFC-004
 entitlement decision semantics, or RFC-005 ledger invariants. It changes what
@@ -84,7 +92,7 @@ UX · **P** = partially implemented · **C** = contracted but not implemented ·
 | E-3 | Creating a **second** BusinessLocation | **M** | `app/Repositories/Contracts/BusinessLocationRepository.php` exposes only `findPrimary()`, `upsertPrimary()`, `setPrimary()`. `app/Repositories/Eloquent/EloquentBusinessLocationRepository.php::upsertPrimary()` edits the existing primary or creates the first one and demotes all others. The only writer is `app/Http/Controllers/Customer/BusinessOnboardingController.php::storeLocation()`. **No product path creates an additional location.** |
 | E-4 | Plan tiers Core/Growth/Agency | W | `app/Enums/Entitlement/WorkspacePlanTier.php` |
 | E-5 | Business-slot capacity enforcement | W | `app/Library/Entitlement/EntitlementManager.php::decideBusinessSlotCapacity()` (line 267), reasons `business_slot_allocation_required` / `business_slot_limit_exceeded` (lines 300–303, 322–323) |
-| E-6 | Seeded slot numbers | W (but see §7.1) | `database/migrations/2026_08_13_120007_seed_workspace_plan_catalog_and_features.php` — Core and Growth: `business_slot_included = 3`, `business_slot_max = 5`, `additional_business_slot_price_ratio = 0.5000`; Agency: `unlimited_business_slots = true` |
+| E-6 | Seeded **Business**-slot numbers | W as deployed; **superseded** by §7.1 | `database/migrations/2026_08_13_120007_seed_workspace_plan_catalog_and_features.php` — Core and Growth: `business_slot_included = 3`, `business_slot_max = 5`, `additional_business_slot_price_ratio = 0.5000`; Agency: `unlimited_business_slots = true`. These are Business/client-account values, not location values. The migration is merged history and is never edited; Slice 1A supersedes the Core/Growth figures additively (§23.2). |
 | E-7 | Plan **prices** | **M** | Same migration seeds `'price' => null, 'currency_id' => null` for all three tiers. The `$497` Agency price exists nowhere in the repository. |
 | E-8 | Location-count limit enforcement | **M** | No `location_limit`, `max_locations`, `location_slot` symbol exists; no code counts `business->locations()` for entitlement |
 | E-9 | Customer navigation | UX | `app/Helpers/Helper.php::menuData()` — customer branch begins line 909. Flat, global, `url('gbp')`, `url('website')`, `url('channels')`, `url('automations')`, `url('outreach')` |
@@ -136,7 +144,7 @@ comments from the first slice onward.
 | **Business** | One client company/account: its own CRM, website, conversations, billing attribution, automations and settings. Conceptually the GHL *Location / sub-account*. | Yes. Core/Growth customers live inside exactly one. |
 | **Client Account** | The Agency-facing customer-visible name for a Business | Agency only |
 | **Location** (a.k.a. *Physical location*, *Service area*) | A `BusinessLocation`: a storefront, branch or service area **inside** a Business | Yes, under Business Settings |
-| **Business phone** | The Business's default messaging/calling identity | Yes |
+| **Business phone** | The Business's default **messaging** (SMS/MMS) identity. Voice is out of scope — see §10.5. | Yes |
 | **Usage balance** | The prepaid telecommunications balance held by the Business wallet | Yes |
 | **Payer** | The party funding a Business's usage balance | Agency only (see §12.4) |
 
@@ -257,39 +265,56 @@ Business-scoped membership.
 
 ## 7. PLAN / ACCOUNT LIMITS
 
-### 7.1 Recorded contradiction — Business slots vs physical locations
+### 7.1 Resolved contradiction — Business capacity vs physical-location capacity
 
-**The locked decisions given to this lane and the merged repository disagree,
-and the disagreement is material.**
+**Status: AUTHORIZED AND RESOLVED.** The product owner has explicitly approved
+the corrected interpretation. RFC-004 has been amended in place
+(`docs/rfcs/RFC-004-PLANS-AND-BUSINESS-FEATURE-ENTITLEMENTS.md` v1.4 revision
+note and §33), and its deployment guide carries the matching amendment note.
+Nothing in this area is awaiting human authorization any longer.
 
-| Subject | Locked decision (this lane) | Repository at `7d235cf` |
-|---|---|---|
-| Core Businesses | **1** | `business_slot_included = 3`, `business_slot_max = 5` |
-| Growth Businesses | **1** | `business_slot_included = 3`, `business_slot_max = 5` |
-| Included physical locations (Core/Growth) | **3** | *no location limit exists at all* (E-8) |
-| Physical locations 4–5 (Core/Growth) | **50% of plan price** | *not modelled* |
-| Additional **Business** slots 4–5 | not offered on Core/Growth | `additional_business_slot_price_ratio = 0.5000`, enforced by `EntitlementManager::decideBusinessSlotCapacity()` |
-| Agency Businesses | unlimited | `unlimited_business_slots = true` ✅ agrees |
-| Agency locations | unlimited | not modelled (no limit exists) — agrees by omission |
-| Agency price | **$497/month** | `price = null` for all tiers (E-7) |
+**What was wrong.** RFC-004 §2 read *"Enforce **Business/location** slot capacity
+(3 included, an explicit paid allocation step for 4 and 5, 6+ requires
+Agency)"*. That single phrase conflated a **Business/client account** (a
+`businesses` row) with a **physical location** (a `business_locations` row).
+Milestone 1 resolved the ambiguity toward Business slots and seeded the catalog
+accordingly (E-6).
 
-**Root cause, stated precisely:** RFC-004 §4 line 38 reads *"Enforce
-**Business/location** slot capacity (3 included, an explicit paid allocation step
-for 4 and 5, 6+ requires Agency)"*. That sentence conflates two different
-entities. The implementation resolved the ambiguity toward **Business** slots.
-The locked product decision resolves it toward **physical locations**, with
-Businesses capped at one for Core/Growth.
+**The authorized resolution.**
 
-**This contract does not silently change either side.** It records that
-implementing §7.2 requires an authorized correction to RFC-004 and to the seeded
-catalog (§27, C-1). No slice below may alter `workspace_plan_catalog` seed values
-until that correction is approved by a human.
+| Subject | Authorized | Deployed at `7d235cf` | Delivered by |
+|---|---|---|---|
+| Core Businesses | **1** | `business_slot_included = 3`, `business_slot_max = 5` | Slice 1A additive migration |
+| Growth Businesses | **1** | as above | Slice 1A |
+| Agency Businesses | Unlimited | `unlimited_business_slots = true` — already correct | — |
+| Included physical locations (Core/Growth) | **3** | *no location capacity exists* (E-8) | Slice 1A additive columns |
+| Physical locations 4 and 5 | **50% of the tier price each** | not modelled | Slice 1A |
+| Physical location 6+ (Core/Growth) | Requires Agency | not modelled | Slice 1A |
+| Agency physical locations | Unlimited | not modelled — agrees by omission | Slice 1A (`unlimited_location_slots`) |
+| Agency price | **$497/month** | `price = null` (E-7) | operator data, not a migration |
+| Core / Growth price | **still undecided** (§28.1) | `price = null` | — |
 
-**Second contradiction:** the 3-included / 4-and-5-at-50% rule cannot be
-implemented for physical locations today, because **no product path creates a
-second `BusinessLocation`** (E-3). A location-count limit would currently be
-unreachable. Multi-location creation is therefore a prerequisite, tracked as
-Slice 1 scope (§21).
+**Column meanings are stated, never silently reinterpreted.**
+`workspace_plan_catalog.business_slot_included`, `business_slot_max`,
+`unlimited_business_slots` and `additional_business_slot_price_ratio` continue to
+mean **Business/client-account** capacity. Physical-location capacity requires
+**new additive columns** (`location_slot_included`, `location_slot_max`,
+`unlimited_location_slots`, `additional_location_slot_price_ratio`) plus a
+per-Business paid-location allocation counter. No existing column is repurposed.
+See RFC-004 §33.3–§33.4.
+
+**The merged seed migration is historical and is never edited.**
+`database/migrations/2026_08_13_120007_seed_workspace_plan_catalog_and_features.php`
+correctly records what M1 seeded. The correction ships as a **new additive
+migration** (§23.2), which also grandfathers existing data so that no Business
+and no location already in use becomes inaccessible (§7.4).
+
+**The second problem is a sequencing problem, and §21 now solves it
+structurally.** The 3-included / 4-and-5-at-50% rule is unenforceable today
+because **no product path creates a second `BusinessLocation`** (E-3). Creating
+that path without shipping enforcement in the same slice would open an
+unlimited-location gap. Slice **1A** therefore ships multi-location creation
+**and** location-capacity enforcement atomically (§7.3, §21).
 
 ### 7.2 Locked plan and account limits (target state)
 
@@ -311,8 +336,78 @@ Slice 1 scope (§21).
   separately unlimited.
 * An empty or dormant Business record must create **zero** provider spending
   (§20, T-COST-8).
+### 7.3 Physical-location capacity behaviour — exact, per case
 
-### 7.3 Activation state for cost-producing capability
+Evaluated per Business, as a `COUNT` of existing `business_locations` rows for
+that Business, at every location-count-increasing operation, while holding the
+Business row lock, before the count-increasing write (RFC-004 §33.8).
+
+| Case | Behaviour |
+|---|---|
+| Locations 1–3, Core/Growth | Created freely. No allocation, no charge, no prompt. |
+| Location 4, Core/Growth | Denied with `location_slot_allocation_required` until a paid allocation exists. Once allocated, creation succeeds. The charge is 50% of the tier price, recurring with the subscription. |
+| Location 5, Core/Growth | Identical to location 4, against a second allocation. |
+| Location 6+, Core/Growth | Denied with `location_slot_limit_exceeded`. **No allocation can raise it** — `location_slot_max = 5`. The only path is upgrading to Agency; the denial message says so in outcome terms. |
+| Any location, Agency | Created freely. `unlimited_location_slots = true` short-circuits the check before any counting. |
+| Downgrade leaving more locations than the target permits | **Every existing location is retained and stays fully accessible.** The Business becomes grandfathered-over-capacity: new location creation is denied, nothing is deleted, hidden or deactivated. Durably audited. |
+| Existing data at migration time | Backfilled as grandfathered-complimentary (§7.4). A Business already holding 4+ locations keeps them all and owes nothing retroactively. |
+
+Because capacity is a `COUNT` of existing rows, deactivating a location can
+never "recover" capacity, and no deactivation path is added.
+
+### 7.4 Business-capacity behaviour — exact, per case
+
+| Case | Behaviour |
+|---|---|
+| First Business, any tier | Created freely |
+| Second Business, Core/Growth | Denied with `business_slot_limit_exceeded`. Core/Growth no longer offer additional Business slots at any price; the only path is Agency. |
+| Any Business, Agency | Created freely (`unlimited_business_slots = true`) |
+| Workspace already holding 2+ Businesses when Slice 1A ships | **Grandfathered-over-capacity.** Every existing Business keeps working; only new creation is denied. This is the state RFC-004 §25.4 and the M1 backfill already define. |
+| Agency → Core/Growth downgrade with multiple Businesses | Same grandfathering. No Business, wallet, phone number or GBP binding is deleted. |
+
+### 7.5 Grandfathering and backfill — no existing data becomes inaccessible
+
+The Slice 1A additive migration (§23.2) tightens Core/Growth Business capacity
+from 3-included/5-max to 1 and introduces a location capacity that never existed.
+Both could otherwise strand real customer data. Therefore, as a blocking rule:
+
+* **No `businesses` row and no `business_locations` row is deleted, deactivated,
+  hidden, unbound or made unreachable by this correction.**
+* A Workspace over its corrected Business capacity, or a Business over its new
+  location capacity, becomes **grandfathered-over-capacity** — the state RFC-004
+  §25.4 already defines. Everything existing keeps working; only *new* creation
+  is denied.
+* Grandfathered capacity is **complimentary**. It must never be re-interpreted
+  later as unpaid recurring debt, and no retroactive charge is raised for a
+  location that predates the migration.
+* One durable `workspace_entitlement_transitions` row per affected Workspace
+  records the corrected capacity with system provenance, exactly as
+  `WorkspaceEntitlementBackfillV1` does.
+* The backfill is idempotent and re-runnable.
+* No wallet, phone number, GBP binding or website is touched.
+
+### 7.6 Atomicity requirement — there must be no unlimited-location gap
+
+**Blocking rule.** Customer-reachable creation of additional `BusinessLocation`
+rows and physical-location capacity enforcement **must ship in the same slice,
+in the same release**. There must never exist a deployable state in which a
+Core or Growth customer can create unlimited physical locations.
+
+This is why §21 splits the original Slice 1 into **1A** (plan and location
+capacity — additive catalog columns, allocation, enforcement, the upgrade path,
+the backfill, *and* the multi-location UI) and **1B** (account context and
+navigation). A slice that adds the creation path without the capacity check, or
+the capacity check without the creation path, is a contract violation regardless
+of how it is reviewed.
+
+Two consequences follow mechanically:
+
+1. Slice 1A's allowlist must permit both the location-writing repository/controller
+   paths and the entitlement/catalog paths (§22). It does.
+2. Slice 1A's exit criteria include T-LOC-1..T-LOC-8 (§24, §24.1). None of those
+   tests may be deferred to a later slice.
+
+### 7.7 Activation state for cost-producing capability
 
 A capability that creates recurring or external cost must be explicitly
 **activated** per Business. Creating a Business activates nothing.
@@ -520,6 +615,29 @@ order for any outbound message:
 requiring it in stored config (E-27). Automations created before an identity
 exists remain valid and become sendable once one exists.
 
+### 10.5 Channel scope — SMS and MMS only; voice is future-only
+
+The managed capability contracted here covers **SMS and MMS**. That is what the
+repository supports through the B1 send core and what
+`AutomationActionType::SendMessage` and `sms_type ∈ {plain, mms}` express
+(`resources/views/customer/Automations/form.blade.php:115-119`).
+
+**Voice/calling is explicitly out of scope for every slice in §21.** No slice
+provisions a voice-capable resource, prices a call, meters a call, or presents
+calling in the customer interface. No acceptance criterion mentions it.
+
+Repository note, so the exclusion is not mistaken for an oversight: an inherited
+Ultimate SMS voice-campaign module does exist at `routes/customer.php:277-284`
+(`CampaignController@voiceQuickSend`, `@voiceCampaignBuilder`, `@voiceImport`).
+It is **User-scoped legacy campaign functionality, not a Business-scoped managed
+capability**, it is not part of the Business frame (§8.2), and this contract
+neither extends nor removes it. Its existence is not evidence that managed
+calling is implemented.
+
+Voice may be contracted later as its own capability with its own meter, its own
+compliance scope and its own rate-card entry. Until then, any future-capability
+language about calling must be labelled future-only wherever it appears.
+
 ---
 
 ## 11. TELNYX ISOLATION AND CREDENTIAL MODEL
@@ -565,12 +683,50 @@ An escape hatch may remain, subject to all of:
 * gated behind `manage_advanced_provider` (§6), Agency-only;
 * located in Settings → Advanced, never in normal onboarding, never linked from
   an empty state or a guided flow;
-* it must not weaken tenancy, encryption, metering, or the support boundary;
-* usage on a BYO connection is still metered and still attributed to the
-  Business, even though the provider bills the customer directly;
+* it must not weaken tenancy, encryption, the support boundary, or **operational
+  measurement** (§11.5);
 * the current customer-facing credential form
   (`MessagingChannelsController::ALLOWED_PROVIDERS`) is the starting point and
   must be moved, not duplicated.
+
+### 11.5 BYO billing semantics — measurement is not charging
+
+"Metered" is ambiguous and must never be used unqualified for BYO. This
+contract separates two distinct things:
+
+| | **Operational measurement** | **Wallet debit** |
+|---|---|---|
+| What it is | Recording that a message was sent, its size, its outcome and its owning Business | Debiting the Business's platform usage balance at the platform retail rate |
+| Purpose | Audit, reporting, analytics, plan-limit accounting, abuse detection, automation history, cost estimates | Collecting money for transport the platform itself paid for |
+| Applies to managed transport | ✅ | ✅ |
+| Applies to **BYO** transport | ✅ | **❌** |
+
+**The rule.** On a BYO provider connection the provider bills the customer
+directly. The platform therefore **must not debit the platform wallet at the
+platform retail rate for that same transport.** Doing so would charge the
+customer twice for one message.
+
+**Exactly what may hit the platform wallet on a BYO connection: nothing.**
+
+There is no platform fee on BYO transport in this contract. A platform fee is
+**not invented here**; if the owner later wants one, it requires an explicit,
+separately disclosed, approved decision and its own contract amendment, and it
+would be a *platform fee* line item — never a re-billing of provider transport.
+
+**Consequences that must be carried consistently everywhere:**
+
+| Surface | BYO behaviour |
+|---|---|
+| Wallet / ledger | No transport debit. No reservation is taken for a BYO send. |
+| Usage meter | The send **is** recorded against the Business's usage meter for measurement and plan-limit accounting, with a rate of zero and an explicit `byo` transport marker, so reporting can distinguish it from a free managed send |
+| Payer | Unchanged. The payer still funds *managed* usage and any non-transport costs. A wholly-BYO Business may hold a zero balance indefinitely without degradation. |
+| Rates | No retail telecom rate is applied to BYO transport, so §28.1's rate-card decision does not gate BYO |
+| Spending caps | A BYO send does not consume the Business spending cap or the Workspace aggregate cap, because it spends none of the platform's money |
+| Insufficient funds | A zero balance **must not** block a BYO send (§12.3 applies only to platform-funded transport) |
+| Automation cost estimate | A recipe on a BYO Business estimates **$0 platform cost** and says so plainly: "Sent through your own provider — billed by them, not by us" |
+| Reporting | Managed and BYO volume are reported separately; they are never summed into a single "spend" figure |
+
+Asserted by T-BYO-1..T-BYO-4 (§24), owned by Slice 9 (§24.1).
 
 ---
 
@@ -583,8 +739,13 @@ software access. Telecommunications is prepaid separately by the assigned payer,
 before any provider-costing operation.
 
 The Business usage balance pays for: phone-number acquisition; recurring number
-rental; required registration and compliance fees; SMS; MMS; calls; and any other
-provider-billed telecommunications usage.
+rental; required registration and compliance fees; **SMS; and MMS**.
+
+**Verified channel scope is SMS and MMS only.** Voice/calling is **not** in
+scope for any slice in this contract — see §10.5. When a future slice adds a
+further provider-billed capability, it extends this list in its own contract,
+adds its own meter, and is priced under the §28.1 rate-card decision. Nothing
+here prices, provisions or implies calling.
 
 ### 12.2 Funding mechanics (reusing RFC-005)
 
@@ -611,6 +772,10 @@ constraints, not a new ledger.
 | Concurrency | RFC-005 locking | none |
 
 ### 12.3 Insufficient funds
+
+This section governs **platform-funded transport only**. A send on a BYO
+provider connection takes no reservation and is never blocked by a zero balance
+(§11.5).
 
 When the balance cannot cover a reservation:
 
@@ -939,56 +1104,144 @@ No slice below is authorized by this document. Each requires its own contract or
 an explicit authorization referencing this one. **This must not be implemented
 as a single branch.**
 
-| # | Slice | Depends on | Parallel with |
-|---|---|---|---|
-| **1** | **Account-context and navigation foundation** — context resolver, frame model, authorization-driven menu builder, fix E-11, Business-frame vs Account-frame separation, multi-`BusinessLocation` creation under Business Settings | — | 2 |
-| **2** | **Shared authentication and customer shell** — auth branding, AI Business OS default assets, shell header/context/user menu, translation completeness (E-10), empty-state pattern | — | 1 |
-| **3** | **Managed messaging / provider foundation** — managed-provider abstraction, per-Business isolation, credential custody, telecom usage meters and rates, move BYO to Settings → Advanced | 1 | 5 |
-| **4** | **Business-phone guided onboarding** — §10 flow, compliance intake, activation state machine (§7.3), number lifecycle (§13) | 3, 5 | — |
-| **5** | **Wallet / payer / balance UX** — $5 minimum, auto-recharge presets, plain-language spend caps, Workspace aggregate cap, kill switch, payer visibility rules, **payer no-op fix (E-12)**, raw feature keys removed (E-14) | 1 | 3 |
-| **6** | **Default messaging identity resolution** — §10.4; remove provider selectors from automations (E-26); `SendMessageAction` resolves at execution (E-27) | 4 | — |
-| **7** | **Guided automation recipes** — §14 catalogue, draft/publish, preview, cost estimate, quiet hours, consent enforcement, dead-letter view | 6 | — |
-| **8** | **New domain-event trigger adapters** — §16 outbox; the class-**C** triggers only, one producer at a time | 7 | — |
-| **9** | **Advanced BYO provider migration** — §11.4 | 3 | — |
-| **10** | **Final accessibility, translation and visual consistency pass** | all | — |
+| # | Slice | Depends on | Human-decision gate | Parallel with |
+|---|---|---|---|---|
+| **1A** | **Plan and physical-location capacity** — additive catalog columns (§7.1), corrected Business capacity, per-Business location allocation, **multi-`BusinessLocation` creation UI**, capacity enforcement, upgrade path, grandfathering backfill (§7.5). Creation and enforcement ship **atomically** (§7.6). | — | **Cleared** (C-1/C-2 authorized). Core/Growth *prices* stay open (§28.1), so the 50% charge is stored as a ratio and cannot be **collected** until a price exists — this does not block the slice. | 1B, 2 |
+| **1B** | **Account-context and navigation foundation** — context resolver, frame model, authorization-driven menu builder, fix E-11, Business-frame vs Account-frame separation, **View as client** (§5.5) | — | None | 1A, 2 |
+| **2** | **Shared authentication and customer shell** — auth branding seam and neutral default, shell header/context/user menu, translation completeness (E-10), empty-state pattern | — | **Partial (§28.6).** Neutral typographic branding ships without artwork. Custom artwork is **not** an acceptance requirement (§21.1). | 1A, 1B |
+| **3** | **Managed messaging / provider foundation** — provider abstraction, per-Business isolation, credential custody, telecom **measurement** meters, move BYO to Settings → Advanced | 1B | **BLOCKING (§28.3)** for any provider-specific implementation. Design-only work is permitted under §21.2. **Retail rate activation is separately gated by §28.1** and is excluded from this slice. | 5 |
+| **4** | **Business-phone guided onboarding** — §10 flow, compliance intake, activation state machine (§7.7), number lifecycle (§13) | 3, 5 | **BLOCKING: all four of §28.3 (mechanism), §28.4 (launch countries and compliance scope), §28.1 (rates), and Slice 5 (funding behaviour) must be resolved before provisioning any number** | — |
+| **5** | **Wallet / payer / balance UX** — $5 minimum, auto-recharge presets, plain-language spend caps, Workspace aggregate cap, kill switch, payer visibility rules, **payer no-op fix (E-12)**, raw feature keys removed (E-14) | 1B | None. Funding mechanics are rate-independent; no retail telecom rate is activated here. | 3 |
+| **6** | **Default messaging identity resolution** — §10.4; remove provider selectors from automations (E-26); `SendMessageAction` resolves at execution (E-27) | 4 | Inherits Slice 4's gates | — |
+| **7** | **Guided automation recipes** — §14 catalogue, draft/publish, preview, cost estimate, quiet hours, consent enforcement, dead-letter view | 6 | None beyond Slice 6's | — |
+| **8** | **New domain-event trigger adapters** — §16 outbox; the class-**C** triggers only, one producer at a time | 7 | None | — |
+| **9** | **Advanced BYO provider migration** — §11.4, §11.5 | 3 | None. BYO applies no retail rate (§11.5), so §28.1 does not gate it. | — |
+| **10** | **Final accessibility, translation and visual consistency pass** | all | §28.6 artwork, if supplied by then | — |
 
-**Hard dependencies:** 4 requires 3 and 5 (funds must exist before provisioning).
-6 requires 4 (there must be an identity to resolve). 7 requires 6 (recipes must
-not ask for a sender). 8 requires 7 (recipes are the consumer).
+**Hard dependencies.** 3 requires 1B (the Business frame must exist to host the
+surface). 4 requires 3 and 5 — funds must exist before provisioning, and the
+provider mechanism must be chosen. 6 requires 4 (there must be an identity to
+resolve). 7 requires 6 (recipes must not ask for a sender). 8 requires 7
+(recipes are the consumer). 9 requires 3 (the abstraction it demotes into).
 
-**May run in parallel:** 1 ∥ 2; 3 ∥ 5.
+**May run in parallel:** 1A ∥ 1B ∥ 2; 3 ∥ 5.
 
-**View as client** (§5.5) belongs to Slice 1. **The §7.2 plan-limit change is
-not in any slice** until the §27 C-1 correction is authorized.
+**1A and 1B are deliberately separated** so that capacity work is not held up by
+navigation work, and so §7.6's atomicity rule has a single owning slice. They may
+ship in either order.
+
+### 21.1 Per-slice entry and exit criteria
+
+| Slice | May start when | Is complete when |
+|---|---|---|
+| **1A** | Now | Every §7.3 and §7.4 case behaves exactly as tabulated; the additive migration and backfill are reversible and idempotent; **no deployable state permits unlimited Core/Growth locations**; T-LOC-1..8 and T-CAP-6..7 pass |
+| **1B** | Now | The six §9.3 experiences see their own navigation; every menu target resolves and is authorized; view-as audits, expires and cannot widen authorization; T-CTX-1..5, T-VIEW-1..4, T-NAV-1..3 pass |
+| **2** | Now | Auth screens carry no `login-v2*.svg` fallback and render a neutral AI Business OS identity; no page renders `locale.`; T-AUTH-1..2, T-I18N-1..2 pass. **Custom illustration assets are explicitly NOT required** — if §28.6 artwork is unavailable, the neutral panel satisfies this slice in full. |
+| **3** | 1B complete **and** §28.3 recorded — *except* the design-only work permitted by §21.2 | The abstraction carries a real recorded mechanism; per-Business isolation holds; no customer role can read a credential; BYO is relocated; measurement meters exist with **no retail rate activated**; T-PROV-1..2, T-BYO-1..2 pass |
+| **4** | 3 and 5 complete **and** §28.3, §28.4 and §28.1 all recorded | A number is acquired only after funds are reserved; renewal, grace and release behave per §13; T-PHONE-1..4 pass |
+| **5** | 1B complete | $5 floor enforced; presets configure; caps hold at the exact boundary; the unchanged payer is a true no-op; no raw feature key renders; T-WALLET-1..3, T-CAP-1..5, T-PAYER-1..4 pass |
+| **6** | 4 complete | An automation with no sender resolves the default identity; with none, it fails closed making zero provider calls; T-SENDER-1..2 pass |
+| **7** | 6 complete | Every visible recipe creates a runnable automation; unbacked recipes are absent; T-AUTO-1..6, T-STOP-1..2 pass |
+| **8** | 7 complete | Each new producer is transactional with an outbox; redelivery is idempotent; T-EVENT-1..4 pass |
+| **9** | 3 complete | BYO never debits the wallet for transport; a zero-balance BYO Business still sends; T-BYO-1..4 pass |
+| **10** | All others complete | T-A11Y-1..3 pass and the full §24 matrix passes as a regression |
+
+### 21.2 What may be built before a blocking gate clears
+
+Slice 3 is gated on §28.3, but need not be idle. Permitted **before** the
+mechanism is recorded:
+
+* the provider-agnostic interface (send, number search, number order,
+  registration submit, status callback) expressed in **platform** vocabulary;
+* a deterministic in-memory fake implementing that interface, in the house
+  pattern already used by `FakeGoogleBusinessProfileReadClient`;
+* the per-Business isolation and credential-custody rules as tests against the
+  fake;
+* the measurement meters and the BYO relocation.
+
+**Forbidden before the gate clears:** any interface shape, column, enum value,
+migration or test that encodes an assumed Telnyx account structure — no
+sub-account identifier, no messaging-profile identifier, no connection
+identifier, and no assumption about which entity owns a number. If the recorded
+mechanism later differs, nothing built under this clause may need reshaping.
+
+**Separately: no retail telecom rate may be activated** in any slice until
+§28.1 is approved. `setActiveRate()` is not called for a telecom meter before
+then. Measurement without a rate is permitted and is what Slice 3 ships.
 
 ---
 
 ## 22. PER-SLICE PATH BOUNDARIES
 
-Each slice's contract must publish an exact allowlist. The mechanically derivable
-boundaries are:
+Each slice's contract must publish an exact allowlist. Every slice below carries
+**implementation paths, test paths and documentation paths**, because §25
+requires all three of every slice. An allowlist that forbids a change the slice's
+own acceptance criteria demand is a defect; §22.2 records the reconciliation.
 
-| Slice | Permitted paths |
-|---|---|
-| 1 | `app/Library/Navigation/**` (new), `app/Providers/MenuServiceProvider.php`, `app/Helpers/Helper.php` (customer menu branch only), `resources/views/panels/{sidebar,submenu,navbar,breadcrumb}.blade.php`, `app/Repositories/{Contracts,Eloquent}/*BusinessLocation*`, `app/Http/Controllers/Customer/Business/BusinessLocationsController.php` (new), `routes/customer.php`, `app/Library/ViewAs/**` (new), `database/migrations/**` (view-as audit, locations) |
-| 2 | `resources/views/auth/**`, `resources/views/layouts/**`, `resources/views/components/branding-illustration.blade.php`, `app/Library/Branding/**`, `resources/lang/en/locale.php`, `public/images/branding/**` (new assets) |
-| 3 | `app/Library/Messaging/**` (new), `app/Models/BusinessMessagingIdentity.php` (new), `app/Http/Controllers/Customer/Business/MessagingChannelsController.php`, `resources/views/customer/business/MessagingChannels/**`, `config/services.php`, `database/migrations/**` |
-| 4 | `app/Library/Telephony/**` (new), `app/Http/Controllers/Customer/Business/BusinessPhoneController.php` (new), `resources/views/customer/business/phone/**` (new), `database/migrations/**` |
-| 5 | `app/Http/Requests/Customer/Business/**`, `app/Library/Usage/{BillingProfileManager,UsageWalletManager}.php`, `app/Http/Controllers/Customer/Business/UsageBilling*.php`, `resources/views/customer/business/usage-billing/**`, `database/migrations/**` |
-| 6 | `app/Library/Automation/Actions/SendMessageAction.php`, `app/Http/Requests/Automations/AutomationDefinitionRequest.php`, `resources/views/customer/Automations/form.blade.php`, `app/Library/Messaging/**` |
-| 7 | `app/Library/Automation/**`, `app/Enums/Automation/**`, `resources/views/customer/Automations/**`, `app/Http/Controllers/Customer/Business/AutomationsController.php`, `database/migrations/**` |
-| 8 | `app/Events/**`, `app/Library/Outbox/**` (new), the specific producer's owning library, `database/migrations/**` |
-| 9 | `resources/views/customer/settings/advanced/**` (new), `app/Http/Controllers/Customer/Business/MessagingChannelsController.php` |
-| 10 | `resources/views/**`, `resources/lang/**`, `resources/sass/**` |
+### 22.1 Allowlists
 
-**Forbidden in every slice:** `database/migrations/2026_08_13_120007_seed_workspace_plan_catalog_and_features.php`
-(until §27 C-1 is authorized), `app/Library/Entitlement/EntitlementManager.php`
-decision semantics, RFC-005 ledger invariants, `public_html`, any other lane's
-worktree.
+| Slice | Implementation paths | Test paths | Documentation paths |
+|---|---|---|---|
+| **1A** | `app/Library/Entitlement/EntitlementManager.php` (**additive location-capacity methods only** — existing `decide()`/`decideBusinessSlotCapacity()` semantics unchanged), `app/DTO/Entitlement/**`, `app/Enums/Entitlement/**`, `app/Models/{WorkspacePlanCatalog,Business,BusinessLocation}.php`, `app/Repositories/Contracts/BusinessLocationRepository.php`, `app/Repositories/Eloquent/EloquentBusinessLocationRepository.php`, `app/Http/Controllers/Customer/Business/BusinessLocationsController.php` (new), `app/Http/Requests/Business/UpsertBusinessLocationRequest.php`, `app/Http/Requests/Business/StoreBusinessLocationRequest.php` (new), `app/Exceptions/Entitlement/**`, `app/Events/Entitlement/**`, `resources/views/customer/business/locations/**` (new), `routes/customer.php`, `database/migrations/**` (additive only — see §23.2) | `tests/Feature/Entitlement/**`, `tests/Unit/Entitlement/**`, `tests/Feature/Business/**` | `docs/rfcs/RFC-004-PLANS-AND-BUSINESS-FEATURE-ENTITLEMENTS.md`, `docs/rfcs/RFC-004-PLANS-AND-BUSINESS-FEATURE-ENTITLEMENTS-DEPLOYMENT.md`, `docs/automation/CUSTOMER-EXPERIENCE-MANAGED-MESSAGING-AUTOMATIONS-CONTRACT.md`, the slice's own contract under `docs/automation/**` |
+| **1B** | `app/Library/Navigation/**` (new), `app/Library/ViewAs/**` (new), `app/Providers/{MenuServiceProvider,AppServiceProvider}.php`, `app/Helpers/Helper.php` (customer menu branch only), `app/Http/Middleware/**` (context resolution, view-as), `app/Http/Kernel.php` (middleware registration only), `app/Models/ViewAsSession.php` (new), `app/Policies/**`, `resources/views/panels/{sidebar,submenu,navbar,breadcrumb}.blade.php`, `resources/views/components/**`, `routes/customer.php`, `database/migrations/**` (view-as audit table) | `tests/Feature/Workspace/**`, `tests/Feature/Security/**`, `tests/Feature/DesignSystem/**` | `docs/automation/CUSTOMER-EXPERIENCE-MANAGED-MESSAGING-AUTOMATIONS-CONTRACT.md`, the slice's own contract |
+| **2** | `resources/views/auth/**`, `resources/views/layouts/**`, `resources/views/components/branding-illustration.blade.php`, `app/Library/Branding/**`, `resources/lang/en/locale.php`, `public/images/branding/**` (new assets), `resources/sass/**` | `tests/Feature/Auth/**`, `tests/Feature/Branding/**`, `tests/Feature/Theme/**` | `docs/automation/DESIGN-SYSTEM-M2-*`, the slice's own contract |
+| **3** | `app/Library/Messaging/**` (new), `app/Library/Messaging/Contracts/**` (new), `app/Models/BusinessMessagingIdentity.php` (new), `app/Http/Controllers/Customer/Business/MessagingChannelsController.php`, `app/Enums/Messaging/**` (new), `resources/views/customer/business/MessagingChannels/**`, `resources/views/customer/settings/advanced/**` (new), `config/services.php`, `config/messaging.php` (new), `app/Providers/AppServiceProvider.php` (binding only), `database/migrations/**` | `tests/Feature/Messaging/**` (new), `tests/Feature/Security/**`, `tests/Feature/Usage/**` | the slice's own contract; **restate the superseded B2 docblock rules** (§27 C-5) |
+| **4** | `app/Library/Telephony/**` (new), `app/Http/Controllers/Customer/Business/BusinessPhoneController.php` (new), `app/Http/Requests/Customer/Business/**`, `app/Jobs/Telephony/**` (new), `app/Notifications/**`, `app/Console/Commands/**` (renewal sweep), `app/Enums/Telephony/**` (new), `resources/views/customer/business/phone/**` (new), `database/migrations/**` | `tests/Feature/Telephony/**` (new), `tests/Feature/Usage/**` | the slice's own contract |
+| **5** | `app/Http/Requests/Customer/Business/**`, `app/Library/Usage/{BillingProfileManager,UsageWalletManager}.php`, `app/Http/Controllers/Customer/Business/UsageBilling*.php`, `app/Models/{BusinessUsageWallet,BusinessPayerAssignment}.php`, `app/Notifications/**`, `app/Console/Commands/**` (threshold alerts), `resources/views/customer/business/usage-billing/**`, `resources/lang/en/locale.php`, `database/migrations/**` | `tests/Feature/Usage/**`, `tests/Unit/Usage/**` | `docs/rfcs/RFC-005-BUSINESS-USAGE-BILLING-AND-WALLETS.md` (§27 C-3), the slice's own contract |
+| **6** | `app/Library/Automation/Actions/SendMessageAction.php`, `app/Http/Requests/Automations/AutomationDefinitionRequest.php`, `app/Library/Automation/AutomationDefinitionValidator.php`, `resources/views/customer/Automations/form.blade.php`, `app/Library/Messaging/**`, `database/migrations/**` (config backfill for existing automations) | `tests/Feature/Automations/**` | `docs/automation/B4-BUSINESS-AUTOMATIONS-CONTRACT.md` (§27 C-4), the slice's own contract |
+| **7** | `app/Library/Automation/**`, `app/Enums/Automation/**`, `app/Models/Automation*.php`, `app/Http/Controllers/Customer/Business/AutomationsController.php`, `app/Http/Requests/Automations/**`, `app/Jobs/Automation*.php`, `app/Notifications/**`, `resources/views/customer/Automations/**`, `resources/lang/en/locale.php`, `database/migrations/**` | `tests/Feature/Automations/**`, `tests/Unit/Automation/**` (new) | `docs/automation/B4-BUSINESS-AUTOMATIONS-CONTRACT.md`, the slice's own contract |
+| **8** | `app/Events/**`, `app/Library/Outbox/**` (new), `app/Jobs/Outbox/**` (new), `app/Listeners/**`, the specific producer's owning library only, `app/Providers/EventServiceProvider.php`, `database/migrations/**` | `tests/Feature/Automations/**`, `tests/Feature/Outbox/**` (new), plus the producer's own existing suite | the slice's own contract |
+| **9** | `app/Http/Controllers/Customer/Business/MessagingChannelsController.php`, `app/Library/Messaging/**`, `resources/views/customer/settings/advanced/**`, `app/Models/CustomerBasedSendingServer.php`, `resources/lang/en/locale.php` | `tests/Feature/Messaging/**`, `tests/Feature/Usage/**` | the slice's own contract |
+| **10** | `resources/views/**`, `resources/lang/**`, `resources/sass/**`, `public/images/branding/**` | any `tests/Feature/**` touched by a fix; the full suite as regression | any contract whose copy changed |
+
+`database/factories/**` and `tests/**` fixture concerns are permitted in every
+slice that lists a `tests/**` boundary, for the entities that slice already
+touches.
+
+### 22.2 Reconciliation — every promised behaviour has a permitted path
+
+| Promised behaviour | Slice | Permitted by |
+|---|---|---|
+| Multi-location creation (§7.6) | 1A | `EloquentBusinessLocationRepository.php`, `BusinessLocationsController.php` (new), `resources/views/customer/business/locations/**` |
+| Location capacity enforcement (§7.3) | 1A | `EntitlementManager.php` additive methods, `app/Exceptions/Entitlement/**` |
+| Additive catalog columns + backfill (§23.2) | 1A | `database/migrations/**` (additive only) |
+| RFC-004 amendment upkeep (§27 C-1/C-2) | 1A | both RFC-004 documentation paths |
+| View as client (§5.5) | 1B | `app/Library/ViewAs/**` (new), `ViewAsSession.php` (new), middleware, migration |
+| Dead menu link fix (E-11) | 1B | `app/Helpers/Helper.php`, `app/Library/Navigation/**` |
+| Translation completeness (§17.1) | 2 | `resources/lang/en/locale.php` |
+| Neutral branding without artwork (§21.1) | 2 | `resources/views/auth/**`, `app/Library/Branding/**`, `resources/sass/**` |
+| Measurement without a rate (§21.2) | 3 | `app/Library/Messaging/**`, `tests/Feature/Usage/**` |
+| BYO relocation (§11.4) | 3 | `resources/views/customer/settings/advanced/**` |
+| Renewal sweep and alerts (§13.2) | 4 | `app/Console/Commands/**`, `app/Notifications/**`, `app/Jobs/Telephony/**` |
+| $5 floor and presets (§12.2) | 5 | `app/Http/Requests/Customer/Business/**` |
+| Payer no-op (E-12) | 5 | `app/Library/Usage/BillingProfileManager.php` |
+| Threshold alerts (§12.2) | 5 | `app/Notifications/**`, `app/Console/Commands/**` |
+| Default identity resolution (§10.4) | 6 | `SendMessageAction.php`, `app/Library/Messaging/**` |
+| Existing automations keep working (§10.4) | 6 | `database/migrations/**` config backfill |
+| Quiet hours (§14.4) | 7 | `app/Library/Automation/**`, `database/migrations/**` |
+| Outbox (§16) | 8 | `app/Library/Outbox/**`, `app/Jobs/Outbox/**` |
+| BYO never debits transport (§11.5) | 9 | `app/Library/Messaging/**`, `tests/Feature/Usage/**` |
+
+### 22.3 Forbidden in every slice
+
+* `database/migrations/2026_08_13_120007_seed_workspace_plan_catalog_and_features.php`
+  and every other **already-merged** migration — history is never edited
+  (§23.2).
+* `EntitlementManager`'s existing `decide()` precedence and
+  `decideBusinessSlotCapacity()` semantics — Slice 1A adds alongside them, it
+  does not alter them.
+* RFC-005 ledger invariants (immutability, idempotency, negative-balance
+  prevention).
+* `app/Http/Controllers/Admin/**` and the admin menu branch of
+  `app/Helpers/Helper.php`, except where a slice explicitly lists them.
+* `public_html`, the preview worktree, and any other lane's worktree.
+* Activating a retail telecom rate before §28.1 (§21.2).
 
 ---
 
 ## 23. MIGRATION AND ROLLBACK EXPECTATIONS
+
+### 23.1 General
 
 * Every migration is additive and reversible, and its `down()` is described in
   its docblock.
@@ -1001,6 +1254,56 @@ worktree.
 * Rolling back a messaging slice must never orphan a provisioned number: the
   provider resource record survives an application rollback and is reconciled
   forward.
+
+### 23.2 The Slice 1A capacity migration — additive, never a history rewrite
+
+**Already-merged migrations are historical and are never edited.** In
+particular `database/migrations/2026_08_13_120007_seed_workspace_plan_catalog_and_features.php`
+correctly records what Milestone 1 seeded and must remain byte-identical. The
+capacity correction ships as **one new additive migration** plus its backfill.
+
+**`up()` — in this order:**
+
+1. Add the four physical-location columns to `workspace_plan_catalog`:
+   `location_slot_included` (unsigned tiny int, default 3),
+   `location_slot_max` (unsigned tiny int, nullable),
+   `unlimited_location_slots` (boolean, default `false`),
+   `additional_location_slot_price_ratio` (decimal 6,4, nullable).
+   Every one is nullable or defaulted, so the change cannot fail on existing
+   rows.
+2. Add the per-**Business** paid-location allocation counter
+   (`businesses.additional_location_slots`, unsigned tiny int, default 0) —
+   held per Business, not per Workspace, because the location limit is per
+   Business.
+3. Set catalog values: Core and Growth `location_slot_included = 3`,
+   `location_slot_max = 5`, `additional_location_slot_price_ratio = 0.5000`,
+   `unlimited_location_slots = false`; Agency `unlimited_location_slots = true`,
+   `location_slot_max = null`, ratio `null`.
+4. Set Core and Growth `business_slot_included = 1`. `business_slot_max`
+   becomes inapplicable for these tiers and is set to `1`, because Core/Growth
+   no longer offer additional Business slots at any price (§7.4).
+   Agency is untouched.
+5. **Grandfather before any tightening can bite** (§7.5): for every Workspace
+   whose current Business count exceeds its corrected capacity, and every
+   Business whose current location count exceeds `location_slot_included`,
+   record the over-capacity state as complimentary and write one durable
+   `workspace_entitlement_transitions` row with system provenance. Nothing is
+   deleted, deactivated or hidden.
+6. Add the location-allocation transition type to the existing transition
+   vocabulary. No new audit table.
+
+**`down()`** drops the four catalog columns and the Business counter, and
+restores Core/Growth `business_slot_included = 3` and `business_slot_max = 5`.
+
+**Properties.** Idempotent and re-runnable; safe on a database that already
+carries it; makes no provider call; touches no wallet, phone number, GBP binding
+or website; and leaves every existing Business and location fully accessible
+(T-LOC-7, T-LOC-8).
+
+**Ordering constraint.** This migration and the customer-reachable
+second-location creation path ship in the **same release** (§7.6). Deploying the
+creation path first would open the unlimited-location gap this correction exists
+to close.
 
 ---
 
@@ -1060,14 +1363,75 @@ worktree.
 | **T-COST-1..10** | The ten §20 invariants, each asserted independently |
 | **T-COST-8** | A dormant Business, including on an unlimited Agency plan, produces zero external cost across a simulated period |
 | **T-TRIAL-1** | A trial account receives no telecom credit; a promotion is required, bounded, expiring and audited |
+| **T-LOC-1** | Locations 1–3 are created freely on Core/Growth with no allocation and no charge |
+| **T-LOC-2** | Location 4 is denied with `location_slot_allocation_required`; after an allocation it succeeds |
+| **T-LOC-3** | Location 5 behaves identically against a second allocation |
+| **T-LOC-4** | Location 6 is denied with `location_slot_limit_exceeded` and **no allocation can raise it** |
+| **T-LOC-5** | An Agency Business creates locations without limit |
+| **T-LOC-6** | Two concurrent creations cannot both consume the last location slot |
+| **T-LOC-7** | Downgrading below the current location count retains **every** existing location and denies only new creation |
+| **T-LOC-8** | After the §23.2 backfill, every pre-existing Business and location remains reachable, and an over-capacity Business owes nothing retroactively |
+| **T-LOC-9** | **No customer-reachable path creates a `BusinessLocation` without passing the capacity assertion** — asserted by reflecting over every location-writing seam, so a future path cannot bypass it silently |
+| **T-BIZ-1** | A second Business on Core/Growth is denied with `business_slot_limit_exceeded` |
+| **T-BIZ-2** | A Workspace already holding several Businesses keeps them all after the backfill and is denied only new creation |
+| **T-BYO-1** | A send on a BYO connection takes **no reservation** and produces **no wallet debit** |
+| **T-BYO-2** | A BYO send is still recorded against the usage meter for measurement, at a zero rate, with a `byo` transport marker |
+| **T-BYO-3** | A Business with a zero balance can still send on a BYO connection, and neither spending cap is consumed |
+| **T-BYO-4** | An automation cost estimate on a BYO Business reports zero platform cost and says the provider bills directly |
+| **T-A11Y-1** | Every §17.2 control is keyboard reachable with a visible focus state |
+| **T-A11Y-2** | Colour is never the sole carrier of meaning for balance, automation or number state |
+| **T-A11Y-3** | The view-as banner is announced to assistive technology |
+| **T-SCOPE-1** | No customer-facing surface in any slice offers, prices, provisions or meters a voice call (§10.5) |
+
+### 24.1 Test ownership — every test has exactly one owning slice
+
+The owning slice is the one that must **first make the test pass**. A later
+slice may extend a test's fixtures but never inherits ownership.
+
+| Slice | Owns |
+|---|---|
+| **1A** | T-LOC-1..9, T-BIZ-1..2, T-CTX-4, T-COST-2 |
+| **1B** | T-CTX-1..3, T-CTX-5, T-VIEW-1..4, T-NAV-1..3 |
+| **2** | T-AUTH-1..2, T-I18N-1..2 |
+| **3** | T-PROV-1..2, T-BYO-1..2, T-SCOPE-1 |
+| **4** | T-PHONE-1..4, T-COST-3, T-INTEG-1 |
+| **5** | T-PAYER-1..4, T-WALLET-1..3, T-CAP-1..5, T-TRIAL-1, T-COST-4, T-COST-9, T-COST-10 |
+| **6** | T-SENDER-1..2 |
+| **7** | T-AUTO-1..6, T-STOP-1..2, T-COST-7 |
+| **8** | T-EVENT-1..4 |
+| **9** | T-BYO-3..4 |
+| **10** | T-A11Y-1..3 |
+| **First slice that ships a meter** (3) | T-COST-1, T-COST-5, T-COST-6, T-COST-8 |
+
+**Gated tests — never demanded of an earlier slice.** These depend on a decision
+that is not this contract's to make, and are marked *gated* in the slice that
+owns them. A gated test is written against the slice's fake and is promoted to a
+release requirement only when its gate clears:
+
+| Test | Gate | Owning slice |
+|---|---|---|
+| T-PHONE-1..4 | §28.3 mechanism, §28.4 countries/compliance, §28.1 rates | 4 |
+| T-PROV-1..2 | §28.3 mechanism (assertions run against the §21.2 fake until then) | 3 |
+| T-CAP-1..2 exact-boundary values in retail currency | §28.1 rate card | 5 |
+| T-COST-9 (retail vs provider cost display) | §28.1 rate card | 5 |
+| Custom-artwork visual assertions | §28.6 assets supplied | 10 |
+
+**T-AUTH-1 is deliberately not gated:** it asserts the absence of the
+`login-v2*.svg` fallback and the presence of a neutral AI Business OS identity,
+both of which Slice 2 can satisfy without any commissioned artwork (§21.1).
+
+**Global regression.** Slice 10 additionally runs the complete §24 matrix. Every
+other slice runs its own subset plus the suites its allowlist touches.
 
 ---
 
 ## 25. ACCEPTANCE CRITERIA
 
-A slice is complete when:
+A slice is complete when it meets its §21.1 exit criteria **and** all of:
 
-1. Every assertion in its §24 subset passes, with exact counts reported.
+1. Every test it **owns** in §24.1 passes, with exact counts reported. A gated
+   test (§24.1) is written and passing against the slice's fake; it becomes a
+   release requirement only once its gate clears.
 2. No customer-facing string contains an internal identifier, key, class name or
    classification value.
 3. No rendered page contains `locale.`.
@@ -1077,7 +1441,11 @@ A slice is complete when:
 7. Documentation is updated in the same commit as the behaviour change.
 8. The six §9.3 experiences have each been exercised.
 9. `git diff --check` is clean and the changed-path list matches the slice
-   allowlist exactly.
+   allowlist exactly (§22.1), including its test and documentation paths.
+10. No already-merged migration was edited (§23.2).
+11. No retail telecom rate was activated ahead of §28.1 (§21.2).
+12. For Slice 1A specifically: **the release contains both the location-creation
+    path and location-capacity enforcement, or neither** (§7.6).
 
 ---
 
@@ -1086,7 +1454,12 @@ A slice is complete when:
 Not authorized by this contract:
 
 * Any product code.
-* Changing `workspace_plan_catalog` seed values (blocked by §27 C-1).
+* **Editing any already-merged migration**, including
+  `2026_08_13_120007_seed_workspace_plan_catalog_and_features.php`. The capacity
+  correction is delivered additively (§23.2).
+* Inventing Core or Growth retail prices (§28.1 remains open).
+* Inventing a platform fee on BYO transport (§11.5).
+* Voice/calling in any form — offered, priced, provisioned or metered (§10.5).
 * Building Calendar, Booking, Forms, Quotes, Pipelines, Reviews, Tasks or
   customer-issued Invoicing — §15 classifies them as future-only.
 * AI-assisted automation responses.
@@ -1105,9 +1478,9 @@ Not authorized by this contract:
 
 | # | Document | Correction required | Blocking? |
 |---|---|---|---|
-| **C-1** | `docs/rfcs/RFC-004-PLANS-AND-BUSINESS-FEATURE-ENTITLEMENTS.md` §4 | The phrase "Business/location slot capacity" conflates two entities. It must be split: **Business slots** (Core/Growth = 1; Agency unlimited) and **physical location slots** (Core/Growth = 3 included, 4–5 at 50%, 6+ requires Agency). The seeded catalog encodes the other reading (§7.1). **Requires human authorization before any code change.** | **Yes** |
-| **C-2** | `docs/rfcs/RFC-004-…-DEPLOYMENT.md` §6 seed table | Follows C-1 | Yes |
-| **C-3** | `docs/rfcs/RFC-005-BUSINESS-USAGE-BILLING-AND-WALLETS.md` | Add: $5 minimum top-up; the four auto-recharge presets; the Workspace aggregate cap; the emergency kill switch; the payer no-op rule; telecom meters as first-class | No |
+| **C-1** | `docs/rfcs/RFC-004-PLANS-AND-BUSINESS-FEATURE-ENTITLEMENTS.md` | **DONE — authorized and applied in this branch.** §2's "Business/location slot capacity" phrase conflated two entities and is corrected in place; a **v1.4 revision note** and a new **§33 Amendment 3** now separate Business/client-account capacity (Core 1, Growth 1, Agency unlimited) from physical-location capacity (3 included, 4–5 at 50%, 6+ requires Agency, Agency unlimited), state which existing catalog columns keep which meaning, specify the additive representation, and lock the grandfathering rule. | No — resolved |
+| **C-2** | `docs/rfcs/RFC-004-PLANS-AND-BUSINESS-FEATURE-ENTITLEMENTS-DEPLOYMENT.md` | **DONE — authorized and applied in this branch.** §6's seed table is relabelled so every value reads explicitly as a `business_slot_*` value, and carries an amendment note pointing at RFC-004 §33; §13's 4th-Business smoke check is annotated as deployed-behaviour-only with its corrected successor stated. The migration itself is untouched. | No — resolved |
+| **C-3** | `docs/rfcs/RFC-005-BUSINESS-USAGE-BILLING-AND-WALLETS.md` | Add: $5 minimum top-up; the four auto-recharge presets; the Workspace aggregate cap; the emergency kill switch; the payer no-op rule; telecom meters as first-class; and the §11.5 **measurement-versus-wallet-debit** distinction, so a metered event is never assumed to imply a debit | No |
 | **C-4** | `docs/automation/B4-BUSINESS-AUTOMATIONS-CONTRACT.md` | The v1 action config requiring `sender_id` + `sending_server` is superseded by default-identity resolution (§10.4) | No |
 | **C-5** | **No B2 contract document exists.** B2 Business Messaging Channels was merged (`7921fd8`, PR #201) with its rules recorded only in the class docblock of `app/Http/Controllers/Customer/Business/MessagingChannelsController.php`. | That docblock's customer-entered-credential model becomes the Agency-only advanced path (§11.4), and managed provisioning becomes the default (§10). Because there is no document to correct, Slice 3's own contract must restate the B2 rules it supersedes rather than cross-referencing them. | No |
 | **C-6** | `docs/automation/DESIGN-SYSTEM-M2-*` | The customer shell must express the Account/Business frame split (§8.1); the current M2 work assumes one flat customer shell | No |
@@ -1122,12 +1495,12 @@ locked decision.
 
 | # | Open question | Recommended default | Reasoning |
 |---|---|---|---|
-| **28.1** | Core and Growth retail prices, and the telecom retail rate card / markup | Set Core and Growth prices before Slice 5; telecom markup **30% over provider cost**, floor-rounded to the cent, published per destination | The catalog seeds `price = null` (E-7) and RFC-004 deliberately refused to invent prices. The 50%-of-plan-price location charge in §7.2 is unimplementable until a plan price exists. 30% is a common reseller margin that covers failed-send waste and support without making SMS look expensive. |
+| **28.1** | Core and Growth retail prices, and the telecom retail rate card / markup | Set Core and Growth prices before the first paid 4th location is sold; telecom markup **30% over provider cost**, floor-rounded to the cent, published per destination | The catalog seeds `price = null` (E-7) and RFC-004 deliberately refused to invent prices. **Gates:** no retail telecom rate may be activated in any slice until this is approved (§21.2), Slice 4 cannot provision (§21), and T-CAP-1..2 boundary values and T-COST-9 are gated on it (§24.1). It does **not** gate Slice 1A: the 50% location charge is stored as a ratio and simply cannot be *collected* until a price exists. It does not gate BYO, which applies no retail rate (§11.5). |
 | **28.2** | Number-renewal grace period, and view-as TTL | Grace **14 days**; view-as TTL **60 minutes** | 14 days spans a missed payment plus a weekend and a support cycle without a month of free rental. 60 minutes is long enough for real support work and short enough to bound an unattended session. |
-| **28.3** | Whether managed Telnyx sub-accounts, a single platform account with per-Business messaging profiles, or another mechanism best matches provider terms | **Blocked pending provider-terms confirmation.** Design Slice 3 against the §11.2 isolation requirements so the mechanism is swappable. | The repository provides zero evidence of Telnyx capability (§11.1). Committing to a mechanism before confirming terms risks a rewrite of the whole messaging foundation. |
-| **28.4** | Initial countries and number types | **US and Canada, local long-code only**, at launch | Matches the existing `+1` normalization in `app/Library/AgencyProspecting/AgencyProspectPhoneNormalizer.php` and confines the compliance surface to one registration regime. |
+| **28.3** | Whether managed Telnyx sub-accounts, a single platform account with per-Business messaging profiles, or another mechanism best matches provider terms | **Blocked pending provider-terms confirmation.** Design Slice 3 against the §11.2 isolation requirements so the mechanism is swappable. | The repository provides zero evidence of Telnyx capability (§11.1). Committing to a mechanism before confirming terms risks a rewrite of the whole messaging foundation. **Gates:** blocks all provider-specific work in Slice 3 and all of Slice 4; §21.2 defines exactly what may be built beforehand and forbids encoding any assumed account structure. Must be **recorded in writing** — the chosen mechanism, the provider terms relied on, and the date — before the gate is treated as cleared. |
+| **28.4** | Initial countries and number types | **US and Canada, local long-code only**, at launch | Matches the existing `+1` normalization in `app/Library/AgencyProspecting/AgencyProspectPhoneNormalizer.php` and confines the compliance surface to one registration regime. **Gates:** Slice 4 cannot provision a number until the launch countries *and* their compliance/registration scope are recorded. |
 | **28.5** | Advanced / BYO eligibility | Agency tier **and** an explicit owner-granted flag; migrations only | Keeps the support boundary intact while honouring genuine agency migrations. |
-| **28.6** | Final visual design direction and assets | Commission the AI Business OS auth and empty-state illustration set before Slice 2 ships; until then use a neutral typographic auth panel rather than the Vuexy artwork | Slice 2 cannot complete on inherited artwork, and a neutral panel is better than another product's illustration. |
+| **28.6** | Final visual design direction and assets | Ship Slice 2 on a **neutral typographic auth panel**; commission the AI Business OS illustration set in parallel and drop it in during Slice 10 | Slice 2 must not be blocked on artwork. **Gates nothing in Slice 2:** removing the Vuexy fallback and rendering a neutral AI Business OS identity fully satisfies T-AUTH-1, so custom artwork is explicitly **not** an acceptance requirement (§21.1). Only the custom-artwork visual assertions are gated, and they belong to Slice 10 (§24.1). |
 | **28.7** | Exact automation recipe copy | Draft from §14.2 during Slice 7; owner review before publish | Copy is the product here; it should not be locked by an engineering contract. |
 | **28.8** | Whether "Tag added" ships as a producer or is deferred | **Defer** until a real tag entity exists | `Contacts::getTags()` over a JSON column (E-33) is not a sound event source, and building a tag entity is its own slice. |
 
@@ -1153,8 +1526,8 @@ locked decision.
 | Usage & Billing *Feature key* text input | `usage-billing/show.blade.php:143` | Named capabilities with plain-language labels (§17.3) |
 | Usage & Billing raw `feature_key` cells | `usage-billing/show.blade.php:130,285` | Plain-language capability names |
 | Usage & Billing *Payer* card | `usage-billing/show.blade.php:160-184` | Agency only, relocated to Client Accounts → [Business] → Billing responsibility (§12.4) |
-| Business location editing (primary only) | `BusinessOnboardingController::storeLocation()` | Settings → **Physical locations & service areas**, multi-location (§21 Slice 1) |
-| `impersonate()` via `parent_id` | `EloquentAccountRepository.php:2263` | **View as client** (§5.5) — new mechanism; the legacy path is retained only for the existing admin/sub-account case until Slice 1 replaces it |
+| Business location editing (primary only) | `BusinessOnboardingController::storeLocation()` | Settings → **Physical locations & service areas**, multi-location (§21 Slice 1A) |
+| `impersonate()` via `parent_id` | `EloquentAccountRepository.php:2263` | **View as client** (§5.5) — new mechanism; the legacy path is retained only for the existing admin/sub-account case until Slice 1B replaces it |
 
 ---
 
