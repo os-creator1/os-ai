@@ -1,6 +1,6 @@
 # TELNYX MANAGED MESSAGING ARCHITECTURE DECISION — §28.3 GATE-CLEARING PASS
 
-**Status:** Bounded research and repository-audit document. No Telnyx API call, account, number, brand, campaign, or rate was created, activated or modified while producing this document. This document does not authorize Slice 3 or Slice 4 implementation; it resolves the architectural question that blocks them.
+**Status:** Bounded research and repository-audit document. No Telnyx API call, account, number, brand, campaign, or rate was created, activated or modified while producing this document. **This document selects and authorizes the launch architecture (Candidate B) for Slice 3 implementation — Slice 3's real provider foundation may be built against it, not merely designed.** This document does not itself implement Slice 3: it is a decision record, not code. It does not authorize any production Telnyx call, number purchase, registration, provisioning, retail charging, or production traffic — those remain gated exactly as stated in §21.2 (credentials/configuration must be deliberately supplied, and absent them, outbound calls stay inert) and, for Slice 4 specifically, by §28.4, §28.1, and Slice 5, all of which remain outstanding.
 
 ---
 
@@ -388,7 +388,7 @@ Unaffected by this correction. §11.4/§11.5 of the messaging contract already d
 
 ## 15. Slice 3 allowlist recommendation
 
-**Corrected 2026-09-08 (Correction Round 1).** This document does not authorize Slice 3; it confirms the messaging contract's existing §22.1 Slice 3 allowlist is **already correctly shaped**, and — now that the launch mechanism carries no commercial/approval gate (§1) — Slice 3 may build its **real** (non-fake) provider adapter against Candidate B immediately, not only the fake:
+**Corrected 2026-09-08 (Correction Round 1, restated in the final status correction).** This document authorizes Slice 3's real provider foundation against Candidate B (see the top-of-document Status line); it does not itself write that code. It confirms the messaging contract's existing §22.1 Slice 3 allowlist is **already correctly shaped**, and — now that the launch mechanism carries no commercial/approval gate (§1) — Slice 3 may build its **real** (non-fake) provider adapter against Candidate B immediately, not only the fake:
 
 - `app/Library/Messaging/**` (new) — the provider-agnostic interface (send, number search, number order, registration submit, status callback) in **platform** vocabulary, per §21.2, with `BusinessMessagingIdentity` as its central resolved record (§8 above) and `provider_mode` as the seam the future §5.2 migration turns on.
 - `app/Library/Messaging/Contracts/**` (new) — the interface itself. Slice 3 implements both a deterministic fake (mirroring `FakeGoogleBusinessProfileReadClient`, for tests) **and** the real Telnyx-backed adapter against the shared platform account (§6) — the real adapter no longer needs to wait on any external gate; it only needs real credentials deliberately supplied before it is ever actually invoked against Telnyx.
