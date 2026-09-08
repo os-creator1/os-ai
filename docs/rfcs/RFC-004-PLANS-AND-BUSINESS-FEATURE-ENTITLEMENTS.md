@@ -1010,16 +1010,23 @@ Physical-location entitlement needs, at minimum:
 * `workspace_plan_catalog.unlimited_location_slots` — boolean (Agency `true`);
 * `workspace_plan_catalog.additional_location_slot_price_ratio` — `0.5000` for
   Core and Growth, `null` for Agency;
-* a per-Business allocation counter for paid locations 4 and 5, held at the
-  **Business** level (not the Workspace level, because the location limit is
-  per Business), with the same authoritative, auditable, admin-controlled
-  mutation discipline §13 already requires for Business slots;
+* a per-Business allocation counter for paid locations 4 and 5
+  (`businesses.additional_location_slots`), held at the **Business** level (not
+  the Workspace level, because the location limit is per Business), with the
+  same authoritative, auditable, admin-controlled mutation discipline §13
+  already requires for Business slots;
+* a per-Business **complimentary grandfathered** counter
+  (`businesses.grandfathered_location_slots`), kept separate from the paid
+  counter because the two behave differently under archiving (§33.9 rule 8);
+* a **lifecycle state** on `business_locations`, because capacity counts active
+  locations and no such column exists today (§33.9);
 * a durable transition type for location-allocation changes, added to the
   existing `workspace_entitlement_transitions` vocabulary rather than a new
   audit table.
 
-All of these are **additive**. Every column is nullable or carries a default, so
-the additive migration cannot fail on existing rows.
+All of these are **additive**. Every column is nullable or carries a default —
+the lifecycle column defaults to `active`, so every existing row keeps exactly
+its present meaning — and the additive migration cannot fail on existing rows.
 
 ### 33.5 Migration and backfill posture — the merged migration is historical
 
@@ -1036,10 +1043,25 @@ migration** that:
 4. **grandfathers existing data** (§33.6) before any tightening takes effect;
 5. writes one durable `workspace_entitlement_transitions` row per affected
    Workspace recording the corrected capacity, with system provenance, exactly
-   as `WorkspaceEntitlementBackfillV1` does;
-6. is idempotent and re-runnable.
+   as `WorkspaceEntitlementBackfillV1` does, whose immutable payload names every
+   affected Business and its exact grandfathered count.
 
-Its `down()` restores the previous column values and drops the added columns.
+**Migration semantics, stated in exact Laravel terms.** A migration runs **once**
+under the `migrations` table; this amendment does **not** claim the whole `up()`
+is re-runnable, and its `Schema::table()` steps would fail on a second
+execution. What must be idempotent is the **backfill logic** in step 4/5, so it
+is safe if invoked again by a repair command or after a rollback-and-reapply.
+
+Its `down()` drops the columns this migration added and restores the Core/Growth
+Business-capacity values **conditionally**: `workspace_plan_catalog` is
+operator-editable (§12.5), so `down()` restores `business_slot_included = 3` /
+`business_slot_max = 5` only if the current values are still exactly the ones
+this migration wrote, and otherwise **aborts the rollback** rather than
+overwriting a later deliberate operator change. If any location is in the
+`archived` lifecycle state, `down()` likewise fails closed rather than silently
+resurrecting archived locations as active. Full rules are in
+`docs/automation/CUSTOMER-EXPERIENCE-MANAGED-MESSAGING-AUTOMATIONS-CONTRACT.md`
+§23.3.
 
 ### 33.6 Grandfathering — no existing Business or location may become inaccessible
 
@@ -1054,11 +1076,17 @@ otherwise strand real data. Therefore:
   `business_slot_limit_exceeded` until the Workspace upgrades to Agency.
 * The same rule applies to physical locations: an existing Business already
   holding more than its corrected location capacity keeps every location, and
-  only *new* location creation is denied.
-* Because capacity is evaluated as a `COUNT` of existing rows (§13), no
-  deactivation path can be used to "recover" capacity, and none is added.
+  only *new* location creation and *reactivation* are denied.
 * Grandfathered allocation is complimentary and must never be interpreted later
   as unpaid recurring debt.
+
+**Business capacity** is evaluated as a `COUNT` of existing `businesses` rows
+(§13), and RFC-003 provides no Business-deletion mechanism, so no path can
+"recover" Business capacity. That is unchanged.
+
+**Physical-location capacity is different, and deliberately so (§33.9).** It
+counts **active** locations, and archiving genuinely frees a slot. A closed
+branch must not consume paid capacity forever.
 
 ### 33.7 Downgrade behaviour
 
@@ -1077,8 +1105,9 @@ number or any Google Business Profile binding.
 
 ### 33.8 Enforcement boundary
 
-Physical-location capacity is asserted at **every location-count-increasing
-operation**, while holding the Business row lock, before the count-increasing
+Physical-location capacity is asserted at **every active-location-count-increasing
+operation — creation *and* reactivation (§33.9) —** while holding the Business
+row lock, before the count-increasing
 write — the same general invariant §17/§24 (as corrected in v1.3) already state
 for Business creation. At the time of writing, `upsertPrimary()` in
 `app/Repositories/Eloquent/EloquentBusinessLocationRepository.php` is the only
@@ -1087,3 +1116,42 @@ gap exists today. The moment a second-location creation path is added, that path
 must carry the assertion in the same change (see
 `docs/automation/CUSTOMER-EXPERIENCE-MANAGED-MESSAGING-AUTOMATIONS-CONTRACT.md`
 §21, Slice 1A, which contracts exactly that atomicity requirement).
+
+Enforcement lives behind **one canonical service boundary** that every
+customer-reachable create and reactivate path delegates to; a source-boundary
+inventory test guards that set. That test guards repository architecture — it
+does not, and this amendment does not claim it does, mathematically prevent
+future code from writing to `business_locations` directly. See the Lane C
+contract §7.3b.
+
+### 33.9 Physical-location lifecycle and reusable paid capacity
+
+Physical-location add-ons are **reusable subscription capacity**, not a
+permanent purchase bound to one database row.
+
+1. Capacity counts locations in the **active** lifecycle state, not every
+   historical row.
+2. Removing a location from active use **archives** it. All history is retained
+   — the row, its Google binding, analytics, website references and audit trail.
+   Archiving is a state change, never a delete.
+3. Archiving frees exactly one active-location slot.
+4. A paid 4th/5th-location allocation is **reusable** for a replacement location
+   while that allocation remains subscribed.
+5. Archiving does **not** auto-cancel the paid allocation.
+6. Cancelling a paid allocation is permitted only when the active-location count
+   fits the post-cancellation capacity at the effective date.
+7. **Reactivation** runs the same capacity assertion as creation.
+8. Complimentary **grandfathered** excess is **not** reusable: archiving a
+   grandfathered excess location consumes that complimentary allowance rather
+   than yielding a transferable free slot. Paid allocations behave the opposite
+   way, by design — that is the distinction between the two.
+
+`business_locations` carries no lifecycle column today (verified at
+`database/migrations/2026_07_18_120002_create_business_locations_table.php`),
+so the additive migration of §33.5 adds one, defaulting every existing row to
+`active`. The four capacity kinds — included, paid, complimentary grandfathered,
+and archived — must each be separately computable from durable per-Business
+state, never re-derived by inference. Full mechanics, including the per-Business
+counters and the archive/reactivate matrix, are in
+`docs/automation/CUSTOMER-EXPERIENCE-MANAGED-MESSAGING-AUTOMATIONS-CONTRACT.md`
+§7.3a, §7.5.1–§7.5.3 and §23.2.
