@@ -348,6 +348,35 @@
 
     /*
     |--------------------------------------------------------------------------
+    | Customer Experience Slice 1B — account context (contract §5, §8)
+    |--------------------------------------------------------------------------
+    | Three server-authorized context actions and the E-11 correction. None
+    | of them is a controller in app/Http/Controllers: they are invokable
+    | actions under app/Library/Navigation and app/Library/ViewAs (the
+    | slice's allowlist), referenced with a fully-qualified class name so
+    | the group's Customer namespace is not prepended.
+    |
+    | - GET  /outreach/campaigns : the bare campaigns entry the legacy menu
+    |   linked to (E-11). Resolves through the canonical context into
+    |   customer.workspaces.businesses.outreach.campaigns, or hands over to
+    |   the Outreach chooser. Never guesses a Business.
+    | - POST /context/business   : the Business switcher. Re-authorized via
+    |   WorkspaceManager::userCanAccessBusiness(); forged, cross-Workspace,
+    |   inactive or foreign uids are 404.
+    | - POST /view-as, /view-as/exit : View as client (§5.5), audited,
+    |   TTL-bounded, narrowing only.
+    */
+    Route::get('outreach/campaigns', '\\' . \App\Library\Navigation\Actions\CampaignsEntryAction::class)
+        ->name('outreach.campaigns.entry');
+    Route::post('context/business', '\\' . \App\Library\Navigation\Actions\SwitchBusinessAction::class)
+        ->name('context.business.switch');
+    Route::post('view-as', '\\' . \App\Library\ViewAs\Actions\StartViewAsAction::class)
+        ->name('view-as.start');
+    Route::post('view-as/exit', '\\' . \App\Library\ViewAs\Actions\ExitViewAsAction::class)
+        ->name('view-as.exit');
+
+    /*
+    |--------------------------------------------------------------------------
     | Messaging Channels entry (B2)
     |--------------------------------------------------------------------------
     |

@@ -1,5 +1,13 @@
 @php
     $configData = \App\Helpers\Helper::applClasses();
+    // Customer Experience Slice 1B: $customerContext / $customerMenu are
+    // supplied by App\Library\Navigation\CustomerShellComposer for
+    // customer-portal users; both are null/empty for the admin portal,
+    // which keeps rendering the legacy static array below.
+    $customerShell = isset($customerContext) && $customerContext instanceof \App\Library\Navigation\CustomerContext;
+    $navigationLabel = $customerShell
+        ? ($customerContext->isBusinessFrame() ? 'Business navigation' : 'Account navigation')
+        : 'Main navigation';
 @endphp
 <div class="main-menu menu-fixed {{(($configData['theme'] === 'dark') || ($configData['theme'] === 'semi-dark')) ? 'menu-dark' : 'menu-light'}} menu-accordion menu-shadow"
      data-scroll-to-active="true">
@@ -17,7 +25,7 @@
 
             @else
                 <li class="nav-item me-auto">
-                    <a class="navbar-brand" href="{{route('admin.home')}}">
+                    <a class="navbar-brand" href="{{ $customerShell ? route('user.home') : route('admin.home') }}">
                         <div class="brand-logo">
                             <x-branding-logo variant="full" background="light" />
                         </div>
@@ -26,7 +34,7 @@
             @endif
 
             <li class="nav-item nav-toggle">
-                <a class="nav-link modern-nav-toggle pe-0 transition-fast" data-toggle="collapse">
+                <a class="nav-link modern-nav-toggle pe-0 transition-fast" data-toggle="collapse" href="javascript:void(0);" role="button" aria-label="Collapse or expand the menu">
                     <x-ds-icon name="x" class="d-block d-xl-none text-primary toggle-icon font-medium-4" />
                     <x-ds-icon name="disc" class="d-none d-xl-block collapse-toggle-icon font-medium-4 text-primary"
                        data-ticon="disc" />
@@ -37,10 +45,24 @@
 
     <div class="shadow-bottom"></div>
 
-    <div class="main-menu-content">
+    @if($customerShell)
+        {{-- Current context (contract §9.2): the Business, or the agency account frame. Never a bare product name. --}}
+        <div class="customer-context-current px-2 pt-1 pb-50" data-role="sidebar-context">
+            <span class="d-block text-muted small text-uppercase" style="letter-spacing: .04em;">
+                {{ $customerContext->isBusinessFrame() ? $customerContext->businessNoun() : ($customerContext->isAgency() ? 'Agency account' : 'Account') }}
+            </span>
+            <strong class="d-block">{{ $customerContext->headerLabel() }}</strong>
+        </div>
+    @endif
+
+    <div class="main-menu-content" role="navigation" aria-label="{{ $navigationLabel }}">
         <ul class="navigation navigation-main" id="main-menu-navigation" data-menu="menu-navigation">
-            {{-- Foreach menu item starts --}}
-            @if(isset($menuData[0]))
+            @if($customerShell)
+                @foreach($customerMenu as $item)
+                    <x-customer-nav-item :item="$item" />
+                @endforeach
+            @elseif(isset($menuData[0]))
+                {{-- Legacy static menu — admin branch (contract §8.4: the legacy array remains for the admin branch). --}}
                 @php
                     if (auth()->user()->active_portal == 'admin'){
                         $sidebarMenu = $menuData['0']->admin;
@@ -94,7 +116,6 @@
                     @endif
                 @endforeach
             @endif
-            {{-- Foreach menu item ends --}}
         </ul>
     </div>
 </div>

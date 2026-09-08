@@ -1847,4 +1847,38 @@ locked decision.
 
 ---
 
+## 30. APPENDIX B — SLICE 1B IMPLEMENTATION RECORD
+
+**Slice 1B (§21 row 1B) is implemented** on
+`agent/customer-experience-slice-1b-account-context`, from `origin/main`
+`c11d3191229523bf5b63cb85b68e3b3f002e4538`. Its own contract is
+`docs/automation/CUSTOMER-EXPERIENCE-SLICE-1B-ACCOUNT-CONTEXT.md`.
+
+| Promise | Delivered by |
+|---|---|
+| Context resolver, frame model (§5, §8.1) | `app/Library/Navigation/CustomerContextResolver.php`, `CustomerContext.php`, `CustomerFrame.php`; `app/Http/Middleware/ResolveCustomerContext.php` (in the `web` group) |
+| Authorization-driven menu builder replacing the static customer branch (§8.4) | `app/Library/Navigation/CustomerMenuBuilder.php`, `CustomerShellComposer.php`; `resources/views/panels/sidebar.blade.php`, `components/customer-nav-item.blade.php`. `Helper::menuData()['customer']` is retained as non-rendered compatibility data. |
+| E-11 dead campaign link | Builder targets `customer.workspaces.businesses.outreach.campaigns`; bare `customer.outreach.campaigns.entry` (`CampaignsEntryAction`) resolves the legacy URL through the context |
+| Business switcher (§9.2) | `components/customer-context-switcher.blade.php`; `POST customer.context.business.switch` (`SwitchBusinessAction`, canonical re-authorization, 404 on forgery) |
+| View as client (§5.5) | `app/Library/ViewAs/**`, `app/Models/ViewAsSession.php`, migration `2026_09_10_140001_create_view_as_sessions_table.php`, routes `customer.view-as.start` / `customer.view-as.exit`, `components/view-as-banner.blade.php`, logout listener in `AppServiceProvider` |
+| Raw `locale.menu.*` labels in the shell (E-10, §17.1) | The builder supplies human labels; the sidebar translates only when a key exists. `resources/lang/en/locale.php` itself remains Slice 2's. |
+
+**Tests (§24.1 ownership):** T-CTX-1, T-CTX-2, T-CTX-5 —
+`tests/Feature/Workspace/CustomerContextResolutionTest.php`; T-CTX-3,
+T-NAV-1..3, T-VIEW-4 — `tests/Feature/Security/CustomerContextSecurityTest.php`;
+T-VIEW-1..3 — `tests/Feature/Workspace/ViewAsClientTest.php`; shell
+accessibility and translation of the touched shell —
+`tests/Feature/DesignSystem/CustomerShellNavigationTest.php`.
+
+**Recorded decisions.** (1) The navigation read model is one joined SELECT
+(`CustomerContextSnapshot`) mirroring RFC-003 §14.1 for listing only, so the
+shell fits inside existing per-page query budgets; every access decision
+remains `WorkspaceManager::userCanAccessBusiness()`. (2) Draft/inactive
+Businesses are listed but never selected or switched into. (3) With several
+Workspaces and no selection the Account frame asks for an explicit choice;
+visiting an account page records it as the navigation preference. (4) View-as
+requires Workspace owner or active Admin (the §5.5 entry rule); the interface
+offers it only on the Agency tier. (5) The View-as TTL is the §28.2 default,
+60 minutes.
+
 **END OF CONTRACT**
