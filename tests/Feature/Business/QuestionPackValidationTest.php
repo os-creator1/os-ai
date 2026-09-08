@@ -100,11 +100,144 @@ class QuestionPackValidationTest extends TestCase
 
     public function test_packs_are_a_pure_stable_key_never_a_ui_label_lookup(): void
     {
-        $pack = $this->createQuestionPack(['key' => 'roofing_v1', 'applies_to_vertical_key' => null], [
+        $this->createVertical(['key' => 'roofing']);
+        $pack = $this->createQuestionPack(['key' => 'roofing', 'applies_to_vertical_key' => 'roofing'], [
             ['field_key' => 'credentials', 'prompt' => 'Do you carry a license?', 'input_type' => 'text', 'options' => null, 'required' => false],
         ]);
 
-        $reloaded = QuestionPack::where('key', 'roofing_v1')->first();
+        $reloaded = QuestionPack::where('key', 'roofing')->first();
         $this->assertSame($pack->id, $reloaded->id);
+    }
+
+    // -----------------------------------------------------------------
+    // Correction 5: full catalog-write validation
+    // -----------------------------------------------------------------
+
+    public function test_a_fully_valid_pack_is_accepted(): void
+    {
+        $this->createVertical(['key' => 'roofing']);
+        $pack = $this->createQuestionPack(['key' => 'roofing', 'applies_to_vertical_key' => 'roofing'], [
+            ['field_key' => 'brand_voice', 'prompt' => 'How would you describe your brand?', 'input_type' => 'textarea', 'options' => null, 'required' => false],
+            ['field_key' => 'pricing_method', 'prompt' => 'How do you price?', 'input_type' => 'select', 'options' => ['fixed', 'hourly'], 'required' => true],
+        ]);
+
+        $this->assertSame('roofing', $pack->key);
+        $this->assertCount(2, $pack->questions);
+    }
+
+    public function test_key_must_match_the_lowercase_separator_pattern(): void
+    {
+        $this->expectException(ValidationException::class);
+        $this->createQuestionPack(['key' => 'Not Valid!', 'applies_to_industry' => 'home_services']);
+    }
+
+    public function test_key_cannot_exceed_the_max_length(): void
+    {
+        $this->expectException(ValidationException::class);
+        $this->createQuestionPack(['key' => str_repeat('a', 41), 'applies_to_industry' => 'home_services']);
+    }
+
+    public function test_key_cannot_have_leading_trailing_or_repeated_separators(): void
+    {
+        $this->expectException(ValidationException::class);
+        $this->createQuestionPack(['key' => 'home__services', 'applies_to_industry' => 'home_services']);
+    }
+
+    public function test_version_must_be_at_least_one(): void
+    {
+        $this->expectException(ValidationException::class);
+        $this->createQuestionPack(['key' => 'general', 'version' => 0]);
+    }
+
+    public function test_questions_must_be_a_non_empty_array(): void
+    {
+        $this->expectException(ValidationException::class);
+        QuestionPack::create([
+            'key' => 'general',
+            'applies_to_industry' => null,
+            'applies_to_vertical_key' => null,
+            'version' => 1,
+            'questions' => [],
+            'is_active' => true,
+        ]);
+    }
+
+    public function test_questions_cannot_repeat_the_same_field_key(): void
+    {
+        $this->expectException(ValidationException::class);
+        $this->createQuestionPack([], [
+            ['field_key' => 'brand_voice', 'prompt' => 'First', 'input_type' => 'text', 'options' => null, 'required' => false],
+            ['field_key' => 'brand_voice', 'prompt' => 'Second', 'input_type' => 'text', 'options' => null, 'required' => false],
+        ]);
+    }
+
+    public function test_applies_to_vertical_key_must_reference_an_existing_vertical(): void
+    {
+        $this->expectException(ValidationException::class);
+        $this->createQuestionPack(['applies_to_vertical_key' => 'does_not_exist']);
+    }
+
+    public function test_a_prompt_cannot_exceed_the_max_length(): void
+    {
+        $this->expectException(ValidationException::class);
+        $this->createQuestionPack([], [
+            ['field_key' => 'brand_voice', 'prompt' => str_repeat('a', 301), 'input_type' => 'text', 'options' => null, 'required' => false],
+        ]);
+    }
+
+    public function test_a_blank_whitespace_only_prompt_is_rejected(): void
+    {
+        $this->expectException(ValidationException::class);
+        $this->createQuestionPack([], [
+            ['field_key' => 'brand_voice', 'prompt' => '   ', 'input_type' => 'text', 'options' => null, 'required' => false],
+        ]);
+    }
+
+    public function test_select_input_type_requires_at_least_one_option(): void
+    {
+        $this->expectException(ValidationException::class);
+        $this->createQuestionPack([], [
+            ['field_key' => 'pricing_method', 'prompt' => 'x', 'input_type' => 'select', 'options' => null, 'required' => true],
+        ]);
+    }
+
+    public function test_multi_select_input_type_requires_at_least_one_option(): void
+    {
+        $this->expectException(ValidationException::class);
+        $this->createQuestionPack([], [
+            ['field_key' => 'differentiators', 'prompt' => 'x', 'input_type' => 'multi_select', 'options' => [], 'required' => true],
+        ]);
+    }
+
+    public function test_a_non_option_input_type_rejects_a_non_null_options_value(): void
+    {
+        $this->expectException(ValidationException::class);
+        $this->createQuestionPack([], [
+            ['field_key' => 'brand_voice', 'prompt' => 'x', 'input_type' => 'textarea', 'options' => ['should not be here'], 'required' => false],
+        ]);
+    }
+
+    public function test_options_cannot_contain_blank_entries(): void
+    {
+        $this->expectException(ValidationException::class);
+        $this->createQuestionPack([], [
+            ['field_key' => 'pricing_method', 'prompt' => 'x', 'input_type' => 'select', 'options' => ['fixed', ''], 'required' => true],
+        ]);
+    }
+
+    public function test_options_cannot_contain_duplicate_entries(): void
+    {
+        $this->expectException(ValidationException::class);
+        $this->createQuestionPack([], [
+            ['field_key' => 'pricing_method', 'prompt' => 'x', 'input_type' => 'select', 'options' => ['fixed', 'fixed'], 'required' => true],
+        ]);
+    }
+
+    public function test_options_count_is_bounded(): void
+    {
+        $this->expectException(ValidationException::class);
+        $this->createQuestionPack([], [
+            ['field_key' => 'pricing_method', 'prompt' => 'x', 'input_type' => 'select', 'options' => array_map(fn ($i) => "option-{$i}", range(1, 21)), 'required' => true],
+        ]);
     }
 }

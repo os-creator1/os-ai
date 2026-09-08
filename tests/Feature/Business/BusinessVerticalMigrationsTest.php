@@ -52,11 +52,11 @@ class BusinessVerticalMigrationsTest extends TestCase
 
     public function test_question_packs_key_and_version_are_unique_together(): void
     {
-        $this->createQuestionPack(['key' => 'general_v1', 'version' => 1]);
+        $this->createQuestionPack(['key' => 'general', 'version' => 1]);
 
         $this->expectException(QueryException::class);
         DB::table('question_packs')->insert([
-            'key' => 'general_v1',
+            'key' => 'general',
             'version' => 1,
             'questions' => '[]',
             'is_active' => true,
@@ -67,11 +67,11 @@ class BusinessVerticalMigrationsTest extends TestCase
 
     public function test_question_packs_key_allows_a_second_version(): void
     {
-        $this->createQuestionPack(['key' => 'general_v1', 'version' => 1]);
-        $v2 = $this->createQuestionPack(['key' => 'general_v1', 'version' => 2]);
+        $this->createQuestionPack(['key' => 'general', 'version' => 1]);
+        $v2 = $this->createQuestionPack(['key' => 'general', 'version' => 2]);
 
         $this->assertSame(2, $v2->version);
-        $this->assertSame(2, \App\Models\QuestionPack::where('key', 'general_v1')->count());
+        $this->assertSame(2, \App\Models\QuestionPack::where('key', 'general')->count());
     }
 
     public function test_applies_to_vertical_key_is_foreign_keyed_to_business_verticals(): void

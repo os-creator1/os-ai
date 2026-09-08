@@ -95,7 +95,7 @@ trait CreatesBusinessKnowledgeProfileFixtures
     protected function createVertical(array $overrides = []): BusinessVertical
     {
         return BusinessVertical::create(array_merge([
-            'key' => 'test_vertical_' . uniqid('', true),
+            'key' => 'test_vertical_' . bin2hex(random_bytes(6)),
             'display_name' => 'Test Vertical',
             'broad_industry' => null,
             'is_active' => true,
@@ -103,6 +103,12 @@ trait CreatesBusinessKnowledgeProfileFixtures
     }
 
     /**
+     * §6.2/§6.3 (corrected): the general-fallback shape (both
+     * applies_to_* columns null) is reserved for key = 'general' --
+     * so the default key here follows whichever shape the caller's
+     * overrides actually request, rather than always generating a
+     * random key that would collide with that reserved identity.
+     *
      * @param  array<int, array<string, mixed>>  $questions
      */
     protected function createQuestionPack(array $overrides = [], array $questions = []): QuestionPack
@@ -113,8 +119,12 @@ trait CreatesBusinessKnowledgeProfileFixtures
             ];
         }
 
+        $appliesToIndustry = array_key_exists('applies_to_industry', $overrides) ? $overrides['applies_to_industry'] : null;
+        $appliesToVertical = array_key_exists('applies_to_vertical_key', $overrides) ? $overrides['applies_to_vertical_key'] : null;
+        $isGeneralShape = $appliesToIndustry === null && $appliesToVertical === null;
+
         return QuestionPack::create(array_merge([
-            'key' => 'test_pack_' . uniqid('', true),
+            'key' => $isGeneralShape ? 'general' : 'test_pack_' . bin2hex(random_bytes(6)),
             'applies_to_industry' => null,
             'applies_to_vertical_key' => null,
             'version' => 1,

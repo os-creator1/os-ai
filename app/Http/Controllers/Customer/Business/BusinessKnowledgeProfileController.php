@@ -124,6 +124,7 @@ class BusinessKnowledgeProfileController extends CustomerBaseController
         [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
 
         $fields = $this->fieldsFromRequest($request);
+        $reconfirmFieldKeys = $this->reconfirmFieldKeysFromRequest($request);
 
         $this->profileManager->updateFields(
             $business,
@@ -131,6 +132,7 @@ class BusinessKnowledgeProfileController extends CustomerBaseController
             'website_setup',
             (int) Auth::id(),
             markVerified: true,
+            reconfirmFieldKeys: $reconfirmFieldKeys,
         );
 
         return redirect()->route('customer.workspaces.businesses.knowledge-profile.show', [$workspaceUid, $businessUid])->with([
@@ -166,56 +168,114 @@ class BusinessKnowledgeProfileController extends CustomerBaseController
 
     /**
      * Translates raw POST input into the typed shape
-     * BusinessKnowledgeProfileManager::updateFields() expects. Every key
-     * here is always submitted by the edit form; a blank submission
-     * always means "not answered" (null) rather than an empty string,
-     * except the two ID multi-selects (an explicit "none selected" is a
-     * genuine [] answer) and the three repeatable-row fields (a row is
-     * only included once its identifying field is non-blank).
+     * BusinessKnowledgeProfileManager::updateFields() expects.
+     *
+     * Correction (§10, non-destructive partial updates): a key is
+     * included in the returned array ONLY when the request actually
+     * presented it (Request::has(), or the dedicated "_presented"
+     * marker for the two multi-selects below). An omitted key is left
+     * out entirely -- the manager then leaves that field untouched,
+     * rather than this method defaulting a missing key to null and
+     * silently clearing it. The full edit form always presents every
+     * key (so ordinary browser saves behave exactly as before); this
+     * matters for any other caller of this action that submits a
+     * narrower payload, since the browser's own form shape is never the
+     * security/integrity boundary here -- the boundary is this explicit
+     * has()/marker check.
      */
     private function fieldsFromRequest(Request $request): array
     {
-        $blankToNull = fn (?string $value) => ($value === null || $value === '') ? null : $value;
+        $fields = [];
 
-        $fields = [
-            'vertical_key' => $blankToNull($request->input('vertical_key')),
-            'pricing_method' => $blankToNull($request->input('pricing_method')),
-            'financing_available' => match ($request->input('financing_available')) {
+        foreach (['vertical_key', 'pricing_method', 'ideal_customers', 'warranties_guarantees', 'primary_conversion_goal', 'conversion_target', 'brand_voice'] as $key) {
+            if ($request->has($key)) {
+                $fields[$key] = $this->blankToNull($request->input($key));
+            }
+        }
+
+        if ($request->has('financing_available')) {
+            $fields['financing_available'] = match ($request->input('financing_available')) {
                 '1' => true,
                 '0' => false,
                 default => null,
-            },
-            'offers' => $this->rowsFromRequest($request, 'offers', 'name', ['name', 'description', 'price_label', 'pricing_method_override']),
-            'differentiators' => $this->linesFromRequest($request, 'differentiators'),
-            'ideal_customers' => $blankToNull($request->input('ideal_customers')),
-            'customer_problems' => $this->linesFromRequest($request, 'customer_problems'),
-            'credentials' => $this->rowsFromRequest($request, 'credentials', 'label', ['label', 'verified']),
-            'years_operating' => $request->filled('years_operating') ? (int) $request->input('years_operating') : null,
-            'warranties_guarantees' => $blankToNull($request->input('warranties_guarantees')),
-            'primary_conversion_goal' => $blankToNull($request->input('primary_conversion_goal')),
-            'conversion_target' => $blankToNull($request->input('conversion_target')),
-            'brand_voice' => $blankToNull($request->input('brand_voice')),
-            'prohibited_claims' => $this->linesFromRequest($request, 'prohibited_claims'),
-            'testimonials' => $this->rowsFromRequest($request, 'testimonials', 'quote', ['quote', 'author_name', 'author_title']),
-        ];
+            };
+        }
 
-        // A native <select multiple> submits no key at all for its name
-        // when nothing is selected -- distinct from an explicit "clear
-        // this list" action, which this form does not offer. Only
-        // include these two keys (and so only ever write []) when the
-        // request actually carried at least one selection; otherwise
-        // leave the field genuinely untouched rather than silently
-        // turning "the customer never opened this section" into an
-        // explicit "zero priorities" answer on every unrelated save.
-        if ($request->has('growth_priority_service_ids')) {
+        if ($request->has('offers')) {
+            $fields['offers'] = $this->rowsFromRequest($request, 'offers', 'name', ['name', 'description', 'price_label', 'pricing_method_override']);
+        }
+
+        if ($request->has('differentiators')) {
+            $fields['differentiators'] = $this->linesFromRequest($request, 'differentiators');
+        }
+
+        if ($request->has('customer_problems')) {
+            $fields['customer_problems'] = $this->linesFromRequest($request, 'customer_problems');
+        }
+
+        if ($request->has('credentials')) {
+            $fields['credentials'] = $this->rowsFromRequest($request, 'credentials', 'label', ['label', 'verified']);
+        }
+
+        if ($request->has('years_operating')) {
+            $fields['years_operating'] = $request->filled('years_operating') ? (int) $request->input('years_operating') : null;
+        }
+
+        if ($request->has('prohibited_claims')) {
+            $fields['prohibited_claims'] = $this->linesFromRequest($request, 'prohibited_claims');
+        }
+
+        if ($request->has('testimonials')) {
+            $fields['testimonials'] = $this->rowsFromRequest($request, 'testimonials', 'quote', ['quote', 'author_name', 'author_title']);
+        }
+
+        // Correction (§6, clearable priority selections): a native
+        // <select multiple> submits no key at all for its name when
+        // nothing is selected -- indistinguishable, by Request::has()
+        // alone, from the control never having been rendered at all.
+        // The edit form always renders a dedicated hidden
+        // "..._presented" marker alongside each multi-select, so
+        // "control shown, customer cleared every selection" (marker
+        // present, array key absent -> write []) is distinguished from
+        // "control never rendered / field omitted from this request"
+        // (marker absent -> leave untouched entirely).
+        if ($request->has('growth_priority_service_ids_presented')) {
             $fields['growth_priority_service_ids'] = array_map('intval', $this->arrayInput($request, 'growth_priority_service_ids'));
         }
 
-        if ($request->has('growth_priority_location_ids')) {
+        if ($request->has('growth_priority_location_ids_presented')) {
             $fields['growth_priority_location_ids'] = array_map('intval', $this->arrayInput($request, 'growth_priority_location_ids'));
         }
 
         return $fields;
+    }
+
+    private function blankToNull(mixed $value): ?string
+    {
+        return ($value === null || $value === '') ? null : $value;
+    }
+
+    /**
+     * Correction (§7, stale-value reconfirmation): a stale field's
+     * "Confirm this is still correct" checkbox in the edit form submits
+     * `reconfirm[<field_key>] = 1`. This is a plain list of field_key
+     * strings the customer explicitly reconfirmed -- BusinessKnowledge
+     * ProfileManager::updateFields() itself decides whether a given
+     * reconfirmed key actually resulted in an unchanged value (a
+     * field-state-only refresh) versus an actual value change (a
+     * normal write); this method does no such classification.
+     *
+     * @return array<int, string>
+     */
+    private function reconfirmFieldKeysFromRequest(Request $request): array
+    {
+        $raw = $request->input('reconfirm', []);
+
+        if (! is_array($raw)) {
+            return [];
+        }
+
+        return array_values(array_map('strval', array_keys(array_filter($raw, fn ($value) => $value === '1' || $value === true))));
     }
 
     private function arrayInput(Request $request, string $key): array

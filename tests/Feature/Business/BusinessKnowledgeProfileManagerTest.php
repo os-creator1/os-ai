@@ -653,4 +653,72 @@ class BusinessKnowledgeProfileManagerTest extends TestCase
         $source = file_get_contents(app_path('Library/Business/BusinessKnowledgeProfileManager.php'));
         $this->assertStringContainsString('DB::transaction(function ()', $source);
     }
+
+    // -----------------------------------------------------------------
+    // Correction (§7): stale-value reconfirmation
+    // -----------------------------------------------------------------
+
+    public function test_reconfirming_an_unchanged_field_refreshes_field_state_without_a_change_row(): void
+    {
+        [$business] = $this->profileFixtureBusiness();
+        $actorId = $this->actorUserId();
+        $this->manager->updateFields($business, ['ideal_customers' => 'Homeowners'], 'manual_edit', $actorId, markVerified: true);
+
+        // Simulate the fact having gone stale: push verified_at into the past.
+        BusinessKnowledgeProfileFieldState::where('business_id', $business->id)
+            ->where('field_key', 'ideal_customers')
+            ->update(['verified_at' => now()->subDays(400)]);
+
+        $this->manager->updateFields($business, ['ideal_customers' => 'Homeowners'], 'manual_edit', $actorId, markVerified: true, reconfirmFieldKeys: ['ideal_customers']);
+
+        $state = BusinessKnowledgeProfileFieldState::where('business_id', $business->id)->where('field_key', 'ideal_customers')->first();
+        $this->assertTrue($state->verified_at->diffInMinutes(now()) < 1);
+        $this->assertSame(1, BusinessKnowledgeProfileChange::where('business_id', $business->id)->where('field_key', 'ideal_customers')->count());
+    }
+
+    public function test_reconfirming_a_field_whose_value_actually_changed_is_a_normal_write_not_a_bare_refresh(): void
+    {
+        [$business] = $this->profileFixtureBusiness();
+        $actorId = $this->actorUserId();
+        $this->manager->updateFields($business, ['ideal_customers' => 'Homeowners'], 'manual_edit', $actorId, markVerified: true);
+
+        $this->manager->updateFields($business, ['ideal_customers' => 'Renters'], 'manual_edit', $actorId, markVerified: true, reconfirmFieldKeys: ['ideal_customers']);
+
+        $this->assertSame(2, BusinessKnowledgeProfileChange::where('business_id', $business->id)->where('field_key', 'ideal_customers')->count());
+        $this->assertSame('Renters', BusinessKnowledgeProfile::where('business_id', $business->id)->first()->ideal_customers);
+    }
+
+    public function test_an_unchanged_field_not_listed_for_reconfirmation_remains_a_true_no_op(): void
+    {
+        [$business] = $this->profileFixtureBusiness();
+        $actorId = $this->actorUserId();
+        $this->manager->updateFields($business, ['ideal_customers' => 'Homeowners'], 'manual_edit', $actorId, markVerified: true);
+
+        $staleVerifiedAt = now()->subDays(400);
+        BusinessKnowledgeProfileFieldState::where('business_id', $business->id)
+            ->where('field_key', 'ideal_customers')
+            ->update(['verified_at' => $staleVerifiedAt]);
+
+        $this->manager->updateFields($business, ['ideal_customers' => 'Homeowners'], 'manual_edit', $actorId, markVerified: true);
+
+        $state = BusinessKnowledgeProfileFieldState::where('business_id', $business->id)->where('field_key', 'ideal_customers')->first();
+        $this->assertSame($staleVerifiedAt->toDateTimeString(), $state->verified_at->toDateTimeString());
+        $this->assertSame(1, BusinessKnowledgeProfileChange::where('business_id', $business->id)->where('field_key', 'ideal_customers')->count());
+    }
+
+    public function test_unknown_reconfirm_field_keys_are_rejected(): void
+    {
+        [$business] = $this->profileFixtureBusiness();
+
+        $this->expectException(ValidationException::class);
+        $this->manager->updateFields($business, [], 'manual_edit', $this->actorUserId(), reconfirmFieldKeys: ['not_a_real_field']);
+    }
+
+    public function test_hours_cannot_be_reconfirmed_through_update_fields(): void
+    {
+        [$business] = $this->profileFixtureBusiness();
+
+        $this->expectException(ValidationException::class);
+        $this->manager->updateFields($business, [], 'manual_edit', $this->actorUserId(), reconfirmFieldKeys: ['hours']);
+    }
 }

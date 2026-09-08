@@ -223,4 +223,291 @@ class BusinessKnowledgeProfileControllerTest extends TestCase
         $this->assertNotNull($primary->fresh()->hours);
         $this->assertNull($secondary->fresh()->hours);
     }
+
+    // -----------------------------------------------------------------
+    // Correction (§6): clearable priority selections via an explicit
+    // "presented" marker
+    // -----------------------------------------------------------------
+
+    public function test_presenting_the_service_priority_select_with_nothing_checked_clears_it_to_empty_array(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $service = $this->addService($business);
+        app(BusinessKnowledgeProfileManager::class)->updateFields($business, ['growth_priority_service_ids' => [$service->id]], 'manual_edit', $customer->user_id, markVerified: true);
+        $this->authenticateAsCustomer($customer);
+
+        $this->put(route('customer.workspaces.businesses.knowledge-profile.update', [$workspace->uid, $business->uid]), [
+            'growth_priority_service_ids_presented' => '1',
+        ])->assertRedirect();
+
+        $profile = \App\Models\BusinessKnowledgeProfile::where('business_id', $business->id)->first();
+        $this->assertSame([], $profile->growth_priority_service_ids);
+    }
+
+    public function test_omitting_the_presented_marker_leaves_existing_service_priorities_untouched(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $service = $this->addService($business);
+        app(BusinessKnowledgeProfileManager::class)->updateFields($business, ['growth_priority_service_ids' => [$service->id]], 'manual_edit', $customer->user_id, markVerified: true);
+        $this->authenticateAsCustomer($customer);
+
+        $this->put(route('customer.workspaces.businesses.knowledge-profile.update', [$workspace->uid, $business->uid]), [
+            'ideal_customers' => 'Something else entirely',
+        ])->assertRedirect();
+
+        $profile = \App\Models\BusinessKnowledgeProfile::where('business_id', $business->id)->first();
+        $this->assertSame([$service->id], $profile->growth_priority_service_ids);
+    }
+
+    public function test_presenting_the_location_priority_select_with_nothing_checked_clears_it_to_empty_array(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $location = $this->addLocation($business);
+        app(BusinessKnowledgeProfileManager::class)->updateFields($business, ['growth_priority_location_ids' => [$location->id]], 'manual_edit', $customer->user_id, markVerified: true);
+        $this->authenticateAsCustomer($customer);
+
+        $this->put(route('customer.workspaces.businesses.knowledge-profile.update', [$workspace->uid, $business->uid]), [
+            'growth_priority_location_ids_presented' => '1',
+        ])->assertRedirect();
+
+        $profile = \App\Models\BusinessKnowledgeProfile::where('business_id', $business->id)->first();
+        $this->assertSame([], $profile->growth_priority_location_ids);
+    }
+
+    public function test_omitting_the_presented_marker_leaves_existing_location_priorities_untouched(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $location = $this->addLocation($business);
+        app(BusinessKnowledgeProfileManager::class)->updateFields($business, ['growth_priority_location_ids' => [$location->id]], 'manual_edit', $customer->user_id, markVerified: true);
+        $this->authenticateAsCustomer($customer);
+
+        $this->put(route('customer.workspaces.businesses.knowledge-profile.update', [$workspace->uid, $business->uid]), [
+            'ideal_customers' => 'Something else entirely',
+        ])->assertRedirect();
+
+        $profile = \App\Models\BusinessKnowledgeProfile::where('business_id', $business->id)->first();
+        $this->assertSame([$location->id], $profile->growth_priority_location_ids);
+    }
+
+    // -----------------------------------------------------------------
+    // Correction (§7): stale-value reconfirmation, HTTP layer
+    // -----------------------------------------------------------------
+
+    public function test_checking_confirm_still_correct_on_an_unchanged_stale_field_clears_staleness_via_http(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        app(BusinessKnowledgeProfileManager::class)->updateFields($business, ['ideal_customers' => 'Homeowners'], 'manual_edit', $customer->user_id, markVerified: true);
+        \App\Models\BusinessKnowledgeProfileFieldState::where('business_id', $business->id)
+            ->where('field_key', 'ideal_customers')
+            ->update(['verified_at' => now()->subDays(400)]);
+        $this->authenticateAsCustomer($customer);
+
+        $this->put(route('customer.workspaces.businesses.knowledge-profile.update', [$workspace->uid, $business->uid]), [
+            'ideal_customers' => 'Homeowners',
+            'reconfirm' => ['ideal_customers' => '1'],
+        ])->assertRedirect();
+
+        $response = $this->get(route('customer.workspaces.businesses.knowledge-profile.show', [$workspace->uid, $business->uid]));
+        $response->assertDontSee('Please confirm these are still correct');
+    }
+
+    public function test_the_completeness_page_lists_a_stale_field_until_reconfirmed(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        app(BusinessKnowledgeProfileManager::class)->updateFields($business, ['ideal_customers' => 'Homeowners'], 'manual_edit', $customer->user_id, markVerified: true);
+        \App\Models\BusinessKnowledgeProfileFieldState::where('business_id', $business->id)
+            ->where('field_key', 'ideal_customers')
+            ->update(['verified_at' => now()->subDays(400)]);
+        $this->authenticateAsCustomer($customer);
+
+        $response = $this->get(route('customer.workspaces.businesses.knowledge-profile.show', [$workspace->uid, $business->uid]));
+
+        $response->assertSee('Please confirm these are still correct');
+        $response->assertSee('Who are your ideal customers?', false);
+    }
+
+    public function test_reconfirming_one_field_does_not_touch_other_untouched_fields_via_http(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $manager = app(BusinessKnowledgeProfileManager::class);
+        $manager->updateFields($business, ['ideal_customers' => 'Homeowners', 'brand_voice' => 'Friendly'], 'manual_edit', $customer->user_id, markVerified: true);
+        \App\Models\BusinessKnowledgeProfileFieldState::where('business_id', $business->id)
+            ->where('field_key', 'ideal_customers')
+            ->update(['verified_at' => now()->subDays(400)]);
+        $this->authenticateAsCustomer($customer);
+
+        $this->put(route('customer.workspaces.businesses.knowledge-profile.update', [$workspace->uid, $business->uid]), [
+            'ideal_customers' => 'Homeowners',
+            'reconfirm' => ['ideal_customers' => '1'],
+        ])->assertRedirect();
+
+        $profile = \App\Models\BusinessKnowledgeProfile::where('business_id', $business->id)->first();
+        $this->assertSame('Friendly', $profile->brand_voice);
+        $this->assertSame(1, BusinessKnowledgeProfileChange::where('business_id', $business->id)->where('field_key', 'brand_voice')->count());
+    }
+
+    // -----------------------------------------------------------------
+    // Correction (§8): all four contracted hours periods
+    // -----------------------------------------------------------------
+
+    public function test_editing_a_location_with_four_stored_periods_renders_all_four(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $location = $this->addLocation($business, ['is_primary' => true]);
+        app(BusinessKnowledgeProfileManager::class)->updateLocationHours($business, $location, [
+            'monday' => [
+                ['open' => '06:00', 'close' => '08:00'],
+                ['open' => '09:00', 'close' => '11:00'],
+                ['open' => '13:00', 'close' => '15:00'],
+                ['open' => '16:00', 'close' => '18:00'],
+            ],
+            'tuesday' => [], 'wednesday' => [], 'thursday' => [], 'friday' => [], 'saturday' => [], 'sunday' => [],
+            'notes' => null,
+        ], 'manual_edit', $customer->user_id, markVerified: true);
+        $this->authenticateAsCustomer($customer);
+
+        $response = $this->get(route('customer.workspaces.businesses.knowledge-profile.edit', [$workspace->uid, $business->uid]));
+
+        $response->assertOk();
+        foreach (['06:00', '08:00', '09:00', '11:00', '13:00', '15:00', '16:00', '18:00'] as $time) {
+            $response->assertSee("value=\"{$time}\"", false);
+        }
+    }
+
+    public function test_resubmitting_the_hours_form_as_rendered_preserves_all_four_periods(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $location = $this->addLocation($business, ['is_primary' => true]);
+        $fourPeriods = [
+            ['open' => '06:00', 'close' => '08:00'],
+            ['open' => '09:00', 'close' => '11:00'],
+            ['open' => '13:00', 'close' => '15:00'],
+            ['open' => '16:00', 'close' => '18:00'],
+        ];
+        app(BusinessKnowledgeProfileManager::class)->updateLocationHours($business, $location, [
+            'monday' => $fourPeriods,
+            'tuesday' => [], 'wednesday' => [], 'thursday' => [], 'friday' => [], 'saturday' => [], 'sunday' => [],
+            'notes' => null,
+        ], 'manual_edit', $customer->user_id, markVerified: true);
+        $this->authenticateAsCustomer($customer);
+
+        $this->put(route('customer.workspaces.businesses.knowledge-profile.locations.hours', [$workspace->uid, $business->uid, $location->uid]), [
+            'monday' => $fourPeriods,
+            'tuesday' => [], 'wednesday' => [], 'thursday' => [], 'friday' => [], 'saturday' => [], 'sunday' => [],
+        ])->assertRedirect();
+
+        $this->assertCount(4, $location->fresh()->hours['monday']);
+    }
+
+    public function test_a_fifth_period_in_one_day_is_rejected_at_the_http_layer(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $location = $this->addLocation($business, ['is_primary' => true]);
+        $this->authenticateAsCustomer($customer);
+
+        $this->put(route('customer.workspaces.businesses.knowledge-profile.locations.hours', [$workspace->uid, $business->uid, $location->uid]), [
+            'monday' => [
+                ['open' => '00:00', 'close' => '02:00'],
+                ['open' => '02:00', 'close' => '04:00'],
+                ['open' => '04:00', 'close' => '06:00'],
+                ['open' => '06:00', 'close' => '08:00'],
+                ['open' => '08:00', 'close' => '10:00'],
+            ],
+        ])->assertSessionHasErrors();
+
+        $this->assertNull($location->fresh()->hours);
+    }
+
+    public function test_hours_input_is_preserved_on_validation_failure(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $location = $this->addLocation($business, ['is_primary' => true]);
+        $this->authenticateAsCustomer($customer);
+
+        $this->put(route('customer.workspaces.businesses.knowledge-profile.locations.hours', [$workspace->uid, $business->uid, $location->uid]), [
+            'monday' => [['open' => '17:00', 'close' => '09:00']],
+            'tuesday' => [['open' => '09:00', 'close' => '17:00']],
+        ])->assertSessionHasErrors();
+
+        $edit = $this->get(route('customer.workspaces.businesses.knowledge-profile.edit', [$workspace->uid, $business->uid]));
+
+        $edit->assertOk();
+        $edit->assertSee('value="17:00"', false);
+        $edit->assertSee('value="09:00"', false);
+    }
+
+    public function test_a_closed_day_with_zero_periods_saves_successfully(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $location = $this->addLocation($business, ['is_primary' => true]);
+        $this->authenticateAsCustomer($customer);
+
+        $this->put(route('customer.workspaces.businesses.knowledge-profile.locations.hours', [$workspace->uid, $business->uid, $location->uid]), [
+            'monday' => [['open' => '09:00', 'close' => '17:00']],
+            'sunday' => [],
+        ])->assertRedirect();
+
+        $this->assertSame([], $location->fresh()->hours['sunday']);
+    }
+
+    // -----------------------------------------------------------------
+    // Correction (§9): null-safe edit view
+    // -----------------------------------------------------------------
+
+    public function test_the_edit_page_renders_with_no_profile_row(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $this->authenticateAsCustomer($customer);
+
+        $response = $this->get(route('customer.workspaces.businesses.knowledge-profile.edit', [$workspace->uid, $business->uid]));
+
+        $response->assertOk();
+        $this->assertSame(0, \App\Models\BusinessKnowledgeProfile::where('business_id', $business->id)->count());
+    }
+
+    // -----------------------------------------------------------------
+    // Correction (§10): non-destructive partial updates
+    // -----------------------------------------------------------------
+
+    public function test_submitting_only_one_field_leaves_every_other_field_byte_identical(): void
+    {
+        [$customer, $business, $workspace] = $this->entitledTenant();
+        $service = $this->addService($business);
+        $location = $this->addLocation($business);
+        $this->createVertical(['key' => 'roofing']);
+        $manager = app(BusinessKnowledgeProfileManager::class);
+
+        $manager->updateFields($business, [
+            'vertical_key' => 'roofing',
+            'pricing_method' => 'fixed',
+            'financing_available' => true,
+            'offers' => [['name' => 'Free estimate', 'description' => null, 'price_label' => null, 'pricing_method_override' => null]],
+            'differentiators' => ['Family owned'],
+            'ideal_customers' => 'Homeowners',
+            'customer_problems' => ['Leaky roofs'],
+            'credentials' => [['label' => 'Licensed', 'verified' => true]],
+            'years_operating' => 12,
+            'warranties_guarantees' => '10-year warranty',
+            'primary_conversion_goal' => 'call',
+            'conversion_target' => 'tel:+15551234567',
+            'brand_voice' => 'Friendly',
+            'prohibited_claims' => ['Never say cheapest'],
+            'growth_priority_service_ids' => [$service->id],
+            'growth_priority_location_ids' => [$location->id],
+            'testimonials' => [['quote' => 'Great work', 'author_name' => 'Jane', 'author_title' => null]],
+        ], 'manual_edit', $customer->user_id, markVerified: true);
+
+        $before = \App\Models\BusinessKnowledgeProfile::where('business_id', $business->id)->first()->getAttributes();
+        $this->authenticateAsCustomer($customer);
+
+        $this->put(route('customer.workspaces.businesses.knowledge-profile.update', [$workspace->uid, $business->uid]), [
+            'ideal_customers' => 'Renters',
+        ])->assertRedirect();
+
+        $after = \App\Models\BusinessKnowledgeProfile::where('business_id', $business->id)->first()->getAttributes();
+
+        $this->assertSame('Renters', $after['ideal_customers']);
+        unset($before['ideal_customers'], $after['ideal_customers'], $before['updated_at'], $after['updated_at']);
+        $this->assertSame($before, $after);
+    }
 }
