@@ -18,7 +18,20 @@
     <meta name="keywords" content="{{config('app.keyword')}}" />
     <meta name="csrf-token" content="{{ csrf_token() }}">
 
-    <title>@yield('title') - {{config('app.title')}}</title>
+    {{--
+        Customer Experience Slice 2 (brief §6): the document title names the
+        page and, inside the customer shell, the current Business or
+        account (the Slice 1B context stored on the request by
+        App\Http\Middleware\ResolveCustomerContext) before the platform
+        title, so browser tabs and history stay understandable.
+    --}}
+    @php
+        $shellContext = request()->attributes->get('customerContext');
+        $shellContextLabel = $shellContext instanceof \App\Library\Navigation\CustomerContext && ($shellContext->isBusinessFrame() || $shellContext->frameWorkspace() !== null)
+            ? trim((string) $shellContext->headerLabel())
+            : '';
+    @endphp
+    <title>@yield('title')@if($shellContextLabel !== '') · {{ $shellContextLabel }}@endif - {{config('app.title')}}</title>
     <x-branding-favicon />
     {{-- Design System Contract, Milestone 1, §9 item 36 — Geist Sans is
     self-hosted (resources/scss/base/tokens/_typography.scss), compiled

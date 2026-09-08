@@ -4,6 +4,8 @@
       data-col="{{$configData['showMenu'] ? $configData['contentLayout'] : '1-column' }}"
       data-framework="ultimatesms"
       data-asset-path="{{ asset('/')}}">
+{{-- Customer Experience Slice 2 (brief §6/§10): a keyboard user can skip the header and sidebar straight to the page content. --}}
+<a class="visually-hidden-focusable skip-to-content" href="#main-content">{{ __('locale.labels.skip_to_main_content') }}</a>
 <!-- BEGIN: Header-->
 @include('panels.navbar')
 <!-- END: Header-->
@@ -30,10 +32,10 @@
             </div>
             <div class="{{ $configData['contentsidebarClass'] }}">
                 <div class="content-wrapper">
-                    <div class="content-body">
+                    <main class="content-body" id="main-content">
                         {{-- Include Page Content --}}
                         @yield('content')
-                    </div>
+                    </main>
                 </div>
             </div>
         </div>
@@ -44,10 +46,10 @@
                 @include('panels.breadcrumb')
             @endif
 
-            <div class="content-body">
+            <main class="content-body" id="main-content">
                 {{-- Include Page Content --}}
                 @yield('content')
-            </div>
+            </main>
         </div>
     @endif
 

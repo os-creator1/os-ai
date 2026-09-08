@@ -1,4 +1,6 @@
 @php use App\Helpers\Helper;use App\Library\Tool;$configData = Helper::applClasses(); @endphp
+@inject('authBranding', 'App\Library\Branding\AuthBrandPresenter')
+@php $authBrand = $authBranding->for(request()); @endphp
 @extends('layouts/fullLayoutMaster')
 
 @section('title', __('locale.auth.register'))
@@ -24,26 +26,22 @@
         <div class="auth-inner row m-0">
             <!-- Brand logo-->
             <a class="brand-logo" href="{{route('login')}}">
-                <x-branding-logo variant="full" background="light" />
+                <x-branding-illustration surface="auth-mark" />
             </a>
             <!-- /Brand logo-->
 
-            <!-- Left Text-->
-            <div class="col-lg-3 d-none d-lg-flex align-items-center p-0">
+            {{-- Brand panel — Customer Experience Slice 2: the branding seam, with no inherited illustration fallback --}}
+            <div class="col-lg-3 d-none d-lg-flex align-items-center p-1">
                 <div class="w-100 d-lg-flex align-items-center justify-content-center">
-                    @if (config('app.auth_illustration'))
-                        <x-branding-illustration surface="auth" :dark="$configData['theme'] === 'dark'" class="w-100" />
-                    @else
-                        <img class="img-fluid w-100" src="{{asset('images/pages/create-account.svg')}}"
-                             alt="{{config('app.name')}}"/>
-                    @endif
+                    <x-branding-illustration surface="auth" :dark="$configData['theme'] === 'dark'" class="w-100" />
                 </div>
             </div>
-            <!-- /Left Text-->
+            <!-- /Brand panel-->
 
             <!-- Register-->
             <div class="col-lg-9 d-flex align-items-center auth-bg px-2 px-sm-3 px-lg-5 pt-3">
                 <div class="width-700 mx-auto">
+                    <h1 class="card-title fw-bold mb-2 h2">{{ __('locale.auth.create_account') }} · {{ $authBrand->displayName }}</h1>
                     <div class="bs-stepper register-multi-steps-wizard shadow-none">
                         <div class="bs-stepper-header px-0" role="tablist">
 
@@ -140,8 +138,12 @@
                                             <div class="input-group input-group-merge form-password-toggle">
                                                 <input type="password" id="password"
                                                        class="form-control @error('password') is-invalid @enderror"
-                                                       value="{{ old('password') }}" name="password" required/>
-                                                <span class="input-group-text cursor-pointer"><x-ds-icon name="eye" /></span>
+                                                       value="{{ old('password') }}" name="password" required autocomplete="new-password"/>
+                                                <button type="button" class="input-group-text cursor-pointer" data-role="password-toggle"
+                                                        aria-controls="password" aria-pressed="false"
+                                                        aria-label="{{ __('locale.auth.show_password') }}"
+                                                        data-label-show="{{ __('locale.auth.show_password') }}"
+                                                        data-label-hide="{{ __('locale.auth.hide_password') }}"><x-ds-icon name="eye" aria-hidden="true" /></button>
                                             </div>
 
                                             @error('password')
@@ -158,8 +160,12 @@
                                                 <input type="password" id="password_confirmation"
                                                        class="form-control @error('password_confirmation') is-invalid @enderror"
                                                        value="{{ old('password_confirmation') }}"
-                                                       name="password_confirmation" required/>
-                                                <span class="input-group-text cursor-pointer"><x-ds-icon name="eye" /></span>
+                                                       name="password_confirmation" required autocomplete="new-password"/>
+                                                <button type="button" class="input-group-text cursor-pointer" data-role="password-toggle"
+                                                        aria-controls="password_confirmation" aria-pressed="false"
+                                                        aria-label="{{ __('locale.auth.show_password') }}"
+                                                        data-label-show="{{ __('locale.auth.show_password') }}"
+                                                        data-label-hide="{{ __('locale.auth.hide_password') }}"><x-ds-icon name="eye" aria-hidden="true" /></button>
                                             </div>
                                         </div>
 

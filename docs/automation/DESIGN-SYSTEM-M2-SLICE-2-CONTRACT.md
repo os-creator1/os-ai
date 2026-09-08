@@ -473,6 +473,18 @@ form, unchanged by Slice 2, not silently claimed as solved here either.
 
 ## 5. Visual and component requirements
 
+> **Amendment — Customer Experience Slice 2 (2026-09,
+> `docs/automation/CUSTOMER-EXPERIENCE-SLICE-2-AUTH-SHELL.md`).** The eight
+> guest authentication views in this contract's scope were re-touched by
+> that slice under its own allowlist: the illustration column now renders
+> only through `<x-branding-illustration>` (neutral AI Business OS panel or
+> an authorized brand — no `images/pages/*.svg` reference remains), each
+> screen carries exactly one `<h1>`, password visibility toggles are
+> `<button>`s with `aria-pressed`/`aria-label`, positive `tabindex` values
+> were removed, and flashed outcomes render inline through
+> `auth/partials/_flash-summary.blade.php`. Items 2, 3, 4, 5, 10 and 12
+> below still hold and are still enforced by `AuthDesignSystemContentTest`.
+
 Slice 2 implementation must, across its 26 rendered views:
 
 1. **Use the merged design tokens and runtime active-theme values** —

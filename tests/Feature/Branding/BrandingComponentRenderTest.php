@@ -26,12 +26,6 @@ class BrandingComponentRenderTest extends TestCase
         $this->ensureRequiredAppConfigRowsExist();
     }
 
-    protected function tearDown(): void
-    {
-        Cache::forget(BrandingPresenter::CACHE_KEY);
-        parent::tearDown();
-    }
-
     private function ensureRequiredAppConfigRowsExist(): void
     {
         $existing = AppConfig::whereIn('setting', ['license', 'customer_permissions', 'custom_script'])
@@ -95,7 +89,14 @@ class BrandingComponentRenderTest extends TestCase
      * surface must fall back to its own bundled illustration (not a
      * single generic one) when app.auth_illustration is unconfigured.
      */
-    public function test_auth_illustrations_use_each_pages_bundled_fallback_when_unconfigured(): void
+    /**
+     * Customer Experience Slice 2 (contract §9.1, T-AUTH-1) supersedes the
+     * Platform Branding correction-round-2 rule above: with
+     * app.auth_illustration unconfigured every auth surface renders the
+     * neutral AI Business OS typographic panel and references no bundled
+     * Vuexy illustration at all.
+     */
+    public function test_auth_surfaces_render_the_neutral_panel_when_unconfigured(): void
     {
         config(['app.auth_illustration' => null]);
         Cache::forget(BrandingPresenter::CACHE_KEY);
@@ -103,34 +104,43 @@ class BrandingComponentRenderTest extends TestCase
         $user = $this->createAuthUser();
 
         $httpCases = [
-            route('login') => 'images/pages/login-v2.svg',
-            route('verify.index') => 'images/pages/two-steps-verification-illustration.svg',
-            route('password.request') => 'images/pages/forgot-password-v2.svg',
-            route('password.reset', 'dummy-token') => 'images/pages/reset-password-v2.svg',
-            route('sub_account.accept', 'dummy-token') => 'images/pages/not-authorized.svg',
+            route('login'),
+            route('verify.index'),
+            route('password.request'),
+            route('password.reset', 'dummy-token'),
+            route('sub_account.accept', 'dummy-token'),
         ];
 
-        foreach ($httpCases as $url => $expected) {
+        foreach ($httpCases as $url) {
             $response = $this->get($url);
             $response->assertOk();
-            $this->assertStringContainsString($expected, $response->getContent(), $url);
+            $this->assertStringContainsString('data-role="auth-brand-panel"', $response->getContent(), $url);
+            $this->assertStringNotContainsString('images/pages/', $response->getContent(), $url);
         }
 
         $verifyResponse = $this->actingAs($user)->get(route('verification.notice'));
         $verifyResponse->assertOk();
-        $this->assertStringContainsString('images/pages/login-v2.svg', $verifyResponse->getContent());
+        $this->assertStringContainsString('data-role="auth-brand-panel"', $verifyResponse->getContent());
+        $this->assertStringNotContainsString('images/pages/', $verifyResponse->getContent());
 
         // register.blade.php is rendered directly rather than through
         // RegisterController::showRegistrationForm(), which depends on a
         // live geo-IP lookup unrelated to branding and would make this
         // test flaky/network-dependent.
         $registerHtml = view('auth.register', $this->registerViewData())->render();
-        $this->assertStringContainsString('images/pages/create-account.svg', $registerHtml);
+        $this->assertStringContainsString('data-role="auth-brand-panel"', $registerHtml);
+        $this->assertStringNotContainsString('images/pages/', $registerHtml);
     }
 
+    /**
+     * Customer Experience Slice 2: the configured asset must be a real
+     * public file under images/branding/ — the seam never emits a
+     * reference it cannot serve — so this test writes one for its run.
+     */
     public function test_auth_illustrations_render_the_configured_asset_when_set(): void
     {
         $configured = 'images/branding/auth_illustration/test-illustration.png';
+        $this->writeTemporaryPublicPng($configured);
         config(['app.auth_illustration' => $configured]);
         Cache::forget(BrandingPresenter::CACHE_KEY);
 
@@ -154,6 +164,34 @@ class BrandingComponentRenderTest extends TestCase
 
         $registerHtml = view('auth.register', $this->registerViewData())->render();
         $this->assertStringContainsString($configured, $registerHtml);
+    }
+
+    /** @var list<string> */
+    private array $temporaryPublicFiles = [];
+
+    private function writeTemporaryPublicPng(string $relativePath): void
+    {
+        $fullPath = public_path($relativePath);
+
+        if (! is_dir(dirname($fullPath))) {
+            mkdir(dirname($fullPath), 0775, true);
+        }
+
+        // A real 1×1 transparent PNG, so the seam's existence check passes.
+        file_put_contents($fullPath, base64_decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='));
+        $this->temporaryPublicFiles[] = $fullPath;
+    }
+
+    protected function tearDown(): void
+    {
+        foreach ($this->temporaryPublicFiles as $file) {
+            if (is_file($file)) {
+                unlink($file);
+            }
+        }
+
+        Cache::forget(BrandingPresenter::CACHE_KEY);
+        parent::tearDown();
     }
 
     private function registerViewData(): array

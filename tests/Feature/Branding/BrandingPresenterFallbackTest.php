@@ -86,16 +86,25 @@ class BrandingPresenterFallbackTest extends TestCase
         $this->assertNotEmpty($presenter->favicon());
     }
 
-    public function test_illustration_falls_back_to_the_bundled_vuexy_file_per_surface(): void
+    /**
+     * Customer Experience Slice 2 (contract §9.1): the auth surface has no
+     * bundled illustration fallback any more — `src` is null so the
+     * branding-illustration component renders the neutral typographic
+     * panel. The installer surface keeps its own bundled file.
+     */
+    public function test_illustration_has_no_auth_fallback_and_keeps_the_installer_fallback(): void
     {
         config(['app.auth_illustration' => null, 'app.installer_illustration' => null]);
 
         $presenter = new BrandingPresenter();
 
         $auth = $presenter->illustration('auth');
+        $authDark = $presenter->illustration('auth', 'dark');
         $installer = $presenter->illustration('installer');
 
-        $this->assertSame('images/pages/login-v2.svg', $auth['src']);
+        $this->assertNull($auth['src']);
+        $this->assertNull($authDark['src']);
+        $this->assertNotEmpty($auth['alt']);
         $this->assertSame('images/pages/create-account.svg', $installer['src']);
     }
 
