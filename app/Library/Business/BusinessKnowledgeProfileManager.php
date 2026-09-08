@@ -12,6 +12,8 @@ use App\Models\BusinessKnowledgeProfileChange;
 use App\Models\BusinessKnowledgeProfileFieldState;
 use App\Models\BusinessLocation;
 use App\Models\BusinessService;
+use App\Models\BusinessVertical;
+use App\Models\QuestionPack;
 use App\Models\Website;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Carbon;
@@ -26,8 +28,11 @@ use InvalidArgumentException;
  * job, or other service is authorized to Model::create()/update() these
  * tables directly (mirrors WebsiteDraftPageService's seam discipline).
  *
- * Slice 1 scope only: no AI call, no vertical/question-pack tables (not
- * yet created by Slice 2), no template/generation concerns.
+ * Through Slice 2: no AI call, no template/generation concerns. The
+ * business_verticals/question_packs catalog tables (§6) exist as of
+ * Slice 2 and are read here (resolveQuestionPack()) and validated
+ * against on write (normalizeVerticalKey()), but this class still never
+ * writes either catalog table itself -- they are operator/seed-owned.
  */
 final class BusinessKnowledgeProfileManager
 {
@@ -89,37 +94,55 @@ final class BusinessKnowledgeProfileManager
     }
 
     /**
+     * $reconfirmFieldKeys (correction, §7's stale-value reconfirmation):
+     * field keys the caller explicitly asked to reconfirm -- e.g. a
+     * customer ticking "Confirm this is still correct" next to a stale
+     * field without changing its value. A key here whose submitted
+     * value is IDENTICAL to what is already stored only refreshes that
+     * field's verification metadata (customer_confirmed, actor, now) --
+     * no fake business_knowledge_profile_changes row is ever written
+     * for a value that did not change. A key here whose value actually
+     * differs is not treated specially: it already goes through the
+     * normal $changed path below. A field genuinely unchanged and never
+     * reconfirmed remains a true no-op, exactly as before.
+     *
      * @throws ValidationException
      */
-    public function updateFields(Business $business, array $fields, string $source, int $actorUserId, bool $markVerified = false): BusinessKnowledgeProfile
+    public function updateFields(Business $business, array $fields, string $source, int $actorUserId, bool $markVerified = false, array $reconfirmFieldKeys = []): BusinessKnowledgeProfile
     {
         $this->assertKnownSource($source);
         $this->assertKnownFieldKeys($fields);
+        $this->assertKnownReconfirmFieldKeys($reconfirmFieldKeys);
 
         $normalized = $this->validateFields($business, $fields);
 
-        return DB::transaction(function () use ($business, $normalized, $source, $actorUserId, $markVerified) {
+        return DB::transaction(function () use ($business, $normalized, $source, $actorUserId, $markVerified, $reconfirmFieldKeys) {
             $profile = $this->getOrCreate($business);
 
             $changed = [];
+            $reconfirmedUnchanged = [];
 
             foreach ($normalized as $key => $value) {
                 if ($profile->{$key} !== $value) {
                     $changed[$key] = ['old' => $profile->{$key}, 'new' => $value];
                     $profile->{$key} = $value;
+                } elseif (in_array($key, $reconfirmFieldKeys, true)) {
+                    $reconfirmedUnchanged[] = $key;
                 }
             }
 
-            if ($changed === []) {
+            if ($changed === [] && $reconfirmedUnchanged === []) {
                 return $profile;
             }
 
-            $finalTestimonials = array_key_exists('testimonials', $normalized)
-                ? $normalized['testimonials']
-                : ($profile->testimonials ?? []);
-            $profile->reviews_source = empty($finalTestimonials) ? 'none' : 'manual_verified';
+            if ($changed !== []) {
+                $finalTestimonials = array_key_exists('testimonials', $normalized)
+                    ? $normalized['testimonials']
+                    : ($profile->testimonials ?? []);
+                $profile->reviews_source = empty($finalTestimonials) ? 'none' : 'manual_verified';
 
-            $profile->save();
+                $profile->save();
+            }
 
             $now = now();
 
@@ -144,6 +167,18 @@ final class BusinessKnowledgeProfileManager
                     'source' => $source,
                     'actor_user_id' => $actorUserId,
                 ]);
+            }
+
+            foreach ($reconfirmedUnchanged as $key) {
+                BusinessKnowledgeProfileFieldState::updateOrCreate(
+                    ['business_id' => $business->id, 'field_key' => $key],
+                    [
+                        'source' => $source,
+                        'verification_status' => BusinessKnowledgeProfileFieldState::STATUS_CUSTOMER_CONFIRMED,
+                        'verified_by_user_id' => $actorUserId,
+                        'verified_at' => $now,
+                    ],
+                );
             }
 
             return $profile->fresh();
@@ -277,7 +312,75 @@ final class BusinessKnowledgeProfileManager
             $stale[] = BusinessKnowledgeProfileFieldKey::Hours->value;
         }
 
-        return new BusinessKnowledgeProfileCompleteness($missing, $stale, $present);
+        $verticalFieldState = $fieldStates->get(BusinessKnowledgeProfileFieldKey::VerticalKey->value);
+        $verticalConfirmed = $verticalFieldState !== null
+            && $verticalFieldState->verification_status === BusinessKnowledgeProfileFieldState::STATUS_CUSTOMER_CONFIRMED;
+
+        $questionPack = $this->resolveQuestionPack($business, $profile?->vertical_key, $verticalConfirmed);
+
+        return new BusinessKnowledgeProfileCompleteness($missing, $stale, $present, $questionPack);
+    }
+
+    /**
+     * §6.3, locked resolution order, corrected for confirmed-vertical
+     * and null-industry safety -- a plain, deterministic, read-only
+     * lookup, no AI involved:
+     *
+     * 1. The pack targeting the Business's own vertical, but ONLY when
+     *    that vertical_key is both tracked as customer_confirmed
+     *    (§5.2 -- an unverified vertical_key, e.g. written by an
+     *    import with markVerified: false, never reaches this step) and
+     *    still an active row in business_verticals (an operator may
+     *    deactivate a vertical after a customer confirmed it).
+     * 2. Else, when the Business has a non-null industry, the pack
+     *    targeting that broad industry -- explicitly excluding any
+     *    vertical-targeted row (never inferred from the industry
+     *    column alone). This step is skipped entirely when industry is
+     *    null; a null industry must never match the general-shaped
+     *    fallback in step 3.
+     * 3. Else, the general fallback pack: key = 'general' AND both
+     *    applies_to_* columns null (§6.2's identity-plus-shape
+     *    agreement -- 'general' is a contracted literal, not merely an
+     *    illustrative example).
+     *
+     * Each step is filtered to is_active = true and orders candidates
+     * by version desc, then id desc as a deterministic tie-break, so
+     * resolution never depends on database row-retrieval order.
+     */
+    private function resolveQuestionPack(Business $business, ?string $verticalKey, bool $verticalConfirmed): ?QuestionPack
+    {
+        if ($verticalKey !== null && $verticalConfirmed && BusinessVertical::where('key', $verticalKey)->where('is_active', true)->exists()) {
+            $pack = QuestionPack::where('applies_to_vertical_key', $verticalKey)
+                ->where('is_active', true)
+                ->orderByDesc('version')
+                ->orderByDesc('id')
+                ->first();
+
+            if ($pack !== null) {
+                return $pack;
+            }
+        }
+
+        if ($business->industry !== null) {
+            $pack = QuestionPack::where('applies_to_industry', $business->industry->value)
+                ->whereNull('applies_to_vertical_key')
+                ->where('is_active', true)
+                ->orderByDesc('version')
+                ->orderByDesc('id')
+                ->first();
+
+            if ($pack !== null) {
+                return $pack;
+            }
+        }
+
+        return QuestionPack::where('key', 'general')
+            ->whereNull('applies_to_industry')
+            ->whereNull('applies_to_vertical_key')
+            ->where('is_active', true)
+            ->orderByDesc('version')
+            ->orderByDesc('id')
+            ->first();
     }
 
     // -----------------------------------------------------------------
@@ -307,6 +410,24 @@ final class BusinessKnowledgeProfileManager
         if (array_key_exists(BusinessKnowledgeProfileFieldKey::Hours->value, $fields)) {
             throw ValidationException::withMessages([
                 'hours' => ['Hours must be written through updateLocationHours(), not updateFields().'],
+            ]);
+        }
+    }
+
+    private function assertKnownReconfirmFieldKeys(array $reconfirmFieldKeys): void
+    {
+        $allowed = array_column(BusinessKnowledgeProfileFieldKey::cases(), 'value');
+        $unknown = array_diff($reconfirmFieldKeys, $allowed);
+
+        if ($unknown !== []) {
+            throw ValidationException::withMessages([
+                'reconfirm' => ['Unknown Business Knowledge Profile reconfirm field key(s): ' . implode(', ', $unknown) . '.'],
+            ]);
+        }
+
+        if (in_array(BusinessKnowledgeProfileFieldKey::Hours->value, $reconfirmFieldKeys, true)) {
+            throw ValidationException::withMessages([
+                'reconfirm' => ['Hours must be reconfirmed through updateLocationHours(), not updateFields().'],
             ]);
         }
     }
@@ -361,11 +482,9 @@ final class BusinessKnowledgeProfileManager
     }
 
     /**
-     * Slice 1 behavior (documented, tested): business_verticals (Slice 2)
-     * does not exist yet, so a non-null vertical_key can never be
-     * validated against an active catalog entry -- it fails safely here
-     * rather than writing an unvalidated value or querying a table that
-     * does not exist. A null value (clearing/never-set) is always valid.
+     * §6.1: validated on write against business_verticals.key
+     * (is_active = true) -- an unknown or inactive key is rejected. A
+     * null value (clearing/never-set) is always valid.
      */
     private function normalizeVerticalKey(mixed $value): ?string
     {
@@ -373,7 +492,11 @@ final class BusinessKnowledgeProfileManager
             return null;
         }
 
-        throw new InvalidArgumentException('vertical_key cannot be set until the vertical catalog (Slice 2) exists.');
+        if (! is_string($value) || ! BusinessVertical::where('key', $value)->where('is_active', true)->exists()) {
+            throw new InvalidArgumentException('vertical_key must reference an active business_verticals entry.');
+        }
+
+        return $value;
     }
 
     private function normalizePricingMethod(mixed $value): ?BusinessPricingMethod

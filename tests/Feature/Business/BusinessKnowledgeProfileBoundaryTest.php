@@ -9,26 +9,34 @@ use Tests\TestCase;
 
 /**
  * Website Guided Generation contract §16, §17 item 11, §20 -- proves
- * this Slice 1 implementation introduces none of Slice 2-6's tables,
- * classes, or a new BusinessIndustry case.
+ * this implementation (through Slice 2) introduces none of Slice 3-6's
+ * tables, classes, or a new BusinessIndustry case. `business_verticals`
+ * and `question_packs` are Slice 2's own contracted tables (§6) and are
+ * deliberately no longer in the forbidden list below -- they were
+ * forbidden only for Slice 1, whose own boundary test this originally
+ * was.
  */
 class BusinessKnowledgeProfileBoundaryTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_no_slice_2_through_6_tables_exist(): void
+    public function test_no_slice_3_through_6_tables_exist(): void
     {
         $forbidden = [
-            'business_verticals',
-            'question_packs',
             'website_templates',
             'website_guided_generation_attempts',
             'business_media_assets',
         ];
 
         foreach ($forbidden as $table) {
-            $this->assertFalse(Schema::hasTable($table), "{$table} must not exist -- Slice 1 owns only the Business Knowledge Profile foundation.");
+            $this->assertFalse(Schema::hasTable($table), "{$table} must not exist -- this implementation owns only Slices 1-2.");
         }
+    }
+
+    public function test_business_verticals_and_question_packs_are_the_only_new_tables_this_slice_added(): void
+    {
+        $this->assertTrue(Schema::hasTable('business_verticals'));
+        $this->assertTrue(Schema::hasTable('question_packs'));
     }
 
     public function test_websites_table_gained_no_template_key_column(): void
