@@ -81,9 +81,11 @@ owner/admin) · Team & account (owner/admin) · Plan & subscription
 (owner/admin who is a customer) · Advanced (Agency owner/admin only:
 Messaging provider, Sender IDs, Numbers, Keywords, Developers).
 
-**Account frame** (no Business selected): Home · Client accounts / Businesses
-/ "Choose an account" · Prospecting (Agency) · Settings → Plan & subscription ·
-Advanced (Agency owner/admin).
+**Account frame** (no Business selected): Home · Advisor (when the
+Opportunity Engine is enabled and the actor can reach at least one Business,
+active or draft) · Client accounts / Businesses / "Choose an account" ·
+Prospecting (Agency) · Settings → Plan & subscription · Advanced (Agency
+owner/admin).
 
 Rules enforced by the builder:
 
