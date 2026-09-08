@@ -64,7 +64,11 @@ class AnalyticsViewTest extends TestCase
 
         $content = $this->overview($workspace, $business)->assertOk()->getContent();
 
-        $this->assertStringContainsString(url('analytics'), $content);
+        // Customer Experience Slice 1B: the customer shell links Analytics
+        // directly to the canonical Business-scoped overview of the selected
+        // Business (the bare /analytics chooser remains registered as the
+        // legacy entry, but the menu no longer points at it).
+        $this->assertStringContainsString(route('customer.workspaces.businesses.analytics.overview', [$workspace->uid, $business->uid]), $content);
         foreach ([url('reports/analyze'), url('reports/all'), url('reports/campaigns'), url('admin/hot-leads'), url('admin/ai-analytics')] as $legacy) {
             $this->assertStringNotContainsString($legacy, $content);
         }

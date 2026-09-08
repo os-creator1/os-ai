@@ -138,8 +138,14 @@ class AnalyticsCampaignTest extends TestCase
         $analyticsOwned = array_values(array_filter($sql, fn (string $s) => preg_match('/\b(reports|tracking_logs|campaigns|workspaces|businesses|workspace_memberships|workspace_membership_businesses)\b/', $s) === 1));
 
         $this->assertCount(2, $aggregates, 'Exactly two grouped aggregates per page, regardless of page size: ' . implode(' | ', $aggregates));
-        // Tenancy chain (≤4) + paginator count + page select + two aggregates.
-        $this->assertLessThanOrEqual(8, count($analyticsOwned), 'Campaign page must stay bounded: ' . implode(' | ', $analyticsOwned));
+        // Tenancy chain (≤4) + paginator count + page select + two aggregates
+        // + exactly one shell statement: the canonical
+        // CustomerContextSnapshot query the authenticated customer shell
+        // issues on every page (Customer Experience Slice 1B). That single
+        // joined SELECT is the whole navigation read model; nothing else in
+        // the shell may touch these tables.
+        $this->assertLessThanOrEqual(9, count($analyticsOwned), 'Campaign page must stay bounded: ' . implode(' | ', $analyticsOwned));
+        $this->assertCount(1, array_filter($analyticsOwned, fn (string $s) => str_contains($s, 'workspace_plan_catalog')), 'Exactly one shell context snapshot statement.');
     }
 
     public function test_analytics_code_never_uses_legacy_campaign_accessors(): void

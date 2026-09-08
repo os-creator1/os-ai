@@ -906,6 +906,16 @@
                         ],
                     ],
                 ],
+                // Customer Experience Slice 1B (contract §8.4): the customer
+                // sidebar is no longer rendered from this static array. It is
+                // built per request by App\Library\Navigation\CustomerMenuBuilder
+                // from the resolved actor, frame and Business, so every entry
+                // is context-aware, authorization-driven and route-verified.
+                // This branch is retained ONLY as compatibility data for its
+                // remaining non-rendering consumers; its one dead target (E-11,
+                // url('outreach/campaigns')) is now served by the bare
+                // customer.outreach.campaigns.entry route. Do not add rendering
+                // entries here — extend CustomerMenuBuilder instead.
                 'customer' => [
                     [
                         'url'    => url('dashboard'),

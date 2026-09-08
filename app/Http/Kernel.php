@@ -14,6 +14,7 @@
     use App\Http\Middleware\PreventRequestsDuringMaintenance;
     use App\Http\Middleware\RedirectIfAuthenticated;
     use App\Http\Middleware\RedirectIfNotValid;
+    use App\Http\Middleware\ResolveCustomerContext;
     use App\Http\Middleware\SubAccountRestriction;
     use App\Http\Middleware\TrimStrings;
     use App\Http\Middleware\TrustProxies;
@@ -72,6 +73,9 @@
                 SubstituteBindings::class,
                 LocaleMiddleware::class,
                 CheckPasswordChanged::class,
+                // Customer Experience Slice 1B — account context + view-as
+                // layer; a no-op for guests, admins and API traffic.
+                ResolveCustomerContext::class,
             ],
 
             'api' => [
@@ -114,6 +118,7 @@
             'business.onboarding' => EnsureRequiredBusinessOnboardingIsComplete::class,
             'business.onboarding.enabled' => EnsureBusinessOnboardingIsEnabled::class,
             'business.profile.accessible' => EnsureBusinessProfileIsAccessible::class,
+            'customer.context'  => ResolveCustomerContext::class,
 
 
         ];

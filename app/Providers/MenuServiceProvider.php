@@ -3,6 +3,7 @@
     namespace App\Providers;
 
     use App\Helpers\Helper;
+    use App\Library\Navigation\CustomerShellComposer;
     use Illuminate\Support\Facades\View;
     use Illuminate\Support\ServiceProvider;
 
@@ -34,6 +35,22 @@
 
             // 4. Share to all views
             View::share('menuData', [$verticalMenuData, $verticalMenuData]);
+
+            // Customer Experience Slice 1B (contract §8.4): the CUSTOMER
+            // sidebar, navbar and breadcrumb are composed per request from
+            // the resolved account context and the authorization-driven
+            // CustomerMenuBuilder. The static array above keeps serving the
+            // admin branch unchanged.
+            View::composer(
+                [
+                    'panels.sidebar',
+                    'panels.navbar',
+                    'panels.breadcrumb',
+                    'components.customer-context-switcher',
+                    'components.view-as-banner',
+                ],
+                CustomerShellComposer::class,
+            );
         }
 
     }

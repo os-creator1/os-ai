@@ -22,6 +22,12 @@ use Tests\TestCase;
  * contract"). Covers the RFC-003 §14.1 effective-access filter over
  * WorkspaceRepository::businessesForWorkspace(), the display-only row
  * shape, and the absence of any new route or link.
+ *
+ * Customer Experience Slice 1B, Correction Round 1 (contract §5.2, §5.4):
+ * a selected-scope member (client or Business-scoped staff) no longer reads
+ * the overview at all — it is 404 by direct URL — so the §14.1 "never
+ * widens" guarantee for those members is proven on the Businesses
+ * themselves: an assigned Business answers, an unassigned sibling is 404.
  */
 class WorkspaceBusinessListHttpTest extends TestCase
 {
@@ -127,13 +133,13 @@ class WorkspaceBusinessListHttpTest extends TestCase
             'is_active' => true,
         ]);
         $granted = $this->createNamedBusiness($owner->id, $workspace->id, 'Granted Co');
-        $this->createNamedBusiness($owner->id, $workspace->id, 'Not Granted Co');
+        $notGranted = $this->createNamedBusiness($owner->id, $workspace->id, 'Not Granted Co');
 
         app(WorkspaceMembershipBusinessRepository::class)->assign($membership, $granted);
 
-        $response = $this->get(route('customer.workspaces.show', ['workspaceUid' => $workspace->uid]))->assertOk();
-
-        $this->assertSame(['Granted Co'], array_column($this->businessesViewData($response), 'name'));
+        $this->get(route('customer.workspaces.show', ['workspaceUid' => $workspace->uid]))->assertNotFound();
+        $this->get(route('customer.workspaces.businesses.analytics.overview', [$workspace->uid, $granted->uid]))->assertOk();
+        $this->get(route('customer.workspaces.businesses.analytics.overview', [$workspace->uid, $notGranted->uid]))->assertNotFound();
     }
 
     public function test_selected_scope_staff_sees_only_assigned_businesses(): void
@@ -147,13 +153,13 @@ class WorkspaceBusinessListHttpTest extends TestCase
             'is_active' => true,
         ]);
         $granted = $this->createNamedBusiness($owner->id, $workspace->id, 'Granted Co');
-        $this->createNamedBusiness($owner->id, $workspace->id, 'Not Granted Co');
+        $notGranted = $this->createNamedBusiness($owner->id, $workspace->id, 'Not Granted Co');
 
         app(WorkspaceMembershipBusinessRepository::class)->assign($membership, $granted);
 
-        $response = $this->get(route('customer.workspaces.show', ['workspaceUid' => $workspace->uid]))->assertOk();
-
-        $this->assertSame(['Granted Co'], array_column($this->businessesViewData($response), 'name'));
+        $this->get(route('customer.workspaces.show', ['workspaceUid' => $workspace->uid]))->assertNotFound();
+        $this->get(route('customer.workspaces.businesses.analytics.overview', [$workspace->uid, $granted->uid]))->assertOk();
+        $this->get(route('customer.workspaces.businesses.analytics.overview', [$workspace->uid, $notGranted->uid]))->assertNotFound();
     }
 
     public function test_selected_scope_with_no_assignments_sees_empty_business_list(): void
@@ -166,12 +172,10 @@ class WorkspaceBusinessListHttpTest extends TestCase
             'business_access_scope' => WorkspaceBusinessAccessScope::Selected,
             'is_active' => true,
         ]);
-        $this->createNamedBusiness($owner->id, $workspace->id, 'Not Granted Co');
+        $notGranted = $this->createNamedBusiness($owner->id, $workspace->id, 'Not Granted Co');
 
-        $response = $this->get(route('customer.workspaces.show', ['workspaceUid' => $workspace->uid]))->assertOk();
-
-        $this->assertSame([], $this->businessesViewData($response));
-        $response->assertSee('No Businesses are accessible in this Workspace.');
+        $this->get(route('customer.workspaces.show', ['workspaceUid' => $workspace->uid]))->assertNotFound();
+        $this->get(route('customer.workspaces.businesses.analytics.overview', [$workspace->uid, $notGranted->uid]))->assertNotFound();
     }
 
     public function test_role_never_widens_business_scope(): void
@@ -184,11 +188,10 @@ class WorkspaceBusinessListHttpTest extends TestCase
             'business_access_scope' => WorkspaceBusinessAccessScope::Selected,
             'is_active' => true,
         ]);
-        $this->createNamedBusiness($owner->id, $workspace->id, 'Not Granted Co');
+        $notGranted = $this->createNamedBusiness($owner->id, $workspace->id, 'Not Granted Co');
 
-        $response = $this->get(route('customer.workspaces.show', ['workspaceUid' => $workspace->uid]))->assertOk();
-
-        $this->assertSame([], $this->businessesViewData($response));
+        $this->get(route('customer.workspaces.show', ['workspaceUid' => $workspace->uid]))->assertNotFound();
+        $this->get(route('customer.workspaces.businesses.analytics.overview', [$workspace->uid, $notGranted->uid]))->assertNotFound();
     }
 
     public function test_direct_business_ownership_is_an_independent_access_path_within_the_workspace(): void
@@ -205,11 +208,12 @@ class WorkspaceBusinessListHttpTest extends TestCase
             'business_access_scope' => WorkspaceBusinessAccessScope::Selected,
             'is_active' => true,
         ]);
-        $this->createNamedBusiness($customer->user_id, $workspace->id, 'My Direct Co');
+        $direct = $this->createNamedBusiness($customer->user_id, $workspace->id, 'My Direct Co');
 
-        $response = $this->get(route('customer.workspaces.show', ['workspaceUid' => $workspace->uid]))->assertOk();
-
-        $this->assertSame(['My Direct Co'], array_column($this->businessesViewData($response), 'name'));
+        // The account frame stays closed to a selected-scope member, but the
+        // directly owned Business answers by its own route.
+        $this->get(route('customer.workspaces.show', ['workspaceUid' => $workspace->uid]))->assertNotFound();
+        $this->get(route('customer.workspaces.businesses.analytics.overview', [$workspace->uid, $direct->uid]))->assertOk();
     }
 
     public function test_inactive_workspace_remains_viewable_but_leaks_no_business_name(): void

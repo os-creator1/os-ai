@@ -4,6 +4,8 @@
 
     use App\Broadcasting\SMSChannel;
     use App\Library\HookManager;
+    use App\Library\ViewAs\ViewAsManager;
+    use App\Models\ViewAsSession;
     use App\Models\Admin;
     use App\Models\Customer;
     use App\Models\User;
@@ -83,11 +85,13 @@
     use App\Repositories\Eloquent\EloquentWorkspaceTransitionRepository;
     use Closure;
     use Exception;
+    use Illuminate\Auth\Events\Logout;
     use Illuminate\Cache\NullStore;
     use Illuminate\Database\Eloquent\Builder;
     use Illuminate\Database\Eloquent\Relations\Relation;
     use Illuminate\Foundation\Http\Middleware\PreventRequestsDuringMaintenance;
     use Illuminate\Support\Facades\Cache;
+    use Illuminate\Support\Facades\Event;
     use Illuminate\Support\Facades\Notification;
     use Illuminate\Support\Facades\URL;
     use Illuminate\Support\ServiceProvider;
@@ -256,6 +260,15 @@
 
             // Custom notification channel
             Notification::extend('sms', fn() => new SMSChannel());
+
+            // Customer Experience Slice 1B (contract §5.5 "Exit"): logging out
+            // ends any open View-as-client session and audits the end.
+            Event::listen(Logout::class, function (Logout $event): void {
+                if ($event->user !== null && isset($event->user->id)) {
+                    $this->app->make(ViewAsManager::class)
+                        ->endAllForActor((int) $event->user->id, ViewAsSession::END_REASON_LOGOUT);
+                }
+            });
 
             // Allow some routes during maintenance
             PreventRequestsDuringMaintenance::except([

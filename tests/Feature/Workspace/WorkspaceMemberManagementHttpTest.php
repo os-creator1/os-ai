@@ -1494,17 +1494,19 @@ class WorkspaceMemberManagementHttpTest extends TestCase
         WorkspaceMembershipBusiness::create(['workspace_membership_id' => $target->id, 'business_id' => $visibleBusiness->id]);
         WorkspaceMembershipBusiness::create(['workspace_membership_id' => $target->id, 'business_id' => $hiddenBusiness->id]);
 
-        $response = $this->get(route('customer.workspaces.show', $workspace->uid))->assertOk();
+        // Customer Experience Slice 1B, Correction Round 1 (contract §5.2,
+        // §5.4): a selected-scope Admin never reads the overview (the
+        // account frame) by direct URL, so the form-level guard this test
+        // used to inspect is never rendered for them at all. The 404 page
+        // carries neither the access form nor the explanatory copy.
+        $response = $this->get(route('customer.workspaces.show', $workspace->uid))->assertNotFound();
         $html = $response->getContent();
 
         $this->assertDoesNotMatchRegularExpression(
             '/data-member-action="access" data-member-uid="' . preg_quote($target->user->uid, '/') . '"/',
             $html
         );
-        $this->assertStringContainsString(
-            "Business access can only be changed by a manager who can see this member's complete assigned Businesses.",
-            $html
-        );
+        $this->assertStringNotContainsString($target->user->uid, $html);
     }
 
     public function test_admin_can_change_access_for_a_member_whose_businesses_are_fully_visible(): void
@@ -1526,12 +1528,20 @@ class WorkspaceMemberManagementHttpTest extends TestCase
         ]);
         WorkspaceMembershipBusiness::create(['workspace_membership_id' => $target->id, 'business_id' => $visibleBusiness->id]);
 
-        $response = $this->get(route('customer.workspaces.show', $workspace->uid))->assertOk();
-        $html = $response->getContent();
+        // Slice 1B Correction Round 1: the overview is closed to a
+        // selected-scope Admin; the change itself is still authorized by the
+        // manager on the POST because every assigned Business is visible.
+        $this->get(route('customer.workspaces.show', $workspace->uid))->assertNotFound();
 
-        $this->assertMatchesRegularExpression(
-            '/data-member-action="access" data-member-uid="' . preg_quote($target->user->uid, '/') . '"/',
-            $html
+        $this->post(route('customer.workspaces.members.access', [$workspace->uid, $target->user->uid]), [
+            'business_access_scope' => 'selected',
+            'business_uids' => [$visibleBusiness->uid],
+        ])->assertSessionHas('flash_success');
+
+        $this->assertSame(WorkspaceBusinessAccessScope::Selected, $target->fresh()->business_access_scope);
+        $this->assertSame(
+            [$visibleBusiness->id],
+            WorkspaceMembershipBusiness::query()->where('workspace_membership_id', $target->id)->pluck('business_id')->map(fn ($id) => (int) $id)->all()
         );
     }
 

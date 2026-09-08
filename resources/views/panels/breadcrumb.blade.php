@@ -3,6 +3,9 @@
 @include('auth.loggedAs')
 {{--For Logged as customer option end here--}}
 
+{{-- Customer Experience Slice 1B (contract §5.5): persistent View-as-client banner with Exit; renders nothing otherwise. --}}
+<x-view-as-banner />
+
 
 <div class="content-header row">
     <div class="content-header-left col-md-9 col-12 mb-2">
