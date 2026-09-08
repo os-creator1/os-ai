@@ -763,12 +763,20 @@
             Route::post('/', 'Business\BusinessLocationsController@store')->name('store');
             Route::post('/archive', 'Business\BusinessLocationsController@archive')->name('archive');
             Route::post('/reactivate', 'Business\BusinessLocationsController@reactivate')->name('reactivate');
-            Route::post('/allocations', 'Business\BusinessLocationsController@allocate')->name('allocations.store');
-            Route::post('/allocations/cancel', 'Business\BusinessLocationsController@cancelAllocation')->name('allocations.cancel');
-            // Declared LAST: a wildcard {locationUid} would otherwise
-            // shadow the static /archive, /reactivate and /allocations
-            // paths above.
-            Route::post('/{locationUid}', 'Business\BusinessLocationsController@update')->name('update');
+            // There is deliberately NO customer route that allocates or
+            // cancels a paid additional location slot. Correction round 1:
+            // that would grant nominally paid capacity for free, because
+            // no Core/Growth price, checkout, subscription amendment,
+            // invoice item or payment evidence exists yet. The domain seam
+            // now requires verified-billing or operator provenance and has
+            // no customer-reachable caller at all.
+            //
+            // The edit path carries an explicit trailing segment rather
+            // than being a bare `/{locationUid}` wildcard. A bare wildcard
+            // matches ANY single segment, so it silently swallowed the
+            // removed /allocations URL — and would shadow any static path
+            // added here later.
+            Route::post('/{locationUid}/details', 'Business\BusinessLocationsController@update')->name('update');
         });
 
         Route::prefix('{workspaceUid}/businesses/{businessUid}/gbp')->name('businesses.gbp.')->group(function () {

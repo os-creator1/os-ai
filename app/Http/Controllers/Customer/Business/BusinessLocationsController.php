@@ -46,8 +46,11 @@ use Illuminate\Support\Facades\Auth;
  * one canonical capacity boundary (contract §7.3b). This controller
  * performs no BusinessLocation write of its own.
  *
- * Slice 1A COLLECTS NOTHING: allocating a paid location slot records
- * capacity only. No Stripe, wallet or provider call happens here.
+ * Slice 1A COLLECTS NOTHING, and therefore SELLS nothing: there is no
+ * customer action here that adds or removes a paid additional location
+ * slot. Correction round 1 removed those, because with no Core/Growth
+ * price and no billing path they would have granted nominally paid
+ * capacity for free while claiming it would appear on a bill.
  */
 class BusinessLocationsController extends CustomerBaseController
 {
@@ -73,7 +76,7 @@ class BusinessLocationsController extends CustomerBaseController
         try {
             $this->locations->createLocation($business, $request->validated());
         } catch (LocationSlotAllocationRequiredException) {
-            return $this->back($workspaceUid, $businessUid, 'error', 'Add an extra location to your plan before opening another one.');
+            return $this->back($workspaceUid, $businessUid, 'error', 'All the locations your plan covers are already open. Close one you no longer operate from to open a different one — extra locations cannot be added yet.');
         } catch (LocationSlotLimitExceededException) {
             return $this->back($workspaceUid, $businessUid, 'error', 'Your current plan covers up to 5 locations. Move to the Agency plan to add more.');
         }
@@ -130,7 +133,7 @@ class BusinessLocationsController extends CustomerBaseController
         try {
             $this->locations->reactivateLocation($business, $location);
         } catch (LocationSlotAllocationRequiredException) {
-            return $this->back($workspaceUid, $businessUid, 'error', 'Add an extra location to your plan before reopening this one.');
+            return $this->back($workspaceUid, $businessUid, 'error', 'All the locations your plan covers are already open. Close another one first — extra locations cannot be added yet.');
         } catch (LocationSlotLimitExceededException) {
             return $this->back($workspaceUid, $businessUid, 'error', 'Your current plan covers up to 5 open locations. Move to the Agency plan to reopen this one.');
         }
@@ -138,44 +141,30 @@ class BusinessLocationsController extends CustomerBaseController
         return $this->back($workspaceUid, $businessUid, 'success', 'Location reopened.');
     }
 
-    /**
-     * Records one additional paid location slot. Slice 1A stores capacity
-     * only — nothing is charged here (§9 exclusions), and the customer
-     * copy says the change appears on their next invoice rather than
-     * claiming a payment was taken.
+    /*
+     * THERE IS DELIBERATELY NO CUSTOMER ALLOCATION ACTION HERE.
+     *
+     * Correction round 1. A paid 4th/5th-location allocation is a
+     * SUBSCRIPTION AMENDMENT. Slice 1A has no Core/Growth price (both are
+     * still null in workspace_plan_catalog), so the contracted 50%-of-plan
+     * amount cannot even be calculated, and there is no checkout,
+     * subscription amendment, invoice item, payment evidence or billing
+     * integration behind it.
+     *
+     * A customer-callable route that incremented additional_location_slots
+     * would therefore have granted nominally paid capacity for free, and
+     * the copy that said it "appears on your next invoice" was an
+     * unsupported billing promise. Both are removed: the routes no longer
+     * exist, the view renders a non-actionable explanation instead of a
+     * form, and the domain seam itself now refuses any caller that cannot
+     * present verified billing or operator provenance
+     * (EntitlementManager::allocateAdditionalLocationSlot()).
+     *
+     * The additive schema, the stored 0.5000 ratio and the capacity
+     * decision all remain, so the future billing slice has a real seam to
+     * call. Nothing here invents a price, an invoice, a deferred charge, a
+     * payment state or a fake checkout.
      */
-    public function allocate(string $workspaceUid, string $businessUid): RedirectResponse
-    {
-        [, $business] = $this->resolveManageableBusiness($workspaceUid, $businessUid);
-
-        try {
-            $this->entitlements->allocateAdditionalLocationSlot($business, (int) Auth::id());
-        } catch (LocationSlotLimitExceededException) {
-            return $this->back($workspaceUid, $businessUid, 'error', 'Your current plan covers up to 5 locations. Move to the Agency plan to add more.');
-        }
-
-        return $this->back($workspaceUid, $businessUid, 'success', 'Extra location added to your plan. You can now open another location.');
-    }
-
-    public function cancelAllocation(string $workspaceUid, string $businessUid): RedirectResponse
-    {
-        [, $business] = $this->resolveManageableBusiness($workspaceUid, $businessUid);
-
-        try {
-            $this->entitlements->cancelAdditionalLocationSlot($business, (int) Auth::id());
-        } catch (LocationAllocationCancellationRefusedException $exception) {
-            $mustClose = $exception->activeCount - $exception->capacityAfter;
-
-            return $this->back(
-                $workspaceUid,
-                $businessUid,
-                'error',
-                'Close ' . $mustClose . ' ' . ($mustClose === 1 ? 'location' : 'locations') . ' first — removing this extra location would leave you with more open locations than your plan covers.',
-            );
-        }
-
-        return $this->back($workspaceUid, $businessUid, 'success', 'Extra location removed from your plan.');
-    }
 
     // -----------------------------------------------------------------
     // Helpers
@@ -210,7 +199,7 @@ class BusinessLocationsController extends CustomerBaseController
      * (EntitlementManager::assertBusinessLocationManagementAuthority).
      *
      * An ordinary member with Business access may VIEW locations but may
-     * not create, archive, reactivate, allocate or cancel. The denial is a
+     * not create, archive, reactivate or edit. The denial is a
      * 403 from the shared authorization layer, distinct from the 404 a
      * foreign or unknown identifier produces, because by this point the
      * actor has already legitimately proven access to this Business.

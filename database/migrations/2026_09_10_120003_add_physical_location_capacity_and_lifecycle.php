@@ -37,17 +37,52 @@ use Illuminate\Support\Facades\Schema;
  * migration does not claim to be re-runnable. Only backfillGrandfathering()
  * is idempotent, so a repair command or a rollback-then-reapply is safe.
  *
- * ROLLBACK (contract §23.3). down() reverses only what up() introduced and
- * FAILS CLOSED rather than destroying data:
+ * ROLLBACK (contract §23.3, reconciled with §23.1 in correction round 3).
  *
- *   - Core/Growth Business capacity is restored only by compare-and-swap
- *     against the exact values this migration wrote (1/1). If an operator
- *     has since changed them, down() aborts instead of overwriting a
- *     deliberate edit — workspace_plan_catalog is operator-editable
- *     (RFC-004 §12.5, updateCatalogPricing()).
- *   - If any location is `archived`, down() aborts rather than silently
- *     resurrecting it as active, which could push a Business over capacity
- *     past a paid allocation it no longer holds.
+ * §23.1 states three things that together decide how down() must behave:
+ * no migration deletes customer data; entitlement and audit history is
+ * IMMUTABLE; and a rollback fails closed when reversing it would destroy
+ * meaningful state. An earlier version of this down() deleted the
+ * location-capacity transition rows and dropped the two per-Business
+ * counters unconditionally — that destroyed immutable audit evidence and
+ * real paid/complimentary entitlement state, so it is replaced.
+ *
+ * down() now runs a COMPLETE PREFLIGHT BEFORE ANY MUTATION and refuses,
+ * reporting every reason it found at once, if reversing would destroy
+ * meaningful state. A refusal leaves the database exactly as it was: no
+ * catalog value restored, no row deleted, no column or index dropped,
+ * because nothing is written until every check has passed.
+ *
+ * The preflight refuses when:
+ *
+ *   1. any Business holds a nonzero `additional_location_slots` — that is
+ *      subscribed paid capacity, and dropping the column would erase it;
+ *   2. any Business holds a nonzero `grandfathered_location_slots` — that
+ *      is a complimentary entitlement granted by this migration's own
+ *      backfill and relied upon by over-capacity Businesses;
+ *   3. any location is `archived` — dropping lifecycle_state would
+ *      silently restore it to active and could push a Business over
+ *      capacity past a paid allocation it no longer holds;
+ *   4. any location-capacity transition row exists, or any transition row
+ *      carries a payload — that is immutable audit history, and down()
+ *      never deletes it;
+ *   5. workspace_plan_catalog no longer holds exactly what up() wrote, for
+ *      the Business-slot values OR the physical-location values — the
+ *      catalog is operator-editable (RFC-004 §12.5,
+ *      updateCatalogPricing()), so a deliberate later edit must never be
+ *      silently overwritten or dropped.
+ *
+ * A pristine rollback — one where up() ran, nothing used any of it, and no
+ * operator edited the catalog — passes every check and reverses cleanly,
+ * so the forward/rollback/replay cycle stays available in development and
+ * in CI.
+ *
+ * RESIDUAL LIMIT, STATED HONESTLY. MySQL DDL is not transactional, so no
+ * migration can make its own DDL steps atomic. The preflight removes every
+ * failure this migration can foresee (each column and index it would drop
+ * is confirmed present first), but a hard infrastructure failure during
+ * the DDL itself remains a deployment-process concern, exactly as the
+ * pre-existing 2026_07_30_120006 migration already documents.
  *
  * Makes no provider, Stripe, Telnyx or Twilio call. Performs no wallet
  * debit. Deletes, archives, hides or disables nothing.
@@ -242,50 +277,53 @@ return new class extends Migration
         }
     }
 
+    /**
+     * The exact physical-location capacity values up() seeded. down()
+     * compare-and-swaps against these too, because these columns are
+     * operator-editable and are about to be DROPPED — an operator's
+     * deliberate edit must never be silently discarded.
+     *
+     * The ratio is compared numerically, not as a string, so a
+     * '0.5000'/'0.5' formatting difference between MySQL versions is not
+     * mistaken for an operator edit.
+     */
+    private const SEEDED_LOCATION_CAPACITY = [
+        'core' => ['included' => 3, 'max' => 5, 'unlimited' => false, 'ratio' => 0.5],
+        'growth' => ['included' => 3, 'max' => 5, 'unlimited' => false, 'ratio' => 0.5],
+        'agency' => ['included' => 3, 'max' => null, 'unlimited' => true, 'ratio' => null],
+    ];
+
     public function down(): void
     {
-        // Fail closed rather than resurrecting archived locations as
-        // active: dropping lifecycle_state would lose the distinction, and
-        // a silently reactivated location could push a Business over
-        // capacity past a paid allocation it no longer holds.
-        if (Schema::hasColumn('business_locations', 'lifecycle_state')) {
-            $archivedBusinessIds = DB::table('business_locations')
-                ->where('lifecycle_state', BusinessLocationLifecycleState::Archived->value)
-                ->distinct()
-                ->pluck('business_id')
-                ->all();
+        // ---------------------------------------------------------------
+        // PREFLIGHT. Runs to completion BEFORE any mutation, collects every
+        // reason, and throws once. Nothing below writes anything, so a
+        // refusal leaves the database completely unchanged.
+        // ---------------------------------------------------------------
+        $refusals = array_merge(
+            $this->paidAllocationRefusals(),
+            $this->grandfatheredAllocationRefusals(),
+            $this->archivedLocationRefusals(),
+            $this->auditHistoryRefusals(),
+            $this->operatorEditedCatalogRefusals(),
+            $this->missingObjectRefusals(),
+        );
 
-            if ($archivedBusinessIds !== []) {
-                throw new RuntimeException(
-                    'Refusing to roll back: archived physical locations exist for Business ids ['
-                    . implode(', ', $archivedBusinessIds)
-                    . ']. Dropping lifecycle_state would silently restore them to active and could push those'
-                    . ' Businesses over their capacity. Resolve those locations deliberately first.'
-                );
-            }
+        if ($refusals !== []) {
+            throw new \RuntimeException(
+                "Refusing to roll back the Slice 1A physical-location capacity migration: reversing it would destroy"
+                . " meaningful state (contract §23.1 — no migration deletes customer data, entitlement and audit"
+                . " history is immutable, and rollback fails closed). Nothing has been changed.\n  - "
+                . implode("\n  - ", $refusals)
+                . "\nResolve each item deliberately before rolling back."
+            );
         }
 
-        // Compare-and-swap: restore the M1 Business-slot values only if the
-        // catalog still holds exactly what up() wrote. workspace_plan_catalog
-        // is operator-editable, so a later deliberate change must never be
-        // silently overwritten.
-        foreach (self::CORRECTED_BUSINESS_SLOTS as $tier => $expected) {
-            $row = DB::table('workspace_plan_catalog')->where('tier', $tier)->first(['business_slot_included', 'business_slot_max']);
-
-            if ($row === null) {
-                continue;
-            }
-
-            if ((int) $row->business_slot_included !== $expected || (int) $row->business_slot_max !== $expected) {
-                throw new RuntimeException(
-                    "Refusing to roll back: workspace_plan_catalog tier [{$tier}] no longer holds the values this"
-                    . " migration wrote (business_slot_included={$expected}, business_slot_max={$expected}); found"
-                    . " included={$row->business_slot_included}, max={$row->business_slot_max}. An operator has since"
-                    . ' changed it. Resolve the intended value deliberately before rolling back.'
-                );
-            }
-        }
-
+        // ---------------------------------------------------------------
+        // MUTATION. Every object below was confirmed present by the
+        // preflight, and every value below was confirmed to be exactly what
+        // up() wrote.
+        // ---------------------------------------------------------------
         foreach (self::HISTORICAL_BUSINESS_SLOTS as $tier => $slots) {
             DB::table('workspace_plan_catalog')->where('tier', $tier)->update([
                 'business_slot_included' => $slots['included'],
@@ -293,13 +331,10 @@ return new class extends Migration
             ]);
         }
 
-        DB::table('workspace_entitlement_transitions')
-            ->whereIn('transition_type', [
-                WorkspaceEntitlementTransitionType::LocationCapacityGrandfathered->value,
-                WorkspaceEntitlementTransitionType::AdditionalLocationSlotsChanged->value,
-            ])
-            ->delete();
-
+        // NOTHING IS DELETED HERE. The preflight has already proven no
+        // location-capacity transition row and no transition payload
+        // exists, so dropping the additive payload column destroys no audit
+        // evidence.
         Schema::table('workspace_entitlement_transitions', function (Blueprint $table) {
             $table->dropColumn('payload');
         });
@@ -321,5 +356,207 @@ return new class extends Migration
                 'additional_location_slot_price_ratio',
             ]);
         });
+    }
+
+    /**
+     * Paid capacity a customer holds right now. Dropping the column would
+     * erase a subscribed entitlement.
+     *
+     * @return array<int, string>
+     */
+    private function paidAllocationRefusals(): array
+    {
+        if (! Schema::hasColumn('businesses', 'additional_location_slots')) {
+            return [];
+        }
+
+        $ids = DB::table('businesses')->where('additional_location_slots', '>', 0)->pluck('id')->all();
+
+        return $ids === [] ? [] : [
+            'Business ids [' . implode(', ', $ids) . '] hold paid additional location slots. Dropping'
+            . ' additional_location_slots would erase capacity those customers are subscribed to.',
+        ];
+    }
+
+    /**
+     * Complimentary excess this migration itself granted, which
+     * over-capacity Businesses depend on to keep locations they already
+     * had (§7.5).
+     *
+     * @return array<int, string>
+     */
+    private function grandfatheredAllocationRefusals(): array
+    {
+        if (! Schema::hasColumn('businesses', 'grandfathered_location_slots')) {
+            return [];
+        }
+
+        $ids = DB::table('businesses')->where('grandfathered_location_slots', '>', 0)->pluck('id')->all();
+
+        return $ids === [] ? [] : [
+            'Business ids [' . implode(', ', $ids) . '] hold complimentary grandfathered location slots.'
+            . ' Dropping grandfathered_location_slots would strip an entitlement those Businesses rely on.',
+        ];
+    }
+
+    /**
+     * @return array<int, string>
+     */
+    private function archivedLocationRefusals(): array
+    {
+        if (! Schema::hasColumn('business_locations', 'lifecycle_state')) {
+            return [];
+        }
+
+        $ids = DB::table('business_locations')
+            ->where('lifecycle_state', BusinessLocationLifecycleState::Archived->value)
+            ->distinct()
+            ->pluck('business_id')
+            ->all();
+
+        return $ids === [] ? [] : [
+            'Archived physical locations exist for Business ids [' . implode(', ', $ids) . ']. Dropping'
+            . ' lifecycle_state would silently restore them to active and could push those Businesses over'
+            . ' their capacity.',
+        ];
+    }
+
+    /**
+     * Immutable audit history (§23.1). down() must never delete it, so it
+     * refuses instead — both for the location-capacity transition types and
+     * for any row carrying the additive payload this migration added.
+     *
+     * @return array<int, string>
+     */
+    private function auditHistoryRefusals(): array
+    {
+        $refusals = [];
+
+        $transitionCount = DB::table('workspace_entitlement_transitions')
+            ->whereIn('transition_type', [
+                WorkspaceEntitlementTransitionType::LocationCapacityGrandfathered->value,
+                WorkspaceEntitlementTransitionType::AdditionalLocationSlotsChanged->value,
+            ])
+            ->count();
+
+        if ($transitionCount > 0) {
+            $refusals[] = $transitionCount . ' location-capacity entitlement transition row(s) exist. Entitlement'
+                . ' and audit history is immutable, so this rollback will not delete them.';
+        }
+
+        if (Schema::hasColumn('workspace_entitlement_transitions', 'payload')) {
+            $payloadCount = DB::table('workspace_entitlement_transitions')->whereNotNull('payload')->count();
+
+            if ($payloadCount > 0) {
+                $refusals[] = $payloadCount . ' entitlement transition row(s) carry an audit payload. Dropping the'
+                    . ' payload column would destroy that immutable evidence.';
+            }
+        }
+
+        return $refusals;
+    }
+
+    /**
+     * The catalog is operator-editable, and down() both overwrites two of
+     * its columns and drops four more. Every one of those values is
+     * compare-and-swapped against exactly what up() wrote.
+     *
+     * @return array<int, string>
+     */
+    private function operatorEditedCatalogRefusals(): array
+    {
+        $refusals = [];
+
+        foreach (self::CORRECTED_BUSINESS_SLOTS as $tier => $expected) {
+            $row = DB::table('workspace_plan_catalog')->where('tier', $tier)->first(['business_slot_included', 'business_slot_max']);
+
+            if ($row === null) {
+                continue;
+            }
+
+            if ((int) $row->business_slot_included !== $expected || (int) $row->business_slot_max !== $expected) {
+                $refusals[] = "workspace_plan_catalog tier [{$tier}] no longer holds the Business-slot values this"
+                    . " migration wrote (included={$expected}, max={$expected}); found"
+                    . " included={$row->business_slot_included}, max={$row->business_slot_max}. An operator has since"
+                    . ' changed it, and restoring the historical values would overwrite that deliberate edit.';
+            }
+        }
+
+        if (! Schema::hasColumn('workspace_plan_catalog', 'location_slot_included')) {
+            return $refusals;
+        }
+
+        foreach (self::SEEDED_LOCATION_CAPACITY as $tier => $expected) {
+            $row = DB::table('workspace_plan_catalog')->where('tier', $tier)->first([
+                'location_slot_included',
+                'location_slot_max',
+                'unlimited_location_slots',
+                'additional_location_slot_price_ratio',
+            ]);
+
+            if ($row === null) {
+                continue;
+            }
+
+            $matches = (int) $row->location_slot_included === $expected['included']
+                && $this->nullableIntMatches($row->location_slot_max, $expected['max'])
+                && (bool) $row->unlimited_location_slots === $expected['unlimited']
+                && $this->nullableFloatMatches($row->additional_location_slot_price_ratio, $expected['ratio']);
+
+            if (! $matches) {
+                $refusals[] = "workspace_plan_catalog tier [{$tier}] no longer holds the physical-location capacity"
+                    . ' values this migration seeded. Those columns are about to be dropped, so an operator edit'
+                    . ' would be discarded without trace.';
+            }
+        }
+
+        return $refusals;
+    }
+
+    /**
+     * Every column and index down() would drop must actually be present.
+     * Checking here rather than letting a DDL step fail halfway is what
+     * keeps a refusal from leaving a partially reversed schema behind.
+     *
+     * @return array<int, string>
+     */
+    private function missingObjectRefusals(): array
+    {
+        $refusals = [];
+
+        $required = [
+            'workspace_entitlement_transitions' => ['payload'],
+            'business_locations' => ['lifecycle_state', 'archived_at'],
+            'businesses' => ['additional_location_slots', 'grandfathered_location_slots'],
+            'workspace_plan_catalog' => [
+                'location_slot_included',
+                'location_slot_max',
+                'unlimited_location_slots',
+                'additional_location_slot_price_ratio',
+            ],
+        ];
+
+        foreach ($required as $table => $columns) {
+            foreach ($columns as $column) {
+                if (! Schema::hasColumn($table, $column)) {
+                    $refusals[] = "Column [{$table}.{$column}] is already gone, so this migration is not in the state"
+                        . ' it created and cannot reverse itself cleanly.';
+                }
+            }
+        }
+
+        return $refusals;
+    }
+
+    private function nullableIntMatches(mixed $actual, ?int $expected): bool
+    {
+        return $expected === null ? $actual === null : ($actual !== null && (int) $actual === $expected);
+    }
+
+    private function nullableFloatMatches(mixed $actual, ?float $expected): bool
+    {
+        return $expected === null
+            ? $actual === null
+            : ($actual !== null && abs((float) $actual - $expected) < 0.00005);
     }
 };

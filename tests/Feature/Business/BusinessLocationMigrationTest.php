@@ -166,6 +166,133 @@ class BusinessLocationMigrationTest extends TestCase
         $this->assertDatabaseCount('business_usage_reservations', 0);
     }
 
+    // -----------------------------------------------------------------
+    // CORRECTION ROUND 3 — the rollback preflight fails closed and is
+    // non-destructive.
+    //
+    // Every case below refuses BEFORE any mutation, so these run safely
+    // inside RefreshDatabase: down() executes only SELECTs on the refusal
+    // path and reaches no DDL. The pristine rollback-and-replay cycle,
+    // which does execute DDL, lives in BusinessLocationRollbackTest.
+    // -----------------------------------------------------------------
+
+    /** Rollback refuses while any Business holds paid capacity. */
+    public function test_rollback_refuses_while_a_paid_allocation_exists(): void
+    {
+        [, $business] = $this->locationTenant();
+        $this->setAdditionalLocationSlots($business, 1);
+
+        $this->assertRollbackRefusedWithoutChangingAnything('hold paid additional location slots');
+    }
+
+    /** Rollback refuses while any Business holds complimentary excess. */
+    public function test_rollback_refuses_while_a_grandfathered_allocation_exists(): void
+    {
+        [, $business] = $this->locationTenant();
+        $this->setGrandfatheredLocationSlots($business, 2);
+
+        $this->assertRollbackRefusedWithoutChangingAnything('complimentary grandfathered location slots');
+    }
+
+    /** Rollback refuses while any location is archived. */
+    public function test_rollback_refuses_while_an_archived_location_exists(): void
+    {
+        [, $business] = $this->locationTenant();
+        $this->seedLocation($business, 'Closed', false, BusinessLocationLifecycleState::Archived);
+
+        $this->assertRollbackRefusedWithoutChangingAnything('Archived physical locations exist');
+    }
+
+    /**
+     * Rollback refuses rather than deleting immutable audit history — and
+     * the rows are still there afterwards.
+     */
+    public function test_rollback_refuses_and_does_not_delete_audit_history(): void
+    {
+        [, $business] = $this->locationTenant();
+
+        DB::table('workspace_entitlement_transitions')->insert([
+            'workspace_id' => $business->workspace_id,
+            'transition_type' => 'location_capacity_grandfathered',
+            'actor_user_id' => null,
+            'reason' => 'Audit evidence that must survive a refused rollback.',
+            'payload' => json_encode(['grandfathered_location_slots_by_business_id' => [(int) $business->id => 2]]),
+            'created_at' => now(),
+        ]);
+
+        $this->assertRollbackRefusedWithoutChangingAnything('immutable');
+
+        $this->assertSame(
+            1,
+            (int) DB::table('workspace_entitlement_transitions')
+                ->where('workspace_id', $business->workspace_id)
+                ->where('transition_type', 'location_capacity_grandfathered')
+                ->count(),
+            'A refused rollback must never delete audit evidence.'
+        );
+    }
+
+    /** Rollback refuses when an operator has edited the catalog. */
+    public function test_rollback_refuses_when_an_operator_edited_the_catalog(): void
+    {
+        DB::table('workspace_plan_catalog')->where('tier', 'growth')->update(['location_slot_max' => 9]);
+
+        $this->assertRollbackRefusedWithoutChangingAnything('no longer holds the physical-location capacity');
+
+        $this->assertSame(
+            9,
+            (int) DB::table('workspace_plan_catalog')->where('tier', 'growth')->value('location_slot_max'),
+            "A refused rollback must not touch the operator's edit."
+        );
+    }
+
+    /** The Business-slot half of the catalog compare-and-swap still holds. */
+    public function test_rollback_refuses_when_an_operator_edited_the_business_slot_values(): void
+    {
+        DB::table('workspace_plan_catalog')->where('tier', 'core')->update(['business_slot_max' => 4]);
+
+        $this->assertRollbackRefusedWithoutChangingAnything('Business-slot values');
+
+        $this->assertSame(
+            4,
+            (int) DB::table('workspace_plan_catalog')->where('tier', 'core')->value('business_slot_max'),
+            "A refused rollback must not overwrite the operator's edit."
+        );
+    }
+
+    /**
+     * Runs down(), requires it to refuse for the expected reason, and
+     * proves the refusal changed absolutely nothing: every column this
+     * migration added is still present and the catalog still holds the
+     * corrected Business-slot values.
+     */
+    private function assertRollbackRefusedWithoutChangingAnything(string $expectedReason): void
+    {
+        $migration = require database_path('migrations/2026_09_10_120003_add_physical_location_capacity_and_lifecycle.php');
+
+        try {
+            $migration->down();
+            $this->fail('down() must refuse rather than destroy meaningful state.');
+        } catch (\RuntimeException $exception) {
+            $this->assertStringContainsString($expectedReason, $exception->getMessage());
+            $this->assertStringContainsString('Nothing has been changed.', $exception->getMessage());
+        }
+
+        foreach ([
+            'workspace_plan_catalog' => ['location_slot_included', 'location_slot_max', 'unlimited_location_slots', 'additional_location_slot_price_ratio'],
+            'businesses' => ['additional_location_slots', 'grandfathered_location_slots'],
+            'business_locations' => ['lifecycle_state', 'archived_at'],
+            'workspace_entitlement_transitions' => ['payload'],
+        ] as $table => $columns) {
+            foreach ($columns as $column) {
+                $this->assertTrue(
+                    Schema::hasColumn($table, $column),
+                    "A refused rollback must not drop {$table}.{$column}."
+                );
+            }
+        }
+    }
+
     /**
      * Re-applies the migration's own backfill rule. Mirrors the private
      * backfillGrandfathering() in

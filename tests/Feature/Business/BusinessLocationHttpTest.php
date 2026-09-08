@@ -5,11 +5,13 @@ namespace Tests\Feature\Business;
 use App\Enums\Business\BusinessLocationLifecycleState;
 use App\Enums\Workspace\WorkspaceBusinessAccessScope;
 use App\Enums\Workspace\WorkspaceMembershipRole;
+use App\Http\Controllers\Customer\Business\BusinessLocationsController;
 use App\Models\User;
 use App\Models\Workspace;
 use App\Models\WorkspaceMembership;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Route;
 use Tests\Feature\Business\Concerns\CreatesLocationCapacityFixtures;
 use Tests\TestCase;
 
@@ -81,24 +83,29 @@ class BusinessLocationHttpTest extends TestCase
         $this->assertSame(BusinessLocationLifecycleState::Active, $foreignLocation->refresh()->lifecycle_state);
     }
 
-    /** A foreign Business's allocation counter cannot be moved. */
-    public function test_a_foreign_business_allocation_cannot_be_changed(): void
+    /** A foreign Business's locations cannot be edited across the tenancy line. */
+    public function test_a_foreign_business_location_cannot_be_edited(): void
     {
-        [$customer, , $workspace] = $this->locationTenant();
+        [$customer, $business, $workspace] = $this->locationTenant();
+        $this->seedActiveLocations($business, 1);
+
         [, $otherBusiness, $otherWorkspace] = $this->locationTenant();
+        $foreignLocation = $this->seedLocation($otherBusiness, 'Their Branch', true);
 
         $this->authenticateAsOwner($customer);
 
-        $this->post(route('customer.workspaces.businesses.locations.allocations.store', [$otherWorkspace->uid, $otherBusiness->uid]))
-            ->assertNotFound();
-
-        $this->assertSame(0, (int) $otherBusiness->refresh()->additional_location_slots);
+        $this->post(
+            route('customer.workspaces.businesses.locations.update', [$otherWorkspace->uid, $otherBusiness->uid, $foreignLocation->uid]),
+            $this->locationPayload(['name' => 'Hijacked'])
+        )->assertNotFound();
 
         // Mixing my Workspace uid with their Business uid is equally refused.
-        $this->post(route('customer.workspaces.businesses.locations.allocations.store', [$workspace->uid, $otherBusiness->uid]))
-            ->assertNotFound();
+        $this->post(
+            route('customer.workspaces.businesses.locations.update', [$workspace->uid, $otherBusiness->uid, $foreignLocation->uid]),
+            $this->locationPayload(['name' => 'Hijacked'])
+        )->assertNotFound();
 
-        $this->assertSame(0, (int) $otherBusiness->refresh()->additional_location_slots);
+        $this->assertSame('Their Branch', $foreignLocation->refresh()->name);
     }
 
     // -----------------------------------------------------------------
@@ -107,7 +114,7 @@ class BusinessLocationHttpTest extends TestCase
 
     /**
      * An ordinary active member with Business access may VIEW locations but
-     * may not create, archive, reactivate, allocate or cancel. Every denial
+     * may not create, archive, reactivate or edit. Every denial
      * is a true no-op with no success message and no audit row.
      */
     public function test_an_ordinary_member_can_view_but_cannot_mutate(): void
@@ -140,13 +147,14 @@ class BusinessLocationHttpTest extends TestCase
             ->assertStatus(401);
         $this->post(route('customer.workspaces.businesses.locations.reactivate', $args), ['location_uid' => $archived->uid])
             ->assertStatus(401);
-        $this->post(route('customer.workspaces.businesses.locations.allocations.store', $args))
-            ->assertStatus(401);
-        $this->post(route('customer.workspaces.businesses.locations.allocations.cancel', $args))
-            ->assertStatus(401);
+        $this->post(
+            route('customer.workspaces.businesses.locations.update', [$workspace->uid, $business->uid, $locations[0]->uid]),
+            $this->locationPayload(['name' => 'Renamed by staff'])
+        )->assertStatus(401);
 
         // Every denial is a COMPLETE no-op.
         $this->assertSame(2, $this->activeLocationCount($business));
+        $this->assertNotSame('Renamed by staff', $locations[0]->refresh()->name);
         $this->assertSame(BusinessLocationLifecycleState::Active, $locations[1]->refresh()->lifecycle_state);
         $this->assertSame(BusinessLocationLifecycleState::Archived, $archived->refresh()->lifecycle_state);
         $this->assertSame(1, (int) $business->refresh()->additional_location_slots);
@@ -215,7 +223,7 @@ class BusinessLocationHttpTest extends TestCase
 
         $this->get(route('customer.workspaces.businesses.locations.index', $args))->assertNotFound();
         $this->post(route('customer.workspaces.businesses.locations.store', $args), $this->locationPayload())->assertNotFound();
-        $this->post(route('customer.workspaces.businesses.locations.allocations.store', $args))->assertNotFound();
+        $this->post(route('customer.workspaces.businesses.locations.reactivate', $args), ['location_uid' => 'no-such-location'])->assertNotFound();
 
         $this->assertSame(1, $this->activeLocationCount($business));
     }
@@ -346,5 +354,157 @@ class BusinessLocationHttpTest extends TestCase
             ->assertRedirect();
 
         $this->assertSame(2, $this->activeLocationCount($business));
+    }
+
+    // -----------------------------------------------------------------
+    // CORRECTION ROUND 1 — no customer surface may grant unpaid capacity
+    // -----------------------------------------------------------------
+
+    /**
+     * The registered route table itself carries the guarantee: no customer
+     * route allocates or cancels a paid additional location slot.
+     */
+    public function test_no_customer_route_allocates_or_cancels_a_paid_location_slot(): void
+    {
+        $names = collect(Route::getRoutes()->getRoutes())
+            ->map(fn ($route) => (string) $route->getName())
+            ->filter()
+            ->filter(fn (string $name) => str_starts_with($name, 'customer.'))
+            ->values();
+
+        foreach (['allocations.store', 'allocations.cancel'] as $removed) {
+            $this->assertEmpty(
+                $names->filter(fn (string $name) => str_contains($name, 'locations.' . $removed))->all(),
+                'No customer route may allocate or cancel a paid location slot while pricing and billing do not exist.'
+            );
+        }
+
+        // The controller must not carry the actions either.
+        foreach (['allocate', 'cancelAllocation'] as $removedAction) {
+            $this->assertFalse(
+                method_exists(BusinessLocationsController::class, $removedAction),
+                'BusinessLocationsController::' . $removedAction . '() must not exist.'
+            );
+        }
+    }
+
+    /**
+     * A direct POST to the removed URLs — exactly what an attacker or a
+     * stale bookmark would send — changes nothing and claims nothing.
+     */
+    public function test_direct_posts_to_the_removed_allocation_urls_grant_no_capacity(): void
+    {
+        [$customer, $business, $workspace] = $this->locationTenant();
+        $this->seedActiveLocations($business, 3);
+        $this->setAdditionalLocationSlots($business, 1);
+        $this->authenticateAsOwner($customer);
+
+        $base = rtrim(route('customer.workspaces.businesses.locations.index', [$workspace->uid, $business->uid]), '/');
+
+        foreach ([$base . '/allocations', $base . '/allocations/cancel'] as $url) {
+            $response = $this->post($url);
+
+            // 404 (no such route) or 405 (method not allowed) — never a
+            // redirect carrying a success message.
+            $this->assertContains(
+                $response->getStatusCode(),
+                [404, 405],
+                'POST ' . $url . ' must not be handled.'
+            );
+
+            $this->assertNull(session('message'), 'A removed allocation URL must never claim success.');
+        }
+
+        // The counter is untouched and no transition was written.
+        $this->assertSame(1, (int) $business->refresh()->additional_location_slots);
+        $this->assertDatabaseMissing('workspace_entitlement_transitions', [
+            'workspace_id' => $business->workspace_id,
+            'transition_type' => 'additional_location_slots_changed',
+        ]);
+    }
+
+    /**
+     * Every customer POST route on this surface is exercised as the owner,
+     * with nothing but a CSRF-valid empty body, and none of them can raise
+     * the paid allocation counter.
+     */
+    public function test_no_customer_post_on_this_surface_can_raise_the_paid_counter(): void
+    {
+        [$customer, $business, $workspace] = $this->locationTenant();
+        $this->seedActiveLocations($business, 3);
+        $this->authenticateAsOwner($customer);
+
+        $before = (int) $business->refresh()->additional_location_slots;
+
+        $namePrefix = 'customer.workspaces.businesses.locations.';
+
+        $posted = 0;
+
+        foreach (Route::getRoutes()->getRoutes() as $route) {
+            if (! in_array('POST', $route->methods(), true)) {
+                continue;
+            }
+
+            if (! str_starts_with((string) $route->getName(), $namePrefix)) {
+                continue;
+            }
+
+            $url = str_replace(
+                ['{workspaceUid}', '{businessUid}', '{locationUid}'],
+                [$workspace->uid, $business->uid, 'no-such-location'],
+                $route->uri()
+            );
+
+            $this->post('/' . $url);
+            $posted++;
+        }
+
+        $this->assertGreaterThan(0, $posted, 'The surface must actually have POST routes to exercise.');
+        $this->assertSame(
+            $before,
+            (int) $business->refresh()->additional_location_slots,
+            'No customer POST on this surface may raise the paid location counter.'
+        );
+        $this->assertDatabaseMissing('workspace_entitlement_transitions', [
+            'workspace_id' => $business->workspace_id,
+            'transition_type' => 'additional_location_slots_changed',
+        ]);
+    }
+
+    /**
+     * The page explains the situation honestly and renders NO actionable
+     * control, and makes no promise about a bill, an invoice or a payment.
+     */
+    public function test_the_page_explains_extra_locations_without_offering_an_unpaid_one(): void
+    {
+        [$customer, $business, $workspace] = $this->locationTenant();
+        $this->seedActiveLocations($business, 3);
+        $this->authenticateAsOwner($customer);
+
+        $response = $this->get(route('customer.workspaces.businesses.locations.index', [$workspace->uid, $business->uid]));
+
+        $response->assertOk();
+        $response->assertSee('Extra locations cannot be added yet.', false);
+
+        $body = (string) $response->getContent();
+
+        // No actionable allocation control of any kind.
+        foreach ([
+            'Add an extra location to my plan',
+            'Remove an extra location',
+            '/allocations',
+        ] as $control) {
+            $this->assertStringNotContainsString($control, $body, 'The page must render no allocation control; found [' . $control . '].');
+        }
+
+        // And no unsupported billing promise.
+        foreach ([
+            'next invoice',
+            'does not take a payment now',
+            'will be charged',
+            'added to your bill',
+        ] as $promise) {
+            $this->assertStringNotContainsString($promise, $body, 'The page must promise no charge; found [' . $promise . '].');
+        }
     }
 }

@@ -87,8 +87,9 @@
             @else
                 <x-alert variant="info" class="mb-2">
                     <strong>All your location slots are in use.</strong>
-                    To open another location, add an extra one to your plan below,
-                    or close a location you no longer operate from.
+                    To open another location, close one you no longer operate from.
+                    Extra locations beyond the ones your plan includes are not
+                    available to add yet.
                 </x-alert>
             @endif
         @endif
@@ -121,9 +122,17 @@
                                          check applies. --}}
                                     <form method="POST" action="{{ route('customer.workspaces.businesses.locations.update', [$workspaceUid, $businessUid, $location->uid]) }}" class="d-flex align-items-end gap-1">
                                         @csrf
+                                        {{-- Carried through unchanged. UpsertBusinessLocationRequest
+                                             conditionally requires the street address and region for a
+                                             storefront or service-area location, so an edit that posted
+                                             only the two visible fields would always fail validation. --}}
                                         <input type="hidden" name="service_mode" value="{{ $location->service_mode->value }}">
                                         <input type="hidden" name="country_code" value="{{ $location->country_code }}">
                                         <input type="hidden" name="public_address" value="{{ $location->public_address ? 1 : 0 }}">
+                                        <input type="hidden" name="address_line_1" value="{{ $location->address_line_1 }}">
+                                        <input type="hidden" name="address_line_2" value="{{ $location->address_line_2 }}">
+                                        <input type="hidden" name="region" value="{{ $location->region }}">
+                                        <input type="hidden" name="postal_code" value="{{ $location->postal_code }}">
                                         <div>
                                             <label class="form-label text-label" for="name-{{ $location->uid }}">Name</label>
                                             <input type="text" class="form-control" id="name-{{ $location->uid }}" name="name" value="{{ $location->name }}" required>
@@ -210,34 +219,36 @@
         </x-card>
     @endif
 
-    {{-- Extra locations on the plan. Slice 1A records capacity only and
-         never claims a payment was taken. --}}
+    {{--
+        Extra locations beyond the included ones.
+
+        CORRECTION ROUND 1 — this section is deliberately NOT actionable.
+        An extra location is a paid addition to the plan, and the price for
+        it has not been set yet, so there is no honest way to let anyone add
+        one from here: there would be nothing to charge, nothing to put on a
+        bill, and no record that it had been paid for. Rather than take an
+        action that silently gives away paid capacity, this explains the
+        situation and stops.
+
+        Nothing on this page promises a future charge, an invoice line or a
+        pending payment, because none of those exist.
+    --}}
     @unless($capacity->unlimited)
         <x-card :padded="true" class="mb-2">
-            <p class="text-section-heading mb-1">Extra locations on your plan</p>
-            <p class="text-caption mb-2">
+            <p class="text-section-heading mb-1">Extra locations</p>
+            <p class="text-caption mb-1">
                 Your plan includes {{ $capacity->includedSlots }} open
                 {{ $capacity->includedSlots === 1 ? 'location' : 'locations' }}.
-                Locations {{ $capacity->includedSlots + 1 }} and {{ $capacity->includedSlots + 2 }} can be added
-                for half your plan price each. Beyond that you would need the Agency plan.
-                Adding one here updates your plan &mdash; it does not take a payment now.
+                @if($capacity->hardMaximum !== null && $capacity->hardMaximum > $capacity->includedSlots)
+                    This plan can eventually cover up to {{ $capacity->hardMaximum }} open locations in total.
+                    Any beyond the included {{ $capacity->includedSlots }} would cost extra on top of your plan.
+                @endif
             </p>
-
-            <div class="d-flex gap-1 flex-wrap">
-                @if($capacity->hardMaximum === null || $capacity->includedSlots + $capacity->additionalSlotsAllocated < $capacity->hardMaximum)
-                    <form method="POST" action="{{ route('customer.workspaces.businesses.locations.allocations.store', [$workspaceUid, $businessUid]) }}">
-                        @csrf
-                        <button type="submit" class="btn btn-primary">Add an extra location to my plan</button>
-                    </form>
-                @endif
-
-                @if($capacity->additionalSlotsAllocated > 0)
-                    <form method="POST" action="{{ route('customer.workspaces.businesses.locations.allocations.cancel', [$workspaceUid, $businessUid]) }}">
-                        @csrf
-                        <button type="submit" class="btn btn-outline-secondary">Remove an extra location</button>
-                    </form>
-                @endif
-            </div>
+            <p class="text-caption mb-0">
+                <strong>Extra locations cannot be added yet.</strong>
+                We have not set the price for them, so there is no way to buy one at the moment.
+                If you need more locations now, please get in touch and we will help.
+            </p>
         </x-card>
     @endunless
 

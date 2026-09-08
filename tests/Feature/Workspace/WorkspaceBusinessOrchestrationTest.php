@@ -68,6 +68,22 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
     {
         $workspace = $this->createWorkspace($owner, $overrides);
 
+        // CX Slice 1A / RFC-004 §33 corrected Core to 1 included / 1 max
+        // Business, which leaves no BOUNDED capacity band for the M2
+        // orchestration fixtures below: every one of them would be at
+        // capacity before its scenario began, and the capacity assertions
+        // would pass vacuously or fail during setup.
+        //
+        // These tests are about REASSIGNMENT, LOCK ORDER and capacity
+        // ENFORCEMENT, not about the retail tier numbers, so the bounded
+        // band they have always relied on (3 included / 5 max) is set
+        // explicitly here. This class uses RefreshDatabase, so the edit is
+        // rolled back with the rest of the test and never leaks.
+        DB::table('workspace_plan_catalog')->where('tier', 'core')->update([
+            'business_slot_included' => 3,
+            'business_slot_max' => 5,
+        ]);
+
         $admin = \App\Models\User::create([
             'first_name' => 'M2Fixture', 'last_name' => 'Admin', 'email' => 'm2fixture' . uniqid() . '@example.test',
             'status' => true, 'is_admin' => true, 'is_customer' => false, 'active_portal' => 'admin',

@@ -391,6 +391,15 @@ an absent field exists.
 | 9 | The **primary** location cannot be archived while it is primary. Primary status must first be reassigned to another **active** location, in the same transaction that archives the old one. A Business's last active location cannot be archived at all. |
 | 10 | Provider resources attached to a location (phone numbers, GBP bindings) follow **their own lifecycle** (§7.7, §13). Archiving the local record never silently releases a number or unbinds a Google location; those require their own explicit, audited actions. |
 
+**Rules 4–6 describe the product model, not a Slice 1A customer surface.**
+They govern how a paid 4th/5th-location allocation behaves *once it can be
+bought*. Core/Growth retail prices are still undecided (§28.1), so Slice 1A
+ships the schema, the 0.5000 ratio, the capacity decision and the guarded
+domain seam, but **no customer route, action or control that allocates or
+cancels one** — see §22.5. Reading rules 4–6 as authorization for a
+customer-callable free grant is a misreading the implementation must not
+make.
+
 **Why the GBP binding needs rule 8 stated explicitly.**
 `business_google_locations` carries
 `bgl_location_business_foreign … onDelete('cascade')`
@@ -420,6 +429,17 @@ honest guard.
    `app/Http/Controllers/Customer/BusinessOnboardingController.php::storeLocation()`
    → `EloquentBusinessLocationRepository::upsertPrimary()`, and it must be
    migrated onto the boundary in Slice 1A.
+   **Delivered (correction round 1).** The chain runs through
+   `OnboardingManager::saveLocationStep()` →
+   `BusinessManager::upsertPrimaryLocation()`, which is where the write
+   actually lives, so that method is what was migrated — see §22.4 for the
+   mechanically required allowlist amendment. After it,
+   `upsertPrimary()` has **no production caller at all**, and the complete
+   production inventory of location-count-increasing callers is exactly
+   three, all of them through the boundary:
+   `BusinessLocationsController::store()`,
+   `BusinessLocationsController::reactivate()` and
+   `BusinessManager::upsertPrimaryLocation()`.
 3. **Direct location-count-increasing writes are prohibited** outside
    migrations, factories, seeders and explicitly named test-support helpers.
 4. **T-LOC-9 is a source-boundary inventory test.** It enumerates the production
@@ -429,7 +449,10 @@ honest guard.
    the GBP suite already uses to assert its read-only guarantee
    (`tests/Feature/GoogleBusinessProfile/GoogleBusinessProfileReadOnlyTest.php`).
 5. **T-LOC-10 covers behaviour**, route by route, for every currently reachable
-   create and reactivate path.
+   create and reactivate path, and T-LOC-19 covers the onboarding chain the
+   same way — by driving the real method and observing boundary-only
+   outcomes, because "delegates to" is a runtime property rather than a
+   textual one.
 6. **Stated honestly:** T-LOC-9 guards repository architecture. It does not
    mathematically prevent future code from writing directly to the database,
    and this contract does not claim otherwise.
@@ -1362,7 +1385,7 @@ ship in either order.
 
 | Slice | May start when | Is complete when |
 |---|---|---|
-| **1A** | Now | Every §7.3, §7.3a and §7.4 case behaves exactly as tabulated; archived locations consume no capacity and paid slots are reusable while grandfathered excess is not (§7.5.3); the additive migration applies once with an idempotent backfill and a fail-closed conditional `down()` (§23.3); **no deployable state permits unlimited Core/Growth locations**; T-LOC-1..16 and T-BIZ-1..2 pass |
+| **1A** | Now | Every §7.3, §7.3a and §7.4 case behaves exactly as tabulated; archived locations consume no capacity and paid slots are reusable while grandfathered excess is not (§7.5.3); the additive migration applies once with an idempotent backfill and a fail-closed conditional `down()` (§23.3); **no deployable state permits unlimited Core/Growth locations**; **no customer surface can grant unpaid 4th/5th-location capacity (§22.5)**; T-LOC-1..20 and T-BIZ-1..2 pass |
 | **1B** | Now | The six §9.3 experiences see their own navigation; every menu target resolves and is authorized; view-as audits, expires and cannot widen authorization; T-CTX-1..5, T-VIEW-1..4, T-NAV-1..3 pass |
 | **2** | Now | Auth screens carry no `login-v2*.svg` fallback and render a neutral AI Business OS identity; no page renders `locale.`; T-AUTH-1..2, T-I18N-1..2 pass. **Custom illustration assets are explicitly NOT required** — if §28.6 artwork is unavailable, the neutral panel satisfies this slice in full. |
 | **3** | 1B complete **and** §28.3 recorded — *except* the design-only work permitted by §21.2 | The abstraction carries a real recorded mechanism; per-Business isolation holds; no customer role can read a credential; BYO is relocated; measurement meters exist with **no retail rate activated**; T-PROV-1..2, T-BYO-1..2 pass |
@@ -1410,7 +1433,7 @@ own acceptance criteria demand is a defect; §22.2 records the reconciliation.
 
 | Slice | Implementation paths | Test paths | Documentation paths |
 |---|---|---|---|
-| **1A** | `app/Library/Entitlement/EntitlementManager.php` (**additive location-capacity methods only** — existing `decide()`/`decideBusinessSlotCapacity()` semantics unchanged), `app/DTO/Entitlement/**`, `app/Enums/Entitlement/**`, `app/Enums/Business/BusinessLocationLifecycleState.php` (new), `app/Models/{WorkspacePlanCatalog,Business,BusinessLocation}.php`, `app/Repositories/Contracts/BusinessLocationRepository.php`, `app/Repositories/Eloquent/EloquentBusinessLocationRepository.php`, `app/Http/Controllers/Customer/Business/BusinessLocationsController.php` (new), `app/Http/Controllers/Customer/BusinessOnboardingController.php` (delegate onto the §7.3b boundary only), `app/Library/Business/BusinessLocationManager.php` (new), `app/Http/Requests/Business/UpsertBusinessLocationRequest.php`, `app/Http/Requests/Business/StoreBusinessLocationRequest.php` (new), `app/Http/Requests/Business/ArchiveBusinessLocationRequest.php` (new), `app/Exceptions/Entitlement/**`, `app/Events/Entitlement/**`, `resources/views/customer/business/locations/**` (new), `routes/customer.php`, `database/migrations/**` (additive only — see §23.2) | `tests/Feature/Entitlement/**`, `tests/Unit/Entitlement/**`, `tests/Feature/Business/**` | `docs/rfcs/RFC-004-PLANS-AND-BUSINESS-FEATURE-ENTITLEMENTS.md`, `docs/rfcs/RFC-004-PLANS-AND-BUSINESS-FEATURE-ENTITLEMENTS-DEPLOYMENT.md`, `docs/automation/CUSTOMER-EXPERIENCE-MANAGED-MESSAGING-AUTOMATIONS-CONTRACT.md`, the slice's own contract under `docs/automation/**` |
+| **1A** | `app/Library/Entitlement/EntitlementManager.php` (**additive location-capacity methods only** — existing `decide()`/`decideBusinessSlotCapacity()` semantics unchanged), `app/DTO/Entitlement/**`, `app/Enums/Entitlement/**`, `app/Enums/Business/BusinessLocationLifecycleState.php` (new), `app/Models/{WorkspacePlanCatalog,Business,BusinessLocation}.php`, `app/Repositories/Contracts/BusinessLocationRepository.php`, `app/Repositories/Eloquent/EloquentBusinessLocationRepository.php`, `app/Http/Controllers/Customer/Business/BusinessLocationsController.php` (new), `app/Http/Controllers/Customer/BusinessOnboardingController.php` (delegate onto the §7.3b boundary only), `app/Library/Business/BusinessManager.php` (**`upsertPrimaryLocation()` only** — see §22.4), `app/Library/Business/BusinessLocationManager.php` (new), `app/Http/Requests/Business/UpsertBusinessLocationRequest.php`, `app/Http/Requests/Business/StoreBusinessLocationRequest.php` (new), `app/Http/Requests/Business/ArchiveBusinessLocationRequest.php` (new), `app/Exceptions/Entitlement/**`, `app/Events/Entitlement/**`, `resources/views/customer/business/locations/**` (new), `routes/customer.php`, `database/migrations/**` (additive only — see §23.2) | `tests/Feature/Entitlement/**`, `tests/Unit/Entitlement/**`, `tests/Feature/Business/**`, `tests/Feature/Workspace/WorkspaceBusinessOrchestrationTest.php` (**capacity-band fixture only** — see §22.4) | `docs/rfcs/RFC-004-PLANS-AND-BUSINESS-FEATURE-ENTITLEMENTS.md`, `docs/rfcs/RFC-004-PLANS-AND-BUSINESS-FEATURE-ENTITLEMENTS-DEPLOYMENT.md`, `docs/automation/CUSTOMER-EXPERIENCE-MANAGED-MESSAGING-AUTOMATIONS-CONTRACT.md`, the slice's own contract under `docs/automation/**` |
 | **1B** | `app/Library/Navigation/**` (new), `app/Library/ViewAs/**` (new), `app/Providers/{MenuServiceProvider,AppServiceProvider}.php`, `app/Helpers/Helper.php` (customer menu branch only), `app/Http/Middleware/**` (context resolution, view-as), `app/Http/Kernel.php` (middleware registration only), `app/Models/ViewAsSession.php` (new), `app/Policies/**`, `resources/views/panels/{sidebar,submenu,navbar,breadcrumb}.blade.php`, `resources/views/components/**`, `routes/customer.php`, `database/migrations/**` (view-as audit table) | `tests/Feature/Workspace/**`, `tests/Feature/Security/**`, `tests/Feature/DesignSystem/**` | `docs/automation/CUSTOMER-EXPERIENCE-MANAGED-MESSAGING-AUTOMATIONS-CONTRACT.md`, the slice's own contract |
 | **2** | `resources/views/auth/**`, `resources/views/layouts/**`, `resources/views/components/branding-illustration.blade.php`, `app/Library/Branding/**`, `resources/lang/en/locale.php`, `public/images/branding/**` (new assets), `resources/sass/**` | `tests/Feature/Auth/**`, `tests/Feature/Branding/**`, `tests/Feature/Theme/**` | `docs/automation/DESIGN-SYSTEM-M2-*`, the slice's own contract |
 | **3** | `app/Library/Messaging/**` (new), `app/Library/Messaging/Contracts/**` (new), `app/Models/BusinessMessagingIdentity.php` (new), `app/Http/Controllers/Customer/Business/MessagingChannelsController.php`, `app/Enums/Messaging/**` (new), `resources/views/customer/business/MessagingChannels/**`, `resources/views/customer/settings/advanced/**` (new), `config/services.php`, `config/messaging.php` (new), `app/Providers/AppServiceProvider.php` (binding only), `database/migrations/**` | `tests/Feature/Messaging/**` (new), `tests/Feature/Security/**`, `tests/Feature/Usage/**` | the slice's own contract; **restate the superseded B2 docblock rules** (§27 C-5) |
@@ -1432,7 +1455,7 @@ touches.
 |---|---|---|
 | Multi-location creation (§7.6) | 1A | `EloquentBusinessLocationRepository.php`, `BusinessLocationsController.php` (new), `resources/views/customer/business/locations/**` |
 | Location capacity enforcement (§7.3) | 1A | `EntitlementManager.php` additive methods, `app/Exceptions/Entitlement/**` |
-| Canonical location service boundary (§7.3b) | 1A | `app/Library/Business/BusinessLocationManager.php` (new), and migrating `BusinessOnboardingController::storeLocation()` onto it |
+| Canonical location service boundary (§7.3b) | 1A | `app/Library/Business/BusinessLocationManager.php` (new), and migrating `BusinessOnboardingController::storeLocation()` onto it — mechanically that means `BusinessManager::upsertPrimaryLocation()`, per §22.4 |
 | Archive / reactivate lifecycle (§7.3a) | 1A | `app/Enums/Business/BusinessLocationLifecycleState.php` (new), `app/Models/BusinessLocation.php`, `database/migrations/**` |
 | Paid-slot reuse and allocation cancellation (§7.3a rules 4–6) | 1A | `EntitlementManager.php` additive methods, `app/Models/Business.php` |
 | Grandfathered counters (§7.5.2) | 1A | `app/Models/Business.php`, `database/migrations/**` |
@@ -1468,6 +1491,119 @@ touches.
   `app/Helpers/Helper.php`, except where a slice explicitly lists them.
 * `public_html`, the preview worktree, and any other lane's worktree.
 * Activating a retail telecom rate before §28.1 (§21.2).
+* **Any customer-reachable route, controller action or view control that
+  allocates or cancels a paid additional physical-location slot, until
+  Core/Growth retail pricing (§28.1) and a real billing path exist.** See
+  §22.5.
+
+### 22.4 Slice 1A allowlist amendment — `BusinessManager::upsertPrimaryLocation()`
+
+Correction round 1 of the Slice 1A implementation review found that the
+original allowlist could not deliver §7.3b point 2. The amendment below is
+the **minimum** required, and it is recorded here rather than applied
+silently.
+
+**Why it was mechanically required.** §7.3b point 2 requires
+`BusinessOnboardingController::storeLocation()` to write through the
+canonical boundary. Inspecting the chain shows the controller performs no
+location write at all:
+
+```
+BusinessOnboardingController::storeLocation()
+  -> OnboardingManager::saveLocationStep()
+       -> BusinessManager::upsertPrimaryLocation()
+            -> EloquentBusinessLocationRepository::upsertPrimary()
+```
+
+The count-increasing write is in `BusinessManager::upsertPrimaryLocation()`.
+The controller and `OnboardingManager` only forward. Delegating therefore
+requires editing exactly one file the original allowlist omitted:
+`app/Library/Business/BusinessManager.php`, and within it exactly one
+method.
+
+**Scope of the amendment.** `upsertPrimaryLocation()` only, plus the
+trailing, defaulted-null constructor dependency it needs (the same pattern
+`$workspaceRepository` already uses in that class, so existing test doubles
+built as `new class(...) extends BusinessManager` stay source-compatible).
+No other `BusinessManager` behaviour, and no `OnboardingManager` change —
+`OnboardingManager` needs none, because it calls `BusinessManager`, which
+now delegates.
+
+**Why the "first location is always safe" argument was rejected.** It is
+true that the creating branch only runs when the Business has no primary,
+and that a Business with active locations always has exactly one active
+primary. But that is *application* behaviour, not a database proof, and it
+leaves a customer-reachable count-increasing writer outside the sole
+boundary. T-LOC-9 cannot honestly call `BusinessLocationManager` the sole
+production write boundary while such a path exists.
+
+**What did not change.** `EloquentBusinessLocationRepository::upsertPrimary()`
+remains in the repository because test fixtures across several suites build
+onboarding state through it. It simply has **no production caller left**,
+which T-LOC-9 now asserts mechanically.
+
+**One behavioural consequence, stated plainly.** The onboarding location
+step now runs the boundary's capacity assertion. For the first location on
+an entitled Workspace that changes nothing. For a Workspace whose plan is
+unassigned, inactive or suspended it now refuses — and
+`BusinessOnboardingController::saveStep()` already renders exactly those
+three exceptions as a capacity denial, so no controller change was needed
+and the customer-visible behaviour is the existing one.
+
+**Second amendment — `tests/Feature/Workspace/WorkspaceBusinessOrchestrationTest.php`.**
+Slice 1A's authorized Business-capacity correction (Core/Growth 3-included
+/ 5-max → 1/1) removes the bounded capacity band the M2 Workspace
+orchestration fixtures raced inside: every `entitledWorkspace()` fixture is
+now at capacity before its scenario begins, so seven pre-existing tests
+error during setup with `BusinessSlotLimitExceededException`. Those tests
+are about reassignment, lock order and capacity enforcement, not about the
+retail tier numbers, so the fixture sets the Core catalog row's
+`business_slot_included`/`business_slot_max` back to the 3/5 band inside
+the test's own transaction. **No assertion is changed, weakened or
+removed**, and the class uses `RefreshDatabase`, so the edit never leaks.
+The same, equally narrow fixture adjustment was applied inside the Slice
+1A allowlist to `EntitlementManagerConcurrencyTest` (which restores the
+row in its existing `tearDown()` snapshot, because that class runs without
+`RefreshDatabase`).
+
+Three further pre-existing Entitlement tests asserted the old seeded 3/5
+Business-slot values directly
+(`WorkspaceEntitlementSchemaTest`, `WorkspacePlanCatalogRepositoryTest`,
+`EntitlementManagerPresentationTest`); they now assert 1/1 plus the new
+3/5 **location** values, which is the authorized corrected model rather
+than a weakened assertion.
+
+### 22.5 Slice 1A correction — no unpaid paid-capacity grant
+
+An extra 4th/5th physical location is priced at **50% of the plan price**
+(§7.3a rule 4), and Core/Growth plan prices are deliberately still
+undecided (§28.1). Slice 1A therefore has no amount to charge, no checkout,
+no subscription amendment, no invoice item and no payment evidence.
+
+A customer-callable route that incremented `additional_location_slots`
+would have handed out nominally paid capacity for free, and copy saying the
+change "appears on your next invoice" would have promised a charge nothing
+implements. Both are forbidden until pricing and a real billing path exist:
+
+* no customer route, controller action or view control may allocate or
+  cancel a paid location slot;
+* the customer surface must instead render an honest, **non-actionable**
+  explanation that extra locations cannot be added yet, and must make no
+  claim about a bill, an invoice, a pending payment or a deferred charge;
+* the domain seam
+  (`EntitlementManager::allocateAdditionalLocationSlot()` /
+  `cancelAdditionalLocationSlot()`) must not mutate merely because a caller
+  invoked it with an actor id. It requires an explicit
+  `LocationSlotAllocationAuthority` carrying either **verified-billing**
+  provenance (a future billing caller that has already verified a durable,
+  successful, idempotent payment and presents its evidence — the same
+  posture as RFC-004 Amendment 1 §5) or **platform-operator** provenance
+  (re-verified against `users.is_admin` inside `EntitlementManager`).
+
+The additive schema, the stored `0.5000` ratio, the capacity decision and
+the internal domain seam all remain, so the future billing slice has a real
+seam to call. Nothing invents a price, an invoice, a deferred charge, a
+payment state or a fake checkout.
 
 ---
 
@@ -1478,6 +1614,12 @@ touches.
 * Every migration is additive and reversible, and its `down()` is described in
   its docblock.
 * No migration deletes customer data. No migration releases a phone number.
+* **Entitlement and audit history is immutable.** No migration — `up()` or
+  `down()` — deletes an entitlement transition row. A `down()` that could
+  only proceed by destroying meaningful state (paid or complimentary
+  entitlement counters, archived rows, audit history, or an operator's
+  deliberate catalog edit) **fails closed** instead, and does so before it
+  has written anything, so a refusal leaves the database unchanged.
 * **Backfill logic** is idempotent and safe to invoke again. This is a property
   of the backfill routine only — a migration itself runs once under the
   `migrations` table (§23.3).
@@ -1556,8 +1698,49 @@ The Round 1 wording ("idempotent and re-runnable") was loose. Corrected:
   `additional_location_slot_price_ratio`,
   `businesses.additional_location_slots`,
   `businesses.grandfathered_location_slots`,
-  `business_locations.lifecycle_state` and `business_locations.archived_at`,
-  and removes the transition type it added.
+  `business_locations.lifecycle_state`, `business_locations.archived_at`
+  and the additive `workspace_entitlement_transitions.payload` column.
+
+**Correction round 3 — `down()` never deletes, and fails closed atomically.**
+The Round 2 wording above said `down()` "removes the transition type it
+added". Taken literally that meant deleting the location-capacity
+transition rows, which contradicts §23.1's own invariants: no migration
+deletes customer data, and entitlement/audit history is immutable. **The
+invariant wins; the rollback wording is corrected here.** `down()` deletes
+no row of any kind. If location-capacity transition rows exist, or if any
+transition row carries an audit payload, `down()` **refuses** rather than
+destroying that evidence.
+
+`down()` runs a **complete preflight before any mutation** and reports every
+reason it found in one error. Because nothing is written until every check
+has passed, a refusal leaves the database completely unchanged — no
+partially restored catalog value, no partially dropped column. It refuses
+when any of the following is true:
+
+1. a Business holds a nonzero `additional_location_slots` (subscribed paid
+   capacity);
+2. a Business holds a nonzero `grandfathered_location_slots` (complimentary
+   entitlement this migration itself granted);
+3. any location is `archived`;
+4. any location-capacity transition row exists, or any transition row
+   carries a payload (immutable audit history);
+5. `workspace_plan_catalog` no longer holds exactly what `up()` wrote — for
+   the Business-slot values **or** the physical-location values, since
+   those four columns are operator-editable and are about to be dropped;
+6. a column this migration created is already gone, so it is not in the
+   state it created and cannot reverse itself cleanly.
+
+A **pristine** rollback — `up()` applied, nothing used any of it, no
+operator edit — passes every check and reverses cleanly, so the
+forward / rollback / forward-replay cycle stays available.
+
+**Residual limit, stated honestly.** MySQL DDL is not transactional, so no
+migration can make its own DDL steps atomic. The preflight removes every
+failure this migration can foresee (each column and index it would drop is
+confirmed present first), but a hard infrastructure failure during the DDL
+itself remains a deployment-process concern — the same one the pre-existing
+`2026_07_30_120006_enforce_business_workspace_constraint.php` already
+documents.
 
 **Rollback of the Core/Growth Business-capacity values is conditional, and
 fails closed.** `workspace_plan_catalog` is **operator-editable** — RFC-004
@@ -1588,7 +1771,7 @@ archives-or-deletes deliberately first.
 
 **Properties.** Makes no provider call; touches no wallet, phone number, GBP
 binding or website; leaves every existing Business and location fully accessible
-(T-LOC-7, T-LOC-8); and both failure modes above are non-destructive.
+(T-LOC-7, T-LOC-8); and **every** failure mode above is non-destructive.
 
 **Ordering constraint.** This migration and the customer-reachable
 second-location creation path ship in the **same release** (§7.6). Deploying the
@@ -1669,6 +1852,10 @@ to close.
 | **T-LOC-14** | The primary location cannot be archived while primary; reassignment and archival happen in one transaction; the last active location cannot be archived |
 | **T-LOC-15** | Archiving deletes nothing — the row, its GBP binding, analytics and audit history all survive, and no phone number is released |
 | **T-LOC-16** | Archiving a **grandfathered excess** location decrements `grandfathered_location_slots` and does **not** yield a reusable free slot; archiving a **paid** location leaves `additional_location_slots` untouched |
+| **T-LOC-17** | **No unpaid capacity grant (§22.5).** No customer route or controller action allocates or cancels a paid location slot; a direct POST to the removed URLs is unhandled, changes `additional_location_slots` by nothing, writes no transition and claims no success; every customer POST on the surface leaves the paid counter unchanged; the page renders no allocation control and promises no bill, invoice or charge |
+| **T-LOC-18** | **Allocation provenance (§22.5).** The seam's signature accepts no actor id; a customer id presented as operator provenance is refused against `users.is_admin` and is a complete no-op; verified-billing provenance cannot be constructed without real evidence, and a genuine one records that evidence on the immutable audit row |
+| **T-LOC-19** | **Onboarding delegation (§22.4).** The real onboarding chain (`BusinessManager::upsertPrimaryLocation()`) creates through `BusinessLocationManager`, runs the capacity assertion, and a refusal is a complete no-op; no production file calls the unguarded `upsertPrimary()` seam |
+| **T-LOC-20** | **Non-destructive rollback (§23.3).** A pristine rollback reverses and replays cleanly; a rollback is refused — with the database completely unchanged — while a paid allocation, a grandfathered allocation, an archived location, location-capacity audit history, or an operator-edited catalog value exists |
 | **T-BIZ-1** | A second Business on Core/Growth is denied with `business_slot_limit_exceeded` |
 | **T-BIZ-2** | A Workspace already holding several Businesses keeps them all after the backfill and is denied only new creation |
 | **T-BYO-1** | A BYO **transport** send takes **no reservation** and produces **no wallet debit** |
@@ -1698,7 +1885,7 @@ slice may extend a test's fixtures but never inherits ownership.
 
 | Slice | Owns |
 |---|---|
-| **1A** | T-LOC-1..16, T-BIZ-1..2, T-CTX-4, T-COST-2 |
+| **1A** | T-LOC-1..20, T-BIZ-1..2, T-CTX-4, T-COST-2 |
 | **1B** | T-CTX-1..3, T-CTX-5, T-VIEW-1..4, T-NAV-1..3 |
 | **2** | T-AUTH-1..2, T-I18N-1..2 |
 | **3** | T-PROV-1..2, T-BYO-1..2, T-SCOPE-1 |

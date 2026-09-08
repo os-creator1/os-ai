@@ -959,14 +959,17 @@ final class EntitlementManager
 
     /**
      * Customer Experience Slice 1A — the authority required to change a
-     * Business's physical locations or its paid location allocations.
+     * Business's physical locations.
      *
      * Deliberately REUSES the existing Workspace owner-or-active-Admin
      * authority that already guards every other Business-level entitlement
      * mutation (disableBusinessFeature, setAdditionalBusinessSlots). No new
      * permission key and no parallel authorization mechanism is introduced:
      * an ordinary Workspace member with Business access may VIEW locations
-     * but may not create, archive, reactivate, allocate or cancel.
+     * but may not create, archive, reactivate or edit. Allocating or
+     * cancelling a PAID slot is not on this authority at all: that needs
+     * LocationSlotAllocationAuthority, which no customer surface can
+     * produce.
      *
      * @throws UnauthorizedWorkspaceManagementException
      */
@@ -991,18 +994,31 @@ final class EntitlementManager
      * Customer Experience Slice 1A — allocate one paid additional
      * PHYSICAL-LOCATION slot to a Business (contract §7.3a rule 4).
      *
-     * Slice 1A stores the capacity model and the contracted 0.5000 ratio
-     * but DELIBERATELY COLLECTS NOTHING: retail activation stays behind
-     * the owner price gate (§28.1), and no Stripe, wallet or provider call
-     * is made here. A later slice adds collection on top of this.
+     * CORRECTION ROUND 1 — this is NOT a general, customer-callable free
+     * grant. A paid 4th/5th location is a subscription amendment, and
+     * Slice 1A has no Core/Growth price, no checkout, no subscription
+     * amendment, no invoice item and no payment evidence. The seam
+     * therefore refuses to mutate for a bare actor id: the caller must
+     * present an explicit LocationSlotAllocationAuthority carrying either
+     * verified-billing evidence or re-verified platform-operator
+     * provenance. Slice 1A ships no caller of either kind, which is
+     * exactly the point — capacity that is nominally paid can no longer be
+     * granted for free.
+     *
+     * This method still performs no provider call and makes no payment
+     * decision. It records the billing caller's own prior verification,
+     * mirroring RFC-004 Amendment 1 §5's
+     * allocateAdditionalBusinessSlotsFromVerifiedPayment().
      *
      * Holds the Business row lock for the whole transaction so an
      * allocation and a location creation cannot race into an invalid
      * state.
      */
-    public function allocateAdditionalLocationSlot(Business $business, int $actorUserId, ?string $reason = null): Business
+    public function allocateAdditionalLocationSlot(Business $business, LocationSlotAllocationAuthority $authority): Business
     {
-        return DB::transaction(function () use ($business, $actorUserId, $reason) {
+        $this->assertLocationSlotAllocationAuthority($authority);
+
+        return DB::transaction(function () use ($business, $authority) {
             $locked = $this->businessRepository->findForUpdate((int) $business->id);
 
             if ($locked === null) {
@@ -1029,7 +1045,7 @@ final class EntitlementManager
 
             $locked->forceFill(['additional_location_slots' => $to])->save();
 
-            $this->recordLocationSlotTransition($locked, $from, $to, $actorUserId, $reason ?? 'Additional physical-location allocation added.');
+            $this->recordLocationSlotTransition($locked, $from, $to, $authority);
 
             return $locked->refresh();
         });
@@ -1045,10 +1061,16 @@ final class EntitlementManager
      *
      * No refund is issued and no payment is reversed — Slice 1A implements
      * no collection, so there is nothing to refund (§9 exclusions).
+     *
+     * CORRECTION ROUND 1 — cancelling a paid allocation is the other half
+     * of the same subscription amendment, so it is gated by the identical
+     * authority/provenance boundary. A customer cannot reach it either.
      */
-    public function cancelAdditionalLocationSlot(Business $business, int $actorUserId, ?string $reason = null): Business
+    public function cancelAdditionalLocationSlot(Business $business, LocationSlotAllocationAuthority $authority): Business
     {
-        return DB::transaction(function () use ($business, $actorUserId, $reason) {
+        $this->assertLocationSlotAllocationAuthority($authority);
+
+        return DB::transaction(function () use ($business, $authority) {
             $locked = $this->businessRepository->findForUpdate((int) $business->id);
 
             if ($locked === null) {
@@ -1078,10 +1100,34 @@ final class EntitlementManager
 
             $locked->forceFill(['additional_location_slots' => $to])->save();
 
-            $this->recordLocationSlotTransition($locked, $from, $to, $actorUserId, $reason ?? 'Additional physical-location allocation cancelled.');
+            $this->recordLocationSlotTransition($locked, $from, $to, $authority);
 
             return $locked->refresh();
         });
+    }
+
+    /**
+     * CORRECTION ROUND 1 — the authority half of the provenance boundary.
+     *
+     * LocationSlotAllocationAuthority already proves the caller supplied
+     * the evidence its provenance implies. This method proves the claim
+     * the value object cannot check for itself: that an operator id really
+     * belongs to a platform administrator. It is re-verified against the
+     * same users.is_admin truth EnsureUserIsAdministrator uses, so passing
+     * a customer's own id as an "operator" grants nothing.
+     *
+     * Verified-billing provenance is not re-checkable here by design: this
+     * class performs no provider call. The future billing caller carries
+     * that responsibility, exactly as
+     * allocateAdditionalBusinessSlotsFromVerifiedPayment() already assumes.
+     *
+     * @throws AuthorizationException
+     */
+    private function assertLocationSlotAllocationAuthority(LocationSlotAllocationAuthority $authority): void
+    {
+        if ($authority->isPlatformOperator()) {
+            $this->assertPlatformAdministrator((int) $authority->operatorUserId);
+        }
     }
 
     /**
@@ -1091,19 +1137,36 @@ final class EntitlementManager
      * both counts, because the transition table's own
      * from/to_additional_business_slots columns are for BUSINESS slots and
      * must never be reused for locations.
+     *
+     * CORRECTION ROUND 1 — the row now also records WHICH authority
+     * produced the change, reusing the columns RFC-004 Amendment 1 already
+     * added for exactly this purpose (actor_user_id for a deliberate
+     * operator action, requesting_customer_user_id + payment_idempotency_key
+     * for a verified-billing action). No new audit table and no new
+     * column: the provider reference rides in the additive payload Slice
+     * 1A already introduced.
      */
-    private function recordLocationSlotTransition(Business $business, int $from, int $to, int $actorUserId, string $reason): void
+    private function recordLocationSlotTransition(Business $business, int $from, int $to, LocationSlotAllocationAuthority $authority): void
     {
+        $payload = [
+            'business_id' => (int) $business->id,
+            'from_additional_location_slots' => $from,
+            'to_additional_location_slots' => $to,
+            'allocation_provenance' => $authority->provenance,
+        ];
+
+        if ($authority->billingProviderReference !== null) {
+            $payload['billing_provider_reference'] = $authority->billingProviderReference;
+        }
+
         $this->transitionRepository->create([
             'workspace_id' => $business->workspace_id,
             'transition_type' => WorkspaceEntitlementTransitionType::AdditionalLocationSlotsChanged,
-            'actor_user_id' => $actorUserId,
-            'reason' => $reason,
-            'payload' => [
-                'business_id' => (int) $business->id,
-                'from_additional_location_slots' => $from,
-                'to_additional_location_slots' => $to,
-            ],
+            'actor_user_id' => $authority->operatorUserId,
+            'requesting_customer_user_id' => $authority->requestingCustomerUserId,
+            'payment_idempotency_key' => $authority->billingIdempotencyKey,
+            'reason' => $authority->reason,
+            'payload' => $payload,
         ]);
     }
 

@@ -44,14 +44,27 @@ class EntitlementManagerBusinessToggleTest extends TestCase
     }
 
     /**
-     * @return array{workspace: Workspace, business: Business}
+     * @return array{workspace: Workspace, business: Business|null}
+     *
+     * @param  bool  $withBusiness  CX Slice 1A / RFC-004 §33 corrected Core
+     *                              to hold exactly ONE Business, so a
+     *                              reassignment DESTINATION must start
+     *                              empty or it is already at capacity. The
+     *                              tests that use a destination never touch
+     *                              its Business, so they pass false. No
+     *                              assertion changes.
      */
-    private function entitledWorkspaceWithBusiness(): array
+    private function entitledWorkspaceWithBusiness(bool $withBusiness = true): array
     {
         $owner = $this->createUser();
         $workspace = Workspace::create(['name' => 'Test Workspace', 'owner_user_id' => $owner->id, 'is_active' => true]);
         app(EntitlementManager::class)->assignFirstPlan($workspace, WorkspacePlanTier::Core, $this->createAdmin(), 'Fixture.', true, 0);
         $customer = Customer::create(['user_id' => $owner->id]);
+
+        if (! $withBusiness) {
+            return ['workspace' => $workspace->fresh(), 'business' => null];
+        }
+
         $business = app(BusinessRepository::class)->createForCustomerInWorkspace($customer, $workspace, [
             'name' => 'Test Business', 'industry' => 'photo_booth_service', 'country_code' => 'US', 'timezone' => 'America/New_York', 'currency_code' => 'USD',
         ]);
@@ -131,7 +144,7 @@ class EntitlementManagerBusinessToggleTest extends TestCase
     public function test_stale_business_after_reassignment_cannot_disable_using_old_workspace_authority(): void
     {
         ['workspace' => $oldWorkspace, 'business' => $business] = $this->entitledWorkspaceWithBusiness();
-        ['workspace' => $newWorkspace] = $this->entitledWorkspaceWithBusiness();
+        ['workspace' => $newWorkspace] = $this->entitledWorkspaceWithBusiness(withBusiness: false);
         $actor = $this->grantCrossAuthority($oldWorkspace, $newWorkspace);
 
         app(WorkspaceManager::class)->reassignBusiness($actor, $business, $newWorkspace);
@@ -150,7 +163,7 @@ class EntitlementManagerBusinessToggleTest extends TestCase
     public function test_stale_business_after_reassignment_cannot_enable_using_old_workspace_authority(): void
     {
         ['workspace' => $oldWorkspace, 'business' => $business] = $this->entitledWorkspaceWithBusiness();
-        ['workspace' => $newWorkspace] = $this->entitledWorkspaceWithBusiness();
+        ['workspace' => $newWorkspace] = $this->entitledWorkspaceWithBusiness(withBusiness: false);
         $actor = $this->grantCrossAuthority($oldWorkspace, $newWorkspace);
 
         app(EntitlementManager::class)->disableBusinessFeature($business, PlatformFeature::Crm, $actor);
@@ -163,7 +176,7 @@ class EntitlementManagerBusinessToggleTest extends TestCase
     public function test_freshly_loaded_business_in_new_workspace_succeeds_with_only_new_workspace_authority(): void
     {
         ['workspace' => $oldWorkspace, 'business' => $business] = $this->entitledWorkspaceWithBusiness();
-        ['workspace' => $newWorkspace] = $this->entitledWorkspaceWithBusiness();
+        ['workspace' => $newWorkspace] = $this->entitledWorkspaceWithBusiness(withBusiness: false);
         $actor = $this->grantCrossAuthority($oldWorkspace, $newWorkspace);
 
         // grantCrossAuthority() grants $oldWorkspace's owner (the actor
@@ -250,7 +263,7 @@ class EntitlementManagerBusinessToggleTest extends TestCase
     public function test_stale_business_mismatch_still_wins_over_inactive_workspace_check(): void
     {
         ['workspace' => $oldWorkspace, 'business' => $business] = $this->entitledWorkspaceWithBusiness();
-        ['workspace' => $newWorkspace] = $this->entitledWorkspaceWithBusiness();
+        ['workspace' => $newWorkspace] = $this->entitledWorkspaceWithBusiness(withBusiness: false);
         $actor = $this->grantCrossAuthority($oldWorkspace, $newWorkspace);
 
         app(WorkspaceManager::class)->reassignBusiness($actor, $business, $newWorkspace);

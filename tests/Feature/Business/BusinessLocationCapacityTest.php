@@ -10,9 +10,13 @@ use App\Exceptions\Entitlement\LocationSlotLimitExceededException;
 use App\Exceptions\Entitlement\PrimaryLocationCannotBeArchivedException;
 use App\Library\Business\BusinessLocationManager;
 use App\Library\Entitlement\EntitlementManager;
+use App\Library\Entitlement\LocationSlotAllocationAuthority;
 use App\Models\BusinessLocation;
+use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use InvalidArgumentException;
+use ReflectionMethod;
 use Tests\Feature\Business\Concerns\CreatesLocationCapacityFixtures;
 use Tests\TestCase;
 
@@ -340,7 +344,7 @@ class BusinessLocationCapacityTest extends TestCase
         $business->refresh();
 
         try {
-            $this->entitlements()->cancelAdditionalLocationSlot($business, $customer->user_id);
+            $this->entitlements()->cancelAdditionalLocationSlot($business, $this->operatorLocationSlotAuthority());
             $this->fail('Cancelling must be refused while 4 locations are active and capacity would drop to 3.');
         } catch (LocationAllocationCancellationRefusedException $exception) {
             $this->assertSame(4, $exception->activeCount);
@@ -364,7 +368,7 @@ class BusinessLocationCapacityTest extends TestCase
         $this->setAdditionalLocationSlots($business, 1);
         $business->refresh();
 
-        $this->entitlements()->cancelAdditionalLocationSlot($business, $customer->user_id);
+        $this->entitlements()->cancelAdditionalLocationSlot($business, $this->operatorLocationSlotAuthority());
 
         $this->assertSame(0, (int) $business->refresh()->additional_location_slots);
 
@@ -379,6 +383,10 @@ class BusinessLocationCapacityTest extends TestCase
         $this->assertSame((int) $business->id, $payload['business_id']);
         $this->assertSame(1, $payload['from_additional_location_slots']);
         $this->assertSame(0, $payload['to_additional_location_slots']);
+
+        // Correction round 1 — the audit row records WHICH authority made
+        // the change, so a paid-capacity movement is never anonymous.
+        $this->assertSame('platform_operator', $payload['allocation_provenance']);
     }
 
     /** Cancelling with nothing allocated is a true no-op, never a false audit row. */
@@ -388,7 +396,7 @@ class BusinessLocationCapacityTest extends TestCase
         $this->seedActiveLocations($business, 1);
         $business->refresh();
 
-        $this->entitlements()->cancelAdditionalLocationSlot($business, $customer->user_id);
+        $this->entitlements()->cancelAdditionalLocationSlot($business, $this->operatorLocationSlotAuthority());
 
         $this->assertSame(0, (int) $business->refresh()->additional_location_slots);
         $this->assertDatabaseMissing('workspace_entitlement_transitions', [
@@ -404,7 +412,7 @@ class BusinessLocationCapacityTest extends TestCase
         $this->seedActiveLocations($business, 3);
         $business->refresh();
 
-        $this->entitlements()->allocateAdditionalLocationSlot($business, $customer->user_id);
+        $this->entitlements()->allocateAdditionalLocationSlot($business, $this->operatorLocationSlotAuthority());
 
         $this->assertSame(1, (int) $business->refresh()->additional_location_slots);
 
@@ -420,13 +428,142 @@ class BusinessLocationCapacityTest extends TestCase
         $this->seedActiveLocations($business, 3);
         $business->refresh();
 
-        $this->entitlements()->allocateAdditionalLocationSlot($business, $customer->user_id);
-        $this->entitlements()->allocateAdditionalLocationSlot($business->refresh(), $customer->user_id);
+        $this->entitlements()->allocateAdditionalLocationSlot($business, $this->operatorLocationSlotAuthority());
+        $this->entitlements()->allocateAdditionalLocationSlot($business->refresh(), $this->operatorLocationSlotAuthority());
 
         $this->assertSame(2, (int) $business->refresh()->additional_location_slots);
 
         $this->expectException(LocationSlotLimitExceededException::class);
-        $this->entitlements()->allocateAdditionalLocationSlot($business->refresh(), $customer->user_id);
+        $this->entitlements()->allocateAdditionalLocationSlot($business->refresh(), $this->operatorLocationSlotAuthority());
+    }
+
+    // -----------------------------------------------------------------
+    // Correction round 1 — the allocation seam's authority/provenance
+    // boundary. The paid slot seam must not mutate merely because some
+    // caller invoked it with an actor id.
+    // -----------------------------------------------------------------
+
+    /** A customer's own user id is not operator provenance, and grants nothing. */
+    public function test_allocation_refuses_a_customer_posing_as_a_platform_operator(): void
+    {
+        [$customer, $business] = $this->locationTenant();
+        $this->seedActiveLocations($business, 3);
+        $business->refresh();
+
+        $authority = LocationSlotAllocationAuthority::fromPlatformOperator(
+            (int) $customer->user_id,
+            'Attempted self-authorised allocation.',
+        );
+
+        try {
+            $this->entitlements()->allocateAdditionalLocationSlot($business, $authority);
+            $this->fail('A non-administrator must not be able to allocate a paid location slot.');
+        } catch (AuthorizationException) {
+            // expected
+        }
+
+        $this->assertSame(0, (int) $business->refresh()->additional_location_slots);
+        $this->assertDatabaseMissing('workspace_entitlement_transitions', [
+            'workspace_id' => $business->workspace_id,
+            'transition_type' => 'additional_location_slots_changed',
+        ]);
+    }
+
+    /** Cancellation is gated by the identical boundary. */
+    public function test_cancellation_refuses_a_customer_posing_as_a_platform_operator(): void
+    {
+        [$customer, $business] = $this->locationTenant();
+        $this->seedActiveLocations($business, 3);
+        $this->setAdditionalLocationSlots($business, 1);
+        $business->refresh();
+
+        $authority = LocationSlotAllocationAuthority::fromPlatformOperator(
+            (int) $customer->user_id,
+            'Attempted self-authorised cancellation.',
+        );
+
+        try {
+            $this->entitlements()->cancelAdditionalLocationSlot($business, $authority);
+            $this->fail('A non-administrator must not be able to cancel a paid location slot.');
+        } catch (AuthorizationException) {
+            // expected
+        }
+
+        $this->assertSame(1, (int) $business->refresh()->additional_location_slots);
+        $this->assertDatabaseMissing('workspace_entitlement_transitions', [
+            'workspace_id' => $business->workspace_id,
+            'transition_type' => 'additional_location_slots_changed',
+        ]);
+    }
+
+    /**
+     * Verified-billing provenance cannot be manufactured without the
+     * evidence it claims to carry. Empty strings are rejected at
+     * construction, so no caller can fabricate a payment it never took.
+     */
+    public function test_verified_billing_authority_requires_real_evidence(): void
+    {
+        [$customer] = $this->locationTenant();
+
+        $this->expectException(InvalidArgumentException::class);
+
+        LocationSlotAllocationAuthority::fromVerifiedBilling(
+            (int) $customer->user_id,
+            '',
+            '',
+            'Fabricated evidence.',
+        );
+    }
+
+    /** A genuine verified-billing caller records its evidence on the audit row. */
+    public function test_verified_billing_allocation_records_its_payment_evidence(): void
+    {
+        [$customer, $business] = $this->locationTenant();
+        $this->seedActiveLocations($business, 3);
+        $business->refresh();
+
+        $this->entitlements()->allocateAdditionalLocationSlot(
+            $business,
+            $this->verifiedBillingLocationSlotAuthority((int) $customer->user_id, 'idem_key_loc_1', 'prov_ref_loc_1'),
+        );
+
+        $this->assertSame(1, (int) $business->refresh()->additional_location_slots);
+
+        $transition = DB::table('workspace_entitlement_transitions')
+            ->where('workspace_id', $business->workspace_id)
+            ->where('transition_type', 'additional_location_slots_changed')
+            ->first();
+
+        $this->assertNotNull($transition);
+        $this->assertNull($transition->actor_user_id);
+        $this->assertSame((int) $customer->user_id, (int) $transition->requesting_customer_user_id);
+        $this->assertSame('idem_key_loc_1', $transition->payment_idempotency_key);
+
+        $payload = json_decode((string) $transition->payload, true);
+        $this->assertSame('verified_billing', $payload['allocation_provenance']);
+        $this->assertSame('prov_ref_loc_1', $payload['billing_provider_reference']);
+    }
+
+    /**
+     * The seam's signature itself is the guarantee: it accepts no actor id,
+     * so no caller anywhere can allocate paid capacity by supplying one.
+     */
+    public function test_the_allocation_seam_accepts_no_bare_actor_id(): void
+    {
+        foreach (['allocateAdditionalLocationSlot', 'cancelAdditionalLocationSlot'] as $method) {
+            $parameters = (new ReflectionMethod(EntitlementManager::class, $method))->getParameters();
+
+            $this->assertCount(2, $parameters, $method . '() must take exactly the Business and an explicit authority.');
+            $this->assertSame(
+                LocationSlotAllocationAuthority::class,
+                (string) $parameters[1]->getType(),
+                $method . '() must demand LocationSlotAllocationAuthority, never an actor id.',
+            );
+            $this->assertFalse(
+                $parameters[1]->isOptional(),
+                $method . '() must not let a caller omit the authority.',
+            );
+        }
     }
 
     // -----------------------------------------------------------------

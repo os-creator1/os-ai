@@ -35,9 +35,17 @@ class EntitlementManagerPresentationTest extends TestCase
     }
 
     /**
-     * @return array{workspace: Workspace, business: Business}
+     * @return array{workspace: Workspace, business: Business|null}
+     *
+     * @param  bool  $withBusiness  CX Slice 1A / RFC-004 §33 corrected Core
+     *                              to hold exactly ONE Business, so a
+     *                              reassignment DESTINATION must start
+     *                              empty or it is already at capacity. The
+     *                              test that uses a destination never
+     *                              touches its Business, so it passes
+     *                              false. No assertion changes.
      */
-    private function createWorkspaceWithBusiness(bool $assign = true): array
+    private function createWorkspaceWithBusiness(bool $assign = true, bool $withBusiness = true): array
     {
         $owner = User::create([
             'first_name' => 'Owner', 'last_name' => 'User',
@@ -46,16 +54,18 @@ class EntitlementManagerPresentationTest extends TestCase
         ]);
         $customer = Customer::create(['user_id' => $owner->id]);
         $workspace = Workspace::create(['name' => 'Test Workspace', 'owner_user_id' => $owner->id, 'is_active' => true]);
-        $business = app(BusinessRepository::class)->createForCustomerInWorkspace($customer, $workspace, [
-            'name' => 'Test Business', 'industry' => 'photo_booth_service',
-            'country_code' => 'US', 'timezone' => 'America/New_York', 'currency_code' => 'USD',
-        ]);
+        $business = $withBusiness
+            ? app(BusinessRepository::class)->createForCustomerInWorkspace($customer, $workspace, [
+                'name' => 'Test Business', 'industry' => 'photo_booth_service',
+                'country_code' => 'US', 'timezone' => 'America/New_York', 'currency_code' => 'USD',
+            ])
+            : null;
 
         if ($assign) {
             app(EntitlementManager::class)->assignFirstPlan($workspace, WorkspacePlanTier::Core, $this->createAdmin(), 'Fixture assignment.', true, 0);
         }
 
-        return ['workspace' => $workspace->fresh(), 'business' => $business->fresh()];
+        return ['workspace' => $workspace->fresh(), 'business' => $business?->fresh()];
     }
 
     // --- listPlanCatalogSummaries() -----------------------------------------
@@ -75,8 +85,12 @@ class EntitlementManagerPresentationTest extends TestCase
         $core = $summaries[0];
 
         $this->assertSame('Core', $core->displayName);
-        $this->assertSame(3, $core->businessSlotIncluded);
-        $this->assertSame(5, $core->businessSlotMax);
+        // CX Slice 1A / RFC-004 §33: Core and Growth hold exactly ONE
+        // Business/client account. The 3/5 figures this assertion once
+        // carried were the conflated reading of RFC-004 §2 — 3-included /
+        // 5-max now governs PHYSICAL LOCATIONS, a separate entitlement.
+        $this->assertSame(1, $core->businessSlotIncluded);
+        $this->assertSame(1, $core->businessSlotMax);
         $this->assertFalse($core->unlimitedBusinessSlots);
         $this->assertContains('crm', $core->planFeatureKeys);
         $this->assertContains('calendar', $core->planFeatureKeys);
@@ -321,7 +335,7 @@ class EntitlementManagerPresentationTest extends TestCase
     public function test_stale_or_reassigned_business_returns_an_empty_map(): void
     {
         ['workspace' => $oldWorkspace, 'business' => $business] = $this->createWorkspaceWithBusiness();
-        ['workspace' => $newWorkspace] = $this->createWorkspaceWithBusiness();
+        ['workspace' => $newWorkspace] = $this->createWorkspaceWithBusiness(withBusiness: false);
         $newWorkspace->update(['owner_user_id' => $oldWorkspace->owner_user_id]);
 
         app(\App\Library\Workspace\WorkspaceManager::class)->reassignBusiness((int) $oldWorkspace->owner_user_id, $business, $newWorkspace);

@@ -3,8 +3,10 @@
 namespace Tests\Feature\Business;
 
 use App\Enums\Business\BusinessLocationLifecycleState;
-use App\Library\Business\BusinessLocationManager;
+use App\Exceptions\Entitlement\LocationSlotLimitExceededException;
+use App\Library\Business\BusinessManager;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Tests\Feature\Business\Concerns\CreatesLocationCapacityFixtures;
 use Tests\TestCase;
 
@@ -180,63 +182,123 @@ class BusinessLocationBoundaryTest extends TestCase
     }
 
     /**
-     * The legacy onboarding location step is documented HONESTLY, not
-     * claimed to be behind the boundary.
+     * CORRECTION ROUND 2 — the ONBOARDING chain now goes through the
+     * canonical boundary too, so `upsertPrimary()` has no production caller
+     * left at all. This is the mechanical half of that proof; the
+     * behavioural half is the T-LOC-10 onboarding test below.
      *
-     * Contract §7.3b point 2 asks for
-     * `BusinessOnboardingController::storeLocation()` to be migrated onto
-     * the boundary. The real call chain is
-     * `storeLocation()` → `OnboardingManager::saveLocationStep()` →
+     * The chain is
+     * `BusinessOnboardingController::storeLocation()` →
+     * `OnboardingManager::saveLocationStep()` →
      * `BusinessManager::upsertPrimaryLocation()` →
-     * `EloquentBusinessLocationRepository::upsertPrimary()`, and neither
-     * `OnboardingManager` nor `BusinessManager` is inside the §22 Slice 1A
-     * allowlist. Rather than silently widen that allowlist, this slice
-     * leaves the chain untouched and reports the blocker.
+     * `BusinessLocationManager::createLocation()`/`updateLocation()`.
      *
-     * That is SAFE today, and this test proves why: `upsertPrimary()` only
-     * ever creates a row when the Business has no primary location, which
-     * is the Business's first location and therefore always inside the
-     * three included on every tier. It can never oversubscribe capacity.
+     * `upsertPrimary()` itself is kept because many test fixtures build
+     * onboarding state through it, but nothing in `app/` may call it: it
+     * creates an active row with no capacity assertion, which is exactly
+     * the thing the boundary exists to prevent.
      */
-    public function test_the_onboarding_upsert_path_can_only_ever_create_the_first_location(): void
+    public function test_no_production_code_calls_the_unguarded_upsert_primary_seam(): void
     {
-        [, $business] = $this->locationTenant();
+        $callers = [];
 
-        $repository = app(\App\Repositories\Contracts\BusinessLocationRepository::class);
+        foreach ($this->productionPhpFiles() as $file) {
+            $relative = str_replace('\\', '/', substr($file, strlen(base_path()) + 1));
 
-        // No primary yet — the only creating case.
-        $first = $repository->upsertPrimary($business, $this->locationPayload(['name' => 'Onboarded']));
+            // The interface declaration itself is not a call.
+            if ($relative === 'app/Repositories/Contracts/BusinessLocationRepository.php'
+                || $relative === 'app/Repositories/Eloquent/EloquentBusinessLocationRepository.php') {
+                continue;
+            }
 
-        $this->assertSame(BusinessLocationLifecycleState::Active, $first->lifecycle_state, 'A row created through the legacy path is active.');
-        $this->assertTrue((bool) $first->is_primary);
-        $this->assertSame(1, $this->activeLocationCount($business));
-
-        // Every later call UPDATES that same primary — it never adds a row,
-        // so the legacy path cannot increase the active count again.
-        foreach (['Renamed once', 'Renamed twice'] as $name) {
-            $updated = $repository->upsertPrimary($business, $this->locationPayload(['name' => $name]));
-
-            $this->assertSame((int) $first->id, (int) $updated->id);
-            $this->assertSame(1, $this->activeLocationCount($business));
+            if (str_contains((string) file_get_contents($file), 'upsertPrimary(')) {
+                $callers[] = $relative;
+            }
         }
 
-        // And a Business always retains a primary while it has any active
-        // location, because archiving the primary requires reassignment and
-        // the last active location cannot be archived at all — so the
-        // creating branch above is unreachable a second time.
-        $this->manager()->createLocation($business, $this->locationPayload(['name' => 'Second']));
-        $this->manager()->archiveLocation($business, $first, (string) $business->refresh()->locations()->where('name', 'Second')->first()->uid);
-
         $this->assertSame(
-            1,
-            (int) $business->refresh()->locations()->where('is_primary', true)->where('lifecycle_state', BusinessLocationLifecycleState::Active->value)->count(),
-            'A Business with active locations always has exactly one active primary.'
+            [],
+            $callers,
+            "upsertPrimary() creates an active location with NO capacity assertion.\n"
+            . "No production file may call it — the onboarding chain now delegates to\n"
+            . 'App\\Library\\Business\\BusinessLocationManager (contract §7.3b).'
         );
     }
 
-    private function manager(): \App\Library\Business\BusinessLocationManager
+    /**
+     * T-LOC-10 (onboarding) — the real onboarding write chain delegates to
+     * the boundary. Proven behaviourally, through
+     * `BusinessManager::upsertPrimaryLocation()`, the exact method
+     * `OnboardingManager::saveLocationStep()` calls.
+     *
+     * "Delegates to" is a runtime property, so this drives the real chain
+     * and observes boundary-only outcomes: the capacity assertion runs, the
+     * refusal is a complete no-op, and the created row carries the
+     * lifecycle state only the boundary's persistence seam sets.
+     */
+    public function test_the_onboarding_write_chain_delegates_to_the_boundary(): void
     {
-        return app(\App\Library\Business\BusinessLocationManager::class);
+        [$customer, $business] = $this->locationTenant();
+
+        $businessManager = app(BusinessManager::class);
+
+        // 1. The first location — created through the boundary, active and
+        //    primary, exactly as onboarding has always produced.
+        $first = $businessManager->upsertPrimaryLocation($customer, $business, $this->locationPayload(['name' => 'Onboarded']));
+
+        $this->assertSame(BusinessLocationLifecycleState::Active, $first->lifecycle_state);
+        $this->assertTrue((bool) $first->is_primary);
+        $this->assertSame(1, $this->activeLocationCount($business));
+
+        // 2. Re-running the step UPDATES the same primary. It is not
+        //    count-increasing, so it is never refused for capacity.
+        $again = $businessManager->upsertPrimaryLocation($customer, $business->fresh(), $this->locationPayload(['name' => 'Renamed']));
+
+        $this->assertSame((int) $first->id, (int) $again->id);
+        $this->assertSame('Renamed', $again->name);
+        $this->assertSame(1, $this->activeLocationCount($business));
+
+        // 3. The capacity assertion really does run on the creating branch.
+        //    A Business at its ceiling with no primary cannot be given one
+        //    through onboarding — before this correction it could.
+        [$fullCustomer, $full] = $this->locationTenant();
+        $this->seedActiveLocations($full, 5);
+        $this->setAdditionalLocationSlots($full, 2);
+        DB::table('business_locations')
+            ->where('business_id', $full->id)
+            ->update(['is_primary' => false]);
+
+        try {
+            $businessManager->upsertPrimaryLocation($fullCustomer, $full->fresh(), $this->locationPayload(['name' => 'Sixth']));
+            $this->fail('The onboarding chain must run the boundary capacity assertion.');
+        } catch (LocationSlotLimitExceededException) {
+            // expected — thrown by BusinessLocationManager, never by the
+            // legacy repository seam, which has no capacity check at all.
+        }
+
+        $this->assertSame(5, $this->activeLocationCount($full), 'A refused onboarding creation must be a complete no-op.');
+    }
+
+    /**
+     * The onboarding controller already renders every entitlement denial
+     * the boundary can now raise on the first location, so delegating
+     * changed no customer-visible error handling.
+     */
+    public function test_the_onboarding_controller_already_handles_the_boundary_denials(): void
+    {
+        $source = (string) file_get_contents(app_path('Http/Controllers/Customer/BusinessOnboardingController.php'));
+
+        foreach ([
+            'WorkspacePlanUnassignedException',
+            'InactiveWorkspacePlanException',
+            'SuspendedWorkspacePlanException',
+        ] as $handled) {
+            $this->assertStringContainsString(
+                $handled,
+                $source,
+                'BusinessOnboardingController must already render ' . $handled . ' as a capacity denial.'
+            );
+        }
     }
 
     /**

@@ -1059,9 +1059,27 @@ operator-editable (§12.5), so `down()` restores `business_slot_included = 3` /
 this migration wrote, and otherwise **aborts the rollback** rather than
 overwriting a later deliberate operator change. If any location is in the
 `archived` lifecycle state, `down()` likewise fails closed rather than silently
-resurrecting archived locations as active. Full rules are in
+resurrecting archived locations as active.
+
+**`down()` deletes nothing.** Entitlement and audit history is immutable, so the
+rollback never removes a `workspace_entitlement_transitions` row: if any
+location-capacity transition exists, or any transition carries the additive
+audit payload, `down()` refuses. It also refuses while any Business holds a
+nonzero paid or complimentary location counter, and while the operator-editable
+physical-location catalog columns hold anything other than what this migration
+seeded. Every one of those checks runs as a **preflight before any mutation**,
+so a refusal leaves the database completely unchanged — no partially restored
+catalog value and no partially dropped column. Full rules are in
 `docs/automation/CUSTOMER-EXPERIENCE-MANAGED-MESSAGING-AUTOMATIONS-CONTRACT.md`
 §23.3.
+
+**Allocating a paid location slot is not customer-callable.** The 4th/5th
+location is priced at 50% of the plan price, and Core/Growth plan prices are
+still undecided (§28.1 of the customer-experience contract), so there is no
+amount to charge and no billing path. The allocation seam therefore requires
+explicit verified-billing or platform-operator provenance rather than an actor
+id, and no customer route, action or view control may reach it. See §22.5 of
+that contract.
 
 ### 33.6 Grandfathering — no existing Business or location may become inaccessible
 

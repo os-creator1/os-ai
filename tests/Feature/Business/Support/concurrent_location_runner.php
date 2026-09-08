@@ -78,9 +78,18 @@ try {
             exit(0);
 
         case 'allocate':
+            // Correction round 1 — the seam takes an explicit authority, not
+            // an actor id. $argv[3] is a platform administrator's id, which
+            // EntitlementManager re-verifies against users.is_admin.
             $business = App\Models\Business::findOrFail((int) $argv[2]);
             $updated = $app->make(App\Library\Entitlement\EntitlementManager::class)
-                ->allocateAdditionalLocationSlot($business, (int) $argv[3]);
+                ->allocateAdditionalLocationSlot(
+                    $business,
+                    App\Library\Entitlement\LocationSlotAllocationAuthority::fromPlatformOperator(
+                        (int) $argv[3],
+                        'Concurrency runner operator allocation.',
+                    ),
+                );
             fwrite(STDOUT, sprintf("OK additional_location_slots=%d\n", $updated->additional_location_slots));
 
             exit(0);

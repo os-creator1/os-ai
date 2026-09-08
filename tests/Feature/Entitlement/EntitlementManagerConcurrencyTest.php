@@ -67,6 +67,11 @@ class EntitlementManagerConcurrencyTest extends TestCase
                 'price' => $this->originalCoreCatalogState['price'],
                 'currency_id' => $this->originalCoreCatalogState['currency_id'],
                 'additional_business_slot_price_ratio' => $this->originalCoreCatalogState['additional_business_slot_price_ratio'],
+                // assignAtBoundary() widens these two to the bounded band
+                // the scenarios race inside; restore the seeded values so
+                // no later test sees a Core row this class edited.
+                'business_slot_included' => $this->originalCoreCatalogState['business_slot_included'],
+                'business_slot_max' => $this->originalCoreCatalogState['business_slot_max'],
             ]);
         }
 
@@ -188,6 +193,22 @@ class EntitlementManagerConcurrencyTest extends TestCase
 
     private function assignAtBoundary(Workspace $workspace, int $existingBusinesses, int $slots = 2): void
     {
+        // CX Slice 1A / RFC-004 §33 corrected Core to 1 included / 1 max
+        // Business, which leaves no BOUNDED band for these scenarios to
+        // race inside: every fixture would already be over capacity before
+        // the race began, and the tests would pass vacuously.
+        //
+        // These scenarios are about LOCK ORDERING at a capacity boundary,
+        // not about the retail tier numbers, so the bounded band this class
+        // has always relied on (3 included / 5 max) is set explicitly here.
+        // setUp() snapshots the shared Core catalog row and tearDown()
+        // restores it, so nothing leaks into other tests — this class
+        // deliberately runs without RefreshDatabase.
+        DB::table('workspace_plan_catalog')->where('tier', 'core')->update([
+            'business_slot_included' => 3,
+            'business_slot_max' => 5,
+        ]);
+
         app(EntitlementManager::class)->assignFirstPlan($workspace, WorkspacePlanTier::Core, $this->createAdminUserId(), 'Concurrency fixture.', true, $slots);
 
         $customer = Customer::firstOrCreate(['user_id' => $workspace->owner_user_id]);

@@ -4,7 +4,10 @@ namespace Tests\Feature\Business;
 
 use App\Enums\Business\BusinessLocationLifecycleState;
 use App\Library\Business\BusinessLocationManager;
+use App\Library\Usage\BillingProfileManager;
+use App\Library\Usage\UsageWalletManager;
 use App\Library\Workspace\WorkspaceManager;
+use App\Models\Currency;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Tests\Feature\Business\Concerns\CreatesLocationCapacityFixtures;
@@ -92,6 +95,22 @@ class BusinessLocationInvariantsTest extends TestCase
 
         // Exactly one wallet and one payer assignment per BUSINESS, no
         // matter how many locations it has.
+        //
+        // Both are provisioned by InitializeBusinessUsageProfile, which is
+        // wired to two ShouldDispatchAfterCommit events. RefreshDatabase
+        // never commits, so those listeners cannot fire inside a test —
+        // the provisioning managers are therefore invoked directly here,
+        // twice each, which also proves the count is driven by the
+        // Business and never by its three locations.
+        Currency::query()->where('code', 'USD')->exists()
+            || Currency::create(['name' => 'US Dollar', 'code' => 'USD', 'format' => '$', 'status' => true]);
+
+        foreach ([1, 2] as $ignored) {
+            app(UsageWalletManager::class)->initializeWalletForNewBusiness((int) $business->id);
+            app(BillingProfileManager::class)->initializePayerAssignmentForBusiness((int) $business->id);
+        }
+
+        $this->assertSame(3, $this->activeLocationCount($business));
         $this->assertSame(1, (int) DB::table('business_usage_wallets')->where('business_id', $business->id)->count());
         $this->assertSame(1, (int) DB::table('business_payer_assignments')->where('business_id', $business->id)->count());
     }
@@ -163,8 +182,11 @@ class BusinessLocationInvariantsTest extends TestCase
         $second = $manager->createLocation($business->fresh(), $this->locationPayload(['name' => 'Two']));
         $manager->createLocation($business->fresh(), $this->locationPayload(['name' => 'Three']));
 
+        // Correction round 1 — no customer can do this; only a verified
+        // billing caller or a platform operator can. Operator provenance is
+        // used so the fixture reflects a real permitted caller.
         app(\App\Library\Entitlement\EntitlementManager::class)
-            ->allocateAdditionalLocationSlot($business->fresh(), $customer->user_id);
+            ->allocateAdditionalLocationSlot($business->fresh(), $this->operatorLocationSlotAuthority());
 
         $manager->createLocation($business->fresh(), $this->locationPayload(['name' => 'Four']));
         $manager->archiveLocation($business->fresh(), $second);
@@ -218,7 +240,10 @@ class BusinessLocationInvariantsTest extends TestCase
             'The locations page must not display a currency amount while pricing is undecided.'
         );
 
-        // The honest label is present instead.
-        $response->assertSee('it does not take a payment now', false);
+        // Correction round 1 — the honest, NON-ACTIONABLE explanation is
+        // present instead, and it promises no future charge.
+        $response->assertSee('Extra locations cannot be added yet.', false);
+        $response->assertDontSee('next invoice', false);
+        $response->assertDontSee('does not take a payment now', false);
     }
 }

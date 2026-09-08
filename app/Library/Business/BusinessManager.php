@@ -46,6 +46,16 @@ class BusinessManager
         private readonly WorkspaceManager $workspaceManager,
         private readonly EntitlementManager $entitlementManager,
         private readonly ?WorkspaceRepository $workspaceRepository = null,
+        // Customer Experience Slice 1A — the canonical physical-location
+        // boundary (contract §7.3b). Declared as a TRAILING, defaulted-null
+        // dependency for exactly the reason $workspaceRepository above is:
+        // pre-existing test doubles are built as
+        // `new class(...) extends BusinessManager` with the historical
+        // constructor arity and must stay source-compatible. The
+        // production, container-resolved instance always receives the real
+        // binding; a manually constructed instance that omits it falls back
+        // to resolving the same binding at the point of use.
+        private readonly ?BusinessLocationManager $locationManager = null,
     ) {
     }
 
@@ -153,14 +163,53 @@ class BusinessManager
     }
 
     /**
-     * Upsert the business's single primary location. Delegates the
-     * one-primary invariant entirely to BusinessLocationRepository.
+     * Upsert the business's single primary location.
+     *
+     * CUSTOMER EXPERIENCE SLICE 1A (contract §7.3b point 2) — this is the
+     * onboarding location step's real write site. The chain is
+     * BusinessOnboardingController::storeLocation() ->
+     * OnboardingManager::saveLocationStep() -> here ->
+     * BusinessLocationRepository. It is a CUSTOMER-REACHABLE
+     * active-location-count-increasing writer, so it must delegate to the
+     * one canonical boundary rather than write directly; "the first
+     * location is always within the included three" is application
+     * behaviour, not a database guarantee, and would leave a second
+     * production writer outside the boundary.
+     *
+     * Both branches now go through BusinessLocationManager:
+     *
+     *   - no primary yet  -> createLocation(), which asserts capacity while
+     *     holding the Business row lock BEFORE the count-increasing write,
+     *     and which sets primary status and dispatches
+     *     BusinessPrimaryLocationUpdated itself for a first location;
+     *   - primary exists  -> updateLocation(), which changes no count and
+     *     therefore runs no capacity decision. There is deliberately no
+     *     second, nested capacity assertion on either branch.
+     *
+     * Laravel nests the inner transaction as a savepoint inside
+     * OnboardingManager::saveLocationStep()'s own transaction, so the
+     * Business row lock is held for the whole outer unit of work and the
+     * lock order (Business row, then write) is unchanged.
+     *
+     * Existing onboarding behaviour is preserved exactly: the same single
+     * primary location is created or updated, and
+     * BusinessPrimaryLocationUpdated is dispatched exactly once either way.
      */
     public function upsertPrimaryLocation(Customer $customer, Business $business, array $attributes): BusinessLocation
     {
         $this->assertOwnership($customer, $business);
 
-        $location = DB::transaction(fn () => $this->locationRepository->upsertPrimary($business, $attributes));
+        $locationManager = $this->locationManager ?? app(BusinessLocationManager::class);
+
+        $existingPrimary = $this->locationRepository->findPrimary($business);
+
+        if ($existingPrimary === null) {
+            // Count-increasing. createLocation() dispatches
+            // BusinessPrimaryLocationUpdated for the first active location.
+            return $locationManager->createLocation($business, $attributes);
+        }
+
+        $location = $locationManager->updateLocation($business, $existingPrimary, $attributes);
 
         BusinessPrimaryLocationUpdated::dispatch($business->id, $location->id);
 

@@ -254,6 +254,28 @@ class BusinessManagerTest extends TestCase
 
         $customer = $this->createCustomer();
         $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
+
+        // Customer Experience Slice 1A — upsertPrimaryLocation() now writes
+        // through BusinessLocationManager, the canonical capacity boundary
+        // (contract §7.3b, §22.4), so the Workspace needs the plan
+        // assignment production always guarantees by this point:
+        // BusinessManager::createBusiness() runs
+        // assertCanCreateAnotherBusiness() first, which itself refuses an
+        // unassigned Workspace. The fixture's repository shortcut skipped
+        // that, so it is supplied here. No assertion below is changed.
+        $admin = \App\Models\User::create([
+            'first_name' => 'Admin', 'last_name' => 'User', 'email' => 'admin' . uniqid('', true) . '@example.test',
+            'status' => true, 'is_admin' => true, 'is_customer' => false, 'active_portal' => 'admin',
+        ]);
+        app(\App\Library\Entitlement\EntitlementManager::class)->assignFirstPlan(
+            \App\Models\Workspace::query()->findOrFail($business->workspace_id),
+            \App\Enums\Entitlement\WorkspacePlanTier::Core,
+            $admin->id,
+            'Fixture.',
+            true,
+            0,
+        );
+
         $manager = app(BusinessManager::class);
 
         $first = $manager->upsertPrimaryLocation($customer, $business, [

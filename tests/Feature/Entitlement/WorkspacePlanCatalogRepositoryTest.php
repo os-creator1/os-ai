@@ -68,8 +68,13 @@ class WorkspacePlanCatalogRepositoryTest extends TestCase
 
         $this->assertNotNull($core);
         $this->assertSame(WorkspacePlanTier::Core, $core->tier);
-        $this->assertSame(3, $core->business_slot_included);
-        $this->assertSame(5, $core->business_slot_max);
+        // CX Slice 1A / RFC-004 §33: Core and Growth hold exactly ONE
+        // Business/client account. 3-included / 5-max now governs PHYSICAL
+        // LOCATIONS, which is a separate, additive entitlement.
+        $this->assertSame(1, $core->business_slot_included);
+        $this->assertSame(1, $core->business_slot_max);
+        $this->assertSame(3, (int) $core->location_slot_included);
+        $this->assertSame(5, (int) $core->location_slot_max);
         $this->assertFalse($core->unlimited_business_slots);
     }
 

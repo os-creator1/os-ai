@@ -33,7 +33,16 @@ class EntitlementManagerDecisionTest extends TestCase
     /**
      * @return array{workspace: Workspace, business: Business}
      */
-    private function createWorkspaceWithBusiness(bool $assign = true): array
+    /**
+     * @param  bool  $withBusiness  CX Slice 1A / RFC-004 §33 corrected Core
+     *                              to hold exactly ONE Business, so a
+     *                              reassignment DESTINATION must start
+     *                              empty or it is already at capacity. The
+     *                              tests that use a destination never touch
+     *                              its Business, so they pass false. No
+     *                              assertion changes.
+     */
+    private function createWorkspaceWithBusiness(bool $assign = true, bool $withBusiness = true): array
     {
         $owner = User::create([
             'first_name' => 'Owner', 'last_name' => 'User',
@@ -42,16 +51,18 @@ class EntitlementManagerDecisionTest extends TestCase
         ]);
         $customer = Customer::create(['user_id' => $owner->id]);
         $workspace = Workspace::create(['name' => 'Test Workspace', 'owner_user_id' => $owner->id, 'is_active' => true]);
-        $business = app(BusinessRepository::class)->createForCustomerInWorkspace($customer, $workspace, [
-            'name' => 'Test Business', 'industry' => 'photo_booth_service',
-            'country_code' => 'US', 'timezone' => 'America/New_York', 'currency_code' => 'USD',
-        ]);
+        $business = $withBusiness
+            ? app(BusinessRepository::class)->createForCustomerInWorkspace($customer, $workspace, [
+                'name' => 'Test Business', 'industry' => 'photo_booth_service',
+                'country_code' => 'US', 'timezone' => 'America/New_York', 'currency_code' => 'USD',
+            ])
+            : null;
 
         if ($assign) {
             app(EntitlementManager::class)->assignFirstPlan($workspace, WorkspacePlanTier::Core, $this->createAdmin(), 'Fixture assignment.', true, 0);
         }
 
-        return ['workspace' => $workspace->fresh(), 'business' => $business->fresh()];
+        return ['workspace' => $workspace->fresh(), 'business' => $business?->fresh()];
     }
 
     public function test_unknown_feature_key_denies_before_any_lookup(): void
@@ -121,7 +132,7 @@ class EntitlementManagerDecisionTest extends TestCase
         // succeed — otherwise it fails closed with
         // WorkspacePlanUnassignedException before the stale-Business state
         // this test needs is ever created.
-        ['workspace' => $newWorkspace] = $this->createWorkspaceWithBusiness();
+        ['workspace' => $newWorkspace] = $this->createWorkspaceWithBusiness(withBusiness: false);
 
         $newWorkspace->update(['owner_user_id' => $oldWorkspace->owner_user_id]);
 
@@ -134,7 +145,7 @@ class EntitlementManagerDecisionTest extends TestCase
     public function test_business_decided_against_its_current_workspace_succeeds_after_reassignment(): void
     {
         ['workspace' => $oldWorkspace, 'business' => $business] = $this->createWorkspaceWithBusiness();
-        ['workspace' => $newWorkspace] = $this->createWorkspaceWithBusiness();
+        ['workspace' => $newWorkspace] = $this->createWorkspaceWithBusiness(withBusiness: false);
 
         $newWorkspace->update(['owner_user_id' => $oldWorkspace->owner_user_id]);
 

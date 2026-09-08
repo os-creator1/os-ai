@@ -157,9 +157,9 @@ class BusinessLocationConcurrencyTest extends TestCase
      */
     public function test_allocation_and_creation_cannot_race_into_an_invalid_state(): void
     {
-        [$business, , , $ownerUserId] = $this->committedTenant(activeLocations: 3, returnOwner: true);
+        [$business, , , $operatorUserId] = $this->committedTenant(activeLocations: 3, returnOperator: true);
 
-        $allocator = new Process([$this->phpBinary(), self::RUNNER, 'allocate', (string) $business->id, (string) $ownerUserId]);
+        $allocator = new Process([$this->phpBinary(), self::RUNNER, 'allocate', (string) $business->id, (string) $operatorUserId]);
         $creator = new Process([$this->phpBinary(), self::RUNNER, 'create-location', (string) $business->id]);
 
         $allocator->start();
@@ -193,7 +193,7 @@ class BusinessLocationConcurrencyTest extends TestCase
     // Committed fixtures (no RefreshDatabase — see the class docblock)
     // -----------------------------------------------------------------
 
-    private function committedTenant(int $activeLocations, bool $withArchived = false, bool $returnOwner = false): array
+    private function committedTenant(int $activeLocations, bool $withArchived = false, bool $returnOperator = false): array
     {
         $this->ensureAppConfig();
 
@@ -247,8 +247,11 @@ class BusinessLocationConcurrencyTest extends TestCase
             $archivedUid = $this->insertLocation($business->id, 'Race Archived', false, BusinessLocationLifecycleState::Archived);
         }
 
-        return $returnOwner
-            ? [$business->fresh(), $archivedUid, null, $userId]
+        // Correction round 1 — the paid-allocation seam demands operator
+        // (or verified-billing) provenance, so the race fixture hands back
+        // the ADMINISTRATOR id, not the customer owner id.
+        return $returnOperator
+            ? [$business->fresh(), $archivedUid, null, $adminId]
             : [$business->fresh(), $archivedUid];
     }
 

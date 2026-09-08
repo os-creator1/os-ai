@@ -7,6 +7,7 @@ use App\Enums\Business\BusinessServiceMode;
 use App\Enums\Business\BusinessStatus;
 use App\Enums\Entitlement\WorkspacePlanTier;
 use App\Library\Entitlement\EntitlementManager;
+use App\Library\Entitlement\LocationSlotAllocationAuthority;
 use App\Models\AppConfig;
 use App\Models\Business;
 use App\Models\BusinessLocation;
@@ -128,6 +129,11 @@ trait CreatesLocationCapacityFixtures
             'service_mode' => BusinessServiceMode::Storefront->value,
             'address_line_1' => '2 Test Street',
             'city' => 'New York',
+            // UpsertBusinessLocationRequest conditionally requires `region`
+            // for a storefront or service-area location, so the shared
+            // payload carries it and is valid for the edit route as well as
+            // the create route.
+            'region' => 'NY',
             'country_code' => 'US',
             'public_address' => true,
         ], $overrides);
@@ -141,6 +147,36 @@ trait CreatesLocationCapacityFixtures
     protected function setGrandfatheredLocationSlots(Business $business, int $count): void
     {
         DB::table('businesses')->where('id', $business->id)->update(['grandfathered_location_slots' => $count]);
+    }
+
+    /**
+     * Correction round 1 — the paid-allocation seam refuses a bare actor
+     * id, so a domain test must present real provenance. Platform-operator
+     * provenance is used here because it is re-verifiable inside
+     * EntitlementManager against users.is_admin; a fresh administrator is
+     * created so the id genuinely holds that flag.
+     */
+    protected function operatorLocationSlotAuthority(string $reason = 'Test-support operator allocation.'): LocationSlotAllocationAuthority
+    {
+        return LocationSlotAllocationAuthority::fromPlatformOperator($this->platformAdminId(), $reason);
+    }
+
+    /**
+     * The other permitted provenance: a future billing caller that has
+     * already verified payment and presents its evidence.
+     */
+    protected function verifiedBillingLocationSlotAuthority(
+        int $requestingCustomerUserId,
+        ?string $idempotencyKey = null,
+        string $providerReference = 'test_provider_ref',
+        string $reason = 'Test-support verified-billing allocation.',
+    ): LocationSlotAllocationAuthority {
+        return LocationSlotAllocationAuthority::fromVerifiedBilling(
+            $requestingCustomerUserId,
+            $idempotencyKey ?? uniqid('loc_slot_', true),
+            $providerReference,
+            $reason,
+        );
     }
 
     protected function activeLocationCount(Business $business): int
