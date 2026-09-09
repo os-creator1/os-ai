@@ -330,152 +330,171 @@ A deployed `.env` carries `APP_LOGO`, so production is unaffected.
 
 ## 6. Verification
 
-Isolated worktree, isolated database `ultimatesms_testing_lane_d`. The
-canonical `ultimatesms_testing` database was never reset, migrated, truncated
-or written to.
+Isolated worktree, isolated database `ultimatesms_testing_lane_d`, PHP 8.3.30.
+The canonical `ultimatesms_testing` database was never reset, migrated,
+truncated or written to.
 
-Reference hashes for the worktree environment files, unchanged throughout:
+Reference values for the worktree environment files:
 
-| File | SHA-256 |
-|---|---|
-| `.env` | `9c6021963c81a7a9eef1e1c5b5e95a96c74affcd5b3f6d03a05444598bb640ce` |
-| `.env.testing` | `095665a5ea28a751556d61b82d3922942eba34ad0afd0271f3b0b16d327d8317` |
+| File | SHA-256 | mtime (epoch) |
+|---|---|---|
+| `.env` | `9c6021963c81a7a9eef1e1c5b5e95a96c74affcd5b3f6d03a05444598bb640ce` | `1788967564` |
+| `.env.testing` | `095665a5ea28a751556d61b82d3922942eba34ad0afd0271f3b0b16d327d8317` | `1788967318` |
+
+The developer's own copies, in the primary checkout, were untouched throughout:
+
+| File | SHA-256 | mtime (epoch) |
+|---|---|---|
+| `.env` | `9c6021963c81a7a9eef1e1c5b5e95a96c74affcd5b3f6d03a05444598bb640ce` | `1788387874` |
+| `.env.testing` | `7364d15b99e09adacfe4a845e30bee00404da195b6f17e2934f6da03f64e065c` | `1787208791` |
 
 ### 6.1 Focused isolation suite
 
-`tests/Feature/Support/TemporaryEnvironmentFileTest.php` — **28 tests, 79
-assertions, 0 failures**. It covers:
+`tests/Feature/Support/TemporaryEnvironmentFileTest.php` — **32 tests, 127
+assertions, 0 failures.**
 
-* the active file is a disposable copy, outside the repository, and exists;
-* the original basename and `environmentFile()` are preserved;
-* the copy is seeded from the active file;
-* each activation is unique and deletes the previous directory;
-* a `write_env()` write lands in the copy and neither real file changes;
-* a value written before re-activation does not survive it;
-* restoring returns the original path and filename, and is idempotent;
-* the real `.env` is restored after a direct hardcoded-path write;
-* eleven write/read round trips, including `backslash before n`;
-* absent versus explicitly empty keys;
-* a CRLF file, unquoted values, and prefix-colliding keys;
-* **subprocess probes** for normal completion, assertion failure and uncaught
-  exception, each asserting the child's temporary directory is gone and both
-  real files are unchanged;
-* **two genuinely concurrent subprocesses** — both started before either is
-  waited on — asserting different pids, different directories, and both
-  cleaned up;
-* no temporary directory belonging to this process outlives the suite.
+Beyond the structural checks it now proves, **before any teardown runs**:
 
-### 6.2 Repeated runs — determinism
+| Assertion | Why it matters |
+|---|---|
+| `AppConfig::setEnv()` changes the disposable file | The corrected writer reaches the right file |
+| The real `.env` **bytes** are unchanged | No damage |
+| The real `.env` **mtime** is unchanged | Stronger than bytes: proves the file was never even opened for writing, which a byte check alone cannot show |
+| The same two for `.env.testing` | Both real files |
+| Neither real file contains the written value | No disclosure window |
+| The real `.env` is not created when absent | Guarded, and where the file exists the writer is proven to resolve elsewhere |
+| A **second PHP process** reading both real files sees nothing this test wrote | The cross-process property snapshot/restore could never provide |
 
-Five consecutive focused runs, each followed by a hash check:
+### 6.2 All probe outcomes, as real subprocesses
 
-| Run | Result | `.env` | `.env.testing` | Leftover temp dirs |
+`tests/Fixtures/EnvironmentIsolationProbeTest.php` drives **both** production
+writers — `write_env()` and `AppConfig::setEnv()` — and is executed as a
+subprocess under every outcome:
+
+| Outcome | Result |
+|---|---|
+| Normal completion | Temp directory removed; both real files unchanged; no marker leaked |
+| Assertion failure | Same |
+| Uncaught exception | Same |
+| **Forced termination** (`SIGKILL`-equivalent, mid-test) | Both real files unchanged by **bytes and mtime**. The child's temp directory necessarily survives, because a killed process runs no teardown — which is exactly why it must live outside the repository. The test removes the orphan so nothing is left behind |
+
+The forced-termination case ran with 5 assertions; it was not skipped.
+
+### 6.3 Two concurrent `AppConfig` writers
+
+Both children are started before either is waited on, so their lifetimes
+overlap. Asserted: different pids, different disposable paths, different
+directories, neither real file mutated by bytes **or** mtime, no cross-process
+value leakage, and both temp directories removed.
+
+### 6.4 Repeated runs — determinism
+
+Five consecutive focused runs, each followed by a hash **and mtime** check:
+
+| Run | Result | `.env` bytes+mtime | `.env.testing` bytes+mtime | Leftover temp dirs |
 |---|---|---|---|---|
-| 1 | 28 tests, 79 assertions | identical | identical | 0 |
-| 2 | 28 tests, 79 assertions | identical | identical | 0 |
-| 3 | 28 tests, 79 assertions | identical | identical | 0 |
-| 4 | 28 tests, 79 assertions | identical | identical | 0 |
-| 5 | 28 tests, 79 assertions | identical | identical | 0 |
+| 1 | 32 tests, 127 assertions | unchanged | unchanged | 0 |
+| 2 | 32 tests, 127 assertions | unchanged | unchanged | 0 |
+| 3 | 32 tests, 127 assertions | unchanged | unchanged | 0 |
+| 4 | 32 tests, 127 assertions | unchanged | unchanged | 0 |
+| 5 | 32 tests, 127 assertions | unchanged | unchanged | 0 |
 
-### 6.3 Settings and Branding, against the pristine baseline
+### 6.5 Settings and Branding
 
-| Suite | Pristine base | With this branch | Delta |
-|---|---|---|---|
-| `tests/Feature/Settings` | 57 tests, 103 assertions, **21 errors, 12 failures** | 57 tests, 120 assertions, **21 errors, 0 failures** | **−12 failures**, +17 assertions, errors unchanged |
-| `tests/Feature/Branding` | 53 tests, 234 assertions, **19 errors**, 0 failures | 53 tests, 234 assertions, **19 errors**, 0 failures | unchanged |
+| Suite | Pristine base | This branch |
+|---|---|---|
+| `tests/Feature/Settings` | 57 tests, 103 assertions, 21 errors, **12 failures** | 57 tests, 120 assertions, 21 errors, **0 failures** |
+| `tests/Feature/Branding` | 53 tests, 234 assertions, 19 errors, 0 failures | 53 tests, **235** assertions, 19 errors, 0 failures |
 
-Every one of the 21 Settings errors and all 19 Branding errors is the same
-pre-existing, unrelated failure:
+Every one of those 40 errors is the same pre-existing, unrelated
+`Unable to locate Mix file: /js/core/theme-tokens.js`. Each error block was
+classified individually rather than assumed, and that asset is the only
+distinct missing one in the repository.
 
-```
-Unable to locate Mix file: /js/core/theme-tokens.js
-(View: resources/views/panels/scripts.blade.php)
-```
+Branding gains one assertion: the strengthened `APP_LOGO` check of §5.4.
 
-That asset is produced by a front-end build this branch does not run and must
-not repair. It was verified to be the *only* distinct missing asset, and every
-error block was classified individually rather than assumed.
+### 6.6 Full repository regression
 
-The twelve Settings failures that this branch removes were all the read-side
-defect of §3.3 — assertions comparing a written value against whatever
-`base_path('.env')` contained, for example:
+Both sides were run in the same worktree, against the same isolated database,
+with the same environment. The pristine side was produced by checking the four
+modified files back out from `origin/main` and moving the three new files
+aside, then restoring them.
 
-```
-Failed asserting that two strings are identical.
-- 'keep-this-secret'
-+ '
-'
-```
+| | Tests | Assertions | Errors | Failures |
+|---|---|---|---|---|
+| pristine `origin/main` | 5118 | 22005 | 976 | 28 |
+| this branch | 5150 | 22141 | 975 | 18 |
 
-### 6.4 Full repository regression, both sides
+The 32 extra tests are this branch's own suite. Compared by distinct failing or
+erroring test name: **13 fixed, 2 apparent regressions**, both investigated in
+§6.7 and shown to be pre-existing flakiness.
 
-Both runs were executed in the same worktree against the same isolated
-database, one after the other. The pristine side was produced by checking the
-two modified files back out from `origin/main` and moving the three new files
-aside, then restoring them afterwards.
+The pristine figures above were reproduced exactly by a second, independent
+full pristine run, which is why the 2-test delta could be attributed with
+confidence rather than guessed at.
 
-| | Tests | Assertions | Errors | Failures | Deprecations | Risky |
-|---|---|---|---|---|---|---|
-| pristine `origin/main` | 5118 | 22005 | 976 | 28 | 14 | 1 |
-| this branch | 5146 | 22104 | 975 | 16 | 14 | 1 |
+The 13 fixed are the twelve Settings read-side assertions plus
+`OpportunityManagerBeginRunTest::test_heartbeat_one_second_past_the_timeout_cutoff_is_abandoned`.
+That last one is not a settings test and this branch does not touch it. It was
+failing on pristine main because an earlier suite had written `APP_TIMEZONE`
+into the shared environment file. It is the cross-suite leak caught in the act,
+and the clearest evidence the defect produced failures that looked like
+unrelated product bugs.
 
-The 28 extra tests are this branch's own
-`TemporaryEnvironmentFileTest` (28 tests). Comparing the two runs by **distinct
-failing or erroring test name**:
-
-* **13 tests fixed**
-* **0 tests newly broken**
+### 6.7 The two apparent regressions are pre-existing flakiness — demonstrated, not assumed
 
 ```
-Tests\Feature\Opportunity\OpportunityManagerBeginRunTest
-    ::test_heartbeat_one_second_past_the_timeout_cutoff_is_abandoned
-Tests\Feature\Settings\PlatformSettingsGeneralWriteTest
-    ::test_valid_app_name_is_saved
-    ::test_explicit_empty_app_keyword_clears_it
-    ::test_explicit_empty_custom_script_clears_it
-    ::test_explicit_empty_footer_company_name_clears_it
-    ::test_explicit_empty_footer_copyright_text_clears_it
-    ::test_saving_advanced_custom_script_preserves_platform_and_appearance_values
-    ::test_saving_appearance_section_preserves_platform_and_advanced_values
-    ::test_saving_platform_section_preserves_appearance_and_advanced_values
-    ::test_submitting_license_alongside_a_valid_field_does_not_mutate_license
-    ::test_the_timezone_side_effect_no_longer_mutates_user_id_one
-Tests\Feature\Settings\PlatformSettingsSecretHandlingTest
-    ::test_blank_openai_api_key_preserves_the_existing_key
-    ::test_blank_smtp_password_preserves_the_existing_password
+Tests\Feature\Usage\UsageWalletManagerConcurrencyTest
+    ::test_concurrent_reserve_for_a_different_business_is_unaffected
+Tests\Feature\Usage\UsageWalletManagerSetActiveRateConcurrencyTest
+    ::test_same_meter_concurrent_rotations_serialize_with_strictly_increasing_versions_and_no_lost_update
 ```
 
-The `OpportunityManagerBeginRunTest` entry is worth naming. It is not a
-settings test and this branch does not touch it. It was failing on pristine
-main because an **earlier suite had written `APP_TIMEZONE` into the shared
-environment file**, and it stops failing once each test gets its own copy.
-That is the cross-suite leak of §2.3 caught in the act, and it is the clearest
-evidence that this defect was producing failures which looked like unrelated
-product bugs.
+The failure text is `Holder process never confirmed its lock.` — a spawned
+holder subprocess failing to signal within its timeout, not an environment
+assertion.
 
-The remaining 975 errors and 16 failures are identical in both runs. They are
-pre-existing and unrelated: the `theme-tokens.js` Mix asset accounts for the
-overwhelming majority (3864 occurrences in the run log, and it is the **only**
-distinct missing asset), and the residue is concurrency tests plus one test
-that hard-codes the literal database name `ultimatesms_testing` and therefore
-fails under any isolated lane database. **None is repaired here**, per the
-brief.
+Three pieces of evidence, all direct:
 
-### 6.5 Environment integrity after the full run
+1. **They pass in isolation on this branch**: running just those two files gives
+   5 tests, 33 assertions, 0 failures.
+2. **They fail intermittently in isolation on this branch**: six consecutive
+   runs of that pair produced a failure on the fifth
+   (`5 tests, 28 assertions, 1 error`), with no suite load at all.
+3. **They fail intermittently in isolation on PRISTINE `origin/main` too.** With
+   the working tree reverted to the base commit — `AppConfig` back on
+   `base_path('.env')`, the trait absent from `Tests\TestCase` — eight
+   consecutive runs of the same pair failed on the **first** repetition
+   (`5 tests, 22 assertions, 2 failures`) and passed the other seven.
 
-After the complete 5146-test regression on this branch:
+Point 3 is the one that settles it: the pair fails on unmodified `origin/main`,
+with none of this branch's code loaded. Observed failure rates — one in eight
+on pristine, one in six on this branch — are indistinguishable.
+
+The pristine full run has its own concurrency failures for the same reason:
+`EntitlementManagerConcurrencyTest` contributes eight and
+`WorkspaceManagerConcurrencyTest` another. The pristine totals were also
+identical across two independent full runs (5118 / 22005 / 976 / 28), so the
+baseline itself is stable; it is these individual subprocess-timing tests that
+are not.
+
+Nothing in this branch touches locking, transactions or subprocess spawning for
+the wallet, and the failing assertion is about a lock handshake, not an
+environment file.
+
+### 6.8 Environment integrity after every major run
+
+After the complete 5150-test regression on this branch:
 
 | Check | Result |
 |---|---|
-| `.env` | byte-identical to its starting hash |
-| `.env.testing` | byte-identical to its starting hash |
-| `aibos-env-*` directories left in the system temp directory | 0 |
-| Developer's real files in the primary checkout | untouched throughout |
-
-The pristine run, by contrast, modified `.env.testing` again — reconfirming the
-defect at the end of the exercise as well as at the start.
-
----
+| `.env` bytes | identical to the reference SHA-256 |
+| `.env.testing` bytes | identical to the reference SHA-256 |
+| `.env.testing` mtime | **unchanged** |
+| `.env` mtime | **moved** — attributed precisely in §5.1 to the three migrations `RefreshDatabase` runs, not to any writer under test. Measured independently: `migrate:fresh` alone reproduces it |
+| `aibos-env-*` directories remaining | 0 |
+| Generated `public/**` files remaining in the branch | 0 — the Branding and Website suites create them; each run's artifacts were deleted |
+| Developer's real files | untouched, bytes and mtimes both |
 
 ## 7. Changed paths
 
@@ -545,3 +564,6 @@ reported rather than modified.
 | `tests/Feature/Branding` and the Website suite write real files under `public/images/branding/**` and `public/images/websites/` during a run | Pre-existing test design. Removing it means editing those suites, which are outside this allowlist. The artifacts were deleted after each run so the worktree stayed clean |
 | One `PHPUnit Deprecations: 1` on every run | Present identically on the pristine base; it comes from `phpunit.xml` schema attributes removed in PHPUnit 11, not from any test |
 | The developer's real `.env` already contains `APP_NAME="Test App"` residue | Caused by earlier runs of this same defect. `.env` is on this branch's zero-change list, so the residue is reported, not corrected |
+| `UsageWalletManager*ConcurrencyTest` fail intermittently with `Holder process never confirmed its lock.` | Demonstrated flaky on unchanged code — one failure in six consecutive isolated runs (§6.7). Not caused by this branch and not repaired here |
+| `EntitlementManagerConcurrencyTest` and `WorkspaceManagerConcurrencyTest` failures | Same class of spawned-subprocess timing flakiness, present identically on pristine main |
+| `WorkspaceManagerTest::test_missing_onboarding_business_reference_throws` asserts the literal database name `ultimatesms_testing` | Fails under any isolated lane database. Pre-existing; a test-side hard-coding this branch is not scoped to change |
