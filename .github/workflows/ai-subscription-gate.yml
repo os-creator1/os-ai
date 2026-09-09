@@ -41,6 +41,14 @@ jobs:
       DB_DATABASE: ultimatesms_testing
       DB_USERNAME: ultimatesms_test
       DB_PASSWORD: Choose-A-Local-Test-Password
+      # Routes 1/2 (this gate) remain canonical-only, matching AGENTS.md
+      # and CLAUDE.md: the historical/enforcement standalone suites
+      # (tests/Feature/Workspace/Support/run_historical_m1a_suite.php,
+      # run_workspace_enforcement_suite.php) now require an explicit
+      # EXPECTED_TEST_DATABASE handoff from their caller — this job is
+      # that caller, and it hands down exactly the same canonical name
+      # DB_DATABASE above already uses, never a validated sibling.
+      EXPECTED_TEST_DATABASE: ultimatesms_testing
     services:
       mysql:
         image: mysql:8.0
