@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Symfony\Component\Process\PhpExecutableFinder;
 use Symfony\Component\Process\Process;
+use Tests\Support\TestDatabaseSafety;
 use Tests\TestCase;
 
 /**
@@ -71,6 +72,37 @@ class UsageWalletBackfillV1ConcurrencyTest extends TestCase
         parent::tearDown();
     }
 
+    /**
+     * The explicit database handoff every child process receives.
+     *
+     * Mirrors ConversationsConcurrencyTest::childEnvironment() exactly.
+     * The parent resolves and VALIDATES the disposable database it is
+     * itself connected to — TestDatabaseSafety::activeTestDatabase()
+     * throws unless it is the canonical test database or a clearly
+     * derived isolated sibling — and hands that exact name down under
+     * both keys: DB_DATABASE so the child connects to it, and
+     * EXPECTED_TEST_DATABASE so the child can prove it did.
+     *
+     * Relying on ambient inheritance alone would give the child the right
+     * value but no proof of it; passing it explicitly means the child can
+     * distinguish "the parent authorized this database" from "something
+     * in my environment happened to point here".
+     *
+     * Symfony merges this into the inherited environment, so the child
+     * still receives everything else it needs.
+     *
+     * @return array<string, string>
+     */
+    private function childEnvironment(): array
+    {
+        $database = TestDatabaseSafety::activeTestDatabase();
+
+        return [
+            'DB_DATABASE' => $database,
+            'EXPECTED_TEST_DATABASE' => $database,
+        ];
+    }
+
     private function phpBinary(): string
     {
         return (new PhpExecutableFinder())->find() ?: 'php';
@@ -90,6 +122,33 @@ putenv('APP_ENV=testing');
 \$app = require '{$bootstrapApp}';
 \$kernel = \$app->make(Illuminate\Contracts\Console\Kernel::class);
 \$kernel->bootstrap();
+
+// Fail-closed database guard, before the first database write.
+//
+// EXPECTED_TEST_DATABASE is MANDATORY. A missing value is not "no
+// expectation" — it means the parent handoff did not happen, so this
+// child cannot know which database it is authorized to write to and
+// must refuse rather than silently fall back to the canonical name.
+//
+// Tests\Support\TestDatabaseSafety is the single authority on which
+// names are permitted; it rejects empty, malformed, unsafe and
+// production-looking values, and never accepts a name merely because it
+// contains "test".
+const WRONG_DATABASE_EXIT_CODE = 3;
+
+\$expectedDatabase = getenv('EXPECTED_TEST_DATABASE');
+
+if (\$expectedDatabase === false || \$expectedDatabase === '') {
+    fwrite(STDERR, "Refusing to run: EXPECTED_TEST_DATABASE was not handed down by the parent test. Aborting before any database write.\n");
+    exit(WRONG_DATABASE_EXIT_CODE);
+}
+
+try {
+    \Tests\Support\TestDatabaseSafety::assertMatchesActiveTestDatabase(\$expectedDatabase);
+} catch (\RuntimeException \$e) {
+    fwrite(STDERR, 'Refusing to run: ' . \$e->getMessage() . " Aborting before any database write.\n");
+    exit(WRONG_DATABASE_EXIT_CODE);
+}
 
 try {
     \$result = (new \App\Library\Usage\Migration\UsageWalletBackfillV1())->run();
@@ -137,8 +196,8 @@ PHP;
     {
         $businessId = $this->createUnwalletedBusiness();
 
-        $runnerA = new Process([$this->phpBinary(), $this->runnerPath]);
-        $runnerB = new Process([$this->phpBinary(), $this->runnerPath]);
+        $runnerA = new Process([$this->phpBinary(), $this->runnerPath], null, $this->childEnvironment());
+        $runnerB = new Process([$this->phpBinary(), $this->runnerPath], null, $this->childEnvironment());
 
         $runnerA->start();
         $runnerB->start();
@@ -163,13 +222,13 @@ PHP;
     {
         $businessId = $this->createUnwalletedBusiness();
 
-        $first = new Process([$this->phpBinary(), $this->runnerPath]);
+        $first = new Process([$this->phpBinary(), $this->runnerPath], null, $this->childEnvironment());
         $first->run();
         $this->assertStringContainsString('OK:1', $first->getOutput());
 
         $countAfterFirst = DB::table('business_usage_wallets')->count();
 
-        $second = new Process([$this->phpBinary(), $this->runnerPath]);
+        $second = new Process([$this->phpBinary(), $this->runnerPath], null, $this->childEnvironment());
         $second->run();
         $this->assertStringContainsString('OK:0', $second->getOutput());
 
