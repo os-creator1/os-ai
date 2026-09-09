@@ -415,12 +415,36 @@
         /**
          * Update setting one line.
          *
+         * Addresses the environment file the application is CURRENTLY
+         * using, via app()->environmentFilePath(), rather than hardcoding
+         * base_path('.env').
+         *
+         * Two reasons, and neither changes this method's behaviour:
+         *
+         *  - Correctness. Under APP_ENV=testing Laravel loads
+         *    `.env.testing`, and every other writer in this repository
+         *    already honours that: App\Helpers\write_env() has always
+         *    used app()->environmentFilePath(). This method was the one
+         *    writer editing a different file from the one the framework
+         *    considers in force, so a value it wrote was invisible to the
+         *    environment that had actually been loaded.
+         *
+         *  - Isolation. Because it is the same seam, redirecting the
+         *    application's environment path now redirects this writer
+         *    too. Tests\Support\UsesTemporaryEnvironmentFile relies on
+         *    exactly that, so no test has to repair a shared real file
+         *    after the fact.
+         *
+         * In production nothing moves: the application's environment file
+         * IS base_path('.env') there, so this resolves to the same path
+         * it always did.
+         *
          * @param $key
          * @param $value
          */
         public static function setEnv($key, $value)
         {
-            $file_path = base_path('.env');
+            $file_path = app()->environmentFilePath();
             $data      = file($file_path);
             $data      = array_map(function ($data) use ($key, $value) {
                 return stristr($data, $key) ? "$key=\"$value\"\n" : $data;

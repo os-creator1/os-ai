@@ -11,6 +11,8 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Tests\TestCase;
 
+use function App\Helpers\write_env;
+
 /**
  * Design System M2 Platform Branding contract §6.3/§9 item 4. A renamed
  * non-image file is rejected despite a passing extension claim; SVG is
@@ -108,6 +110,24 @@ class BrandingUploadValidationTest extends TestCase
     public function test_a_valid_png_logo_upload_is_accepted_and_stored_with_a_content_addressed_name(): void
     {
         $this->actingAsAdmin(['access backend', 'general settings']);
+
+        // APP_LOGO must already exist in the environment file, because
+        // AppConfig::setEnv() is an UPDATE-only writer: it rewrites lines
+        // that already match the key and adds nothing when none does. A
+        // deployed `.env` carries APP_LOGO, so seeding it here reproduces
+        // production rather than relaxing anything.
+        //
+        // This assertion used to read base_path('.env') directly, which
+        // is a different file from the one the application has loaded
+        // under APP_ENV=testing. It therefore passed by observing a value
+        // an earlier run had left in the developer's own `.env`, not one
+        // this test wrote. Reading through the inherited isolation helper
+        // addresses the file the writer actually writes, and seeding a
+        // distinct placeholder first makes the assertion strictly
+        // stronger: it now proves the upload REPLACED a known value.
+        write_env('APP_LOGO', 'images/branding/default-logo.svg');
+        $this->assertSame('images/branding/default-logo.svg', $this->readActiveEnvValue('APP_LOGO'));
+
         $contents = base64_decode(self::VALID_PNG_BASE64);
         $file = UploadedFile::fake()->createWithContent('MyLogo.png', $contents);
 
@@ -115,18 +135,7 @@ class BrandingUploadValidationTest extends TestCase
 
         $expectedFilename = hash('sha256', $contents) . '.png';
         $this->assertFileExists(public_path("images/branding/logo/{$expectedFilename}"));
-        $this->assertSame("images/branding/logo/{$expectedFilename}", $this->readEnvValue('APP_LOGO'));
-    }
-
-    private function readEnvValue(string $key): ?string
-    {
-        $line = collect(file(base_path('.env')))->first(fn ($line) => str_starts_with($line, "{$key}="));
-
-        if ($line === null) {
-            return null;
-        }
-
-        return trim(explode('=', $line, 2)[1] ?? '', "\"\n");
+        $this->assertSame("images/branding/logo/{$expectedFilename}", $this->readActiveEnvValue('APP_LOGO'));
     }
 
     public function test_an_svg_upload_is_rejected_for_every_branding_field(): void

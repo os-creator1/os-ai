@@ -154,14 +154,39 @@ trait SettingsTestHelpers
         ], $overrides);
     }
 
+    /**
+     * Read one key back out of the environment file this test process is
+     * actually using.
+     *
+     * THE IMPLEMENTATION DELIBERATELY NO LONGER LIVES HERE. The copy
+     * this trait used to carry read `base_path('.env')` — the file
+     * App\Helpers\write_env() never touches under APP_ENV=testing,
+     * because the application's environment file is `.env.testing`
+     * there. The settings suite was therefore asserting against a file
+     * its own writes had not reached, and was really reading whatever
+     * the developer's `.env` happened to contain. It also decoded with
+     * `trim($value, "\"\n")`, which cannot strip the trailing `\r` of a
+     * CRLF line and so left the closing quote attached — the origin of
+     * actual values such as `AI Business OS"`.
+     *
+     * The single implementation is now
+     * Tests\Support\UsesTemporaryEnvironmentFile::readActiveEnvValue(),
+     * which Tests\TestCase applies to every test in this repository. It
+     * addresses the disposable copy the writers write, and decodes the
+     * exact quoting App\Helpers\format_dotenv_value() produces.
+     *
+     * This thin delegate exists so the settings suite keeps calling
+     * `readEnvValue()`, and so the shared name is not declared on
+     * Tests\TestCase itself: Tests\Feature\Branding\BrandingUploadValidationTest
+     * carries its own PRIVATE readEnvValue(), and PHP fatals when a
+     * subclass narrows an inherited protected method to private. Naming
+     * the trait method differently keeps this remediation inside its
+     * allowlist instead of forcing an edit to that unrelated file.
+     *
+     * @see \Tests\Support\UsesTemporaryEnvironmentFile::readActiveEnvValue()
+     */
     protected function readEnvValue(string $key): ?string
     {
-        $line = collect(file(base_path('.env')))->first(fn ($line) => str_starts_with($line, "{$key}="));
-
-        if ($line === null) {
-            return null;
-        }
-
-        return trim(explode('=', $line, 2)[1] ?? '', "\"\n");
+        return $this->readActiveEnvValue($key);
     }
 }

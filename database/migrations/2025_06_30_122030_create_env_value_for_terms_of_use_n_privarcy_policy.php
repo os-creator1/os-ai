@@ -6,7 +6,15 @@
 
         public function up()
         {
-            $envPath = base_path('.env');
+            // The environment file the application is CURRENTLY using.
+            // Was base_path('.env'), which is identical in production —
+            // there the active file IS base_path('.env') — but under
+            // APP_ENV=testing the framework has loaded .env.testing, and
+            // the test harness points the application at a disposable
+            // copy before this migration runs. Resolved once and reused
+            // by the file_exists guard, the read and the write below,
+            // exactly as before.
+            $envPath = app()->environmentFilePath();
 
             // Key-value pairs to update
             $envUpdates = [
