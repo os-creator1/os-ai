@@ -27,4 +27,15 @@ enum PlatformFeature: string
     case WhiteLabel = 'white_label';
     case AgencyPackageCapabilities = 'agency_package_capabilities';
     case ProspectOutreach = 'prospect_outreach';
+
+    /**
+     * Customer Experience Slice 3 §4.8 — additive, measurement-only.
+     *
+     * Messaging transport is measured (quantity and unit) without any retail
+     * rate: Slice 3 activates no rate, creates no
+     * platform_feature_usage_classifications row for this case, and takes no
+     * wallet reservation for telecom transport. A later slice that decides
+     * to price it is the one that adds those rows.
+     */
+    case MessagingTransport = 'messaging_transport';
 }

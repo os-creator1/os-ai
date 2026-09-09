@@ -157,6 +157,10 @@
                 \App\Repositories\Contracts\BusinessFeatureToggleRepository::class => \App\Repositories\Eloquent\EloquentBusinessFeatureToggleRepository::class,
                 \App\Repositories\Contracts\WorkspaceEntitlementTransitionRepository::class => \App\Repositories\Eloquent\EloquentWorkspaceEntitlementTransitionRepository::class,
                 \App\Repositories\Contracts\BusinessUsageWalletRepository::class => \App\Repositories\Eloquent\EloquentBusinessUsageWalletRepository::class,
+                // Customer Experience Slice 3 §4.8 — RFC-005's additive,
+                // measurement-only repository; the sole writer of
+                // business_usage_measurements.
+                \App\Repositories\Contracts\BusinessUsageMeasurementRepository::class => \App\Repositories\Eloquent\EloquentBusinessUsageMeasurementRepository::class,
                 \App\Repositories\Contracts\BusinessUsageRateRepository::class => \App\Repositories\Eloquent\EloquentBusinessUsageRateRepository::class,
                 \App\Repositories\Contracts\BusinessUsageRateActivationRepository::class => \App\Repositories\Eloquent\EloquentBusinessUsageRateActivationRepository::class,
                 \App\Repositories\Contracts\PlatformFeatureUsageClassificationRepository::class => \App\Repositories\Eloquent\EloquentPlatformFeatureUsageClassificationRepository::class,

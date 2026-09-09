@@ -42,6 +42,8 @@ use App\Models\BusinessBillingReceipt;
 use App\Repositories\Contracts\BusinessBillingReceiptRepository;
 use App\Repositories\Contracts\BusinessFeatureUsageLimitRepository;
 use App\Repositories\Contracts\BusinessUsageLedgerEntryRepository;
+use App\Repositories\Contracts\BusinessUsageMeasurementRepository;
+use App\Models\BusinessUsageMeasurement;
 use App\Repositories\Contracts\BusinessUsageLimitTransitionRepository;
 use App\Repositories\Contracts\BusinessUsageRateActivationRepository;
 use App\Repositories\Contracts\BusinessUsageRateRepository;
@@ -178,7 +180,46 @@ class UsageWalletManager
         private readonly BusinessUsageLimitTransitionRepository $limitTransitionRepository,
         private readonly BusinessUsageWalletBillingStatusTransitionRepository $billingStatusTransitionRepository,
         private readonly BusinessBillingReceiptRepository $receiptRepository,
+        // Customer Experience Slice 3 §4.8 — additive dependency only; no
+        // existing parameter is modified, reordered or removed.
+        private readonly BusinessUsageMeasurementRepository $measurementRepository,
     ) {
+    }
+
+    /**
+     * Customer Experience Slice 3 §4.8 — record that a measurable quantity of
+     * a feature was consumed, WITHOUT pricing it.
+     *
+     * This is deliberately not an accounting call. It takes no reservation,
+     * writes no ledger entry, activates no rate and creates no
+     * platform_feature_usage_classifications row; it only records quantity
+     * and unit against a Business, idempotently by $idempotencyKey.
+     *
+     * Kept here, on the manager, because RFC-005 requires UsageWalletManager
+     * to be the single write authority for usage-billing-adjacent state — and
+     * it delegates the write to the repository rather than touching the table
+     * itself, following this class's own established
+     * manager-calls-repository layering.
+     *
+     * $quantity is a decimal-safe string, matching reserve()'s own
+     * ?string $estimatedQuantity convention — never a native float.
+     */
+    public function recordMeasurement(
+        Business $business,
+        PlatformFeature $featureKey,
+        string $quantity,
+        string $unit,
+        string $idempotencyKey,
+        ?string $transportMarker = null,
+    ): BusinessUsageMeasurement {
+        return $this->measurementRepository->recordOnce(
+            $business,
+            $featureKey,
+            $quantity,
+            $unit,
+            $idempotencyKey,
+            $transportMarker,
+        );
     }
 
     /**
