@@ -393,6 +393,35 @@
 
             $data = null;
 
+            // Customer Experience Slice 3 §4.5 — managed-messaging
+            // delegation, before any legacy provider switch runs.
+            //
+            // A Business with an active managed identity sends through the
+            // platform's own transport, resolved entirely from the Business
+            // model, and never reaches SendCampaignSMS's provider case
+            // blocks. A Business without one returns null here and the
+            // legacy path below proceeds exactly as before.
+            //
+            // A managed Business whose identity cannot be used fails closed
+            // rather than falling back to a legacy provider.
+            $managedResult = \App\Library\Messaging\ManagedDispatchDelegate::attempt(
+                $input['business_id'] ?? null,
+                $phone,
+                $message,
+                $input['idempotency_token'] ?? null,
+                isset($input['media_url']) ? [(string) $input['media_url']] : [],
+                (string) $sms_count,
+            );
+
+            if ($managedResult !== null) {
+                return response()->json([
+                    'status'  => $managedResult->accepted ? 'success' : 'error',
+                    'message' => $managedResult->accepted
+                        ? __('locale.campaigns.campaign_successfully_sent')
+                        : __('locale.campaigns.campaign_sending_failed'),
+                ]);
+            }
+
             // RFC-005 Milestone 5 §C — null means "not an M5-qualifying
             // send, do not attach m5_token_action to the response at all";
             // any non-null value is the exact contract-locked action for

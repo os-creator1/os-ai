@@ -975,6 +975,31 @@
         {
             $getData = null;
 
+            // Customer Experience Slice 3 §4.5 — managed-messaging
+            // delegation, before any provider send method runs.
+            //
+            // This is the single point the bulk/scheduled path AND
+            // campaignBuilder()'s async chain (RunCampaign -> LoadCampaign ->
+            // SendMessage -> processSend -> here) both converge on, so one
+            // insertion covers every campaign entry route. A Business
+            // without a managed identity returns null and the legacy
+            // provider methods below run exactly as before.
+            $managedResult = \App\Library\Messaging\ManagedDispatchDelegate::attempt(
+                $this->business_id ?? null,
+                $preparedData['phone'] ?? null,
+                $preparedData['message'] ?? null,
+                null,
+                isset($preparedData['media_url']) ? [(string) $preparedData['media_url']] : [],
+                (string) ($preparedData['sms_count'] ?? 1),
+            );
+
+            if ($managedResult !== null) {
+                return (object) [
+                    'status' => $managedResult->accepted ? 'Delivered' : 'Failed',
+                    'cost'   => $preparedData['cost'] ?? 0,
+                ];
+            }
+
             if ($this->sms_type == 'plain' || $this->sms_type == 'unicode') {
                 $getData = $this->sendPlainSMS($preparedData);
             }
