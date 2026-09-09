@@ -41,7 +41,6 @@
 
 // locale Route
 ///new
-Route::post('/inbound/telnyx', [DLRController::class, 'inboundTelnyx']);
 
     Route::get('lang/{locale}', [LanguageController::class, 'swap']);
     Route::any('languages', [LanguageController::class, 'languages'])->name('languages');
@@ -73,7 +72,6 @@ Route::post('/inbound/telnyx', [DLRController::class, 'inboundTelnyx']);
     // Lane A's Agency Prospecting runtime already read via
     // config('services.openai.*').
 
-Route::post('/telnyx/webhook', [DLRController::class, 'inboundTelnyx']);
 
 
  

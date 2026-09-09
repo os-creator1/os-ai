@@ -2,9 +2,14 @@
 
     namespace App\Http\Controllers\Customer;
 
+    use App\Enums\Messaging\MessagingProvider;
+    use App\Enums\Messaging\WebhookRejectionReason;
     use App\Events\MessageReceived;
     use App\Http\Controllers\Controller;
     use App\Library\Business\LegacyBusinessResolver;
+    use App\Library\Messaging\InboundWebhookAttributionResolver;
+    use App\Library\Messaging\MessagingWebhookRejectionRecorder;
+    use App\Models\CustomerBasedSendingServer;
     use App\Library\SMSCounter;
     use App\Library\SpinText;
     use App\Models\Blacklists;
@@ -915,22 +920,36 @@ $chatBox->touch();
                 }
 
             } else {
+                // Customer Experience Slice 3 §4.6.5 — the shared fail-open
+                // boundary fix, for every provider that flows through this
+                // method. Previously an unattributable inbound message was
+                // written against whatever $user_id happened to be in scope
+                // (defaulting to 1), silently handing one tenant's message to
+                // another. There is no authoritative attribution here, so
+                // nothing is attributed: no Reports row, no ChatBox row, and
+                // no STOP/blacklist processing.
+                //
+                // This is deliberately NOT a claim that the other ~58
+                // providers now have signature verification — they do not.
+                // Only the unattributed write is removed.
+                app(MessagingWebhookRejectionRecorder::class)->record(
+                    WebhookRejectionReason::UnknownMapping,
+                    MessagingProvider::Telnyx,
+                    (string) json_encode([
+                        'sending_server_id' => $sending_server->id,
+                        'to' => $to,
+                    ]),
+                    null,
+                    $from,
+                );
 
-                Reports::create([
-                    'user_id'           => $user_id,
-                    'business_id'       => app(LegacyBusinessResolver::class)->resolveForCustomer((int) $user_id)?->id,
-                    'from'              => $from,
-                    'to'                => $to,
-                    'message'           => $message,
-                    'sms_type'          => $sms_type,
-                    'status'            => 'Delivered',
-                    'customer_status'   => 'Delivered',
-                    'direction'         => Reports::DIRECTION_INCOMING,
-                    'cost'              => $cost,
-                    'sms_count'         => $sms_count,
-                    'media_url'         => $media_url,
-                    'sending_server_id' => $sending_server->id,
-                ]);
+                // The method's existing generic "processed" response shape, so
+                // no legacy provider's polling/webhook expectations break.
+                if ($failed == null) {
+                    return $success;
+                }
+
+                return $failed;
             }
 
 
@@ -963,6 +982,74 @@ $chatBox->touch();
             }
 
             return $failed;
+        }
+
+        /**
+         * Customer Experience Slice 3 §4.6.1 — the managed Telnyx inbound
+         * route's entry point.
+         *
+         * Delegates immediately to the dual-signal attribution resolver: this
+         * method deliberately contains no attribution logic of its own, so the
+         * fail-closed rules live in exactly one place.
+         */
+        public function inboundTelnyxManaged(Request $request): JsonResponse
+        {
+            return app(InboundWebhookAttributionResolver::class)->handle($request);
+        }
+
+        /**
+         * Slice 3 §4.6.5 — true Twilio request-signature verification.
+         *
+         * Returns false when no active Twilio sending server's auth_token
+         * validates the signature, including when the header is absent.
+         */
+        private function twilioSignatureIsValid(Request $request): bool
+        {
+            $signature = $request->header('X-Twilio-Signature');
+
+            if (! is_string($signature) || $signature === '') {
+                return false;
+            }
+
+            $url = $request->fullUrl();
+            $params = $request->isMethod('POST') ? $request->post() : [];
+
+            $servers = SendingServer::query()
+                ->where('status', true)
+                ->where('type', SendingServer::TYPE_TWILIO)
+                ->get();
+
+            foreach ($servers as $server) {
+                $authToken = $server->auth_token ?? null;
+
+                if (! is_string($authToken) || $authToken === '') {
+                    continue;
+                }
+
+                $validator = new \Twilio\Security\RequestValidator($authToken);
+
+                if ($validator->validate($signature, $url, $params)) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /**
+         * Slice 3 §4.6.5 — read-only check for whether a sending server is a
+         * Business-facing BYO connection.
+         *
+         * Read-only by design: no column, cast or method is added to
+         * SendingServer or CustomerBasedSendingServer.
+         */
+        private function isBusinessFacingByoConnection(SendingServer $sendingServer): bool
+        {
+            // The link column is `sending_server`, holding the SendingServer's
+            // own id — see CustomerBasedSendingServer::sendingServer().
+            return CustomerBasedSendingServer::query()
+                ->where('sending_server', $sendingServer->id)
+                ->exists();
         }
 
         private function getSendingServer(string $gateway, string $type)
@@ -1007,6 +1094,26 @@ $chatBox->touch();
                 $gateway ?: SendingServer::TYPE_TWILIO,
                 $gateway ? 'uid' : SendingServer::TYPE_TWILIO
             );
+
+            // Customer Experience Slice 3 §4.6.5 — BYO Twilio, Option A.
+            // The route carries no tenant identifier and more than one Twilio
+            // SendingServer may be active, so verification iterates the active
+            // Twilio servers and accepts the first whose auth_token validates
+            // this request's signature. A genuine HMAC match against an
+            // independently-set secret is itself strong evidence of which
+            // account produced the request. A request that validates against
+            // none of them never reaches inboundDLR().
+            if (! $this->twilioSignatureIsValid($request)) {
+                app(MessagingWebhookRejectionRecorder::class)->record(
+                    WebhookRejectionReason::InvalidSignature,
+                    MessagingProvider::Telnyx,
+                    $request->getContent(),
+                    null,
+                    $from,
+                );
+
+                return $response->message('Invalid signature');
+            }
 
             $NumMedia = (int) $request->input('NumMedia');
             if ($NumMedia > 0) {
@@ -1427,6 +1534,34 @@ $chatBox->touch();
                         $gateway ?: SendingServer::TYPE_TELNYX,
                         $gateway ? 'uid' : SendingServer::TYPE_TELNYX
                     );
+
+                    // Customer Experience Slice 3 §4.6.5 — BYO Telnyx,
+                    // Option B: fail closed until upgraded. No SendingServer
+                    // column exists to hold a BYO customer's own Ed25519
+                    // webhook public key, so this request's authenticity
+                    // cannot be verified at all. Rather than process an
+                    // unverifiable inbound message, a Business-facing BYO
+                    // connection has inbound processing disabled outright.
+                    // Outbound sending is unaffected, and the relocated
+                    // advanced-settings UI states this honestly.
+                    //
+                    // An admin-only/legacy Telnyx connection with no
+                    // CustomerBasedSendingServer link is outside this gate and
+                    // keeps its pre-existing behaviour, including the
+                    // now-fixed shared default-to-user-1 removal.
+                    if ($sendingServer && $this->isBusinessFacingByoConnection($sendingServer)) {
+                        app(MessagingWebhookRejectionRecorder::class)->record(
+                            WebhookRejectionReason::UnknownMapping,
+                            MessagingProvider::Telnyx,
+                            $request->getContent(),
+                            null,
+                            $from,
+                        );
+
+                        // Nothing actionable to tell Telnyx: this is not a
+                        // signature-verified party we owe a retry signal to.
+                        return 'Inbound processing is disabled for this connection';
+                    }
 
 
 

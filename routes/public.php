@@ -24,6 +24,10 @@
     Route::any('dlr/infobip', 'Customer\DLRController@dlrInfobip')->name('dlr.infobip');
     Route::any('inbound/signalwire/{gateway?}', 'Customer\DLRController@inboundSignalwire')->name('inbound.signalwire');
     Route::any('inbound/telnyx/{gateway?}', 'Customer\DLRController@inboundTelnyx')->name('inbound.telnyx');
+    // Customer Experience Slice 3 §4.6.1 — the managed Telnyx inbound
+    // route. Distinct from the legacy BYO route above, which §4.6.5
+    // disables for Business-facing BYO connections.
+    Route::post('inbound/telnyx-managed', 'Customer\DLRController@inboundTelnyxManaged')->name('inbound.telnyx_managed');
     Route::any('inbound/teletopiasms/{gateway?}', 'Customer\DLRController@inboundTeletopiasms')->name('inbound.teletopiasms');
     Route::any('inbound/flowroute/{gateway?}', 'Customer\DLRController@inboundFlowRoute')->name('inbound.flowroute');
     Route::any('dlr/easysendsms', 'Customer\DLRController@dlrEasySendSMS')->name('dlr.easysendsms');
