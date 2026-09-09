@@ -1,8 +1,14 @@
 # MANUAL-LANE GOVERNANCE RECONCILIATION
 
-**Status:** Governance-only correction. Three paths, all documentation or
+**Status:** Governance-only correction. Four paths, all documentation or
 governance metadata. No product, test, migration, configuration, workflow or
 automation-code change. The merged PR #229 implementation is untouched.
+
+The contradictions are removed **in the source documents themselves**. An
+earlier revision of this branch added a clarifying object to the state file
+while leaving its absolute sentences in place; that was not enough, because a
+later clarification does not make an earlier absolute sentence consistent.
+Those sentences are now edited directly.
 
 **Base:** `b54441ed53540f085114946715985db1c565b6a7` — the PR #229 merge
 commit, `origin/main` at the time this branch was cut.
@@ -12,18 +18,25 @@ commit, `origin/main` at the time this branch was cut.
 ## 1. What this corrects, and what it does not
 
 GitHub's automated review of PR #229 raised two inconsistencies. Both were
-real, and both were about **repository governance**, not about the merged
-work. This document records them and the correction.
+real, both were about **repository governance**, and both were legitimate
+findings. This document records them and the correction.
 
-**Neither comment was meaningless, and neither identified a defect in the
-Lane E implementation.** PR #229 passed independent review on its own terms:
-exactly eleven allowlisted paths, one commit ahead and zero behind, no
-generated or production paths, the guarded runners requiring the explicit
-database handoff and delegating validation to `Tests\Support\TestDatabaseSafety`,
-and that shared authority itself unchanged. What the comments found is that
-**`AGENTS.md` did not describe the workflow that produced it.** A reviewer
-following `AGENTS.md` literally would have flagged compliant work as
-non-compliant — which is exactly what happened.
+**Stated precisely, because the distinction matters.** Lane E had direct
+human authorization, and its implementation was technically correct: exactly
+eleven allowlisted paths, one commit ahead and zero behind, no generated or
+production paths, the guarded runners requiring the explicit database handoff
+and delegating validation to `Tests\Support\TestDatabaseSafety`, and that
+shared authority itself unchanged. **But the repository's own instructions
+had not encoded that authorization route.** Read literally, `AGENTS.md` and
+the state file said the work was not permitted. So the review findings were
+correct as findings about the rules, and the rules — not the review — were
+what needed fixing.
+
+This document does **not** claim the previous instructions were already
+unambiguous, and it does not treat the automated review as having applied the
+wrong workflow. There was no documented right workflow to apply. The
+contradictions are removed prospectively by this branch, in the source
+documents themselves rather than by explanation.
 
 ### Comment 1 — the paused state file versus a human-authorized lane
 
@@ -33,19 +46,25 @@ tests, and locked slice contract"* for automation-managed work, while
 `implementation_authorized: false`, `allowed_paths: []` and
 `gate_label: "ai:paused"`.
 
-Read together and applied to everything, that says no work of any kind may
-proceed. But the same state file's `forbidden_scope` closes with:
+The state file went further still, in prose: *"This closure state authorizes
+no further work of any kind."* Read together and applied to everything, that
+says no work of any kind may proceed. The same file's `forbidden_scope` also
+carried absolutes — *"No implementation is currently authorized"*, *"No
+product, test, schema, config, or route change of any kind"* — with nothing
+scoping them to the loop.
+
+Those sentences genuinely contradicted the file's own closing line:
 
 > "Any future work requires separate, explicit human authorization"
 
-Lane E **had** that authorization: the human issued a concrete task with its
-own exact scope, allowlist, branch, worktree and verification requirements.
-The gap was that `AGENTS.md` never said how a per-task human authorization
-relates to the paused autonomous state file, so the two readings could not be
-reconciled from the repository alone. Lane E disclosed the ambiguity in
+Lane E **had** that authorization. But an absolute sentence is not made
+consistent by a later clarification elsewhere, so the first pass of this
+branch — which added a `governance_scope` object and left the absolutes
+standing — did not actually remove the contradiction. **This revision edits
+the absolute sentences themselves**, so the file no longer says two
+incompatible things. Lane E had earlier disclosed the ambiguity in
 `USAGE-SUBPROCESS-DATABASE-SAFETY-COMPLETION.md` §1 rather than resolving it,
-because resolving it was outside that lane's own allowlist. This document
-resolves it.
+because resolving it was outside that lane's own allowlist.
 
 An adjacent nuance the existing documents already had, and which was not
 enough on its own: `docs/automation/AI-SUBSCRIPTION-LOOP.md` defines a
@@ -66,8 +85,11 @@ live migration, and both then trusted results the other was mutating.
 
 Lane E used `ultimatesms_testing_lane_e`, which the merged helper validates
 as a safe sibling, and never reset or wrote the canonical database. That was
-both authorized and safer. `AGENTS.md` had simply not been updated to match
-the behaviour already merged.
+both authorized and safer. `AGENTS.md` had not been updated to match the
+behaviour already merged, and `CLAUDE.md` carried the same canonical-only
+absolute under **"Non-negotiable rules"**, a heading whose own preamble said
+those rules applied to the Routine and to manually-run Claude Code alike.
+Both are corrected here.
 
 ---
 
@@ -75,7 +97,25 @@ the behaviour already merged.
 
 `AGENTS.md` now opens its review rules by making a reviewer choose which of
 two routes is in front of them, because they draw scope from different
-places.
+places. `CLAUDE.md` draws the same line one level finer, separating three
+execution routes, because it also has to account for a human running Claude
+Code interactively against the Routine's *own* locked slice:
+
+| Route | Scope comes from | Database |
+|---|---|---|
+| **1. Autonomous Claude Routine** | `AI-AUTONOMY-STATE.json`'s locked slice | `ultimatesms_testing` only; GitHub Actions is the authoritative gate |
+| **2. Manual completion of that same locked slice** | the same state file | `ultimatesms_testing` only — identical restrictions, only execution differs |
+| **3. Separately human-authorized manual lane** | **its own task contract**, governed by `AGENTS.md` | canonical **or** a validated `TestDatabaseSafety` sibling; distinct siblings when lanes write concurrently |
+
+Route 3 is the one that had no documented home. Routes 1 and 2 are unchanged
+by this branch, and **the Routine's canonical-database restriction is not
+weakened** — it is stated as binding routes 1 and 2, exactly as it always
+did.
+
+Across all three routes, without exception: Claude never opens the PR and
+never merges it; ChatGPT reviews the pushed branch and opens the PR; the
+human alone merges; and no production-looking database, real data, or
+production-looking credential is ever permitted.
 
 ### A. Autonomous state-loop work
 
@@ -164,17 +204,37 @@ files — 2 executable scripts, 4 workflows, 80 documents.**
 validator anywhere in the control plane. Every one reads named fields from a
 parsed object, so an added key is inert by construction.
 
-### Proof the clarification is compatible
+### Proof the changes are compatible
 
-The added `governance_scope` object is **documentation only**. Mechanically
-verified:
+Two kinds of change were made to the state file: one added
+`governance_scope` object, and edits to **explanatory string values** in
+`current_slice`, `forbidden_scope` and a new `forbidden_scope_applies_to`
+key. Neither kind touches an authorization value.
+
+**Are the edited strings machine-consumed?** Checked directly:
+
+| Field | Machine use | Effect of this edit |
+|---|---|---|
+| `forbidden_scope` | **Not referenced anywhere under `.github/`** | none possible |
+| `forbidden_scope_applies_to` | new key, referenced nowhere | none possible |
+| `governance_scope` | new key, referenced nowhere | none possible |
+| `current_slice` | `ai_subscription_gate.js` `loadState()` requires it to be a **non-empty string**; `rfc-003-m3-aggregate-regression.yml` compares it for exact equality with `'Milestone 3 aggregate regression'` | still a non-empty string; still not equal to that sentinel, exactly as before — that comparison was already false and remains false |
+
+Mechanically verified against the pre-correction file:
 
 ```
-keys added  : ["governance_scope"]
+keys added  : ["forbidden_scope_applies_to", "governance_scope"]
 keys removed: []
-DEEP-EQUAL after removing the added key: PASS
-All 10 consumed fields unchanged: PASS
+All 12 machine-consumed authorization fields unchanged: PASS
 ```
+
+The twelve fields checked are every field any consumer reads for an
+authorization decision: `repository`, `base_branch`, `head_branch`,
+`merge_policy`, `advance_automatically`, `implementation_authorized`,
+`status`, `active_pull_request`, `expected_head_sha`, `contract_source`,
+`require_exact_scope`, `start_automatically_after_contract_merge` — plus
+`allowed_paths`, `required_new_paths`, `required_test_commands`,
+`gate_label`, `success_label` and `failure_label`, all likewise unchanged.
 
 Re-running each consumer's own decision function against the file before and
 after gives identical answers:
@@ -246,39 +306,61 @@ Both agree on every governance-critical value:
 
 ## 6. Contradiction search
 
-| Searched for | Result |
-|---|---|
-| tests may run "only" against `ultimatesms_testing` | The only remaining match in `AGENTS.md` is the corrected sentence, which now reads "only against a **disposable** database" and then names both permitted forms. One residual match in `CLAUDE.md` — see below |
-| all manually authorized work is forbidden | none |
-| `implementation_authorized` applied indiscriminately to manual lanes | none — both `AGENTS.md` matches now scope it explicitly to the autonomous loop |
-| derived disposable test databases forbidden | none |
+Searched across the whole repository, excluding `vendor/` and
+`node_modules/`. Every match is classified; **no active contradictory
+instruction remains.**
 
-**One residual item, deliberately left alone.** `CLAUDE.md` still carries
-*"**Use only `ultimatesms_testing`.** Do not improvise a database inside a
-Routine."* Read in full, that sentence is already scoped to the autonomous
-**Routine**, which uses the GitHub Actions gate rather than a local database,
-so it does not actually contradict the corrected `AGENTS.md` policy for
-manual lanes. Its bold lead-in is nevertheless ambiguous when quoted alone.
-`CLAUDE.md` is **outside this branch's three-path allowlist**, so it was not
-edited. It is recorded here so a future authorized task can align the wording
-deliberately rather than a lane widening its own scope to do it silently.
+| Searched for | Matches | Classification |
+|---|---|---|
+| `"no further work of any kind"` | 0 active | **Removed.** `current_slice` now says "no further AUTONOMOUS state-loop work and grants no standing implementation authority of any kind", and states that a separate explicit human instruction may authorize one manual lane |
+| `"No implementation is currently authorized"` | 0 active | **Removed.** Now "No implementation is authorized for the autonomous state loop, which holds no standing implementation authority" |
+| `"No product, test, schema, config, or route change of any kind"` | 0 active | **Removed.** Now scoped to "the autonomous state loop's own contract", naming the manual lane's own allowlist as what binds instead |
+| `"Use only ultimatesms_testing"` / ``"Use only `ultimatesms_testing`"`` | 0 active | **Removed.** `CLAUDE.md` now reads "Routes 1 and 2: use only `ultimatesms_testing`" and states what route 3 uses |
+| canonical-only database instructions | 0 active | `AGENTS.md` names both permitted forms; `CLAUDE.md` scopes the canonical rule to routes 1 and 2 |
+| autonomous-only fields applied to all manual lanes | 0 active | `AGENTS.md`, `CLAUDE.md` and the state file all now scope them explicitly |
+| historical mentions in merged contract documents | 2 | **Not active instructions, and each is self-scoped in its own text** — see below |
+
+Every surviving match of a searched phrase, enumerated:
+
+| File | Line | Why it is not an active contradiction |
+|---|---|---|
+| `docs/automation/MANUAL-LANE-GOVERNANCE-RECONCILIATION.md` | §1, §6 | This document, quoting the superseded wording deliberately so the correction record and this search table are readable |
+| `docs/automation/RFC-005-M6-CONTRACT.md` | 413 | *"Authorizes no next RFC, no design module, and no further work of any kind **beyond recording completion**"* — a requirement placed on one specific past closure PR, describing what **that PR** could authorize. Dated, self-limiting, already executed |
+| `docs/automation/RFC-005-TEST-COVERAGE-COMPLETION-CONTRACT.md` | 404 | *"No implementation is currently authorized **by this document**"* — self-scoped by its own words to that contract, and the sentence continues by naming the separate authorization PR that would lift it |
+
+Neither historical document is edited. Both are previously merged remediation
+contracts, outside this branch's allowlist, and rewriting merged history is
+not this correction's business. Their wording binds their own past slices,
+not the repository at large.
+
+**`CLAUDE.md` is no longer a deferred item.** The previous revision of this
+document listed it as a residual ambiguity left alone because it sat outside
+that pass's allowlist. The allowlist was widened for this correction, and
+`CLAUDE.md` is now corrected in full: it distinguishes the three routes
+explicitly, and its "Non-negotiable rules" say per rule which routes they
+bind. The Routine's own canonical-database restriction is **not weakened** —
+it is stated as binding routes 1 and 2, exactly as before.
 
 ---
 
 ## 7. Scope
 
-Exactly three paths:
+Exactly four paths:
 
-1. `AGENTS.md` — the two corrected sections.
-2. `docs/automation/AI-AUTONOMY-STATE.json` — one added documentation-only
-   `governance_scope` object. No existing key or value changed.
-3. `docs/automation/MANUAL-LANE-GOVERNANCE-RECONCILIATION.md` — this file,
-   newly added.
+1. `AGENTS.md` — the two corrected sections, plus accurate retrospective
+   wording about PR #229.
+2. `CLAUDE.md` — the three-route distinction, and per-rule scoping of the
+   "Non-negotiable rules" including the canonical-database rule.
+3. `docs/automation/AI-AUTONOMY-STATE.json` — absolute human-readable
+   wording in `current_slice` and `forbidden_scope` scoped to the autonomous
+   loop; two added documentation-only keys. **No authorization value
+   changed.**
+4. `docs/automation/MANUAL-LANE-GOVERNANCE-RECONCILIATION.md` — this file.
 
 Zero changes to `app/`, `tests/`, `database/`, `routes/`, `config/`,
 `resources/`, `public/`, `bootstrap/cache/`, `vendor/`, `node_modules/`,
-dependency files, workflows, automation code, `.env`, `.env.testing`,
-`CLAUDE.md`, or any previously merged remediation document.
+dependency files, workflows, automation scripts, `.env`, `.env.testing`, or
+any previously merged remediation document other than this one.
 `tests/Support/TestDatabaseSafety.php` is unchanged, and all eleven paths
 merged by PR #229 are unchanged.
 

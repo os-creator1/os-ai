@@ -60,8 +60,14 @@ Do not restate its policy anywhere, and do not add a second helper.
 
 Work reaches this repository through one of exactly two routes. They have
 different sources of scope, and a reviewer must first decide which one is in
-front of them. Applying the wrong one is what made PR #229 look
-non-compliant when it was not.
+front of them.
+
+This section exists because the repository previously did not encode that
+distinction. PR #229 was directly authorized by the human and its
+implementation was technically correct, but the rules as they stood did not
+describe the route that produced it — so the review findings against it were
+legitimate governance findings, not a misreading. The rules below fix that
+prospectively.
 
 **A. Autonomous state-loop work.** Driven by the Routine and governed by
 `docs/automation/AI-AUTONOMY-STATE.json`.
