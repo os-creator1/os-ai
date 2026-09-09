@@ -117,7 +117,7 @@ class MessagingChannelsController extends CustomerBaseController
         ));
 
         if (count($accessible) === 0) {
-            return view('customer.business.MessagingChannels.entry', ['accessible' => []]);
+            return view('customer.settings.advanced.entry', ['accessible' => []]);
         }
 
         if (count($accessible) === 1) {
@@ -126,7 +126,7 @@ class MessagingChannelsController extends CustomerBaseController
             return redirect()->route('customer.workspaces.businesses.channels.index', [$workspace->uid, $business->uid]);
         }
 
-        return view('customer.business.MessagingChannels.entry', ['accessible' => $accessible]);
+        return view('customer.settings.advanced.entry', ['accessible' => $accessible]);
     }
 
     public function channels(string $workspaceUid, string $businessUid): View|Factory|Application
@@ -152,7 +152,7 @@ class MessagingChannelsController extends CustomerBaseController
             ];
         }
 
-        return view('customer.business.MessagingChannels.index', [
+        return view('customer.settings.advanced.index', [
             'workspaceUid' => $workspaceUid,
             'businessUid' => $businessUid,
             'providers' => $providers,
@@ -172,7 +172,7 @@ class MessagingChannelsController extends CustomerBaseController
             return $this->channelsError($workspaceUid, $businessUid, 'Unsupported provider.');
         }
 
-        return view('customer.business.MessagingChannels.connect', [
+        return view('customer.settings.advanced.connect', [
             'workspaceUid' => $workspaceUid,
             'businessUid' => $businessUid,
             'provider' => $provider,
@@ -246,7 +246,7 @@ class MessagingChannelsController extends CustomerBaseController
 
         $provider = $connection->sendingServer->settings;
 
-        return view('customer.business.MessagingChannels.show', [
+        return view('customer.settings.advanced.show', [
             'workspaceUid' => $workspaceUid,
             'businessUid' => $businessUid,
             'connection' => $connection,
