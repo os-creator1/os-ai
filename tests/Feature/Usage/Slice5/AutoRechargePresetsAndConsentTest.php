@@ -41,7 +41,7 @@ class AutoRechargePresetsAndConsentTest extends TestCase
                     'auto_recharge_enabled' => '1',
                     'auto_recharge_amount_micro' => (string) $preset,
                     'auto_recharge_threshold' => '2.00',
-                    'monthly_recharge_cap' => '',
+                    'monthly_recharge_cap' => '500.00',
                 ])
                 ->assertSessionDoesntHaveErrors()
                 ->assertRedirect($this->usageBillingUrl($workspace, $business))
@@ -51,7 +51,7 @@ class AutoRechargePresetsAndConsentTest extends TestCase
             $this->assertSame(1, (int) $wallet->auto_recharge_enabled);
             $this->assertSame((string) $preset, (string) $wallet->auto_recharge_amount_micro);
             $this->assertSame('2000000', (string) $wallet->auto_recharge_threshold_micro);
-            $this->assertNull($wallet->monthly_recharge_cap_micro);
+            $this->assertSame('500000000', (string) $wallet->monthly_recharge_cap_micro);
             $this->assertNotNull($wallet->auto_recharge_consented_at);
             $this->assertSame((int) $owner->user_id, (int) $wallet->auto_recharge_consented_by_user_id);
         }
@@ -128,7 +128,7 @@ class AutoRechargePresetsAndConsentTest extends TestCase
         $this->assertSame(0, DB::table('business_usage_ledger_entries')->where('business_id', $business->id)->where('entry_type', 'auto_recharge')->count());
 
         // Only the payer's explicit opt-in changes that.
-        app(UsageWalletManager::class)->configureAutoRecharge($business, true, '2000000', '5000000', null, (int) $owner->user_id);
+        app(UsageWalletManager::class)->configureAutoRecharge($business, true, '2000000', '5000000', (string) UsageWalletManager::BUSINESS_MONTHLY_AUTO_RECHARGE_MAXIMUM_MICRO, (int) $owner->user_id);
         EvaluateBusinessAutoRecharge::dispatch((int) $business->id);
         $this->assertSame(1, DB::table('business_funding_attempts')->where('business_id', $business->id)->where('purpose', 'auto_recharge')->count());
     }
@@ -138,7 +138,7 @@ class AutoRechargePresetsAndConsentTest extends TestCase
         [$owner, $business, $workspace] = $this->tenantWithWallet(WorkspacePlanTier::Growth);
         $this->fakeProvider();
         $this->attachFakeCard($business, (int) $owner->user_id);
-        app(UsageWalletManager::class)->configureAutoRecharge($business, true, '2000000', '5000000', null, (int) $owner->user_id);
+        app(UsageWalletManager::class)->configureAutoRecharge($business, true, '2000000', '5000000', (string) UsageWalletManager::BUSINESS_MONTHLY_AUTO_RECHARGE_MAXIMUM_MICRO, (int) $owner->user_id);
         $this->assertNotNull($this->walletRow($business)->auto_recharge_consented_at);
 
         app(UsageWalletManager::class)->configureAutoRecharge($business, false, null, null, null, (int) $owner->user_id);
@@ -165,6 +165,7 @@ class AutoRechargePresetsAndConsentTest extends TestCase
             'auto_recharge_enabled' => '1',
             'auto_recharge_amount_micro' => '5000000',
             'auto_recharge_threshold' => '2.00',
+            'monthly_recharge_cap' => '500.00',
         ])->assertRedirect()->assertSessionHas('flash_error');
 
         $this->assertSame(0, (int) $this->walletRow($business)->auto_recharge_enabled);

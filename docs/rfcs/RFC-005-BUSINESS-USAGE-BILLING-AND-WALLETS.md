@@ -1365,8 +1365,10 @@ is rewritten.
    is superseded.
 2. **Automatic top-up amounts are the four fixed presets** $5 / $10 / $25 /
    $50 (`UsageWalletManager::AUTO_RECHARGE_PRESETS_MICRO`); a custom amount
-   is refused at the request and at `configureAutoRecharge()`. The custom
-   range remains owner-gated (parent §28.9) and is not implemented.
+   is refused at the request and at `configureAutoRecharge()`.
+   **Correction Round 1 (owner-approved, parent §28.9 resolved):** no
+   custom amount ships; the $5 preset is only a visual suggestion on the
+   page (never persisted on GET, never consent, never a charge).
    Automatic top-up is **off by default** and records explicit consent
    (`auto_recharge_consented_at/_by_user_id`) only when the payer enables
    it; §19's trigger, single-outstanding-attempt rule and failure counter
@@ -1380,7 +1382,8 @@ is rewritten.
    after the wallet row (fixed lock order). §15's evaluation order becomes:
    billing_status → outstanding_debt → per-feature limit → Business spend
    cap → **Workspace aggregate cap** → platform safety limit → balance,
-   preceded by the two emergency stops of item 4.
+   preceded by the two emergency stops of item 4. The aggregate automatic
+   top-up ceiling is enforced in execution by item 9 (Correction Round 1).
 4. **Emergency kill switch.** A Business stop
    (`business_usage_wallets.paid_activity_paused_at`) and a Workspace stop
    (`workspace_usage_controls.paid_activity_paused_at`), customer-set and
@@ -1405,3 +1408,62 @@ is rewritten.
    reservation and no debit; managed transport and every paid
    non-transport service reserve and debit through `reserve()/commit()`.
    No code path may assume that recording usage creates a charge.
+
+*Items 8–11 were added by Customer Experience Slice 5 — Correction Round 1
+(owner-approved automatic top-up policy).*
+
+8. **Automatic top-up policy constants (single source).**
+   `UsageWalletManager` carries the whole policy:
+   `MINIMUM_MANUAL_TOP_UP_MICRO` ($5), `AUTO_RECHARGE_PRESETS_MICRO`
+   ($5/$10/$25/$50), `AUTO_RECHARGE_SUGGESTED_PRESET_MICRO` ($5),
+   `BUSINESS_MONTHLY_AUTO_RECHARGE_MAXIMUM_MICRO` ($500),
+   `WORKSPACE_MONTHLY_AUTO_RECHARGE_MAXIMUM_MICRO` ($500),
+   `AUTO_RECHARGE_MAX_PER_ROLLING_WINDOW` (2) and
+   `AUTO_RECHARGE_ROLLING_WINDOW_HOURS` (24). All amounts are integer
+   micro-units; no float ever touches a financial value.
+9. **Monthly ceilings are required, bounded and enforced in execution.**
+   Enabling automatic top-up requires a deliberately chosen Business
+   monthly ceiling of at least the preset and at most the $500 maximum,
+   validated by `ConfigureAutoRechargeRequest` and again by
+   `configureAutoRecharge()` (`autoRechargeConfigurationProblem()`); an
+   Agency Workspace aggregate ceiling is at most $500
+   (`setWorkspaceAggregateRechargeCap()`, `UpdateBusinessSpendCapRequest`).
+   The maxima are automatic-charge safety maxima, never default ceilings.
+   In execution, `EvaluateBusinessAutoRecharge` pre-checks
+   `autoRechargeCeilingAdmission()` and `UsageBillingCheckoutManager::
+   initiateCharge()` repeats the decision under the wallet row lock
+   (`claimAutoRechargeAdmissionUnderLock()`, which also takes the
+   `workspace_usage_controls` row lock while the Workspace pays — the same
+   wallet → Workspace order as `reserve()`) **before creating the attempt
+   and before any provider call**. The attempt row itself is the durable
+   claim: pending (non-terminal) AutoRecharge attempts count by their
+   `expected_amount_micro`; settled ones count through
+   `recharged_this_period_micro`; failed/canceled attempts release their
+   claim; an idempotent replay of one attempt never counts twice. A missing
+   Business ceiling, or a missing Agency aggregate ceiling for an
+   agency-paid Business, fails closed. Client-paid Businesses, manual
+   top-ups, promotional credit and refunds never count towards the
+   aggregate. A refusal is a policy outcome, not a payment failure: no
+   attempt, no balance change, no increment of
+   `consecutive_recharge_failures`, and one opted-in billing-contact alert
+   per rolling window (`notifyAutoRechargeRefusal()`,
+   `auto_recharge_refusal_notified_at`).
+10. **At most two automatic top-ups per Business in any rolling 24 hours.**
+    Derived from the authoritative funding attempts
+    (`countAutoRechargeAttemptsCreatedAfter()`): an AutoRecharge attempt
+    counts while `created_at > now − 24h` and its state is outstanding or
+    was charged (succeeded, refunded, disputed); failed and canceled
+    attempts do not count; manual top-ups never count; exactly 24 hours old
+    no longer counts. Evaluated in the same locked admission as item 9.
+11. **Financial-control authority is the payer side's.**
+    `BillingProfileManager::actorManagesPayerControls()`: while the
+    Workspace pays, the Workspace owner or an active Agency-wide Admin;
+    while the Business pays, the direct Business owner only. It governs the
+    spending limit, capability limits and pause/resume
+    (`setSpendCap()`, `setFeatureLimit()`, `pausePaidActivity()`);
+    charge-causing consent (§16) still governs adding funds and enabling
+    automatic top-up. §16's non-payer "billing management" authority is
+    retained only for the billing contact. The Agency payer control lives at
+    Client accounts → [Business] → Billing responsibility (customer field
+    `billing_responsibility` = `agency` | `client`, mapped server-side to
+    the payer enum); the true no-op of item 5 holds through that form.

@@ -2,6 +2,7 @@
 
 namespace App\Http\Requests\Customer\Business;
 
+use App\Library\Usage\UsageWalletManager;
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Validation\Rule;
 
@@ -66,8 +67,20 @@ class UpdateBusinessSpendCapRequest extends FormRequest
             'paused' => ['required_if:control,' . self::CONTROL_BUSINESS_PAUSE, 'nullable', 'boolean'],
             'confirm_pause' => ['nullable', 'boolean'],
             'workspace_monthly_spend_cap_micro' => ['nullable', 'integer', 'min:0'],
-            'workspace_monthly_recharge_cap_micro' => ['nullable', 'integer', 'min:0'],
+            // Correction Round 1 §6.2 — the Agency-wide automatic top-up
+            // ceiling is bounded by the approved hard maximum at the request
+            // boundary; UsageWalletManager::setWorkspaceAggregateRechargeCap()
+            // refuses the same crafted value at the manager boundary.
+            'workspace_monthly_recharge_cap_micro' => ['nullable', 'integer', 'min:0', 'max:' . UsageWalletManager::WORKSPACE_MONTHLY_AUTO_RECHARGE_MAXIMUM_MICRO],
             'workspace_paused' => ['nullable', 'boolean'],
+        ];
+    }
+
+    public function messages(): array
+    {
+        return [
+            'workspace_monthly_recharge_cap_micro.max' => __('locale.usage_billing.validation.workspace_recharge_cap_above_maximum'),
+            'workspace_monthly_recharge_cap_micro.integer' => __('locale.usage_billing.validation.monthly_cap_invalid'),
         ];
     }
 

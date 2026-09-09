@@ -81,6 +81,13 @@ class UsageBillingController extends CustomerBaseController
             'minimumTopUpMicro' => (string) UsageWalletManager::MINIMUM_MANUAL_TOP_UP_MICRO,
             'autoRechargePresetsMicro' => array_map('strval', UsageWalletManager::AUTO_RECHARGE_PRESETS_MICRO),
             'paidActivityPaused' => $viewModel->wallet !== null && $this->paidActivityPausedFor($business),
+            // Correction Round 1 §2/§3 — the policy figures the page shows,
+            // read from the one authoritative source; never re-typed in a view.
+            'autoRechargeSuggestedPresetMicro' => (string) UsageWalletManager::AUTO_RECHARGE_SUGGESTED_PRESET_MICRO,
+            'businessMonthlyAutoRechargeMaximumMicro' => (string) UsageWalletManager::BUSINESS_MONTHLY_AUTO_RECHARGE_MAXIMUM_MICRO,
+            'workspaceMonthlyAutoRechargeMaximumMicro' => (string) UsageWalletManager::WORKSPACE_MONTHLY_AUTO_RECHARGE_MAXIMUM_MICRO,
+            'autoRechargeMaxPerWindow' => UsageWalletManager::AUTO_RECHARGE_MAX_PER_ROLLING_WINDOW,
+            'autoRechargeWindowHours' => UsageWalletManager::AUTO_RECHARGE_ROLLING_WINDOW_HOURS,
         ]);
     }
 
@@ -98,25 +105,30 @@ class UsageBillingController extends CustomerBaseController
         $actorUserId = (int) Auth::id();
         $business = $this->resolveViewableBusiness($workspaceUid, $businessUid, $actorUserId);
 
-        $payerType = PayerType::from($request->validated('payer_type'));
+        // Customer Experience Slice 5, Correction Round 1 §8/§10 — the
+        // customer form speaks in billing-responsibility terms and is mapped
+        // to the internal payer by the request; the Agency account frame
+        // (Client accounts → [Business] → Billing responsibility) posts here
+        // with return_to=account. Authorization, the true no-op and the audit
+        // all live in BillingProfileManager::assignPayer(), unchanged.
+        $payerType = $request->payerType();
+        $isAgency = (bool) $this->billingProfileManager->billingResponsibilityFor($business, $actorUserId)['is_agency'];
+        $reason = $request->returnsToAccountFrame() ? 'Changed via Client accounts → Billing responsibility.' : 'Changed via Usage & Billing.';
 
         try {
-            $outcome = $this->billingProfileManager->assignPayer($business, $payerType, $actorUserId, 'Changed via Usage & Billing.');
+            $outcome = $this->billingProfileManager->assignPayer($business, $payerType, $actorUserId, $reason);
         } catch (UnauthorizedPayerAssignmentException) {
             return redirect()->back()->with('flash_error', __('locale.usage_billing.messages.payer_not_authorized'));
         }
 
-        $payerLabel = $this->payerLabel($outcome['to']);
+        $destination = $request->returnsToAccountFrame()
+            ? redirect()->route('customer.workspaces.show', [$workspaceUid])
+            : redirect()->route('customer.workspaces.businesses.usage-billing.show', [$workspaceUid, $businessUid]);
+        $message = __('locale.usage_billing.messages.' . $this->responsibilityMessageKey($outcome['to'], $isAgency, (bool) $outcome['changed']));
 
-        if (! $outcome['changed']) {
-            return redirect()
-                ->route('customer.workspaces.businesses.usage-billing.show', [$workspaceUid, $businessUid])
-                ->with('flash_info', __('locale.usage_billing.messages.payer_unchanged', ['payer' => $payerLabel]));
-        }
-
-        return redirect()
-            ->route('customer.workspaces.businesses.usage-billing.show', [$workspaceUid, $businessUid])
-            ->with('flash_success', __('locale.usage_billing.messages.payer_changed', ['payer' => $payerLabel]));
+        return $outcome['changed']
+            ? $destination->with('flash_success', $message)
+            : $destination->with('flash_info', $message);
     }
 
     public function updateBillingContact(UpdateBusinessBillingContactRequest $request, string $workspaceUid, string $businessUid): RedirectResponse
@@ -201,8 +213,8 @@ class UsageBillingController extends CustomerBaseController
             return redirect()->back()->with('flash_error', __('locale.usage_billing.messages.not_authorized_spending_controls'));
         } catch (UsageWalletNotFoundException) {
             return redirect()->back()->with('flash_error', __('locale.usage_billing.messages.wallet_not_set_up'));
-        } catch (\InvalidArgumentException) {
-            return redirect()->back()->with('flash_error', __('locale.usage_billing.messages.invalid_amount'));
+        } catch (\InvalidArgumentException $e) {
+            return redirect()->back()->with('flash_error', $this->policyMessage($e->getMessage(), 'messages.invalid_amount'));
         }
 
         return redirect()
@@ -240,11 +252,29 @@ class UsageBillingController extends CustomerBaseController
             ->with('flash_success', __('locale.usage_billing.messages.feature_limit_updated', ['capability' => $this->walletManager->capabilityLabel($featureKey)]));
     }
 
-    private function payerLabel(PayerType $payerType): string
+    /**
+     * Customer language only — never "Payer updated", never an enum word.
+     */
+    private function responsibilityMessageKey(PayerType $to, bool $isAgency, bool $changed): string
     {
-        return $payerType === PayerType::Workspace
-            ? __('locale.usage_billing.responsibility.agency_short')
-            : __('locale.usage_billing.responsibility.business_short');
+        $state = $changed ? 'changed' : 'unchanged';
+
+        if (! $isAgency) {
+            return 'responsibility_' . $state . '_owner';
+        }
+
+        return 'responsibility_' . $state . '_' . ($to === PayerType::Workspace ? 'agency' : 'client');
+    }
+
+    /**
+     * Maps a manager policy code (an InvalidArgumentException message such as
+     * workspace_recharge_cap_above_maximum) to its customer sentence.
+     */
+    private function policyMessage(string $code, string $fallbackKey): string
+    {
+        return \Illuminate\Support\Facades\Lang::has('locale.usage_billing.validation.' . $code)
+            ? __('locale.usage_billing.validation.' . $code)
+            : __('locale.usage_billing.' . $fallbackKey);
     }
 
     private function paidActivityPausedFor(Business $business): bool

@@ -34,6 +34,19 @@
         $actorIsPayer = (bool) $responsibility['actor_is_payer'];
         $managesLimits = (bool) $responsibility['actor_manages_limits'];
         $managesAgency = (bool) $responsibility['actor_manages_responsibility'];
+        // Correction Round 1 §9 — the billing contact keeps M2's generic
+        // billing-management authority; financial controls use the payer-side
+        // authority ($managesLimits). Never the same flag.
+        $managesBillingContact = (bool) ($responsibility['actor_manages_billing_contact'] ?? $responsibility['actor_manages_limits']);
+        // Correction Round 1 §2.3 — the suggested preset is a visual
+        // preselection only: computed here, never written on GET, never
+        // consent. A saved value that is not a preset (a legacy custom
+        // amount) is never offered; the page falls back to the suggestion.
+        $savedPreset = $dashboard->autoRecharge['amount_micro'] !== null ? (string) $dashboard->autoRecharge['amount_micro'] : null;
+        $selectedPreset = (string) old(
+            'auto_recharge_amount_micro',
+            $savedPreset !== null && in_array($savedPreset, $autoRechargePresetsMicro, true) ? $savedPreset : $autoRechargeSuggestedPresetMicro,
+        );
         $agencyPaidClientView = $responsibility['agency_paid'] && ! $actorIsPayer && ! $managesAgency;
         $entryLabel = static fn (string $type): string => \Illuminate\Support\Facades\Lang::has('locale.usage_billing.activity.entries.' . $type) ? __('locale.usage_billing.activity.entries.' . $type) : ucfirst(str_replace('_', ' ', $type));
         $purposeLabel = static fn (string $purpose): string => \Illuminate\Support\Facades\Lang::has('locale.usage_billing.activity.purposes.' . $purpose) ? __('locale.usage_billing.activity.purposes.' . $purpose) : ucfirst(str_replace('_', ' ', $purpose));
@@ -214,10 +227,13 @@
                                 <fieldset class="mb-1">
                                     <legend class="form-label text-label fs-6">{{ __('locale.usage_billing.auto_top_up.amount_label') }}</legend>
                                     <p class="text-caption mb-50" id="usage-billing-auto-recharge-amount-help">{{ __('locale.usage_billing.auto_top_up.amount_help') }}</p>
+                                    @if (! $dashboard->autoRecharge['enabled'])
+                                        <p class="text-caption mb-50" data-role="auto-top-up-suggestion">{{ __('locale.usage_billing.auto_top_up.suggested', ['amount' => $money($autoRechargeSuggestedPresetMicro)]) }}</p>
+                                    @endif
                                     <div class="d-flex flex-wrap gap-1" data-role="auto-recharge-presets">
                                         @foreach ($autoRechargePresetsMicro as $preset)
                                             <div class="form-check">
-                                                <input class="form-check-input" type="radio" name="auto_recharge_amount_micro" id="usage-billing-auto-recharge-amount-{{ $preset }}" value="{{ $preset }}" @checked((string) old('auto_recharge_amount_micro', $dashboard->autoRecharge['amount_micro']) === (string) $preset) aria-describedby="usage-billing-auto-recharge-amount-help">
+                                                <input class="form-check-input" type="radio" name="auto_recharge_amount_micro" id="usage-billing-auto-recharge-amount-{{ $preset }}" value="{{ $preset }}" @checked($selectedPreset === (string) $preset) aria-describedby="usage-billing-auto-recharge-amount-help">
                                                 <label class="form-check-label" for="usage-billing-auto-recharge-amount-{{ $preset }}">{{ $money($preset) }}</label>
                                             </div>
                                         @endforeach
@@ -232,11 +248,12 @@
                                     <div class="col-sm-6">
                                         <label class="form-label text-label" for="usage-billing-auto-recharge-cap">{{ __('locale.usage_billing.auto_top_up.monthly_limit_label') }} ({{ $currency }})</label>
                                         <input type="text" inputmode="decimal" class="form-control transition-fast" id="usage-billing-auto-recharge-cap" name="monthly_recharge_cap" value="{{ old('monthly_recharge_cap', $decimal($dashboard->autoRecharge['monthly_cap_micro'])) }}" aria-describedby="usage-billing-auto-recharge-cap-help">
-                                        <p class="text-caption mb-0" id="usage-billing-auto-recharge-cap-help">{{ __('locale.usage_billing.auto_top_up.monthly_limit_help') }}</p>
+                                        <p class="text-caption mb-0" id="usage-billing-auto-recharge-cap-help">{{ __('locale.usage_billing.auto_top_up.monthly_limit_help', ['maximum' => $money($businessMonthlyAutoRechargeMaximumMicro)]) }}</p>
                                     </div>
                                 </div>
 
-                                <p class="text-caption mt-1 mb-1">{{ __('locale.usage_billing.auto_top_up.charge_note') }}</p>
+                                <p class="text-caption mt-1 mb-50" data-role="auto-top-up-frequency-help">{{ __('locale.usage_billing.auto_top_up.frequency_help') }}</p>
+                                <p class="text-caption mb-1">{{ __('locale.usage_billing.auto_top_up.charge_note') }}</p>
                                 <x-button type="submit" variant="outline">{{ __('locale.usage_billing.auto_top_up.button') }}</x-button>
                             </form>
                         @endif
@@ -311,7 +328,7 @@
                                     <div class="col-sm-6">
                                         <label class="form-label text-label" for="usage-billing-agency-recharge-cap">{{ __('locale.usage_billing.spending.agency_recharge_limit_label') }} ({{ $currency }})</label>
                                         <input type="text" inputmode="decimal" class="form-control transition-fast" id="usage-billing-agency-recharge-cap" name="workspace_monthly_recharge_cap" value="{{ old('workspace_monthly_recharge_cap', $decimal($workspaceControls['monthly_aggregate_recharge_cap_micro'])) }}" aria-describedby="usage-billing-agency-recharge-cap-help">
-                                        <p class="text-caption mb-0" id="usage-billing-agency-recharge-cap-help">{{ __('locale.usage_billing.spending.agency_recharge_limit_help') }}</p>
+                                        <p class="text-caption mb-0" id="usage-billing-agency-recharge-cap-help">{{ __('locale.usage_billing.spending.agency_recharge_limit_help', ['maximum' => $money($workspaceMonthlyAutoRechargeMaximumMicro)]) }}</p>
                                     </div>
                                 </div>
                                 <input type="hidden" name="workspace_paused" value="0">
@@ -372,7 +389,7 @@
             @endif
 
             {{-- 6. Billing contact --}}
-            @if ($managesLimits)
+            @if ($managesBillingContact)
                 <div class="col-12">
                     <x-card id="usage-billing-contact" title="Billing contact">
                         @if ($dashboard->billingContact === null)

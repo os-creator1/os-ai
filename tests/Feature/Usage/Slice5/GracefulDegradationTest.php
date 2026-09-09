@@ -43,7 +43,7 @@ class GracefulDegradationTest extends TestCase
         $gateway = $this->fakeProvider();
         $this->attachFakeCard($business, (int) $owner->user_id);
         $this->billingContact($business, (int) $owner->user_id);
-        app(UsageWalletManager::class)->configureAutoRecharge($business, true, '2000000', '5000000', null, (int) $owner->user_id);
+        app(UsageWalletManager::class)->configureAutoRecharge($business, true, '2000000', '5000000', (string) UsageWalletManager::BUSINESS_MONTHLY_AUTO_RECHARGE_MAXIMUM_MICRO, (int) $owner->user_id);
         $this->fund($business, 1_000_000);
         Notification::fake();
 

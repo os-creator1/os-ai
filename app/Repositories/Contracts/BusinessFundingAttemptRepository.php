@@ -47,4 +47,30 @@ interface BusinessFundingAttemptRepository extends BaseRepository
      * must never be used for a read-only display).
      */
     public function recentForBusiness(int $businessId, int $limit = 20): Collection;
+
+    /**
+     * Customer Experience Slice 5, Correction Round 1 §5.1/§5.3 — the
+     * automatic top-up capacity already durably claimed but not yet
+     * settled: the sum of expected_amount_micro over every AutoRecharge
+     * attempt of the given Businesses that is still in an outstanding
+     * (non-terminal) state and may therefore still become a charge.
+     * Optionally narrowed to one frozen payer_type_snapshot (the Workspace
+     * aggregate counts only attempts the Workspace pays for). Terminal
+     * attempts (succeeded, failed, canceled, refunded, disputed) never
+     * count here — a settled success is already in the wallet's own
+     * recharged_this_period_micro, and a failure released its claim.
+     *
+     * @param list<int> $businessIds
+     */
+    public function outstandingAutoRechargeAmountMicroForBusinesses(array $businessIds, ?string $payerTypeSnapshot = null): int;
+
+    /**
+     * Correction Round 1 §7.1 — how many automatic top-ups of one Business
+     * count against the rolling window: every AutoRecharge attempt created
+     * strictly after $since whose state is outstanding or was charged
+     * (succeeded, and the post-charge refunded/disputed states). Failed and
+     * canceled attempts do not count; a replay of the same attempt is the
+     * same row and counts once.
+     */
+    public function countAutoRechargeAttemptsCreatedAfter(int $businessId, \DateTimeInterface $since): int;
 }

@@ -172,7 +172,12 @@ class BillingProfileManager
      * responsibility, computed server-side from the authoritative tier,
      * payer assignment and actor. Never a raw model.
      *
-     * @return array{tier: ?string, payer_type: string, is_agency: bool, agency_paid: bool, actor_is_payer: bool, actor_manages_responsibility: bool, actor_manages_limits: bool, actor_is_workspace_owner: bool}
+     * Correction Round 1 §9 — actor_manages_limits is the payer-side
+     * financial-control authority (actorManagesPayerControls()), never the
+     * generic billing-management authority; that one is exposed separately
+     * as actor_manages_billing_contact for the billing contact card only.
+     *
+     * @return array{tier: ?string, payer_type: string, is_agency: bool, agency_paid: bool, actor_is_payer: bool, actor_manages_responsibility: bool, actor_manages_limits: bool, actor_manages_billing_contact: bool, actor_is_workspace_owner: bool}
      */
     public function billingResponsibilityFor(Business $business, int $actorUserId): array
     {
@@ -196,7 +201,8 @@ class BillingProfileManager
             'agency_paid' => $isAgency && $payerType === PayerType::Workspace,
             'actor_is_payer' => $actorIsPayer,
             'actor_manages_responsibility' => $isAgency && $this->isAgencyWideManager($business, $actorUserId),
-            'actor_manages_limits' => $this->canManageBusinessUsageBilling($business, $actorUserId),
+            'actor_manages_limits' => $this->actorManagesPayerControls($business, $actorUserId),
+            'actor_manages_billing_contact' => $this->canManageBusinessUsageBilling($business, $actorUserId),
             'actor_is_workspace_owner' => $isWorkspaceOwner,
         ];
     }
@@ -249,6 +255,46 @@ class BillingProfileManager
             && $membership->is_active
             && $membership->role === WorkspaceMembershipRole::Admin
             && $membership->business_access_scope === WorkspaceBusinessAccessScope::All;
+    }
+
+    /**
+     * Customer Experience Slice 5, Correction Round 1 §9 — the one
+     * financial-control authority matrix. Payer-owned controls (adding
+     * funds is separately consent-gated by RFC-005 §16; here: automatic
+     * top-up configuration limits, the Business spending limit, capability
+     * limits, pause/resume of paid activity) belong to the payer side:
+     *
+     *   - while the Workspace pays: the Workspace owner, or an active
+     *     Agency-wide Admin (business_access_scope = all). A directly
+     *     owned client Business's own user is NOT the payer side and is
+     *     refused, even though M2 lets them edit the billing contact;
+     *   - while the Business pays: the direct Business owner only. The
+     *     Agency owner/Admin changes billing responsibility and views the
+     *     summary, but never alters the client payer's controls.
+     *
+     * Staff, selected-scope Admins, inactive members and strangers are
+     * always refused. Generic permission to edit Business billing data
+     * (assertCanManageBusinessUsageBilling()) never implies any of this.
+     */
+    public function actorManagesPayerControls(Business $business, int $actorUserId): bool
+    {
+        $business->loadMissing('workspace');
+
+        $assignment = $this->payerAssignmentRepository->findByBusinessId((int) $business->id);
+        $payerType = $assignment?->payer_type ?? PayerType::Workspace;
+
+        if ($payerType === PayerType::Business) {
+            return (int) $business->customer_id === $actorUserId;
+        }
+
+        return $this->isAgencyWideManager($business, $actorUserId);
+    }
+
+    public function assertActorManagesPayerControls(Business $business, int $actorUserId): void
+    {
+        if (! $this->actorManagesPayerControls($business, $actorUserId)) {
+            throw new UnauthorizedUsageBillingManagementException($actorUserId, (int) $business->id);
+        }
     }
 
     private function canManageBusinessUsageBilling(Business $business, int $actorUserId): bool

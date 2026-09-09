@@ -50,11 +50,19 @@ class UsageBillingAutoRechargeController extends CustomerBaseController
             return redirect()->back()->with('flash_error', __('locale.usage_billing.messages.not_authorized_auto_recharge'));
         } catch (UsageWalletNotFoundException) {
             return redirect()->back()->with('flash_error', __('locale.usage_billing.messages.wallet_not_set_up'));
-        } catch (\InvalidArgumentException) {
-            // Customer Experience Slice 5 (T-WALLET-4) — a crafted amount
-            // outside the four presets, or an incomplete configuration,
-            // is refused by the manager regardless of the request layer.
-            return redirect()->back()->with('flash_error', __('locale.usage_billing.validation.auto_recharge_preset_only'));
+        } catch (\InvalidArgumentException $e) {
+            // Customer Experience Slice 5 (T-WALLET-4), Correction Round 1
+            // §6.1 — the manager refuses a crafted or incomplete
+            // configuration regardless of the request layer: a non-preset
+            // amount, a missing threshold, or a missing / too-low / above-
+            // maximum monthly ceiling. Its policy code becomes the same
+            // customer sentence the request layer would have shown.
+            $code = $e->getMessage();
+            $message = \Illuminate\Support\Facades\Lang::has('locale.usage_billing.validation.' . $code)
+                ? __('locale.usage_billing.validation.' . $code)
+                : __('locale.usage_billing.validation.auto_recharge_preset_only');
+
+            return redirect()->back()->withInput()->with('flash_error', $message);
         }
 
         return redirect()

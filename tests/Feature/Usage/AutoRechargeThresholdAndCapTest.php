@@ -81,7 +81,10 @@ class AutoRechargeThresholdAndCapTest extends TestCase
         ));
         $instrumentManager->confirmSetupIntentAndAttach($business, $customer->user_id, $setupIntent->providerSetupIntentId);
 
-        app(UsageWalletManager::class)->configureAutoRecharge($business, true, $thresholdMicro, $amountMicro, $capMicro, (int) $customer->user_id);
+        // Customer Experience Slice 5, Correction Round 1 §6.1 — enabling now
+        // requires a deliberately chosen monthly ceiling; these job tests that
+        // never exercise the ceiling use the approved hard maximum.
+        app(UsageWalletManager::class)->configureAutoRecharge($business, true, $thresholdMicro, $amountMicro, $capMicro ?? (string) UsageWalletManager::BUSINESS_MONTHLY_AUTO_RECHARGE_MAXIMUM_MICRO, (int) $customer->user_id);
 
         return [$customer, $business];
     }

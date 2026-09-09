@@ -177,7 +177,7 @@ class AutoRechargeFailedPaymentRetryTest extends TestCase
         ));
         $instrumentManager->confirmSetupIntentAndAttach($business, $ownerId, $setupIntent->providerSetupIntentId);
 
-        app(UsageWalletManager::class)->configureAutoRecharge($business, true, '2000000', '5000000', null, $ownerId);
+        app(UsageWalletManager::class)->configureAutoRecharge($business, true, '2000000', '5000000', (string) UsageWalletManager::BUSINESS_MONTHLY_AUTO_RECHARGE_MAXIMUM_MICRO, $ownerId);
 
         return [$businessId, $ownerId];
     }
@@ -345,7 +345,7 @@ class AutoRechargeFailedPaymentRetryTest extends TestCase
         DB::table('business_usage_wallets')->where('business_id', $businessId)
             ->update(['consecutive_recharge_failures' => 3, 'auto_recharge_enabled' => false]);
 
-        app(UsageWalletManager::class)->configureAutoRecharge($business, true, '2000000', '5000000', null, $ownerId);
+        app(UsageWalletManager::class)->configureAutoRecharge($business, true, '2000000', '5000000', (string) UsageWalletManager::BUSINESS_MONTHLY_AUTO_RECHARGE_MAXIMUM_MICRO, $ownerId);
 
         $wallet = app(BusinessUsageWalletRepository::class)->findByBusinessId($businessId);
         $this->assertSame(0, $wallet->consecutive_recharge_failures);

@@ -32,8 +32,10 @@ use App\Http\Requests\Customer\Workspace\StoreWorkspaceRequest;
 use App\Http\Requests\Customer\Workspace\TransferWorkspaceOwnershipRequest;
 use App\Http\Requests\Customer\Workspace\UpdateWorkspaceMemberAccessRequest;
 use App\Http\Requests\Customer\Workspace\UpdateWorkspaceMemberRoleRequest;
+use App\Enums\Entitlement\WorkspacePlanTier;
 use App\Library\Entitlement\EntitlementManager;
 use App\Library\Entitlement\PlatformFeatureRegistry;
+use App\Library\Usage\BillingProfileManager;
 use App\Library\Workspace\WorkspaceManager;
 use App\Models\Business;
 use App\Models\User;
@@ -62,6 +64,7 @@ class WorkspaceController extends CustomerBaseController
         private readonly WorkspaceMembershipBusinessRepository $membershipBusinessRepository,
         private readonly WorkspaceManager $workspaceManager,
         private readonly EntitlementManager $entitlementManager,
+        private readonly BillingProfileManager $billingProfileManager,
     ) {
     }
 
@@ -136,9 +139,59 @@ class WorkspaceController extends CustomerBaseController
             // directory, manageableBusinesses) stays exactly as it already
             // was for every existing caller/test.
             request()->attributes->set('reassignTargetWorkspaces', $this->manageableTargetWorkspaces($userId));
+
+            // Customer Experience Slice 5, Correction Round 1 §8 — the Agency
+            // payer control lives here (Client accounts → [Business] →
+            // Billing responsibility), for the Agency owner or an active
+            // Agency-wide Admin only; the account frame already admits only
+            // scope-all Admins. Core/Growth accounts never receive the key.
+            $billingResponsibility = $this->billingResponsibilityViewData($workspace, $userId);
+
+            if ($billingResponsibility !== null) {
+                $viewData['billingResponsibility'] = $billingResponsibility;
+            }
         }
 
         return view('customer.workspaces.show', $viewData);
+    }
+
+    /**
+     * Presentation facts only (uid, name, customer-facing responsibility);
+     * never a payer enum, an assignment id or a user id. Null unless the
+     * Workspace is on the Agency tier and the actor may change billing
+     * responsibility for every listed client account. The Agency's own
+     * directly-owned Business has no separate client to bill and is not
+     * listed. Read-only: nothing is written on GET.
+     *
+     * @return array{businesses: list<array{uid: string, name: string, responsibility: string}>}|null
+     */
+    private function billingResponsibilityViewData(Workspace $workspace, int $userId): ?array
+    {
+        if ($this->entitlementManager->getWorkspaceEntitlementSummary($workspace)->tier !== WorkspacePlanTier::Agency) {
+            return null;
+        }
+
+        $rows = [];
+
+        foreach ($this->accessibleBusinesses($workspace, $userId) as $business) {
+            if ((int) $business->customer_id === (int) $workspace->owner_user_id) {
+                continue;
+            }
+
+            $facts = $this->billingProfileManager->billingResponsibilityFor($business, $userId);
+
+            if (! $facts['actor_manages_responsibility']) {
+                return null;
+            }
+
+            $rows[] = [
+                'uid' => (string) $business->uid,
+                'name' => (string) $business->name,
+                'responsibility' => $facts['payer_type'] === 'workspace' ? 'agency' : 'client',
+            ];
+        }
+
+        return ['businesses' => $rows];
     }
 
     /**

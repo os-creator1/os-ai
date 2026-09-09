@@ -50,7 +50,29 @@ class ConfigureAutoRechargeRequest extends FormRequest
             'auto_recharge_enabled' => ['required', 'boolean'],
             'auto_recharge_threshold_micro' => ['required_if:auto_recharge_enabled,1', 'nullable', 'integer', 'min:1'],
             'auto_recharge_amount_micro' => ['required_if:auto_recharge_enabled,1', 'nullable', 'integer', Rule::in(UsageWalletManager::AUTO_RECHARGE_PRESETS_MICRO)],
-            'monthly_recharge_cap_micro' => ['nullable', 'integer', 'min:1'],
+            // Correction Round 1 §6.1 — required while enabling, at least the
+            // chosen preset, never above the approved hard maximum. The manager
+            // re-validates the same policy (UsageWalletManager::
+            // autoRechargeConfigurationProblem()) so a crafted POST that skips
+            // this layer is refused there too.
+            'monthly_recharge_cap_micro' => [
+                'required_if:auto_recharge_enabled,1',
+                'nullable',
+                'integer',
+                'min:1',
+                'max:' . UsageWalletManager::BUSINESS_MONTHLY_AUTO_RECHARGE_MAXIMUM_MICRO,
+                function (string $attribute, mixed $value, \Closure $fail): void {
+                    $amount = $this->input('auto_recharge_amount_micro');
+
+                    if ($this->boolean('auto_recharge_enabled')
+                        && is_scalar($amount)
+                        && preg_match('/^\d+$/', (string) $amount) === 1
+                        && preg_match('/^\d+$/', (string) $value) === 1
+                        && bccomp((string) $value, (string) $amount) < 0) {
+                        $fail(__('locale.usage_billing.validation.monthly_cap_below_preset'));
+                    }
+                },
+            ],
         ];
     }
 
@@ -64,6 +86,10 @@ class ConfigureAutoRechargeRequest extends FormRequest
             'auto_recharge_amount_micro.required_if' => __('locale.usage_billing.validation.auto_recharge_preset_required'),
             'auto_recharge_amount_micro.in' => __('locale.usage_billing.validation.auto_recharge_preset_only'),
             'auto_recharge_amount_micro.integer' => __('locale.usage_billing.validation.auto_recharge_preset_only'),
+            'monthly_recharge_cap_micro.required_if' => __('locale.usage_billing.validation.monthly_cap_required'),
+            'monthly_recharge_cap_micro.min' => __('locale.usage_billing.validation.monthly_cap_required'),
+            'monthly_recharge_cap_micro.integer' => __('locale.usage_billing.validation.monthly_cap_invalid'),
+            'monthly_recharge_cap_micro.max' => __('locale.usage_billing.validation.monthly_cap_above_maximum'),
         ];
     }
 }

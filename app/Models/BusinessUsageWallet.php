@@ -41,6 +41,7 @@ class BusinessUsageWallet extends Model
         'auto_recharge_consented_at',
         'auto_recharge_consented_by_user_id',
         'spending_limit_alert_period_key',
+        'auto_recharge_refusal_notified_at',
     ];
 
     protected $casts = [
@@ -67,6 +68,7 @@ class BusinessUsageWallet extends Model
         'paid_activity_paused_by_user_id' => 'integer',
         'auto_recharge_consented_at' => 'datetime',
         'auto_recharge_consented_by_user_id' => 'integer',
+        'auto_recharge_refusal_notified_at' => 'datetime',
     ];
 
     /**

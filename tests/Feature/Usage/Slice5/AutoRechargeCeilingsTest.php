@@ -61,6 +61,12 @@ class AutoRechargeCeilingsTest extends TestCase
         $this->setPayer($clientB, PayerType::Workspace);
         $this->setPayer($selfPaid, PayerType::Business);
 
+        // Correction Round 1 §6.1 — every Business carries its own deliberately
+        // chosen ceiling (a missing one fails closed); the approved maximum keeps
+        // the Business control out of the way of the Workspace ceiling under test.
+        foreach ([$clientA, $clientB, $selfPaid] as $each) {
+            DB::table('business_usage_wallets')->where('business_id', $each->id)->update(['monthly_recharge_cap_micro' => UsageWalletManager::BUSINESS_MONTHLY_AUTO_RECHARGE_MAXIMUM_MICRO]);
+        }
         app(UsageWalletManager::class)->setWorkspaceAggregateRechargeCap($workspace, '20000000', (int) $agency->user_id, 'Agency ceiling.');
 
         DB::table('business_usage_wallets')->where('business_id', $clientA->id)->update(['recharged_this_period_micro' => 10_000_000]);

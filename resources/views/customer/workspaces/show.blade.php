@@ -278,6 +278,38 @@
                                         @endforeach
                                     </ul>
 
+                                    {{-- Customer Experience Slice 5, Correction Round 1 §8 — Client accounts → [Business] → Billing responsibility.
+                                         Rendered only when the controller says the actor manages responsibility (Agency owner / Agency-wide Admin);
+                                         the POST is authorized server-side by BillingProfileManager::assignPayer() regardless. Customer vocabulary only. --}}
+                                    @if (isset($billingResponsibility))
+                                        <div class="mt-2" id="client-billing-responsibility" data-role="billing-responsibility">
+                                            <h5>{{ __('locale.usage_billing.responsibility.account_frame_title') }}</h5>
+                                            <p class="text-caption mb-1">{{ __('locale.usage_billing.responsibility.account_frame_help') }}</p>
+                                            @if (empty($billingResponsibility['businesses']))
+                                                <p class="text-caption mb-0">{{ __('locale.usage_billing.responsibility.account_frame_empty') }}</p>
+                                            @else
+                                                @foreach ($billingResponsibility['businesses'] as $clientAccount)
+                                                    <form method="POST" data-business-action="usage-billing/payer" data-business-uid="{{ $clientAccount['uid'] }}" data-role="billing-responsibility-form" class="mb-2" novalidate>
+                                                        @csrf
+                                                        <input type="hidden" name="return_to" value="account">
+                                                        <fieldset>
+                                                            <legend class="h6 mb-50">{{ $clientAccount['name'] }} &mdash; {{ __('locale.usage_billing.responsibility.account_frame_current') }} <span data-role="billing-responsibility-current">{{ $clientAccount['responsibility'] === 'agency' ? __('locale.usage_billing.responsibility.agency_pays_option') : __('locale.usage_billing.responsibility.client_pays_option') }}</span></legend>
+                                                            <div class="form-check mb-50">
+                                                                <input class="form-check-input" type="radio" name="billing_responsibility" id="billing-responsibility-agency-{{ $clientAccount['uid'] }}" value="agency" @checked($clientAccount['responsibility'] === 'agency')>
+                                                                <label class="form-check-label" for="billing-responsibility-agency-{{ $clientAccount['uid'] }}"><strong>{{ __('locale.usage_billing.responsibility.agency_pays_option') }}</strong> &mdash; {{ __('locale.usage_billing.responsibility.agency_pays_option_help') }}</label>
+                                                            </div>
+                                                            <div class="form-check mb-50">
+                                                                <input class="form-check-input" type="radio" name="billing_responsibility" id="billing-responsibility-client-{{ $clientAccount['uid'] }}" value="client" @checked($clientAccount['responsibility'] === 'client')>
+                                                                <label class="form-check-label" for="billing-responsibility-client-{{ $clientAccount['uid'] }}"><strong>{{ __('locale.usage_billing.responsibility.client_pays_option') }}</strong> &mdash; {{ __('locale.usage_billing.responsibility.client_pays_option_help') }}</label>
+                                                            </div>
+                                                        </fieldset>
+                                                        <button type="submit" class="btn btn-sm btn-outline-secondary">{{ __('locale.usage_billing.responsibility.account_frame_button') }}</button>
+                                                    </form>
+                                                @endforeach
+                                            @endif
+                                        </div>
+                                    @endif
+
                                     <h5>Platform feature preferences</h5>
                                     @foreach ($manageableBusinesses as $business)
                                         @php $businessFeatures = $entitlement['features'][$business['uid']] ?? []; @endphp

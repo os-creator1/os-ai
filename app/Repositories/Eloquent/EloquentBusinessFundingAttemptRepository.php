@@ -2,6 +2,7 @@
 
 namespace App\Repositories\Eloquent;
 
+use App\Enums\Usage\FundingAttemptPurpose;
 use App\Models\BusinessFundingAttempt;
 use App\Repositories\Contracts\BusinessFundingAttemptRepository;
 use Illuminate\Support\Collection;
@@ -9,6 +10,14 @@ use Illuminate\Support\Collection;
 class EloquentBusinessFundingAttemptRepository extends EloquentBaseRepository implements BusinessFundingAttemptRepository
 {
     private const OUTSTANDING_STATES = ['created', 'provider_pending', 'requires_action', 'processing'];
+
+    /**
+     * Correction Round 1 §7.1 — states that count towards the rolling
+     * automatic top-up frequency window: still-pending claims plus every
+     * attempt that was actually charged (a later refund or dispute does not
+     * un-count the charge that happened).
+     */
+    private const FREQUENCY_COUNTED_STATES = ['created', 'provider_pending', 'requires_action', 'processing', 'succeeded', 'refunded', 'disputed'];
 
     public function __construct(BusinessFundingAttempt $attempt)
     {
@@ -88,5 +97,33 @@ class EloquentBusinessFundingAttemptRepository extends EloquentBaseRepository im
             ->orderByDesc('id')
             ->limit($limit)
             ->get();
+    }
+
+    public function outstandingAutoRechargeAmountMicroForBusinesses(array $businessIds, ?string $payerTypeSnapshot = null): int
+    {
+        if ($businessIds === []) {
+            return 0;
+        }
+
+        $query = $this->query()
+            ->whereIn('business_id', $businessIds)
+            ->where('purpose', FundingAttemptPurpose::AutoRecharge->value)
+            ->whereIn('state', self::OUTSTANDING_STATES);
+
+        if ($payerTypeSnapshot !== null) {
+            $query->where('payer_type_snapshot', $payerTypeSnapshot);
+        }
+
+        return (int) $query->sum('expected_amount_micro');
+    }
+
+    public function countAutoRechargeAttemptsCreatedAfter(int $businessId, \DateTimeInterface $since): int
+    {
+        return $this->query()
+            ->where('business_id', $businessId)
+            ->where('purpose', FundingAttemptPurpose::AutoRecharge->value)
+            ->whereIn('state', self::FREQUENCY_COUNTED_STATES)
+            ->where('created_at', '>', $since)
+            ->count();
     }
 }
