@@ -321,6 +321,74 @@ Failed asserting that two strings are identical.
 '
 ```
 
+### 6.4 Full repository regression, both sides
+
+Both runs were executed in the same worktree against the same isolated
+database, one after the other. The pristine side was produced by checking the
+two modified files back out from `origin/main` and moving the three new files
+aside, then restoring them afterwards.
+
+| | Tests | Assertions | Errors | Failures | Deprecations | Risky |
+|---|---|---|---|---|---|---|
+| pristine `origin/main` | 5118 | 22005 | 976 | 28 | 14 | 1 |
+| this branch | 5146 | 22104 | 975 | 16 | 14 | 1 |
+
+The 28 extra tests are this branch's own
+`TemporaryEnvironmentFileTest` (28 tests). Comparing the two runs by **distinct
+failing or erroring test name**:
+
+* **13 tests fixed**
+* **0 tests newly broken**
+
+```
+Tests\Feature\Opportunity\OpportunityManagerBeginRunTest
+    ::test_heartbeat_one_second_past_the_timeout_cutoff_is_abandoned
+Tests\Feature\Settings\PlatformSettingsGeneralWriteTest
+    ::test_valid_app_name_is_saved
+    ::test_explicit_empty_app_keyword_clears_it
+    ::test_explicit_empty_custom_script_clears_it
+    ::test_explicit_empty_footer_company_name_clears_it
+    ::test_explicit_empty_footer_copyright_text_clears_it
+    ::test_saving_advanced_custom_script_preserves_platform_and_appearance_values
+    ::test_saving_appearance_section_preserves_platform_and_advanced_values
+    ::test_saving_platform_section_preserves_appearance_and_advanced_values
+    ::test_submitting_license_alongside_a_valid_field_does_not_mutate_license
+    ::test_the_timezone_side_effect_no_longer_mutates_user_id_one
+Tests\Feature\Settings\PlatformSettingsSecretHandlingTest
+    ::test_blank_openai_api_key_preserves_the_existing_key
+    ::test_blank_smtp_password_preserves_the_existing_password
+```
+
+The `OpportunityManagerBeginRunTest` entry is worth naming. It is not a
+settings test and this branch does not touch it. It was failing on pristine
+main because an **earlier suite had written `APP_TIMEZONE` into the shared
+environment file**, and it stops failing once each test gets its own copy.
+That is the cross-suite leak of §2.3 caught in the act, and it is the clearest
+evidence that this defect was producing failures which looked like unrelated
+product bugs.
+
+The remaining 975 errors and 16 failures are identical in both runs. They are
+pre-existing and unrelated: the `theme-tokens.js` Mix asset accounts for the
+overwhelming majority (3864 occurrences in the run log, and it is the **only**
+distinct missing asset), and the residue is concurrency tests plus one test
+that hard-codes the literal database name `ultimatesms_testing` and therefore
+fails under any isolated lane database. **None is repaired here**, per the
+brief.
+
+### 6.5 Environment integrity after the full run
+
+After the complete 5146-test regression on this branch:
+
+| Check | Result |
+|---|---|
+| `.env` | byte-identical to its starting hash |
+| `.env.testing` | byte-identical to its starting hash |
+| `aibos-env-*` directories left in the system temp directory | 0 |
+| Developer's real files in the primary checkout | untouched throughout |
+
+The pristine run, by contrast, modified `.env.testing` again — reconfirming the
+defect at the end of the exercise as well as at the start.
+
 ---
 
 ## 7. Changed paths
@@ -347,6 +415,6 @@ a subprocess.
 | Observation | Why it is left alone |
 |---|---|
 | `Unable to locate Mix file: /js/core/theme-tokens.js` across Settings, Branding and much of the suite | Pre-existing on the base commit; needs a front-end build, not a test change |
-| `tests/Feature/Branding` writes real files under `public/images/branding/**` during a run | Pre-existing test design. Removing it means editing Branding tests, which are outside this allowlist. The artifact was deleted after each run so the worktree stayed clean |
+| `tests/Feature/Branding` and the Website suite write real files under `public/images/branding/**` and `public/images/websites/` during a run | Pre-existing test design. Removing it means editing those suites, which are outside this allowlist. The artifacts were deleted after each run so the worktree stayed clean |
 | One `PHPUnit Deprecations: 1` on every run | Present identically on the pristine base; it comes from `phpunit.xml` schema attributes removed in PHPUnit 11, not from any test |
 | The developer's real `.env` already contains `APP_NAME="Test App"` residue | Caused by earlier runs of this same defect. `.env` is on this branch's zero-change list, so the residue is reported, not corrected |
