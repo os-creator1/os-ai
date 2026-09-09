@@ -83,7 +83,8 @@ class SetupIntentAuthorizationTest extends TestCase
         $directOwner = $this->createCustomer();
         $business = app(\App\Repositories\Contracts\BusinessRepository::class)->createForCustomerInWorkspace($directOwner, $workspace, $this->businessAttributes());
         app(UsageWalletManager::class)->initializeWalletForNewBusiness($business->id);
-        app(BillingProfileManager::class)->changePayer($business, PayerType::Business, $directOwner->user_id, 'Test.');
+        // Customer Experience Slice 5: a Business user can no longer set the payer; the "Business pays" fixture is written directly.
+        \Illuminate\Support\Facades\DB::table('business_payer_assignments')->updateOrInsert(['business_id' => $business->id], ['payer_type' => 'business', 'effective_payment_instrument_id' => null, 'created_at' => now(), 'updated_at' => now()]);
 
         $result = app(PaymentInstrumentManager::class)->createSetupIntent($business, $directOwner->user_id);
 
@@ -98,7 +99,8 @@ class SetupIntentAuthorizationTest extends TestCase
         $directOwner = $this->createCustomer();
         $business = app(\App\Repositories\Contracts\BusinessRepository::class)->createForCustomerInWorkspace($directOwner, $workspace, $this->businessAttributes());
         app(UsageWalletManager::class)->initializeWalletForNewBusiness($business->id);
-        app(BillingProfileManager::class)->changePayer($business, PayerType::Business, $directOwner->user_id, 'Test.');
+        // Customer Experience Slice 5: a Business user can no longer set the payer; the "Business pays" fixture is written directly.
+        \Illuminate\Support\Facades\DB::table('business_payer_assignments')->updateOrInsert(['business_id' => $business->id], ['payer_type' => 'business', 'effective_payment_instrument_id' => null, 'created_at' => now(), 'updated_at' => now()]);
 
         $this->expectException(UnauthorizedPayerAssignmentException::class);
         app(PaymentInstrumentManager::class)->createSetupIntent($business, $ownerCustomer->user_id);

@@ -1350,3 +1350,132 @@ No area in the merged contract's §5 A–L, and no human product requirement, is
 ---
 
 *End of RFC-005 design document. Every milestone named in §36 requires its own separate, human-reviewed, merged implementation contract before any code, migration, test, route, view, or Stripe/provider change may be written.*
+
+## 41. Amendment — Customer Experience Slice 5 (parent contract §27 C-3)
+
+Applied by `docs/automation/CUSTOMER-EXPERIENCE-SLICE-5-WALLET-PAYER-UX.md`
+on branch `agent/customer-experience-slice-5-wallet-payer-ux`. Where this
+section and an earlier section disagree, this section wins; nothing above
+is rewritten.
+
+1. **Minimum manual top-up is $5.00** (5 000 000 micro-units of the wallet
+   currency), enforced by `InitiateTopUpRequest` and by
+   `UsageWalletManager::manualTopUpDenialReason()` in front of
+   `UsageBillingCheckoutManager::initiateTopUp()`. §18's free-form minimum
+   is superseded.
+2. **Automatic top-up amounts are the four fixed presets** $5 / $10 / $25 /
+   $50 (`UsageWalletManager::AUTO_RECHARGE_PRESETS_MICRO`); a custom amount
+   is refused at the request and at `configureAutoRecharge()`.
+   **Correction Round 1 (owner-approved, parent §28.9 resolved):** no
+   custom amount ships; the $5 preset is only a visual suggestion on the
+   page (never persisted on GET, never consent, never a charge).
+   Automatic top-up is **off by default** and records explicit consent
+   (`auto_recharge_consented_at/_by_user_id`) only when the payer enables
+   it; §19's trigger, single-outstanding-attempt rule and failure counter
+   are unchanged. Every failed attempt additionally notifies the billing
+   contact (`AutoRechargeFailedNotification`).
+3. **Workspace aggregate caps.** `workspace_usage_controls` adds, per
+   Workspace, a monthly aggregate spending limit and a monthly aggregate
+   automatic top-up ceiling covering every Business the Workspace pays for.
+   The spending limit is evaluated inside `reserve()` after the Business
+   monthly cap, under a `SELECT … FOR UPDATE` on the Workspace row taken
+   after the wallet row (fixed lock order). §15's evaluation order becomes:
+   billing_status → outstanding_debt → per-feature limit → Business spend
+   cap → **Workspace aggregate cap** → platform safety limit → balance,
+   preceded by the two emergency stops of item 4. The aggregate automatic
+   top-up ceiling is enforced in execution by item 9 (Correction Round 1).
+4. **Emergency kill switch.** A Business stop
+   (`business_usage_wallets.paid_activity_paused_at`) and a Workspace stop
+   (`workspace_usage_controls.paid_activity_paused_at`), customer-set and
+   audited in `usage_control_transitions`, refuse every new reservation
+   first, before any meter or provider work; open reservations keep their
+   §13 lifecycle; the ledger is never modified.
+5. **Payer no-op rule.** `BillingProfileManager::assignPayer()`: submitting
+   the currently-assigned payer performs no update, writes no
+   `business_payer_transitions` row, dispatches no `BusinessPayerChanged`
+   and returns `changed=false`; §16's "repeated call still records a
+   transition" resolution is withdrawn. Authority to change responsibility
+   is the Agency owner's or an Agency-wide active Admin's, on the Agency
+   tier only (parent §12.4); §16's direct-owner → 'business' consent path
+   is superseded. Charge-causing consent (§16, corrected round) is
+   unchanged.
+6. **Telecom meters as first-class meters.** SMS/MMS transport, number
+   acquisition, rental and compliance fees are `usage_meters` like any
+   other; no retail telecom rate is activated by this amendment (parent
+   §28.1a) and none is invented in tests.
+7. **Measurement versus wallet debit** (parent §11.5). A metered event
+   never implies a debit: BYO transport is measured but takes no
+   reservation and no debit; managed transport and every paid
+   non-transport service reserve and debit through `reserve()/commit()`.
+   No code path may assume that recording usage creates a charge.
+
+*Items 8–11 were added by Customer Experience Slice 5 — Correction Round 1
+(owner-approved automatic top-up policy).*
+
+8. **Automatic top-up policy constants (single source).**
+   `UsageWalletManager` carries the whole policy:
+   `MINIMUM_MANUAL_TOP_UP_MICRO` ($5), `AUTO_RECHARGE_PRESETS_MICRO`
+   ($5/$10/$25/$50), `AUTO_RECHARGE_SUGGESTED_PRESET_MICRO` ($5),
+   `BUSINESS_MONTHLY_AUTO_RECHARGE_MAXIMUM_MICRO` ($500),
+   `WORKSPACE_MONTHLY_AUTO_RECHARGE_MAXIMUM_MICRO` ($500),
+   `AUTO_RECHARGE_MAX_PER_ROLLING_WINDOW` (2) and
+   `AUTO_RECHARGE_ROLLING_WINDOW_HOURS` (24). All amounts are integer
+   micro-units; no float ever touches a financial value.
+9. **Monthly ceilings are required, bounded and enforced in execution.**
+   Enabling automatic top-up requires a deliberately chosen Business
+   monthly ceiling of at least the preset and at most the $500 maximum,
+   validated by `ConfigureAutoRechargeRequest` and again by
+   `configureAutoRecharge()` (`autoRechargeConfigurationProblem()`); an
+   Agency Workspace aggregate ceiling is at most $500
+   (`setWorkspaceAggregateRechargeCap()`, `UpdateBusinessSpendCapRequest`).
+   The maxima are automatic-charge safety maxima, never default ceilings.
+   In execution, `EvaluateBusinessAutoRecharge` pre-checks
+   `autoRechargeCeilingAdmission()` and `UsageBillingCheckoutManager::
+   initiateCharge()` repeats the decision under the wallet row lock
+   (`claimAutoRechargeAdmissionUnderLock()`, which also takes the
+   `workspace_usage_controls` row lock while the Workspace pays — the same
+   wallet → Workspace order as `reserve()`) **before creating the attempt
+   and before any provider call**. The attempt row itself is the durable
+   claim: pending (non-terminal) AutoRecharge attempts count by their
+   `expected_amount_micro`; settled ones count through
+   `recharged_this_period_micro`; failed/canceled attempts release their
+   claim; an idempotent replay of one attempt never counts twice. A missing
+   Business ceiling, or a missing Agency aggregate ceiling for an
+   agency-paid Business, fails closed. Client-paid Businesses, manual
+   top-ups, promotional credit and refunds never count towards the
+   aggregate. A refusal is a policy outcome, not a payment failure: no
+   attempt, no balance change, no increment of
+   `consecutive_recharge_failures`, and one opted-in billing-contact alert
+   per rolling window (`notifyAutoRechargeRefusal()`,
+   `auto_recharge_refusal_notified_at`).
+10. **At most two automatically INITIATED top-ups per Business in any
+    rolling 24 hours** (corrected by Correction Round 2). Derived from the
+    authoritative funding attempts
+    (`countAutoRechargeAttemptsCreatedAfter()`): an AutoRecharge attempt
+    counts while `created_at > now − 24h`, **whatever its state is now** —
+    pending, succeeded, failed, cancelled, refunded and disputed alike. The
+    frequency slot is consumed when the durable row is created and released
+    only by the passage of the window; failure or cancellation releases the
+    attempt's *monetary* headroom (item 9) but never its slot, because the
+    approved policy bounds how often the platform may contact the payment
+    provider, not how often it succeeds. Manual top-ups never count; a
+    policy refusal or validation failure that precedes row creation creates
+    no row and no slot; a webhook replay and an idempotent administrator
+    retry confirm the same row and remain one slot; only a genuinely new
+    AutoRecharge row — creatable solely through the locked admission in
+    item 9 — is a new slot. Exactly 24 hours old no longer counts. Evaluated
+    in the same locked admission as item 9. Consequence: the §19 3-strike
+    disable is unchanged but now spans two windows, since two failures fill
+    the first.
+11. **Financial-control authority is the payer side's.**
+    `BillingProfileManager::actorManagesPayerControls()`: while the
+    Workspace pays, the Workspace owner or an active Agency-wide Admin;
+    while the Business pays, the direct Business owner only. It governs the
+    spending limit, capability limits and pause/resume
+    (`setSpendCap()`, `setFeatureLimit()`, `pausePaidActivity()`);
+    charge-causing consent (§16) still governs adding funds and enabling
+    automatic top-up. §16's non-payer "billing management" authority is
+    retained only for the billing contact. The Agency payer control lives at
+    Client accounts → [Business] → Billing responsibility (customer field
+    `billing_responsibility` = `agency` | `client`, mapped server-side to
+    the payer enum); the true no-op of item 5 holds through that form.

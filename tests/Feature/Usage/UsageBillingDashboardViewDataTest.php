@@ -108,7 +108,7 @@ class UsageBillingDashboardViewDataTest extends TestCase
 
         $this->get(route('customer.workspaces.businesses.usage-billing.show', [$workspace->uid, $business->uid]))
             ->assertOk()
-            ->assertSee('Outstanding debt');
+            ->assertSee('Outstanding balance');
     }
 
     public function test_suspended_billing_status_is_shown(): void
@@ -127,7 +127,7 @@ class UsageBillingDashboardViewDataTest extends TestCase
         $this->get(route('customer.workspaces.businesses.usage-billing.show', [$workspace->uid, $business->uid]))
             ->assertOk()
             ->assertSee('Suspended')
-            ->assertSee("This Business's usage wallet is suspended. Contact support.", false);
+            ->assertSee("This Business's usage wallet is suspended. Contact support.");
     }
 
     public function test_no_ledger_activity_shows_the_honest_empty_state(): void

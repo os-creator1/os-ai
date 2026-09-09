@@ -31,6 +31,7 @@ class UsageBillingTopUpController extends CustomerBaseController
         private readonly WorkspaceManager $workspaceManager,
         private readonly UsageBillingCheckoutManager $checkoutManager,
         private readonly BusinessFundingAttemptRepository $attemptRepository,
+        private readonly \App\Library\Usage\UsageWalletManager $walletManager,
     ) {
     }
 
@@ -38,21 +39,29 @@ class UsageBillingTopUpController extends CustomerBaseController
     {
         $actorUserId = (int) Auth::id();
         $business = $this->resolveViewableBusiness($workspaceUid, $businessUid, $actorUserId);
+        $amountMicro = (int) $request->validated('amount_micro');
+
+        // Customer Experience Slice 5 (contract §12.2 E-18; T-WALLET-1) —
+        // the manager-boundary half of the $5.00 floor, independent of the
+        // request rule above it.
+        if ($this->walletManager->manualTopUpDenialReason($amountMicro) !== null) {
+            return redirect()->back()->with('flash_error', __('locale.usage_billing.validation.top_up_minimum'));
+        }
 
         try {
-            $result = $this->checkoutManager->initiateTopUp($business, $actorUserId, (int) $request->validated('amount_micro'));
+            $result = $this->checkoutManager->initiateTopUp($business, $actorUserId, $amountMicro);
         } catch (UnauthorizedPayerAssignmentException) {
-            return redirect()->back()->with('flash_error', 'You are not authorized to initiate a top-up for this Business.');
+            return redirect()->back()->with('flash_error', __('locale.usage_billing.messages.not_authorized_top_up'));
         } catch (UsageWalletNotFoundException) {
-            return redirect()->back()->with('flash_error', 'Usage tracking has not been set up for this Business yet.');
+            return redirect()->back()->with('flash_error', __('locale.usage_billing.messages.wallet_not_set_up'));
         }
 
         if ($result->denialReason === 'no_payment_instrument') {
-            return redirect()->back()->with('flash_error', 'Set up a payment method before initiating a top-up.');
+            return redirect()->back()->with('flash_error', __('locale.usage_billing.messages.top_up_needs_payment_method'));
         }
 
         if ($result->denialReason !== null) {
-            return redirect()->back()->with('flash_error', 'Top-up could not be started.');
+            return redirect()->back()->with('flash_error', __('locale.usage_billing.messages.top_up_not_started'));
         }
 
         if ($result->redirectUrl !== null) {
@@ -61,7 +70,7 @@ class UsageBillingTopUpController extends CustomerBaseController
 
         return redirect()
             ->route('customer.workspaces.businesses.usage-billing.show', [$workspaceUid, $businessUid])
-            ->with('flash_success', 'Top-up initiated.');
+            ->with('flash_success', __('locale.usage_billing.messages.top_up_started'));
     }
 
     /**
@@ -88,12 +97,12 @@ class UsageBillingTopUpController extends CustomerBaseController
         if ($result->denialReason !== null) {
             return redirect()
                 ->route('customer.workspaces.businesses.usage-billing.show', [$workspaceUid, $businessUid])
-                ->with('flash_error', 'Top-up could not be confirmed.');
+                ->with('flash_error', __('locale.usage_billing.messages.top_up_not_confirmed'));
         }
 
         return redirect()
             ->route('customer.workspaces.businesses.usage-billing.show', [$workspaceUid, $businessUid])
-            ->with('flash_success', 'Top-up confirmed.');
+            ->with('flash_success', __('locale.usage_billing.messages.top_up_confirmed'));
     }
 
     private function resolveViewableBusiness(string $workspaceUid, string $businessUid, int $userId): Business

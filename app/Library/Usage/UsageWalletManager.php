@@ -3,6 +3,10 @@
 namespace App\Library\Usage;
 
 use App\Enums\Entitlement\PlatformFeature;
+use App\Enums\Entitlement\WorkspacePlanTier;
+use App\Enums\Usage\PayerType;
+use App\Library\Entitlement\EntitlementManager;
+use App\Repositories\Contracts\BusinessFundingAttemptRepository;
 use App\Enums\Usage\BillingStatusTransitionSource;
 use App\Enums\Workspace\WorkspaceBusinessAccessScope;
 use App\Enums\Workspace\WorkspaceMembershipRole;
@@ -50,11 +54,18 @@ use App\Repositories\Contracts\UsageMeterTransitionRepository;
 use App\Repositories\Contracts\WorkspaceMembershipBusinessRepository;
 use App\Repositories\Contracts\WorkspaceMembershipRepository;
 use App\Jobs\Usage\EvaluateBusinessAutoRecharge;
+use App\Models\Workspace;
+use App\Notifications\Usage\AutoRechargeFailedNotification;
+use App\Notifications\Usage\SpendingLimitReachedNotification;
+use App\Repositories\Contracts\BusinessBillingContactRepository;
+use App\Repositories\Contracts\BusinessPayerAssignmentRepository;
 use Illuminate\Database\QueryException;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Carbon\CarbonImmutable;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Lang;
+use Illuminate\Support\Facades\Notification;
 use Illuminate\Support\Str;
 
 /**
@@ -72,6 +83,87 @@ use Illuminate\Support\Str;
 class UsageWalletManager
 {
     private const RESERVATION_TTL_MINUTES = 30;
+
+    /**
+     * Customer Experience Slice 5 (contract §12.2, §28.9) — the manual
+     * top-up floor: exactly 5.00 units of the wallet's currency, in the
+     * repository's micro-unit convention (1 major unit = 1 000 000 micro).
+     * Enforced here at the manager boundary and again by
+     * InitiateTopUpRequest; $4.99 (4 990 000) is refused, $5.00 accepted.
+     */
+    public const MINIMUM_MANUAL_TOP_UP_MICRO = 5_000_000;
+
+    /**
+     * The only automatic top-up amounts that exist (contract §12.2). A
+     * custom amount is prohibited server-side until §28.9's bounds are
+     * approved by the owner; the recommended $5–$500 range is deliberately
+     * NOT implemented.
+     */
+    public const AUTO_RECHARGE_PRESETS_MICRO = [5_000_000, 10_000_000, 25_000_000, 50_000_000];
+
+    /**
+     * Customer Experience Slice 5, Correction Round 1 §2/§3 — the owner-
+     * approved automatic top-up policy, in one place. Every request rule,
+     * manager check, job decision and view figure reads these constants;
+     * no other numeric literal for this policy exists in the codebase.
+     *
+     * - The suggested preset is only a visual preselection on the page
+     *   (never persisted, never consent, never a charge).
+     * - The two monthly maxima are automatic-charge safety maxima, not
+     *   default ceilings: the payer must deliberately choose a ceiling at
+     *   or below them before any automatic charge can run.
+     * - At most AUTO_RECHARGE_MAX_PER_ROLLING_WINDOW automatically
+     *   INITIATED top-ups per Business inside any rolling
+     *   AUTO_RECHARGE_ROLLING_WINDOW_HOURS, on exact timestamps (an
+     *   attempt counts while created_at > now - window; exactly
+     *   window-old no longer counts). Correction Round 2: the slot is
+     *   consumed by the creation of the attempt row and held for the whole
+     *   window whatever the attempt's outcome — a declined attempt already
+     *   contacted the provider — while its MONEY is released as soon as it
+     *   fails or is canceled. Frequency and monetary headroom are two
+     *   separate calculations.
+     */
+    public const AUTO_RECHARGE_SUGGESTED_PRESET_MICRO = 5_000_000;
+    public const BUSINESS_MONTHLY_AUTO_RECHARGE_MAXIMUM_MICRO = 500_000_000;
+    public const WORKSPACE_MONTHLY_AUTO_RECHARGE_MAXIMUM_MICRO = 500_000_000;
+    public const AUTO_RECHARGE_MAX_PER_ROLLING_WINDOW = 2;
+    public const AUTO_RECHARGE_ROLLING_WINDOW_HOURS = 24;
+
+    /** Automatic top-up refusal reasons (policy refusals, never payment failures). */
+    public const DENIAL_BUSINESS_RECHARGE_CAP = 'business_recharge_cap';
+    public const DENIAL_BUSINESS_RECHARGE_CAP_MISSING = 'business_recharge_cap_missing';
+    public const DENIAL_WORKSPACE_RECHARGE_CAP_MISSING = 'workspace_recharge_cap_missing';
+    public const DENIAL_AUTO_RECHARGE_FREQUENCY = 'auto_recharge_frequency';
+    public const AUTO_RECHARGE_REFUSAL_REASONS = [
+        self::DENIAL_BUSINESS_RECHARGE_CAP,
+        self::DENIAL_BUSINESS_RECHARGE_CAP_MISSING,
+        'workspace_recharge_cap',
+        self::DENIAL_WORKSPACE_RECHARGE_CAP_MISSING,
+        self::DENIAL_AUTO_RECHARGE_FREQUENCY,
+    ];
+
+    /** Reservation denial reasons introduced by this slice (contract §12.2, §20 C-10). */
+    public const DENIAL_PAID_ACTIVITY_PAUSED = 'paid_activity_paused';
+
+    public const DENIAL_WORKSPACE_PAID_ACTIVITY_PAUSED = 'workspace_paid_activity_paused';
+
+    public const DENIAL_WORKSPACE_SPEND_CAP = 'workspace_spend_cap';
+
+    public const DENIAL_WORKSPACE_RECHARGE_CAP = 'workspace_recharge_cap';
+
+    public const DENIAL_BELOW_MINIMUM_TOP_UP = 'below_minimum_top_up';
+
+    /** usage_control_transitions.control values written by this slice. */
+    public const CONTROL_BUSINESS_PAID_ACTIVITY = 'business_paid_activity';
+
+    public const CONTROL_WORKSPACE_PAID_ACTIVITY = 'workspace_paid_activity';
+
+    public const CONTROL_WORKSPACE_SPEND_CAP = 'workspace_aggregate_spend_cap';
+
+    public const CONTROL_WORKSPACE_RECHARGE_CAP = 'workspace_aggregate_recharge_cap';
+
+    /** Alert once per period when consumption reaches this share of a limit. */
+    private const SPENDING_THRESHOLD_ALERT_PERCENT = 80;
 
     public function __construct(
         private readonly BusinessUsageWalletRepository $walletRepository,
@@ -292,6 +384,7 @@ class UsageWalletManager
 
         $shouldDispatchAutoRecharge = false;
         $shouldDispatchLowBalanceNotification = false;
+        $spendingLimitAlertReason = null;
 
         // RFC-005 Milestone 5 §3.8 correction — the race-loser catch must
         // surround DB::transaction() itself, not sit inside the closure.
@@ -301,7 +394,7 @@ class UsageWalletManager
         // a fully-closed transaction — never while the loser's own
         // transaction is still open.
         try {
-            $result = DB::transaction(function () use ($business, $featureKey, $idempotencyKey, $estimatedQuantity, &$shouldDispatchAutoRecharge, &$shouldDispatchLowBalanceNotification) {
+            $result = DB::transaction(function () use ($business, $featureKey, $idempotencyKey, $estimatedQuantity, &$shouldDispatchAutoRecharge, &$shouldDispatchLowBalanceNotification, &$spendingLimitAlertReason) {
             $wallet = $this->walletRepository->findForUpdateByBusinessId($business->id);
 
             if ($wallet === null) {
@@ -309,6 +402,26 @@ class UsageWalletManager
             }
 
             $wallet = $this->rollOverPeriodsIfNeeded($wallet, $business);
+
+            // Customer Experience Slice 5 (contract §12.2 E-20, §20 C-1,
+            // T-CAP-5) — the emergency stops are evaluated first, under the
+            // wallet lock, before any meter, cap or balance work and
+            // therefore before any caller could reach a provider. They stop
+            // NEW cost-producing work only: existing reservations keep
+            // their normal commit/release/expiry lifecycle and no ledger
+            // row is touched. Lock order is fixed — wallet row, then the
+            // Workspace controls row — so two Businesses of one Workspace
+            // serialize on the shared row and can never both consume the
+            // final unit of the aggregate allowance (T-CAP-2, T-CAP-4).
+            if ($wallet->paid_activity_paused_at !== null) {
+                return new ReservationResult(false, null, self::DENIAL_PAID_ACTIVITY_PAUSED, false);
+            }
+
+            $workspaceControls = $this->lockWorkspaceControls((int) $business->workspace_id);
+
+            if ($workspaceControls !== null && $workspaceControls->paid_activity_paused_at !== null) {
+                return new ReservationResult(false, null, self::DENIAL_WORKSPACE_PAID_ACTIVITY_PAUSED, false);
+            }
 
             $meter = $this->meterRepository->findByMeterKey($featureKey);
 
@@ -397,7 +510,32 @@ class UsageWalletManager
             );
 
             if (! $businessSpendCapEvaluation->allowed) {
+                $spendingLimitAlertReason = $this->markSpendingLimitAlert($wallet, $businessSpendCapEvaluation->denialReason);
+
                 return new ReservationResult(false, null, $businessSpendCapEvaluation->denialReason, false);
+            }
+
+            // Customer Experience Slice 5 (contract §12.2 E-19, T-CAP-2) —
+            // the Workspace aggregate monthly limit covers every Business
+            // whose usage the Workspace pays for. Evaluated with the same
+            // exact-integer headroom rule as the Business cap, against the
+            // sum of this period's committed + reserved spend of all
+            // Workspace-paid wallets, while the Workspace controls row is
+            // locked (above). Unconfigured, or a Business paying for
+            // itself, never denies.
+            if ($workspaceControls !== null && $workspaceControls->monthly_aggregate_spend_cap_micro !== null && $this->isWorkspacePaid((int) $business->id)) {
+                $workspaceCapEvaluation = $this->evaluateHeadroom(
+                    (int) $workspaceControls->monthly_aggregate_spend_cap_micro,
+                    $this->workspacePaidSpendThisPeriod((int) $business->workspace_id, $wallet->spend_period_key),
+                    $reservedAmountMicro,
+                    self::DENIAL_WORKSPACE_SPEND_CAP,
+                );
+
+                if (! $workspaceCapEvaluation->allowed) {
+                    $spendingLimitAlertReason = $this->markSpendingLimitAlert($wallet, self::DENIAL_WORKSPACE_SPEND_CAP);
+
+                    return new ReservationResult(false, null, self::DENIAL_WORKSPACE_SPEND_CAP, false);
+                }
             }
 
             // Contract §8.C — deliberately the plain, non-locking read:
@@ -417,6 +555,8 @@ class UsageWalletManager
             }
 
             if ($wallet->available_balance_micro < $reservedAmountMicro) {
+                $spendingLimitAlertReason = $this->markSpendingLimitAlert($wallet, 'insufficient_balance');
+
                 return new ReservationResult(false, null, 'insufficient_balance', false);
             }
 
@@ -527,6 +667,19 @@ class UsageWalletManager
 
         if ($shouldDispatchLowBalanceNotification) {
             \App\Jobs\Usage\SendLowBalanceNotification::dispatch((int) $business->id);
+        }
+
+        // Customer Experience Slice 5 (contract §12.2 "alerts before
+        // thresholds", §20 C-10) — a refusal caused by a spending limit or
+        // an empty balance is announced to the billing contact once per
+        // period, strictly after the (already rolled-back or committed)
+        // transaction, never from inside it.
+        if ($spendingLimitAlertReason !== null) {
+            $this->notifyBillingContact((int) $business->id, new SpendingLimitReachedNotification(
+                $business->name,
+                $spendingLimitAlertReason,
+                $this->customerMessageForDenial($spendingLimitAlertReason),
+            ));
         }
 
         return $result;
@@ -1184,7 +1337,7 @@ class UsageWalletManager
     public function setSpendCap(Business $business, ?string $capMicro, int $actorUserId, string $reason): void
     {
         DB::transaction(function () use ($business, $capMicro, $actorUserId, $reason) {
-            $this->assertCanManageBusinessUsageBilling($business, $actorUserId);
+            $this->assertCanManagePayerControls($business, $actorUserId);
 
             $wallet = $this->walletRepository->findForUpdateByBusinessId((int) $business->id);
 
@@ -1234,7 +1387,7 @@ class UsageWalletManager
         }
 
         DB::transaction(function () use ($business, $featureKey, $limitMicro, $actorUserId, $reason) {
-            $this->assertCanManageBusinessUsageBilling($business, $actorUserId);
+            $this->assertCanManagePayerControls($business, $actorUserId);
 
             if ($limitMicro !== null) {
                 $safetyLimit = $this->safetyLimitRepository->findByFeatureKey($featureKey);
@@ -1865,7 +2018,22 @@ class UsageWalletManager
     ): void {
         $this->assertChargeCausingConsentForAutoRecharge($business, $actorUserId);
 
-        DB::transaction(function () use ($business, $enabled, $thresholdMicro, $amountMicro, $monthlyCapMicro) {
+        // Customer Experience Slice 5 (contract §12.2, §28.9; T-WALLET-2/4)
+        // — enabling requires a threshold and one of the four fixed preset
+        // amounts. A custom amount is refused here regardless of what any
+        // request layer accepted, so a crafted POST can never enable
+        // automatic top-up for an unapproved amount.
+        // Correction Round 1 §6.1 — the manager boundary re-validates
+        // everything the request layer validates, so a crafted POST can
+        // never enable automatic top-up without a preset amount and a
+        // deliberately chosen monthly ceiling at or below the hard maximum.
+        $problem = self::autoRechargeConfigurationProblem($enabled, $thresholdMicro, $amountMicro, $monthlyCapMicro);
+
+        if ($problem !== null) {
+            throw new \InvalidArgumentException($problem);
+        }
+
+        DB::transaction(function () use ($business, $enabled, $thresholdMicro, $amountMicro, $monthlyCapMicro, $actorUserId) {
             $wallet = $this->walletRepository->findForUpdateByBusinessId((int) $business->id);
 
             if ($wallet === null) {
@@ -1889,8 +2057,708 @@ class UsageWalletManager
                 $walletUpdate['consecutive_recharge_failures'] = 0;
             }
 
+            // Slice 5 (T-WALLET-5) — consent is recorded only by this
+            // explicit, payer-authorized action: who enabled it and when.
+            // Never inferred from a stored payment method or an earlier
+            // manual top-up. Turning it off clears the record.
+            if ($enabled) {
+                $walletUpdate['auto_recharge_consented_at'] = Carbon::now();
+                $walletUpdate['auto_recharge_consented_by_user_id'] = $actorUserId;
+            } else {
+                $walletUpdate['auto_recharge_consented_at'] = null;
+                $walletUpdate['auto_recharge_consented_by_user_id'] = null;
+            }
+
             $this->walletRepository->update($wallet, $walletUpdate);
         });
+    }
+
+    public static function isAutoRechargePreset(string $amountMicro): bool
+    {
+        if (preg_match('/^\d+$/', $amountMicro) !== 1) {
+            return false;
+        }
+
+        return in_array((int) $amountMicro, self::AUTO_RECHARGE_PRESETS_MICRO, true);
+    }
+
+    /**
+     * Correction Round 1 §6.1 — validates one automatic top-up
+     * configuration against the approved policy. Returns the problem code
+     * (a locale key under usage_billing.validation) or null when the
+     * configuration is acceptable. Pure, so the request layer and the
+     * manager apply the identical rule. Exact integer strings only; no
+     * float ever touches an amount.
+     *
+     * While disabled, a stored ceiling is still bounded by the hard
+     * maximum (never stored above it) but is not required, and is never
+     * treated as permission to charge.
+     */
+    public static function autoRechargeConfigurationProblem(bool $enabled, ?string $thresholdMicro, ?string $amountMicro, ?string $monthlyCapMicro): ?string
+    {
+        if ($monthlyCapMicro !== null) {
+            if (preg_match('/^\d+$/', $monthlyCapMicro) !== 1) {
+                return 'monthly_cap_invalid';
+            }
+
+            if (bccomp($monthlyCapMicro, (string) self::BUSINESS_MONTHLY_AUTO_RECHARGE_MAXIMUM_MICRO) > 0) {
+                return 'monthly_cap_above_maximum';
+            }
+        }
+
+        if (! $enabled) {
+            return null;
+        }
+
+        if ($thresholdMicro === null || preg_match('/^\d+$/', $thresholdMicro) !== 1 || bccomp($thresholdMicro, '0') <= 0) {
+            return 'auto_recharge_threshold_required';
+        }
+
+        if ($amountMicro === null || ! self::isAutoRechargePreset($amountMicro)) {
+            return 'auto_recharge_preset_only';
+        }
+
+        if ($monthlyCapMicro === null || bccomp($monthlyCapMicro, '0') <= 0) {
+            return 'monthly_cap_required';
+        }
+
+        if (bccomp($monthlyCapMicro, $amountMicro) < 0) {
+            return 'monthly_cap_below_preset';
+        }
+
+        return null;
+    }
+
+    /**
+     * Customer Experience Slice 5 (contract §12.2 E-18, T-WALLET-1) — the
+     * manager-boundary half of the $5 floor. Returns the denial reason, or
+     * null when the amount may proceed to UsageBillingCheckoutManager.
+     */
+    public function manualTopUpDenialReason(int $amountMicro): ?string
+    {
+        return $amountMicro < self::MINIMUM_MANUAL_TOP_UP_MICRO ? self::DENIAL_BELOW_MINIMUM_TOP_UP : null;
+    }
+
+    /**
+     * Customer Experience Slice 5 (contract §12.3, §20 C-10; T-CAP-3) — the
+     * task-oriented sentence a customer reads for a refused action. Never
+     * a key, class name or classification value.
+     */
+    public function customerMessageForDenial(string $reason): string
+    {
+        $key = 'locale.usage_billing.denials.' . $reason;
+
+        if (Lang::has($key)) {
+            return __($key);
+        }
+
+        return __('locale.usage_billing.denials.generic');
+    }
+
+    /**
+     * Customer Experience Slice 5 (E-14; brief §11) — the curated,
+     * customer-selectable capabilities a per-capability limit may target:
+     * every feature the registry marks Available and Business-scoped.
+     * Keys are internal; the view renders capabilityLabel().
+     *
+     * @return list<string>
+     */
+    public function customerCapabilityCatalog(): array
+    {
+        $keys = [];
+
+        foreach (PlatformFeature::cases() as $feature) {
+            if (PlatformFeatureRegistry::isAvailable($feature->value) && PlatformFeatureRegistry::isBusinessScoped($feature->value)) {
+                $keys[] = $feature->value;
+            }
+        }
+
+        return $keys;
+    }
+
+    public function isCustomerLimitableCapability(string $featureKey): bool
+    {
+        return in_array($featureKey, $this->customerCapabilityCatalog(), true);
+    }
+
+    /**
+     * Human label for a feature key — the catalogue's entry, or a readable
+     * fallback for a historical key a later catalogue no longer names, so
+     * old ledger rows stay legible without ever showing the raw key as the
+     * primary label.
+     */
+    public function capabilityLabel(?string $featureKey): string
+    {
+        if ($featureKey === null || $featureKey === '') {
+            return __('locale.usage_billing.capabilities.general');
+        }
+
+        $key = 'locale.usage_billing.capabilities.' . $featureKey . '.label';
+
+        if (Lang::has($key)) {
+            return __($key);
+        }
+
+        return Str::of($featureKey)->replace(['_', '-'], ' ')->ucfirst()->toString();
+    }
+
+    public function capabilityHelp(string $featureKey): ?string
+    {
+        $key = 'locale.usage_billing.capabilities.' . $featureKey . '.help';
+
+        return Lang::has($key) ? __($key) : null;
+    }
+
+    /**
+     * Customer Experience Slice 5 (contract §12.2 E-20; T-CAP-5) — the
+     * Business-level emergency stop. Idempotent; audited in
+     * usage_control_transitions. Authorized like every other non-charge
+     * limit: Workspace owner, covering active Admin, or the direct
+     * Business owner.
+     */
+    public function pausePaidActivity(Business $business, int $actorUserId, string $reason): void
+    {
+        $this->setPaidActivityPaused($business, true, $actorUserId, $reason);
+    }
+
+    public function resumePaidActivity(Business $business, int $actorUserId, string $reason): void
+    {
+        $this->setPaidActivityPaused($business, false, $actorUserId, $reason);
+    }
+
+    /**
+     * Read model of the Workspace-level controls (never a raw row handed
+     * to Blade).
+     *
+     * @return array{monthly_aggregate_spend_cap_micro: ?string, monthly_aggregate_recharge_cap_micro: ?string, paid_activity_paused: bool, paid_activity_paused_at: ?string, workspace_paid_spend_this_period_micro: string}
+     */
+    public function workspaceControls(Workspace $workspace, ?string $periodKey = null): array
+    {
+        $row = DB::table('workspace_usage_controls')->where('workspace_id', (int) $workspace->id)->first();
+        $periodKey ??= Carbon::now()->format('Y-m');
+
+        return [
+            'monthly_aggregate_spend_cap_micro' => $row?->monthly_aggregate_spend_cap_micro !== null ? (string) $row->monthly_aggregate_spend_cap_micro : null,
+            'monthly_aggregate_recharge_cap_micro' => $row?->monthly_aggregate_recharge_cap_micro !== null ? (string) $row->monthly_aggregate_recharge_cap_micro : null,
+            'paid_activity_paused' => $row?->paid_activity_paused_at !== null,
+            'paid_activity_paused_at' => $row?->paid_activity_paused_at !== null ? (string) $row->paid_activity_paused_at : null,
+            'workspace_paid_spend_this_period_micro' => (string) $this->workspacePaidSpendThisPeriod((int) $workspace->id, $periodKey),
+        ];
+    }
+
+    /**
+     * Customer Experience Slice 5 (contract §12.2 E-19; T-CAP-2) — the
+     * Agency-wide monthly spending limit. Null clears it. Workspace owner
+     * or Agency-wide active Admin only.
+     */
+    public function setWorkspaceAggregateSpendCap(Workspace $workspace, ?string $capMicro, int $actorUserId, string $reason): void
+    {
+        $this->assertCanManageWorkspaceUsageControls($workspace, $actorUserId);
+        $this->assertNullOrNonNegativeInteger($capMicro);
+
+        DB::transaction(function () use ($workspace, $capMicro, $actorUserId, $reason) {
+            $row = $this->lockOrCreateWorkspaceControls((int) $workspace->id, $actorUserId);
+            $from = $row->monthly_aggregate_spend_cap_micro !== null ? (string) $row->monthly_aggregate_spend_cap_micro : null;
+
+            $this->recordControlTransition('workspace', (int) $workspace->id, self::CONTROL_WORKSPACE_SPEND_CAP, $from, $capMicro, $actorUserId, $reason);
+
+            DB::table('workspace_usage_controls')->where('id', $row->id)->update([
+                'monthly_aggregate_spend_cap_micro' => $capMicro,
+                'updated_by_user_id' => $actorUserId,
+                'updated_at' => Carbon::now(),
+            ]);
+        });
+    }
+
+    /**
+     * Customer Experience Slice 5 (T-WALLET-6) — the Agency-wide monthly
+     * automatic top-up ceiling. Stored and audited here; its exact
+     * platform hard maximum is owner-gated (§28.9 d) and NOT invented.
+     */
+    public function setWorkspaceAggregateRechargeCap(Workspace $workspace, ?string $capMicro, int $actorUserId, string $reason): void
+    {
+        $this->assertCanManageWorkspaceUsageControls($workspace, $actorUserId);
+        $this->assertNullOrNonNegativeInteger($capMicro);
+
+        // Correction Round 1 §6.2 — bounded by the approved Agency-wide
+        // hard maximum at the manager boundary too; a crafted POST above it
+        // is refused before anything is written.
+        if ($capMicro !== null && bccomp($capMicro, (string) self::WORKSPACE_MONTHLY_AUTO_RECHARGE_MAXIMUM_MICRO) > 0) {
+            throw new \InvalidArgumentException('workspace_recharge_cap_above_maximum');
+        }
+
+        DB::transaction(function () use ($workspace, $capMicro, $actorUserId, $reason) {
+            $row = $this->lockOrCreateWorkspaceControls((int) $workspace->id, $actorUserId);
+            $from = $row->monthly_aggregate_recharge_cap_micro !== null ? (string) $row->monthly_aggregate_recharge_cap_micro : null;
+
+            $this->recordControlTransition('workspace', (int) $workspace->id, self::CONTROL_WORKSPACE_RECHARGE_CAP, $from, $capMicro, $actorUserId, $reason);
+
+            DB::table('workspace_usage_controls')->where('id', $row->id)->update([
+                'monthly_aggregate_recharge_cap_micro' => $capMicro,
+                'updated_by_user_id' => $actorUserId,
+                'updated_at' => Carbon::now(),
+            ]);
+        });
+    }
+
+    /**
+     * Customer Experience Slice 5 (contract §12.2 E-20) — the Workspace-wide
+     * emergency stop: every Business of the Workspace is refused new paid
+     * work at reserve() time. Workspace owner or Agency-wide active Admin
+     * only; audited; idempotent.
+     */
+    public function pauseWorkspacePaidActivity(Workspace $workspace, int $actorUserId, string $reason): void
+    {
+        $this->setWorkspacePaidActivityPaused($workspace, true, $actorUserId, $reason);
+    }
+
+    public function resumeWorkspacePaidActivity(Workspace $workspace, int $actorUserId, string $reason): void
+    {
+        $this->setWorkspacePaidActivityPaused($workspace, false, $actorUserId, $reason);
+    }
+
+    /**
+     * Customer Experience Slice 5 (T-WALLET-6) — whether one more automatic
+     * top-up of $amountMicro for this Business is admitted by BOTH monthly
+     * ceilings: the Business's own monthly_recharge_cap_micro and, for a
+     * Workspace-paid Business, the Workspace aggregate recharge ceiling
+     * (sum of recharged_this_period_micro across the Workspace-paid
+     * wallets in the same recharge period). Exact integer boundary:
+     * reaching a ceiling exactly is admitted; one unit over is refused.
+     */
+    public function autoRechargeCeilingAdmission(Business $business, int $amountMicro): CapEvaluation
+    {
+        $wallet = $this->walletRepository->findByBusinessId((int) $business->id);
+
+        if ($wallet === null) {
+            throw new UsageWalletNotFoundException((int) $business->id);
+        }
+
+        $payerType = $this->isWorkspacePaid((int) $business->id) ? PayerType::Workspace : PayerType::Business;
+
+        return $this->evaluateAutoRechargeAdmission($wallet, $business, $payerType, $amountMicro);
+    }
+
+    /**
+     * Correction Round 1 §5.1 — the authoritative admission that precedes
+     * the durable claim. MUST be called inside the caller's transaction
+     * while it holds the Business wallet row lock
+     * (UsageBillingCheckoutManager::initiateCharge()); the funding attempt
+     * the caller creates immediately afterwards, in the same transaction,
+     * is the claim itself (no second counter, no parallel ledger).
+     *
+     * Lock order — fixed, and identical to reserve():
+     *   1. business_usage_wallets row (taken by the caller, FOR UPDATE);
+     *   2. workspace_usage_controls row (taken here, FOR UPDATE, only while
+     *      the Workspace pays).
+     * Both are locking reads, so no consistent-read snapshot exists yet;
+     * every consistent read of the evaluation happens after both locks and
+     * therefore sees every claim committed by the previous lock holders.
+     * Two Businesses of one Workspace serialize on the Workspace row and
+     * can never both consume the final aggregate unit; two evaluations of
+     * one Business serialize on its wallet row.
+     */
+    public function claimAutoRechargeAdmissionUnderLock(BusinessUsageWallet $lockedWallet, Business $business, PayerType $payerType, int $amountMicro): CapEvaluation
+    {
+        if ($payerType === PayerType::Workspace) {
+            $this->lockWorkspaceControls((int) $business->workspace_id);
+        }
+
+        $wallet = $this->rollOverPeriodsIfNeeded($lockedWallet, $business);
+
+        return $this->evaluateAutoRechargeAdmission($wallet, $business, $payerType, $amountMicro);
+    }
+
+    /**
+     * Correction Round 1 §5 — every applicable automatic top-up control,
+     * in order, before any provider call:
+     *   1. the Business's own monthly ceiling, deliberately chosen (missing
+     *      fails closed) and bounded by the approved hard maximum;
+     *   2. the rolling-window frequency limit;
+     *   3. while the Workspace pays: the Workspace aggregate monthly
+     *      ceiling (an Agency Workspace without one fails closed; a Core/
+     *      Growth account needs none), bounded by its hard maximum.
+     * MONETARY consumption counts, exactly once each, every automatic
+     * top-up already added this period (the wallets' own
+     * recharged_this_period_micro, incremented only by AutoRecharge
+     * credits) plus every non-terminal automatic top-up attempt that may
+     * still become a charge (its expected_amount_micro). Manual top-ups,
+     * promotional credit, refunds and client-paid Businesses never count.
+     * Failed, cancelled and abandoned attempts release that monetary
+     * headroom by leaving the outstanding states.
+     *
+     * The FREQUENCY check in step (b) is deliberately independent of that
+     * release (Correction Round 2 §1.1): every automatically initiated
+     * attempt row holds its rolling-window slot for the full window, even
+     * after it fails or is canceled, so the scheduler can never contact the
+     * payment provider more than the approved number of times per window.
+     */
+    private function evaluateAutoRechargeAdmission(BusinessUsageWallet $wallet, Business $business, PayerType $payerType, int $amountMicro): CapEvaluation
+    {
+        $attempts = app(BusinessFundingAttemptRepository::class);
+        $businessId = (int) $business->id;
+        $now = Carbon::now();
+
+        if ($wallet->monthly_recharge_cap_micro === null) {
+            return new CapEvaluation(false, self::DENIAL_BUSINESS_RECHARGE_CAP_MISSING, '0');
+        }
+
+        $periodOpen = $wallet->recharge_period_end_utc === null || $now->lt($wallet->recharge_period_end_utc);
+        $recharged = $periodOpen ? (int) $wallet->recharged_this_period_micro : 0;
+        $pendingOwn = $attempts->outstandingAutoRechargeAmountMicroForBusinesses([$businessId]);
+
+        $businessCeiling = $this->evaluateHeadroom(
+            min((int) $wallet->monthly_recharge_cap_micro, self::BUSINESS_MONTHLY_AUTO_RECHARGE_MAXIMUM_MICRO),
+            $recharged + $pendingOwn,
+            $amountMicro,
+            self::DENIAL_BUSINESS_RECHARGE_CAP,
+        );
+
+        if (! $businessCeiling->allowed) {
+            return $businessCeiling;
+        }
+
+        // (b) The rolling-window frequency slot. Counted over EVERY
+        // automatically initiated attempt row created inside the window,
+        // regardless of its current state — a failed or canceled attempt
+        // released its money above but keeps its slot here.
+        $windowStart = $now->copy()->subHours(self::AUTO_RECHARGE_ROLLING_WINDOW_HOURS);
+
+        if ($attempts->countAutoRechargeAttemptsCreatedAfter($businessId, $windowStart) >= self::AUTO_RECHARGE_MAX_PER_ROLLING_WINDOW) {
+            return new CapEvaluation(false, self::DENIAL_AUTO_RECHARGE_FREQUENCY, '0');
+        }
+
+        if ($payerType !== PayerType::Workspace) {
+            return $businessCeiling;
+        }
+
+        $business->loadMissing('workspace');
+        $workspaceId = (int) $business->workspace_id;
+        $controls = DB::table('workspace_usage_controls')->where('workspace_id', $workspaceId)->first();
+        $workspaceCap = $controls?->monthly_aggregate_recharge_cap_micro;
+
+        if ($workspaceCap === null) {
+            $isAgency = app(EntitlementManager::class)->getWorkspaceEntitlementSummary($business->workspace)->tier === WorkspacePlanTier::Agency;
+
+            return $isAgency
+                ? new CapEvaluation(false, self::DENIAL_WORKSPACE_RECHARGE_CAP_MISSING, '0')
+                : $businessCeiling;
+        }
+
+        $timezone = $business->timezone !== '' && $business->timezone !== null ? $business->timezone : config('app.timezone');
+        $periodKey = $periodOpen ? (string) $wallet->recharge_period_key : $this->computePeriodBoundaries($timezone, $now)['key'];
+        $workspacePaidIds = $this->workspacePaidBusinessIdsQuery($workspaceId)->pluck('business_id')->map(static fn ($id): int => (int) $id)->all();
+
+        $aggregateRecharged = $workspacePaidIds === [] ? 0 : (int) BusinessUsageWallet::query()
+            ->whereIn('business_id', $workspacePaidIds)
+            ->where('recharge_period_key', $periodKey)
+            ->sum('recharged_this_period_micro');
+        $aggregatePending = $workspacePaidIds === [] ? 0 : $attempts->outstandingAutoRechargeAmountMicroForBusinesses($workspacePaidIds, PayerType::Workspace->value);
+
+        return $this->evaluateHeadroom(
+            min((int) $workspaceCap, self::WORKSPACE_MONTHLY_AUTO_RECHARGE_MAXIMUM_MICRO),
+            $aggregateRecharged + $aggregatePending,
+            $amountMicro,
+            self::DENIAL_WORKSPACE_RECHARGE_CAP,
+        );
+    }
+
+    /**
+     * Correction Round 1 §7.3 — announces a refused automatic top-up (a
+     * ceiling or the rolling-window limit) to the opted-in billing contact
+     * at most once per rolling window, so the evaluation job's repeated
+     * runs never spam the payer. The marker is set under the wallet lock;
+     * balances, attempts and the failure counter are never touched — a
+     * policy refusal is not a payment failure.
+     */
+    public function notifyAutoRechargeRefusal(int $businessId, string $reason): void
+    {
+        $shouldNotify = DB::transaction(function () use ($businessId): bool {
+            $wallet = $this->walletRepository->findForUpdateByBusinessId($businessId);
+
+            if ($wallet === null) {
+                return false;
+            }
+
+            $windowStart = Carbon::now()->subHours(self::AUTO_RECHARGE_ROLLING_WINDOW_HOURS);
+
+            if ($wallet->auto_recharge_refusal_notified_at !== null && Carbon::parse((string) $wallet->auto_recharge_refusal_notified_at)->gt($windowStart)) {
+                return false;
+            }
+
+            $this->walletRepository->update($wallet, ['auto_recharge_refusal_notified_at' => Carbon::now()]);
+
+            return true;
+        });
+
+        if (! $shouldNotify) {
+            return;
+        }
+
+        $business = Business::query()->find($businessId);
+
+        if ($business !== null) {
+            $this->notifyBillingContact($businessId, new SpendingLimitReachedNotification($business->name, $reason, $this->customerMessageForDenial($reason)));
+        }
+    }
+
+    /**
+     * Customer Experience Slice 5 — "alerts before thresholds": announce,
+     * once per period, every Business whose committed + reserved spend has
+     * reached the alert share of its monthly limit (or of the Workspace
+     * aggregate limit it counts towards). Called by the
+     * usage:spending-threshold-alerts command. Returns the number of
+     * Businesses alerted.
+     */
+    public function sendSpendingThresholdAlerts(): int
+    {
+        $sent = 0;
+
+        $wallets = BusinessUsageWallet::query()
+            ->whereNotNull('monthly_spend_cap_micro')
+            ->where('monthly_spend_cap_micro', '>', 0)
+            ->orderBy('id')
+            ->get();
+
+        foreach ($wallets as $wallet) {
+            if ($wallet->spending_limit_alert_period_key === $wallet->spend_period_key) {
+                continue;
+            }
+
+            $consumed = (int) $wallet->committed_spend_this_period_micro + (int) $wallet->reserved_spend_this_period_micro;
+            $threshold = (int) bcdiv(bcmul((string) $wallet->monthly_spend_cap_micro, (string) self::SPENDING_THRESHOLD_ALERT_PERCENT), '100', 0);
+
+            if ($consumed < $threshold) {
+                continue;
+            }
+
+            $business = Business::query()->find((int) $wallet->business_id);
+
+            if ($business === null) {
+                continue;
+            }
+
+            $this->walletRepository->update($wallet, ['spending_limit_alert_period_key' => $wallet->spend_period_key]);
+
+            $this->notifyBillingContact((int) $business->id, new SpendingLimitReachedNotification(
+                $business->name,
+                'business_spend_cap_threshold',
+                __('locale.usage_billing.denials.business_spend_cap_threshold', ['percent' => self::SPENDING_THRESHOLD_ALERT_PERCENT]),
+            ));
+
+            $sent++;
+        }
+
+        return $sent;
+    }
+
+    private function setPaidActivityPaused(Business $business, bool $paused, int $actorUserId, string $reason): void
+    {
+        DB::transaction(function () use ($business, $paused, $actorUserId, $reason) {
+            $this->assertCanManagePayerControls($business, $actorUserId);
+
+            $wallet = $this->walletRepository->findForUpdateByBusinessId((int) $business->id);
+
+            if ($wallet === null) {
+                throw new UsageWalletNotFoundException((int) $business->id);
+            }
+
+            $currentlyPaused = $wallet->paid_activity_paused_at !== null;
+
+            if ($currentlyPaused === $paused) {
+                return;
+            }
+
+            $this->recordControlTransition('business', (int) $business->id, self::CONTROL_BUSINESS_PAID_ACTIVITY, $currentlyPaused ? 'paused' : 'active', $paused ? 'paused' : 'active', $actorUserId, $reason);
+
+            $this->walletRepository->update($wallet, [
+                'paid_activity_paused_at' => $paused ? Carbon::now() : null,
+                'paid_activity_paused_by_user_id' => $paused ? $actorUserId : null,
+            ]);
+        });
+    }
+
+    private function setWorkspacePaidActivityPaused(Workspace $workspace, bool $paused, int $actorUserId, string $reason): void
+    {
+        $this->assertCanManageWorkspaceUsageControls($workspace, $actorUserId);
+
+        DB::transaction(function () use ($workspace, $paused, $actorUserId, $reason) {
+            $row = $this->lockOrCreateWorkspaceControls((int) $workspace->id, $actorUserId);
+            $currentlyPaused = $row->paid_activity_paused_at !== null;
+
+            if ($currentlyPaused === $paused) {
+                return;
+            }
+
+            $this->recordControlTransition('workspace', (int) $workspace->id, self::CONTROL_WORKSPACE_PAID_ACTIVITY, $currentlyPaused ? 'paused' : 'active', $paused ? 'paused' : 'active', $actorUserId, $reason);
+
+            DB::table('workspace_usage_controls')->where('id', $row->id)->update([
+                'paid_activity_paused_at' => $paused ? Carbon::now() : null,
+                'paid_activity_paused_by_user_id' => $paused ? $actorUserId : null,
+                'updated_by_user_id' => $actorUserId,
+                'updated_at' => Carbon::now(),
+            ]);
+        });
+    }
+
+    private function lockWorkspaceControls(int $workspaceId): ?object
+    {
+        return DB::table('workspace_usage_controls')->where('workspace_id', $workspaceId)->lockForUpdate()->first();
+    }
+
+    private function lockOrCreateWorkspaceControls(int $workspaceId, int $actorUserId): object
+    {
+        $row = $this->lockWorkspaceControls($workspaceId);
+
+        if ($row !== null) {
+            return $row;
+        }
+
+        try {
+            DB::table('workspace_usage_controls')->insert([
+                'workspace_id' => $workspaceId,
+                'updated_by_user_id' => $actorUserId,
+                'created_at' => Carbon::now(),
+                'updated_at' => Carbon::now(),
+            ]);
+        } catch (UniqueConstraintViolationException) {
+            // A concurrent creator won; fall through to the locked read.
+        }
+
+        $row = $this->lockWorkspaceControls($workspaceId);
+
+        if ($row === null) {
+            throw new \RuntimeException("Workspace usage controls row for workspace {$workspaceId} could not be created.");
+        }
+
+        return $row;
+    }
+
+    private function recordControlTransition(string $scope, int $scopeId, string $control, ?string $from, ?string $to, int $actorUserId, string $reason): void
+    {
+        $reason = trim($reason);
+
+        if ($reason === '') {
+            throw new \InvalidArgumentException('A reason is required for every spending-control change.');
+        }
+
+        DB::table('usage_control_transitions')->insert([
+            'scope' => $scope,
+            'scope_id' => $scopeId,
+            'control' => $control,
+            'from_value' => $from,
+            'to_value' => $to,
+            'actor_user_id' => $actorUserId,
+            'reason' => $reason,
+            'created_at' => Carbon::now(),
+        ]);
+    }
+
+    private function isWorkspacePaid(int $businessId): bool
+    {
+        $assignment = app(BusinessPayerAssignmentRepository::class)->findByBusinessId($businessId);
+
+        return ($assignment?->payer_type ?? \App\Enums\Usage\PayerType::Workspace) === \App\Enums\Usage\PayerType::Workspace;
+    }
+
+    /**
+     * Committed + reserved spend this period across every wallet in the
+     * Workspace whose Business is paid by the Workspace, in the same spend
+     * period. Integer sum, read under the Workspace controls lock when
+     * called from reserve().
+     */
+    private function workspacePaidSpendThisPeriod(int $workspaceId, string $periodKey): int
+    {
+        $row = BusinessUsageWallet::query()
+            ->whereIn('business_id', $this->workspacePaidBusinessIdsQuery($workspaceId))
+            ->where('spend_period_key', $periodKey)
+            ->selectRaw('COALESCE(SUM(committed_spend_this_period_micro + reserved_spend_this_period_micro), 0) as total')
+            ->toBase()
+            ->first();
+
+        return (int) ($row->total ?? 0);
+    }
+
+    /**
+     * Customer Experience Slice 5 — the Business ids in a Workspace whose
+     * payer is the Workspace: the wallets that count towards the Workspace
+     * aggregate ceilings. A subquery resolved through the Eloquent models,
+     * never a raw billing-table query (the Usage surface-boundary tests
+     * reserve those for the Eloquent repository implementations).
+     */
+    private function workspacePaidBusinessIdsQuery(int $workspaceId): \Illuminate\Database\Eloquent\Builder
+    {
+        return \App\Models\BusinessPayerAssignment::query()
+            ->where('payer_type', \App\Enums\Usage\PayerType::Workspace->value)
+            ->whereIn('business_id', Business::query()->where('workspace_id', $workspaceId)->select('id'))
+            ->select('business_id');
+    }
+
+    /**
+     * Sets the once-per-period alert marker under the wallet lock and
+     * returns the reason to announce, or null when this period was already
+     * announced.
+     */
+    private function markSpendingLimitAlert(BusinessUsageWallet $wallet, string $reason): ?string
+    {
+        if ($wallet->spending_limit_alert_period_key === $wallet->spend_period_key) {
+            return null;
+        }
+
+        $this->walletRepository->update($wallet, ['spending_limit_alert_period_key' => $wallet->spend_period_key]);
+
+        return $reason;
+    }
+
+    /**
+     * Recipient resolution mirrors SendLowBalanceNotification exactly: the
+     * opted-in billing contact's email, else nothing (never a guess).
+     */
+    private function notifyBillingContact(int $businessId, \Illuminate\Notifications\Notification $notification): void
+    {
+        $contact = app(BusinessBillingContactRepository::class)->findByBusinessId($businessId);
+
+        if ($contact === null || ! $contact->notification_opt_in) {
+            return;
+        }
+
+        $email = $contact->contact_user_id === null ? $contact->contact_email : $contact->contactUser?->email;
+
+        if (blank($email)) {
+            return;
+        }
+
+        Notification::route('mail', $email)->notify($notification);
+    }
+
+    private function assertNullOrNonNegativeInteger(?string $value): void
+    {
+        if ($value !== null && preg_match('/^\d+$/', $value) !== 1) {
+            throw new \InvalidArgumentException('A spending limit must be a whole non-negative amount.');
+        }
+    }
+
+    /**
+     * Workspace-level controls belong to the account owner or an
+     * Agency-wide (all-Business) active Admin — never a Business-scoped
+     * member, Staff, or a Business user (contract §12.4, §18 S-6).
+     */
+    private function assertCanManageWorkspaceUsageControls(Workspace $workspace, int $actorUserId): void
+    {
+        if ((int) $workspace->owner_user_id === $actorUserId) {
+            return;
+        }
+
+        $membership = app(WorkspaceMembershipRepository::class)->findByWorkspaceAndUser($workspace, $actorUserId);
+
+        if ($membership !== null
+            && $membership->is_active
+            && $membership->role === WorkspaceMembershipRole::Admin
+            && $membership->business_access_scope === WorkspaceBusinessAccessScope::All) {
+            return;
+        }
+
+        throw new UnauthorizedUsageBillingManagementException($actorUserId, 0);
     }
 
     /**
@@ -1937,6 +2805,16 @@ class UsageWalletManager
                 \App\Jobs\Usage\SendAutoRechargeDisabledNotification::dispatch($businessId)->afterCommit();
             }
         });
+
+        // Customer Experience Slice 5 (brief §7 "failed recharge must be
+        // visible and alert the payer") — every failed attempt is announced
+        // to the billing contact, after commit; the balance is never
+        // touched here (the attempt row already records the failure).
+        $business = Business::query()->find($businessId);
+
+        if ($business !== null) {
+            $this->notifyBillingContact($businessId, new AutoRechargeFailedNotification($business->name));
+        }
     }
 
     /**
@@ -1988,6 +2866,20 @@ class UsageWalletManager
      * every M1 call) is unnecessary constructor-resolution overhead this
      * class should not pay on paths that never use them.
      */
+    /**
+     * Correction Round 1 §9 — financial controls (spending limit,
+     * capability limits, pause/resume) belong to the payer side: while the
+     * Workspace pays, the Workspace owner or an Agency-wide active Admin;
+     * while the Business pays, the direct Business owner. Generic
+     * billing-management authority (assertCanManageBusinessUsageBilling(),
+     * kept below) never implies it. The one matrix lives in
+     * BillingProfileManager::actorManagesPayerControls().
+     */
+    private function assertCanManagePayerControls(Business $business, int $actorUserId): void
+    {
+        app(BillingProfileManager::class)->assertActorManagesPayerControls($business, $actorUserId);
+    }
+
     private function assertCanManageBusinessUsageBilling(Business $business, int $actorUserId): void
     {
         $business->loadMissing('workspace');

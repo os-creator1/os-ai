@@ -3,6 +3,7 @@
 namespace Tests\Feature\Usage;
 
 use App\Jobs\Usage\EvaluateBusinessAutoRecharge;
+use Carbon\Carbon;
 use App\Jobs\Usage\SendAutoRechargeDisabledNotification;
 use App\Library\Usage\Contracts\PaymentProviderGateway;
 use App\Library\Usage\FakePaymentProviderGateway;
@@ -60,6 +61,8 @@ class AutoRechargeFailedPaymentRetryTest extends TestCase
 
     protected function tearDown(): void
     {
+        Carbon::setTestNow();
+
         if ($this->runnerPath !== null && file_exists($this->runnerPath)) {
             @unlink($this->runnerPath);
         }
@@ -177,7 +180,7 @@ class AutoRechargeFailedPaymentRetryTest extends TestCase
         ));
         $instrumentManager->confirmSetupIntentAndAttach($business, $ownerId, $setupIntent->providerSetupIntentId);
 
-        app(UsageWalletManager::class)->configureAutoRecharge($business, true, '2000000', '3000000', null, $ownerId);
+        app(UsageWalletManager::class)->configureAutoRecharge($business, true, '2000000', '5000000', (string) UsageWalletManager::BUSINESS_MONTHLY_AUTO_RECHARGE_MAXIMUM_MICRO, $ownerId);
 
         return [$businessId, $ownerId];
     }
@@ -224,7 +227,7 @@ class AutoRechargeFailedPaymentRetryTest extends TestCase
 
         $wallet = app(BusinessUsageWalletRepository::class)->findByBusinessId($businessId);
         $this->assertSame(0, $wallet->consecutive_recharge_failures);
-        $this->assertSame('4000000', (string) $wallet->available_balance_micro);
+        $this->assertSame('6000000', (string) $wallet->available_balance_micro);
     }
 
     /**
@@ -236,10 +239,19 @@ class AutoRechargeFailedPaymentRetryTest extends TestCase
      * is invoked via a direct handle() call, never ::dispatch(), so the
      * fake only ever observes SendAutoRechargeDisabledNotification.
      */
+    /**
+     * Correction Round 2 §1.1 / §2 item 13 — the 3-strike system disable is
+     * unchanged and undiminished, but it now necessarily spans more than one
+     * rolling window: a failed automatic attempt keeps its frequency slot, so
+     * only two automatic attempts may be initiated per 24 hours and the third
+     * failure arrives in the next window. Nothing about the counter, the
+     * disable edge or the notification changed.
+     */
     public function test_the_third_consecutive_failure_disables_auto_recharge_and_dispatches_the_disabled_notification(): void
     {
         Queue::fake();
 
+        Carbon::setTestNow(Carbon::parse('2026-09-09 09:00:00', 'UTC'));
         [$businessId] = $this->createBusinessWithAutoRechargeConfigured();
         DB::table('business_usage_wallets')->where('business_id', $businessId)->update(['available_balance_micro' => '1000000']);
         $this->gateway->paymentIntentOutcomes = ['*' => 'declined'];
@@ -247,13 +259,28 @@ class AutoRechargeFailedPaymentRetryTest extends TestCase
         $walletRepository = app(BusinessUsageWalletRepository::class);
         $attemptRepository = app(BusinessFundingAttemptRepository::class);
 
-        for ($i = 0; $i < 3; $i++) {
+        // Two failures fill this window …
+        for ($i = 0; $i < 2; $i++) {
             (new EvaluateBusinessAutoRecharge($businessId))->handle($walletRepository, $attemptRepository);
         }
+        $this->assertSame(2, $walletRepository->findByBusinessId($businessId)->consecutive_recharge_failures);
+
+        // … and a third automatic attempt inside the same window is refused
+        // before the provider, so the counter does not move.
+        (new EvaluateBusinessAutoRecharge($businessId))->handle($walletRepository, $attemptRepository);
+        $this->assertSame(2, $walletRepository->findByBusinessId($businessId)->consecutive_recharge_failures);
+        $this->assertSame(2, DB::table('business_funding_attempts')->where('business_id', $businessId)->where('purpose', 'auto_recharge')->count());
+        $this->assertTrue((bool) $walletRepository->findByBusinessId($businessId)->auto_recharge_enabled);
+
+        // The next window: the third failure lands and disables auto-recharge.
+        Carbon::setTestNow(Carbon::parse('2026-09-10 10:00:00', 'UTC'));
+        DB::table('business_usage_wallets')->where('business_id', $businessId)->update(['available_balance_micro' => '1000000']);
+        (new EvaluateBusinessAutoRecharge($businessId))->handle($walletRepository, $attemptRepository);
 
         $wallet = $walletRepository->findByBusinessId($businessId);
         $this->assertSame(3, $wallet->consecutive_recharge_failures);
         $this->assertFalse((bool) $wallet->auto_recharge_enabled);
+        $this->assertSame(3, DB::table('business_funding_attempts')->where('business_id', $businessId)->where('purpose', 'auto_recharge')->count());
         Queue::assertPushed(SendAutoRechargeDisabledNotification::class, 1);
     }
 
@@ -308,7 +335,7 @@ class AutoRechargeFailedPaymentRetryTest extends TestCase
         $wallet = app(BusinessUsageWalletRepository::class)->findByBusinessId($businessId);
         $this->assertFalse((bool) $wallet->auto_recharge_enabled);
         $this->assertSame('2000000', (string) $wallet->auto_recharge_threshold_micro);
-        $this->assertSame('3000000', (string) $wallet->auto_recharge_amount_micro);
+        $this->assertSame('5000000', (string) $wallet->auto_recharge_amount_micro);
     }
 
     /**
@@ -345,7 +372,7 @@ class AutoRechargeFailedPaymentRetryTest extends TestCase
         DB::table('business_usage_wallets')->where('business_id', $businessId)
             ->update(['consecutive_recharge_failures' => 3, 'auto_recharge_enabled' => false]);
 
-        app(UsageWalletManager::class)->configureAutoRecharge($business, true, '2000000', '3000000', null, $ownerId);
+        app(UsageWalletManager::class)->configureAutoRecharge($business, true, '2000000', '5000000', (string) UsageWalletManager::BUSINESS_MONTHLY_AUTO_RECHARGE_MAXIMUM_MICRO, $ownerId);
 
         $wallet = app(BusinessUsageWalletRepository::class)->findByBusinessId($businessId);
         $this->assertSame(0, $wallet->consecutive_recharge_failures);
