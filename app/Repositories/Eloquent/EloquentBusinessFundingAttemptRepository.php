@@ -11,14 +11,6 @@ class EloquentBusinessFundingAttemptRepository extends EloquentBaseRepository im
 {
     private const OUTSTANDING_STATES = ['created', 'provider_pending', 'requires_action', 'processing'];
 
-    /**
-     * Correction Round 1 §7.1 — states that count towards the rolling
-     * automatic top-up frequency window: still-pending claims plus every
-     * attempt that was actually charged (a later refund or dispute does not
-     * un-count the charge that happened).
-     */
-    private const FREQUENCY_COUNTED_STATES = ['created', 'provider_pending', 'requires_action', 'processing', 'succeeded', 'refunded', 'disputed'];
-
     public function __construct(BusinessFundingAttempt $attempt)
     {
         parent::__construct($attempt);
@@ -119,11 +111,15 @@ class EloquentBusinessFundingAttemptRepository extends EloquentBaseRepository im
 
     public function countAutoRechargeAttemptsCreatedAfter(int $businessId, \DateTimeInterface $since): int
     {
+        // Correction Round 2 §1.3 — no state filter: every automatically
+        // initiated attempt row holds its slot for the whole window,
+        // including the failed and canceled ones (they still reached the
+        // provider). Counting distinct rows is counting distinct logical
+        // attempts, since local_idempotency_key is unique per row.
         return $this->query()
             ->where('business_id', $businessId)
             ->where('purpose', FundingAttemptPurpose::AutoRecharge->value)
-            ->whereIn('state', self::FREQUENCY_COUNTED_STATES)
             ->where('created_at', '>', $since)
-            ->count();
+            ->count('id');
     }
 }

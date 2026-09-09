@@ -65,12 +65,28 @@ interface BusinessFundingAttemptRepository extends BaseRepository
     public function outstandingAutoRechargeAmountMicroForBusinesses(array $businessIds, ?string $payerTypeSnapshot = null): int;
 
     /**
-     * Correction Round 1 §7.1 — how many automatic top-ups of one Business
-     * count against the rolling window: every AutoRecharge attempt created
-     * strictly after $since whose state is outstanding or was charged
-     * (succeeded, and the post-charge refunded/disputed states). Failed and
-     * canceled attempts do not count; a replay of the same attempt is the
-     * same row and counts once.
+     * Correction Round 2 §1.1/§1.3 — how many automatically initiated
+     * top-ups of one Business count against the rolling window: EVERY
+     * AutoRecharge funding attempt whose row was created strictly after
+     * $since, whatever its state is now.
+     *
+     * A frequency slot is consumed the moment the durable AutoRecharge row
+     * is created (after every local policy check) and stays consumed for
+     * the full rolling window — pending, succeeded, failed, canceled,
+     * refunded and disputed alike. It is deliberately NOT filtered by the
+     * mutable terminal state: a declined attempt still contacted the
+     * payment provider, so letting it release its slot would allow more
+     * than the approved number of provider contacts per window. Monetary
+     * headroom is the separate calculation
+     * (outstandingAutoRechargeAmountMicroForBusinesses()), and a failed or
+     * canceled attempt does release that.
+     *
+     * One row is one distinct logical attempt (local_idempotency_key is
+     * unique per row), so a webhook replay, an idempotent administrator
+     * retry of the same provider operation and any other confirmation of
+     * an existing row never add a slot; only a genuinely new AutoRecharge
+     * row does, and that row can only be created through the locked
+     * admission in UsageBillingCheckoutManager::initiateCharge().
      */
     public function countAutoRechargeAttemptsCreatedAfter(int $businessId, \DateTimeInterface $since): int;
 }

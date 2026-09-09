@@ -112,10 +112,16 @@ class UsageWalletManager
      * - The two monthly maxima are automatic-charge safety maxima, not
      *   default ceilings: the payer must deliberately choose a ceiling at
      *   or below them before any automatic charge can run.
-     * - At most AUTO_RECHARGE_MAX_PER_ROLLING_WINDOW automatic top-ups per
-     *   Business inside any rolling AUTO_RECHARGE_ROLLING_WINDOW_HOURS, on
-     *   exact timestamps (an attempt counts while
-     *   created_at > now - window; exactly window-old no longer counts).
+     * - At most AUTO_RECHARGE_MAX_PER_ROLLING_WINDOW automatically
+     *   INITIATED top-ups per Business inside any rolling
+     *   AUTO_RECHARGE_ROLLING_WINDOW_HOURS, on exact timestamps (an
+     *   attempt counts while created_at > now - window; exactly
+     *   window-old no longer counts). Correction Round 2: the slot is
+     *   consumed by the creation of the attempt row and held for the whole
+     *   window whatever the attempt's outcome — a declined attempt already
+     *   contacted the provider — while its MONEY is released as soon as it
+     *   fails or is canceled. Frequency and monetary headroom are two
+     *   separate calculations.
      */
     public const AUTO_RECHARGE_SUGGESTED_PRESET_MICRO = 5_000_000;
     public const BUSINESS_MONTHLY_AUTO_RECHARGE_MAXIMUM_MICRO = 500_000_000;
@@ -2372,14 +2378,20 @@ class UsageWalletManager
      *   3. while the Workspace pays: the Workspace aggregate monthly
      *      ceiling (an Agency Workspace without one fails closed; a Core/
      *      Growth account needs none), bounded by its hard maximum.
-     * Consumption counts, exactly once each, every automatic top-up already
-     * added this period (the wallets' own recharged_this_period_micro,
-     * incremented only by AutoRecharge credits) plus every non-terminal
-     * automatic top-up attempt that may still become a charge (its
-     * expected_amount_micro). Manual top-ups, promotional credit, refunds
-     * and client-paid Businesses never count. Failed, cancelled and
-     * abandoned attempts released their claim by leaving the outstanding
-     * states.
+     * MONETARY consumption counts, exactly once each, every automatic
+     * top-up already added this period (the wallets' own
+     * recharged_this_period_micro, incremented only by AutoRecharge
+     * credits) plus every non-terminal automatic top-up attempt that may
+     * still become a charge (its expected_amount_micro). Manual top-ups,
+     * promotional credit, refunds and client-paid Businesses never count.
+     * Failed, cancelled and abandoned attempts release that monetary
+     * headroom by leaving the outstanding states.
+     *
+     * The FREQUENCY check in step (b) is deliberately independent of that
+     * release (Correction Round 2 §1.1): every automatically initiated
+     * attempt row holds its rolling-window slot for the full window, even
+     * after it fails or is canceled, so the scheduler can never contact the
+     * payment provider more than the approved number of times per window.
      */
     private function evaluateAutoRechargeAdmission(BusinessUsageWallet $wallet, Business $business, PayerType $payerType, int $amountMicro): CapEvaluation
     {
@@ -2406,6 +2418,10 @@ class UsageWalletManager
             return $businessCeiling;
         }
 
+        // (b) The rolling-window frequency slot. Counted over EVERY
+        // automatically initiated attempt row created inside the window,
+        // regardless of its current state — a failed or canceled attempt
+        // released its money above but keeps its slot here.
         $windowStart = $now->copy()->subHours(self::AUTO_RECHARGE_ROLLING_WINDOW_HOURS);
 
         if ($attempts->countAutoRechargeAttemptsCreatedAfter($businessId, $windowStart) >= self::AUTO_RECHARGE_MAX_PER_ROLLING_WINDOW) {

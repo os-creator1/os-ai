@@ -68,6 +68,11 @@ class AutoRechargeRollingWindowTest extends TestCase
         return $state === null ? $query->count() : $query->where('state', $state)->count();
     }
 
+    private function setWallet(Business $business, array $columns): void
+    {
+        DB::table('business_usage_wallets')->where('business_id', $business->id)->update($columns);
+    }
+
     private function evaluate(Business $business): void
     {
         $this->fund($business, 1_000_000);
@@ -170,33 +175,132 @@ class AutoRechargeRollingWindowTest extends TestCase
         $this->assertSame(2, app(BusinessFundingAttemptRepository::class)->countAutoRechargeAttemptsCreatedAfter((int) $business->id, now()->subDay()));
     }
 
-    public function test_pending_attempts_count_while_failed_and_cancelled_attempts_do_not(): void
+    /**
+     * Correction Round 2 §1.1, §2 items 1, 3, 4, 5, 14 — every automatically
+     * initiated attempt holds its frequency slot for the whole window
+     * whatever its outcome, while a failed or cancelled attempt releases its
+     * monetary headroom. Frequency and money are two separate calculations.
+     */
+    public function test_failed_and_cancelled_attempts_keep_their_slot_while_releasing_their_money(): void
     {
         [, $business] = $this->configured();
         $repository = app(BusinessFundingAttemptRepository::class);
+        $manager = app(UsageWalletManager::class);
         $since = fn () => now()->subHours(UsageWalletManager::AUTO_RECHARGE_ROLLING_WINDOW_HOURS);
 
-        // 40. Two declined (failed) attempts: nothing counts, both slots remain.
+        // A ceiling of exactly one preset makes the monetary release visible:
+        // if a failed attempt still held its money, the second attempt could
+        // not be admitted at all.
+        $this->setWallet($business, ['monthly_recharge_cap_micro' => 5_000_000]);
+
+        // 1/4. Two declined (failed) attempts: both slots consumed, all money released.
+        $this->gateway->paymentIntentOutcomes = ['*' => 'declined'];
+        $this->evaluate($business);
+        $this->assertSame(1, $this->autoRechargeAttempts($business, 'failed'));
+        $this->assertSame(1, $repository->countAutoRechargeAttemptsCreatedAfter((int) $business->id, $since()));
+        $this->assertSame(0, $repository->outstandingAutoRechargeAmountMicroForBusinesses([(int) $business->id]), 'A failed attempt reserves no money.');
+        $this->assertSame('5000000', $manager->autoRechargeCeilingAdmission($business, 5_000_000)->remainingHeadroomMicro, 'Its monetary headroom is released …');
+
+        $this->evaluate($business);
+        $this->assertSame(2, $this->autoRechargeAttempts($business, 'failed'));
+        $this->assertSame(2, $repository->countAutoRechargeAttemptsCreatedAfter((int) $business->id, $since()), '… but its slot is not.');
+
+        // A third automatic attempt is refused on frequency, not on money —
+        // and refused before the provider, so no third attempt row appears.
+        $refused = $manager->autoRechargeCeilingAdmission($business, 5_000_000);
+        $this->assertFalse($refused->allowed);
+        $this->assertSame(UsageWalletManager::DENIAL_AUTO_RECHARGE_FREQUENCY, $refused->denialReason);
+        $this->evaluate($business);
+        $this->assertSame(2, $this->autoRechargeAttempts($business), '14. No provider call after the limit refuses admission.');
+        $this->assertSame('0', (string) $this->walletRow($business)->recharged_this_period_micro);
+        $this->assertSame(2, (int) $this->walletRow($business)->consecutive_recharge_failures, 'The refusal is a policy outcome, not a payment failure.');
+    }
+
+    /**
+     * Correction Round 2 §2 item 2 — one failed plus one successful attempt
+     * fills the window just as two failures do.
+     */
+    public function test_one_failed_and_one_successful_attempt_block_a_third(): void
+    {
+        [, $business] = $this->configured();
+        $repository = app(BusinessFundingAttemptRepository::class);
+
+        $this->gateway->paymentIntentOutcomes = ['*' => 'declined'];
+        $this->evaluate($business);
+        $this->gateway->paymentIntentOutcomes = [];
+        $this->evaluate($business);
+
+        $this->assertSame(1, $this->autoRechargeAttempts($business, 'failed'));
+        $this->assertSame(1, $this->autoRechargeAttempts($business, 'succeeded'));
+        $this->assertSame(2, $repository->countAutoRechargeAttemptsCreatedAfter((int) $business->id, now()->subDay()));
+
+        $this->gateway->paymentIntentOutcomes = ['*' => 'declined'];
+        $this->evaluate($business);
+        $this->assertSame(2, $this->autoRechargeAttempts($business));
+        $this->assertSame(UsageWalletManager::DENIAL_AUTO_RECHARGE_FREQUENCY, app(UsageWalletManager::class)->autoRechargeCeilingAdmission($business, 5_000_000)->denialReason);
+    }
+
+    /**
+     * Correction Round 2 §2 item 3 — two cancelled attempts block a third.
+     * Cancellation is a terminal state reached out of band (no production
+     * path writes it today), so it is written directly here.
+     */
+    public function test_two_cancelled_attempts_block_a_third(): void
+    {
+        [, $business] = $this->configured();
+        $repository = app(BusinessFundingAttemptRepository::class);
+        $manager = app(UsageWalletManager::class);
+
+        // RFC-005 §19's one-outstanding-attempt rule means a second attempt can
+        // only be created once the first has left the outstanding states, so
+        // each pending attempt is cancelled before the next is initiated.
+        $this->gateway->paymentIntentOutcomes = ['*' => 'requires_action'];
+        $this->evaluate($business);
+        DB::table('business_funding_attempts')->where('business_id', $business->id)->where('purpose', 'auto_recharge')->update(['state' => 'canceled']);
+        $this->evaluate($business);
+        DB::table('business_funding_attempts')->where('business_id', $business->id)->where('purpose', 'auto_recharge')->update(['state' => 'canceled']);
+        $this->assertSame(2, $this->autoRechargeAttempts($business, 'canceled'));
+
+        // 5. The money is released …
+        $this->assertSame(0, $repository->outstandingAutoRechargeAmountMicroForBusinesses([(int) $business->id]));
+        $this->assertSame('0', (string) $this->walletRow($business)->recharged_this_period_micro);
+        // … and the two slots are still held.
+        $this->assertSame(2, $repository->countAutoRechargeAttemptsCreatedAfter((int) $business->id, now()->subDay()));
+        $refused = $manager->autoRechargeCeilingAdmission($business, 5_000_000);
+        $this->assertFalse($refused->allowed);
+        $this->assertSame(UsageWalletManager::DENIAL_AUTO_RECHARGE_FREQUENCY, $refused->denialReason);
+
+        $this->gateway->paymentIntentOutcomes = ['*' => 'declined'];
+        $this->evaluate($business);
+        $this->assertSame(2, $this->autoRechargeAttempts($business));
+    }
+
+    /**
+     * Correction Round 2 §2 item 7 — a policy refusal that happens before any
+     * AutoRecharge row is created (here: no deliberately chosen Business
+     * ceiling) creates no row and therefore consumes no slot.
+     */
+    public function test_a_pre_attempt_policy_refusal_creates_no_row_and_consumes_no_slot(): void
+    {
+        [, $business] = $this->configured();
+        $repository = app(BusinessFundingAttemptRepository::class);
+
+        $this->setWallet($business, ['monthly_recharge_cap_micro' => null]);
         $this->gateway->paymentIntentOutcomes = ['*' => 'declined'];
         $this->evaluate($business);
         $this->evaluate($business);
-        $this->assertSame(2, $this->autoRechargeAttempts($business, 'failed'));
-        $this->assertSame(0, $repository->countAutoRechargeAttemptsCreatedAfter((int) $business->id, $since()));
-        $this->assertTrue(app(UsageWalletManager::class)->autoRechargeCeilingAdmission($business, 5_000_000)->allowed);
+        $this->evaluate($business);
 
-        // One success, then a pending (requires-action) attempt: 2 counted, the window is full.
+        $this->assertSame(0, $this->autoRechargeAttempts($business));
+        $this->assertSame(0, $repository->countAutoRechargeAttemptsCreatedAfter((int) $business->id, now()->subDay()));
+
+        // Both slots are still available once the ceiling is chosen.
+        $this->setWallet($business, ['monthly_recharge_cap_micro' => UsageWalletManager::BUSINESS_MONTHLY_AUTO_RECHARGE_MAXIMUM_MICRO]);
         $this->gateway->paymentIntentOutcomes = [];
         $this->evaluate($business);
-        $this->gateway->paymentIntentOutcomes = ['*' => 'requires_action'];
         $this->evaluate($business);
-        $this->assertSame(1, $this->autoRechargeAttempts($business, 'requires_action'));
-        $this->assertSame(2, $repository->countAutoRechargeAttemptsCreatedAfter((int) $business->id, $since()));
-        $this->assertSame(UsageWalletManager::DENIAL_AUTO_RECHARGE_FREQUENCY, app(UsageWalletManager::class)->autoRechargeCeilingAdmission($business, 5_000_000)->denialReason);
-
-        // The pending attempt is cancelled: its slot is released.
-        DB::table('business_funding_attempts')->where('business_id', $business->id)->where('state', 'requires_action')->update(['state' => 'canceled']);
-        $this->assertSame(1, $repository->countAutoRechargeAttemptsCreatedAfter((int) $business->id, $since()));
-        $this->assertTrue(app(UsageWalletManager::class)->autoRechargeCeilingAdmission($business, 5_000_000)->allowed);
+        $this->assertSame(2, $this->autoRechargeAttempts($business, 'succeeded'));
+        $this->assertSame(2, $repository->countAutoRechargeAttemptsCreatedAfter((int) $business->id, now()->subDay()));
     }
 
     public function test_retrying_or_replaying_the_same_attempt_counts_once(): void
@@ -210,9 +314,28 @@ class AutoRechargeRollingWindowTest extends TestCase
         $attemptId = (int) DB::table('business_funding_attempts')->where('business_id', $business->id)->value('id');
         $this->assertSame(1, $repository->countAutoRechargeAttemptsCreatedAfter((int) $business->id, $since()));
 
-        // The platform-administrator retry re-syncs the same attempt: no new provider charge, same row.
+        // Correction Round 2 §1.2 / §2 item 9 — the administrator retry path
+        // was traced mechanically, not inferred from its name: for an
+        // AutoRecharge attempt it calls retrievePaymentIntent() on the
+        // attempt's own frozen provider reference and confirms THAT row. It
+        // creates no funding-attempt row and no second provider charge
+        // operation, so it stays one slot.
+        $reference = (string) $repository->findById($attemptId)->provider_session_or_intent_reference;
+        $idempotencyKey = (string) $repository->findById($attemptId)->local_idempotency_key;
+        $retrievalsBefore = count($this->gateway->retrievePaymentIntentCalls);
+        $checkoutSessionsBefore = count($this->gateway->createCheckoutSessionCalls);
+
         app(UsageBillingCheckoutManager::class)->retryFundingAttemptAsAdministrator($repository->findById($attemptId), $this->platformAdminUserId(), 'Retry.');
+
+        $retried = $repository->findById($attemptId);
         $this->assertDatabaseHas('business_funding_attempts', ['id' => $attemptId, 'state' => 'succeeded']);
+        $this->assertSame($reference, (string) $retried->provider_session_or_intent_reference, 'The retry re-reads the same provider operation — no new charge.');
+        $this->assertSame($idempotencyKey, (string) $retried->local_idempotency_key);
+        // It only READS the existing intent (here, and once more from the receipt
+        // job that follows a successful credit); it creates no charge operation.
+        $this->assertGreaterThan($retrievalsBefore, count($this->gateway->retrievePaymentIntentCalls));
+        $this->assertSame([$reference], array_values(array_unique(array_slice($this->gateway->retrievePaymentIntentCalls, $retrievalsBefore))), 'Every retrieval targets the same existing intent.');
+        $this->assertSame($checkoutSessionsBefore, count($this->gateway->createCheckoutSessionCalls));
         $this->assertSame(1, $this->autoRechargeAttempts($business));
         $this->assertSame(1, $repository->countAutoRechargeAttemptsCreatedAfter((int) $business->id, $since()));
 
@@ -229,12 +352,20 @@ class AutoRechargeRollingWindowTest extends TestCase
         $this->assertSame(1, $repository->countAutoRechargeAttemptsCreatedAfter((int) $business->id, $since()));
         $this->assertSame('5000000', (string) $this->walletRow($business)->recharged_this_period_micro);
 
-        // One slot is left: the next evaluation still runs, the one after that is refused.
+        // §2 item 10 — a genuinely new automatic provider operation is a new
+        // row with its own idempotency key and provider reference, and it
+        // must claim the second slot; the one after that is refused.
         $this->gateway->paymentIntentOutcomes = [];
         $this->evaluate($business);
         $this->assertSame(2, $this->autoRechargeAttempts($business, 'succeeded'));
+        $fresh = DB::table('business_funding_attempts')->where('business_id', $business->id)->where('id', '!=', $attemptId)->first();
+        $this->assertNotSame($idempotencyKey, (string) $fresh->local_idempotency_key, 'A genuinely new automatic operation, not a replay.');
+        $this->assertNotSame($reference, (string) $fresh->provider_session_or_intent_reference);
+        $this->assertSame(2, $repository->countAutoRechargeAttemptsCreatedAfter((int) $business->id, $since()));
+
         $this->gateway->paymentIntentOutcomes = ['*' => 'declined'];
         $this->evaluate($business);
         $this->assertSame(2, $this->autoRechargeAttempts($business));
+        $this->assertSame(UsageWalletManager::DENIAL_AUTO_RECHARGE_FREQUENCY, app(UsageWalletManager::class)->autoRechargeCeilingAdmission($business, 5_000_000)->denialReason);
     }
 }

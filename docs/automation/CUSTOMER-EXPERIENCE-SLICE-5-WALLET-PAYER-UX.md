@@ -4,12 +4,21 @@
 
 **Status:** Implemented on branch `agent/customer-experience-slice-5-wallet-payer-ux`
 (initial commit `7d6e902c9822754b23f6a2303001a9cbf323fbe0`), corrected by
-**Correction Round 1** on the same branch (this revision). Correction Round 1
-closes the four gaps the first implementation reported — the Workspace
+**Correction Round 1** (`b3deb552140ab1a70ee35774e3cecfdc23f97d18`) and by
+**Correction Round 2** on the same branch (this revision). Correction Round 1
+closed the four gaps the first implementation reported — the Workspace
 automatic top-up ceiling not wired into the real job, the missing Agency payer
 control on the account frame, ceilings without approved maxima, and generic
 billing authority letting an agency-paid client alter financial controls — and
-adds the owner-approved twice-per-rolling-24-hours protection.
+added the owner-approved twice-per-rolling-24-hours protection.
+
+**Correction Round 2** merges current `main` (PR #219's §28.3 Telnyx
+launch-architecture decision, preserved in full) and corrects the rolling
+24-hour rule: the **frequency slot and the monetary headroom are two separate
+calculations**. Every automatically initiated attempt holds its frequency slot
+for the whole window whatever its outcome — a failed or cancelled attempt
+already contacted the payment provider — while its money is released as soon as
+it fails or is cancelled. Nothing else about the approved policy changed.
 
 **Parent contract:** `docs/automation/CUSTOMER-EXPERIENCE-MANAGED-MESSAGING-AUTOMATIONS-CONTRACT.md`
 — §12 (wallet, payer and spending-control model), §17.1/§17.2, §18 (S-2,
@@ -38,7 +47,7 @@ longer gated (§13).
 | `business_payer_assignments` / `business_payer_transitions` / `BusinessPayerChanged` | the one payer system; `BillingProfileManager::assignPayer()` carries the no-op rule and the Agency authority; the account-frame control posts into it |
 | `monthly_spend_cap_micro`, `business_feature_usage_limits`, `platform_feature_usage_safety_limits` | unchanged; surfaced in plain language |
 | `monthly_recharge_cap_micro`, `recharged_this_period_micro`, `consecutive_recharge_failures`, `EvaluateBusinessAutoRecharge` | the Business ceiling is now required, bounded and enforced by the real job (§6A); the counter and the failure logic are unchanged |
-| `business_funding_attempts` (+ transitions), `UsageBillingCheckoutManager::initiateCharge()`, outstanding-attempt rule, exactly-once credit | **the durable claim**: the attempt created under the wallet lock is the pending automatic top-up capacity; the same rows drive the rolling-window count — no second counter, no parallel ledger |
+| `business_funding_attempts` (+ transitions), `UsageBillingCheckoutManager::initiateCharge()`, outstanding-attempt rule, exactly-once credit | **the durable claim**: the attempt created under the wallet lock is the pending automatic top-up capacity, and the same immutable rows drive the rolling-window count — the outstanding ones for money, **all** of them for frequency (Correction Round 2). No second counter, no parallel ledger, no new schema |
 | `issueManualCredit(PromotionalCredit)` (platform administrator only, idempotent, audited) | the only way promotional credit exists |
 | `FakePaymentProviderGateway` | the only provider in every test |
 
@@ -89,18 +98,28 @@ No second wallet, ledger, payer system, reservation mechanism, provider-specific
 * **Presets only:** `ConfigureAutoRechargeRequest` (`Rule::in`) and `configureAutoRecharge()` (`autoRechargeConfigurationProblem()`) each refuse every other amount; there is no custom field and the former $5–$500 custom range is withdrawn.
 * **Business ceiling — required and bounded:** enabling requires `monthly_recharge_cap_micro` ≥ the preset and ≤ $500 (both boundaries; `$500.00` succeeds, `$500.01` fails, `500_000_000` succeeds, `500_010_000` fails, negative/zero/blank fail while enabling). While disabled a stored ceiling is still bounded by the maximum but is never permission to charge.
 * **Agency aggregate ceiling — bounded and required for agency-paid Businesses:** `setWorkspaceAggregateRechargeCap()` and `UpdateBusinessSpendCapRequest` refuse anything above $500; an agency-paid Business cannot be charged automatically until the Agency has set one (fails closed). Core/Growth accounts need none; a client-paid Business neither counts towards nor is limited by it.
-* **Frequency:** at most two automatic top-ups per Business in any rolling 24 hours (§6A).
+* **Frequency:** at most two automatically *initiated* top-ups per Business in any rolling 24 hours — counted over every attempt row created in the window, whatever became of it (§6A).
 * Failed recharge: `recordAutoRechargeFailure()` still mails `AutoRechargeFailedNotification` on every payment failure; a policy refusal (§6A) is not a failure.
 
 ## 6A. Real execution flow, lock order and accounting (Correction Round 1 §5, §7)
 
 1. `EvaluateBusinessAutoRecharge::handle()` — enabled? below threshold? then the **read-only pre-check** `UsageWalletManager::autoRechargeCeilingAdmission()`; a refusal exits with `notifyAutoRechargeRefusal()` (one opted-in billing-contact alert per rolling window, `auto_recharge_refusal_notified_at`), creating no attempt and touching no balance or failure counter. Then the outstanding-attempt rule, then `initiateAutoRecharge()`.
 2. `UsageBillingCheckoutManager::initiateCharge()` (AutoRecharge branch) — inside one transaction: **lock 1** `business_usage_wallets` row (`FOR UPDATE`); outstanding-attempt check (locking read); `claimAutoRechargeAdmissionUnderLock()` → **lock 2** `workspace_usage_controls` row (`FOR UPDATE`, only while the Workspace pays); period rollover; the full evaluation below; then the attempt row is created **in the same transaction** — it is the durable claim. Only after commit is the provider called. The order wallet → Workspace is the same as `reserve()`, so two Businesses of one Workspace serialize on the Workspace row and two evaluations of one Business on its wallet row; because both locks are locking reads taken before any consistent read, the transaction's snapshot includes every claim committed by the previous lock holders.
-3. **Evaluation order** (`evaluateAutoRechargeAdmission()`), every step before any provider call: (a) Business ceiling — missing fails closed; effective limit = min(stored, $500); consumed = `recharged_this_period_micro` (incremented only by AutoRecharge credits) + `expected_amount_micro` of the Business's outstanding AutoRecharge attempts; exact integer headroom; (b) rolling window — `countAutoRechargeAttemptsCreatedAfter(now − 24h)` over outstanding + charged states; ≥ 2 refuses; (c) Workspace aggregate (Workspace-paid only) — missing on the Agency tier fails closed, absent on Core/Growth is skipped; effective limit = min(stored, $500); consumed = Σ `recharged_this_period_micro` over the Workspace-paid wallets in the same period + Σ outstanding AutoRecharge amounts with `payer_type_snapshot = workspace`.
-4. **Accounting invariants:** a pending attempt counts by amount until it settles or fails; on settlement the same amount moves into `recharged_this_period_micro` (credit and state finalization commit in one transaction — never both, never neither); a definitively failed or canceled attempt released its claim and its window slot by leaving the outstanding states; the platform-administrator retry and a replayed webhook confirm the **same** attempt (one row, one ledger entry, one slot, one amount); manual top-ups, promotional credit, refunds, unrelated adjustments, BYO transport and client-paid Businesses never count.
-5. **Boundary rule:** an attempt counts while `created_at > now() − 24 hours`; exactly 24 hours old no longer counts (precise timestamps, never a calendar-date comparison).
-6. **Customer message and alert:** refusals map through `customerMessageForDenial()` to `usage_billing.denials.*` — "Automatic top-up has reached its daily safety limit — it can run at most twice in any 24 hours. No automatic charge was made. You can add funds manually at any time." (and the ceiling equivalents) — never a funding-attempt state or identifier; the actual payer's opted-in billing contact receives `SpendingLimitReachedNotification` with that sentence at most once per window.
-7. Existing protections stay: one outstanding auto-recharge attempt per Business, the failed-payment counter and the 3-strike system disable, `AutoRechargeFailedNotification`, exactly-once credit, no provider call inside a transaction.
+3. **Evaluation order** (`evaluateAutoRechargeAdmission()`), every step before any provider call: (a) Business ceiling (**monetary**) — missing fails closed; effective limit = min(stored, $500); consumed = `recharged_this_period_micro` (incremented only by AutoRecharge credits) + `expected_amount_micro` of the Business's **outstanding** AutoRecharge attempts; exact integer headroom; (b) rolling window (**frequency**) — `countAutoRechargeAttemptsCreatedAfter(now − 24h)` over **every** AutoRecharge attempt row created in the window, with no state filter at all; ≥ 2 refuses; (c) Workspace aggregate (Workspace-paid only, **monetary**) — missing on the Agency tier fails closed, absent on Core/Growth is skipped; effective limit = min(stored, $500); consumed = Σ `recharged_this_period_micro` over the Workspace-paid wallets in the same period + Σ outstanding AutoRecharge amounts with `payer_type_snapshot = workspace`.
+4. **Frequency slot versus monetary headroom (Correction Round 2 §1.1) — two separate calculations over the same immutable rows:**
+
+   | | Frequency slot | Monetary headroom |
+   |---|---|---|
+   | Consumed when | the durable AutoRecharge row is created, after every local policy check | the same moment, by `expected_amount_micro` |
+   | Held while | the full rolling 24 hours, in **every** state: pending, succeeded, failed, cancelled, refunded, disputed | the attempt stays outstanding |
+   | Released by | only the passage of 24 hours since `created_at` | failure or cancellation (immediately), or settlement (the amount moves into `recharged_this_period_micro` — never counted twice) |
+   | Never consumed by | manual top-ups; a policy refusal or validation failure that happens **before** a row is created; a webhook replay; an idempotent retry of the same provider operation | manual top-ups, promotional credit, refunds, unrelated adjustments, BYO transport, client-paid Businesses (for the Agency aggregate) |
+
+   A failed attempt therefore gives its money back but keeps its slot: it already contacted the payment provider, and the approved policy bounds provider contacts, not successes. A genuinely new AutoRecharge row — the only way one is created is `UsageBillingCheckoutManager::initiateCharge()`, under the locked admission — is always a new slot.
+5. **Administrator retry (Correction Round 2 §1.2), traced mechanically, not inferred from the method name:** `retryFundingAttemptAsAdministrator()` on an AutoRecharge attempt calls `retrievePaymentIntent()` on that attempt's own frozen `provider_session_or_intent_reference` and confirms **that** row through `confirmSucceeded()`. It creates no funding-attempt row, no new idempotency key and no second provider charge operation, so it stays exactly one slot and one financial result; a replayed webhook behaves identically. No production path exists that creates a second provider charge for an existing AutoRecharge row, so no administrator path can bypass the two-per-24-hours limit. (Cancellation likewise has no production writer today; it is exercised out of band in the tests.)
+6. **Boundary rule:** an attempt counts while `created_at > now() − 24 hours`; exactly 24 hours old no longer counts (precise timestamps, never a calendar-date comparison).
+7. **Customer message and alert:** refusals map through `customerMessageForDenial()` to `usage_billing.denials.*` — "Automatic top-up has reached its daily safety limit — it can run at most twice in any 24 hours. No automatic charge was made. You can add funds manually at any time." (and the ceiling equivalents) — never a funding-attempt state or identifier; the actual payer's opted-in billing contact receives `SpendingLimitReachedNotification` with that sentence at most once per window.
+8. Existing protections stay: one outstanding auto-recharge attempt per Business, the failed-payment counter and the 3-strike system disable, `AutoRechargeFailedNotification`, exactly-once credit, no provider call inside a transaction. The 3-strike disable is undiminished but now necessarily spans more than one rolling window: two failures fill a window, so the third failure — and the disable — arrive in the next one.
 
 ## 7. Spending controls (T-CAP-1..5)
 
@@ -144,6 +163,8 @@ Additive only; no merged migration edited; the three original Slice 5 migrations
 3. `2026_09_11_120003_backfill_auto_recharge_consent_on_business_usage_wallets` — data-only, idempotent consent backfill.
 4. **Correction Round 1:** `2026_09_11_120004_require_deliberate_ceiling_for_enabled_auto_recharge_on_business_usage_wallets` — adds nullable `business_usage_wallets.auto_recharge_refusal_notified_at` (the once-per-window refusal-alert marker) and, idempotently (`apply()`), switches **off** every enabled row whose ceiling is missing, zero, below its preset or above $500 — values preserved for a one-click re-enable, consent neither fabricated nor erased, no balance/ledger/payer/attempt touched. Rationale: the maxima are safety maxima, not defaults, so an enabled row without a deliberately chosen compliant ceiling must not keep charging; a new additive migration was chosen over editing the verified backfill. `down()` drops the marker column only and never re-enables anything.
 
+**Correction Round 2 added no migration.** The corrected rolling-window rule needs only `business_funding_attempts.business_id`, `purpose` and `created_at`, which the existing immutable rows already carry, and each row is already a distinct logical attempt (`local_idempotency_key` is UNIQUE). Removing a state filter from a read is not a schema change, so no table, column or index was added and the allowlist needed no further amendment.
+
 Forward, `migrate:rollback --step=4` (exactly the Slice 5 set), forward replay: §14.
 
 ## 12. Changed paths (all inside §22.1 row 5 as amended by Correction Round 1)
@@ -168,13 +189,72 @@ Not needed and not touched: `routes/customer.php` (the account-frame form posts 
 |---|---|
 | §28.1a telecom retail rate card | no telecom rate activated; every amount in tests is an explicit fixture rate |
 | T-COST-9 in real retail currency | proven with fixture rates only |
-| Provider / Telnyx production implementation, BYO provider implementation | untouched (Slices 3/4/9) |
+| Provider / Telnyx production implementation, BYO provider implementation | untouched by this slice (Slices 3/4/9). Correction Round 2 merged `main`, which resolves the parent's §28.3 launch architecture (one platform-owned Telnyx account, a dedicated Messaging Profile and number per Business, `docs/automation/TELNYX-MANAGED-MESSAGING-ARCHITECTURE-DECISION.md`); that decision is preserved verbatim and changes nothing here — Slice 5 activates no provider and no telecom rate |
 | Promotional credit automatic expiry | not modelled by the ledger (§10) |
 | Custom automatic top-up amounts | withdrawn by owner decision; presets only |
 
 Resolved by Correction Round 1 (no longer gaps): the Workspace ceiling is wired into the real job and checkout path; the Agency payer UI exists on the account frame; the monthly ceiling hard maxima are approved ($500 / $500) and enforced; the rolling-window limit is enforced.
 
 ## 14. Evidence
+
+### 14.0 Correction Round 2 (current)
+
+Base: the branch merged `origin/main` at `6c820c801da08ecfd6165d1d3a52ae6336606f0c`
+(PR #219) with a normal merge commit — no rebase, no squash, no force. All runs
+on `ultimatesms_testing` (the canonical name the multi-process concurrency tests
+require), one `artisan test <path>` per invocation, strictly serial, fake
+provider gateway only.
+
+| Command | Result |
+|---|---|
+| `tests/Feature/Usage/Slice5/AutoRechargeRollingWindowTest.php` (×2) | 8 passed (78 assertions) both runs |
+| `tests/Feature/Usage/Slice5/AutoRechargeRollingWindowConcurrencyTest.php` (×2) | 1 passed (10 assertions) both runs |
+| `tests/Feature/Usage/Slice5/AutoRechargeExecutionCeilingsTest.php` | 6 passed (59 assertions) |
+| `tests/Feature/Usage/AutoRechargeFailedPaymentRetryTest.php` | 10 passed (35 assertions) |
+| `tests/Feature/Usage/Slice5` (complete) | 92 passed (1082 assertions) |
+| `tests/Feature/Usage` | **998 passed (5195 assertions), 0 failed** |
+| `tests/Unit/Usage` | 21 passed (46 assertions) |
+| `tests/Feature/Workspace` | 774 passed (2279 assertions) |
+| `tests/Feature/Security` | 140 passed (1129 assertions) |
+| `tests/Feature/Business` | 3 failed, 540 passed (5021 assertions) — the three pre-existing `BusinessKnowledgeProfile*` failures (§14.3) |
+| `tests/Feature/Entitlement` | 326 passed (869 assertions) |
+| `tests/Feature/DesignSystem/WorkspaceBusinessComponentAdoptionTest.php` | 13 passed (136 assertions) |
+| `tests/Feature/DesignSystem/WorkspaceBusinessDesignSystemContentTest.php` | 8 passed (101 assertions) |
+| `tests` (full suite) | 9 failed, 5077 passed (26032 assertions) — exactly the nine pre-existing failures below; nothing under Usage, Unit/Usage, Workspace, Security, Entitlement or DesignSystem fails |
+
+**Baseline reproductions — exact merged `origin/main` `6c820c801da08ecfd6165d1d3a52ae6336606f0c`**, in a worktree detached at that commit with the same never-commit environment artifacts:
+
+| Test | Correction branch | Baseline `6c820c8` | Verdict |
+|---|---|---|---|
+| `BusinessKnowledgeProfileControllerTest::test_missing_stale_and_present_fields_are_all_displayed` | failed | 1 failed, 28 passed (68 assertions) — same test | deterministic baseline failure |
+| `BusinessKnowledgeProfileHoursTest::test_no_change_row_for_a_true_hours_no_op` | failed | 1 failed, 17 passed (35 assertions) — same test | deterministic baseline failure |
+| `BusinessKnowledgeProfileSeamTest::test_only_the_manager_writes_the_tracked_tables` | failed | 1 failed, 2 passed (3707 assertions) — same test | deterministic baseline failure |
+| `BrandingAdminFooterRenderTest::test_admin_footer_renders_the_company_name_exactly_once…` | failed | 1 failed, 1 passed (9 assertions) — same test | deterministic baseline failure |
+| `OpportunityManagerBeginRunTest` heartbeat (`RunAlreadyActiveException`) | failed | 1 failed, 11 passed (48 assertions) — same test, same exception | deterministic baseline failure |
+| `WebsiteIndexingTest::test_robots_txt_is_untouched_by_this_feature_branch` | failed | 1 failed, 4 passed (15 assertions) — same test | deterministic baseline failure |
+| `WebsiteDraftPageServiceSeamTest` store/update "persists every draft field" (2 tests) | failed | 2 failed, 8 passed (56 assertions) — same two tests | deterministic baseline failure |
+| `WebsiteDraftPublishTest::test_rollback_repoints_the_website_without_mutating_any_revision…` | failed | 1 failed, 6 passed (35 assertions) — same test | deterministic baseline failure |
+
+None was fixed: they are unrelated to this slice, and §5 of the correction brief forbids touching them.
+**Rolling-window proof (the corrected rule).** `AutoRechargeRollingWindowTest`
+covers: two failed attempts block a third; one failed plus one successful block
+a third; two cancelled attempts block a third; a failed attempt releases its
+monetary headroom while keeping its slot (proved with a ceiling of exactly one
+preset, so the second attempt is only admissible because the money came back);
+a cancelled attempt likewise; manual top-ups never consume a slot; a
+pre-attempt policy refusal creates no row and no slot; the exact 24-hour
+boundary (23:59:59 counts, 24:00:00 does not); a webhook replay and the
+administrator retry stay one slot and one financial result; a genuinely new
+provider operation claims a new slot; and no attempt row — therefore no
+provider call — appears once the limit refuses admission.
+`AutoRechargeFailedPaymentRetryTest` proves the 3-strike disable is
+undiminished across two windows. `AutoRechargeRollingWindowConcurrencyTest`
+runs two OS processes released by one shared signal against the final available
+slot: exactly one claims it, two attempts exist in total, one charge occurs.
+
+**Migration decision:** none needed — see §11.
+
+### 14.1–14.5 Correction Round 1 (unchanged, for reference)
 
 All runs on the disposable `ultimatesms_testing` database, one `artisan test <path>` per
 invocation, strictly serial (the runner waits for an idle PHP before each path),

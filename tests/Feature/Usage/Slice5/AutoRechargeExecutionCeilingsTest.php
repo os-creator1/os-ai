@@ -217,14 +217,23 @@ class AutoRechargeExecutionCeilingsTest extends TestCase
         $this->assertSame('5000000', (string) $this->walletRow($business)->recharged_this_period_micro);
         $this->assertSame('5000000', $manager->autoRechargeCeilingAdmission($business, 5_000_000)->remainingHeadroomMicro, 'Counted once, not twice.');
 
-        // 33. A definitively failed attempt releases its claim.
+        // 33. A definitively failed attempt releases its MONETARY claim …
         $this->fund($business, 1_000_000);
         $this->gateway->paymentIntentOutcomes = ['*' => 'declined'];
         EvaluateBusinessAutoRecharge::dispatch((int) $business->id);
         $this->assertDatabaseHas('business_funding_attempts', ['business_id' => $business->id, 'purpose' => 'auto_recharge', 'state' => 'failed']);
         $this->assertSame('5000000', (string) $this->walletRow($business)->recharged_this_period_micro);
-        $this->assertSame('5000000', $manager->autoRechargeCeilingAdmission($business, 5_000_000)->remainingHeadroomMicro);
-        $this->assertSame(0, app(BusinessFundingAttemptRepository::class)->outstandingAutoRechargeAmountMicroForBusinesses([(int) $business->id]));
+        $this->assertSame(0, app(BusinessFundingAttemptRepository::class)->outstandingAutoRechargeAmountMicroForBusinesses([(int) $business->id]), 'A failed attempt reserves no money.');
+
+        // … but not its frequency slot (Correction Round 2 §1.1): two attempt
+        // rows exist in this window, so the next automatic initiation is
+        // refused on frequency even though 5,000,000 of monetary headroom
+        // remains under the ceiling.
+        $repository = app(BusinessFundingAttemptRepository::class);
+        $this->assertSame(2, $repository->countAutoRechargeAttemptsCreatedAfter((int) $business->id, now()->subHours(UsageWalletManager::AUTO_RECHARGE_ROLLING_WINDOW_HOURS)));
+        $refused = $manager->autoRechargeCeilingAdmission($business, 5_000_000);
+        $this->assertFalse($refused->allowed);
+        $this->assertSame(UsageWalletManager::DENIAL_AUTO_RECHARGE_FREQUENCY, $refused->denialReason);
     }
 
     public function test_an_idempotent_replay_of_the_same_attempt_never_consumes_the_allowance_twice(): void

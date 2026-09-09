@@ -1448,13 +1448,25 @@ is rewritten.
    `consecutive_recharge_failures`, and one opted-in billing-contact alert
    per rolling window (`notifyAutoRechargeRefusal()`,
    `auto_recharge_refusal_notified_at`).
-10. **At most two automatic top-ups per Business in any rolling 24 hours.**
-    Derived from the authoritative funding attempts
+10. **At most two automatically INITIATED top-ups per Business in any
+    rolling 24 hours** (corrected by Correction Round 2). Derived from the
+    authoritative funding attempts
     (`countAutoRechargeAttemptsCreatedAfter()`): an AutoRecharge attempt
-    counts while `created_at > now − 24h` and its state is outstanding or
-    was charged (succeeded, refunded, disputed); failed and canceled
-    attempts do not count; manual top-ups never count; exactly 24 hours old
-    no longer counts. Evaluated in the same locked admission as item 9.
+    counts while `created_at > now − 24h`, **whatever its state is now** —
+    pending, succeeded, failed, cancelled, refunded and disputed alike. The
+    frequency slot is consumed when the durable row is created and released
+    only by the passage of the window; failure or cancellation releases the
+    attempt's *monetary* headroom (item 9) but never its slot, because the
+    approved policy bounds how often the platform may contact the payment
+    provider, not how often it succeeds. Manual top-ups never count; a
+    policy refusal or validation failure that precedes row creation creates
+    no row and no slot; a webhook replay and an idempotent administrator
+    retry confirm the same row and remain one slot; only a genuinely new
+    AutoRecharge row — creatable solely through the locked admission in
+    item 9 — is a new slot. Exactly 24 hours old no longer counts. Evaluated
+    in the same locked admission as item 9. Consequence: the §19 3-strike
+    disable is unchanged but now spans two windows, since two failures fill
+    the first.
 11. **Financial-control authority is the payer side's.**
     `BillingProfileManager::actorManagesPayerControls()`: while the
     Workspace pays, the Workspace owner or an active Agency-wide Admin;
