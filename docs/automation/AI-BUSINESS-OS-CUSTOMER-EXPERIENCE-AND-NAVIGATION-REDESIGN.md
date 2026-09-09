@@ -6,6 +6,25 @@
 dependency or generated asset is authorized or changed by this document.** This
 branch changes exactly one file: this one.
 
+**Revision: Correction Round 1.** This round makes one substantive change of
+position and one of fact.
+
+* **Position.** The four security defects this audit discovered were originally
+  recorded as observations outside the user-experience remit, with no owner and
+  no schedule. That was wrong. Recording a live, unauthenticated
+  payment-configuration overwrite as an aside is not neutrality; it is a
+  deferral decision taken silently. They are now **§16.A Security Remediation
+  Slice 0**: an explicitly owned, pre-release **release blocker** and a
+  prerequisite for every other slice in §16. Nothing visual ships before it.
+* **Fact.** §11.2's "three recipes are buildable today" framing is **withdrawn**
+  and replaced by the three-state classification locked by the automation
+  expansion contract merged at `origin/main` after this branch was cut. See
+  §11.2 and §20 item 4.
+
+Correction Round 1 also expands §5.4: re-reading `DebugController` in full for
+this round found two further unauthenticated destructive routes beyond the two
+originally named, one of which overwrites live payment-gateway configuration.
+
 **Verified base:** `origin/main` at
 `6c820c801da08ecfd6165d1d3a52ae6336606f0c` — `Merge pull request #219 from
 os-creator1/agent/telnyx-managed-messaging-architecture-decision`, fetched with
@@ -13,6 +32,16 @@ os-creator1/agent/telnyx-managed-messaging-architecture-decision`, fetched with
 permission default and plan-packaging claim below was read at that commit in a
 clean worktree created directly from that SHA. No unmerged Lane A, B, C, E or F
 branch was merged, cherry-picked or consulted for evidence.
+
+**`origin/main` has since advanced to
+`98e063aabf0f8f67bc02190ce761064f8889ed22`** (`Merge pull request #220`). That
+advance adds **exactly one file**,
+`docs/automation/AUTOMATION-TRIGGER-EVENT-AND-GUIDED-RECIPE-EXPANSION-CONTRACT.md`,
+and **changes no source, route, migration or configuration**
+(`git diff --name-status 6c820c8..98e063a` returns a single `A` row). Every
+code-level claim in this document therefore remains exactly true at both SHAs.
+This branch is **not** rebased or merged onto the new head, per the standing
+instruction; the advance is recorded here instead.
 
 **Branch:** `agent/customer-experience-ux-redesign-contract`.
 
@@ -25,6 +54,8 @@ edit:
 | `docs/automation/CUSTOMER-EXPERIENCE-MANAGED-MESSAGING-AUTOMATIONS-CONTRACT.md` | **Parent.** Its §4 terminology, §5 account model, §7 capacity, §10–§13 messaging/wallet/number model, §14–§16 automations and §18–§20 invariants remain binding and are not restated here except where this document adds visible-experience detail. Where the two disagree on **customer-visible naming**, this document wins (§3, §8); on **mechanism**, the parent wins. |
 | `docs/automation/PRODUCT-SURFACE-RETENTION-AUDIT.md` §12 | **Binding human decisions.** All eight are treated as settled and are relied on throughout (§9, §16). This document never reopens them. |
 | `docs/automation/CUSTOMER-EXPERIENCE-SLICE-1B-ACCOUNT-CONTEXT.md`, `docs/automation/CUSTOMER-EXPERIENCE-SLICE-2-AUTH-SHELL.md` | **Delivered work.** §4 records honestly which reported defects these already fixed. |
+| `docs/automation/AUTOMATION-TRIGGER-EVENT-AND-GUIDED-RECIPE-EXPANSION-CONTRACT.md` (merged at `98e063a`) | **Authority on recipe feasibility.** Its §7.0 three-state classification governs §11.2 of this document, which is rewritten to match. Where the two disagree on whether a recipe can run or ship, **that contract wins**. This document does not restate its trigger, producer or event-architecture analysis and makes no producer claim of its own. |
+| `docs/automation/CUSTOMER-EXPERIENCE-SLICE-3-MESSAGING-PROVIDER-FOUNDATION.md` (on the unmerged branch `agent/customer-experience-slice-3-messaging-provider-contract`) | **Owns provider relocation.** Its §4.7 already specifies moving BYO credentials to Agency-only advanced settings, introducing `manage_advanced_provider`, and removing the old routes. §16.A item 3 is deliberately scoped **not** to duplicate it — see §16.A.3. |
 | `docs/automation/DESIGN-SYSTEM-CONTRACT.md` and the `DESIGN-SYSTEM-M2-*` set | **Design substrate.** §15 reuses its tokens and components rather than proposing a second system. |
 | RFC-003 / RFC-004 / RFC-005 | **Unchanged.** No tenancy, entitlement-decision or ledger semantics are altered. |
 
@@ -188,13 +219,27 @@ Severity is product severity, not vulnerability severity.
 | D-21 | Raw platform environment-variable names shown to customers | **NEW — CONFIRMED** | High |
 | D-22 | View-as-client banner disappears in some layout branches | **NEW — CONFIRMED** | High |
 | D-23 | No loading-state primitive exists anywhere | **NEW — CONFIRMED** | Medium |
-| D-24 | Five unauthenticated destructive debug routes in `routes/web.php` | **NEW — CONFIRMED** | Outside UX scope, detailed in §5.4 |
+| D-24 | Five unauthenticated destructive debug routes in `routes/web.php`, one of which overwrites live payment configuration | **NEW — CONFIRMED** | **Release blocker — Slice 0 §16.A.1** |
 
 D-19 through D-24 were not in the brief's lead list. They were found by the
 mechanical audit the brief required and are reported rather than filtered out.
-D-24 in particular is not a user-experience defect at all; it is recorded in
-§5.4 and deliberately excluded from every slice allowlist in §16 so that no
-user-experience branch quietly carries a security change.
+
+**Correction Round 1 — security ownership.** Four of the confirmed defects are
+security defects, not user-experience defects. The first version of this
+document recorded them as observations outside its remit. They are now owned,
+scheduled and blocking:
+
+| Defect | Security failure | Owner |
+|---|---|---|
+| D-24 | Unauthenticated destructive writes and payment reconfiguration by `GET` | **§16.A.1** |
+| D-19 | Cross-tenant invoice count rendered to a customer | **§16.A.2** |
+| D-9 | Provider credential surface where menu visibility is the only boundary | **§16.A.3** |
+| D-21 | Operator configuration leaked into customer responses | **§16.A.4** |
+
+**§16.A Security Remediation Slice 0 is a release blocker and a prerequisite
+for every other slice in §16.** No navigation, dashboard, settings or visual
+work begins until it exits. The remaining defects in this register stay
+user-experience work and keep their original slices.
 
 ### 4.2 D-1 — Login artwork. ALREADY FIXED
 
@@ -769,32 +814,67 @@ remaining source of "dead ends the customer can fall into".
 | Per-gateway payment callbacks | 27 | required by gateways | **Keep**, never in navigation |
 | Debug routes | 5 | none | **Remove immediately** — see §5.4 |
 
-### 5.4 Out of UX scope, but found during the route inventory and too serious to omit
+### 5.4 The unauthenticated debug surface — complete inventory
 
-`routes/web.php` lines 54–58 register five `DebugController` routes. They are
-placed in the `mapWebRoutes()` group that applies **only the `web` middleware**
+**Correction Round 1.** This section previously ended by saying the debug
+routes were "outside this contract's UX remit" and should be fixed "on their
+own branch", with no owner and no schedule. That was a deferral dressed as
+scoping. They are now owned by **§16.A Security Remediation Slice 0**, a
+release blocker. Re-reading the controller in full for this round also found
+that two of the five routes are materially worse than first recorded.
+
+`routes/web.php` lines 54–58 register five `DebugController` routes inside the
+`mapWebRoutes()` group, which applies **only the `web` middleware**
 (`app/Providers/RouteServiceProvider.php`) — no `auth`, no `can:`, no signed
-URL, no `app.stage` guard. `app/Http/Controllers/Debug/DebugController.php` has
-no constructor middleware and no internal guard of any kind.
+URL, no `app.stage` guard, no throttle.
+`app/Http/Controllers/Debug/DebugController.php` is 431 lines, declares no
+constructor, calls `middleware()` nowhere, and contains no internal guard of
+any kind. Every method is reachable by an anonymous `GET`.
 
-| Route | Method | Effect |
-|---|---|---|
-| `GET /remove-jobs` | `removeJobs()` lines 34–40 | `truncate()` on `job_monitors`, `job_batches`, `jobs`, `import_job_histories` and `failed_jobs` — destroys the entire queue for every tenant |
-| `GET /remove-contacts` | `removeContacts()` lines 375–397 | Chunks **every `Contacts` row on the platform** and deletes any whose phone number fails to parse |
-| `GET /cache-clear` | `cacheClear()` line 408 | `Cache::flush()` |
-| `GET /add-gateways` | `addGateways()` line 45 | Writes `PaymentMethods` rows |
-| `GET /update-campaign-cache/{campaign}/{number}` | `updateCampaignCache()` line 413 | Mutates campaign cache for an arbitrary campaign id |
+| # | Route | Method | Verb | Effect | Blast radius |
+|---|---|---|---|---|---|
+| R-1 | `/remove-jobs` | `removeJobs()` lines 34–40 | GET | `truncate()` on `job_monitors`, `job_batches`, `jobs`, `import_job_histories`, `failed_jobs` | Every tenant's queued work, batch state and failure record destroyed, unrecoverably |
+| R-2 | `/remove-contacts` | `removeContacts()` lines 375–397 | GET | Chunks **every `Contacts` row on the platform**, parses each phone number, and `delete()`s any that fails `isPossibleNumber()` or throws `NumberParseException` | Cross-tenant customer-data deletion, driven by a parser's opinion of each number |
+| R-3 | `/add-gateways` | `addGateways()` lines 45–370 | GET | `PaymentMethods::updateOrCreate(['type' => …], ['name', 'status', 'options'])` across **29 gateway definitions** hardcoded in the method body | **Overwrites live payment configuration.** See below |
+| R-4 | `/cache-clear` | `cacheClear()` line 408 | GET | `Cache::flush()` | Whole-application cache eviction on demand |
+| R-5 | `/update-campaign-cache/{campaign}/{number}` | `updateCampaignCache()` lines 413–430 | GET | Looks up **any** campaign by uid with no ownership check, rewrites its cached contact count from the URL, calls `setDone()` and sets `delivery_at` | Cross-tenant campaign mutation; a running campaign can be marked complete by a stranger |
 
-Only `GET /debug` is guarded, and only by `config('app.stage') === 'local'`.
-The other five are registered unconditionally in every environment.
+Only `GET /debug` is guarded, and only by `config('app.stage') === 'local'`
+(`routes/web.php` line 60). R-1 through R-5 are registered unconditionally in
+every environment, production included.
 
-**This is an unauthenticated destructive-write surface, not a UX defect.** It is
-recorded here because it was found during the mechanical route inventory this
-brief required and a reader of this audit should not have to discover it
-independently. It should be fixed on its own branch, ahead of and independently
-of every slice in §16, and it is deliberately excluded from those slices'
-allowlists so no UX work is delayed behind it and no UX branch quietly carries
-a security change.
+**R-3 is the most serious finding in this audit.** The 29 gateway definitions
+it writes are the inherited vendor's own values, embedded as literals in the
+controller. Two carry hardcoded provider credentials in an `options` payload,
+and the offline-payment definition carries a third party's bank routing
+number, account number, beneficiary name and support email address. Because
+the write is `updateOrCreate` keyed on `type`, an anonymous request to
+`GET /add-gateways` on a production install will:
+
+* replace the operator's configured credentials for those gateways with the
+  vendor's sandbox values, breaking payment collection;
+* flip the `status` flag on all 29 gateways to the hardcoded defaults,
+  silently enabling or disabling payment methods;
+* **replace the offline-payment instructions with a third party's bank
+  account details**, so customers paying by transfer are told to send money to
+  an account the operator does not control.
+
+That last item is a payment-redirection vector reachable by an unauthenticated
+`GET`. It requires no credential, no session and no CSRF token, and a browser
+will follow it from a link or an image tag.
+
+**Why each of these is security-critical, not merely untidy.** They are
+state-changing operations behind `GET`, which means they are triggerable by
+cross-site request, by a crawler, by a prefetching browser, by a link in an
+email, and by any embedded resource on any page. `GET` is defined as safe, so
+none of the ordinary protections apply: there is no CSRF token to miss, and
+browsers issue these requests without user intent. Combined with no
+authentication at all, the effective access-control policy for platform-wide
+data destruction and payment reconfiguration is "know the URL", and the URLs
+are literal, guessable English words in a file committed to the repository.
+
+The exact evidence above is the input to §16.A.1, which decides the disposition
+of each route rather than assuming one.
 
 ---
 
@@ -1194,35 +1274,66 @@ automatically?"** and shows recipe cards. The existing When/Then form at
 `resources/views/customer/Automations/form.blade.php` becomes the **custom**
 path only, reached from the last card and labelled *Build your own*.
 
-### 11.2 Recipe catalogue, with honest availability
+### 11.2 Recipe catalogue — reconciled with the automation expansion contract
 
-Every recipe in the brief is listed. Availability is stated against the code at
-this base SHA, so nobody plans work on a trigger that does not exist.
+**Correction Round 1. The earlier framing of this section — "three recipes are
+buildable today, the catalogue ships with three cards" — is withdrawn.** It used
+a binary *buildable / not buildable* test that collapsed two independent
+questions into one, and it produced a wrong shipping instruction. A recipe can
+be mechanically runnable through the legacy technical form and still be
+unacceptable to show in a guided, managed catalogue. The earlier wording would
+have shipped three guided cards that depend on messaging-identity and wallet
+work that has not landed.
 
-| Recipe | Trigger needed | Action needed | Backed at this base? | Blocker |
-|---|---|---|---|---|
-| Reply to a new lead | `contact_created` | `send_message` | **Yes** | none |
-| Appointment reminder | appointment approaching | `send_message` | **No** | no calendar or appointment model exists |
-| Appointment booked confirmation | booking created | `send_message` | **No** | same |
-| Missed-call text back | missed call | `send_message` | **No** | voice events are out of scope (parent §10.5) |
-| Payment received thank-you | payment received | `send_message` | **No** | no Business-facing payments product |
-| Payment failed reminder | payment failed | `send_message` | **No** | same |
-| Inbound message follow-up | inbound message received | `send_message` | **No** | no inbound-message trigger in `AutomationTriggerType` |
-| Review request after completed service | appointment completed | `send_message` | **No** | no calendar |
-| Lead not answered | contact created plus no reply within N | `send_message` | **No** | no elapsed-time-without-response trigger |
-| Booking cancelled | booking cancelled | `send_message` | **No** | no calendar |
-| No-show follow-up | appointment no-show | `send_message` | **No** | no calendar |
-| Date-based reminder (birthday, renewal, anniversary) | `contact_date_reached` | `send_message` | **Yes** | none |
-| Tag a new contact | `contact_created` | `update_contact_field` | **Yes** | none |
+**Authority.** Recipe feasibility is now governed by
+`docs/automation/AUTOMATION-TRIGGER-EVENT-AND-GUIDED-RECIPE-EXPANSION-CONTRACT.md`
+§7.0, merged at `origin/main` `98e063a`. Its three states are adopted verbatim:
 
-**Three recipes are buildable today. Eight are not.** Parent §14.2 already
-requires that an unbacked recipe is **not shown** — never greyed out, never
-labelled "coming soon", never creatable. That discipline is adopted here
-unchanged, and it means the catalogue ships with three cards plus *Build your
-own* until calendar, payments and inbound-message triggers exist.
+| State | Meaning |
+|---|---|
+| **1 — Technically runnable today** | Trigger and action both execute now through the existing legacy When/Then form. Says nothing about whether it may be exposed |
+| **2 — Product/release blocked** | State 1 holds, but the recipe may not ship in the guided experience until default Business messaging-identity resolution, the managed-provider foundation, wallet reservation and cost estimation, and removal of sender/server choices from the form have all landed |
+| **3 — No producer or action substrate** | The trigger, the action, or both do not exist as dispatchable code. No amount of identity or wallet work unblocks this |
 
-Stating this now prevents the most likely failure of this whole redesign:
-shipping a catalogue of eleven promises against a two-trigger engine.
+**This document makes no producer claim of its own.** Every classification below
+is the expansion contract's, cited rather than re-derived. Where a recipe from
+this document's brief is not among that contract's seventeen, it is marked
+**unclassified upstream** and must be ruled on there before any design work,
+rather than being given a verdict here.
+
+| Recipe (this document's brief) | Expansion-contract row | State | Why |
+|---|---|---|---|
+| Reply to a new lead | #1, New lead instant reply | **1 + 2** | Runs today via legacy config; withheld from the guided catalogue pending messaging-identity, provider and wallet work |
+| Missed-call text back | #2 | **3** | No voice ingestion exists; out of scope per parent §10.5 |
+| Appointment booked confirmation | #3 | **3** | No Booking domain |
+| Appointment reminder | #4 | **3** | Same |
+| Booking cancelled | #6 | **3** | Same |
+| No-show follow-up | #7 | **3** | Same |
+| Payment received thank-you | #8 | **3** | No Business-to-client payments domain |
+| Payment failed reminder | #9 | **3** | Same |
+| Inbound message follow-up | #12 | **3** | An inbound event exists but is a websocket broadcast with no Business attribution, and there is no notify-staff action. **Corrected:** the earlier "no inbound-message trigger" wording understated this — a producer exists and is unsafe, which is a different finding from absence |
+| Review request after completed service | #14 | **3** | Needs both Booking and review-ingestion domains |
+| Lead not answered | #13, Lead has not replied | **3** | Requires a Business-scoped Conversation model; `ChatBox` is user-scoped |
+| Date-based reminder | **unclassified upstream** | — | `contact_date_reached → send_message` is mechanically state 1, but the pair is not one of the seventeen. Its guided-catalogue status must be ruled on in the expansion contract before design |
+| Tag a new contact | **unclassified upstream** | — | `contact_created → update_contact_field` is mechanically state 1 and is the one candidate that needs **no** messaging identity or wallet, so it may not carry state 2. That is an upstream ruling, not one this document may make |
+
+**The corrected shipping instruction.** The expansion contract §7.0 states that
+**no recipe is shown in the guided catalogue in state 1 alone** — the
+product-readiness bar of state 2 governs every entry, Recipe 1 included.
+Therefore:
+
+* **At this base, the guided catalogue ships with zero cards.** Slice 7 delivers
+  the catalogue *mechanism*, the card contract of §11.3, and *Build your own* —
+  not a populated catalogue.
+* Recipe 1 is the **first** card to appear, and only once the messaging
+  prerequisites land. It is near-term and well understood.
+* The two unclassified pairs may be additional early candidates, once ruled on
+  upstream.
+* Recipes in state 3 are never shown, never greyed out, never labelled "coming
+  soon", and never creatable — parent §14.2's discipline, unchanged.
+
+This correction removes the risk the earlier wording created: shipping guided
+cards that depend on unlanded work, presented to customers as ready.
 
 ### 11.3 What every recipe card must say
 
@@ -1544,6 +1655,7 @@ None of them was merged or consulted for evidence.
 | `agent/customer-experience-slice-5-wallet-payer-ux` | `UsageBillingController.php`, `UsageBillingTopUpController.php`, `UsageBillingAutoRechargeController.php`, `BillingProfileManager.php`, `WorkspaceController.php`, `usage-billing/show.blade.php`, `workspaces/show.blade.php`, `resources/lang/en/locale.php` | **1, 5** |
 | `agent/b1-outreach-compose` | `_originator.blade.php`, the four compose partials, `OutreachController.php`, `Helper.php`, `routes/customer.php`, `resources/lang/en/locale.php` | **1, 6** |
 | `agent/customer-experience-slice-1a-location-capacity` | `EntitlementManager.php`, `Business.php`, `BusinessLocation.php`, `routes/customer.php`, and a new `customer/business/locations/index.blade.php` | **2, 9** |
+| `agent/customer-experience-slice-3-messaging-provider-contract` *(added Correction Round 1)* | Documentation only — adds `CUSTOMER-EXPERIENCE-SLICE-3-MESSAGING-PROVIDER-FOUNDATION.md` and edits the parent contract. It changes no source, so it collides with no slice's code. But its **§4.7 owns the provider relocation**, which bounds **§16.A.3** | **0 (item 3), 6** |
 
 Two consequences are binding:
 
@@ -1559,8 +1671,12 @@ Business-scoped `customer/business/locations/index.blade.php` that the
 Settings → Business → Locations placement needs, so Slice 9 should build on it
 rather than create a second locations surface.
 
+**Slice 0 (§16.A) sits ahead of everything in this section and is a release
+blocker.** The numbered slices below begin only after it exits.
+
 Every slice carries the same universal stop conditions:
 
+* **stop if Slice 0 has not exited** — no slice below may start first;
 * stop if the change requires a schema migration not already contracted;
 * stop if the change touches RFC-003 tenancy, RFC-004 entitlement decisions or
   RFC-005 ledger invariants;
@@ -1568,6 +1684,357 @@ Every slice carries the same universal stop conditions:
 * stop if the slice would need to modify a currently-active contract's files;
 * stop on any finding that contradicts this document, and record it rather than
   working around it.
+
+### 16.A SECURITY REMEDIATION SLICE 0 — release blocker, prerequisite for every slice below
+
+**Status: release blocker.** Slice 0 must land before any slice in §16, before
+any visual or navigation work, and before release. It is not a "nice to have
+first"; a slice that renumbers a menu while `GET /add-gateways` remains open is
+work spent on the wrong thing. **Owner: the same team that takes Slice 1.** It
+is not a background task, not a follow-up, and not conditional on someone
+volunteering.
+
+**Why Slice 0 exists rather than four scattered tickets.** All four items share
+one root cause: *a boundary that is enforced somewhere other than where the
+request is authorized.* R-1 through R-5 rely on the URL being unknown; D-9
+relies on the menu not linking it; D-19 relies on SQL precedence that does not
+hold; D-21 relies on a message being read by the right audience. Each is the
+same mistake, and fixing them together makes the shared rule explicit: **the
+authorization boundary is the controller, and nothing else.**
+
+**Slice 0 changes no user-visible design.** It is deliberately shaped so it can
+land while the design questions in §18 are still open, and so that no
+user-experience branch has to carry a security change.
+
+#### Universal Slice 0 conditions
+
+* **No schema migration.** Every fix is additive route, controller, gate or
+  query work. Any item that appears to need a migration stops and is
+  re-contracted (this is why §16.A.2 does not add a `business_id` to invoices).
+* **Fail closed.** Every new check denies by default and permits explicitly.
+* **No behaviour change for a correctly authorized actor**, except where the
+  current behaviour is itself the defect.
+* **Each item is independently revertible** — see the per-item rollback rows.
+  A revert restores the prior (defective) behaviour and nothing else.
+* **Ship order.** Items 1 and 2 are independent and may land in parallel. Items
+  3 and 4 are independent of both.
+
+---
+
+#### 16.A.1 — Unauthenticated destructive debug routes (D-24)
+
+**Objective.** No unauthenticated request may destroy data, mutate another
+tenant's records, or alter payment configuration. No `GET` may do so at all.
+
+**Evidence.** §5.4, routes R-1 through R-5.
+
+**Disposition, decided per route rather than assumed.** The brief's default —
+remove customer-accessible production registration unless a real operational
+requirement is evidenced — was applied to each. The evidence search for an
+operational requirement was: consumers of each route name across the
+repository, and whether the behaviour is reachable through an existing
+authorized surface.
+
+| Route | Evidenced operational need | Disposition | Reasoning |
+|---|---|---|---|
+| R-1 `/remove-jobs` | **None found.** Queue maintenance belongs to the operator's own tooling, and `php artisan queue:flush` already exists | **Delete route and method** | A web endpoint that truncates five queue tables has no legitimate caller. Nothing in the application links it |
+| R-2 `/remove-contacts` | **None found.** A one-off historical data-cleanup pass, not an operation | **Delete route and method** | It deletes customer data platform-wide on a parser heuristic. If the cleanup is ever needed again it is a console command run deliberately, not a URL |
+| R-3 `/add-gateways` | **Seeding is a real need.** `database/seeders/PaymentMethodsSeeder.php` already exists and is the correct home | **Delete route and method; do not re-home the hardcoded values** | The behaviour duplicates an existing seeder. The embedded vendor credentials and third-party bank details must be removed from source, not relocated |
+| R-4 `/cache-clear` | **Real, but already served.** `php artisan cache:clear` exists | **Delete route and method** | An unauthenticated cache-eviction endpoint is a denial-of-service primitive |
+| R-5 `/update-campaign-cache/{campaign}/{number}` | **None found.** It repairs a cached counter | **Delete route and method** | It mutates any campaign by uid with no ownership check. A repair operation belongs in a console command that names its tenant |
+
+**Recommended disposition: delete all five routes and the controller.** With
+every method removed, `app/Http/Controllers/Debug/DebugController.php` has no
+remaining behaviour, and the `if (config('app.stage') === 'local')` block
+guarding `/debug` becomes the only survivor. The recommendation is to delete the
+class outright and, with it, the hardcoded credentials and bank details in
+source.
+
+**If the operator evidences a genuine need for any one of them**, the fallback
+is not "add auth" alone. It is all four of: registration only under
+`config('app.stage') === 'local'`; `POST` not `GET`; behind `auth` plus an
+explicit operator ability; and a throttle. A route that survives on those terms
+is an operator tool, never a customer-reachable one. **This fallback requires
+named, written evidence of the need; absence of evidence resolves to delete.**
+
+**Implementation paths (exact).**
+
+| Path | Change |
+|---|---|
+| `routes/web.php` lines 54–58 | Remove the five `Route::get(...)` registrations |
+| `routes/web.php` line 60 and the `use` at line 8 | Remove the `config('app.stage') === 'local'` `/debug` block and the now-unused import |
+| `app/Http/Controllers/Debug/DebugController.php` | Delete the file |
+
+**Test paths (exact).**
+
+| Path | Assertions |
+|---|---|
+| `tests/Feature/Security/DebugRouteRemovalTest.php` **(new)** | For each of the five URIs: an **unauthenticated** request returns 404; an **ordinary authenticated customer** returns 404; an **authenticated admin** returns 404. `Route::has()` is false for `add.gateways`, `remove.jobs`, `remove.contacts`, `cache.clear`, `update.campaign.cache` |
+| Same file | **Behavioural proof, not just routing:** seed `jobs`, `failed_jobs` and `Contacts` rows across **two unrelated tenants**, issue each request unauthenticated, and assert every row still exists. This proves the destructive behaviour is gone, not merely that a route name changed |
+| Same file | Seed `PaymentMethods` with operator-configured `options`, request `/add-gateways` unauthenticated, assert the stored `options` and `status` are byte-identical afterwards |
+| Same file | **No `GET` route anywhere in the application truncates a table or deletes contacts:** assert the five names are absent, and that `DebugController` no longer exists via `class_exists()` |
+| `tests/Feature/Security/NoHardcodedGatewayCredentialsTest.php` **(new)** | Assert `app/Http/Controllers/Debug/` contains no PHP file. Guards against the values being reintroduced by a revert |
+
+**Entry criteria.** Owner assigned. Operator asked, in writing, whether any of
+the five is in real use; the answer recorded in the pull request. Absence of an
+answer within the review window resolves to delete.
+
+**Exit criteria.** All five URIs 404 for every actor class. The behavioural
+tests above pass with a positive assertion count. No file under
+`app/Http/Controllers/Debug/` remains. No credential or bank detail from those
+definitions survives anywhere in source.
+
+**Rollback.** Revert the commit. This restores the routes and the controller,
+including the defect — so rollback is only acceptable as an emergency response
+to an unrelated regression, and must be followed by a re-landing. **Deleting
+routes cannot break a customer flow**, because none of the five is linked from
+any view, controller, job or test in the repository; that absence was the
+evidence used to classify them.
+
+**Dependencies.** None. Slice 0 item 1 has no prerequisite and blocks nothing
+in its own right — it can land first and immediately.
+
+---
+
+#### 16.A.2 — Cross-tenant invoice count (D-19)
+
+**Objective.** No customer-facing query may count, sum or display another
+tenant's records.
+
+**Evidence.** `resources/views/customer/dashboard.blade.php` line 320:
+`Invoices::where('user_id', …)->where('status', UNPAID)->orWhere('status', PENDING)->count()`
+emits `WHERE user_id = ? AND status = 'unpaid' OR status = 'pending'`. `AND`
+binds tighter than `OR`, so the second disjunct carries no ownership predicate.
+
+**The fix, stated precisely.** Replace the ungrouped `orWhere` with an
+explicitly grouped status set under a single ownership predicate:
+
+```php
+Invoices::where('user_id', $actorUserId)
+    ->whereIn('status', [Invoices::STATUS_UNPAID, Invoices::STATUS_PENDING])
+    ->count();
+```
+
+`whereIn` removes the precedence trap by construction rather than by adding a
+closure that a future edit could unbalance again.
+
+**An honest scoping note, because the brief asked for Business/Account
+scoping.** The `invoices` table has **only `user_id`** — no `business_id` and no
+`workspace_id` (`database/migrations/2021_03_25_135511_create_invoices_table.php`
+lines 19 and 29; a grep for either column in that migration returns zero).
+Invoices are subscription invoices owned by the paying user. **Re-keying them to
+a Business or Account is a schema migration and a billing-model change, not a
+security fix**, and Slice 0 does not do it. The security defect is precisely the
+missing grouping, and grouping fixes it completely. The *navigational*
+correction — invoices belong at the Account level — is §9 and Slice 5.
+Attempting the schema change inside a security slice would delay the fix and
+couple it to RFC-005.
+
+**Implementation paths (exact).**
+
+| Path | Change |
+|---|---|
+| `resources/views/customer/dashboard.blade.php` lines 320–321 | Remove both inline queries |
+| `app/Http/Controllers/User/UserController.php` | Pass pre-computed, actor-scoped counts into the view |
+
+Slice 4 later moves these into a presenter with a query budget. Slice 0 does the
+**minimum** that removes the disclosure: compute in the controller with an
+explicit actor argument, and use `whereIn`. Slice 0 does not restructure the
+dashboard.
+
+**Test paths (exact).**
+
+| Path | Assertions |
+|---|---|
+| `tests/Feature/Security/DashboardInvoiceScopeTest.php` **(new)** | **Fixtures: three unrelated tenants** — tenant A (the viewer), tenant B, tenant C. Each holds invoices in `paid`, `unpaid` **and** `pending` status, so **both sides of the former `OR` are populated for every tenant** |
+| Same file | Tenant A's dashboard shows a count equal to A's own `unpaid` + `pending` only — asserted against an explicitly computed expected integer, never against a hard-coded literal |
+| Same file | **Regression guard for the precedence bug specifically:** with A holding *zero* pending invoices and B and C holding several, A's count must not include them. This is the exact case the old query got wrong and a naive fixture would miss |
+| Same file | The rendered response body does not contain B's or C's invoice totals |
+| `tests/Feature/Dashboards/DashboardRenderTest.php` **(existing)** | Extended, not replaced, so the existing render assertions keep passing |
+
+**Entry criteria.** None beyond an owner.
+
+**Exit criteria.** The multi-tenant tests pass with a positive assertion count.
+No `orWhere` remains in any customer-facing view or dashboard query path.
+
+**Rollback.** Revert the commit; the count returns to its defective value. No
+data is written by this change, so rollback carries no data risk.
+
+**Dependencies.** None. Independent of items 1, 3 and 4. **Slice 4 depends on
+this**, and must build on the corrected query rather than reintroducing an
+inline one.
+
+---
+
+#### 16.A.3 — Provider credential authorization (D-9)
+
+**Objective.** Server-side, fail-closed authorization on the provider
+credential surface, so that menu visibility is never the boundary.
+
+**Evidence.** All eight methods of
+`app/Http/Controllers/Customer/Business/MessagingChannelsController.php` gate
+only on `$this->authorize('view_numbers')` plus Business access — lines 78, 97,
+128, 147, 201, 224, 264, 285. `config/customer-permissions.php` sets
+`view_numbers` `'default' => true`, so every customer holds it.
+`CustomerMenuBuilder::advancedItems()` line 216 hides the entry unless
+`isAgency() && canManageWorkspace()`, but that is navigation, not
+authorization. `routes/customer.php` line 388 redirects an actor with exactly
+one accessible Business straight in.
+
+**Scope boundary — this item does not duplicate the Slice 3 contract.** The
+unmerged `agent/customer-experience-slice-3-messaging-provider-contract` branch
+already owns, in its §4.7: relocating the surface to Agency-only advanced
+settings, introducing `manage_advanced_provider` in
+`config/customer-permissions.php`, **removing** the
+`businesses/{businessUid}/channels` routes, and tests T-MSG-24 through T-MSG-26.
+Slice 0 must not re-specify any of that.
+
+The division is:
+
+| Concern | Owner |
+|---|---|
+| **Close the hole on the routes that exist today**, additively, with no relocation and no new permission key | **Slice 0 §16.A.3** |
+| Relocate the surface, introduce `manage_advanced_provider`, remove the old routes, redesign the advanced UI | **Slice 3 contract §4.7** |
+
+Slice 0 adds a guard; Slice 3 deletes the guarded routes and the guard with
+them. The two do not conflict, and Slice 0 does not have to land first or last.
+**Slice 0 exists here because Slice 3 is a large foundation contract with new
+schema and provider-neutral interfaces, and a live authorization hole must not
+wait behind it.**
+
+**The guard, stated exactly.** Every one of the eight methods gains a single
+fail-closed check, before any existing tenancy resolution, requiring **all** of:
+
+1. **Account tier is Agency.** A verified existing check is available:
+   `App\Library\Navigation\WorkspaceCandidate::isAgency()` (line 40), reached
+   through `App\Library\Navigation\CustomerContext::isAgency()` (line 106),
+   which the resolved request context already exposes. Slice 0 reuses it rather
+   than inventing a predicate. (The Slice 3 contract explicitly declined to name
+   this method because it had not verified one; this document has, and records
+   it so Slice 3 can reuse the citation.)
+2. **Role is owner or active admin of that account** —
+   `CustomerContext::canManageWorkspace()` (line 149).
+3. **Entitlement.** The account's plan must actually package the advanced
+   provider capability, resolved through the existing `EntitlementManager`
+   rather than inferred from tier alone.
+4. **Business scope.** The existing `resolveAccessibleBusiness()` /
+   `resolveOwnedConnection()` boundary is **preserved verbatim** and still runs.
+   The new check is additional, never a replacement.
+5. **The existing `view_numbers` permission check is retained**, so the change
+   is strictly narrowing.
+
+**Failure response.** `abort(404)`, never 403, matching the established
+existence-disclosure discipline in parent §5.4 and the GBP controller. A Core
+or Growth actor must not learn that a provider surface exists.
+
+**Implementation paths (exact).**
+
+| Path | Change |
+|---|---|
+| `app/Http/Controllers/Customer/Business/MessagingChannelsController.php` | One private guard method; one call at the head of each of the eight public methods |
+| `app/Library/Navigation/CustomerMenuBuilder.php` | No change — it is already correct; it is simply no longer load-bearing |
+
+No route file changes. No new permission key. No view changes. No migration.
+
+**Test paths (exact).**
+
+| Path | Assertions |
+|---|---|
+| `tests/Feature/Security/MessagingProviderAuthorizationTest.php` **(new)** | **By direct URL, for every one of the eight routes**, a Core owner, a Growth owner, an Agency staff member without manage rights, and a restricted Business user each receive **404** |
+| Same file | **Mutation requests specifically**, not only reads: `POST` to connect, `PUT`/`PATCH` to update, and `POST` to enable and disable each return 404 for those actors, **and** the corresponding `SendingServer` / `CustomerBasedSendingServer` rows are unchanged afterwards |
+| Same file | An Agency owner with the entitlement retains full access — proving the change is narrowing, not breaking |
+| Same file | An Agency owner whose plan does **not** package the capability receives 404 — proving entitlement is checked, not just tier |
+| Same file | `GET /channels` does not redirect a Core actor into the surface |
+| `tests/Feature/Business/MessagingChannelsTest.php` **(existing)** | Extended so existing Agency-path coverage keeps passing |
+
+**Entry criteria.** Confirm the Slice 3 branch has not yet merged. If it has
+merged and its §4.7 relocation has landed, **this item is closed as superseded**
+and must not be implemented — the routes it guards will no longer exist.
+
+**Exit criteria.** Every non-Agency actor receives 404 on all eight routes by
+direct URL and by mutation. No credential field is reachable from the normal
+Business interface. Existing Agency behaviour unchanged.
+
+**Rollback.** Revert the single controller commit. The guard disappears and the
+prior behaviour returns. No data or schema is touched, so rollback is clean.
+
+**Dependencies.** **External dependency on the Slice 3 contract** — see entry
+criteria. Independent of items 1, 2 and 4.
+
+---
+
+#### 16.A.4 — Operator configuration leakage (D-21)
+
+**Objective.** A customer response never carries an environment-variable name,
+an operator instruction, or any other internal configuration detail. The
+operator still gets the exact detail, in logs.
+
+**Evidence.**
+`app/Exceptions/GoogleBusinessProfile/GoogleBusinessProfileConfigurationException.php`
+lines 65–73 return five messages naming `GOOGLE_BUSINESS_PROFILE_CLIENT_ID`,
+`GOOGLE_BUSINESS_PROFILE_CLIENT_SECRET` and `GOOGLE_BUSINESS_PROFILE_REDIRECT`.
+The docblock calls these "operator-facing", but
+`GoogleBusinessProfileController` lines 196 and 319 route them through
+`redirectWithError()` into a **customer** flash.
+
+**Why this is security-relevant and not only cosmetic.** It discloses which
+integrations an install has configured and which specific settings are missing,
+to an unprivileged customer, on demand. That is reconnaissance: it tells an
+attacker the platform's integration surface and its current misconfiguration
+state, and it invites social engineering of the operator using the exact
+setting names.
+
+**The fix.** Split the message into two audiences at the seam that already
+exists:
+
+| Audience | Content | Mechanism |
+|---|---|---|
+| Customer | Plain recovery guidance naming no setting: *"Google connections aren't available right now. This is something we need to fix on our side — we've been notified."* (§14.2) | A new `customerMessage()` on the exception, which is what `redirectWithError()` receives |
+| Operator | The existing exact text, including the setting name | `Log::error()` at the catch site, with the reason code; `userMessage()` is retained and **renamed `operatorMessage()`** so its audience is unambiguous in the type itself |
+
+Renaming rather than repurposing matters: the current name `userMessage()` is
+exactly why a message written for operators reached customers.
+
+**Implementation paths (exact).**
+
+| Path | Change |
+|---|---|
+| `app/Exceptions/GoogleBusinessProfile/GoogleBusinessProfileConfigurationException.php` | Rename `userMessage()` to `operatorMessage()`; add `customerMessage()` returning setting-free copy |
+| `app/Http/Controllers/Customer/Business/GoogleBusinessProfileController.php` lines 196, 319 | Log `operatorMessage()`; flash `customerMessage()` |
+
+**Test paths (exact).**
+
+| Path | Assertions |
+|---|---|
+| `tests/Feature/Security/ConfigurationLeakageTest.php` **(new)** | With each configuration reason forced, an authenticated customer's response body contains **none** of the three setting names, and contains the plain guidance |
+| Same file | The operator detail **is** written to the log, so the fix does not destroy diagnosability |
+| Same file | **Repository-wide regression guard:** no customer-reachable response contains a token matching `[A-Z][A-Z0-9_]{7,}` that resolves to a known configuration key. Scoped to an explicit route list so it stays deterministic |
+| `tests/Feature/Security/GoogleBusinessProfileSecurityTest.php` **(existing)** | Extended |
+
+**Entry criteria.** None beyond an owner.
+
+**Exit criteria.** No customer-reachable response names a configuration
+setting. Operator diagnosis is preserved in logs. `userMessage()` no longer
+exists under that name.
+
+**Rollback.** Revert; the leak returns. No data risk.
+
+**Dependencies.** None. Slice 8 later adopts the §14.2 copy across all states
+and must not reintroduce the setting names.
+
+---
+
+#### 16.A.5 — Explicitly *not* in Slice 0
+
+| Item | Why not | Owner |
+|---|---|---|
+| **Payer no-op honesty (D-13, T-NOOP-1/2)** | This is Lane A's work. `agent/customer-experience-slice-5-wallet-payer-ux` already rewrites `BillingProfileManager` and `UsageBillingController` (§16.0). Specifying it here would produce two contracts for one change | **External dependency.** Re-audit `changePayer()` for the equality check **after Slice 5 merges**; if the no-op still reports success, it becomes a Slice 5 exit-criterion failure, not new Slice 0 scope |
+| Provider relocation and `manage_advanced_provider` | Owned by the Slice 3 contract §4.7 | Slice 3 |
+| Re-keying invoices to Business or Account | Schema and billing-model change, not a security fix | A future contract; §9 places it |
+| Dashboard restructure | Not security | Slice 4 |
+| Empty-state copy adoption | Not security | Slice 8 |
+
+---
 
 ### Slice 1 — Terminology, translation and dead-link cleanup
 
@@ -1649,7 +2116,9 @@ Every slice carries the same universal stop conditions:
 * **Acceptance.** Payer is unreachable from the Business surface. Every control
   is gated on the capability that will authorize its write. A submission that
   changes nothing says so, writes no transition row and dispatches no event.
-* **Tests.** T-BILL-1 through T-BILL-4, T-NOOP-1.
+* **Tests.** T-BILL-1 through T-BILL-4. **T-NOOP-1 and T-NOOP-2 are an external
+  dependency**, owned by Lane A (§16.A.5): re-audit `changePayer()` for the
+  equality check after Slice 5 merges rather than specifying it twice.
 * **Interaction.** **Blocked by `agent/customer-experience-slice-5-wallet-payer-ux`**
   (§16.0), which already rewrites `UsageBillingController`,
   `BillingProfileManager`, `WorkspaceController` and both views. Land or abandon
@@ -1684,15 +2153,21 @@ Every slice carries the same universal stop conditions:
 * **Paths.** `app/Http/Controllers/Customer/Business/AutomationsController.php`;
   a recipe definition under `app/Library/Automation/Recipes/`;
   `resources/views/customer/Automations/`.
-* **Prerequisites.** Slice 6, because every recipe depends on a resolvable
-  Business phone.
-* **Acceptance.** Exactly the three backed recipes appear (§11.2). No unbacked
-  recipe is shown in any form. Every card states its trigger, outcome, audience,
-  cost, gaps and safety verdict. The custom builder contains no sending-server
-  or sender select.
+* **Prerequisites.** Slice 6, because every messaging recipe depends on a
+  resolvable Business phone.
+* **Acceptance (corrected Round 1).** The catalogue **mechanism** ships, along
+  with the §11.3 card contract and *Build your own*. **The catalogue itself
+  renders zero cards at this base**, because the expansion contract §7.0 admits
+  no recipe in state 1 alone (§11.2). A card appears only when its recipe has
+  cleared state 2 upstream. Every card that does appear states its trigger,
+  outcome, audience, cost, gaps and safety verdict. The custom builder contains
+  no sending-server or sender select.
 * **Tests.** T-AUTO-1 through T-AUTO-4.
-* **Stop if.** A recipe would require a trigger not present in
-  `AutomationTriggerType`.
+* **Stop if.** A recipe would be rendered whose upstream state is 1 alone or 3,
+  or whose trigger is not present in `AutomationTriggerType`.
+* **Interaction.** Recipe classification is owned upstream. If Slice 7 believes
+  a recipe should appear, the change is made in the expansion contract first,
+  never by adding a card here.
 
 ### Slice 8 — Empty, loading, error and help states
 
@@ -1741,11 +2216,29 @@ Every slice carries the same universal stop conditions:
 ### Dependency graph
 
 ```
-1 ──┬── 2 ──┬── 4
-    │       ├── 5 ── 6 ── 7
-    │       └── 8 ── 9 ── 10
-    └── 3 (parallel)
+        ┌─────────────────────────────────────────────┐
+        │  SLICE 0 — SECURITY (§16.A)  RELEASE BLOCKER │
+        │  0.1 debug routes    0.2 invoice scope       │
+        │  0.3 provider authz  0.4 config leakage      │
+        │  (0.1–0.4 are mutually independent)          │
+        └───────────────────────┬─────────────────────┘
+                                │  must exit first
+                                ▼
+        1 ──┬── 2 ──┬── 4
+            │       ├── 5 ── 6 ── 7
+            │       └── 8 ── 9 ── 10
+            └── 3 (parallel)
 ```
+
+Slice 0's four items have no dependencies on each other and may be worked in
+parallel by one owner. Item 3 alone carries an external dependency: it is
+closed as superseded if the Slice 3 contract's relocation lands first.
+
+Three later slices inherit a Slice 0 obligation and must not undo it: **Slice 4**
+builds on the corrected invoice query, **Slice 6** must not reintroduce a
+customer-reachable provider surface when Slice 0's guard is removed alongside
+the relocated routes, and **Slice 8** must not reintroduce configuration names
+while adopting the §14.2 copy.
 
 ---
 
@@ -1757,14 +2250,31 @@ Extends, and never duplicates, the existing suites — notably
 `tests/Feature/Workspace/{CustomerContextResolutionTest,ViewAsClientTest}.php`
 and the six suites under `tests/Feature/Auth/`.
 
+**Every test has exactly one owning slice.** Slice 0's tests are listed first
+because they gate every other row: no slice below may be marked complete while
+a `T-SEC0-*` row is failing.
+
 | ID | Assertion | Owning slice |
 |---|---|---|
+| **T-SEC0-1** | Each of the five debug URIs returns 404 for an unauthenticated visitor, an ordinary authenticated customer, and an authenticated admin | **0.1** |
+| **T-SEC0-2** | With queue and contact rows seeded across two unrelated tenants, an unauthenticated request to `/remove-jobs` and `/remove-contacts` destroys nothing | **0.1** |
+| **T-SEC0-3** | An unauthenticated request to `/add-gateways` leaves stored `PaymentMethods` `options` and `status` byte-identical | **0.1** |
+| **T-SEC0-4** | No `GET` route in the application truncates a table or deletes contacts; `DebugController` no longer exists | **0.1** |
+| **T-SEC0-5** | No file remains under `app/Http/Controllers/Debug/`, so the hardcoded credentials and bank details cannot return by revert | **0.1** |
+| **T-SEC0-6** | With three unrelated tenants each holding `paid`, `unpaid` and `pending` invoices, the dashboard count equals the viewer's own `unpaid` + `pending` only | **0.2** |
+| **T-SEC0-7** | Precedence regression guard: a viewer with zero pending invoices, while other tenants hold several, sees none of them counted | **0.2** |
+| **T-SEC0-8** | All eight provider-credential routes return 404 by direct URL for a Core owner, a Growth owner, an Agency staff member without manage rights, and a restricted Business user | **0.3** |
+| **T-SEC0-9** | The same actors' mutation requests (connect, update, enable, disable) return 404 **and** leave the `SendingServer` and `CustomerBasedSendingServer` rows unchanged | **0.3** |
+| **T-SEC0-10** | An Agency owner with the entitlement retains full access; an Agency owner without it receives 404 | **0.3** |
+| **T-SEC0-11** | `GET /channels` does not redirect a Core actor into the provider surface | **0.3** |
+| **T-SEC0-12** | No customer-reachable response contains `GOOGLE_BUSINESS_PROFILE_CLIENT_ID`, `_CLIENT_SECRET` or `_REDIRECT`; the plain guidance is shown instead | **0.4** |
+| **T-SEC0-13** | The operator detail is still written to the log, so diagnosability survives the fix | **0.4** |
 | **T-NAV-4** | Every URL emitted by any rendered customer navigation resolves to a registered route | 1 |
 | **T-NAV-5** | Menu contents differ correctly across Core owner, Growth owner, Agency owner, Agency admin, Agency staff, restricted staff and view-as | 2 |
 | **T-NAV-6** | Account-frame and Business-frame entries are disjoint in every role and context | 2 |
 | **T-ENT-1** | A menu entry never appears for a feature the account's plan excludes; specifically, a Core actor never sees Google Business Profile | 2 |
 | **T-AUTHZ-1** | Direct URL access to every Business-scoped route is refused for a non-member with 404, never 403 | 2 |
-| **T-AUTHZ-2** | Direct URL access to `/channels` and `…/channels/*` is refused for a Core or Growth actor even though they hold `view_numbers` | 6 |
+| **T-AUTHZ-2** | After the managed-messaging cutover, no provider-credential surface is reachable by any customer at all, because the routes no longer exist. Distinct from T-SEC0-8, which proves the **interim** guard on the routes as they stand today | 6 |
 | **T-TERM-1** | No rendered customer response contains `Workspace`, for any tier including Agency | 1 |
 | **T-TERM-2** | No rendered customer response contains `Sending Server`, `Sender ID`, `Originator`, `Sub Account`, `Account SID`, `Auth Token` or `API Key` | 1 |
 | **T-I18N-3** | No rendered response, customer or admin, contains a string matching `locale.` | 1 |
@@ -1779,9 +2289,9 @@ and the six suites under `tests/Feature/Auth/`.
 | **T-BILL-2** | Every billing control is rendered only to an actor whose write would be authorized | 5 |
 | **T-BILL-3** | A non-payer sees a read-only balance with an explanation and no funding control | 5 |
 | **T-BILL-4** | A Core or Growth actor never sees the word payer | 5 |
-| **T-NOOP-1** | Submitting an unchanged payer reports no change, writes no transition row and dispatches no event | 5 |
-| **T-NOOP-2** | The same holds for spend cap, billing contact and feature limit | 5 |
-| **T-ERR-1** | No customer-reachable response contains a string matching `[A-Z_]{6,}` that names an environment variable | 8 |
+| **T-NOOP-1** | Submitting an unchanged payer reports no change, writes no transition row and dispatches no event. **External dependency — owned by Lane A (§16.A.5). Re-audit after Slice 5 merges; do not implement here** | 5, external |
+| **T-NOOP-2** | The same holds for spend cap, billing contact and feature limit. Same external ownership as T-NOOP-1 | 5, external |
+| **T-ERR-1** | Extends T-SEC0-12 beyond Google Business Profile: no customer-reachable response, in any empty, error or disabled state, contains a token matching `[A-Z][A-Z0-9_]{7,}` that resolves to a configuration key | 8 |
 | **T-ERR-2** | A plan exclusion produces a `locked` empty state with a reason, never a 404 | 8 |
 | **T-EMPTY-1** | Exactly one empty-state component exists and every call site uses it | 8 |
 | **T-EMPTY-2** | Every empty state carries a state word, an explanation and either an action or an owner hint | 8 |
@@ -1793,7 +2303,7 @@ and the six suites under `tests/Feature/Auth/`.
 | **T-PHONE-1** | The compose screen renders one sending line and no provider control | 6 |
 | **T-PHONE-2** | No provider-costing call occurs before funds are reserved | 6 |
 | **T-PHONE-3** | A Business with no phone renders the attention state, not a disabled form | 6 |
-| **T-AUTO-1** | Only recipes whose trigger and action exist in the enums are rendered | 7 |
+| **T-AUTO-1** | No recipe is rendered whose upstream state is 1 alone or 3. At this base that means the catalogue renders zero cards, and the mechanism is proven through the *Build your own* path (§11.2) | 7 |
 | **T-AUTO-2** | Every recipe card states trigger, outcome, audience, cost, gaps and safety verdict | 7 |
 | **T-AUTO-3** | The custom builder renders no sending-server or sender select | 7 |
 | **T-AUTO-4** | A recipe is a draft until explicitly activated, and drafts never execute | 7 |
@@ -1846,6 +2356,29 @@ Performed before commit, in this worktree, at the base SHA.
 | No source, migration, configuration, dependency or generated asset changed | Confirmed by `git status` and `git show --stat` |
 | Tests executed | **None.** No PHP runtime is available in this environment (§2.2). This is an audit and contract; it authorizes no code and changes no behaviour, so no test could pass or fail differently because of it |
 
+### 19.1 Correction Round 1 — validation performed before this commit
+
+| Check | Result |
+|---|---|
+| Expected HEAD `afc00c3bf62a120aef53e1ffbd793af8f6b7ae26` | Confirmed for both local and `origin/agent/customer-experience-ux-redesign-contract` before editing |
+| Working tree clean before editing | Confirmed, `git status --porcelain` empty |
+| Current `origin/main` recorded | Advanced to `98e063aabf0f8f67bc02190ce761064f8889ed22`; `git diff --name-status 6c820c8..98e063a` returns exactly one added documentation file, so **no code-level claim in this document is invalidated**. Not merged or rebased, per instruction |
+| No new branch, PR, merge, rebase or force-push | Confirmed; same branch, ordinary commit and push |
+| Slice 0 evidence re-verified at the base SHA | `DebugController` re-read in full (431 lines, 6 public methods, no constructor, no `middleware()` call); `addGateways()` confirmed as `updateOrCreate` over 29 gateway definitions; `updateCampaignCache()` confirmed to resolve any campaign uid with no ownership check |
+| Invoice scoping claim re-verified | `database/migrations/2021_03_25_135511_create_invoices_table.php` has `user_id` only; a grep for `business_id` or `workspace_id` in that migration returns 0. The §16.A.2 fix is therefore grouping, not re-keying |
+| Agency-tier predicate cited in §16.A.3 verified to exist | `WorkspaceCandidate::isAgency()` line 40, reached via `CustomerContext::isAgency()` line 106; `canManageWorkspace()` line 149 |
+| `manage_advanced_provider` confirmed absent | Grep across `app/`, `config/`, `database/` returns no match, matching the Slice 3 contract's own finding. §16.A.3 therefore does **not** depend on it |
+| Duplication check against in-flight contracts | Slice 3 §4.7 owns provider relocation; Lane A owns the payer no-op. Both are recorded as external dependencies in §16.A.3 and §16.A.5 and are **not** re-specified |
+| Automation reconciliation | §11.2 rewritten against the merged expansion contract §7.0. No producer claim is made in this document; every classification is cited to that contract, and two pairs outside its seventeen are marked unclassified upstream rather than given a verdict here |
+| Test ownership | Every test has exactly one owning slice. Three prior overlaps corrected: T-AUTHZ-2 rescoped to the post-cutover state, T-ERR-1 rescoped as the repository-wide extension of T-SEC0-12, T-NOOP-1/2 marked external |
+| Stale-phrase sweep | "three recipes are buildable", "three cards", "out of UX scope", "outside this contract's UX remit", "on its own branch", "excluded from those slices' allowlists" — all removed or explicitly superseded and labelled as withdrawn |
+| Reference and path validation | Every `§` cross-reference resolves to a heading in this document or is explicitly qualified as `Parent §`, `Retention §` or `expansion contract §`. Every cited repository path exists, except three that are explicitly introduced as new in the slice plan |
+| `git diff --check` | Clean |
+| Secret-shaped-string sweep | No token, key, credential, routing number or account number value. §5.4 describes the hardcoded values in `addGateways()` **without reproducing any of them**. Configuration-variable **names** appear only where quoting the D-21 and §16.A.4 defect, with no values |
+| Exactly one file changed | `docs/automation/AI-BUSINESS-OS-CUSTOMER-EXPERIENCE-AND-NAVIGATION-REDESIGN.md` |
+| No source, migration, configuration, dependency or generated asset changed | Confirmed by `git status` and `git show --stat` |
+| Tests executed | **None**, for the same reason as the first round. Slice 0 specifies tests; it does not authorize writing them on this branch |
+
 ---
 
 ## 20. APPENDIX A — WHY THIS DOCUMENT DISAGREES WITH ITS OWN BRIEF IN FOUR PLACES
@@ -1861,15 +2394,35 @@ Recorded so a reviewer can accept or reject each disagreement deliberately.
 3. **The legacy footer is data, not code** (D-4). The seam is correct and falls
    back to `AI Business OS`. The correction is an operator data change plus a
    shipped default.
-4. **Eight of the eleven requested automation recipes cannot be built at this
-   base** (§11.2). Calendar, bookings, payments and inbound-message triggers do
-   not exist in the repository. The catalogue is specified in full so it is
-   ready when they do, but shipping it now would mean shipping eleven promises
-   against a two-trigger engine.
+4. **None of the requested automation recipes may ship in the guided catalogue
+   at this base** (§11.2). *Corrected in Round 1.* The first version of this
+   appendix said eight of eleven "cannot be built" and implied the other three
+   could ship. Both halves were wrong in a way that mattered: one recipe is
+   genuinely runnable through the legacy form, and none of the three is
+   acceptable in a guided, managed catalogue until messaging-identity, provider
+   and wallet work lands. The classification now defers to the merged automation
+   expansion contract §7.0 rather than being re-derived here.
 
 The brief asked for these to be treated as leads rather than assumptions, and
 for exact current evidence. That is what §4 records.
 
 ---
 
-AI BUSINESS OS CUSTOMER EXPERIENCE AND NAVIGATION REDESIGN — READY FOR HUMAN/CHATGPT REVIEW
+## 21. APPENDIX B — WHAT CORRECTION ROUND 1 CHANGED
+
+| Area | Before | After |
+|---|---|---|
+| Security defects | Recorded as observations "outside this contract's UX remit", to be fixed "on their own branch", with no owner and no schedule | **§16.A Security Remediation Slice 0** — an owned, release-blocking prerequisite for every other slice, with per-item paths, tests, entry and exit criteria, rollback and dependencies |
+| Debug route inventory | Five routes named; two described in detail | All five inventoried with method, verb, effect and blast radius. **Two upgraded on re-reading:** `/add-gateways` overwrites live payment configuration including offline-payment bank details, and `/update-campaign-cache` mutates any tenant's campaign |
+| Disposition of debug routes | None proposed | Decided per route against an evidenced-need test, defaulting to delete. Recommendation: delete all five and the controller |
+| Invoice fix | Named as a defect | Specified as explicit `whereIn` grouping, with an honest note that the table has no Business or Account key and that re-keying is a separate contracted migration, not a security fix |
+| Provider authorization | Named as a defect | Specified as an additive fail-closed guard on the existing eight methods, with the Agency-tier predicate verified and cited, and **explicitly bounded** so it does not duplicate the Slice 3 contract's relocation |
+| Configuration leakage | Named as a defect | Specified as an audience split, renaming `userMessage()` to `operatorMessage()` so the type itself records the audience |
+| Payer no-op | Owned by Slice 5 here | **External dependency** — Lane A owns it; re-audit after Slice 5 merges (§16.A.5) |
+| Recipe availability | "Three recipes are buildable today" | Withdrawn. Three-state model adopted from the merged expansion contract; catalogue ships with zero cards; two pairs marked unclassified upstream rather than judged here |
+| Test matrix | 48 assertions | **61 assertions.** Thirteen `T-SEC0-*` rows added, all gating; three prior ownership overlaps corrected (T-AUTHZ-2, T-ERR-1, T-NOOP-1/2) |
+| Dependency graph | Slices 1–10 | Slice 0 added as a blocking root, with the three later slices that inherit an obligation named |
+
+---
+
+AI BUSINESS OS CUSTOMER EXPERIENCE AND NAVIGATION REDESIGN — CORRECTION ROUND 1 READY FOR HUMAN/CHATGPT REVIEW
