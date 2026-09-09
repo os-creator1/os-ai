@@ -85,7 +85,8 @@ class PayerChangeDuringPendingAttemptTest extends TestCase
         $this->assertSame(FundingAttemptState::ProviderPending, $attempt->state);
 
         // The payer change happens while the attempt is still in flight.
-        app(BillingProfileManager::class)->changePayer($business, PayerType::Business, $directOwner->user_id, 'Mid-flight payer change.');
+        // Customer Experience Slice 5: a Business user can no longer set the payer; the "Business pays" fixture is written directly.
+        \Illuminate\Support\Facades\DB::table('business_payer_assignments')->updateOrInsert(['business_id' => $business->id], ['payer_type' => 'business', 'effective_payment_instrument_id' => null, 'created_at' => now(), 'updated_at' => now()]);
 
         $freshAttempt = app(BusinessFundingAttemptRepository::class)->findById($attempt->id);
         $this->assertSame(PayerType::Workspace, $freshAttempt->payer_type_snapshot, 'The already-created attempt\'s own frozen snapshot must not retroactively change.');
@@ -123,7 +124,8 @@ class PayerChangeDuringPendingAttemptTest extends TestCase
         app(BillingProfileManager::class)->changePayer($business, PayerType::Workspace, $ownerCustomer->user_id, 'Test.');
 
         // Payer changes from workspace to business.
-        app(BillingProfileManager::class)->changePayer($business, PayerType::Business, $directOwner->user_id, 'Test.');
+        // Customer Experience Slice 5: a Business user can no longer set the payer; the "Business pays" fixture is written directly.
+        \Illuminate\Support\Facades\DB::table('business_payer_assignments')->updateOrInsert(['business_id' => $business->id], ['payer_type' => 'business', 'effective_payment_instrument_id' => null, 'created_at' => now(), 'updated_at' => now()]);
 
         $this->expectException(UnauthorizedPayerAssignmentException::class);
         app(UsageBillingCheckoutManager::class)->initiateTopUp($business, $ownerCustomer->user_id, 1_000_000);

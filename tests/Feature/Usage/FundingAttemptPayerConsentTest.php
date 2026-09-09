@@ -96,7 +96,8 @@ class FundingAttemptPayerConsentTest extends TestCase
         $directOwner = $this->createCustomer();
         $business = app(BusinessRepository::class)->createForCustomerInWorkspace($directOwner, $workspace, $this->businessAttributes());
         app(UsageWalletManager::class)->initializeWalletForNewBusiness($business->id);
-        app(BillingProfileManager::class)->changePayer($business, PayerType::Business, $directOwner->user_id, 'Test.');
+        // Customer Experience Slice 5: a Business user can no longer set the payer; the "Business pays" fixture is written directly.
+        \Illuminate\Support\Facades\DB::table('business_payer_assignments')->updateOrInsert(['business_id' => $business->id], ['payer_type' => 'business', 'effective_payment_instrument_id' => null, 'created_at' => now(), 'updated_at' => now()]);
 
         $result = app(UsageBillingCheckoutManager::class)->initiateTopUp($business, $directOwner->user_id, 1_000_000);
 
@@ -187,6 +188,8 @@ class FundingAttemptPayerConsentTest extends TestCase
 
         [$customer, $business] = $this->businessWithAttachedInstrument();
 
+        // Customer Experience Slice 5, Correction Round 1 §5/§6.1 — an automatic charge only runs for a deliberately chosen monthly ceiling.
+        \Illuminate\Support\Facades\DB::table('business_usage_wallets')->where('business_id', $business->id)->update(['monthly_recharge_cap_micro' => \App\Library\Usage\UsageWalletManager::BUSINESS_MONTHLY_AUTO_RECHARGE_MAXIMUM_MICRO]);
         $result = app(UsageBillingCheckoutManager::class)->initiateAutoRecharge($business, 5_000_000);
 
         $this->assertSame(FundingAttemptState::Succeeded, $result->state);
@@ -219,6 +222,8 @@ class FundingAttemptPayerConsentTest extends TestCase
         [$customer, $business] = $this->businessWithAttachedInstrument();
         $this->gateway->paymentIntentOutcomes = ['*' => 'requires_action'];
 
+        // Customer Experience Slice 5, Correction Round 1 §5/§6.1 — an automatic charge only runs for a deliberately chosen monthly ceiling.
+        \Illuminate\Support\Facades\DB::table('business_usage_wallets')->where('business_id', $business->id)->update(['monthly_recharge_cap_micro' => \App\Library\Usage\UsageWalletManager::BUSINESS_MONTHLY_AUTO_RECHARGE_MAXIMUM_MICRO]);
         $result = app(UsageBillingCheckoutManager::class)->initiateAutoRecharge($business, 5_000_000);
         $attempt = app(BusinessFundingAttemptRepository::class)->findById($result->fundingAttemptId);
         $this->assertSame(FundingAttemptState::RequiresAction, $attempt->state);
@@ -256,6 +261,8 @@ class FundingAttemptPayerConsentTest extends TestCase
         [$customer, $business] = $this->businessWithAttachedInstrument();
         $this->gateway->paymentIntentOutcomes = ['*' => 'requires_action'];
 
+        // Customer Experience Slice 5, Correction Round 1 §5/§6.1 — an automatic charge only runs for a deliberately chosen monthly ceiling.
+        \Illuminate\Support\Facades\DB::table('business_usage_wallets')->where('business_id', $business->id)->update(['monthly_recharge_cap_micro' => \App\Library\Usage\UsageWalletManager::BUSINESS_MONTHLY_AUTO_RECHARGE_MAXIMUM_MICRO]);
         $result = app(UsageBillingCheckoutManager::class)->initiateAutoRecharge($business, 5_000_000);
         $attempt = app(BusinessFundingAttemptRepository::class)->findById($result->fundingAttemptId);
         $this->assertSame(FundingAttemptState::RequiresAction, $attempt->state);
@@ -307,7 +314,7 @@ class FundingAttemptPayerConsentTest extends TestCase
         // mutation — never bypassed by an admin-role special case.
         $deniedUnderWorkspace = false;
         try {
-            app(UsageWalletManager::class)->configureAutoRecharge($business, true, '2000000', '3000000', null, (int) $admin->id);
+            app(UsageWalletManager::class)->configureAutoRecharge($business, true, '2000000', '5000000', null, (int) $admin->id);
         } catch (UnauthorizedUsageBillingManagementException $e) {
             $deniedUnderWorkspace = true;
         }
@@ -318,11 +325,12 @@ class FundingAttemptPayerConsentTest extends TestCase
         // Payer type: Business (direct) — switch the payer, then confirm
         // the identical denial under this payer_type too, exactly as the
         // requirement's own "under any payer_type" wording demands.
-        app(BillingProfileManager::class)->changePayer($business, PayerType::Business, (int) $customer->user_id, 'Switch to direct payer.');
+        // Customer Experience Slice 5: a Business user can no longer set the payer; the "Business pays" fixture is written directly.
+        \Illuminate\Support\Facades\DB::table('business_payer_assignments')->updateOrInsert(['business_id' => $business->id], ['payer_type' => 'business', 'effective_payment_instrument_id' => null, 'created_at' => now(), 'updated_at' => now()]);
 
         $deniedUnderBusiness = false;
         try {
-            app(UsageWalletManager::class)->configureAutoRecharge($business, true, '2000000', '3000000', null, (int) $admin->id);
+            app(UsageWalletManager::class)->configureAutoRecharge($business, true, '2000000', '5000000', null, (int) $admin->id);
         } catch (UnauthorizedUsageBillingManagementException $e) {
             $deniedUnderBusiness = true;
         }
@@ -374,6 +382,8 @@ class FundingAttemptPayerConsentTest extends TestCase
         $this->gateway->paymentIntentOutcomes = ['*' => 'requires_action'];
         $manager = app(UsageBillingCheckoutManager::class);
 
+        // Customer Experience Slice 5, Correction Round 1 §5/§6.1 — an automatic charge only runs for a deliberately chosen monthly ceiling.
+        \Illuminate\Support\Facades\DB::table('business_usage_wallets')->where('business_id', $business->id)->update(['monthly_recharge_cap_micro' => \App\Library\Usage\UsageWalletManager::BUSINESS_MONTHLY_AUTO_RECHARGE_MAXIMUM_MICRO]);
         $result = $manager->initiateAutoRecharge($business, 5_000_000);
         $attempt = app(BusinessFundingAttemptRepository::class)->findById($result->fundingAttemptId);
 

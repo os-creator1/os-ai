@@ -59,13 +59,20 @@ class PayerTransitionAuditTest extends TestCase
         $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
         $business->loadMissing('workspace');
         $ownerId = (int) $business->workspace->owner_user_id;
-        $directOwnerId = (int) $business->customer_id;
+
+        // Customer Experience Slice 5: real changes are the Agency owner's, on the Agency tier.
+        $admin = \App\Models\User::create([
+            'first_name' => 'Fixture', 'last_name' => 'Admin', 'email' => 'fixture' . uniqid() . '@example.test',
+            'status' => true, 'is_admin' => true, 'is_customer' => false, 'active_portal' => 'admin',
+        ]);
+        app(\App\Library\Entitlement\EntitlementManager::class)->assignFirstPlan($business->workspace, \App\Enums\Entitlement\WorkspacePlanTier::Agency, $admin->id, 'Fixture.', true, 0);
+        $business->workspace->refresh();
 
         app(BillingProfileManager::class)->initializePayerAssignmentForBusiness($business->id);
-        app(BillingProfileManager::class)->changePayer($business, PayerType::Business, $directOwnerId, 'First.');
+        app(BillingProfileManager::class)->changePayer($business, PayerType::Workspace, $ownerId, 'First.');
         $firstTransitionId = DB::table('business_payer_transitions')->where('business_id', $business->id)->orderBy('id')->value('id');
 
-        app(BillingProfileManager::class)->changePayer($business, PayerType::Workspace, $ownerId, 'Second.');
+        app(BillingProfileManager::class)->changePayer($business, PayerType::Business, $ownerId, 'Second.');
 
         $this->assertDatabaseHas('business_payer_transitions', ['id' => $firstTransitionId, 'reason' => 'First.']);
         $this->assertSame(2, DB::table('business_payer_transitions')->where('business_id', $business->id)->count());

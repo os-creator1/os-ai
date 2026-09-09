@@ -39,6 +39,7 @@ use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\Log;
 use LogicException;
 
 /**
@@ -193,7 +194,17 @@ class GoogleBusinessProfileController extends CustomerBaseController
         try {
             $url = $this->connections->beginConnect($business, (int) Auth::id());
         } catch (GoogleBusinessProfileConfigurationException $exception) {
-            return $this->redirectWithError($workspaceUid, $businessUid, $exception->userMessage());
+            // Security Remediation Slice 0 §16.A.4 (D-21) — the exact
+            // setting name is an operator diagnostic, logged here, never
+            // customer-visible. The customer only ever sees customerMessage().
+            Log::error('Google Business Profile configuration error.', [
+                'reason' => $exception->reason,
+                'operator_message' => $exception->operatorMessage(),
+                'workspace_uid' => $workspaceUid,
+                'business_uid' => $businessUid,
+            ]);
+
+            return $this->redirectWithError($workspaceUid, $businessUid, $exception->customerMessage());
         } catch (GoogleBusinessProfileConcurrencyException $exception) {
             return $this->redirectWithError($workspaceUid, $businessUid, $exception->userMessage());
         } catch (LogicException) {
@@ -316,7 +327,16 @@ class GoogleBusinessProfileController extends CustomerBaseController
         try {
             $this->connections->completeConnect($connection, (string) $request->query('code'), (int) Auth::id());
         } catch (GoogleBusinessProfileConfigurationException $exception) {
-            return $this->redirectWithError($workspaceUid, $businessUid, $exception->userMessage());
+            // Security Remediation Slice 0 §16.A.4 (D-21) — see the
+            // identical handling in connect() above.
+            Log::error('Google Business Profile configuration error.', [
+                'reason' => $exception->reason,
+                'operator_message' => $exception->operatorMessage(),
+                'workspace_uid' => $workspaceUid,
+                'business_uid' => $businessUid,
+            ]);
+
+            return $this->redirectWithError($workspaceUid, $businessUid, $exception->customerMessage());
         } catch (GoogleBusinessProfileConcurrencyException $exception) {
             return $this->redirectWithError($workspaceUid, $businessUid, $exception->userMessage());
         } catch (GoogleBusinessProfileProviderException $exception) {

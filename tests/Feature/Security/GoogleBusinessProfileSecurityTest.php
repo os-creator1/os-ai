@@ -259,6 +259,27 @@ class GoogleBusinessProfileSecurityTest extends TestCase
     }
 
     /**
+     * Security Remediation Slice 0 §16.A.4 (D-21) extension — this file's
+     * own no-regression mandate for the operator/customer message split
+     * added to GoogleBusinessProfileConfigurationException: a broken
+     * provider configuration must never become a shortcut around this
+     * class's own G-9 authorization gating above. An unauthenticated
+     * request to the configuration-sensitive connect route is still denied
+     * before the broken configuration is ever evaluated. The exact
+     * customer/operator message content is covered by
+     * tests/Feature/Security/ConfigurationLeakageTest.php, which this test
+     * does not duplicate.
+     */
+    public function test_broken_configuration_never_bypasses_the_auth_gate_on_connect(): void
+    {
+        [, $business, $workspace] = $this->entitledTenant();
+        config(['services.google_business_profile.client_id' => null]);
+
+        $this->post(route('customer.workspaces.businesses.gbp.connect', [$workspace->uid, $business->uid]))
+            ->assertStatus(401);
+    }
+
+    /**
      * Contract §17.2 — the quota-consuming and security-sensitive routes
      * carry the contracted throttles.
      */

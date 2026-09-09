@@ -172,6 +172,8 @@ class ProviderPaymentIdentifierResolutionTest extends TestCase
     {
         [, $business] = $this->autoRechargeAttemptSetup();
 
+        // Customer Experience Slice 5, Correction Round 1 §5/§6.1 — an automatic charge only runs for a deliberately chosen monthly ceiling.
+        \Illuminate\Support\Facades\DB::table('business_usage_wallets')->where('business_id', $business->id)->update(['monthly_recharge_cap_micro' => \App\Library\Usage\UsageWalletManager::BUSINESS_MONTHLY_AUTO_RECHARGE_MAXIMUM_MICRO]);
         $result = app(UsageBillingCheckoutManager::class)->initiateAutoRecharge($business, 5_000_000);
         $attempt = app(BusinessFundingAttemptRepository::class)->findById($result->fundingAttemptId);
 
@@ -184,6 +186,8 @@ class ProviderPaymentIdentifierResolutionTest extends TestCase
         [, $business] = $this->autoRechargeAttemptSetup();
         $this->gateway->paymentIntentOutcomes['*'] = 'requires_action';
 
+        // Customer Experience Slice 5, Correction Round 1 §5/§6.1 — an automatic charge only runs for a deliberately chosen monthly ceiling.
+        \Illuminate\Support\Facades\DB::table('business_usage_wallets')->where('business_id', $business->id)->update(['monthly_recharge_cap_micro' => \App\Library\Usage\UsageWalletManager::BUSINESS_MONTHLY_AUTO_RECHARGE_MAXIMUM_MICRO]);
         $result = app(UsageBillingCheckoutManager::class)->initiateAutoRecharge($business, 5_000_000);
         $attempt = app(BusinessFundingAttemptRepository::class)->findById($result->fundingAttemptId);
 
@@ -198,6 +202,8 @@ class ProviderPaymentIdentifierResolutionTest extends TestCase
         [, $business] = $this->autoRechargeAttemptSetup();
         $this->gateway->paymentIntentOutcomes['*'] = 'requires_action';
 
+        // Customer Experience Slice 5, Correction Round 1 §5/§6.1 — an automatic charge only runs for a deliberately chosen monthly ceiling.
+        \Illuminate\Support\Facades\DB::table('business_usage_wallets')->where('business_id', $business->id)->update(['monthly_recharge_cap_micro' => \App\Library\Usage\UsageWalletManager::BUSINESS_MONTHLY_AUTO_RECHARGE_MAXIMUM_MICRO]);
         $result = app(UsageBillingCheckoutManager::class)->initiateAutoRecharge($business, 5_000_000);
         $attempt = app(BusinessFundingAttemptRepository::class)->findById($result->fundingAttemptId);
 
@@ -331,6 +337,8 @@ class ProviderPaymentIdentifierResolutionTest extends TestCase
         [, $business] = $this->autoRechargeAttemptSetup();
         $this->gateway->paymentIntentOutcomes['*'] = 'requires_action';
 
+        // Customer Experience Slice 5, Correction Round 1 §5/§6.1 — an automatic charge only runs for a deliberately chosen monthly ceiling.
+        \Illuminate\Support\Facades\DB::table('business_usage_wallets')->where('business_id', $business->id)->update(['monthly_recharge_cap_micro' => \App\Library\Usage\UsageWalletManager::BUSINESS_MONTHLY_AUTO_RECHARGE_MAXIMUM_MICRO]);
         $result = app(UsageBillingCheckoutManager::class)->initiateAutoRecharge($business, 5_000_000);
 
         // Simulate the pre-migration state (the backfill migration's own

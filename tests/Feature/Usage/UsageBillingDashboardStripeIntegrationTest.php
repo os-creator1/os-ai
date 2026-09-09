@@ -130,8 +130,8 @@ class UsageBillingDashboardStripeIntegrationTest extends TestCase
         $response->assertSee('4242');
         // The funding-history card (item 104) genuinely paginates real rows.
         $response->assertSee('Funding history');
-        $response->assertSee('manual_top_up');
-        $response->assertSee('succeeded');
+        $response->assertSee('Funds added');
+        $response->assertSee('Completed');
 
         $html = $response->getContent();
         $this->assertStringNotContainsString($providerCustomer->provider_customer_id, $html, 'The raw provider customer id must never be rendered.');
@@ -170,7 +170,7 @@ class UsageBillingDashboardStripeIntegrationTest extends TestCase
 
         $this->post(route('customer.workspaces.businesses.usage-billing.payment-method.setup-intent', [$workspace->uid, $business->uid]))
             ->assertNotFound();
-        $this->post(route('customer.workspaces.businesses.usage-billing.top-up.initiate', [$workspace->uid, $business->uid]), ['amount_micro' => 1_000_000])
+        $this->post(route('customer.workspaces.businesses.usage-billing.top-up.initiate', [$workspace->uid, $business->uid]), ['amount_micro' => 5_000_000])
             ->assertNotFound();
         $this->post(route('customer.workspaces.businesses.usage-billing.auto-recharge.configure', [$workspace->uid, $business->uid]), ['auto_recharge_enabled' => '0'])
             ->assertNotFound();
@@ -224,7 +224,7 @@ class UsageBillingDashboardStripeIntegrationTest extends TestCase
         app(BillingProfileManager::class)->changePayer($business, PayerType::Workspace, $customer->user_id, 'Test.');
         app(PaymentInstrumentManager::class)->resolveProviderCustomer($business, $customer->user_id);
 
-        $response = $this->post(route('customer.workspaces.businesses.usage-billing.top-up.initiate', [$workspace->uid, $business->uid]), ['amount_micro' => 1_000_000]);
+        $response = $this->post(route('customer.workspaces.businesses.usage-billing.top-up.initiate', [$workspace->uid, $business->uid]), ['amount_micro' => 5_000_000]);
 
         $response->assertRedirect();
         $this->assertStringStartsWith('https://checkout.fake.stripe.test/', $response->headers->get('Location'));

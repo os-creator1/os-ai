@@ -2,6 +2,7 @@
 
 namespace App\Repositories\Eloquent;
 
+use App\Enums\Usage\FundingAttemptPurpose;
 use App\Models\BusinessFundingAttempt;
 use App\Repositories\Contracts\BusinessFundingAttemptRepository;
 use Illuminate\Support\Collection;
@@ -88,5 +89,37 @@ class EloquentBusinessFundingAttemptRepository extends EloquentBaseRepository im
             ->orderByDesc('id')
             ->limit($limit)
             ->get();
+    }
+
+    public function outstandingAutoRechargeAmountMicroForBusinesses(array $businessIds, ?string $payerTypeSnapshot = null): int
+    {
+        if ($businessIds === []) {
+            return 0;
+        }
+
+        $query = $this->query()
+            ->whereIn('business_id', $businessIds)
+            ->where('purpose', FundingAttemptPurpose::AutoRecharge->value)
+            ->whereIn('state', self::OUTSTANDING_STATES);
+
+        if ($payerTypeSnapshot !== null) {
+            $query->where('payer_type_snapshot', $payerTypeSnapshot);
+        }
+
+        return (int) $query->sum('expected_amount_micro');
+    }
+
+    public function countAutoRechargeAttemptsCreatedAfter(int $businessId, \DateTimeInterface $since): int
+    {
+        // Correction Round 2 §1.3 — no state filter: every automatically
+        // initiated attempt row holds its slot for the whole window,
+        // including the failed and canceled ones (they still reached the
+        // provider). Counting distinct rows is counting distinct logical
+        // attempts, since local_idempotency_key is unique per row.
+        return $this->query()
+            ->where('business_id', $businessId)
+            ->where('purpose', FundingAttemptPurpose::AutoRecharge->value)
+            ->where('created_at', '>', $since)
+            ->count('id');
     }
 }

@@ -292,12 +292,29 @@ class UsageBillingCheckoutManager
         // attempt rule applies there), but locking unconditionally keeps
         // attempt creation for both purposes inside one consistent,
         // already-established wallet-row-lock pattern.
-        $attempt = DB::transaction(function () use ($businessId, $wallet, $purpose, $payerType, $contact, $providerCustomer, $paymentMethodDisplaySnapshot, $actorUserId, $amountMicro, $idempotencyKey, $postAttemptCreationHook) {
-            $this->walletRepository->findForUpdateByBusinessId($businessId);
+        // Customer Experience Slice 5, Correction Round 1 §5 — for an
+        // automatic top-up, the same wallet-row-locked transaction that
+        // creates the attempt is where the Business monthly ceiling, the
+        // approved hard maxima, the Workspace aggregate ceiling and the
+        // rolling-window frequency limit are admitted, and the attempt row
+        // created right after IS the durable claim (its expected_amount_micro
+        // counts as pending capacity until it settles or fails). Lock order:
+        // wallet row here, then the Workspace controls row inside
+        // claimAutoRechargeAdmissionUnderLock() — identical to reserve().
+        // All of this precedes the provider call below.
+        $claim = DB::transaction(function () use ($business, $businessId, $wallet, $purpose, $payerType, $contact, $providerCustomer, $paymentMethodDisplaySnapshot, $actorUserId, $amountMicro, $idempotencyKey, $postAttemptCreationHook) {
+            $lockedWallet = $this->walletRepository->findForUpdateByBusinessId($businessId);
 
-            if ($purpose === FundingAttemptPurpose::AutoRecharge
-                && $this->attemptRepository->findOutstandingForBusiness($businessId, FundingAttemptPurpose::AutoRecharge->value) !== null) {
-                return null;
+            if ($purpose === FundingAttemptPurpose::AutoRecharge) {
+                if ($this->attemptRepository->findOutstandingForBusiness($businessId, FundingAttemptPurpose::AutoRecharge->value) !== null) {
+                    return ['attempt' => null, 'denial' => 'auto_recharge_already_in_flight'];
+                }
+
+                $admission = $this->walletManager->claimAutoRechargeAdmissionUnderLock($lockedWallet, $business, $payerType, $amountMicro);
+
+                if (! $admission->allowed) {
+                    return ['attempt' => null, 'denial' => $admission->denialReason];
+                }
             }
 
             $attempt = $this->attemptRepository->create([
@@ -323,12 +340,14 @@ class UsageBillingCheckoutManager
                 $postAttemptCreationHook($attempt);
             }
 
-            return $attempt;
+            return ['attempt' => $attempt, 'denial' => null];
         });
 
-        if ($attempt === null) {
-            return new FundingAttemptResult(0, FundingAttemptState::Failed, 'auto_recharge_already_in_flight');
+        if ($claim['attempt'] === null) {
+            return new FundingAttemptResult(0, FundingAttemptState::Failed, (string) $claim['denial']);
         }
+
+        $attempt = $claim['attempt'];
 
         $currencyCode = (string) DB::table('currencies')->where('id', $wallet->currency_id)->value('code');
 

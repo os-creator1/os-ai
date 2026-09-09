@@ -35,24 +35,41 @@ class UsageBillingAutoRechargeController extends CustomerBaseController
         $actorUserId = (int) Auth::id();
         $business = $this->resolveViewableBusiness($workspaceUid, $businessUid, $actorUserId);
 
+        $enabled = (bool) $request->validated('auto_recharge_enabled');
+
         try {
             $this->walletManager->configureAutoRecharge(
                 $business,
-                (bool) $request->validated('auto_recharge_enabled'),
+                $enabled,
                 $request->validated('auto_recharge_threshold_micro') !== null ? (string) $request->validated('auto_recharge_threshold_micro') : null,
                 $request->validated('auto_recharge_amount_micro') !== null ? (string) $request->validated('auto_recharge_amount_micro') : null,
                 $request->validated('monthly_recharge_cap_micro') !== null ? (string) $request->validated('monthly_recharge_cap_micro') : null,
                 $actorUserId,
             );
         } catch (UnauthorizedUsageBillingManagementException) {
-            return redirect()->back()->with('flash_error', 'You are not authorized to configure auto-recharge for this Business.');
+            return redirect()->back()->with('flash_error', __('locale.usage_billing.messages.not_authorized_auto_recharge'));
         } catch (UsageWalletNotFoundException) {
-            return redirect()->back()->with('flash_error', 'Usage tracking has not been set up for this Business yet.');
+            return redirect()->back()->with('flash_error', __('locale.usage_billing.messages.wallet_not_set_up'));
+        } catch (\InvalidArgumentException $e) {
+            // Customer Experience Slice 5 (T-WALLET-4), Correction Round 1
+            // §6.1 — the manager refuses a crafted or incomplete
+            // configuration regardless of the request layer: a non-preset
+            // amount, a missing threshold, or a missing / too-low / above-
+            // maximum monthly ceiling. Its policy code becomes the same
+            // customer sentence the request layer would have shown.
+            $code = $e->getMessage();
+            $message = \Illuminate\Support\Facades\Lang::has('locale.usage_billing.validation.' . $code)
+                ? __('locale.usage_billing.validation.' . $code)
+                : __('locale.usage_billing.validation.auto_recharge_preset_only');
+
+            return redirect()->back()->withInput()->with('flash_error', $message);
         }
 
         return redirect()
             ->route('customer.workspaces.businesses.usage-billing.show', [$workspaceUid, $businessUid])
-            ->with('flash_success', 'Auto-recharge settings updated.');
+            ->with('flash_success', $enabled
+                ? __('locale.usage_billing.messages.auto_recharge_on')
+                : __('locale.usage_billing.messages.auto_recharge_off'));
     }
 
     private function resolveViewableBusiness(string $workspaceUid, string $businessUid, int $userId): Business

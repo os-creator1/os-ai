@@ -59,10 +59,16 @@ final class GoogleBusinessProfileConfigurationException extends RuntimeException
     }
 
     /**
-     * A safe operator-facing message. It names the setting, never its
-     * value, so a screenshot of this page discloses no credential.
+     * Security Remediation Slice 0 §16.A.4 (D-21) — renamed from
+     * userMessage(). This method's audience is the OPERATOR only: it names
+     * the setting, never its value, so a screenshot of an operator's own
+     * diagnostic tooling discloses no credential. The name `userMessage()`
+     * was itself the defect — it read as customer-safe and was routed into
+     * a customer flash by GoogleBusinessProfileController. Callers must log
+     * this, never flash it. See customerMessage() for what a customer may
+     * see.
      */
-    public function userMessage(): string
+    public function operatorMessage(): string
     {
         return match ($this->reason) {
             self::MISSING_CLIENT_ID => 'Google Business Profile is not configured: GOOGLE_BUSINESS_PROFILE_CLIENT_ID is not set.',
@@ -71,5 +77,18 @@ final class GoogleBusinessProfileConfigurationException extends RuntimeException
             self::REDIRECT_MISMATCH => 'Google Business Profile is misconfigured: GOOGLE_BUSINESS_PROFILE_REDIRECT does not match this application\'s callback URL.',
             default => 'Google Business Profile is misconfigured: GOOGLE_BUSINESS_PROFILE_REDIRECT must use HTTPS.',
         };
+    }
+
+    /**
+     * Security Remediation Slice 0 §16.A.4 (D-21) — the customer-safe
+     * message, §14.2's exact required copy. Names no environment variable,
+     * no configuration key, and no operator instruction, for any reason:
+     * a customer must never learn which integration setting is wrong, only
+     * that something needs the operator's attention and that they've been
+     * notified.
+     */
+    public function customerMessage(): string
+    {
+        return "Google connections aren't available right now. This is something we need to fix on our side — we've been notified.";
     }
 }

@@ -197,9 +197,13 @@ class UsageBillingDashboardAuthorizationTest extends TestCase
         $workspace = $this->entitledWorkspace($customer->user);
         $business = app(BusinessRepository::class)->createForCustomerInWorkspace($customer, $workspace, $this->businessAttributes());
 
+        // Customer Experience Slice 5 (T-PAYER-3): the Workspace already
+        // pays, so the owner's submission is a true no-op — a neutral
+        // "No change" message, never "updated", and nothing written.
         $this->post(route('customer.workspaces.businesses.usage-billing.payer', [$workspace->uid, $business->uid]), ['payer_type' => 'workspace'])
             ->assertRedirect()
-            ->assertSessionHas('flash_success');
+            ->assertSessionHas('flash_info')
+            ->assertSessionMissing('flash_success');
     }
 
     public function test_direct_business_owner_cannot_set_payer_to_workspace(): void
