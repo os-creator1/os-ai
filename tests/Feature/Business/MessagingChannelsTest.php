@@ -96,31 +96,44 @@ class MessagingChannelsTest extends TestCase
     public function test_business_owner_can_view_the_channels_page(): void
     {
         [$tenant, $business] = $this->tenantWithBusiness();
-        $this->authenticateAsCustomer($tenant, ['view_numbers']);
+        $this->authenticateAsCustomer($tenant, ['view_numbers', 'manage_advanced_provider']);
 
         $this->get(route('customer.workspaces.businesses.channels.index', [$business->workspace->uid, $business->uid]))
             ->assertOk();
     }
 
-    public function test_authorized_staff_can_view_the_channels_page_even_when_actor_id_differs_from_owner(): void
+    /**
+     * Customer Experience Slice 3 §4.7 — corrected from Slice 0's rule.
+     *
+     * Slice 0 admitted an Agency-wide active Admin here through
+     * canManage(). The parent contract's §6 row for this exact capability
+     * marks Agency admin DENIED and only Agency owner allowed, so Slice 3
+     * narrows the guard to authoritative Workspace ownership. This test
+     * therefore asserts the inverse of its original expectation, and is
+     * renamed accordingly — the behaviour change is deliberate and
+     * contract-mandated, not an incidental break.
+     */
+    public function test_an_agency_wide_admin_who_is_not_the_workspace_owner_is_denied(): void
     {
-        [$ownerCustomer, $business] = $this->tenantWithBusiness();
+        [, $business] = $this->tenantWithBusiness();
         $staffCustomer = $this->createCustomer();
         $this->makeStaff($business, $staffCustomer, 'all');
 
         $this->assertNotSame($staffCustomer->user_id, $business->customer_id);
 
-        $this->authenticateAsCustomer($staffCustomer, ['view_numbers']);
+        // Even holding the granted permission, and even with canManage()
+        // true, a non-owner must not reach this surface.
+        $this->authenticateAsCustomer($staffCustomer, ['view_numbers', 'manage_advanced_provider']);
 
         $this->get(route('customer.workspaces.businesses.channels.index', [$business->workspace->uid, $business->uid]))
-            ->assertOk();
+            ->assertNotFound();
     }
 
     public function test_unauthorized_customer_is_denied_access_to_a_businesss_channels_page(): void
     {
         [, $businessA] = $this->tenantWithBusiness();
         [$tenantB] = $this->tenantWithBusiness();
-        $this->authenticateAsCustomer($tenantB, ['view_numbers']);
+        $this->authenticateAsCustomer($tenantB, ['view_numbers', 'manage_advanced_provider']);
 
         $this->get(route('customer.workspaces.businesses.channels.index', [$businessA->workspace->uid, $businessA->uid]))
             ->assertStatus(404);
@@ -130,7 +143,7 @@ class MessagingChannelsTest extends TestCase
     {
         [$tenantA, $businessA] = $this->tenantWithBusiness();
         [, $businessB] = $this->tenantWithBusiness();
-        $this->authenticateAsCustomer($tenantA, ['view_numbers']);
+        $this->authenticateAsCustomer($tenantA, ['view_numbers', 'manage_advanced_provider']);
 
         $this->get(route('customer.workspaces.businesses.channels.index', [$businessA->workspace->uid, $businessB->uid]))
             ->assertStatus(404);
@@ -139,7 +152,7 @@ class MessagingChannelsTest extends TestCase
     public function test_unknown_workspace_and_business_404(): void
     {
         [$tenant, $business] = $this->tenantWithBusiness();
-        $this->authenticateAsCustomer($tenant, ['view_numbers']);
+        $this->authenticateAsCustomer($tenant, ['view_numbers', 'manage_advanced_provider']);
 
         $this->get(route('customer.workspaces.businesses.channels.index', ['no-such-workspace', $business->uid]))
             ->assertStatus(404);
@@ -154,7 +167,7 @@ class MessagingChannelsTest extends TestCase
     public function test_entry_route_redirects_when_exactly_one_business_is_accessible(): void
     {
         [$tenant, $business] = $this->tenantWithBusiness();
-        $this->authenticateAsCustomer($tenant, ['view_numbers']);
+        $this->authenticateAsCustomer($tenant, ['view_numbers', 'manage_advanced_provider']);
 
         $this->get(route('customer.channels.index'))
             ->assertRedirect(route('customer.workspaces.businesses.channels.index', [$business->workspace->uid, $business->uid]));
@@ -165,7 +178,7 @@ class MessagingChannelsTest extends TestCase
         $tenant = $this->createCustomer();
         $this->makeAgencyReady($this->createBusinessWithWorkspace($tenant, $this->businessAttributes(['name' => 'Business One'])));
         $this->makeAgencyReady($this->createBusinessWithWorkspace($tenant, $this->businessAttributes(['name' => 'Business Two'])));
-        $this->authenticateAsCustomer($tenant, ['view_numbers']);
+        $this->authenticateAsCustomer($tenant, ['view_numbers', 'manage_advanced_provider']);
 
         $response = $this->get(route('customer.channels.index'));
 
@@ -177,7 +190,7 @@ class MessagingChannelsTest extends TestCase
     public function test_entry_route_shows_empty_state_for_zero_businesses(): void
     {
         $tenant = $this->createCustomer();
-        $this->authenticateAsCustomer($tenant, ['view_numbers']);
+        $this->authenticateAsCustomer($tenant, ['view_numbers', 'manage_advanced_provider']);
 
         $this->get(route('customer.channels.index'))->assertOk();
     }
@@ -189,7 +202,7 @@ class MessagingChannelsTest extends TestCase
     public function test_twilio_connect_form_is_reachable(): void
     {
         [$tenant, $business] = $this->tenantWithBusiness();
-        $this->authenticateAsCustomer($tenant, ['view_numbers']);
+        $this->authenticateAsCustomer($tenant, ['view_numbers', 'manage_advanced_provider']);
 
         $this->get(route('customer.workspaces.businesses.channels.connect', [$business->workspace->uid, $business->uid, SendingServer::TYPE_TWILIO]))
             ->assertOk();
@@ -198,7 +211,7 @@ class MessagingChannelsTest extends TestCase
     public function test_telnyx_connect_form_is_reachable(): void
     {
         [$tenant, $business] = $this->tenantWithBusiness();
-        $this->authenticateAsCustomer($tenant, ['view_numbers']);
+        $this->authenticateAsCustomer($tenant, ['view_numbers', 'manage_advanced_provider']);
 
         $this->get(route('customer.workspaces.businesses.channels.connect', [$business->workspace->uid, $business->uid, SendingServer::TYPE_TELNYX]))
             ->assertOk();
@@ -207,7 +220,7 @@ class MessagingChannelsTest extends TestCase
     public function test_an_arbitrary_inherited_provider_type_is_rejected(): void
     {
         [$tenant, $business] = $this->tenantWithBusiness();
-        $this->authenticateAsCustomer($tenant, ['view_numbers']);
+        $this->authenticateAsCustomer($tenant, ['view_numbers', 'manage_advanced_provider']);
 
         $response = $this->post(route('customer.workspaces.businesses.channels.connect', [$business->workspace->uid, $business->uid, SendingServer::TYPE_PLIVO]), [
             'account_sid' => 'AC123',
@@ -231,7 +244,7 @@ class MessagingChannelsTest extends TestCase
         [$tenant, $business] = $this->tenantWithBusiness();
         $plivoConnection = $this->createDedicatedConnection($business, SendingServer::TYPE_PLIVO);
 
-        $this->authenticateAsCustomer($tenant, ['view_numbers']);
+        $this->authenticateAsCustomer($tenant, ['view_numbers', 'manage_advanced_provider']);
 
         $response = $this->get(route('customer.workspaces.businesses.channels.index', [$business->workspace->uid, $business->uid]));
 
@@ -244,7 +257,7 @@ class MessagingChannelsTest extends TestCase
         [$tenant, $business] = $this->tenantWithBusiness();
         $plivoConnection = $this->createDedicatedConnection($business, SendingServer::TYPE_PLIVO);
 
-        $this->authenticateAsCustomer($tenant, ['view_numbers']);
+        $this->authenticateAsCustomer($tenant, ['view_numbers', 'manage_advanced_provider']);
 
         $this->get(route('customer.workspaces.businesses.channels.connections.show', [$business->workspace->uid, $business->uid, $plivoConnection->uid]))
             ->assertStatus(404);
@@ -256,7 +269,7 @@ class MessagingChannelsTest extends TestCase
         $plivoConnection = $this->createDedicatedConnection($business, SendingServer::TYPE_PLIVO);
         $originalServer = SendingServer::find($plivoConnection->sending_server);
 
-        $this->authenticateAsCustomer($tenant, ['view_numbers']);
+        $this->authenticateAsCustomer($tenant, ['view_numbers', 'manage_advanced_provider']);
 
         $this->put(route('customer.workspaces.businesses.channels.connections.update', [$business->workspace->uid, $business->uid, $plivoConnection->uid]), [
             'account_sid' => 'HACKED_VIA_B2',
@@ -270,7 +283,7 @@ class MessagingChannelsTest extends TestCase
         [$tenant, $business] = $this->tenantWithBusiness();
         $plivoConnection = $this->createDedicatedConnection($business, SendingServer::TYPE_PLIVO);
 
-        $this->authenticateAsCustomer($tenant, ['view_numbers']);
+        $this->authenticateAsCustomer($tenant, ['view_numbers', 'manage_advanced_provider']);
 
         $this->post(route('customer.workspaces.businesses.channels.connections.disable', [$business->workspace->uid, $business->uid, $plivoConnection->uid]))
             ->assertStatus(404);
@@ -284,7 +297,7 @@ class MessagingChannelsTest extends TestCase
         $plivoConnection = $this->createDedicatedConnection($business, SendingServer::TYPE_PLIVO);
         $plivoConnection->update(['status' => false]);
 
-        $this->authenticateAsCustomer($tenant, ['view_numbers']);
+        $this->authenticateAsCustomer($tenant, ['view_numbers', 'manage_advanced_provider']);
 
         $this->post(route('customer.workspaces.businesses.channels.connections.enable', [$business->workspace->uid, $business->uid, $plivoConnection->uid]))
             ->assertStatus(404);
@@ -297,40 +310,38 @@ class MessagingChannelsTest extends TestCase
     // never write their own id as the tenant owner.
     // -----------------------------------------------------------------
 
-    public function test_staff_connecting_twilio_writes_the_business_owners_identity_never_the_staff_actor(): void
+    /**
+     * Customer Experience Slice 3 §4.7 — the same tightening applied to a
+     * mutation rather than a read.
+     *
+     * Slice 0's version asserted that a non-owner staff member's connect
+     * wrote the OWNER's identity rather than their own. Slice 3 denies the
+     * mutation outright, which subsumes that guarantee: no credential row
+     * is written at all, so no identity can be mis-recorded.
+     */
+    public function test_an_agency_wide_admin_who_is_not_the_owner_cannot_connect_a_provider(): void
     {
-        [$ownerCustomer, $business] = $this->tenantWithBusiness();
+        [, $business] = $this->tenantWithBusiness();
         $staffCustomer = $this->createCustomer();
         $this->makeStaff($business, $staffCustomer, 'all');
 
-        $this->authenticateAsCustomer($staffCustomer, ['view_numbers']);
+        $this->authenticateAsCustomer($staffCustomer, ['view_numbers', 'manage_advanced_provider']);
 
-        $response = $this->post(route('customer.workspaces.businesses.channels.connect', [$business->workspace->uid, $business->uid, SendingServer::TYPE_TWILIO]), [
+        $this->post(route('customer.workspaces.businesses.channels.connect', [$business->workspace->uid, $business->uid, SendingServer::TYPE_TWILIO]), [
             'account_sid' => 'AC_TEST_SID',
             'auth_token' => 'test_auth_token',
-        ]);
+        ])->assertNotFound();
 
-        $response->assertSessionHas('status', 'success');
-
-        $assignment = CustomerBasedSendingServer::where('business_id', $business->id)->first();
-        $this->assertNotNull($assignment);
-        $this->assertSame($business->id, $assignment->business_id);
-        $this->assertSame($ownerCustomer->user_id, $assignment->user_id);
-        $this->assertNotSame($staffCustomer->user_id, $assignment->user_id);
-
-        $sendingServer = SendingServer::find($assignment->sending_server);
-        $this->assertSame($ownerCustomer->user_id, $sendingServer->user_id);
-        $this->assertNotSame($staffCustomer->user_id, $sendingServer->user_id);
-        $this->assertSame(SendingServer::TYPE_TWILIO, $sendingServer->settings);
-        $this->assertSame('AC_TEST_SID', $sendingServer->account_sid);
-        $this->assertTrue((bool) $sendingServer->plain);
-        $this->assertTrue((bool) $sendingServer->mms);
+        $this->assertNull(
+            CustomerBasedSendingServer::where('business_id', $business->id)->first(),
+            'A denied actor must leave no credential row behind at all.',
+        );
     }
 
     public function test_connecting_telnyx_stores_the_exact_reused_credential_fields(): void
     {
         [$tenant, $business] = $this->tenantWithBusiness();
-        $this->authenticateAsCustomer($tenant, ['view_numbers']);
+        $this->authenticateAsCustomer($tenant, ['view_numbers', 'manage_advanced_provider']);
 
         $this->post(route('customer.workspaces.businesses.channels.connect', [$business->workspace->uid, $business->uid, SendingServer::TYPE_TELNYX]), [
             'api_key' => 'telnyx_key_123',
@@ -349,7 +360,7 @@ class MessagingChannelsTest extends TestCase
     public function test_connecting_a_provider_requires_its_required_credential_fields(): void
     {
         [$tenant, $business] = $this->tenantWithBusiness();
-        $this->authenticateAsCustomer($tenant, ['view_numbers']);
+        $this->authenticateAsCustomer($tenant, ['view_numbers', 'manage_advanced_provider']);
 
         $response = $this->post(route('customer.workspaces.businesses.channels.connect', [$business->workspace->uid, $business->uid, SendingServer::TYPE_TWILIO]), [
             'account_sid' => '',
@@ -372,7 +383,7 @@ class MessagingChannelsTest extends TestCase
         $businessB = $this->makeAgencyReady($this->createBusinessWithWorkspace($tenant, $this->businessAttributes(['name' => 'Business B'])));
         $connectionB = $this->createDedicatedConnection($businessB, SendingServer::TYPE_TWILIO);
 
-        $this->authenticateAsCustomer($tenant, ['view_numbers']);
+        $this->authenticateAsCustomer($tenant, ['view_numbers', 'manage_advanced_provider']);
 
         $response = $this->get(route('customer.workspaces.businesses.channels.index', [$businessA->workspace->uid, $businessA->uid]));
 
@@ -387,7 +398,7 @@ class MessagingChannelsTest extends TestCase
         $businessB = $this->makeAgencyReady($this->createBusinessWithWorkspace($tenant, $this->businessAttributes(['name' => 'Business B'])));
         $connectionB = $this->createDedicatedConnection($businessB, SendingServer::TYPE_TWILIO);
 
-        $this->authenticateAsCustomer($tenant, ['view_numbers']);
+        $this->authenticateAsCustomer($tenant, ['view_numbers', 'manage_advanced_provider']);
 
         $this->get(route('customer.workspaces.businesses.channels.connections.show', [$businessA->workspace->uid, $businessA->uid, $connectionB->uid]))
             ->assertStatus(404);
@@ -401,7 +412,7 @@ class MessagingChannelsTest extends TestCase
         $connectionB = $this->createDedicatedConnection($businessB, SendingServer::TYPE_TWILIO);
         $originalToken = SendingServer::find($connectionB->sending_server)->auth_token;
 
-        $this->authenticateAsCustomer($tenant, ['view_numbers']);
+        $this->authenticateAsCustomer($tenant, ['view_numbers', 'manage_advanced_provider']);
 
         $this->put(route('customer.workspaces.businesses.channels.connections.update', [$businessA->workspace->uid, $businessA->uid, $connectionB->uid]), [
             'auth_token' => 'HACKED_TOKEN',
@@ -417,7 +428,7 @@ class MessagingChannelsTest extends TestCase
         $businessB = $this->makeAgencyReady($this->createBusinessWithWorkspace($tenant, $this->businessAttributes(['name' => 'Business B'])));
         $connectionB = $this->createDedicatedConnection($businessB, SendingServer::TYPE_TWILIO);
 
-        $this->authenticateAsCustomer($tenant, ['view_numbers']);
+        $this->authenticateAsCustomer($tenant, ['view_numbers', 'manage_advanced_provider']);
 
         $this->post(route('customer.workspaces.businesses.channels.connections.disable', [$businessA->workspace->uid, $businessA->uid, $connectionB->uid]))
             ->assertStatus(404);
@@ -433,7 +444,7 @@ class MessagingChannelsTest extends TestCase
         $connectionB = $this->createDedicatedConnection($businessB, SendingServer::TYPE_TWILIO);
         $connectionB->update(['status' => false]);
 
-        $this->authenticateAsCustomer($tenant, ['view_numbers']);
+        $this->authenticateAsCustomer($tenant, ['view_numbers', 'manage_advanced_provider']);
 
         $this->post(route('customer.workspaces.businesses.channels.connections.enable', [$businessA->workspace->uid, $businessA->uid, $connectionB->uid]))
             ->assertStatus(404);
@@ -450,7 +461,7 @@ class MessagingChannelsTest extends TestCase
         [$tenant, $business] = $this->tenantWithBusiness();
         $connection = $this->createDedicatedConnection($business, SendingServer::TYPE_TWILIO, ['auth_token' => 'super-secret-token-value']);
 
-        $this->authenticateAsCustomer($tenant, ['view_numbers']);
+        $this->authenticateAsCustomer($tenant, ['view_numbers', 'manage_advanced_provider']);
 
         $response = $this->get(route('customer.workspaces.businesses.channels.connections.show', [$business->workspace->uid, $business->uid, $connection->uid]));
 
@@ -463,7 +474,7 @@ class MessagingChannelsTest extends TestCase
         [$tenant, $business] = $this->tenantWithBusiness();
         $connection = $this->createDedicatedConnection($business, SendingServer::TYPE_TWILIO, ['account_sid' => 'AC_KNOWN_VALUE']);
 
-        $this->authenticateAsCustomer($tenant, ['view_numbers']);
+        $this->authenticateAsCustomer($tenant, ['view_numbers', 'manage_advanced_provider']);
 
         $response = $this->get(route('customer.workspaces.businesses.channels.connections.show', [$business->workspace->uid, $business->uid, $connection->uid]));
 
@@ -476,7 +487,7 @@ class MessagingChannelsTest extends TestCase
         [$tenant, $business] = $this->tenantWithBusiness();
         $connection = $this->createDedicatedConnection($business, SendingServer::TYPE_TWILIO, ['account_sid' => 'AC_ORIGINAL', 'auth_token' => 'token_original']);
 
-        $this->authenticateAsCustomer($tenant, ['view_numbers']);
+        $this->authenticateAsCustomer($tenant, ['view_numbers', 'manage_advanced_provider']);
 
         $this->put(route('customer.workspaces.businesses.channels.connections.update', [$business->workspace->uid, $business->uid, $connection->uid]), [
             'account_sid' => '',
@@ -493,7 +504,7 @@ class MessagingChannelsTest extends TestCase
         [$tenant, $business] = $this->tenantWithBusiness();
         $connection = $this->createDedicatedConnection($business, SendingServer::TYPE_TWILIO, ['account_sid' => 'AC_ORIGINAL', 'auth_token' => 'token_original']);
 
-        $this->authenticateAsCustomer($tenant, ['view_numbers']);
+        $this->authenticateAsCustomer($tenant, ['view_numbers', 'manage_advanced_provider']);
 
         $this->put(route('customer.workspaces.businesses.channels.connections.update', [$business->workspace->uid, $business->uid, $connection->uid]), [
             'account_sid' => '',
@@ -508,7 +519,7 @@ class MessagingChannelsTest extends TestCase
     public function test_validation_error_response_does_not_leak_the_submitted_secret(): void
     {
         [$tenant, $business] = $this->tenantWithBusiness();
-        $this->authenticateAsCustomer($tenant, ['view_numbers']);
+        $this->authenticateAsCustomer($tenant, ['view_numbers', 'manage_advanced_provider']);
 
         $response = $this->post(route('customer.workspaces.businesses.channels.connect', [$business->workspace->uid, $business->uid, SendingServer::TYPE_TELNYX]), [
             'api_key' => '',
@@ -533,7 +544,7 @@ class MessagingChannelsTest extends TestCase
         [$otherTenant, $otherBusiness] = $this->tenantWithBusiness();
         CustomerBasedSendingServer::create(['user_id' => $otherTenant->user_id, 'business_id' => $otherBusiness->id, 'sending_server' => $sharedServer->id, 'status' => true]);
 
-        $this->authenticateAsCustomer($tenant, ['view_numbers']);
+        $this->authenticateAsCustomer($tenant, ['view_numbers', 'manage_advanced_provider']);
 
         $response = $this->get(route('customer.workspaces.businesses.channels.connections.show', [$business->workspace->uid, $business->uid, $connection->uid]));
         $response->assertOk();
@@ -560,7 +571,7 @@ class MessagingChannelsTest extends TestCase
         $connectionA = CustomerBasedSendingServer::create(['user_id' => $tenant->user_id, 'business_id' => $businessA->id, 'sending_server' => $server->id, 'status' => true]);
         $connectionB = CustomerBasedSendingServer::create(['user_id' => $tenant->user_id, 'business_id' => $businessB->id, 'sending_server' => $server->id, 'status' => true]);
 
-        $this->authenticateAsCustomer($tenant, ['view_numbers']);
+        $this->authenticateAsCustomer($tenant, ['view_numbers', 'manage_advanced_provider']);
 
         $this->post(route('customer.workspaces.businesses.channels.connections.disable', [$businessB->workspace->uid, $businessB->uid, $connectionB->uid]))
             ->assertSessionHas('status', 'success');
@@ -576,7 +587,7 @@ class MessagingChannelsTest extends TestCase
         $connection = $this->createDedicatedConnection($business, SendingServer::TYPE_TWILIO);
         $connection->update(['status' => false]);
 
-        $this->authenticateAsCustomer($tenant, ['view_numbers']);
+        $this->authenticateAsCustomer($tenant, ['view_numbers', 'manage_advanced_provider']);
 
         $this->post(route('customer.workspaces.businesses.channels.connections.enable', [$business->workspace->uid, $business->uid, $connection->uid]))
             ->assertSessionHas('status', 'success');
@@ -591,7 +602,7 @@ class MessagingChannelsTest extends TestCase
         SendingServer::find($connection->sending_server)->update(['status' => false]);
         $connection->update(['status' => false]);
 
-        $this->authenticateAsCustomer($tenant, ['view_numbers']);
+        $this->authenticateAsCustomer($tenant, ['view_numbers', 'manage_advanced_provider']);
 
         $response = $this->post(route('customer.workspaces.businesses.channels.connections.enable', [$business->workspace->uid, $business->uid, $connection->uid]));
 
@@ -698,7 +709,7 @@ class MessagingChannelsTest extends TestCase
     public function test_business_accessible_user_with_view_numbers_can_still_use_channels_normally(): void
     {
         [$tenant, $business] = $this->tenantWithBusiness();
-        $this->authenticateAsCustomer($tenant, ['view_numbers']);
+        $this->authenticateAsCustomer($tenant, ['view_numbers', 'manage_advanced_provider']);
 
         $this->get(route('customer.workspaces.businesses.channels.index', [$business->workspace->uid, $business->uid]))
             ->assertOk();
