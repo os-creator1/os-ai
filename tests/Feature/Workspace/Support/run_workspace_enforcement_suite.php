@@ -10,11 +10,21 @@
  * #[Group('workspace-enforcement')] test classes against it in a
  * genuinely separate PHPUnit child process, then drops the database.
  *
- * The primary ultimatesms_testing database is only ever read to verify it
- * is the resolved base connection — it is never migrated, dropped,
- * renamed or reconfigured.
+ * The active base database — the canonical ultimatesms_testing database or
+ * any Tests\Support\TestDatabaseSafety-validated disposable sibling — is
+ * only ever read to verify it is the resolved base connection; it is never
+ * migrated, dropped, renamed or reconfigured.
  *
- * Usage: php tests/Feature/Workspace/Support/run_workspace_enforcement_suite.php
+ * EXPECTED_TEST_DATABASE is a mandatory environment handoff, exactly like
+ * every other guarded subprocess runner in this repository: this is a
+ * standalone entry point with no parent PHPUnit test to inherit an
+ * already-verified connection from, so the caller (a human, a script, or a
+ * CI workflow step) must set EXPECTED_TEST_DATABASE explicitly before
+ * invoking this file. The autonomous GitHub gate provides the canonical
+ * handoff in its own workflow environment (.github/workflows/
+ * ai-subscription-gate.yml) — routes 1 and 2 remain canonical-only.
+ *
+ * Usage: EXPECTED_TEST_DATABASE=ultimatesms_testing php tests/Feature/Workspace/Support/run_workspace_enforcement_suite.php
  */
 
 require __DIR__ . '/../../../../vendor/autoload.php';
@@ -30,17 +40,22 @@ use Illuminate\Support\Facades\DB;
 use Symfony\Component\Process\PhpExecutableFinder;
 use Symfony\Component\Process\Process;
 use Tests\Feature\Workspace\Support\TemporaryTestDatabase;
+use Tests\Support\TestDatabaseSafety;
 
 const WRONG_DATABASE_EXIT_CODE = 3;
 const SETUP_OR_CLEANUP_FAILURE_EXIT_CODE = 5;
 
-$resolvedDatabase = DB::connection()->getDatabaseName();
+$expectedDatabase = getenv('EXPECTED_TEST_DATABASE');
 
-if ($resolvedDatabase !== 'ultimatesms_testing') {
-    fwrite(STDERR, sprintf(
-        "Refusing to run the workspace enforcement suite: resolved database is [%s], expected [ultimatesms_testing].\n",
-        $resolvedDatabase
-    ));
+if ($expectedDatabase === false || $expectedDatabase === '') {
+    fwrite(STDERR, "Refusing to run the workspace enforcement suite: EXPECTED_TEST_DATABASE was not set by the caller. Aborting before any database write.\n");
+    exit(WRONG_DATABASE_EXIT_CODE);
+}
+
+try {
+    TestDatabaseSafety::assertMatchesActiveTestDatabase($expectedDatabase);
+} catch (RuntimeException $e) {
+    fwrite(STDERR, 'Refusing to run the workspace enforcement suite: ' . $e->getMessage() . " Aborting before any database write.\n");
     exit(WRONG_DATABASE_EXIT_CODE);
 }
 

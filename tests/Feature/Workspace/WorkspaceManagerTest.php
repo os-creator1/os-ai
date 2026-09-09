@@ -18,6 +18,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use RuntimeException;
+use Tests\Support\TestDatabaseSafety;
 use Tests\TestCase;
 
 class WorkspaceManagerTest extends TestCase
@@ -266,9 +267,10 @@ class WorkspaceManagerTest extends TestCase
     public function test_missing_onboarding_business_reference_throws(): void
     {
         // Independently verified before ever touching FOREIGN_KEY_CHECKS —
-        // this must never run against any connection but the disposable
-        // testing database.
-        $this->assertSame('ultimatesms_testing', DB::connection()->getDatabaseName());
+        // this must never run against any connection but a validated
+        // disposable database (the canonical ultimatesms_testing database
+        // or a Tests\Support\TestDatabaseSafety-approved sibling).
+        $this->assertSame(TestDatabaseSafety::activeTestDatabase(), DB::connection()->getDatabaseName());
 
         $owner = $this->createUser();
         $workspace = $this->createWorkspaceOwnedBy($owner->id);

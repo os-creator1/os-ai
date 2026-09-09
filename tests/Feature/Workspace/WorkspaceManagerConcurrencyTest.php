@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Symfony\Component\Process\PhpExecutableFinder;
 use Symfony\Component\Process\Process;
+use Tests\Support\TestDatabaseSafety;
 use Tests\TestCase;
 
 /**
@@ -45,6 +46,22 @@ class WorkspaceManagerConcurrencyTest extends TestCase
     }
 
     /**
+     * Forwarded explicitly to every spawned runner process, mirroring
+     * PR #229's proven Usage-runner pattern — the child must resolve the
+     * very same validated disposable database this parent process itself
+     * is running against, never a hardcoded literal.
+     */
+    private function childEnvironment(): array
+    {
+        $database = TestDatabaseSafety::activeTestDatabase();
+
+        return [
+            'DB_DATABASE' => $database,
+            'EXPECTED_TEST_DATABASE' => $database,
+        ];
+    }
+
+    /**
      * Under RFC-004 M2, a brand-new Workspace provisioned by
      * resolveLegacyOnboardingWorkspace()'s zero-candidate auto-provisioning
      * path now legitimately receives a narrow complimentary Core
@@ -73,7 +90,7 @@ class WorkspaceManagerConcurrencyTest extends TestCase
     // A. Real two-process outcome test.
     public function test_two_concurrent_resolver_attempts_for_the_same_owner_create_exactly_one_workspace(): void
     {
-        $this->assertSame('ultimatesms_testing', DB::connection()->getDatabaseName());
+        $this->assertSame(TestDatabaseSafety::activeTestDatabase(), DB::connection()->getDatabaseName());
 
         $ownerUserId = DB::table('users')->insertGetId([
             'uid' => (string) Str::uuid(),
@@ -93,7 +110,7 @@ class WorkspaceManagerConcurrencyTest extends TestCase
         $phpBinary = (new PhpExecutableFinder())->find() ?: 'php';
         $holdSeconds = '2';
 
-        $slow = new Process([$phpBinary, $runnerScript, 'slow', $holdSeconds, (string) $ownerUserId]);
+        $slow = new Process([$phpBinary, $runnerScript, 'slow', $holdSeconds, (string) $ownerUserId], null, $this->childEnvironment());
         $slow->start();
 
         // Give the slow process enough time to connect and acquire the
@@ -101,7 +118,7 @@ class WorkspaceManagerConcurrencyTest extends TestCase
         usleep(500_000);
 
         $start = microtime(true);
-        $fast = new Process([$phpBinary, $runnerScript, 'plain', '0', (string) $ownerUserId]);
+        $fast = new Process([$phpBinary, $runnerScript, 'plain', '0', (string) $ownerUserId], null, $this->childEnvironment());
         $fast->run();
         $elapsed = microtime(true) - $start;
 
@@ -128,6 +145,20 @@ class WorkspaceManagerConcurrencyTest extends TestCase
     }
 
     // B. Runner database guard test.
+    //
+    // The runner process re-verifies its own resolved database connection
+    // before doing anything else — APP_ENV=testing alone isn't proof
+    // enough. Rather than pointing a child process at a real wrong database
+    // (which the instructions forbid, and which would require separate
+    // credentials), this overrides DB_DATABASE via the child's environment
+    // while forwarding this test's own real, already-validated
+    // EXPECTED_TEST_DATABASE: Laravel's Dotenv loader is immutable, so a
+    // pre-set OS env var wins over .env.testing's value, and the resolved
+    // database name changes without ever attempting a real connection to
+    // it — the guard checks getDatabaseName() (config-only) against the
+    // genuinely expected value before any query runs, so the mismatch
+    // between the bogus DB_DATABASE and the real EXPECTED_TEST_DATABASE is
+    // exactly what triggers the refusal.
     public function test_runner_refuses_to_execute_against_an_unexpected_resolved_database(): void
     {
         $runnerScript = __DIR__ . '/Support/concurrent_workspace_resolver_runner.php';
@@ -137,7 +168,7 @@ class WorkspaceManagerConcurrencyTest extends TestCase
         $process = new Process(
             [$phpBinary, $runnerScript, 'plain', '0', '1'],
             null,
-            ['DB_DATABASE' => $bogusDatabase]
+            ['DB_DATABASE' => $bogusDatabase, 'EXPECTED_TEST_DATABASE' => TestDatabaseSafety::activeTestDatabase()]
         );
         $process->run();
 
