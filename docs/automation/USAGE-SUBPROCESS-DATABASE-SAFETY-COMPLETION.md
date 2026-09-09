@@ -394,12 +394,44 @@ are all outside version control; `git check-ignore` confirms `.env` is
 ignored.
 
 `bootstrap/cache/packages.php` and `bootstrap/cache/services.php` are
-tracked files that Laravel rewrites whenever `artisan` or
-`dump-autoload` runs. They were modified on disk as runtime contamination
-and were **deliberately never staged**. They are not in the branch diff.
-They were *not* restored with `git checkout --`, because doing so is known
-in this repository to break view-rendering suites; leaving them alone and
-excluding them from the commit is the correct handling.
+**tracked** files that Laravel rewrites whenever `artisan` or
+`composer dump-autoload` runs. Both were regenerated on disk during this
+lane, purely as a side effect of preparing and running the verification in
+§4 — no edit was ever made to either by hand.
+
+They were handled in three steps:
+
+1. **Regenerated temporarily for verification.** Running the suites
+   required a working autoloader and package manifest in this fresh
+   worktree, so `composer dump-autoload` and `artisan` rewrote both files.
+2. **Excluded from the implementation commit.** Every path in
+   `0c578de` was staged by name; neither cache file was ever staged, and
+   neither appears in the branch diff.
+3. **Restored explicitly to `HEAD` after all testing completed**, with a
+   path-scoped command naming only these two files:
+
+   ```
+   git restore --source=HEAD -- bootstrap/cache/packages.php bootstrap/cache/services.php
+   ```
+
+   No broad `checkout`, `clean`, or `reset` was used, and no other file was
+   touched. Both then hashed byte-identical to `HEAD`:
+   `packages.php` → `6779c61d…`, `services.php` → `eeb76a39…`.
+
+**The final worktree contains no modified, staged or untracked paths** —
+`git status --short` is empty.
+
+**Correcting an earlier claim in this document.** A previous revision
+stated that leaving these two tracked files modified was "the correct
+handling", on the reasoning that restoring generated artifacts has
+previously broken view-rendering suites in this repository. That reasoning
+does not apply here and the conclusion was wrong. Restoring a tracked file
+to *this branch's own committed content* is not the hazardous case; the
+hazardous case is restoring a stale artifact that no longer matches the
+code around it. Leaving tracked modifications behind is not an acceptable
+final state under the project's operating rules, regardless of whether they
+were staged. The files are restored, and this section records what was
+actually done rather than defending the shortcut.
 
 No `git add -A` was used at any point. Every path was staged by name.
 
