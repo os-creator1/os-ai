@@ -133,8 +133,8 @@ final class TestDatabaseSafety
 
         if ($expected !== null && $expected !== '' && $resolved !== $expected) {
             throw new RuntimeException(sprintf(
-                'Refusing to run: resolved database is [%s], but the parent process is using [%s]. '
-                . 'Aborting before any database write.',
+                'Refusing to use database [%s]: the parent process is using [%s],'
+                . ' and a spawned child must resolve the very same disposable database.',
                 $resolved,
                 $expected
             ));

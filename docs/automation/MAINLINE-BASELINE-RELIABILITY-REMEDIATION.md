@@ -36,6 +36,59 @@ result.
 
 ---
 
+## 0.2 Correction round 2 — final synchronisation
+
+| | |
+|---|---|
+| Pre-merge branch HEAD | `fdef3da45fe4dc6a5072c579e74111591a49d223` |
+| Fetched `origin/main` | `ef0c01346b517fa093d7d95b3384cf25689a0288` |
+| Merge commit | `3339c45a50a40def187b86aa42282ef5d1976402` |
+| Conflicts | **none** |
+
+Main advanced by 19 commits across three pull requests — #223 (Customer
+Experience Slice 5: wallet, payer, balance and spending-control UX),
+#224 (Slice 3 messaging provider contract) and #225 (Security
+Remediation Slice 0) — touching 89 files, +14 029 / −971.
+
+All 89 files main changed are **byte-identical** between the merge result
+and `origin/main`: each path's blob SHA was compared individually, not
+just the merge's exit status. The merge touched no path this branch owns,
+and this branch's round-0/round-1 work touched no path main changed.
+
+Security Remediation Slice 0's removals are intact after the merge:
+
+| Invariant | State at the merge commit |
+|---|---|
+| `app/Http/Controllers/Debug/DebugController.php` | absent from `origin/main`, from `HEAD`, and from disk |
+| Debug routes in `routes/` | none; `routes/web.php` carries only the §16.A.1 comment recording the removal |
+| `tests/Feature/Security` | 172 tests, 1 302 assertions, green |
+
+One honest observation, recorded and **not** changed here:
+`app/Http/Controllers.zip` — tracked since the 2026-07-18 baseline import,
+long predating this lane and PR #225 — still contains a `DebugController`
+entry. It is a dormant archive: not autoloaded, not routable, and it
+resurrects nothing. But the source text does still ship in the
+repository. It is main's file and outside this branch's allowed paths, so
+it is reported rather than deleted.
+
+### 0.2.1 A stale generated artifact, not a code defect
+
+`DebugRouteRemovalTest` failed once immediately after the merge:
+
+```
+ErrorException: include(.../app/Http/Controllers/Debug/DebugController.php):
+Failed to open stream: No such file or directory
+```
+
+`vendor/composer/autoload_classmap.php` — generated, untracked — still
+mapped the class main had deleted, so `class_exists()` tried to include a
+file that no longer existed. `composer dump-autoload` cleared it and the
+suite went green. Recorded because the failure *looks* like the removal
+being incomplete and is not: nothing in `app/`, `routes/` or `config/`
+references the controller.
+
+---
+
 ## 1. Baseline
 
 | | |
@@ -499,6 +552,11 @@ here so the next person does not rediscover it from scratch.
 * `tests/Feature/Workspace/WorkspaceManagerTest.php`
 * `tests/Feature/Workspace/WorkspaceBackfillV1ConcurrencyTest.php`
 * `tests/Feature/Entitlement/EntitlementManagerConcurrencyTest.php`
+* `tests/Feature/Usage/SlotAgreementConcurrencyTest.php` (correction round 2)
+* `tests/Feature/Usage/ConversationsConcurrencyTest.php` (correction round 2)
+* `tests/Feature/Usage/Support/concurrent_slot_agreement_runner.php` (correction round 2)
+* `tests/Feature/Usage/Support/concurrent_conversations_send_runner.php` (correction round 2)
+* `tests/Feature/Security/BlacklistsSecurityTest.php` (correction round 2)
 
 ### 3.7 Reliable baseline command
 
@@ -570,6 +628,32 @@ The four deferred failures therefore stand, each naming its own cause:
 **This branch does not claim a fully green suite.** It claims zero
 failures that this branch owns.
 
+**Resolved in correction round 2.** This task authorised correcting the
+two Usage runners on this branch, so all four deferrals above are now
+closed — see §9 (K) for the seam and its proofs, and §6.2 for the
+resulting suite. `git diff origin/main HEAD -- app/Library/Usage
+tests/Unit/Usage` remains empty: the correction touched the two runner
+scripts, their two parent tests and nothing else Lane A owns.
+
+Round 2's own audit opened a **new**, smaller deferral in the same class —
+nine `tests/Feature/Usage/**` tests whose runtime-generated runners carry
+no database guard. They are not broken today. §9.1 records them, the
+reason they are latent rather than active, and why correcting them is out
+of this round's scope.
+
+---
+
+## 5.1 Deferred corrections (unowned)
+
+Not Lane A's, not scoped to this round, and each recorded with the
+evidence needed to act on it without re-deriving anything.
+
+| Finding | Change | Why deferred |
+|---|---|---|
+| §9 **N** — `AppConfig::setEnv()` writes `base_path('.env')`, so five callers still reach a developer's real environment file from tests | Resolve `app()->environmentFilePath()` instead; identical in production | Production change to a five-caller method, arriving after this round's regression was measured |
+| §9.1 — nine `tests/Feature/Usage/**` tests generate runners with no database guard | Give each generated child the `TestDatabaseSafety` guard the named runners now carry | `tests/Feature/Usage/**` is Lane A's; latent, not active |
+| §0.2 — `app/Http/Controllers.zip` still contains the `DebugController` source PR #225 removed | Delete the archive once nothing references it | Main's file, predates this lane, outside this branch's allowed paths |
+
 ---
 
 ## 6. Acceptance criteria
@@ -614,6 +698,12 @@ resolved-database guard (16), manifest integrity (4), asset render smoke
 5070-test run, and the working tree carries no vendor, upload, cache, log
 or temporary-database artifact.
 
+> **Qualified in correction round 2.** Byte-identical, yes — but not
+> untouched. `AppConfig::setEnv()` resolves `base_path('.env')`, which the
+> temporary-environment-file trait does not redirect, so
+> `tests/Feature/Settings` still *writes* the real file with the same
+> bytes. See §9 (N) for the reproduction and §5.1 for the deferral.
+
 All four remaining failures are the **Lane-A-owned deferrals recorded in
 §5**, and each names its own cause:
 
@@ -633,6 +723,53 @@ attempted: Lane A was running `artisan test tests/Feature/Usage` against
 completed on an isolated database *while* Lane A used the canonical one
 is the clearest demonstration of what the isolation work buys — before
 it, one of the two runs would have silently corrupted the other.
+
+---
+
+## 6.2 Result — correction round 2
+
+| | Before (`d2b275e`) | Round 0 | Round 1 | **Round 2 (merged `ef0c0134`)** |
+|---|---|---|---|---|
+| Tests | 4 992 | 5 026 | 5 070 | **5 196** |
+| Assertions | 21 129 | 28 118 | 28 408 | **29 737** |
+| Errors | 911 | 0 | 0 | **0** |
+| Failures | 35 | 4 | 4 | **0** |
+| Distinct failing tests | **947** | 4 | 4 | **0** |
+
+Run through `scripts/test-baseline.php --database=ultimatesms_testing_sync`
+on a database reset with `migrate:fresh` immediately beforehand. The
+runner's own contract held: it validated the database Laravel actually
+resolves before touching it, and it refuses a zero-test success (proven
+earlier in this round, when a mis-shaped argument made PHPUnit discover no
+tests and the runner exited 5 rather than 0).
+
+**Every one of the 5 196 progress characters is a dot.** No error, no
+failure, no skipped, incomplete or risky test — counted from the progress
+stream, not inferred from the summary line. The 21 PHPUnit deprecations
+are framework-level notices and are not failures.
+
+The four failures round 1 had to defer are gone, and they are gone
+because the defect was fixed, not because anything was relaxed: no
+assertion was deleted, weakened or made conditional anywhere in this
+round, and the concurrency barriers still block on a child-emitted
+`LOCKED` line rather than on elapsed time.
+
+The suite ran against **the committed `public/` tree** — the runner found
+the manifest already valid and skipped its asset step — so this result
+describes exactly what the branch contains, not a locally rebuilt variant
+of it.
+
+After the run:
+
+| | |
+|---|---|
+| `.env` | content unchanged (`16b7a6c1…` before and after). It was *written*, with identical bytes — see §9 (N) |
+| `.env.testing` | untouched; mtime unchanged from before the round began |
+| Working tree | the seven intended files only |
+| `public/` | **0** changed or untracked paths |
+| Runtime upload leftovers | **0** |
+| Temporary environment directories | **0** |
+| Temporary databases | none created by the suite; the canonical `ultimatesms_testing` was neither reset nor written by this lane |
 
 ---
 
@@ -741,3 +878,299 @@ writes only into untracked runtime directories, is not one of the
 reproduced failures in §2, and fixing it means changing upload behaviour
 those suites assert on — so it is recorded here rather than widened into
 this branch.
+
+---
+
+## 9. Correction round 2 — the subprocess database seam
+
+### K — The two Usage runners hardcoded the canonical database **(3)**, corrected
+
+`tests/Feature/Usage/Support/concurrent_slot_agreement_runner.php` and
+`concurrent_conversations_send_runner.php` each opened with
+
+```php
+const EXPECTED_DATABASE = 'ultimatesms_testing';
+```
+
+and refused to run against anything else. The guard was right in spirit —
+a child process that writes must prove where it is pointed — but the
+literal made both tests **unrunnable on any isolated database**, which is
+precisely why §6.1 recorded four deferred failures in round 1.
+
+Both runners now resolve the same seam every other subprocess in this
+repository uses:
+
+```php
+$expectedDatabase = getenv('EXPECTED_TEST_DATABASE');
+
+if ($expectedDatabase === false || $expectedDatabase === '') {
+    fwrite(STDERR, "Refusing to run: EXPECTED_TEST_DATABASE was not handed "
+        . "down by the parent test. Aborting before any database write.\n");
+    exit(WRONG_DATABASE_EXIT_CODE);
+}
+
+try {
+    Tests\Support\TestDatabaseSafety::assertMatchesActiveTestDatabase($expectedDatabase);
+} catch (RuntimeException $e) {
+    fwrite(STDERR, 'Refusing to run: ' . $e->getMessage()
+        . " Aborting before any database write.\n");
+    exit(WRONG_DATABASE_EXIT_CODE);
+}
+```
+
+The properties this preserves, each verified rather than asserted:
+
+| Requirement | How it holds |
+|---|---|
+| No hardcoded name, no silent fallback | A missing or empty `EXPECTED_TEST_DATABASE` is a **refusal**, not "no expectation" — the handoff not happening means the child cannot know what it is authorised to write |
+| One database-safety authority | `Tests\Support\TestDatabaseSafety` only; no second helper was introduced |
+| No broad "contains test" acceptance | `acme_test_live` is refused |
+| Refusal happens before any write | The guard runs immediately after bootstrap, before the first model call |
+| The parent hands its own resolved name down | `childEnvironment()` returns `DB_DATABASE` **and** `EXPECTED_TEST_DATABASE` from `TestDatabaseSafety::activeTestDatabase()` |
+| Barriers unchanged | The `LOCKED`-line and arrival-count barriers are untouched; **no sleep was added as synchronisation** |
+
+Proven behaviour, run directly against the runners:
+
+| Handoff | Result |
+|---|---|
+| `EXPECTED_TEST_DATABASE` unset | exit 3 — "EXPECTED_TEST_DATABASE was not handed down by the parent test" |
+| set empty | exit 3 — same |
+| `ultimatesms_testing_other` (mismatch) | exit 3 — "the parent process is using [ultimatesms_testing_other], and a spawned child must resolve the very same disposable database" |
+| `acme_test_live` (merely contains "test") | exit 3 |
+| active database `ultimatesms_production` | exit 3 — "it is not the canonical test database or a suffixed sibling of it" |
+| correct handoff | passes the guard and reaches mode dispatch |
+
+### L — A Security subprocess wrote with no guard at all **(3)**, corrected
+
+The subprocess audit found `tests/Feature/Security/BlacklistsSecurityTest`
+spawning a generated script through `proc_open` that **creates and deletes
+users, customers and blacklists** with no database check whatsoever — a
+strictly worse position than K, which at least refused. The generated
+child now carries the same guard, with the parent's resolved name baked in
+via `var_export(TestDatabaseSafety::activeTestDatabase(), true)`.
+
+### M — The refusal message was double-framed
+
+`assertMatchesActiveTestDatabase()`'s mismatch message carried its own
+`Refusing to run:` prefix and `Aborting before any database write.`
+suffix, which the callers add too, so a real refusal read:
+
+```
+Refusing to run: Refusing to run: resolved database is [...]. Aborting
+before any database write. Aborting before any database write.
+```
+
+The helper's message is now a bare statement, matching the shape its
+unsafe-name sibling already had. Cosmetic, but a guard message is read
+exactly once — when something has gone wrong — and it should be legible.
+
+
+### N — `AppConfig::setEnv()` still writes the developer's real `.env` **(3)**, found here, deferred
+
+Found by watching `.env`'s modification time during round 2's own
+verification, not by a failing test — which is exactly why it survived
+rounds 0 and 1.
+
+`tests/Support/UsesTemporaryEnvironmentFile` redirects
+`app()->environmentFilePath()`, and `TestCase` applies it to every test,
+so nothing that resolves the environment file *through the framework* can
+reach a developer's file. Three code paths do not resolve it through the
+framework:
+
+| Path | Call |
+|---|---|
+| `app/Models/AppConfig.php:423` | `$file_path = base_path('.env')` |
+| `app/Library/Tool.php:850, 859` | `file_get_contents(base_path('.env'))` / `file_put_contents(...)` |
+| `app/Repositories/Eloquent/EloquentSettingsRepository.php:312, 321` | same pair |
+
+`base_path()` is not redirected and must not be — it is the application
+root, used for everything. So `AppConfig::setEnv()` and its five remaining
+callers write the real file. This was known when
+`app/Library/Branding/BrandingUploadService.php` was routed through
+`PlatformSettingsEnvWriter` in round 0 (the comment at its line 96 says
+so); what was not established is that the *other* callers still reach it
+from tests.
+
+**Reproduced, measured, bounded:**
+
+```
+before: md5 16b7a6c1…  mtime 14:51:13
+php vendor/bin/phpunit tests/Feature/Settings   →  57 tests, 172 assertions, green
+after:  md5 16b7a6c1…  mtime 14:55:41
+```
+
+The suite **does write** the developer's `.env` — the mtime moves — but
+the bytes are unchanged, because `SettingsController` calls
+`AppConfig::setEnv('TERMS_OF_USE', …)` and `('PRIVACY_POLICY', …)` with
+the values already in the file. Both keys are present in this machine's
+`.env` and in neither `.env.example`, which is the signature of exactly
+this append.
+
+So §6.1's round-1 statement — `.env` byte-identical before and after — is
+**true but incomplete**. The file is byte-identical; it is not untouched.
+Today the write is idempotent; the moment a settings test asserts a value
+different from the developer's, it stops being idempotent and the
+developer's environment changes underneath them. That is the same defect
+class as §H2, one step short of firing.
+
+**The fix, and why it is not applied here.** One line in
+`app/Models/AppConfig.php` — resolve `app()->environmentFilePath()`
+instead of `base_path('.env')` — makes the existing trait cover all five
+remaining callers, and changes nothing in production, where the two
+expressions are equal. It is small and it is right. It is also a
+**production** change to a method five call sites depend on, arriving
+after this round's full regression had already been measured, and outside
+the correction list this round was scoped to. Landing it would mean
+claiming a regression result that never covered it. It is therefore
+recorded here, with its reproduction, as the next correction.
+
+### 9.1 Full subprocess audit
+
+Every site in `tests/` and `scripts/` that spawns an OS process
+(`new Process`, `proc_open`, `exec`, `shell_exec`):
+
+| Site | Writes to the database | Guard |
+|---|---|---|
+| `Usage/Support/concurrent_slot_agreement_runner.php` | yes | **corrected this round** |
+| `Usage/Support/concurrent_conversations_send_runner.php` | yes | **corrected this round** |
+| `Security/BlacklistsSecurityTest.php` | yes | **corrected this round** |
+| `Entitlement/EntitlementManagerConcurrencyTest.php` + `Support/concurrent_business_slot_runner.php` | yes | present |
+| `Entitlement/WorkspaceEntitlementBackfillV1ConcurrencyTest.php` | yes | present |
+| `Workspace/WorkspaceManagerConcurrencyTest.php` | yes | present |
+| `Workspace/WorkspaceBackfillV1ConcurrencyTest.php` | yes | present |
+| `Workspace/Support/concurrent_backfill_runner.php` | yes | present |
+| `Workspace/Support/concurrent_workspace_resolver_runner.php` | yes | present |
+| `Workspace/Support/run_historical_m1a_suite.php` | yes | present |
+| `Workspace/Support/run_workspace_enforcement_suite.php` | yes | present |
+| `Support/ResolvedTestDatabaseGuardTest.php` | yes | present (it *is* the guard's own test) |
+| `Support/TemporaryEnvironmentFileTest.php` | no — the probe reads environment files only | n/a |
+| `scripts/test-baseline.php` | yes | present |
+
+**Deferred, Lane A owned.** Nine further tests under
+`tests/Feature/Usage/**` generate a runner into `sys_get_temp_dir()` at
+runtime and spawn it:
+
+`AutoRechargeFailedPaymentRetryTest`, `ConcurrentTopUpConcurrencyTest`,
+`PayerAssignmentConcurrencyTest`, `ProviderRefundDisputeConcurrencyTest`,
+`RefundablePaidAvailableAccountingTest`,
+`Slice5/AutoRechargeRollingWindowConcurrencyTest`,
+`UsageWalletBackfillV1ConcurrencyTest`,
+`UsageWalletManagerConcurrencyTest`,
+`UsageWalletManagerSetActiveRateConcurrencyTest`.
+
+None hardcodes a database name, so none is broken today: they inherit the
+caller's real environment, and `phpunit.xml` pins no `DB_DATABASE`, so the
+OS environment is the only source and inheritance is correct. But none
+carries a guard either. The hazard is latent rather than active — a lane
+that selected its database in-process (a `<server>` entry, a `putenv()`
+without an OS-level export) would have those children silently resolve
+`.env`'s database instead. Correcting them means editing nine
+`tests/Feature/Usage/**` files Lane A owns, well beyond the two runners
+this round was scoped to, so they are recorded here as the next
+correction rather than taken.
+
+### 9.2 Build determinism (correction round 2)
+
+`npm ci` on the merged tree resolves webpack **5.105.4** (the pin),
+laravel-mix 6.0.49, webpackbar 5.0.2; `npm ci --dry-run` reports no drift.
+Merged main changed no build input — only `resources/lang/en/locale.php`
+and three Blade views, none of which is a compiled-asset source. `terser`
+(5.50.0) and `terser-webpack-plugin` (5.6.1) resolve **identically** on
+`origin/main` and on this branch; webpack is the only differing entry, and
+webpack does not minify.
+
+Three production builds were run:
+
+| Build | Starting tree | Result |
+|---|---|---|
+| #1 | runtime uploads present | **discarded** — the manifest indexed 4 upload artifacts (the §A.2 mechanism, reproduced) |
+| #2 | build #1's output | 1 299 files, byte-identical to #1 |
+| #3 | `public/` reset to the committed state | 1 299 files, **byte-identical to #1** |
+
+So a second clean build produces no diff, and the build is reproducible
+from the committed state rather than only from a warm tree.
+
+The corrected manifest carries **1 187 entries**, **zero** of which point
+into a runtime upload directory, and **zero** of which name a file that
+does not exist on disk. `/js/core/theme-tokens.js` and
+`/js/scripts/pages/theme-settings.js` both resolve to real generated
+files. `MixManifestIntegrityTest` reproduced the pollution as a failure
+before the fix and passes after it.
+
+### 9.3 Why nothing under `public/` is committed this round
+
+Every one of the 471 files a production build leaves dirty was classified
+individually, by comparing each against its `HEAD` blob with carriage
+returns stripped:
+
+| Class | Count | Disposition |
+|---|---|---|
+| Required new output | **0** | Nothing untracked appeared; round 0 already committed the new outputs |
+| Changed-source output | **0** | Main changed no compiled-asset source |
+| Identical content, line endings only | 28 (including `mix-manifest.json`) | Restored — committing them would only re-add CRLF that `.gitattributes` normalises straight back |
+| Third-party re-minification churn | 443, all `public/vendors/js/**` | Restored |
+
+The 443 are not this branch's doing. `public/vendors/js/**` has been
+touched by exactly **one** commit in the repository's history — the
+2026-07-18 baseline import — so those blobs are the vendor's own shipped
+minified files, while `webpack.mix.js` line 61 re-minifies them through
+`mix.scripts()` on every build. Any production build on `origin/main`
+produces the same delta, with the same terser. Committing them would put
+443 files of semantically identical third-party churn into a reliability
+branch.
+
+Result: `public/` is left exactly as `HEAD` has it, and the round-2 commit
+contains only source.
+
+### 9.4 Database and migration verification (correction round 2)
+
+All on the isolated `ultimatesms_testing_sync`; the canonical
+`ultimatesms_testing` was neither reset nor written by this lane's runs.
+
+| Check | Result |
+|---|---|
+| `scripts/resolve-test-database.php` | exit 0, `RESOLVED_DATABASE=ultimatesms_testing_sync` — the database Laravel *resolves*, cross-checked against `SELECT DATABASE()` |
+| `migrate:fresh` | 251 steps DONE |
+| `migrate:status` | 250 ran, **0 pending** |
+| `rollback --step=3` → forward | 0 pending |
+| `rollback --step=4` → forward | 0 pending |
+| `rollback --step=1` → forward | 0 pending |
+
+Slice 5 added **four** migrations, not three — `2026_09_11_120001`
+through `120004`. `120004`
+(`require_deliberate_ceiling_for_enabled_auto_recharge_on_business_usage_wallets`)
+arrived with Slice 5's own correction round 2 and is easy to miss when
+counting from the original contract.
+
+### 9.5 Focused suites (correction round 2)
+
+All on the isolated `ultimatesms_testing_sync`, after `migrate:fresh`.
+
+| Suite | Tests | Assertions |
+|---|---|---|
+| Lane C infrastructure — `Unit/Support/TestDatabaseSafetyTest`, `Unit/Assets/MixManifestIntegrityTest`, `Feature/Assets`, `Feature/Support`, `Feature/Branding` | 131 | 744 |
+| `tests/Feature/Security` | 172 | 1 302 |
+| `tests/Feature/Workspace` | 774 | 2 279 |
+| `tests/Feature/Business` | 543 | 8 213 |
+| `tests/Feature/GoogleBusinessProfile` | 136 | 1 610 |
+| `tests/Feature/Usage/Slice5` | 92 | 1 082 |
+| `tests/Unit/Usage` | 21 | 46 |
+| `tests/Feature/Usage` | 998 | 5 190 |
+| Render and dashboard — `Feature/Dashboards`, `Auth/AuthActiveThemeRenderingTest`, `Auth/AuthPageRenderTest`, `Feature/Branding`, `Settings/PlatformSettingsIndexRenderTest`, `Feature/Theme`, `Feature/Assets`, `Website/Public/WebsitePublicRenderingTest` | 188 | 1 188 |
+| Concurrency bundle — both corrected Usage tests plus `Workspace` ×2 and `Entitlement` | 18 | 124 |
+
+Every one green, with no assertion weakened, skipped or made conditional.
+
+**Determinism of the corrected concurrency tests.** Ten consecutive runs
+of `SlotAgreementConcurrencyTest` + `ConversationsConcurrencyTest`, each
+**7 tests / 38 assertions**, all exit 0 — and deliberately run on a
+*second* isolated database, `ultimatesms_testing_sync_conc`, **while the
+full 5 196-test regression was running against
+`ultimatesms_testing_sync`**. Two independent suites, two databases, one
+MySQL server, no interference: that is the property this whole lane
+exists to buy, and before the round-2 correction these two tests were the
+only ones that could not participate in it.
+
+An earlier set of five runs on `ultimatesms_testing_sync` produced the
+same 7/38 result, so 15 consecutive runs are on record with identical
+counts.

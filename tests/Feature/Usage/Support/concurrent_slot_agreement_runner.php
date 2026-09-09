@@ -59,17 +59,37 @@ $_SERVER['APP_ENV'] = 'testing';
 $app = require __DIR__ . '/../../../../bootstrap/app.php';
 $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
 
-const EXPECTED_DATABASE = 'ultimatesms_testing';
 const WRONG_DATABASE_EXIT_CODE = 3;
 
-$resolvedDatabase = Illuminate\Support\Facades\DB::connection()->getDatabaseName();
+// The safety property is unchanged — this process still refuses to write
+// anything until it has proven where it is pointed. What changed is that
+// the authorized database is no longer the single literal
+// `ultimatesms_testing`: the PARENT selects and validates a disposable
+// database and hands the exact name down, and this child must resolve
+// that same one.
+//
+// EXPECTED_TEST_DATABASE is therefore MANDATORY here. A missing value is
+// not "no expectation" — it means the handoff did not happen, so this
+// child cannot know which database it is authorized to write to and must
+// refuse rather than silently fall back to the canonical name. That
+// fallback is exactly what used to make this test unrunnable for any lane
+// working on an isolated database.
+//
+// Tests\Support\TestDatabaseSafety is the single authority on which names
+// are permitted; it rejects empty, malformed, unsafe and
+// production-looking values, and never accepts a name merely because it
+// contains "test".
+$expectedDatabase = getenv('EXPECTED_TEST_DATABASE');
 
-if ($resolvedDatabase !== EXPECTED_DATABASE) {
-    fwrite(STDERR, sprintf(
-        "Refusing to run: resolved database is [%s], expected [%s]. Aborting before any database write.\n",
-        $resolvedDatabase,
-        EXPECTED_DATABASE
-    ));
+if ($expectedDatabase === false || $expectedDatabase === '') {
+    fwrite(STDERR, "Refusing to run: EXPECTED_TEST_DATABASE was not handed down by the parent test. Aborting before any database write.\n");
+    exit(WRONG_DATABASE_EXIT_CODE);
+}
+
+try {
+    Tests\Support\TestDatabaseSafety::assertMatchesActiveTestDatabase($expectedDatabase);
+} catch (RuntimeException $e) {
+    fwrite(STDERR, 'Refusing to run: ' . $e->getMessage() . " Aborting before any database write.\n");
     exit(WRONG_DATABASE_EXIT_CODE);
 }
 
