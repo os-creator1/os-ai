@@ -9,10 +9,29 @@ corrects an unproven webhook-retry claim, verifies `manage_advanced_provider`
 mechanically rather than assuming it exists, replaces a fragile
 never-resolved test claim with a real network-safety design, and separates
 operational state, security auditing, and usage measurement into three
-distinct, narrowly scoped stores. Every change below is evidence-driven;
-§2 records the additional mechanical verification this round required.
-Still a documentation-and-audit pass only — no Telnyx API call, no
-provider account/profile/number/registration/webhook/rate/credential
+distinct, narrowly scoped stores.
+
+**Correction Round 2 (2026-09-09).** Round 1's three uniqueness invariants
+(one active-or-pending managed identity per Business; a number cannot belong
+to two active-or-pending identities; at most one active primary number per
+identity) were each described as a "partial unique index," which MySQL does
+not support — PostgreSQL's `CREATE UNIQUE INDEX ... WHERE ...` syntax has no
+MySQL equivalent, and this repository runs MySQL, not PostgreSQL (§2 item
+20). This round replaces every such claim with an executable design already
+proven in this exact repository: a nullable `STORED` generated guard column
+plus an ordinary `UNIQUE` index on it, exactly matching
+`database/migrations/2026_08_16_140001_create_payment_provider_customers_table.php`'s
+already-merged, already-tested pattern. All three invariants are now
+enforced by MySQL's own unique-index conflict detection at the storage
+engine level — never by application validation or row locks alone — with
+exact migration syntax, rollback behaviour, and concurrency/replay tests
+specified in §4.2/§4.9/§4.12. §4.8's RFC-005 measurement seam is also
+re-audited for exact file ownership at every layer (manager, repository,
+model, migration, enum, documentation, test), per this round's request.
+
+Every change below is evidence-driven; §2 records the mechanical
+verification each round required. Still a documentation-and-audit pass
+only — no Telnyx API call, no provider account/profile/number/registration/webhook/rate/credential
 change, no production code, no PR.
 
 ## 1. STATUS AND AUTHORITY
@@ -415,6 +434,75 @@ safety, mechanically verified.**
   the new bounded-retention purge command (§4.8/§4.11), not a new scheduler
   mechanism.
 
+**(20) NEW THIS ROUND — database version, migration convention, and
+generated-column precedent for uniqueness invariants that must survive
+concurrency.**
+
+* `composer.json:45` — `laravel/framework: ^12.0` (already cited, item 19).
+* CI provisions MySQL, not PostgreSQL, for every workflow that runs a
+  database-backed test: `.github/workflows/ai-subscription-gate.yml:46` and
+  `.github/workflows/rfc-003-m3-aggregate-regression.yml:38` both declare
+  `image: mysql:8.0` as the service container. `docs/automation/CUSTOMER-EXPERIENCE-SLICE-2-AUTH-SHELL.md:263`
+  additionally records a real run against `MySQL 8.4`. **MySQL does not
+  support PostgreSQL's `CREATE UNIQUE INDEX ... WHERE ...` partial-index
+  syntax at all** — no `WHERE` clause exists on a MySQL `CREATE INDEX`/`ALTER
+  TABLE ... ADD UNIQUE` statement, in any MySQL version. Every "partial
+  unique index" claim in the prior round of this document was therefore not
+  executable against this repository's actual database.
+* This repository already has a proven, merged, tested alternative for
+  exactly this shape of problem — a nullable `STORED` generated column that
+  collapses every non-guarded row to `NULL` (which a MySQL `UNIQUE` index
+  permits in unlimited quantity, since MySQL — like every SQL-standard
+  implementation — treats `NULL` as distinct from every other `NULL` for
+  uniqueness purposes) plus an ordinary `UNIQUE` index on that generated
+  column:
+  `database/migrations/2026_08_16_140001_create_payment_provider_customers_table.php`
+  (read in full). It creates `payment_provider_customers` with a
+  `business_id`/`workspace_id`/`status` shape, then, in a **separate**
+  `Schema::table()` call after `Schema::create()` (the migration's own
+  comment, `:33-38`, explains why: "Laravel's fluent generated-column
+  builder targets a fresh column add, not create-time definition alongside a
+  foreign key in the same statement in every MySQL/Laravel version
+  combination"), adds:
+  ```php
+  $table->unsignedBigInteger('active_business_id')
+      ->nullable()
+      ->storedAs("CASE WHEN status = 'active' THEN business_id ELSE NULL END")
+      ->after('status');
+  ```
+  and a matching `active_workspace_id` column, then, in a **third**
+  `Schema::table()` call, `$table->unique(['provider', 'active_business_id']);`
+  and `$table->unique(['provider', 'active_workspace_id']);`. `down()` is a
+  plain `Schema::dropIfExists('payment_provider_customers')` — the whole
+  table, generated columns and their indexes included, drops together.
+* This exact pattern is already covered by a real, merged, passing test:
+  `tests/Feature/Usage/ProviderCustomerOwnershipTest.php` (read in full).
+  `test_unique_provider_and_active_business_id_rejects_a_second_active_row()`
+  (`:90-113`) raw-inserts one `active` row for a Business, then asserts a
+  second raw insert for the same Business/`active` status throws
+  `Illuminate\Database\QueryException` — **the database itself**, not
+  application code, rejects it. `test_detach_then_recreate_allows_a_new_active_row()`
+  (`:115-144`) proves the inverse: updating the first row's `status` away
+  from `active` (which recomputes the generated column to `NULL` in the same
+  `UPDATE`, per MySQL's own generated-column semantics — no separate cleanup
+  step) immediately frees the slot for a new `active` row. Both tests use
+  plain sequential `DB::table(...)->insert()`/`->update()` calls, not a
+  multi-process harness — sufficient because the actual protection is
+  InnoDB's own atomic unique-index conflict check, which does not care
+  whether two conflicting statements are issued from the same process, two
+  processes, or genuinely simultaneously; the repository's own established
+  convention already treats sequential-insert-expecting-`QueryException` as
+  valid, sufficient proof of a uniqueness invariant holding under
+  concurrency (a true multi-process harness exists elsewhere in this
+  repository, e.g. `tests/Feature/Usage/ConcurrentTopUpConcurrencyTest.php::test_two_genuinely_concurrent_processes_confirming_the_same_attempt_produce_exactly_one_ledger_credit_and_transition()`,
+  but that pattern is reserved for races the database's own constraints do
+  not themselves resolve — not needed here, where a real `UNIQUE` index is
+  the entire mechanism).
+* **Conclusion: §4.2's three uniqueness invariants are redesigned this round
+  around this exact, already-proven mechanism** — a `STORED` generated guard
+  column plus an ordinary `UNIQUE` index — never a partial index, never
+  application validation or a row lock as the source of truth.
+
 ## 3. EXECUTABILITY AUDIT OF THE §22.1 SLICE 3 ALLOWLIST
 
 | Required behaviour | Current production entry point | Implementation path required | Was it allowlisted before this document? | Why it must change | Test proving delegation |
@@ -498,10 +586,42 @@ architecture; a single column here could not honestly represent that. Number
 mapping moves entirely to `business_messaging_numbers` below.
 
 **Indexes/constraints:** `UNIQUE(uid)`, `UNIQUE(messaging_profile_id)`, index
-on `business_id`; one-active-or-pending-identity-per-Business is enforced
-exactly as before — a transactional existence check in
-`BusinessMessagingIdentityResolver::create()` plus the hard
-`UNIQUE(messaging_profile_id)` backstop.
+on `business_id`.
+
+**One active-or-pending managed identity per Business — corrected this
+round, MySQL-executable, database-enforced.** A nullable `STORED` generated
+guard column, added in a `Schema::table()` call immediately after
+`Schema::create()` (mirroring `database/migrations/2026_08_16_140001_create_payment_provider_customers_table.php`,
+§2 item 20, exactly):
+
+```php
+$table->unsignedBigInteger('active_or_pending_business_id')
+    ->nullable()
+    ->storedAs("CASE WHEN status IN ('pending','active') THEN business_id ELSE NULL END")
+    ->after('status');
+```
+
+followed, in a subsequent `Schema::table()` call, by:
+
+```php
+$table->unique(['provider', 'active_or_pending_business_id']);
+```
+
+A `suspended` or `archived` row's generated column is `NULL`; MySQL's
+`UNIQUE` index permits unlimited `NULL`s, so historical/inactive rows never
+collide with each other or with the one live row. A `pending` or `active`
+row's generated column equals its own `business_id`, so a second `pending`
+or `active` row for the same Business — whichever combination of the two
+statuses — collides on the same non-`NULL` value and MySQL's own unique-index
+check (InnoDB, at the storage-engine level) rejects the `INSERT`/`UPDATE`
+with a `QueryException`, before any application code runs. **This is the
+sole enforcement mechanism; it is not a backstop behind an application check.**
+`BusinessMessagingIdentityResolver::create()` still performs a `DB::transaction()`
++ `lockForUpdate()` existence pre-check (§4.9) — but only to turn what would
+otherwise be a raw `QueryException` into a clean, catchable
+`MessagingIdentityConflictException` for a well-behaved caller; the
+invariant holds even if that pre-check is skipped, raced, or removed,
+because the database constraint does not depend on it.
 
 **Deliberately absent, per the parent contract's provider-neutrality
 discipline (§21.2):** no `provider_managed_account_id` column; no
@@ -525,21 +645,56 @@ Business, never stored per-Business (§4.4).
 | `released_at` | timestamp | yes | `null` | |
 | `created_at`, `updated_at` | timestamp | — | — | |
 
-**Indexes/constraints:**
+**Indexes/constraints — corrected this round, MySQL-executable, database-enforced.**
+Two independent `STORED` generated guard columns, following the identical
+pattern and migration ordering as `business_messaging_identities` above
+(and the same repository precedent, §2 item 20), added together in one
+`Schema::table()` call after `Schema::create()`:
 
-* `UNIQUE(phone_number) WHERE status IN ('pending','active')` (partial/
-  application-enforced, mirroring the identity table's pattern) — **no
-  provider phone number belongs to two Businesses** at the same time. A
-  `released` number's row is retained (never deleted) but no longer
-  participates in that uniqueness window, honestly modelling that Telnyx may
-  reassign a released number later without this schema claiming an
-  impossible eternal reservation.
-* `UNIQUE(business_messaging_identity_id) WHERE is_primary = true AND status
-  = 'active'` (partial/application-enforced) — **at most one active primary
-  number per identity**, checked transactionally in
-  `BusinessMessagingIdentityResolver::attachNumber()` the same way identity
-  creation is guarded (§4.9).
-* Index on `business_messaging_identity_id`; index on `status`.
+```php
+$table->string('active_or_pending_phone_number', 32)
+    ->nullable()
+    ->storedAs("CASE WHEN status IN ('pending','active') THEN phone_number ELSE NULL END")
+    ->after('phone_number');
+
+$table->unsignedBigInteger('active_primary_identity_id')
+    ->nullable()
+    ->storedAs("CASE WHEN is_primary = 1 AND status = 'active' THEN business_messaging_identity_id ELSE NULL END")
+    ->after('is_primary');
+```
+
+then, in a subsequent `Schema::table()` call:
+
+```php
+$table->unique('active_or_pending_phone_number');
+$table->unique('active_primary_identity_id');
+$table->index('business_messaging_identity_id');
+$table->index('status');
+```
+
+* **No provider phone number belongs to two Businesses.**
+  `UNIQUE(active_or_pending_phone_number)` — a `suspended`/`released` row's
+  generated value is `NULL` (unlimited `NULL`s permitted), so a `released`
+  number's row is retained (never deleted) without claiming an impossible
+  eternal reservation; a `pending`/`active` row's generated value is its own
+  `phone_number`, so a second `pending`/`active` row for the same number —
+  on any identity, including a different Business's — collides and MySQL
+  rejects it. **Deliberately not scoped by `provider`** (unlike the identity
+  table's composite index): a real E.164 phone number is unique in reality
+  regardless of which provider label a row carries, and scoping by provider
+  would let two different "provider" rows falsely claim the same real
+  number simultaneously — the opposite of what this invariant exists to
+  prevent.
+* **At most one active primary number per identity.**
+  `UNIQUE(active_primary_identity_id)` — a non-primary or non-`active` row's
+  generated value is `NULL`; a row that is both `is_primary = true` and
+  `status = 'active'` generates its owning identity's ID, so a second such
+  row for the same identity collides and MySQL rejects it.
+* Both are the sole enforcement mechanism, exactly as for the identity
+  table above — `BusinessMessagingIdentityResolver::attachNumber()`'s
+  transactional pre-check exists only to produce a clean
+  `MessagingIdentityConflictException` instead of a raw `QueryException`,
+  never as the actual source of truth.
 
 **Resolution rule, stated exactly (no fallback to "the first number"):**
 outbound sending resolves the identity's single **active, primary** number
@@ -663,9 +818,9 @@ all, on any row, under any reason.
 
 ### Uniqueness/conflict rules, stated exactly
 
-* **One active-or-pending managed identity per Business** — `UNIQUE(messaging_profile_id)` plus the transactional create-time check.
-* **One active-or-pending primary number per identity** — the partial unique index on `business_messaging_numbers`.
-* **No provider phone number belongs to two Businesses** — the partial unique index on `phone_number`.
+* **One active-or-pending managed identity per Business** — `UNIQUE(provider, active_or_pending_business_id)` on the `STORED` generated column above, a real MySQL database constraint, not an application check.
+* **At most one active primary number per identity** — `UNIQUE(active_primary_identity_id)` on the `STORED` generated column above, same mechanism.
+* **No provider phone number belongs to two Businesses** — `UNIQUE(active_or_pending_phone_number)` on the `STORED` generated column above, same mechanism.
 * **A Business may have multiple active numbers** — `business_messaging_numbers` has no per-identity row-count limit; only the "at most one primary" constraint above.
 * **BYO identity cardinality** is unchanged from today — `CustomerBasedSendingServer` already permits at most one non-managed dedicated connection per Business per provider type; Slice 3 does not alter this.
 * **A Business can never have both a managed identity and an active BYO connection treated as ambiguously "the" sender for the same operation** — §4.5's resolver checks the managed identity first; no automatic "try BYO if managed fails" fallback.
@@ -684,7 +839,59 @@ all, on any row, under any reason.
   in reverse dependency order (`business_messaging_numbers` before
   `business_messaging_identities`; the other two have no FK dependents) —
   safe because every one is new in this slice, with no pre-existing data to
-  preserve on rollback.
+  preserve on rollback. Dropping a table drops its `STORED` generated
+  columns and their indexes together, in one statement — there is no
+  separate generated-column or index cleanup step in `down()`.
+
+### Archival, replacement, and reactivation — corrected this round, stated precisely
+
+**Archival is a plain `status` update, and the guard column recomputes
+automatically as part of it.** MySQL recomputes a `STORED` generated column
+on every `UPDATE` that touches a column its expression reads — here,
+`status` (and, for the number table, `is_primary`/`status`). Setting
+`business_messaging_identities.status` from `pending`/`active` to
+`archived` (or `business_messaging_numbers.status` to `suspended`/`released`)
+recomputes the guard column to `NULL` **in that same `UPDATE` statement**,
+atomically freeing the unique slot — no separate cleanup migration, batch
+job, or application-level "release the slot" step exists or is needed.
+
+**Multiple historical rows are preserved without limit.** Because an
+archived/suspended/released row's guard column is always `NULL`, and a
+`UNIQUE` index permits unlimited `NULL`s, a Business may accumulate any
+number of archived `BusinessMessagingIdentity` rows (and a number may
+accumulate any number of released `BusinessMessagingNumber` rows) — nothing
+in this schema deletes or limits historical rows, satisfying "preserve
+historical inactive identities and numbers without preventing multiple
+historical records."
+
+**Replacement.** Once identity A for Business X is archived (guard column
+`NULL`), a fresh `INSERT` creating identity B (`status = 'pending'`) for the
+same Business X succeeds without any conflict — A's archived row plays no
+part in the constraint check. The identical logic applies to
+`business_messaging_numbers`: once a number is `released`, a **different**
+number (or, if genuinely reissued by Telnyx, the same E.164 value on a new
+row) can be attached to a new or different identity without colliding with
+the released row.
+
+**Reactivation re-runs every invariant, by construction, not by extra
+application logic.** Reactivating identity A (`archived` → `active`, or
+`archived` → `pending`) is itself an `UPDATE` that touches `status` — MySQL
+recomputes `active_or_pending_business_id` back to A's `business_id` **as
+part of committing that `UPDATE`**, and the same `UNIQUE(provider,
+active_or_pending_business_id)` index is checked at that instant. If some
+other identity is already `pending`/`active` for that same Business, the
+reactivating `UPDATE` itself fails with a `QueryException` — the exact same
+protection creation gets, for free, with no separate "is this Business
+already claimed" method to write or to forget to call. The identical
+argument applies to reactivating a `business_messaging_numbers` row (its
+generated columns recompute on the same basis).
+
+**Concurrency.** Every case above — first creation, replacement creation,
+and reactivation — is protected by the same real MySQL `UNIQUE` index;
+InnoDB's own row-insert/row-update conflict detection is what decides which
+of two racing statements wins, not application code, a `lockForUpdate()`
+read, or an assumption about statement ordering. §4.9 and §4.12 (T-MSG-1,
+T-MSG-7, T-MSG-14, T-MSG-43..47) restate and test this exactly.
 
 ## 4.3 PROVIDER-NEUTRAL INTERFACES
 
@@ -919,7 +1126,7 @@ RFC-005-owned measurement call:**
 
 **Proofs (updated table/column names, otherwise unchanged in substance):**
 
-* **Business A can never send through Business B's number/profile.** Steps 2-4's re-resolution, combined with the two partial unique indexes (§4.2), is a structural guarantee. T-MSG-11.
+* **Business A can never send through Business B's number/profile.** Steps 2-4's re-resolution, combined with the real MySQL `UNIQUE` indexes on the generated guard columns (§4.2) — not partial indexes, not application checks — is a structural, database-enforced guarantee. T-MSG-11.
 * **Forged IDs fail before provider invocation.** No request-input path into identity/number selection exists. T-MSG-12.
 * **Inactive/suspended/archived/missing/conflicted identities or numbers make zero provider calls.** T-MSG-13 (identity), T-MSG-6 (number).
 * **No fallback to an arbitrary first sending server or number.** Step 3's explicit fail-closed rule, never `getSendingServer()`'s "first active" pattern.
@@ -1191,14 +1398,36 @@ inbound is disabled per §4.6.5, honestly explained in this relocated UI.
 
 ## 4.8 USAGE MEASUREMENT WITHOUT RETAIL CHARGING
 
-**Corrected this round — the seam is now genuinely RFC-005-owned, not a
-Messaging-owned table declared "outside" RFC-005 by name.**
+**Corrected this round — every layer named exactly, so ownership is
+unambiguous, not merely a method name declared "RFC-005-owned."** RFC-005's
+own established layering (evidenced by `UsageWalletManager`'s constructor —
+`app/Library/Usage/UsageWalletManager.php:77,82` inject
+`BusinessUsageWalletRepository`/`BusinessUsageReservationRepository`, bound
+in `app/Providers/AppServiceProvider.php:159,166` as
+`\App\Repositories\Contracts\X::class => \App\Repositories\Eloquent\EloquentX::class`
+pairs) is Manager-calls-Repository-writes-table, never Manager-writes-table
+directly. `recordMeasurement()` follows that exact, already-established
+layering — it does not bypass it by writing to the new table itself.
 
-**Exact seam.** One new, additive public method on the existing
-`app/Library/Usage/UsageWalletManager.php` (the same file RFC-005 already
-designates the sole write authority for its own §25 tables):
+**Exact source, migration, model, enum, manager, and repository paths —
+every one named, none left as a glob standing in for "somewhere in Usage":**
+
+| Layer | Exact path | Status |
+|---|---|---|
+| Migration | `database/migrations/<timestamp>_create_business_usage_measurements_table.php` | new |
+| Model | `app/Models/BusinessUsageMeasurement.php` | new |
+| Enum case | `App\Enums\Entitlement\PlatformFeature::MessagingTransport`, in `app/Enums/Entitlement/PlatformFeature.php` | existing file, additive case only |
+| Repository contract | `app/Repositories/Contracts/BusinessUsageMeasurementRepository.php` | new |
+| Repository implementation | `app/Repositories/Eloquent/EloquentBusinessUsageMeasurementRepository.php` | new |
+| Container binding | `app/Providers/AppServiceProvider.php` — one new `\App\Repositories\Contracts\BusinessUsageMeasurementRepository::class => \App\Repositories\Eloquent\EloquentBusinessUsageMeasurementRepository::class` line in the existing `$bindings` array | existing file, one array-entry addition only |
+| Manager method | `UsageWalletManager::recordMeasurement()`, in `app/Library/Usage/UsageWalletManager.php` | existing file — **one additive public method, and one additive constructor-injected dependency** (`BusinessUsageMeasurementRepository $measurementRepository`), added to the existing constructor's parameter list alongside its current repository dependencies; no existing method or existing constructor parameter is modified or removed |
+| Documentation | `docs/rfcs/RFC-005-BUSINESS-USAGE-BILLING-AND-WALLETS.md` §27 C-3 (parent contract) — extended, not edited directly in this branch (below) | existing row, narrow extension |
+| Tests | `tests/Feature/Usage/` (new test file(s) for the repository/manager pair) | new |
+
+**Exact seam, corrected this round to show the repository call:**
 
 ```php
+// app/Library/Usage/UsageWalletManager.php — additive method only
 public function recordMeasurement(
     Business $business,
     PlatformFeature $featureKey,
@@ -1207,29 +1436,42 @@ public function recordMeasurement(
     string $idempotencyKey,
     ?string $transportMarker = null,
 ): BusinessUsageMeasurement
+{
+    return $this->measurementRepository->recordOnce(
+        $business, $featureKey, $quantity, $unit, $idempotencyKey, $transportMarker,
+    );
+}
 ```
 
-* Writes exactly one row to the new `business_usage_measurements` table
-  (§4.2), guarded by `UNIQUE(idempotency_key)` — a repeat call with the same
-  key returns the existing row.
+`EloquentBusinessUsageMeasurementRepository::recordOnce()` is the **only**
+code in the entire codebase that writes to `business_usage_measurements` —
+`firstOrCreate`-style, guarded by the table's own `UNIQUE(idempotency_key)`.
+Messaging's own classes (`ManagedMessageDispatcher`,
+`InboundWebhookAttributionResolver`, the relocated BYO send path) call
+`UsageWalletManager::recordMeasurement()` only — none of them holds a
+reference to the repository, the model, or the table directly. This is what
+makes "measurements belong to RFC-005; provider operations and webhook
+rejections do not" unambiguous at the code level, not only in prose:
+`business_messaging_operations` and `messaging_webhook_rejections` are
+written exclusively by Messaging's own classes
+(`ManagedMessageDispatcher`/`InboundWebhookAttributionResolver` and
+`MessagingWebhookRejectionRecorder` respectively, both in
+`app/Library/Messaging/**`), and `business_usage_measurements` is written
+exclusively by `EloquentBusinessUsageMeasurementRepository`, in
+`app/Repositories/Eloquent/**` — no class exists that can write to a table
+outside its own owning layer.
+
 * **Never** calls `setActiveRate()` or `activateMetering()`.
 * **Never** inserts into `business_usage_rates`, `business_usage_rate_activations`,
   `business_usage_reservations`, or any ledger-entry table.
 * **Never** reads or writes `platform_feature_usage_classifications` — no
   classification row is created for `PlatformFeature::MessagingTransport`
-  (**new, additive enum case** in the existing `app/Enums/Entitlement/PlatformFeature.php`,
-  §4.11) in Slice 3. A future slice that activates a retail rate for this
-  feature is the one that inserts a classification row and decides how
+  in Slice 3. A future slice that activates a retail rate for this feature
+  is the one that inserts a classification row and decides how
   already-recorded `business_usage_measurements` rows feed any
   reconciliation/backfill billing process — Slice 3 makes no promise about
   that mechanism, only that this table's generic shape (`feature_key`,
   `quantity`, `unit`) does not block one being built later.
-* Is called directly by `ManagedMessageDispatcher` (outbound, transport
-  marker `managed`) and `InboundWebhookAttributionResolver` (inbound,
-  transport marker `managed`), and by the relocated BYO send path (transport
-  marker `byo`) — in every case as a direct call to `UsageWalletManager`,
-  never through a Messaging-owned intermediary that would re-introduce a
-  shadow-ledger shape.
 
 **Responsibility separation, stated exactly (corrected this round):**
 
@@ -1245,16 +1487,21 @@ public function recordMeasurement(
 
 No table above serves more than one of these responsibilities.
 
-**Future RFC-005 documentation debt, recorded but not made in this branch.**
-`docs/rfcs/RFC-005-BUSINESS-USAGE-BILLING-AND-WALLETS.md` will eventually
-need a new subsection documenting `recordMeasurement()` and
-`business_usage_measurements` as an RFC-005-owned, additive
-measurement-only primitive, alongside its existing §11/§13/§14 material. That
-edit is **not** made in this branch, because Lane A may currently be
-touching that RFC document concurrently; the parent contract's existing §27
-C-3 row (which already covers the §11.5 measurement-versus-debit distinction)
-is the natural home for it and is extended, narrowly, in this correction
-(§4.11).
+**Future RFC-005 documentation debt — owned explicitly, not left unowned,
+corrected this round.** `docs/rfcs/RFC-005-BUSINESS-USAGE-BILLING-AND-WALLETS.md`
+will eventually need a new subsection documenting
+`recordMeasurement()`/`BusinessUsageMeasurementRepository`/`business_usage_measurements`
+as an RFC-005-owned, additive measurement-only primitive, alongside its
+existing §11/§13/§14 material. That edit is **not** made in this branch,
+because Lane A may currently be touching that RFC document concurrently —
+but the debt itself is not left as an unowned "someday" note: the parent
+contract's existing §27 C-3 row (`docs/automation/CUSTOMER-EXPERIENCE-MANAGED-MESSAGING-AUTOMATIONS-CONTRACT.md`
+§27, "Corrections required to older contracts") is explicitly the row that
+tracks it, extended narrowly in this correction (§4.11) to name the exact
+primitive by name. §27's own table format already carries a "Blocking?"
+column (`No`, for this row) — the debt is tracked exactly as every other
+pending correction to an older contract in this repository already is, not
+in a new, ad hoc, easily-missed note.
 
 **Tests demonstrate measurement while no retail rate is active** by
 asserting directly against `business_usage_measurements` row counts/fields,
@@ -1274,13 +1521,22 @@ unasserted-on.
 * **Provider-message-ID uniqueness and scope.** Enforced at the database
   level, scoped per `provider` (a composite constraint), so Telnyx's and
   Twilio's ID spaces never collide even though both are UUID-shaped.
-* **Identity-creation races.** `BusinessMessagingIdentityResolver::create()`
-  wraps its existence check and insert in `DB::transaction()` +
-  `lockForUpdate()`; the table's own unique constraints are the backstop.
-* **Number-attachment races (new this round).** `attachNumber()` uses the
-  identical transactional pattern against `business_messaging_numbers`; the
-  partial unique indexes on `phone_number` and on
-  `(business_messaging_identity_id) WHERE is_primary` are the hard backstop.
+* **Identity-creation races — corrected this round: the database is the
+  mechanism, not the backstop.** `UNIQUE(provider, active_or_pending_business_id)`
+  (§4.2's `STORED` generated column) is what actually decides a race between
+  two concurrent creations for the same Business — InnoDB rejects the
+  second `INSERT` with a `QueryException` regardless of timing.
+  `BusinessMessagingIdentityResolver::create()`'s `DB::transaction()` +
+  `lockForUpdate()` pre-check exists only to convert that raw exception into
+  a clean `MessagingIdentityConflictException` for a well-behaved caller —
+  removing or racing past that pre-check does not weaken the invariant,
+  because the database constraint does not depend on it.
+* **Number-attachment races — same correction.** `UNIQUE(active_or_pending_phone_number)`
+  and `UNIQUE(active_primary_identity_id)` (§4.2's `STORED` generated
+  columns) are what decide a race over the same phone number or over two
+  rows both claiming `is_primary` for one identity; `attachNumber()`'s
+  transactional pre-check is the same courtesy-only wrapper as above, never
+  the actual source of truth.
 * **Retries after uncertain provider outcomes.** A timeout/ambiguous
   response is recorded as `rejected`/`RETRYABLE`, never `accepted`; **this
   document does not claim exactly-once external delivery.** A retry with the
@@ -1355,13 +1611,20 @@ unasserted-on.
 `app/Models/BusinessMessagingNumber.php` (new, corrected this round);
 `app/Models/BusinessUsageMeasurement.php` (new, corrected this round —
 RFC-005-owned model); `app/Models/MessagingWebhookRejection.php` (new,
-corrected this round); `app/Http/Controllers/Customer/Business/MessagingChannelsController.php`
+corrected this round); `app/Repositories/Contracts/BusinessUsageMeasurementRepository.php`
+(new, corrected Round 2 — RFC-005-owned repository contract);
+`app/Repositories/Eloquent/EloquentBusinessUsageMeasurementRepository.php`
+(new, corrected Round 2 — the sole writer of `business_usage_measurements`);
+`app/Http/Controllers/Customer/Business/MessagingChannelsController.php`
 (existing); `app/Enums/Messaging/**` (new);
 `app/Enums/Entitlement/PlatformFeature.php` (existing — **corrected this
 round, new addition**: one additive enum case, `MessagingTransport`, only —
 no existing case renamed or removed); `app/Library/Usage/UsageWalletManager.php`
 (existing — **corrected this round, new addition**: one additive public
-method, `recordMeasurement()`, only — no existing method modified);
+method, `recordMeasurement()`, plus one additive constructor-injected
+dependency (`BusinessUsageMeasurementRepository`) added to the existing
+constructor's parameter list — no existing method, existing parameter, or
+existing behaviour modified or removed);
 `resources/views/customer/business/MessagingChannels/**` (existing);
 `resources/views/customer/settings/advanced/**` (new);
 `config/services.php` (existing — new `telnyx` block only);
@@ -1421,27 +1684,32 @@ row (§4.8's RFC-005 documentation-debt note).
 
 ## 4.12 TEST MATRIX
 
-**Renumbered cleanly this round**, replacing the previous T-MSG-1..30 in
-full. Inherited from the parent contract (§24), unchanged: **T-PROV-1**,
+**Round 1 renumbered T-MSG-1..30 in full to T-MSG-1..42; Round 2 corrects
+T-MSG-1/2/7/14/39's wording to the database-enforced generated-column
+mechanism (§2 item 20, §4.2) and adds T-MSG-43..48** for the
+archival/replacement/reactivation/migration-rollback-replay/repository-layering
+requirements this round adds — no existing ID 1-42 is renumbered or removed,
+only corrected in place or (39) rewritten to a more precise assertion of the
+same shape. Inherited from the parent contract (§24), unchanged: **T-PROV-1**,
 **T-PROV-2**, **T-BYO-1**, **T-BYO-2**, **T-SCOPE-1** — all still owned by
 Slice 3, none reused as a new ID below.
 
 | ID | Assertion | Location |
 |---|---|---|
-| T-MSG-1 | A second `BusinessMessagingIdentity` creation attempt for a Business that already has a non-archived one fails closed before any provider call | `tests/Feature/Messaging/` |
-| T-MSG-2 | `UNIQUE(messaging_profile_id)` violations raise a caught, reported exception, never a silent overwrite | `tests/Feature/Messaging/` |
+| T-MSG-1 | **One active-or-pending identity per Business, database-enforced.** A raw `DB::table('business_messaging_identities')->insert()` of a second `pending`-or-`active` row for a Business that already has one raises `Illuminate\Database\QueryException` from MySQL's own `UNIQUE(provider, active_or_pending_business_id)` index (mirroring `ProviderCustomerOwnershipTest::test_unique_provider_and_active_business_id_rejects_a_second_active_row`, §2 item 20) — asserted both for a second `active` row against an existing `active` one and for a `pending` row against an existing `active` one (and vice versa), proving the two statuses conflict correctly, not only identical-status pairs | `tests/Feature/Messaging/` |
+| T-MSG-2 | `UNIQUE(messaging_profile_id)` and `UNIQUE(provider, active_or_pending_business_id)` violations each raise a caught, reported `MessagingIdentityConflictException` at the `BusinessMessagingIdentityResolver::create()` layer, and an uncaught `QueryException` when the same raw insert bypasses the resolver — never a silent overwrite either way | `tests/Feature/Messaging/` |
 | T-MSG-3 | A `pending`/`suspended`/`archived` identity resolves to `null` — never a partially-usable object | `tests/Feature/Messaging/` |
 | T-MSG-4 | Neither `BusinessMessagingIdentity` nor `BusinessMessagingNumber` has any credential-shaped attribute, cast, or hidden field | `tests/Feature/Messaging/` |
 | T-MSG-5 | Migration `up()`/`down()` round-trips cleanly on all four new tables, in correct dependency order, with no data-loss warning | `tests/Feature/Messaging/` |
 | T-MSG-6 | **One Business, multiple phone numbers** — a Business's identity may own two or more active `BusinessMessagingNumber` rows simultaneously | `tests/Feature/Messaging/` |
-| T-MSG-7 | **A number cannot belong to two Businesses** — attaching an already-active number to a second identity fails closed via the partial unique index | `tests/Feature/Messaging/` |
+| T-MSG-7 | **A number cannot belong to two Businesses, database-enforced.** A raw insert of a second `pending`-or-`active` `business_messaging_numbers` row for the same `phone_number` under a different identity raises `QueryException` from `UNIQUE(active_or_pending_phone_number)` — never an application-only check | `tests/Feature/Messaging/` |
 | T-MSG-8 | **Exact E.164 normalization** — a set of equivalent input formats for the same number all normalize to one canonical E.164 value before any uniqueness check runs | `tests/Feature/Messaging/` |
 | T-MSG-9 | `EloquentCampaignRepository::quickSend()` for a Business with an active managed identity delegates to `ManagedMessageDispatcher`/`FakeMessagingAdapter`, never reaching `SendCampaignSMS`'s Telnyx `case` block | `tests/Feature/Business/` |
 | T-MSG-10 | `Campaigns`'s own dispatch switch shows the same delegation for its bulk/scheduled path | `tests/Feature/Business/` |
 | T-MSG-11 | Business A's resolved identity/number can never be used to construct an `OutboundMessageRequest` for Business B's send | `tests/Feature/Messaging/` |
 | T-MSG-12 | A forged identity or number ID submitted as request input is never read by the outbound resolution path | `tests/Feature/Messaging/` |
 | T-MSG-13 | Each non-`active` identity status produces zero `FakeMessagingAdapter` calls | `tests/Feature/Messaging/` |
-| T-MSG-14 | Zero active-or-primary numbers, or more than one primary, fails closed with zero provider calls — no "first number" fallback | `tests/Feature/Messaging/` |
+| T-MSG-14 | **At most one active primary number per identity, database-enforced.** Zero active-primary numbers fails closed with zero provider calls (no "first number" fallback); a raw `UPDATE ... SET is_primary = 1` against a second `active` row for the same identity while another is already `active`+primary raises `QueryException` from `UNIQUE(active_primary_identity_id)` | `tests/Feature/Messaging/` |
 | T-MSG-15 | `FakeMessagingAdapter::send()` records the call and returns a scripted `OutboundMessageResult` deterministically | `tests/Feature/Messaging/` |
 | T-MSG-16 | **Profile and destination number agree** — a real `POST` to `route('inbound.telnyx_managed')` with both signals resolving to the same active identity is processed and attributed correctly | `tests/Feature/Messaging/` |
 | T-MSG-17 | **Known Profile + unknown number fails closed** — no processing, one `unknown_mapping` rejection row, `200` | `tests/Feature/Messaging/` |
@@ -1466,10 +1734,16 @@ Slice 3, none reused as a new ID below.
 | T-MSG-36 | Throughout the full Slice 3 suite run, `platform_feature_usage_classifications` carries no row at all for `PlatformFeature::MessagingTransport`, and no telecom feature's `is_metered` becomes `true` | `tests/Feature/Usage/` |
 | T-MSG-37 | **Rejection records obey retention/minimization** — a `messaging_webhook_rejections` row never contains a raw message body or any credential; a repeated identical rejection increments `occurrence_count` rather than inserting a new row; the purge command removes rows past the configured retention window and leaves newer ones | `tests/Feature/Messaging/` |
 | T-MSG-38 | `tests/Feature/Usage/ConversationsPlainSmsMeteringTest.php` and `tests/Feature/AgencyProspecting/AgencyProspectingRuntimeTest.php` pass unmodified after every change in this correction | `tests/Feature/Usage/`, `tests/Feature/AgencyProspecting/` (regression) |
-| T-MSG-39 | A concurrent pair of identity-creation or number-attachment calls for the same Business/number cannot both succeed | `tests/Feature/Messaging/` |
+| T-MSG-39 | **Two simultaneous first-identity creations for the same Business cannot both succeed.** Two sequential raw inserts of a `pending` `business_messaging_identities` row for the same Business (mirroring `ProviderCustomerOwnershipTest::test_unique_provider_and_active_business_id_rejects_a_second_active_row` exactly) prove MySQL's own unique-index conflict detection rejects the second, regardless of statement ordering — the database is the mechanism, not application code (§2 item 20, §4.2) | `tests/Feature/Messaging/` |
 | T-MSG-40 | **Outbound/inbound/DLR idempotency remain independent** — forcing a duplicate on one of the three (same `operation_key`, same inbound `provider_message_id`, same delivery-status `provider_message_id`) does not suppress or interfere with processing of the other two for different keys in the same test run | `tests/Feature/Messaging/` |
 | T-MSG-41 | No exception message or `OutboundMessageResult` contains a credential-shaped substring | `tests/Feature/Messaging/` |
 | T-MSG-42 | A provider timeout/ambiguous response never produces `MessageDispatchStatus::ACCEPTED` | `tests/Feature/Messaging/` |
+| T-MSG-43 | **Two Businesses cannot concurrently claim the same number.** Two sequential raw inserts of a `pending`/`active` `business_messaging_numbers` row for the same `phone_number` under two different identities; the second raises `QueryException` from `UNIQUE(active_or_pending_phone_number)` | `tests/Feature/Messaging/` |
+| T-MSG-44 | **Two primary numbers cannot concurrently exist for one identity.** Two sequential raw updates setting `is_primary = 1`/`status = 'active'` on two different `business_messaging_numbers` rows under the same identity; the second raises `QueryException` from `UNIQUE(active_primary_identity_id)` | `tests/Feature/Messaging/` |
+| T-MSG-45 | **Archived history does not block a legitimate replacement.** Archiving identity A for Business X (an `UPDATE` recomputing its guard column to `NULL`), then inserting fresh `pending` identity B for Business X, succeeds without conflict; A's row is neither deleted nor modified beyond its `status`/`archived_at` | `tests/Feature/Messaging/` |
+| T-MSG-46 | **Reactivation re-runs every invariant.** With identity A archived and identity B `active` for the same Business, an `UPDATE` reactivating A (`status: archived → active`) raises `QueryException` from the same `UNIQUE(provider, active_or_pending_business_id)` index that would have blocked a fresh creation; with B archived first, the identical reactivating `UPDATE` on A succeeds | `tests/Feature/Messaging/` |
+| T-MSG-47 | **Forward, rollback, and replay work on the repository's actual database.** Running `php artisan migrate` for both new migrations, confirming the constraint-violation behaviour above holds, running `php artisan migrate:rollback` and confirming both tables no longer exist, then running `php artisan migrate` again (replay) and confirming the identical constraint-violation behaviour holds unchanged — executed against this repository's real configured MySQL connection, not a driver-agnostic in-memory substitute | `tests/Feature/Messaging/` |
+| T-MSG-48 | **The RFC-005 measurement seam writes through its own repository, at the right layer.** `UsageWalletManager::recordMeasurement()` calls `BusinessUsageMeasurementRepository::recordOnce()` (asserted via a spy/fake repository binding, mirroring how `UsageWalletManager`'s existing repository dependencies are already tested); no code path in `app/Library/Messaging/**` holds a reference to `BusinessUsageMeasurementRepository`, `EloquentBusinessUsageMeasurementRepository`, `BusinessUsageMeasurement`, or the `business_usage_measurements` table directly | `tests/Feature/Usage/` |
 
 **Ownership.** Every ID above is owned by Slice 3 alone; none collides with
 any ID in the parent contract's §24/§24.1. No ID is reused across two rows.
@@ -1493,8 +1767,10 @@ measurement seam, and the legacy-route work.
    against `Http::fake()`.
 6. `BusinessMessagingIdentityResolver` (including number-resolution methods)
    and `ManagedMessageDispatcher`, wired into the two narrow production
-   delegation points; the additive `UsageWalletManager::recordMeasurement()`
-   method and `business_usage_measurements` table.
+   delegation points; `business_usage_measurements`, its
+   `BusinessUsageMeasurementRepository`/`EloquentBusinessUsageMeasurementRepository`
+   pair, and the additive `UsageWalletManager::recordMeasurement()` method
+   that delegates to it.
 7. `DLRController::inboundTelnyxManaged()`, the new `routes/public.php` line,
    removal of `routes/web.php`'s two dead/duplicate lines, and
    `InboundWebhookAttributionResolver`'s dual-signal cross-check.
@@ -1510,48 +1786,61 @@ measurement seam, and the legacy-route work.
 10. Full regression: `ConversationsPlainSmsMeteringTest.php`,
     `AgencyProspectingRuntimeTest.php`, every existing
     `tests/Feature/Business/**`/`tests/Feature/Security/**` test, run
-    alongside the full T-MSG-1..42 matrix plus the five inherited IDs.
+    alongside the full T-MSG-1..48 matrix plus the five inherited IDs.
 
 Adjustable if implementation-time evidence proves a safer sequence
 necessary — not itself authorization to implement (§1).
 
 ## 5. CONTRACT INTEGRITY SELF-CHECK
 
-* **Already-existing behaviour** (traced, not re-implemented): items 1-19 of
-  §2, including this round's new item 19 evidence.
+* **Already-existing behaviour** (traced, not re-implemented): items 1-20 of
+  §2, including this round's new item 20 evidence (MySQL/Laravel version,
+  the `payment_provider_customers` generated-column precedent and its test).
 * **Slice-3-will-implement:** every item in §4.1's inclusions; §4.2's four
-  tables; §4.3's contracts/DTOs/adapters; the eight (widened, corrected)
-  production delegation/edit points in §3/§4.11.
+  tables (now with database-enforced, not partial-index, uniqueness); §4.3's
+  contracts/DTOs/adapters; the ten (widened, corrected) production
+  delegation/edit points in §3/§4.11, including the two new RFC-005
+  repository files.
 * **Deferred to Slice 4/6/9/Managed-Accounts-migration:** every item in
   §4.1's exclusions, including the BYO-Telnyx upgrade path (Slice 9) and
   number lifecycle workflow (Slice 4), both stated explicitly this round.
 * **Assumptions:** none stated as fact without evidence; item 19's findings
   (`manage_advanced_provider` non-existence, `preventStrayRequests`
-  availability) are as mechanically verified as items 1-18.
-* **Mechanically-proven facts:** §2's 19 items; §3's executability table.
+  availability) and item 20's findings (MySQL/generated-column precedent) are
+  as mechanically verified as items 1-18.
+* **Mechanically-proven facts:** §2's 20 items; §3's executability table.
 * **Already-locked human decisions, not re-litigated:** Candidate B (§28.3),
   no Managed-Account column (§21.2), no retail rate activation
   (§28.1/§28.1a), $5 funding floor and BYO billing semantics (§11.5).
 * **No isolation control is described as "implemented"** anywhere — §4.5-§4.8
   describe what Slice 3 **will build**.
+* **No uniqueness invariant is described as enforced by a mechanism this
+  repository's database cannot execute** — corrected this round; every
+  `UNIQUE` constraint in §4.2 targets a real, physical, `STORED` generated
+  column, never a `WHERE`-qualified "partial" index.
 * **Every cited path/symbol** was verified against the merged tree at
   `6c820c801da08ecfd6165d1d3a52ae6336606f0c`, including this round's new
-  greps (`manage_advanced_provider`, `preventStrayRequests`,
+  greps/reads (`manage_advanced_provider`, `preventStrayRequests`,
   `laravel/framework` version, `PlatformFeature`'s existing case list,
   `config/customer-permissions.php`, `AuthServiceProvider.php`'s Gate loop,
-  `SubAccountController.php`'s permission storage).
+  `SubAccountController.php`'s permission storage, both `mysql:8.0` CI
+  service-container declarations, the `payment_provider_customers` migration
+  read in full, `ProviderCustomerOwnershipTest.php` read in full,
+  `UsageWalletManager`'s constructor and `AppServiceProvider.php`'s
+  repository-binding array).
 * **Every internal `§` reference** resolves to a section in this document
   (§1-§4.13) or, when prefixed "parent contract," to that document's current
   numbering (§6, §11, §21, §22, §24, §27, §28), re-confirmed current.
-* **Test-to-slice map has no duplicates or unowned tests:** T-MSG-1..42 are
-  new, unique IDs, fully replacing the withdrawn T-MSG-1..30; the five
-  inherited IDs are unchanged and were not renumbered.
+* **Test-to-slice map has no duplicates or unowned tests:** T-MSG-1..48 are
+  unique IDs; T-MSG-1/2/7/14/39 are corrected in place from Round 1 (same ID,
+  no renumbering), T-MSG-43..48 are new this round; the five inherited IDs
+  are unchanged and were not renumbered.
 * **No live credential value or secret-shaped example** appears anywhere.
 
 ## 6. VALIDATION
 
-* Only two paths changed in this branch across both correction rounds: this
-  document and the parent contract's §22.1 (and its narrow §27 C-3
+* Only two paths changed in this branch across all three correction rounds:
+  this document and the parent contract's §22.1 (and its narrow §27 C-3
   extension). No source code, migration, configuration, dependency, or
   generated asset changed.
 * `git diff --check`: clean — verified below.
@@ -1559,26 +1848,41 @@ necessary — not itself authorization to implement (§1).
   marked `(new)`.
 * Every internal `§` reference resolves per §5.
 * The §4.12 test-to-slice map carries no duplicate or unowned test ID.
-* Stale-phrase sweep, corrected this round, additionally confirms: **zero**
-  remaining references to `business_messaging_usage_events` anywhere in this
-  document (the withdrawn table); **zero** claims that a table's name alone
-  exempts it from RFC-005 ownership (the new table is explicitly described
-  as RFC-005-owned, written only via `UsageWalletManager`); **zero**
-  Messaging-Profile-only inbound attribution (§4.6 now requires both
-  signals); **zero** default-to-user-1 compatibility promise (§4.6.5 removes
-  it); **zero** `LIKE`-based number fallback establishing tenancy in the
-  contracted managed or BYO-Twilio-secured path (the legacy `LIKE` fallback
-  inside `inboundDLR()`'s attribution logic for a **resolved** `$phone_number`
-  is unchanged legacy behaviour, not a tenancy-establishing mechanism for the
-  new managed/cross-checked path, and is not claimed as fixed for the
-  remaining ~58 providers); **zero** claim that `403` (or any status code)
-  prevents Telnyx retry beyond what its own documentation states (§4.6.4);
-  multiple phone numbers are representable (§4.2); operational state,
-  rejection audit, measurement, and accounting are held in four separate
-  tables with no overlap (§4.8's responsibility table); BYO relocation
-  removes the old surface (§4.7); no real Telnyx call is authorized; no
-  retail rate is activated; no Managed Accounts launch field exists; every
-  parent-contract allowlist addition is named exactly and justified in §3.
+* **Round 2 stale-phrase sweep, run in full, confirms:**
+  * **Zero** remaining occurrences of the phrase "partial unique" anywhere in
+    this document, except inside §2 item 20's and this sweep's own explicit
+    statements that MySQL does not support it — no schema section, proof
+    bullet, or test description relies on it any longer.
+  * **Zero** uniqueness invariant in §4.2 described as application-only —
+    every one of the three now cites a real MySQL `UNIQUE` index on a
+    `STORED` generated column as its enforcement mechanism, with the
+    application-level transactional check explicitly labelled a courtesy
+    convenience, never the source of truth (§4.2, §4.9).
+  * **Zero** "first-number fallback" language — §4.2's resolution rule and
+    §4.5 step 3 both state the fail-closed rule with no fallback, unchanged
+    from Round 1 and re-confirmed this round.
+  * **Zero** one-identity/one-number claim left unenforced by the database —
+    every such claim in §4.2, §4.5's proofs, and §4.9 now names its exact
+    `UNIQUE` index.
+  * **Zero** remaining references to the withdrawn `business_messaging_usage_events`
+    anywhere in this document, outside its own explicit "withdrawn"/history
+    callouts (§4.2, §6).
+  * **Zero** suggestion that `business_messaging_operations` or
+    `messaging_webhook_rejections` are financial ledger entries — §4.2
+    explicitly lists what each excludes (wallet balance, retail amount,
+    debit/credit, rate, reservation amount, payer, invoice state, spending-cap
+    state), and §4.8's responsibility table draws the line to
+    `business_usage_measurements` (RFC-005-owned) as the only
+    measurement-adjacent store, itself explicitly not a reservation/ledger
+    table either.
+  * (Carried forward from Round 1, re-confirmed unchanged this round:) zero
+    claims that a table's name alone exempts it from RFC-005 ownership; zero
+    Messaging-Profile-only inbound attribution; zero default-to-user-1
+    compatibility promise; zero `LIKE`-based number fallback establishing
+    tenancy in the contracted managed or BYO-Twilio-secured path; zero claim
+    that `403` (or any status code) prevents Telnyx retry beyond what its own
+    documentation states; no real Telnyx call is authorized; no retail rate
+    is activated; no Managed Accounts launch field exists.
 * Secret-shaped-string sweep over every line added/changed in this branch:
   none found.
 * Confirmed: zero source code, migration, configuration, dependency, or
@@ -1586,4 +1890,4 @@ necessary — not itself authorization to implement (§1).
 
 ---
 
-**CUSTOMER EXPERIENCE SLICE 3 MESSAGING PROVIDER CONTRACT — CORRECTION ROUND 1 READY FOR HUMAN/CHATGPT REVIEW**
+**CUSTOMER EXPERIENCE SLICE 3 MESSAGING PROVIDER CONTRACT — CORRECTION ROUND 2 READY FOR HUMAN/CHATGPT REVIEW**
