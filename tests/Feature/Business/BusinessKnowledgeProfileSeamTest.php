@@ -29,10 +29,16 @@ class BusinessKnowledgeProfileSeamTest extends TestCase
 
     public function test_only_the_manager_writes_the_tracked_tables(): void
     {
-        $managerPath = app_path('Library/Business/BusinessKnowledgeProfileManager.php');
+        // Compared through one canonical path shape. app_path() appends
+        // its argument verbatim, so on Windows it yields mixed separators
+        // ("...\app\Library/Business/...") while RecursiveDirectoryIterator
+        // yields all-backslash paths. The two never compared equal there,
+        // so the manager was never skipped and this test failed against
+        // the manager's own authorized writes.
+        $managerPath = $this->canonicalPath(app_path('Library/Business/BusinessKnowledgeProfileManager.php'));
 
         foreach ($this->phpFilesUnder(app_path()) as $path) {
-            if ($path === $managerPath) {
+            if ($this->canonicalPath($path) === $managerPath) {
                 continue;
             }
 
@@ -93,6 +99,16 @@ class BusinessKnowledgeProfileSeamTest extends TestCase
     /**
      * @return array<int, string>
      */
+    /**
+     * One canonical shape for a filesystem path, so a comparison is
+     * platform-independent: real path where it resolves, forward slashes
+     * either way.
+     */
+    private function canonicalPath(string $path): string
+    {
+        return str_replace('\\', '/', realpath($path) ?: $path);
+    }
+
     private function phpFilesUnder(string $directory): array
     {
         $files = [];

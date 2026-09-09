@@ -31,5 +31,8 @@
         "glob": "^8.0.3",
         "laravel-echo": "^1.11.0",
         "pusher-js": "^7.0.3"
+    },
+    "overrides": {
+        "webpack": "5.105.4"
     }
 }

@@ -26,7 +26,6 @@ $_SERVER['APP_ENV'] = 'testing';
 $app = require __DIR__ . '/../../../../bootstrap/app.php';
 $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
 
-use Illuminate\Support\Facades\DB;
 use Symfony\Component\Process\PhpExecutableFinder;
 use Symfony\Component\Process\Process;
 use Tests\Feature\Workspace\Support\TemporaryTestDatabase;
@@ -34,13 +33,15 @@ use Tests\Feature\Workspace\Support\TemporaryTestDatabase;
 const WRONG_DATABASE_EXIT_CODE = 3;
 const SETUP_OR_CLEANUP_FAILURE_EXIT_CODE = 5;
 
-$resolvedDatabase = DB::connection()->getDatabaseName();
-
-if ($resolvedDatabase !== 'ultimatesms_testing') {
-    fwrite(STDERR, sprintf(
-        "Refusing to run the workspace enforcement suite: resolved database is [%s], expected [ultimatesms_testing].\n",
-        $resolvedDatabase
-    ));
+// The base connection must be a disposable test database — the canonical
+// one or a clearly-derived isolated sibling. TestDatabaseSafety throws,
+// naming the offending value and the permitted shapes, for anything else.
+// The enforcement database this suite creates is derived from whichever
+// base is active, so two lanes never collide over one name.
+try {
+    Tests\Support\TestDatabaseSafety::activeTestDatabase();
+} catch (RuntimeException $e) {
+    fwrite(STDERR, 'Refusing to run the workspace enforcement suite: ' . $e->getMessage() . "\n");
     exit(WRONG_DATABASE_EXIT_CODE);
 }
 

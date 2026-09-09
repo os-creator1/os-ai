@@ -118,16 +118,10 @@ class BrandingUploadValidationTest extends TestCase
         $this->assertSame("images/branding/logo/{$expectedFilename}", $this->readEnvValue('APP_LOGO'));
     }
 
-    private function readEnvValue(string $key): ?string
-    {
-        $line = collect(file(base_path('.env')))->first(fn ($line) => str_starts_with($line, "{$key}="));
-
-        if ($line === null) {
-            return null;
-        }
-
-        return trim(explode('=', $line, 2)[1] ?? '', "\"\n");
-    }
+    // readEnvValue() now comes from Tests\TestCase's
+    // UsesTemporaryEnvironmentFile: it reads the same disposable
+    // environment file write_env() writes, instead of a hardcoded
+    // base_path('.env') the writer never touches under APP_ENV=testing.
 
     public function test_an_svg_upload_is_rejected_for_every_branding_field(): void
     {

@@ -154,14 +154,4 @@ trait SettingsTestHelpers
         ], $overrides);
     }
 
-    protected function readEnvValue(string $key): ?string
-    {
-        $line = collect(file(base_path('.env')))->first(fn ($line) => str_starts_with($line, "{$key}="));
-
-        if ($line === null) {
-            return null;
-        }
-
-        return trim(explode('=', $line, 2)[1] ?? '', "\"\n");
-    }
 }

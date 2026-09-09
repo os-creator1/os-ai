@@ -18,6 +18,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use RuntimeException;
+use Tests\Support\TestDatabaseSafety;
 use Tests\TestCase;
 
 class WorkspaceManagerTest extends TestCase
@@ -266,9 +267,16 @@ class WorkspaceManagerTest extends TestCase
     public function test_missing_onboarding_business_reference_throws(): void
     {
         // Independently verified before ever touching FOREIGN_KEY_CHECKS —
-        // this must never run against any connection but the disposable
-        // testing database.
-        $this->assertSame('ultimatesms_testing', DB::connection()->getDatabaseName());
+        // this must never run against any connection but a disposable
+        // testing database. TestDatabaseSafety throws, naming the
+        // offending value, unless the active connection is the canonical
+        // test database or a clearly-derived disposable sibling of it, so
+        // the safeguard is unchanged in strength while two lanes can now
+        // run at the same time without sharing one database.
+        $this->assertSame(
+            DB::connection()->getDatabaseName(),
+            TestDatabaseSafety::activeTestDatabase()
+        );
 
         $owner = $this->createUser();
         $workspace = $this->createWorkspaceOwnedBy($owner->id);

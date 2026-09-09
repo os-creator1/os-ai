@@ -129,9 +129,26 @@ class WebsiteDraftPublishTest extends TestCase
         $this->subPage($website, 'about');
         $revisionTwo = $publisher->publish($website->fresh(), $customer->user->id);
 
+        // Captured by RE-READING the persisted rows, not from the models
+        // returned by publish(). `snapshot` is a MySQL `json` column and
+        // MySQL normalises the key order of every object it stores, so an
+        // in-memory snapshot never equals its own read-back and this
+        // comparison failed for a reason unrelated to mutation.
+        //
+        // Reading both sides from the database makes this a genuine
+        // byte-for-byte before/after comparison of the PERSISTED rows —
+        // strictly stronger than the previous check, because it now also
+        // catches a mutation that happened to round-trip back to the
+        // original in-memory shape.
+        $readPersisted = static function (int $id): array {
+            $row = WebsiteRevision::findOrFail($id);
+
+            return [$row->snapshot, $row->version_number, $row->created_at->toIso8601String()];
+        };
+
         $before = [
-            $revisionOne->id => [$revisionOne->snapshot, $revisionOne->version_number, $revisionOne->created_at->toIso8601String()],
-            $revisionTwo->id => [$revisionTwo->snapshot, $revisionTwo->version_number, $revisionTwo->created_at->toIso8601String()],
+            $revisionOne->id => $readPersisted($revisionOne->id),
+            $revisionTwo->id => $readPersisted($revisionTwo->id),
         ];
 
         $this->authenticateAsCustomer($customer);

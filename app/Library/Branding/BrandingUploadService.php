@@ -3,7 +3,7 @@
 namespace App\Library\Branding;
 
 use App\Library\Branding\Exceptions\InvalidBrandingAssetException;
-use App\Models\AppConfig;
+use App\Library\Settings\PlatformSettingsEnvWriter;
 use App\Rules\ValidBrandingImageRule;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Cache;
@@ -23,6 +23,10 @@ class BrandingUploadService
         'favicon' => 'images/branding/default-favicon.svg',
     ];
 
+    public function __construct(private readonly PlatformSettingsEnvWriter $envWriter)
+    {
+    }
+
     /**
      * logo_compact/logo_dark are deliberately not APP_LOGO_COMPACT/
      * APP_LOGO_DARK -- AppConfig::setEnv()'s own find/replace is a
@@ -30,6 +34,12 @@ class BrandingUploadService
      * as a substring would be silently corrupted by an update to the
      * plain APP_LOGO key (confirmed directly during this contract's own
      * test development).
+     *
+     * These writes now go through PlatformSettingsEnvWriter, whose
+     * write_env() matches the key EXACTLY, so the collision above can no
+     * longer happen at all. The distinct names are kept anyway: renaming
+     * a shipped .env key would silently orphan every existing
+     * installation's configured value.
      */
     private const ENV_KEYS = [
         'logo' => 'APP_LOGO',
@@ -82,14 +92,25 @@ class BrandingUploadService
 
         $previousPath = config("app.{$field}");
 
-        AppConfig::setEnv(self::ENV_KEYS[$field], $relativePath);
-        // Keeps the in-process config repository consistent with the
-        // just-written .env file immediately — AppConfig::setEnv() only
-        // rewrites the file, it does not itself update config() for the
-        // remainder of the current request/process (a real gap for any
-        // non-HTTP-redirect caller, e.g. a console command or queued job,
-        // not merely a test-only concern).
-        config(["app.{$field}" => $relativePath]);
+        // Written through the hardened B3 seam, not AppConfig::setEnv().
+        // setEnv() rewrites base_path('.env') directly and matches its key
+        // with a case-insensitive SUBSTRING search over each line, so it
+        // has two defects this path hit in practice:
+        //
+        //   * it edits `.env` even when the application is running from a
+        //     different environment file (APP_ENV=testing loads
+        //     `.env.testing`), so the write lands in a file nothing reads;
+        //   * a key that is not already present is never appended, so the
+        //     value is silently discarded. Neither `.env` nor
+        //     `.env.example` ships an APP_LOGO line, so a first logo
+        //     upload persisted nothing at all.
+        //
+        // PlatformSettingsEnvWriter wraps write_env(), which addresses
+        // app()->environmentFilePath(), matches the key exactly, appends
+        // it when missing, escapes the value, and mirrors it into the
+        // in-process config() repository for the rest of this
+        // request/process.
+        $this->envWriter->set(self::ENV_KEYS[$field], "app.{$field}", $relativePath);
 
         $this->invalidateCache();
 
@@ -114,7 +135,8 @@ class BrandingUploadService
         $previousPath = config("app.{$field}");
         $resetValue = self::DEFAULT_PATHS[$field] ?? null;
 
-        AppConfig::setEnv(self::ENV_KEYS[$field], (string) $resetValue);
+        // Same hardened seam as store() — see the comment there.
+        $this->envWriter->set(self::ENV_KEYS[$field], "app.{$field}", (string) $resetValue);
         config(["app.{$field}" => $resetValue]);
 
         $this->invalidateCache();

@@ -5,6 +5,7 @@ namespace Tests\Feature\Website;
 use App\Models\WebsitePage;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\Feature\Website\Concerns\CreatesWebsiteFixtures;
+use Tests\Support\CanonicalJson;
 use Tests\TestCase;
 
 /**
@@ -95,7 +96,13 @@ class WebsiteDraftPageServiceSeamTest extends TestCase
         $this->assertSame('About Us | Acme', $page->seo_title);
         $this->assertSame('Learn more about our company.', $page->meta_description);
         $this->assertTrue($page->noindex);
-        $this->assertSame($sections, $page->sections);
+        // `sections` is a MySQL `json` column and MySQL normalises the
+        // key order of every object it stores, so the read-back never
+        // matches the in-memory fixture by raw array identity. Compared
+        // canonically instead: every key, every value and every list
+        // ORDER is still asserted exactly — only object key order, which
+        // JSON does not define, is normalised on both sides.
+        $this->assertSame(CanonicalJson::canonicalize($sections), CanonicalJson::canonicalize($page->sections));
     }
 
     public function test_update_page_persists_every_draft_field_through_the_seam(): void
@@ -127,7 +134,13 @@ class WebsiteDraftPageServiceSeamTest extends TestCase
         $this->assertSame('Our Services | Acme', $page->seo_title);
         $this->assertSame('What we offer.', $page->meta_description);
         $this->assertFalse($page->noindex);
-        $this->assertSame($sections, $page->sections);
+        // `sections` is a MySQL `json` column and MySQL normalises the
+        // key order of every object it stores, so the read-back never
+        // matches the in-memory fixture by raw array identity. Compared
+        // canonically instead: every key, every value and every list
+        // ORDER is still asserted exactly — only object key order, which
+        // JSON does not define, is normalised on both sides.
+        $this->assertSame(CanonicalJson::canonicalize($sections), CanonicalJson::canonicalize($page->sections));
     }
 
     public function test_noindex_is_coerced_to_a_real_boolean_rather_than_an_arbitrary_string(): void

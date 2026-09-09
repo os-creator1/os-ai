@@ -6,7 +6,21 @@ the approved RFCs under `docs/rfcs/`.
 
 ## Verification
 
-- Run only against the disposable `ultimatesms_testing` database.
+- Run only against a **disposable test database**: `ultimatesms_testing`, or
+  an isolated sibling named `ultimatesms_testing_<safe suffix>` (lowercase
+  letters, digits and underscores only). `Tests\Support\TestDatabaseSafety`
+  is the single authority on which names are permitted; a production-like,
+  empty or unsafe name is refused before anything runs. Isolated names exist
+  so two lanes can test at the same time without overwriting each other's
+  database — which used to happen silently.
+- Prefer the supported runner, which validates the database, clears caches,
+  migrates, checks the compiled assets exist, keeps raw logs, and returns a
+  truthful exit code:
+  `composer test:baseline -- --database=ultimatesms_testing_<your suffix>`.
+  It never writes `.env` or `.env.testing`.
+- The local MySQL user needs `GRANT ALL PRIVILEGES ON `ultimatesms\_testing%`.*`
+  so isolated siblings and the temporary databases some suites create can be
+  created and dropped.
 - Run focused tests before broader regression tests.
 - A command that exits zero but discovers zero tests is a failure.
 - Report the exact test count and exact changed-file list.

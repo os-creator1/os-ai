@@ -50,6 +50,16 @@ class SlowWorkspaceManager extends WorkspaceManager
         $row = parent::lockOwnerRow($ownerUserId);
 
         if ($row !== null) {
+            // The synchronisation barrier the parent test waits on.
+            // Emitted AFTER the lock is genuinely acquired and BEFORE the
+            // hold begins, so the parent can start the racing process at
+            // the one moment contention is guaranteed — instead of
+            // guessing a duration and hoping the child had booted.
+            // Flushed immediately: an unflushed buffer would defeat the
+            // whole point of a barrier.
+            fwrite(STDOUT, "LOCKED\n");
+            fflush(STDOUT);
+
             usleep((int) ($this->holdSeconds * 1_000_000));
         }
 

@@ -1,0 +1,41 @@
+# One canonical line ending for the whole repository.
+#
+# WHY. Without this file, git honours each developer's local
+# core.autocrlf. On Windows that is `true` by default, so text files are
+# materialised with CRLF while the repository stores LF. Any test that
+# asserts a file's exact bytes — for example the robots.txt content
+# assertion in tests/Feature/Website/Public/WebsiteIndexingTest.php —
+# then passes on Linux CI and fails on every Windows checkout, for a
+# reason that has nothing to do with the code under test.
+#
+# `eol=lf` makes the working tree match the repository on every platform,
+# so "the bytes on disk" means the same thing everywhere.
+* text=auto eol=lf
+
+# Binary assets: never touched, never diffed as text.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.webp binary
+*.svgz binary
+*.pdf binary
+*.zip binary
+*.gz binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.eot binary
+*.otf binary
+*.mp3 binary
+*.mp4 binary
+*.xlsx binary
+
+# Better diffs for the languages this repository actually contains.
+*.php diff=php
+*.blade.php diff=html
+*.css diff=css
+*.scss diff=css
+*.html diff=html
+*.md diff=markdown

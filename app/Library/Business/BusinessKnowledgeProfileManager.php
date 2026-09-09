@@ -213,7 +213,25 @@ final class BusinessKnowledgeProfileManager
             $newVerifiedAt = $markVerified ? $now : null;
 
             $oldHours = $locked->hours;
-            $hoursChanged = $oldHours !== $normalizedHours;
+
+            // Compare CANONICALLY, never by raw array identity. `hours` is
+            // a MySQL `json` column, and MySQL normalises the key order of
+            // every JSON object it stores (by key length, then
+            // lexicographically), so the value read back is never
+            // identical to the freshly normalised one even when the two
+            // describe exactly the same opening hours:
+            //
+            //   {"monday":…,"tuesday":…,"notes":null}
+            //     -> {"notes": null, "monday": …, "tuesday": …}
+            //
+            // A raw `!==` therefore reported "changed" on every repeat
+            // write, emitting a spurious immutable change row for a true
+            // no-op. Canonicalising both sides restores the no-op
+            // guarantee for real callers, not just for tests. Key ORDER is
+            // not semantic here; the set of days and their period lists
+            // are.
+            $hoursChanged = $this->canonicalizeForComparison($oldHours)
+                !== $this->canonicalizeForComparison($normalizedHours);
 
             $provenanceChanged = $hoursChanged
                 || $locked->hours_source !== $source
@@ -787,6 +805,33 @@ final class BusinessKnowledgeProfileManager
     // -----------------------------------------------------------------
     // Hours validation (§5.5)
     // -----------------------------------------------------------------
+
+    /**
+     * One canonical shape for comparing two decoded JSON values that a
+     * storage layer may legitimately have reordered.
+     *
+     * Associative arrays are key-sorted; lists keep their order, because
+     * a list IS ordered (the periods within a day are sorted by opening
+     * time and that order is meaningful). Scalars are returned unchanged,
+     * so a genuine value difference still compares as different.
+     *
+     * This is the explicit canonicalisation boundary: nothing else in
+     * this class depends on MySQL's own JSON retrieval order.
+     */
+    private function canonicalizeForComparison(mixed $value): mixed
+    {
+        if (! is_array($value)) {
+            return $value;
+        }
+
+        $canonical = array_map(fn ($item) => $this->canonicalizeForComparison($item), $value);
+
+        if (! array_is_list($canonical)) {
+            ksort($canonical);
+        }
+
+        return $canonical;
+    }
 
     private function normalizeHours(array $hoursByDay): array
     {

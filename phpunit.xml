@@ -36,5 +36,35 @@
         <server name="MAIL_DRIVER" value="array"/>
         <server name="QUEUE_CONNECTION" value="sync"/>
         <server name="SESSION_DRIVER" value="array"/>
+
+        <!--
+            Deterministic product defaults, pinned so the suite cannot
+            depend on whatever an individual developer happens to have in
+            an untracked .env/.env.testing.
+
+            Both values are the defaults config/app.php itself declares
+            (`env('APP_NAME', 'AI Business OS')`,
+            `env('APP_TIMEZONE', 'UTC')`) — this pins the PRODUCT default,
+            it does not invent a test-only value. Laravel's environment
+            repository is immutable, so a real environment variable set
+            here wins over the dotenv file.
+
+            Why each one matters:
+
+            * APP_NAME — the customer-facing footer resolves through
+              BrandingPresenter::footerCompanyName(), which falls back to
+              config('app.name'). A local APP_NAME="Test App" made the
+              rendered branding, and every assertion about it, depend on
+              one machine's .env.
+            * APP_TIMEZONE — Eloquent writes a datetime in whatever
+              timezone the value carries and reads it back in
+              config('app.timezone'). A non-UTC app timezone therefore
+              shifted stored instants by the offset, which silently broke
+              lease/heartbeat window assertions. UTC is also what
+              App\Library\Analytics\AnalyticsDateRange documents as the
+              storage timezone.
+        -->
+        <server name="APP_NAME" value="AI Business OS"/>
+        <server name="APP_TIMEZONE" value="UTC"/>
     </php>
 </phpunit>

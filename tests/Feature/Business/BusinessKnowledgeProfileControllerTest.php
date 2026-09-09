@@ -148,8 +148,15 @@ class BusinessKnowledgeProfileControllerTest extends TestCase
         $response = $this->get(route('customer.workspaces.businesses.knowledge-profile.show', [$workspace->uid, $business->uid]));
 
         $response->assertOk();
-        $response->assertSee("How would you describe your brand's tone?", false);
-        $response->assertSee('Who are your ideal customers?', false);
+        // Both labels are rendered through Blade's `{{ }}`, so the page
+        // contains `brand&#039;s`, not a raw apostrophe. assertSee()'s
+        // default escaping applies the very same transformation to the
+        // expected string, which is what makes this a correct comparison
+        // — the previous `false` argument searched for raw HTML the view
+        // never emits. The exact label text is still required to be
+        // present.
+        $response->assertSee("How would you describe your brand's tone?");
+        $response->assertSee('Who are your ideal customers?');
     }
 
     public function test_viewing_the_completeness_page_creates_no_profile_row(): void

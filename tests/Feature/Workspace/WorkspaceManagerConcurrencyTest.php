@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use Symfony\Component\Process\PhpExecutableFinder;
 use Symfony\Component\Process\Process;
+use Tests\Support\TestDatabaseSafety;
 use Tests\TestCase;
 
 /**
@@ -27,6 +28,14 @@ class WorkspaceManagerConcurrencyTest extends TestCase
     private const PROBE_CONNECTION = 'mysql_workspace_manager_lock_probe';
 
     private const LOCK_WAIT_TIMEOUT_SECONDS = 2;
+
+    /**
+     * Failsafe only. The barrier is the holder's own "LOCKED" line; this
+     * bound exists so a wedged child cannot hang the suite, and is set
+     * well above the worst observed child boot time under whole-suite
+     * load rather than being tuned to make a race pass.
+     */
+    private const LOCK_SIGNAL_TIMEOUT_SECONDS = 60;
 
     private const MAX_ELAPSED_SECONDS = 8.0;
 
@@ -73,7 +82,11 @@ class WorkspaceManagerConcurrencyTest extends TestCase
     // A. Real two-process outcome test.
     public function test_two_concurrent_resolver_attempts_for_the_same_owner_create_exactly_one_workspace(): void
     {
-        $this->assertSame('ultimatesms_testing', DB::connection()->getDatabaseName());
+        // A disposable test database — the canonical one or a
+        // clearly-derived isolated sibling. TestDatabaseSafety throws,
+        // naming the offending value, for anything else.
+        $activeDatabase = TestDatabaseSafety::activeTestDatabase();
+        $this->assertSame(DB::connection()->getDatabaseName(), $activeDatabase);
 
         $ownerUserId = DB::table('users')->insertGetId([
             'uid' => (string) Str::uuid(),
@@ -93,15 +106,29 @@ class WorkspaceManagerConcurrencyTest extends TestCase
         $phpBinary = (new PhpExecutableFinder())->find() ?: 'php';
         $holdSeconds = '2';
 
-        $slow = new Process([$phpBinary, $runnerScript, 'slow', $holdSeconds, (string) $ownerUserId]);
+        $childEnv = ['EXPECTED_TEST_DATABASE' => $activeDatabase];
+
+        $slow = new Process([$phpBinary, $runnerScript, 'slow', $holdSeconds, (string) $ownerUserId], null, $childEnv);
         $slow->start();
 
-        // Give the slow process enough time to connect and acquire the
-        // users-row lock before the fast attempt races it.
-        usleep(500_000);
+        // Wait for the holder's OWN "LOCKED" signal, not for a guessed
+        // duration. SlowWorkspaceManager prints it immediately after
+        // lockOwnerRow() returns and before it starts holding, so this
+        // returns only once the users-row lock is genuinely held and the
+        // race window below is guaranteed to be reached.
+        //
+        // The previous usleep(500_000) was a guess: under whole-suite load
+        // a child needs longer than that just to boot Laravel, so the
+        // "racing" process could start after the holder had already
+        // finished — and the test then passed or failed on scheduler luck
+        // rather than on the invariant. The deadline here is only a
+        // failsafe against hanging forever; it is never the thing being
+        // waited on, and a child that dies before signalling is reported
+        // immediately with its exit code and stderr instead of timing out.
+        $this->awaitLockSignal($slow);
 
         $start = microtime(true);
-        $fast = new Process([$phpBinary, $runnerScript, 'plain', '0', (string) $ownerUserId]);
+        $fast = new Process([$phpBinary, $runnerScript, 'plain', '0', (string) $ownerUserId], null, $childEnv);
         $fast->run();
         $elapsed = microtime(true) - $start;
 
@@ -274,6 +301,46 @@ class WorkspaceManagerConcurrencyTest extends TestCase
             $callback();
         } finally {
             DB::connection()->statement('SET SESSION innodb_lock_wait_timeout = ' . (int) $original);
+        }
+    }
+
+    /**
+     * Block until the holder process has PROVEN it holds its row lock.
+     *
+     * The synchronisation is the child's own "LOCKED" line, printed after
+     * the lock is acquired and before it is held — not a duration. The
+     * deadline is a failsafe so a wedged child cannot hang the suite
+     * forever, and it is deliberately generous because it is not what the
+     * test is waiting on. A child that exits before signalling is a real
+     * failure and is reported immediately, with its exit code and stderr,
+     * rather than being swallowed until the deadline expires.
+     */
+    private function awaitLockSignal(Process $holder): void
+    {
+        $deadline = microtime(true) + self::LOCK_SIGNAL_TIMEOUT_SECONDS;
+
+        while (! str_contains($holder->getOutput(), 'LOCKED')) {
+            if (! $holder->isRunning()) {
+                $this->fail(sprintf(
+                    "Holder process exited (code %s) before signalling that it held its lock.\nstdout: %s\nstderr: %s",
+                    var_export($holder->getExitCode(), true),
+                    $holder->getOutput(),
+                    $holder->getErrorOutput()
+                ));
+            }
+
+            if (microtime(true) >= $deadline) {
+                $holder->stop(0);
+
+                $this->fail(sprintf(
+                    "Holder process never signalled that it held its lock within %ds.\nstdout: %s\nstderr: %s",
+                    self::LOCK_SIGNAL_TIMEOUT_SECONDS,
+                    $holder->getOutput(),
+                    $holder->getErrorOutput()
+                ));
+            }
+
+            usleep(20_000);
         }
     }
 }

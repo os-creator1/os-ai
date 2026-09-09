@@ -37,6 +37,19 @@ class BrandingAdminFooterRenderTest extends TestCase
 
     public function test_admin_footer_renders_the_company_name_exactly_once_with_no_login_link(): void
     {
+        // Drive the branding seam explicitly instead of inheriting whatever
+        // APP_FOOTER_COMPANY_NAME an ambient .env happens to hold. With no
+        // owner-configured footer company name, BrandingPresenter::
+        // footerCompanyName() falls back to config('app.name') — that
+        // documented fallback IS what this test exercises, so the expected
+        // string is read from the same configuration the presenter reads,
+        // never hardcoded as a test-only literal.
+        config(['app.footer_company_name' => null]);
+        Cache::forget(BrandingPresenter::CACHE_KEY);
+
+        $expectedCompanyName = (string) config('app.name');
+        $this->assertNotSame('', $expectedCompanyName, 'config(app.name) must always resolve to a real product name.');
+
         $this->actingAsAdmin(['access backend', 'manage theme']);
 
         $html = $this->get(route('admin.home'))->assertOk()->getContent();
@@ -47,7 +60,7 @@ class BrandingAdminFooterRenderTest extends TestCase
 
         $this->assertSame(
             1,
-            substr_count($footerHtml, 'AI Business OS'),
+            substr_count($footerHtml, $expectedCompanyName),
             'The footer company name must appear exactly once, not duplicated.'
         );
         $this->assertDoesNotMatchRegularExpression(

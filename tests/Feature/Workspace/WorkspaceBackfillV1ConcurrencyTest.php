@@ -25,6 +25,14 @@ use Tests\Feature\Workspace\Support\HistoricalWorkspaceConcurrencyTestCase;
 #[Group('historical-m1a')]
 class WorkspaceBackfillV1ConcurrencyTest extends HistoricalWorkspaceConcurrencyTestCase
 {
+    /**
+     * Failsafe only. The barrier is the holder's own "LOCKED" line; this
+     * bound exists so a wedged child cannot hang the suite, and is set
+     * well above the worst observed child boot time under whole-suite
+     * load rather than being tuned to make a race pass.
+     */
+    private const LOCK_SIGNAL_TIMEOUT_SECONDS = 60;
+
     private array $createdUserIds = [];
     private array $createdBusinessIds = [];
 
@@ -93,9 +101,18 @@ class WorkspaceBackfillV1ConcurrencyTest extends HistoricalWorkspaceConcurrencyT
         $slow = new Process([$phpBinary, $runnerScript, 'slow', $holdSeconds], null, $childEnv);
         $slow->start();
 
-        // Give the slow process enough time to connect and acquire the
-        // users-row lock before the fast attempt races it.
-        usleep(500_000);
+        // Wait for the holder's OWN "LOCKED" signal, not for a guessed
+        // duration. SlowWorkspaceBackfillV1 prints it immediately after
+        // lockOwnerRow() returns and before it starts holding, so this
+        // returns only once the users-row lock is genuinely held and the
+        // race window below is guaranteed to be reached.
+        //
+        // The previous usleep(500_000) was a guess: under whole-suite
+        // load a child needs longer than that just to boot Laravel, so
+        // the "racing" process could start after the holder had already
+        // finished, and the test then turned on scheduler luck rather
+        // than on the invariant.
+        $this->awaitLockSignal($slow);
 
         $start = microtime(true);
         $fast = new Process([$phpBinary, $runnerScript, 'plain', '0'], null, $childEnv);
@@ -158,5 +175,45 @@ class WorkspaceBackfillV1ConcurrencyTest extends HistoricalWorkspaceConcurrencyT
         // after a completed run() call; an empty stdout proves the guard
         // aborted before the action was even instantiated, let alone run.
         $this->assertSame('', trim($process->getOutput()));
+    }
+
+    /**
+     * Block until the holder process has PROVEN it holds its row lock.
+     *
+     * The synchronisation is the child's own "LOCKED" line, printed after
+     * the lock is acquired and before it is held — not a duration. The
+     * deadline is a failsafe so a wedged child cannot hang the suite, and
+     * is deliberately generous because it is not what the test waits on.
+     * A child that exits before signalling is a real failure and is
+     * reported at once, with its exit code and stderr, rather than being
+     * swallowed until the deadline expires.
+     */
+    private function awaitLockSignal(Process $holder): void
+    {
+        $deadline = microtime(true) + self::LOCK_SIGNAL_TIMEOUT_SECONDS;
+
+        while (! str_contains($holder->getOutput(), 'LOCKED')) {
+            if (! $holder->isRunning()) {
+                $this->fail(sprintf(
+                    "Holder process exited (code %s) before signalling that it held its lock.\nstdout: %s\nstderr: %s",
+                    var_export($holder->getExitCode(), true),
+                    $holder->getOutput(),
+                    $holder->getErrorOutput()
+                ));
+            }
+
+            if (microtime(true) >= $deadline) {
+                $holder->stop(0);
+
+                $this->fail(sprintf(
+                    "Holder process never signalled that it held its lock within %ds.\nstdout: %s\nstderr: %s",
+                    self::LOCK_SIGNAL_TIMEOUT_SECONDS,
+                    $holder->getOutput(),
+                    $holder->getErrorOutput()
+                ));
+            }
+
+            usleep(20_000);
+        }
     }
 }

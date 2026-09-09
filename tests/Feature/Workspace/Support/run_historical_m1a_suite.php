@@ -162,13 +162,15 @@ function assertHistoricalSchemaState(string $connectionName, string $databaseNam
     }
 }
 
-$resolvedDatabase = DB::connection()->getDatabaseName();
-
-if ($resolvedDatabase !== 'ultimatesms_testing') {
-    fwrite(STDERR, sprintf(
-        "Refusing to run the historical M1A suite: resolved database is [%s], expected [ultimatesms_testing].\n",
-        $resolvedDatabase
-    ));
+// The base connection must be a disposable test database — the canonical
+// one or a clearly-derived isolated sibling. TestDatabaseSafety throws,
+// naming the offending value and the permitted shapes, for anything else.
+// The historical database this suite creates is derived from whichever
+// base is active, so two lanes never collide over one name.
+try {
+    Tests\Support\TestDatabaseSafety::activeTestDatabase();
+} catch (RuntimeException $e) {
+    fwrite(STDERR, 'Refusing to run the historical M1A suite: ' . $e->getMessage() . "\n");
     exit(WRONG_DATABASE_EXIT_CODE);
 }
 

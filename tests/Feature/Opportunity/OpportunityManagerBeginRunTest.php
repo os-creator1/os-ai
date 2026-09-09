@@ -310,7 +310,15 @@ class OpportunityManagerBeginRunTest extends TestCase
         $business = $this->createBusinessForOpportunities();
         $manager = app(OpportunityManager::class);
         $timeoutMinutes = config('opportunity.run_timeout_minutes', 30);
-        $frozenNow = CarbonImmutable::parse('2026-06-01T12:00:00+00:00');
+        // In the APPLICATION timezone, not hardcoded UTC. Eloquent
+        // writes a datetime as the wall-clock of whatever timezone the
+        // value carries and reads it back in config('app.timezone'), so a
+        // UTC-built fixture silently shifts the stored instant by the
+        // app offset and lands outside the window this test is about.
+        // Building the frozen instant in the app timezone makes the
+        // round-trip exact under ANY configured timezone.
+        $frozenNow = CarbonImmutable::parse('2026-06-01T12:00:00+00:00')
+            ->setTimezone((string) config('app.timezone'));
 
         $this->travelTo($frozenNow);
 
@@ -334,7 +342,15 @@ class OpportunityManagerBeginRunTest extends TestCase
         $business = $this->createBusinessForOpportunities();
         $manager = app(OpportunityManager::class);
         $timeoutMinutes = config('opportunity.run_timeout_minutes', 30);
-        $frozenNow = CarbonImmutable::parse('2026-06-01T12:00:00+00:00');
+        // In the APPLICATION timezone, not hardcoded UTC. Eloquent
+        // writes a datetime as the wall-clock of whatever timezone the
+        // value carries and reads it back in config('app.timezone'), so a
+        // UTC-built fixture silently shifts the stored instant by the
+        // app offset and lands outside the window this test is about.
+        // Building the frozen instant in the app timezone makes the
+        // round-trip exact under ANY configured timezone.
+        $frozenNow = CarbonImmutable::parse('2026-06-01T12:00:00+00:00')
+            ->setTimezone((string) config('app.timezone'));
 
         $this->travelTo($frozenNow);
 

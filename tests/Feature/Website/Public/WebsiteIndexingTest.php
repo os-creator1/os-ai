@@ -68,7 +68,15 @@ class WebsiteIndexingTest extends TestCase
         $path = base_path('public/robots.txt');
         $this->assertFileExists($path);
 
-        $actual = file_get_contents($path);
+        // ONE canonical line ending. The repository stores LF (see
+        // .gitattributes), but git may still materialise CRLF in a working
+        // tree checked out before that was declared, and a CRLF working
+        // copy is not a content change. Normalising the line endings here
+        // — and nothing else — keeps this a genuine byte-for-byte
+        // assertion about the file's CONTENT: every character, the exact
+        // directives, their order, and the absence of anything else are
+        // all still asserted exactly.
+        $actual = str_replace("\r\n", "\n", file_get_contents($path));
 
         $this->assertSame("User-agent: *\nDisallow:\n", $actual);
     }

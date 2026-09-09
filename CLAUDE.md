@@ -35,8 +35,12 @@ handoff. All non-negotiable rules below apply to both paths equally.
 - **Never merge pull requests.** A human makes the merge decision.
 - **No metered model credentials.** Do not call OpenAI, Anthropic Console, or
   another paid model API from repository workflows or scripts.
-- **Use only `ultimatesms_testing`.** Do not improvise a database inside a
-  Routine. GitHub Actions is the authoritative disposable MySQL test gate.
+- **Use only a disposable test database.** That means `ultimatesms_testing`
+  or an isolated sibling `ultimatesms_testing_<safe suffix>`, validated by
+  `Tests\Support\TestDatabaseSafety` — never an improvised name, and never
+  anything production-like. Isolated siblings exist so concurrent lanes stop
+  overwriting one another's database; a Routine still uses the canonical
+  name. GitHub Actions remains the authoritative disposable MySQL test gate.
 - **Never touch production-looking data or secrets.** Stop with
   `ai:needs-human` if a task appears to require either.
 - **Do not claim unverified tests.** GitHub Actions runs the locked focused

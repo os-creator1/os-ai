@@ -139,6 +139,9 @@
     "post-create-project-cmd": [
       "@php artisan key:generate --ansi"
     ],
-    "post-update-cmd": []
+    "post-update-cmd": [],
+    "test:baseline": [
+      "@php scripts/test-baseline.php"
+    ]
   }
 }

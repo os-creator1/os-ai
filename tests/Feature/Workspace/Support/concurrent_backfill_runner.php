@@ -39,8 +39,6 @@ use Tests\Feature\Workspace\Support\TemporaryTestDatabase;
 
 const WRONG_DATABASE_EXIT_CODE = 3;
 
-const PRIMARY_TEST_DATABASE = 'ultimatesms_testing';
-
 $expectedDatabase = getenv('EXPECTED_TEST_DATABASE');
 
 if ($expectedDatabase === false || $expectedDatabase === '') {
@@ -48,14 +46,21 @@ if ($expectedDatabase === false || $expectedDatabase === '') {
     exit(WRONG_DATABASE_EXIT_CODE);
 }
 
-$isPrimaryTestDatabase = $expectedDatabase === PRIMARY_TEST_DATABASE;
-$isHistoricalTemporaryDatabase = TemporaryTestDatabase::isValidHistoricalName($expectedDatabase);
+// This runner already required the parent to hand down its exact
+// database, which is the strong half of the guarantee and is unchanged.
+// The only thing that moved is WHICH names count as disposable: the
+// hardcoded `ultimatesms_testing` literal is replaced by the shared
+// Tests\Support\TestDatabaseSafety rule, so an isolated
+// `ultimatesms_testing_<safe suffix>` parent is accepted too. Historical
+// temporary databases are still additionally recognised by
+// TemporaryTestDatabase's own stricter pattern.
+$isPermittedName = Tests\Support\TestDatabaseSafety::isSafeTestDatabaseName($expectedDatabase)
+    || TemporaryTestDatabase::isValidHistoricalName($expectedDatabase);
 
-if (! $isPrimaryTestDatabase && ! $isHistoricalTemporaryDatabase) {
+if (! $isPermittedName) {
     fwrite(STDERR, sprintf(
-        "Refusing to run WorkspaceBackfillV1: EXPECTED_TEST_DATABASE [%s] is neither [%s] nor a valid historical temporary database name. Aborting before any database write.\n",
-        $expectedDatabase,
-        PRIMARY_TEST_DATABASE
+        "Refusing to run WorkspaceBackfillV1: EXPECTED_TEST_DATABASE [%s] is not a permitted disposable test database. Aborting before any database write.\n",
+        $expectedDatabase
     ));
     exit(WRONG_DATABASE_EXIT_CODE);
 }

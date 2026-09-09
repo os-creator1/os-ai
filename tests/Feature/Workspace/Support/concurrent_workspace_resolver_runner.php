@@ -33,17 +33,16 @@ $_SERVER['APP_ENV'] = 'testing';
 $app = require __DIR__ . '/../../../../bootstrap/app.php';
 $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
 
-const EXPECTED_DATABASE = 'ultimatesms_testing';
 const WRONG_DATABASE_EXIT_CODE = 3;
 
-$resolvedDatabase = Illuminate\Support\Facades\DB::connection()->getDatabaseName();
-
-if ($resolvedDatabase !== EXPECTED_DATABASE) {
-    fwrite(STDERR, sprintf(
-        "Refusing to run WorkspaceManager: resolved database is [%s], expected [%s]. Aborting before any database write.\n",
-        $resolvedDatabase,
-        EXPECTED_DATABASE
-    ));
+// Same safety property, wider set of permitted disposable databases —
+// see Tests\Support\TestDatabaseSafety. EXPECTED_TEST_DATABASE is the
+// parent's own active database, so this child can only ever write to the
+// exact database the parent is asserting against.
+try {
+    Tests\Support\TestDatabaseSafety::assertMatchesActiveTestDatabase(getenv('EXPECTED_TEST_DATABASE') ?: null);
+} catch (RuntimeException $e) {
+    fwrite(STDERR, 'Refusing to run WorkspaceManager: ' . $e->getMessage() . "\n");
     exit(WRONG_DATABASE_EXIT_CODE);
 }
 

@@ -18,6 +18,7 @@ use App\Repositories\Contracts\BusinessRepository;
 use Illuminate\Support\Facades\DB;
 use Symfony\Component\Process\PhpExecutableFinder;
 use Symfony\Component\Process\Process;
+use Tests\Support\TestDatabaseSafety;
 use Tests\TestCase;
 
 /**
@@ -32,6 +33,14 @@ use Tests\TestCase;
 class EntitlementManagerConcurrencyTest extends TestCase
 {
     private const RUNNER = __DIR__ . '/Support/concurrent_business_slot_runner.php';
+
+    /**
+     * Failsafe only. The barrier is the holder's own "LOCKED" line; this
+     * bound exists so a wedged child cannot hang the suite, and is set
+     * well above the worst observed child boot time under whole-suite
+     * load rather than being tuned to make a race pass.
+     */
+    private const LOCK_SIGNAL_TIMEOUT_SECONDS = 60;
 
     private array $createdUserIds = [];
     private array $createdWorkspaceIds = [];
@@ -58,10 +67,23 @@ class EntitlementManagerConcurrencyTest extends TestCase
         // race outcome that leaves the row non-null-priced never leaks into
         // later tests, regardless of which scenario ran or how it asserted.
         $this->originalCoreCatalogState = (array) DB::table('workspace_plan_catalog')->where('tier', 'core')->first();
+
+        // Hand this suite's own active database down to every child
+        // process it spawns. The children inherit DB_DATABASE anyway, but
+        // this makes the expectation explicit, so a child can only ever
+        // write to the exact disposable database the parent is asserting
+        // against — never the canonical one while the parent runs
+        // isolated, and never an isolated one while the parent runs
+        // canonical.
+        putenv('EXPECTED_TEST_DATABASE=' . TestDatabaseSafety::activeTestDatabase());
     }
 
     protected function tearDown(): void
     {
+        // Always cleared, so a later suite's children can never inherit
+        // this suite's expectation.
+        putenv('EXPECTED_TEST_DATABASE');
+
         if ($this->originalCoreCatalogState !== null) {
             DB::table('workspace_plan_catalog')->where('tier', 'core')->update([
                 'price' => $this->originalCoreCatalogState['price'],
@@ -232,13 +254,47 @@ class EntitlementManagerConcurrencyTest extends TestCase
         ));
         $holder->start();
 
-        $deadline = microtime(true) + 5.0;
+        // The barrier is the holder's own "LOCKED" line, which is already
+        // the right mechanism. Two things were wrong with the wait around
+        // it, and both are fixed here without changing what is proven:
+        //
+        //   * the 5-second ceiling was not a failsafe, it was a race —
+        //     under whole-suite load a child needs longer than that just
+        //     to boot Laravel, so the wait expired before the lock was
+        //     ever taken and the test failed for load, not for behaviour;
+        //   * a child that DIED before signalling was indistinguishable
+        //     from a slow one, so a genuine child failure was reported
+        //     only after the full timeout, and as a timeout.
+        //
+        // The loop now exits the moment the child exits, reporting its
+        // exit code and stderr, and the remaining deadline is a generous
+        // failsafe against hanging forever rather than the thing being
+        // waited on.
+        $deadline = microtime(true) + self::LOCK_SIGNAL_TIMEOUT_SECONDS;
 
-        while (! str_contains($holder->getOutput(), 'LOCKED') && microtime(true) < $deadline) {
-            usleep(50_000);
+        while (! str_contains($holder->getOutput(), 'LOCKED')) {
+            if (! $holder->isRunning()) {
+                $this->fail(sprintf(
+                    "Holder process exited (code %s) before signalling lock acquisition.\nstdout: %s\nstderr: %s",
+                    var_export($holder->getExitCode(), true),
+                    $holder->getOutput(),
+                    $holder->getErrorOutput()
+                ));
+            }
+
+            if (microtime(true) >= $deadline) {
+                $holder->stop(0);
+
+                $this->fail(sprintf(
+                    "Holder process never signalled lock acquisition within %ds.\nstdout: %s\nstderr: %s",
+                    self::LOCK_SIGNAL_TIMEOUT_SECONDS,
+                    $holder->getOutput(),
+                    $holder->getErrorOutput()
+                ));
+            }
+
+            usleep(20_000);
         }
-
-        $this->assertStringContainsString('LOCKED', $holder->getOutput(), 'Holder process never signaled lock acquisition: ' . $holder->getErrorOutput());
 
         return $holder;
     }

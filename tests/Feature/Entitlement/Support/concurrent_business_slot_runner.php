@@ -61,17 +61,25 @@ $_SERVER['APP_ENV'] = 'testing';
 $app = require __DIR__ . '/../../../../bootstrap/app.php';
 $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
 
-const EXPECTED_DATABASE = 'ultimatesms_testing';
 const WRONG_DATABASE_EXIT_CODE = 3;
 
-$resolvedDatabase = Illuminate\Support\Facades\DB::connection()->getDatabaseName();
-
-if ($resolvedDatabase !== EXPECTED_DATABASE) {
-    fwrite(STDERR, sprintf(
-        "Refusing to run: resolved database is [%s], expected [%s]. Aborting before any database write.\n",
-        $resolvedDatabase,
-        EXPECTED_DATABASE
-    ));
+// The safety property is unchanged — this process still refuses to write
+// anything until it has proven it is pointed at a disposable test
+// database. What changed is that "disposable" is no longer the single
+// literal name `ultimatesms_testing`: Tests\Support\TestDatabaseSafety
+// accepts that name and clearly-derived siblings of it
+// (`ultimatesms_testing_<safe suffix>`), and nothing else. That is what
+// lets two lanes run concurrently without fighting over one database.
+//
+// EXPECTED_TEST_DATABASE is the parent's own active database, handed
+// down explicitly. Inheriting the environment is not enough on its own:
+// this proves the child resolved the very same database, so it can never
+// write into a different one — including the canonical one — while the
+// parent asserts against its own.
+try {
+    Tests\Support\TestDatabaseSafety::assertMatchesActiveTestDatabase(getenv('EXPECTED_TEST_DATABASE') ?: null);
+} catch (RuntimeException $e) {
+    fwrite(STDERR, $e->getMessage() . "\n");
     exit(WRONG_DATABASE_EXIT_CODE);
 }
 
