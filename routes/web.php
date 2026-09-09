@@ -5,7 +5,6 @@
     use App\Http\Controllers\Customer\DLRController;
     use Illuminate\Support\Facades\DB;
     use App\Http\Controllers\Customer\PusherController;
-    use App\Http\Controllers\Debug\DebugController;
     use App\Http\Controllers\LanguageController;
     use App\Http\Controllers\MaintenanceNotifyController;
 
@@ -51,15 +50,19 @@ Route::post('/inbound/telnyx', [DLRController::class, 'inboundTelnyx']);
     Route::post('/pusher/auth', [PusherController::class, 'pusherAuth'])
         ->middleware('auth')->name('pusher.auth');
 
-    Route::get('add-gateways', [DebugController::class, 'addGateways'])->name('add.gateways');
-    Route::get('remove-jobs', [DebugController::class, 'removeJobs'])->name('remove.jobs');
-    Route::get('remove-contacts', [DebugController::class, 'removeContacts'])->name('remove.contacts');
-    Route::get('cache-clear', [DebugController::class, 'cacheClear'])->name('cache.clear');
-    Route::get('update-campaign-cache/{campaign}/{number}', [DebugController::class, 'updateCampaignCache'])->name('update.campaign.cache');
+    // Security Remediation Slice 0 §16.A.1 (D-24) — the five unauthenticated
+    // GET routes formerly registered here (add-gateways, remove-jobs,
+    // remove-contacts, cache-clear, update-campaign-cache/{campaign}/{number})
+    // and the locally guarded /debug route are removed, along with
+    // app/Http/Controllers/Debug/DebugController.php in full. None had a
+    // legitimate caller anywhere in this repository: queue maintenance is
+    // `php artisan queue:flush`, cache eviction is `php artisan cache:clear`,
+    // gateway seeding is database/seeders/PaymentMethodsSeeder.php, and the
+    // contact-cleanup/campaign-cache-repair behaviours have no console
+    // replacement because they were never a real operational need. See
+    // docs/automation/AI-BUSINESS-OS-CUSTOMER-EXPERIENCE-AND-NAVIGATION-REDESIGN.md
+    // §5.4/§16.A.1 for the full evidence and per-route disposition.
 
-    if (config('app.stage') == 'local') {
-        Route::get('debug', [DebugController::class, 'index'])->name('debug');
-    }
     // B3 Simplified Platform Settings §7 — the orphan "AI Brain" surface
     // (app/Http/Controllers/Admin/AiSettingsController.php, an ai_settings
     // table with no migration anywhere in this repository, and its
