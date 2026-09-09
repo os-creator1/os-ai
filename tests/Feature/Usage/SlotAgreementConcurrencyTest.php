@@ -21,6 +21,7 @@ use App\Repositories\Contracts\WorkspacePlanCatalogRepository;
 use Illuminate\Support\Facades\DB;
 use Symfony\Component\Process\PhpExecutableFinder;
 use Symfony\Component\Process\Process;
+use Tests\Support\TestDatabaseSafety;
 use Tests\TestCase;
 
 /**
@@ -122,6 +123,39 @@ class SlotAgreementConcurrencyTest extends TestCase
     private function phpBinary(): string
     {
         return (new PhpExecutableFinder())->find() ?: 'php';
+    }
+
+    /**
+     * The explicit database handoff every child process receives.
+     *
+     * The parent resolves and VALIDATES the disposable database it is
+     * itself connected to — TestDatabaseSafety::activeTestDatabase()
+     * throws unless it is the canonical test database or a clearly
+     * derived isolated sibling — and hands that exact name down under
+     * both keys: DB_DATABASE so the child connects to it, and
+     * EXPECTED_TEST_DATABASE so the child can prove it did.
+     *
+     * The runner previously hardcoded `ultimatesms_testing` and refused
+     * anything else, which made this whole test unrunnable for any lane
+     * working on an isolated database — the four failures the Lane C
+     * baseline could not clear. Relying on ambient inheritance alone
+     * would fix the value but not the proof; passing it explicitly means
+     * the child can distinguish "the parent authorized this database"
+     * from "something in my environment happened to point here".
+     *
+     * Symfony merges this into the inherited environment, so the child
+     * still receives everything else it needs.
+     *
+     * @return array<string, string>
+     */
+    private function childEnvironment(): array
+    {
+        $database = TestDatabaseSafety::activeTestDatabase();
+
+        return [
+            'DB_DATABASE' => $database,
+            'EXPECTED_TEST_DATABASE' => $database,
+        ];
     }
 
     private function createOwnerUserId(): int
@@ -280,7 +314,7 @@ class SlotAgreementConcurrencyTest extends TestCase
         DB::table('additional_business_slot_agreements')->where('id', $agreement->id)->update(['state' => 'allocation_pending']);
 
         $lockSpec = "additional_business_slot_agreements:id:{$agreement->id}";
-        $holder = new Process([$this->phpBinary(), self::RUNNER, 'hold-then', $lockSpec, '1', 'perform-verified-allocation', (string) $agreement->id]);
+        $holder = new Process([$this->phpBinary(), self::RUNNER, 'hold-then', $lockSpec, '1', 'perform-verified-allocation', (string) $agreement->id], null, $this->childEnvironment());
         $holder->start();
 
         $deadline = microtime(true) + 5.0;
@@ -291,7 +325,7 @@ class SlotAgreementConcurrencyTest extends TestCase
 
         $this->assertStringContainsString('LOCKED', $holder->getOutput(), 'Holder process never signaled lock acquisition: '.$holder->getErrorOutput());
 
-        $waiter = new Process([$this->phpBinary(), self::RUNNER, 'perform-verified-allocation', (string) $agreement->id]);
+        $waiter = new Process([$this->phpBinary(), self::RUNNER, 'perform-verified-allocation', (string) $agreement->id], null, $this->childEnvironment());
         $waiter->start();
         $holder->wait();
         $waiter->wait();
@@ -358,8 +392,8 @@ class SlotAgreementConcurrencyTest extends TestCase
         $barrierFile = sys_get_temp_dir().DIRECTORY_SEPARATOR.'m4_retry_barrier_'.uniqid('', true).'.txt';
 
         try {
-            $p1 = new Process([$this->phpBinary(), self::RUNNER, 'retry-slot-renewal-owner', (string) $charge->id, (string) $owner->id, 'declined', $barrierFile, '2', '10']);
-            $p2 = new Process([$this->phpBinary(), self::RUNNER, 'retry-slot-renewal-owner', (string) $charge->id, (string) $owner->id, 'declined', $barrierFile, '2', '10']);
+            $p1 = new Process([$this->phpBinary(), self::RUNNER, 'retry-slot-renewal-owner', (string) $charge->id, (string) $owner->id, 'declined', $barrierFile, '2', '10'], null, $this->childEnvironment());
+            $p2 = new Process([$this->phpBinary(), self::RUNNER, 'retry-slot-renewal-owner', (string) $charge->id, (string) $owner->id, 'declined', $barrierFile, '2', '10'], null, $this->childEnvironment());
             $p1->start();
             $p2->start();
             $p1->wait();

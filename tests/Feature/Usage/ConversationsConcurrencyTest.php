@@ -10,6 +10,7 @@ use Illuminate\Support\Facades\DB;
 use Symfony\Component\Process\PhpExecutableFinder;
 use Symfony\Component\Process\Process;
 use Tests\Feature\Business\Concerns\CreatesBusinessTestData;
+use Tests\Support\TestDatabaseSafety;
 use Tests\TestCase;
 
 /**
@@ -38,6 +39,39 @@ class ConversationsConcurrencyTest extends TestCase
     private array $createdWorkspaceIds = [];
     private array $createdSendingServerIds = [];
     private ?int $createdCurrencyId = null;
+
+    /**
+     * The explicit database handoff every child process receives.
+     *
+     * The parent resolves and VALIDATES the disposable database it is
+     * itself connected to — TestDatabaseSafety::activeTestDatabase()
+     * throws unless it is the canonical test database or a clearly
+     * derived isolated sibling — and hands that exact name down under
+     * both keys: DB_DATABASE so the child connects to it, and
+     * EXPECTED_TEST_DATABASE so the child can prove it did.
+     *
+     * The runner previously hardcoded `ultimatesms_testing` and refused
+     * anything else, which made this whole test unrunnable for any lane
+     * working on an isolated database. Relying on ambient inheritance
+     * alone would fix the value but not the proof; passing it explicitly
+     * means the child can distinguish "the parent authorized this
+     * database" from "something in my environment happened to point
+     * here".
+     *
+     * Symfony merges this into the inherited environment, so the child
+     * still receives everything else it needs.
+     *
+     * @return array<string, string>
+     */
+    private function childEnvironment(): array
+    {
+        $database = TestDatabaseSafety::activeTestDatabase();
+
+        return [
+            'DB_DATABASE' => $database,
+            'EXPECTED_TEST_DATABASE' => $database,
+        ];
+    }
 
     protected function tearDown(): void
     {
@@ -149,8 +183,10 @@ class ConversationsConcurrencyTest extends TestCase
         $runnerPath = __DIR__ . '/Support/concurrent_conversations_send_runner.php';
         $phpBinary = (new PhpExecutableFinder())->find() ?: 'php';
 
-        $processA = new Process([$phpBinary, $runnerPath, 'reserve', (string) $business->id, $meterKey, $idempotencyKey, '1', $barrierFile, '2', '10', $providerCallLogFile]);
-        $processB = new Process([$phpBinary, $runnerPath, 'reserve', (string) $business->id, $meterKey, $idempotencyKey, '1', $barrierFile, '2', '10', $providerCallLogFile]);
+        $reserveArgs = [$phpBinary, $runnerPath, 'reserve', (string) $business->id, $meterKey, $idempotencyKey, '1', $barrierFile, '2', '10', $providerCallLogFile];
+
+        $processA = new Process($reserveArgs, null, $this->childEnvironment());
+        $processB = new Process($reserveArgs, null, $this->childEnvironment());
 
         $processA->start();
         $processB->start();
@@ -355,8 +391,8 @@ class ConversationsConcurrencyTest extends TestCase
             $idempotencyToken, $barrierFile, '2', '10', $providerCallLogFile,
         ];
 
-        $processA = new Process($args);
-        $processB = new Process($args);
+        $processA = new Process($args, null, $this->childEnvironment());
+        $processB = new Process($args, null, $this->childEnvironment());
         $processA->start();
         $processB->start();
         $processA->wait();
