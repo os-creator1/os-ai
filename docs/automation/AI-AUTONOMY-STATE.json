@@ -37,6 +37,38 @@
     "Force-pushing, or pushing directly to main",
     "Any future work requires separate, explicit human authorization"
   ],
+  "governance_scope": {
+    "purpose": "Documentation only. No consumer reads this object; it exists so that a reader cannot mistake the scope of the fields around it. Adding or removing it changes no behaviour.",
+    "these_fields_govern": "the autonomous state loop only",
+    "autonomous_only_fields": [
+      "implementation_authorized",
+      "allowed_paths",
+      "required_new_paths",
+      "required_test_commands",
+      "expected_head_sha",
+      "contract_source",
+      "current_slice",
+      "active_pull_request",
+      "head_branch",
+      "status",
+      "gate_label",
+      "advance_automatically",
+      "start_automatically_after_contract_merge",
+      "next_candidate",
+      "forbidden_scope"
+    ],
+    "autonomous_loop_state": "PAUSED. implementation_authorized is false, gate_label is ai:paused, advance_automatically is false, start_automatically_after_contract_merge is false, and allowed_paths is empty. The autonomous loop may not start, select or implement anything, and nothing in this object alters that.",
+    "manually_authorized_lanes": "A lane the human authorizes directly, per task, through the ChatGPT-to-Claude review-gated workflow is governed by that task's own contract - its own exact allowlist, branch, worktree and verification requirements - and not by the autonomous-only fields listed above. Such a lane is the 'separate, explicit human authorization' that forbidden_scope already requires; it neither activates nor bypasses the autonomous loop.",
+    "this_object_does_not_grant": [
+      "any standing or perpetual implementation authority",
+      "authority for Claude to invent, select or start a task",
+      "authority to resume or activate the autonomous loop",
+      "authority to merge, force-push, or push directly to main",
+      "any relaxation of merge_policy, which remains human_only for every route"
+    ],
+    "authorization_lifetime": "per task; completing one manual lane grants no authority to begin another",
+    "see": "AGENTS.md and docs/automation/MANUAL-LANE-GOVERNANCE-RECONCILIATION.md"
+  },
   "success_label": "ai:ready-for-human",
   "failure_label": "ai:needs-human",
   "completed_pull_request": 164,
