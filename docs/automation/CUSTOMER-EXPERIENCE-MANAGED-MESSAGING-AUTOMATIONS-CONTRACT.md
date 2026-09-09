@@ -1493,6 +1493,49 @@ two new repository paths are added to the row above. Full evidence, the
 exact migration syntax, and the corresponding test additions are recorded in
 that document's §2 item 20, §4.2, §4.8, §4.9, and §4.12.
 
+**Post-merge correction to the Slice 3 row — Round 3 (2026-09-09),
+human-owner-authorized, documentation-only, five findings against the
+merged Round 1/2 state.** (1) A governance/autonomy-state reconciliation —
+`docs/automation/AI-AUTONOMY-STATE.json`'s RFC-005-closure posture is
+reconciled with this row's own merge (and with the separately-merged
+Security Remediation Slice 0) as expected behaviour of `CLAUDE.md`'s
+documented Manual completion path, not a silently-tolerated inconsistency;
+no edit is made to that state file (see that document's §1.1 for the full
+reasoning). (2) Round 2's partial-unique-index sweep missed two of its own
+targeted definitions, on `business_messaging_operations`'s `operation_key`
+and `(provider, provider_message_id)` — corrected to ordinary MySQL
+`UNIQUE` indexes (no generated column needed, since neither carries a
+conditional uniqueness rule). (3) `EloquentCampaignRepository::campaignBuilder()`'s
+immediate-send branch was traced end to end this round: it does converge on
+the already-allowlisted `Campaigns.php` dispatch-switch delegation point,
+via an async job chain, but no prior revision tested that chain, and the
+prior revision's own supporting citation named the wrong method
+(`sendApi()`, not `campaignBuilder()`) — both corrected, with a new named
+integration test; the same re-audit found three real, currently
+undelegated, previously undocumented outbound-dispatch entry points
+(`sendApi()`, `app/Console/Commands/SendScheduleAPIMessage.php`,
+`apiCampaignBuilder()`), explicitly disclosed as **not** fixed by this
+round and left for separate authorization, rather than silently carried
+forward or fixed outside this round's authorized scope. (4) The
+delivery-status replay design incorrectly treated an outbound operation's
+own pre-existing `(provider, provider_message_id)` as proof its first
+delivery-status callback was a replay — corrected to a status-transition
+guard keyed on the operation's own current status, never on the shared
+index's mere existence. (5) The relocated advanced-provider surface's
+authorization checked `canManage()` (owner-or-active-Admin), looser than
+this parent contract's own §6 matrix row for `manage_advanced_provider`
+(Agency **owner**, explicitly not Agency admin) — corrected to
+`WorkspaceCandidate::$isOwner`, an already-existing, already-populated
+predicate now cited exactly rather than deferred, reconciled explicitly
+with the separately-merged Security Remediation Slice 0 guard as a
+tightening, not a reversal, of that guard. No implementation path in the
+row above changes as a result of this round — every correction is a
+design/documentation/test-specification fix to the not-yet-implemented
+Slice 3 contract itself, confirmed against the row's existing paths, not a
+widening of them. Full evidence for all five findings is recorded in
+`docs/automation/CUSTOMER-EXPERIENCE-SLICE-3-MESSAGING-PROVIDER-FOUNDATION.md`
+§1.1, §2 item 1, §3, §4.2, §4.6.2, §4.6.3, §4.7, §4.9, §4.11, §4.12.
+
 ### 22.2 Reconciliation — every promised behaviour has a permitted path
 
 | Promised behaviour | Slice | Permitted by |

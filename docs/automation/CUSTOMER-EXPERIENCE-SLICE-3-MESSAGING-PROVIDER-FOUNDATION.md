@@ -29,6 +29,27 @@ specified in §4.2/§4.9/§4.12. §4.8's RFC-005 measurement seam is also
 re-audited for exact file ownership at every layer (manager, repository,
 model, migration, enum, documentation, test), per this round's request.
 
+**Correction Round 3 (2026-09-09), post-merge, human-owner-authorized.**
+Rounds 1 and 2 above merged as PR #224. This round resolves five further
+findings against that merged state: (1) an honest governance/autonomy-state
+reconciliation, recorded at §1.1, rather than a silent state-file edit; (2)
+Round 2's sweep missed two of its own targeted invalid definitions —
+`business_messaging_operations`'s `operation_key` and `(provider,
+provider_message_id)` indexes still used the PostgreSQL-only `UNIQUE(...)
+WHERE ... IS NOT NULL` syntax — replaced at §4.2 with ordinary MySQL `UNIQUE`
+indexes (no generated column needed here, unlike Round 2's three invariants,
+because neither column carries a *conditional* uniqueness rule); (3)
+`EloquentCampaignRepository::campaignBuilder()`'s own immediate-send branch,
+reached by `CampaignController`/`OutreachController`, was never in the
+managed-dispatch delegation scope alongside `quickSend()` — corrected at §3
+and §4.11; (4) the delivery-status replay design at §4.6.3 had the exact
+defect described below and is corrected to a real status-transition guard;
+(5) the relocated advanced-provider surface's authorization at §4.7 checked
+`canManage()` (owner-or-admin), looser than the parent contract's own §6
+matrix row for this capability (Agency **owner**, not admin) — corrected to
+`WorkspaceCandidate::$isOwner`, an already-existing, already-populated
+predicate, cited exactly rather than deferred.
+
 Every change below is evidence-driven; §2 records the mechanical
 verification each round required. Still a documentation-and-audit pass
 only — no Telnyx API call, no provider account/profile/number/registration/webhook/rate/credential
@@ -66,19 +87,185 @@ SHA as of this document's authoring. This correction round continued on the
 same branch from head `946d34ed131d540c88f2aed04ae82895db2473e8` — no new
 branch, no merge, no rebase.
 
+**Round 3 base verification (2026-09-09), fresh post-merge branch.** Rounds 1
+and 2 above merged as PR #224 (merge commit
+`3be7fcdf2160ce8c6c259cdd6ff4da3e4de65640`). This round is a **fresh,
+human-owner-authorized post-merge correction**, not a continuation of the
+authoring branch above: `agent/customer-experience-slice-3-contract-post-merge-correction`
+was created from `origin/main` at `ef0c01346b517fa093d7d95b3384cf25689a0288`
+(confirmed exact via `git fetch` + `git rev-parse origin/main`), with PR #224's
+head `e40766ae764e5a76d215a31b41d2bb084093fd18` and PR #225's head
+`d62ceda9817f459190403792161f2a3ae1ae6f97` both confirmed ancestors via
+`git merge-base --is-ancestor`. No Lane A/B/C/E branch was merged or rebased
+into this one. This round remains, exactly as Rounds 1/2 were, a
+documentation-and-audit-only pass: no Telnyx API call, no provider
+account/profile/number/registration/webhook/rate/credential change, no
+application code, migration, dependency, configuration, or generated asset
+changed.
+
+### 1.1 Governance and autonomy-state reconciliation — corrected Round 3
+
+**The apparent conflict.** `docs/automation/AI-AUTONOMY-STATE.json`, read in
+full as part of this round's preflight, currently records a closure state for
+an entirely different, already-completed effort — RFC-005 Milestone 6
+(`contract_source: docs/automation/RFC-005-M6-CONTRACT.md`,
+`completed_pull_request: 164`) — with `implementation_authorized: false`,
+`allowed_paths: []`, `active_pull_request: null`, `next_candidate: null`, and
+a `forbidden_scope` that includes "No product, test, schema, config, or route
+change of any kind" and "Any future work requires separate, explicit human
+authorization." Read superficially, PR #224 (this Slice 3 contract's Rounds 1
+and 2, merged) and PR #225 (an unrelated Security Remediation Slice 0,
+merged) both landed real, substantial documentation/contract and code work
+respectively while that closure state stood unchanged and unadvanced.
+
+**The honest reconciliation, per `AGENTS.md`.** `AGENTS.md`'s only obligation
+regarding this file is: "Read `docs/automation/AI-AUTONOMY-STATE.json` before
+reviewing an automation-managed pull request. Enforce that file's allowed
+paths, required tests, and locked slice contract." Both clauses are scoped
+explicitly to *reviewing an automation-managed pull request* — one dispatched
+through the semi-autonomous Routine described in `CLAUDE.md`
+(`docs/automation/CLAUDE-ROUTINE-PROMPT.md` + this same state file's "locked
+task"). Neither PR #224 nor PR #225 was such a PR: both were carried out
+through `CLAUDE.md`'s own documented **Manual completion path**
+(`docs/automation/AI-SUBSCRIPTION-LOOP.md`, "Manual completion path") — a
+human operator directly, explicitly instructing an interactive Claude Code
+session for one specific, separately-scoped, separately-authorized piece of
+work, exactly as this present correction round was itself dispatched (the
+task instruction opening this round states plainly: "This is a
+human-owner-authorized, documentation-only post-merge correction. It does not
+authorize automatic implementation or activate the autonomous loop.").
+`CLAUDE.md` permits this path *instead of* dispatching the Routine, without
+requiring a Routine handoff, a Codex review, or — on its own text, and on
+`AGENTS.md`'s own text — an `AI-AUTONOMY-STATE.json` update. The state file's
+`current_slice`/`active_pull_request`/`allowed_paths` fields track the
+Routine's own one locked task; they were never the record of manually,
+directly human-authorized interactive work, and their remaining parked on
+RFC-005's closure while three unrelated manual efforts (Slice 5's PR #223,
+Slice 3's PR #224, Security Slice 0's PR #225) proceeded is the **expected**
+shape of the documented two-path system, not a silently-tolerated
+inconsistency.
+
+**Why no edit is made to `AI-AUTONOMY-STATE.json` in this round.** The task
+opening this round poses an explicit conditional: update the state file
+minimally and truthfully *if* `AGENTS.md` requires it to record manual
+documentation authorization; otherwise, if the schema cannot represent that
+without activating automation, stop and report the blocker rather than
+inventing semantics. Per the reconciliation above, `AGENTS.md` does **not**
+require it — its state-file obligation is scoped to reviewing
+automation-managed PRs, and this was not one. Separately, the schema itself
+offers no field shaped for "a one-off, human-authorized, non-automation
+correction is in progress": every field that could describe "work is
+happening" (`implementation_authorized`, `allowed_paths`,
+`active_pull_request`, `next_candidate`, `gate_label`) is, by this same
+file's own design, read by the Routine as automation authorization/gating
+state, not as a neutral audit log. Populating any of them — even narrowly,
+even truthfully, even scoped to this round's own documentation-only paths —
+would risk being mechanically misread, by the very Routine this task
+explicitly forbids reactivating, as a grant to advance automatically. That is
+precisely the outcome both this task and `AI-AUTONOMY-STATE.json`'s own
+`forbidden_scope` ("No automatic start of any work," "Any future work
+requires separate, explicit human authorization") exist to prevent. Rather
+than invent a safe-looking semantic the schema does not actually offer, this
+round makes **no edit** to `docs/automation/AI-AUTONOMY-STATE.json` at all —
+it is not part of this round's changed-path set — and instead records this
+reconciliation here, in the correction's own documentation, where a human or
+Codex reviewer will read it alongside the rest of this round's evidence. The
+file's RFC-005 closure state, its `ai:paused` gate label, and its blanket
+`forbidden_scope` remain completely intact and unweakened; nothing in this
+round enables automatic implementation, automatic advancement, or an
+autonomous loop for Slice 3, RFC-005, or anything else.
+
 ## 2. MECHANICAL REPOSITORY AUDIT — SUMMARY AND FILE:LINE EVIDENCE
 
 Items (1)-(18) are carried forward from the initial pass, unchanged, and
 remain the evidentiary basis for everything in §3-§4 that they support. Item
 (19) is new evidence gathered specifically for this correction round.
 
-**(1) Outbound SMS/MMS dispatch entry points.** Two independent families:
+**(1) Outbound SMS/MMS dispatch entry points — corrected Round 3, one
+citation was wrong and three real entry points were missing entirely.**
+Two independent families:
 
 * Legacy/B1-B4 core, all funnelling into `Campaigns` (which `extends
   SendCampaignSMS`, `app/Models/Campaigns.php:52`):
-  `EloquentCampaignRepository::quickSend()` (`app/Repositories/Eloquent/EloquentCampaignRepository.php:421,441,446` — switch on `sms_type` to `sendPlainSMS`/`sendVoiceSMS`/`sendMMS`), a second switch in the same file's bulk/scheduled `campaignBuilder()` path (`:1826,1830,1834`), `Campaigns`'s own internal dispatch switch (`app/Models/Campaigns.php:979,983,987`), and direct callers: `app/Library/Automation/Actions/SendMessageAction.php:139` (via `quickSend()`), `app/Console/Commands/SendScheduleAPIMessage.php:60,64,68`, `app/Console/Commands/CheckUserPreferences.php:103,129,179,205`, `app/Repositories/Eloquent/EloquentAnnouncementsRepository.php:105`, `app/Notifications/TwoFactorCode.php:82`, `app/Notifications/TopupNotification.php:75`.
+  `EloquentCampaignRepository::quickSend()` (`app/Repositories/Eloquent/EloquentCampaignRepository.php:421,441,446` — switch on `sms_type` to `sendPlainSMS`/`sendVoiceSMS`/`sendMMS`), `Campaigns`'s own internal dispatch switch (`app/Models/Campaigns.php:979,983,987`), and direct callers: `app/Library/Automation/Actions/SendMessageAction.php:139` (via `quickSend()`), `app/Console/Commands/CheckUserPreferences.php:103,129,179,205`, `app/Repositories/Eloquent/EloquentAnnouncementsRepository.php:105`, `app/Notifications/TwoFactorCode.php:82`, `app/Notifications/TopupNotification.php:75` (these last four are platform-initiated notifications, not customer-composed sends — deliberately out of Slice 3's customer-messaging scope, unchanged from the initial pass).
+
+  **Corrected citation.** The previous revision cited `:1826,1830,1834` as
+  "a second switch in the same file's bulk/scheduled `campaignBuilder()`
+  path." **This was wrong** — those three line numbers fall inside
+  `sendApi()` (`:1526-1894`), a completely different method reached only
+  from the public API, not from `campaignBuilder()` at all.
+  `campaignBuilder()` (`:847-1251`) contains **no inline dispatch switch of
+  its own**; its real chain, traced this round end to end, is:
+  `campaignBuilder()`'s immediate-send branch (`:1131-1134`, `status =
+  QUEUING`, `run_at = now()`) → `Campaigns::execute()`
+  (`Campaigns.php:1381-1417`, dispatches the `RunCampaign` job) →
+  `RunCampaign::handle()` (`app/Jobs/RunCampaign.php:38-86`) →
+  `Campaigns::run()` (`Campaigns.php:1092-1208`, dispatches a batch of
+  `LoadCampaign` jobs) → `LoadCampaign::handle()`
+  (`app/Jobs/LoadCampaign.php`) → `Campaigns::loadDeliveryJobsByIds()`
+  (`Campaigns.php:1799-1879`, builds `SendMessage` jobs) →
+  `SendMessage::send()` (`app/Jobs/SendMessage.php:122`, calls
+  `$this->campaign->send(...)`) → `Campaigns::send()`
+  (`Campaigns.php:807-876`) → **`Campaigns::sendSMS()`**
+  (`Campaigns.php:974-1003`, the already-allowlisted switch). Structurally,
+  this converges on the exact same delegation point `Campaigns.php:979,983,987`
+  already covers — but only after crossing three asynchronous job
+  boundaries, never synchronously inside `campaignBuilder()` itself, and
+  **no test anywhere in this document's prior revisions actually exercised
+  that chain** — T-MSG-9/10 assert delegation for `quickSend()` and for
+  `Campaigns`'s switch in isolation, never for a `campaignBuilder()`-created
+  campaign's full async path. §4.12 T-MSG-65/66 (new, below) close that gap.
+  The identical convergence, via the parallel `SendFileMessage` job, is how
+  `sendUsingFile()`'s (`:1894-2053`, file-upload campaigns) sends reach
+  `Campaigns::sendSMS()` too.
+
+  **Three entry points found this round that were absent from every prior
+  revision, not merely mislabeled — genuine, currently-undelegated gaps,
+  disclosed rather than silently left out:**
+  * `EloquentCampaignRepository::sendApi()` (`:1526-1894`, the actual owner
+    of the mislabeled `:1826,1830,1834` lines) — the public bulk/comma-separated-recipient
+    branch of the `sms/send`/`sms/campaign` API routes. Its own inline
+    switch calls `sendPlainSMS()`/`sendMMS()`/etc. **directly**, reaching
+    neither `quickSend()` nor `Campaigns::sendSMS()`.
+  * `app/Console/Commands/SendScheduleAPIMessage.php:60,64,68` — the cron
+    that later dispatches `sendApi()`'s scheduled branch; its own inline
+    switch calls the same dispatch methods directly, independently of
+    `sendApi()`'s own gap.
+  * `EloquentCampaignRepository::apiCampaignBuilder()`
+    (`:2165-2637`) — a structurally-identical sibling of `campaignBuilder()`
+    reached from the public `sms/campaign` API route
+    (`API\CampaignController@campaign`, `CampaignHTTPController@campaign`),
+    never mentioned anywhere in any prior revision of this document. Its
+    immediate branch (`:2560-2563`, `execute()` at `:2605`) converges on
+    `Campaigns::sendSMS()` through the identical async chain traced above
+    for `campaignBuilder()` — structurally covered by the same delegation
+    point, subject to the identical prior gap of being untested.
+
+  **Disposition, this round: fix what was asked, disclose the rest,
+  authorize nothing beyond either.** This correction's mandate is
+  `campaignBuilder()` specifically (§4.11, §4.12 below); it adds the
+  missing test proving that chain's existing structural coverage and
+  corrects the wrong citation. `sendApi()` and `SendScheduleAPIMessage.php`
+  are genuine, currently-live gaps — a managed Business's bulk/scheduled
+  API-driven sends can bypass `ManagedMessageDispatcher` entirely today,
+  and will continue to be able to after this correction ships, unless and
+  until a **separately authorized** correction adds their own delegation
+  seam. `apiCampaignBuilder()` requires no new seam (it already converges
+  on the covered switch) but does need the same missing-test treatment
+  `campaignBuilder()` gets here. Widening this correction's allowlist to
+  fix `sendApi()`/`SendScheduleAPIMessage.php` now would be exactly the
+  unauthorized scope-widening this task's own instructions forbid ("Do not
+  broadly authorize unrelated edits to the repository") — so this document
+  states the gap plainly instead of silently carrying it forward or
+  quietly fixing it out of scope. Tracked at §4.11's allowlist note and
+  §3's executability table as an explicit, named, not-fixed-here finding.
 * Agency Prospecting (entirely separate, never touches `SendCampaignSMS`):
-  `app/Jobs/AgencyProspectingInitialSendJob.php:98` → `AgencyProspectingMessageSender` contract → `app/Library/AgencyProspecting/ProviderAgencyProspectingMessageSender.php:38-42` (`match($channel->provider) { TYPE_TWILIO, TYPE_TELNYX }`).
+  `app/Jobs/AgencyProspectingInitialSendJob.php:98` → `AgencyProspectingMessageSender` contract → `app/Library/AgencyProspecting/ProviderAgencyProspectingMessageSender.php:38-42` (`match($channel->provider) { TYPE_TWILIO, TYPE_TELNYX }`). Its own docblock states it never touches `EloquentCampaignRepository::campaignBuilder()` or the legacy Campaigns/Reports tables — confirmed independent by design, not a gap.
+* Conversation/chat and DLR-triggered sends, already managed:
+  `ChatBoxController@sent`/`@reply` (`:313`,`:564`) and
+  `DLRController.php`'s STOP/opt-out/auto-reply handling
+  (`:765,782,804,846,862,899`) both call `quickSend()` — already covered by
+  the existing `quickSend()` delegation, no new path.
 
 **(2) The legacy raw-cURL dispatcher.** `app/Models/SendCampaignSMS.php`,
 18,188 lines. `sendPlainSMS()` at line 71, `sendVoiceSMS()` at line 13566,
@@ -511,7 +698,9 @@ concurrency.**
 | Removal of the shared fail-open default-to-user-1 write for **every** provider reached by `inboundDLR()`, without claiming signature verification for providers that do not have it | `DLRController::inboundDLR()`'s unconditional `else` branch (`:917-934`) | A narrow edit to the **existing** `inboundDLR()` method: no `Reports`/`ChatBox` write and no STOP/blacklist processing when `$phone_number` cannot be resolved | **No** | This is the exact behaviour named unacceptable in this correction round; it cannot be fixed by adding a new route beside the old one | §4.12 T-MSG-20/T-MSG-21 |
 | Secure BYO **Twilio** inbound, using data already on the connection | `DLRController::inboundTwilio()` | A narrow edit to the **existing** `inboundTwilio()` method: `Twilio\Security\RequestValidator` verification using the resolved `SendingServer.auth_token`, mirroring the Agency Prospecting precedent (item 10) | **No** | `auth_token` is already stored and already proven sufficient (item 10) — Option A is mechanically achievable today | §4.12 T-MSG-22 |
 | Fail-closed (not fail-open) BYO **Telnyx** inbound, honestly, given no per-connection Ed25519 material exists | `DLRController::inboundTelnyx()` | A narrow edit to the **existing** `inboundTelnyx()` method: Business-facing BYO Telnyx connections (identified via the existing `isManagedConnection()`-adjacent, read-only `CustomerBasedSendingServer` existence check, item 16) are disabled for inbound processing, not silently left fail-open | **No** | No schema exists to verify Telnyx BYO inbound (item 4); Option B is the only honest choice absent that material | §4.12 T-MSG-23 |
-| Managed outbound dispatch actually used by real sends | `EloquentCampaignRepository::quickSend()` (`:421,441,446`, `:1826,1830,1834`), `Campaigns`'s own switch (`Campaigns.php:979,983,987`) | Pre-dispatch managed-identity resolution/delegation inserted before each switch | **No** — neither file was in the row | Without this, a managed `BusinessMessagingIdentity` never leaves this document's tests | §4.12 T-MSG-9/T-MSG-10 |
+| Managed outbound dispatch actually used by real sends | `EloquentCampaignRepository::quickSend()` (`:421,441,446`), `Campaigns`'s own switch (`Campaigns.php:979,983,987`) | Pre-dispatch managed-identity resolution/delegation inserted before each switch | **No** — neither file was in the row | Without this, a managed `BusinessMessagingIdentity` never leaves this document's tests | §4.12 T-MSG-9/T-MSG-10 |
+| **Corrected Round 3 — `campaignBuilder()`'s async chain actually reaches the delegated switch, but was never tested and its evidence was mis-cited** | `campaignBuilder()` (`:847-1251`) → `execute()`→`RunCampaign`→`run()`→`LoadCampaign`→`SendMessage`→`Campaigns::send()`→**`Campaigns::sendSMS()`** (item 1) | No new implementation path — the existing `Campaigns.php` switch delegation already covers this chain structurally; a new test proving it | **N/A — already structurally covered**; the gap was test/evidence coverage, not delegation | The prior revision's citation for this chain (`:1826,1830,1834`) named a different method (`sendApi()`); no test exercised the real chain, so the claim was unverified, not merely undocumented | §4.12 T-MSG-65/T-MSG-66 |
+| **New this round, disclosed, not fixed here — `sendApi()`, `SendScheduleAPIMessage.php`, and `apiCampaignBuilder()`** | `EloquentCampaignRepository::sendApi()` (`:1526-1894`), `app/Console/Commands/SendScheduleAPIMessage.php:60,64,68`, `EloquentCampaignRepository::apiCampaignBuilder()` (`:2165-2637`) | `sendApi()`/`SendScheduleAPIMessage.php` each need their own delegation seam (not designed here); `apiCampaignBuilder()` needs only the same test treatment as `campaignBuilder()` (not built here) | **No** — none of the three appear in any prior revision of this row or the allowlist | Explicitly out of this round's authorized scope (campaignBuilder() only); disclosed here rather than silently carried forward, per this task's own "do not broadly authorize unrelated edits" instruction | Not built this round — tracked as an open finding, no ID assigned |
 | Authoritative, honestly-cardinalitied number-to-Business resolution | None — `PhoneNumbers`/`Senderid` (`business_id` nullable, no unique constraint) | New `business_messaging_identities` (profile-level) + new `business_messaging_numbers` (one-to-many number mapping) | **Partially** — `BusinessMessagingIdentity.php` and `database/migrations/**` were allowlisted; a single `phone_number` column on the identity could not honestly model "dedicated phone number(s)" | Candidate B permits multiple numbers per Business; a single column cannot represent that | §4.12 T-MSG-1..8 |
 | Real Telnyx adapter wiring | None | `TelnyxMessagingAdapter` in `app/Library/Messaging/**` | **Yes** — already allowlisted | No change needed | §4.12 T-MSG-13/T-MSG-14 |
 | Real network safety for the real adapter | None | `config('messaging.managed_messaging_enabled')` gate + `Http::preventStrayRequests()` in `tests/TestCase.php` | **No** — `tests/TestCase.php` was absent; the enable-switch design did not previously exist | Container resolution is not a security boundary; an explicit switch plus test-wide stray-request prevention is | §4.12 T-MSG-27..30 |
@@ -736,14 +925,52 @@ table entirely — the RFC-005-owned measurement quantity itself
 this specific send/receive happen, was it accepted, what is its current
 delivery state, and how do we find it again."
 
-**Indexes/constraints:**
+**Indexes/constraints — corrected Round 3 (2026-09-09).** Round 2's sweep
+replaced three PostgreSQL-only partial-unique-index claims on
+`business_messaging_identities`/`business_messaging_numbers` with the
+`STORED`-generated-column mechanism, but missed these two on this table,
+which used the identical invalid `UNIQUE(...) WHERE ... IS NOT NULL`
+syntax MySQL does not support. Unlike the three Round-2 invariants, neither
+column here needs a computed guard column at all: `operation_key` and
+`provider_message_id` carry no *conditional* uniqueness rule (there is no
+"only unique while some other column has value X"; every non-null value
+must simply be globally unique, full stop), which is exactly what an
+ordinary MySQL `UNIQUE` index already provides natively — MySQL treats
+each `NULL` as distinct for uniqueness purposes, so a nullable column
+under a plain `UNIQUE` index permits unlimited `NULL` rows while still
+rejecting any duplicate *non-null* value. The `STORED`-column idiom exists
+to encode a condition; there is no condition to encode here, so adding one
+would be unnecessary complexity, not a fix.
 
-* `UNIQUE(operation_key) WHERE operation_key IS NOT NULL` — outbound
-  idempotency.
-* `UNIQUE(provider, provider_message_id) WHERE provider_message_id IS NOT
-  NULL` — one shared namespace per provider across both directions (item
-  11's evidence), the inbound-replay guard and the DLR-replay guard alike.
+* Ordinary `UNIQUE(operation_key)` — outbound idempotency. `operation_key`
+  is `nullable()` (present on outbound rows only, per its column
+  definition above); every inbound row leaves it `NULL`, and MySQL permits
+  any number of `NULL` rows under this index without conflict. A second
+  outbound row inserted with an already-used, non-null `operation_key`
+  raises `Illuminate\Database\QueryException` from this index.
+* Ordinary composite `UNIQUE(provider, provider_message_id)` — one shared
+  namespace per provider across both directions (item 11's evidence). Rows
+  with a `NULL` `provider_message_id` (an outbound row not yet accepted by
+  the provider) never conflict with each other or with any other row,
+  again by MySQL's own null-handling in a `UNIQUE` index; a second row for
+  the same `provider` with an already-used, non-null
+  `provider_message_id` raises `QueryException`. **This index is
+  necessary but not sufficient to detect a delivery-status replay** — see
+  §4.6.3's corrected replay semantics below; the outbound operation row
+  that owns a given `provider_message_id` is expected to already exist by
+  the time its first delivery-status callback arrives, which is normal,
+  not a duplicate.
 * Index on `(business_id, occurred_at)` for support/reporting queries.
+
+**Historical-row behaviour, stated exactly.** Neither unique index is ever
+violated by an `attempted`-status row awaiting provider acceptance (both
+guarded columns are still `NULL` at that point), by an inbound row (which
+never carries an `operation_key`), or by any archived/superseded row —
+nothing here is ever deleted or nulled out after the fact to "free" the
+index; the two columns are simply write-once-then-immutable per row, so no
+historical row can ever collide with a later one once both are populated,
+and no row transitions in a way that would newly collide with an existing
+row either.
 
 ### `business_usage_measurements` (new table — RFC-005-owned, additive, generic; replaces the withdrawn table's measurement role)
 
@@ -947,7 +1174,7 @@ Eloquent):
 * `MessageDispatchStatus` — `ACCEPTED`, `REJECTED`.
 * `MessagingOperationStatus` (**new this round**) — `ATTEMPTED`, `ACCEPTED`, `REJECTED`, `DELIVERED`, `FAILED`.
 * `ProviderErrorCategory` — `RETRYABLE`, `TERMINAL`, `CONFIGURATION`, `UNKNOWN`.
-* `WebhookRejectionReason` (**new this round**) — `INVALID_SIGNATURE`, `MALFORMED_PAYLOAD`, `DUPLICATE`, `UNKNOWN_MAPPING`, `CONFLICTING_MAPPING`.
+* `WebhookRejectionReason` (**new this round**) — `INVALID_SIGNATURE`, `MALFORMED_PAYLOAD`, `DUPLICATE`, `UNKNOWN_MAPPING`, `CONFLICTING_MAPPING`, `REGRESSIVE_TRANSITION` (**new, Round 3** — a `DELIVERY_STATUS` callback requesting a transition absent from §4.6.3's permitted-next table for the operation's current status; distinct from `DUPLICATE`, which is an exact-status replay, not an invalid one).
 
 **Exceptions** (`app/Library/Messaging/Exceptions/`):
 
@@ -1162,10 +1389,24 @@ claims are limited to what Telnyx's own published documentation states.
    A payload that passes signature verification but fails to parse into the
    expected shape returns `400`, writes one `malformed_payload` rejection
    row, and does nothing else.
-3. **Provider-message-ID replay check.** Guarded upsert against
-   `business_messaging_operations`'s `UNIQUE(provider, provider_message_id)`.
-   A duplicate returns `200` (see 4.6.4) and does nothing further.
-4. **Dual-signal attribution — corrected this round, the central fix.**
+3. **Branch by event kind — corrected Round 3.** `$event->kind` decides what
+   "already exists" means, because the two kinds have opposite expected
+   states for `(provider, provider_message_id)`:
+   * `MESSAGE_RECEIVED` — a genuinely new row is expected. Guarded insert
+     against `business_messaging_operations`'s `UNIQUE(provider,
+     provider_message_id)`; a row already existing for this exact pair
+     means this exact inbound message was already processed — a true
+     replay. Returns `200` (see §4.6.4) and does nothing further. Continue
+     to step 4 only when no such row exists yet.
+   * `DELIVERY_STATUS` — an existing row is expected and required: it is
+     the outbound operation the provider is confirming delivery of,
+     already written when `ManagedMessageDispatcher` recorded the
+     provider's acceptance. Its existence is never, by itself, evidence of
+     replay — treating it as such would discard every message's first,
+     and often only, legitimate delivery-status callback. Skip step 4
+     entirely and go directly to the corrected §4.6.3 below.
+4. **Dual-signal attribution (MESSAGE_RECEIVED only) — corrected this round,
+   the central fix.**
    Both of the following are resolved **independently**:
    * `identityByProfile = BusinessMessagingIdentityResolver::resolveByMessagingProfileId($event->messagingProfileId)`
    * `identityByNumber = BusinessMessagingIdentityResolver::resolveByPhoneNumber($event->destinationNumber)`
@@ -1208,19 +1449,88 @@ any single-signal shortcut. Neither the Messaging Profile ID nor the
 destination number is ever, on its own, sufficient — this is the mechanical
 fix for the initial pass's "Profile ID as sole attribution key" defect.
 
-### 4.6.3 Delivery-status attribution
+### 4.6.3 Delivery-status attribution — corrected Round 3, replay semantics fixed
 
-A `DELIVERY_STATUS` event resolves **first** through the recorded outbound
-operation, by `provider_message_id`, against `business_messaging_operations`
-(never against a usage-measurement row, and never against the legacy
-`reports.status` packing). If the event's payload **also** carries
-`messagingProfileId`/`destinationNumber` evidence (Telnyx's own published
-`message.finalized` example payload includes both), that evidence is
-independently resolved and cross-checked against the stored operation's own
-`business_messaging_identity_id`; a mismatch is a `conflicting_mapping`
-rejection — the status update is **refused**, not applied — rather than
-trusting either source blindly. An unknown `provider_message_id` is treated
-identically to the unknown-mapping case above.
+**The defect this round fixes.** The prior revision treated
+`business_messaging_operations`'s `UNIQUE(provider, provider_message_id)`
+as a single, undifferentiated "have I seen this pair before" replay guard
+shared identically by inbound messages and delivery-status callbacks. That
+is correct for `MESSAGE_RECEIVED` (§4.6.2 step 3) but backwards for
+`DELIVERY_STATUS`: the outbound operation row **already holds** that exact
+`(provider, provider_message_id)` pair from the moment the provider
+accepted the send — long before any delivery-status callback arrives. A
+naive "row exists → this is a replay, discard it" check would have
+discarded the **first**, and frequently only, legitimate delivery-status
+callback for every managed message ever sent. Replay detection for a
+`DELIVERY_STATUS` event must instead compare the requested transition
+against the row's own **current status**, not against the row's mere
+existence.
+
+A `DELIVERY_STATUS` event resolves as follows, in order:
+
+1. **Locate, never create.** Resolve the existing outbound operation by
+   `(provider, provider_message_id)` against `business_messaging_operations`
+   (never against a usage-measurement row, and never against the legacy
+   `reports.status` packing). No row found (an unknown `provider_message_id`)
+   is an `unknown_mapping` rejection — refused, `200`, no state change.
+2. **Business-identity validation.** If the event's payload **also** carries
+   `messagingProfileId`/`destinationNumber` evidence (Telnyx's own published
+   `message.finalized` example payload includes both), that evidence is
+   independently resolved and cross-checked against the stored operation's
+   own `business_messaging_identity_id`; a mismatch — including evidence
+   that resolves to a **different** Business entirely — is a
+   `conflicting_mapping` rejection: refused, `200`, no state change, logged.
+   This is the existing cross-Business protection, unchanged in substance,
+   stated here as its own explicit step.
+3. **Status-transition guard — the corrected mechanism.** Determine the
+   requested target `MessagingOperationStatus` from `$event->deliveryStatus`
+   and apply **only** the permitted forward transition below. This is what
+   "was this exact callback already processed" actually means for a
+   `DELIVERY_STATUS` event: a function of the row's own current, already-persisted
+   `status`, never of the shared unique index's mere existence.
+
+   | Current `status` | Permitted next `status` | Set by |
+   |---|---|---|
+   | `attempted` | `accepted`, `rejected` | The outbound send path itself (`ManagedMessageDispatcher`), **never** a `DELIVERY_STATUS` callback — a callback can only ever move a row that is already `accepted` |
+   | `accepted` | `delivered`, `failed` | A `DELIVERY_STATUS` callback |
+   | `delivered` | *(none — terminal)* | — |
+   | `failed` | *(none — terminal)* | — |
+   | `rejected` | *(none — terminal)* | — |
+
+   * **Exact replay.** The requested target status equals the row's current
+     status: a no-op, `200`, logged as a `duplicate`-reasoned
+     `messaging_webhook_rejections` row (the same reason already used for an
+     inbound-message replay, §4.6.2 step 3), operation row unchanged. This
+     is the **only** circumstance in which this exact callback is recognized
+     as already processed — it becomes a no-op only *after* the first valid
+     transition into that status has actually been applied, never before.
+   * **Regressive or otherwise invalid transition.** The requested target
+     status is not in the table's permitted-next set for the row's current
+     status (moving backward — e.g. `delivered` → `accepted` — or out of a
+     terminal status to anything else, or any other combination absent from
+     the table): refused, `200`, logged as a **new**
+     `regressive_transition`-reasoned `messaging_webhook_rejections` row
+     (one new `WebhookRejectionReason::RegressiveTransition` case, additive
+     to the existing enum), operation row unchanged. The operation's status
+     can never move backward through a `DELIVERY_STATUS` callback, and an
+     out-of-order delivery from the provider can never corrupt an
+     already-later state.
+   * **Permitted forward transition.** The requested target status is
+     exactly the table's permitted next status: applied. `status` updates to
+     the new value; `occurred_at` is updated to reflect the callback's own
+     timestamp (never the original send's `occurred_at`). This is the first
+     and only application of that specific transition — a subsequent,
+     identical callback for the same target status now falls into the
+     "exact replay" case above.
+
+**What the shared unique index still does, and does not do (Round 3
+clarification).** `UNIQUE(provider, provider_message_id)` (§4.2) still does
+real, load-bearing work: it is what makes step 1's "locate the existing
+outbound operation" a unique, race-free lookup, and it still is exactly
+what guards inbound-message replay in §4.6.2 step 3. What it is **never**
+used for, after this correction, is deciding delivery-status replay by its
+own existence — that determination is made solely by the status-transition
+guard above.
 
 ### 4.6.4 Response-code and retry claims — corrected this round
 
@@ -1350,19 +1660,101 @@ document stops referring to it as if it did. Its representation:
 * Granted/revoked through the existing, generic
   `SubAccountController`-based permission-management surface, stored on
   `Customer.permissions` (item 19) — no new grant UI is built.
-* **Additional, Slice-3-owned restriction, beyond the generic mechanism.**
-  The generic sub-account permission system is not role-hierarchy-aware; it
-  would let anyone who can edit a sub-account's permissions grant this key to
-  any sub-account, including a Business-scoped one, which is stricter than
-  the parent contract's own §6 table (Platform owner/Agency owner only). The
-  relocated advanced-settings route therefore checks **both**
-  `Gate::allows('manage_advanced_provider')` **and** an explicit,
-  Slice-3-owned check that the acting account is Agency- or Platform-tier —
-  reusing whichever existing account-tier check this repository already uses
-  elsewhere for Agency-gated capabilities. This document does not invent a
-  method name for that check where it has not independently verified one;
-  identifying and citing the exact existing method is a required, narrow
-  step at implementation time, not a new capability to design from scratch.
+* **Additional, Slice-3-owned restriction, beyond the generic mechanism —
+  corrected Round 3: Workspace-owner-only, mechanically cited, not
+  deferred.** The generic sub-account permission system is not
+  role-hierarchy-aware; it would let anyone who can edit a sub-account's
+  permissions grant this key to any sub-account, including a
+  Business-scoped one, which is far looser than the parent contract's own
+  §6 table row for this exact capability: `Advanced / BYO provider
+  (manage_advanced_provider, new)` reads **Platform owner ✅, Agency owner
+  ✅, Agency admin ❌, Agency staff ❌, Business owner ❌, Business staff ❌,
+  Client (viewed) ❌** — Agency **owner**, not "Agency-tier," and explicitly
+  **not** Agency admin. The prior revision of this document deferred
+  identifying the exact existing predicate ("this document does not invent
+  a method name... identifying and citing the exact existing method is a
+  required, narrow step at implementation time"). That predicate is now
+  identified, mechanically, by direct citation:
+
+  * `WorkspaceCandidate::$isOwner` (`app/Library/Navigation/WorkspaceCandidate.php:28`)
+    is a public, readonly `bool`, computed once per Workspace in
+    `CustomerContextSnapshot::forUser()`
+    (`app/Library/Navigation/CustomerContextSnapshot.php:107`, `$isOwner =
+    (int) $row->workspace_owner_user_id === $userId`) and passed straight
+    into the candidate. It is the exact, already-existing, owner-exclusive
+    fact this rule needs — no new column, method, or query.
+  * It is **not** the same thing as `WorkspaceCandidate::canManage()`
+    (`WorkspaceCandidate.php:43-54`), whose own docblock states it plainly:
+    "Owner-or-active-Admin — the same authority rule `WorkspaceManager`
+    applies to every Workspace mutation." `canManage()` returns `true` for
+    an active Agency-wide Admin staff member even when `isOwner` is
+    `false` — exactly the actor §6's row marks ❌.
+  * **The merged Security Remediation Slice 0 guard already uses
+    `canManage()` here, and this is not a defect in Slice 0 to
+    retroactively fault.** `MessagingChannelsController::hasAdvancedProviderAccess()`
+    (added by the separately-authorized, already-merged Security
+    Remediation Slice 0) checks, in order: the Workspace resolves in the
+    caller's `CustomerContext::$workspaces`; `isAgency()`; `isActive`;
+    `canManage()`; `$business->status === BusinessStatus::Active`; then
+    `EntitlementManager::decide()` for `PlatformFeature::Conversations`.
+    Slice 0's job was to close an **immediately** exploitable fail-open gap
+    on the legacy, still-live credential surface, fast, without waiting for
+    Slice 3's relocation — `canManage()` (owner-or-admin) is strictly
+    narrower than what existed before Slice 0 (no server-side check at
+    all) and was never claimed to be the final, relocated surface's rule.
+    Slice 3 **relocates and tightens** that surface to its final,
+    contractually-correct form; it does not claim Slice 0 was wrong, and it
+    must not weaken anything Slice 0 already blocks.
+  * **The tightening, exactly.** At the relocated surface, the
+    Slice-3-owned check changes exactly one clause from Slice 0's guard:
+    `$workspaceCandidate->canManage()` becomes
+    `$workspaceCandidate->isOwner`. Every other clause (Agency tier, active
+    Workspace, active Business, the `Conversations`/relevant-feature
+    entitlement decision) is retained unchanged. This can only **narrow**
+    Slice 0's already-merged behaviour — every actor Slice 0 already denies
+    (Core/Growth tier, denied entitlement, inactive Business, cross-tenant,
+    unauthenticated) remains denied; the only actor newly denied by this
+    tightening is an Agency-wide active Admin/staff member who is not the
+    Workspace owner, who previously passed `canManage()` and must not pass
+    `isOwner`. `Gate::allows('manage_advanced_provider')` remains an
+    **additional**, independent requirement stacked on top — the owner must
+    also hold the granted permission; holding the permission alone, even at
+    Agency tier, is never sufficient without `isOwner`, and `isOwner` alone
+    is never sufficient without the granted permission. Either check may
+    narrow access further; **neither may substitute for, or widen past, the
+    other.**
+  * **Platform owner (§6's other ✅ cell) — disclosed honestly, not
+    invented.** "Platform owner" in §6 is the platform's own internal
+    administrator, authorized through this application's entirely separate,
+    already-existing platform-admin path — `users.is_admin` (`User.php:186`,
+    `isAdmin()`-shaped accessor), enforced independently by
+    `EnsureUserIsAdministrator` middleware on the distinct `Admin`
+    route/controller group, and by the repeated
+    `assertPlatformAdministrator()`-style direct `is_admin` read already
+    used by `EntitlementManager`, `UsageWalletManager`, and
+    `UsageBillingCheckoutManager`. This path is **never** derived from a
+    Workspace's plan tier, a Workspace membership row, or
+    `manage_advanced_provider` — a platform administrator with no Workspace
+    membership at all still qualifies, and an Agency-tier Workspace owner
+    does not become a platform administrator by virtue of their tier.
+    Slice 3 builds and touches only the customer-facing, per-Workspace
+    relocated route (§4.11's allowlist); it does not build a
+    platform-admin-side advanced-provider view. If the platform team later
+    wants platform administrators to manage a Business's advanced provider
+    settings directly, that surface must be reached through the existing,
+    separate `Admin`/`is_admin` boundary — never by loosening this
+    customer route's `isOwner` check, and never by inferring platform-owner
+    status from `WorkspacePlanTier::Agency` or from `canManage()`. This
+    document does not build that admin-side surface and says so plainly,
+    consistent with its own established practice of disclosing a gap
+    rather than silently inventing scope to close it.
+  * **Cross-Workspace and inactive-Workspace access.** Unchanged from Slice
+    0's existing shape: `guardAdvancedProviderAccess()`'s
+    `abort_unless(..., 404)` already fails closed, with no information
+    disclosure, for a Workspace the caller cannot resolve at all, an
+    inactive Workspace, or a foreign Business — this correction adds the
+    `isOwner` clause to the same existing 404 path; it introduces no new
+    response shape.
 * Audit behaviour: a grant/revoke of this specific key is recorded the same
   way every other `customer-permissions` change already is recorded by the
   existing `SubAccountController` flow — no new audit table is introduced
@@ -1479,8 +1871,8 @@ outside its own owning layer.
 |---|---|
 | Outbound operation/idempotency | `business_messaging_operations.operation_key` |
 | Provider acceptance | `business_messaging_operations.status` |
-| Inbound message replay | `business_messaging_operations` `UNIQUE(provider, provider_message_id)` |
-| DLR/delivery-status replay | Same constraint, status-transition guard |
+| Inbound message replay | `business_messaging_operations` `UNIQUE(provider, provider_message_id)` (guarded insert — a row already existing for the pair **is** the replay signal) |
+| DLR/delivery-status replay | **Corrected Round 3 — not the same signal.** The status-transition guard alone (§4.6.3): the row existing is normal and expected, never itself evidence of replay; only a callback whose requested status exactly equals the row's current status is a replay |
 | Security/rejection audit | `messaging_webhook_rejections`, via `MessagingWebhookRejectionRecorder` |
 | Usage quantity measurement | `business_usage_measurements`, via `UsageWalletManager::recordMeasurement()` only |
 | Wallet accounting | RFC-005's existing `business_usage_reservations`/ledger tables — **untouched by Slice 3** for telecom transport |
@@ -1515,9 +1907,21 @@ unasserted-on.
 * **Duplicate outbound submission.** `operationKey` checked against
   `business_messaging_operations.operation_key` before calling `send()` — a
   duplicate is a no-op returning the previously recorded result.
-* **Duplicate inbound webhook / duplicate DLR.** `UNIQUE(provider,
-  provider_message_id)` guarded insert/status-transition guard, both sharing
-  one table (§4.2's item-11-evidenced shared namespace).
+* **Duplicate inbound webhook.** `UNIQUE(provider, provider_message_id)`
+  guarded insert — the row already existing for the pair is itself the
+  replay signal (§4.6.2 step 3).
+* **Duplicate/regressive delivery-status callback — corrected Round 3, a
+  different mechanism from the above, not the same one.** The row already
+  existing for `(provider, provider_message_id)` is the *normal, expected*
+  state for a `DELIVERY_STATUS` event (it is the outbound operation being
+  confirmed), never itself a replay signal. Replay/invalidity is decided
+  solely by §4.6.3's status-transition guard: a callback whose requested
+  status equals the row's current status is an exact replay (no-op); one
+  requesting a status absent from the current status's permitted-next set
+  is regressive/invalid (refused); both share the same underlying table and
+  the same `UNIQUE(provider, provider_message_id)` index only in the sense
+  that the index is what makes locating the one correct row possible — the
+  index's existence is never read as "discard this."
 * **Provider-message-ID uniqueness and scope.** Enforced at the database
   level, scoped per `provider` (a composite constraint), so Telnyx's and
   Twilio's ID spaces never collide even though both are UUID-shaped.
@@ -1645,9 +2049,18 @@ two dead/duplicate Telnyx lines, no other line touched); `routes/customer.php`
 (existing — new routes only, for the relocated advanced-settings surface,
 plus removal of the old `businesses/{businessUid}/channels` route block);
 `app/Repositories/Eloquent/EloquentCampaignRepository.php` (existing — the
-pre-dispatch delegation insertion in `quickSend()` only);
+pre-dispatch delegation insertion in `quickSend()` only — **confirmed
+unchanged this round**: `campaignBuilder()` needs no delegation insertion of
+its own, since it never dispatches directly — it converges on
+`Campaigns.php`'s already-covered switch through the async chain traced in
+§2 item 1; **not** widened to include `sendApi()` or `apiCampaignBuilder()`,
+which are explicitly out of this round's scope per §4.11's prohibited-paths
+note below);
 `app/Models/Campaigns.php` (existing — the pre-dispatch delegation insertion
-in its own dispatch switch only); `tests/TestCase.php` (existing —
+in its own dispatch switch only — **confirmed this round** to already be the
+one convergence point for `quickSend()`, `Campaigns`'s own bulk/scheduled
+path, and `campaignBuilder()`'s async chain alike; no additional insertion
+point needed for the last of these); `tests/TestCase.php` (existing —
 **corrected this round, new addition**: one new line,
 `Http::preventStrayRequests()`, in the base test setup only);
 `app/Console/Commands/PurgeMessagingWebhookRejections.php` (new, corrected
@@ -1681,6 +2094,14 @@ row (§4.8's RFC-005 documentation-debt note).
   itself, in this branch (§4.8's documentation-debt note explains why).
 * Any real Telnyx API call, account, number, brand, campaign, or rate
   activation.
+* **New this round, disclosed:** `EloquentCampaignRepository::sendApi()`,
+  `app/Console/Commands/SendScheduleAPIMessage.php`, and
+  `EloquentCampaignRepository::apiCampaignBuilder()` — real, currently
+  undelegated outbound-dispatch entry points found during this round's
+  re-audit (§2 item 1). None is touched, tested, or delegated by this
+  correction; closing them is explicitly **not** authorized here and is
+  left for a separately-authorized future correction, named so the gap is
+  never silently carried forward as if fixed.
 
 ## 4.12 TEST MATRIX
 
@@ -1706,6 +2127,8 @@ Slice 3, none reused as a new ID below.
 | T-MSG-8 | **Exact E.164 normalization** — a set of equivalent input formats for the same number all normalize to one canonical E.164 value before any uniqueness check runs | `tests/Feature/Messaging/` |
 | T-MSG-9 | `EloquentCampaignRepository::quickSend()` for a Business with an active managed identity delegates to `ManagedMessageDispatcher`/`FakeMessagingAdapter`, never reaching `SendCampaignSMS`'s Telnyx `case` block | `tests/Feature/Business/` |
 | T-MSG-10 | `Campaigns`'s own dispatch switch shows the same delegation for its bulk/scheduled path | `tests/Feature/Business/` |
+| T-MSG-65 | **Corrected Round 3 — `campaignBuilder()`'s real async chain, not merely its entry, actually reaches the delegated switch.** For a Business with an active managed identity, a real `POST` to `CampaignController@storeCampaign` (through `campaignBuilder()`'s immediate/`QUEUING` branch), run through the real `RunCampaign`→`LoadCampaign`→`SendMessage` job chain (queue run synchronously in-test, not mocked away), delegates to `ManagedMessageDispatcher`/`FakeMessagingAdapter` and never reaches `SendCampaignSMS`'s Telnyx `case` block — closing the gap left by the prior revision's mis-cited, untested claim | `tests/Feature/Business/` |
+| T-MSG-66 | **Named integration test — both campaign-builder entry routes, full seam coverage.** For a managed Business, both `CampaignController@storeCampaign` and `OutreachController@storeSmsCampaign` (the two real, currently-reachable `campaignBuilder()` entry routes traced this round) are each exercised through the full async chain and proven, for each: (a) `ManagedMessageDispatcher`/`FakeMessagingAdapter` is called, never `SendCampaignSMS`'s provider `case` block; (b) the resolved `BusinessMessagingIdentity`/number is this Business's own, never another's; (c) exactly one `business_usage_measurements` row is written via `UsageWalletManager::recordMeasurement()`; (d) the request is refused with zero provider calls when `config('messaging.managed_messaging_enabled')` is `false` (kill-switch) or the Business's `Conversations`/messaging entitlement is denied; (e) exactly one `business_messaging_operations` row records the operation. This is the one test proving the two entry points found this round cannot bypass any of the five seams, together, not merely that each seam exists somewhere | `tests/Feature/Business/` |
 | T-MSG-11 | Business A's resolved identity/number can never be used to construct an `OutboundMessageRequest` for Business B's send | `tests/Feature/Messaging/` |
 | T-MSG-12 | A forged identity or number ID submitted as request input is never read by the outbound resolution path | `tests/Feature/Messaging/` |
 | T-MSG-13 | Each non-`active` identity status produces zero `FakeMessagingAdapter` calls | `tests/Feature/Messaging/` |
@@ -1718,13 +2141,27 @@ Slice 3, none reused as a new ID below.
 | T-MSG-20 | **Inactive/suspended/released number mapping** with an otherwise-valid Profile fails closed | `tests/Feature/Messaging/` |
 | T-MSG-21 | Invalid/missing signature on `inbound.telnyx_managed` returns `403`, writes one `invalid_signature` rejection row, updates no conversation data | `tests/Feature/Messaging/` |
 | T-MSG-22 | **Delivery-status operation resolution and evidence cross-check** — a `DELIVERY_STATUS` event resolves via the stored `provider_message_id`; when it also carries Profile/number evidence that conflicts with the stored operation's identity, the status update is refused | `tests/Feature/Messaging/` |
-| T-MSG-23 | Duplicate delivery of the same inbound/DLR webhook (`provider_message_id` replay) produces exactly one attributed effect, `200`, no second write | `tests/Feature/Messaging/` |
+| T-MSG-23 | Duplicate delivery of the same inbound `MESSAGE_RECEIVED` webhook (`provider_message_id` already recorded on an inbound row) produces exactly one attributed effect, `200`, no second write | `tests/Feature/Messaging/` |
+| T-MSG-49 | **Corrected Round 3 — the first legitimate DLR is never discarded as a replay.** An outbound operation with `status = accepted` and a real `provider_message_id` receives its first `DELIVERY_STATUS` callback targeting `delivered`; the row's `status` actually updates to `delivered` — proving the row's pre-existing `provider_message_id` is not itself misread as a replay signal (the exact defect this round fixes) | `tests/Feature/Messaging/` |
+| T-MSG-50 | **Exact DLR replay is a no-op only after the first transition.** The identical `delivered` callback from T-MSG-49 delivered a second time leaves `status` at `delivered` (unchanged), writes one `duplicate`-reasoned `messaging_webhook_rejections` row, and returns `200` | `tests/Feature/Messaging/` |
+| T-MSG-51 | **`accepted` → `delivered` is permitted and applied exactly once**, asserted independently of T-MSG-49/50's specific fixture, over the full `attempted` → `accepted` → `delivered` lifecycle from a real `send()` through two real webhook `POST`s | `tests/Feature/Messaging/` |
+| T-MSG-52 | **A regressive callback can never move `delivered` backward.** A `delivered` operation receives a further `DELIVERY_STATUS` callback targeting `accepted` (or any other non-terminal status); `status` remains `delivered`, one `regressive_transition`-reasoned `messaging_webhook_rejections` row is written, `200` is returned, and no other operation field changes | `tests/Feature/Messaging/` |
+| T-MSG-53 | **Unknown and cross-Business `provider_message_id`s on a `DELIVERY_STATUS` event fail closed**, asserted separately: (a) a `provider_message_id` with no matching operation row → `unknown_mapping`, `200`, no row created; (b) a matching operation row whose payload evidence resolves to a *different* Business than the row's own `business_messaging_identity_id` → `conflicting_mapping`, `200`, operation `status` unchanged | `tests/Feature/Messaging/` |
+| T-MSG-54 | **Inbound-message deduplication is independent of DLR processing.** Forcing an inbound `MESSAGE_RECEIVED` replay (same `provider_message_id` as an already-processed inbound row) and, in the same test run, forcing a DLR exact replay and a DLR regressive callback for an unrelated outbound operation, prove each of the three is detected and handled by its own mechanism (§4.6.2 step 3's guarded insert vs §4.6.3's status-transition guard) without any of the three suppressing or altering the others' outcome | `tests/Feature/Messaging/` |
 | T-MSG-24 | **Legacy Telnyx route cannot default to user 1** — a `POST` to `routes/public.php`'s legacy `inbound/telnyx/{gateway?}` with an unattributable `from` number writes no `Reports`/`ChatBox` row and no STOP/blacklist entry | `tests/Feature/Messaging/` |
 | T-MSG-25 | **Legacy Twilio route cannot default to user 1** — same assertion against `inboundTwilio()` | `tests/Feature/Messaging/` |
 | T-MSG-26 | **BYO Twilio inbound is securely verified** — a `POST` to the legacy Twilio route with a valid `X-Twilio-Signature` (matching a fixture `auth_token`) is processed; an invalid one is rejected before `inboundDLR()` runs | `tests/Feature/Messaging/` |
 | T-MSG-27 | **Missing BYO verification material / BYO Telnyx inbound explicitly disabled** — a `POST` to the legacy Telnyx route for a `CustomerBasedSendingServer`-linked (BYO) connection makes no `Reports`/`ChatBox` write regardless of payload content, and records the disablement | `tests/Feature/Messaging/` |
 | T-MSG-28 | **Duplicate/dead Telnyx route cannot bypass canonical handling** — `routes/web.php`'s two former duplicate lines no longer resolve to any route after this correction | `tests/Feature/Messaging/` |
-| T-MSG-29 | **`manage_advanced_provider` flag authorization** — the relocated advanced-settings route is unreachable without both the granted permission and the Agency/Platform-tier check | `tests/Feature/Security/` |
+| T-MSG-29 | **`manage_advanced_provider` flag authorization, corrected Round 3** — the relocated advanced-settings route is unreachable without both the granted permission and the Workspace-**owner** check (`isOwner`, not tier alone and not `canManage()`) | `tests/Feature/Security/` |
+| T-MSG-55 | **Workspace owner, entitled and permitted, retains full access** to the relocated advanced-settings route — the positive case proving the tightening narrows, not breaks | `tests/Feature/Security/` |
+| T-MSG-56 | **An active Agency Admin — not the owner — is denied `404`** even holding `manage_advanced_provider` and even under `canManage() === true`, on every method the relocated surface exposes, by direct URL | `tests/Feature/Security/` |
+| T-MSG-57 | **Ordinary Agency staff (owner-or-admin neither) is denied `404`** on the relocated surface, with and without `manage_advanced_provider` granted | `tests/Feature/Security/` |
+| T-MSG-58 | **Selected-scope staff assigned to the Business is denied `404`** on the relocated surface — Business-scope assignment is not Workspace ownership | `tests/Feature/Security/` |
+| T-MSG-59 | **Core/Growth-tier Workspace owner is denied `404`** on the relocated surface — owner status alone, without Agency/Platform tier, is insufficient (unchanged from Slice 0, re-asserted at the relocated route) | `tests/Feature/Security/` |
+| T-MSG-60 | **A platform operator reaches equivalent Business data, if at all, only through the existing, separate `is_admin`/`EnsureUserIsAdministrator` admin boundary — never through the relocated customer route.** An authenticated platform administrator with no Workspace membership at all is denied `404` on the customer-facing relocated route by direct URL, proving platform-owner access (§6) is never inferred from `WorkspacePlanTier::Agency` or from this route at all | `tests/Feature/Security/` |
+| T-MSG-61 | **Inactive Workspace fails closed `404`** for an actor who would otherwise be the owner — an owner of a Workspace with `is_active = false` is denied exactly like Slice 0's existing inactive-Business/inactive-membership cases | `tests/Feature/Security/` |
+| T-MSG-62 | **Cross-tenant direct URL fails closed `404`** — a Workspace owner of Workspace A supplying Workspace B's UID (a Business they do not own or manage at all) is denied on every one of the relocated surface's methods, GET and mutation alike | `tests/Feature/Security/` |
 | T-MSG-30 | **Old BYO routes removed/redirected** — the pre-relocation `businesses/{businessUid}/channels` routes no longer resolve after relocation ships | `tests/Feature/Business/` |
 | T-MSG-31 | `TelnyxMessagingAdapter` throws `MessagingProviderNotConfiguredException` when `managed_messaging_enabled` is `false`, even with otherwise-complete `services.telnyx` config, before any HTTP call | `tests/Feature/Messaging/` |
 | T-MSG-32 | Real credentials present but the enable switch off produces **zero** HTTP calls across a representative set of adapter operations | `tests/Feature/Messaging/` |
@@ -1743,6 +2180,8 @@ Slice 3, none reused as a new ID below.
 | T-MSG-45 | **Archived history does not block a legitimate replacement.** Archiving identity A for Business X (an `UPDATE` recomputing its guard column to `NULL`), then inserting fresh `pending` identity B for Business X, succeeds without conflict; A's row is neither deleted nor modified beyond its `status`/`archived_at` | `tests/Feature/Messaging/` |
 | T-MSG-46 | **Reactivation re-runs every invariant.** With identity A archived and identity B `active` for the same Business, an `UPDATE` reactivating A (`status: archived → active`) raises `QueryException` from the same `UNIQUE(provider, active_or_pending_business_id)` index that would have blocked a fresh creation; with B archived first, the identical reactivating `UPDATE` on A succeeds | `tests/Feature/Messaging/` |
 | T-MSG-47 | **Forward, rollback, and replay work on the repository's actual database.** Running `php artisan migrate` for both new migrations, confirming the constraint-violation behaviour above holds, running `php artisan migrate:rollback` and confirming both tables no longer exist, then running `php artisan migrate` again (replay) and confirming the identical constraint-violation behaviour holds unchanged — executed against this repository's real configured MySQL connection, not a driver-agnostic in-memory substitute | `tests/Feature/Messaging/` |
+| T-MSG-63 | **Corrected Round 3 — `operation_key` and `(provider, provider_message_id)` are ordinary, NULL-tolerant unique indexes, proven against the repository's actual MySQL version.** Two outbound rows both left with `operation_key = NULL` (mirroring an inbound row's shape) coexist without conflict; a raw insert duplicating an already-used, non-null `operation_key` raises `Illuminate\Database\QueryException`. Both assertions executed against this repository's real configured MySQL connection, not an in-memory substitute (mirrors T-MSG-47's method) | `tests/Feature/Messaging/` |
+| T-MSG-64 | **Corrected Round 3 — same proof for `(provider, provider_message_id)`.** Multiple rows sharing `provider = 'telnyx'` with `provider_message_id = NULL` (outbound rows not yet accepted) coexist without conflict; a raw insert duplicating an already-used, non-null `(provider, provider_message_id)` pair raises `QueryException`; a duplicate pair under a *different* `provider` value does not conflict, proving the composite (not single-column) scope | `tests/Feature/Messaging/` |
 | T-MSG-48 | **The RFC-005 measurement seam writes through its own repository, at the right layer.** `UsageWalletManager::recordMeasurement()` calls `BusinessUsageMeasurementRepository::recordOnce()` (asserted via a spy/fake repository binding, mirroring how `UsageWalletManager`'s existing repository dependencies are already tested); no code path in `app/Library/Messaging/**` holds a reference to `BusinessUsageMeasurementRepository`, `EloquentBusinessUsageMeasurementRepository`, `BusinessUsageMeasurement`, or the `business_usage_measurements` table directly | `tests/Feature/Usage/` |
 
 **Ownership.** Every ID above is owned by Slice 3 alone; none collides with
@@ -1786,7 +2225,7 @@ measurement seam, and the legacy-route work.
 10. Full regression: `ConversationsPlainSmsMeteringTest.php`,
     `AgencyProspectingRuntimeTest.php`, every existing
     `tests/Feature/Business/**`/`tests/Feature/Security/**` test, run
-    alongside the full T-MSG-1..48 matrix plus the five inherited IDs.
+    alongside the full T-MSG-1..66 matrix plus the five inherited IDs.
 
 Adjustable if implementation-time evidence proves a safer sequence
 necessary — not itself authorization to implement (§1).
@@ -1815,9 +2254,16 @@ necessary — not itself authorization to implement (§1).
 * **No isolation control is described as "implemented"** anywhere — §4.5-§4.8
   describe what Slice 3 **will build**.
 * **No uniqueness invariant is described as enforced by a mechanism this
-  repository's database cannot execute** — corrected this round; every
-  `UNIQUE` constraint in §4.2 targets a real, physical, `STORED` generated
-  column, never a `WHERE`-qualified "partial" index.
+  repository's database cannot execute.** Round 2 corrected the three
+  identity/number invariants to a real, physical `STORED` generated column
+  plus an ordinary `UNIQUE` index; **Round 3 corrected the two invariants
+  Round 2's own sweep missed** — `business_messaging_operations`'s
+  `operation_key` and `(provider, provider_message_id)` indexes, which
+  needed no generated column at all (neither carries a *conditional*
+  uniqueness rule), only an ordinary nullable-column `UNIQUE` index (§4.2).
+  As of this round, every `UNIQUE` constraint anywhere in §4.2 is either a
+  `STORED`-generated-column index or an ordinary index on a plain nullable
+  column — never a `WHERE`-qualified "partial" index.
 * **Every cited path/symbol** was verified against the merged tree at
   `6c820c801da08ecfd6165d1d3a52ae6336606f0c`, including this round's new
   greps/reads (`manage_advanced_provider`, `preventStrayRequests`,
@@ -1828,13 +2274,33 @@ necessary — not itself authorization to implement (§1).
   read in full, `ProviderCustomerOwnershipTest.php` read in full,
   `UsageWalletManager`'s constructor and `AppServiceProvider.php`'s
   repository-binding array).
+* **Round 3's additional citations**, verified against `origin/main` at
+  `ef0c01346b517fa093d7d95b3384cf25689a0288` (which contains
+  `6c820c801d...` in its history via PR #219/#224): `WorkspaceCandidate.php`
+  (`$isOwner` property and `canManage()` body, `app/Library/Navigation/WorkspaceCandidate.php:28,43-54`),
+  `CustomerContextSnapshot.php` (`$isOwner` computation,
+  `app/Library/Navigation/CustomerContextSnapshot.php:107`),
+  `MessagingChannelsController.php`'s merged Security Remediation Slice 0
+  guard (`guardAdvancedProviderAccess()`/`hasAdvancedProviderAccess()`,
+  `:361-423`), `User.php:186` (`is_admin` accessor),
+  `EnsureUserIsAdministrator.php:34`, `EntitlementManager.php:1377-1379`'s
+  `assertPlatformAdministrator()`, `WorkspaceMembershipRole.php`/`WorkspaceBusinessAccessScope.php`'s
+  exact enum cases, `EloquentCampaignRepository.php`'s `campaignBuilder()`
+  (`:847-1251`) and `apiCampaignBuilder()` (`:2165-2637`) read in full,
+  `Campaigns.php`'s `execute()`/`run()` (`:1381-1417`, `:1092-1208`),
+  `app/Jobs/RunCampaign.php`, `app/Jobs/LoadCampaign.php`,
+  `app/Jobs/SendMessage.php:122`, `EloquentCampaignRepository.php`'s
+  `sendApi()` (`:1526-1894`), and `app/Console/Commands/SendScheduleAPIMessage.php:60,64,68`.
 * **Every internal `§` reference** resolves to a section in this document
-  (§1-§4.13) or, when prefixed "parent contract," to that document's current
-  numbering (§6, §11, §21, §22, §24, §27, §28), re-confirmed current.
-* **Test-to-slice map has no duplicates or unowned tests:** T-MSG-1..48 are
+  (§1-§4.13, including new §1.1) or, when prefixed "parent contract," to
+  that document's current numbering (§6, §11, §21, §22, §22.1, §22.2, §24,
+  §27, §28), re-confirmed current.
+* **Test-to-slice map has no duplicates or unowned tests:** T-MSG-1..66 are
   unique IDs; T-MSG-1/2/7/14/39 are corrected in place from Round 1 (same ID,
-  no renumbering), T-MSG-43..48 are new this round; the five inherited IDs
-  are unchanged and were not renumbered.
+  no renumbering), T-MSG-43..48 are new from Round 2, T-MSG-49..66 are new
+  this round (Round 3); the five inherited IDs (T-PROV-1, T-PROV-2, T-BYO-1,
+  T-BYO-2, T-SCOPE-1) are unchanged and were not renumbered; no ID above is
+  reused across two rows.
 * **No live credential value or secret-shaped example** appears anywhere.
 
 ## 6. VALIDATION
@@ -1842,7 +2308,16 @@ necessary — not itself authorization to implement (§1).
 * Only two paths changed in this branch across all three correction rounds:
   this document and the parent contract's §22.1 (and its narrow §27 C-3
   extension). No source code, migration, configuration, dependency, or
-  generated asset changed.
+  generated asset changed. **Round 3 confirms this remains true**: its five
+  findings are a governance reconciliation recorded in prose (§1.1, no edit
+  to `docs/automation/AI-AUTONOMY-STATE.json`), two corrected index
+  definitions (§4.2), a corrected/added evidence trail and new tests for an
+  already-covered dispatch chain plus disclosure of three separately-scoped
+  gaps (§2 item 1, §3, §4.11, §4.12), a corrected replay-semantics design
+  (§4.6.2/§4.6.3/§4.9), and a corrected authorization predicate citation
+  (§4.7) — every one a documentation/design/test-specification change to
+  this not-yet-implemented contract, never a change to real application
+  code, migration, configuration, dependency, or generated asset.
 * `git diff --check`: clean — verified below.
 * Every cited path in §2-§4 exists in the merged tree, or is explicitly
   marked `(new)`.
@@ -1882,6 +2357,32 @@ necessary — not itself authorization to implement (§1).
     tenancy in the contracted managed or BYO-Twilio-secured path; zero claim
     that `403` (or any status code) prevents Telnyx retry beyond what its own
     documentation states; no real Telnyx call is authorized; no retail rate
+* **Round 3 stale-phrase sweep, run in full across all five corrections,
+  confirms:**
+  * **Zero** remaining `UNIQUE(...) WHERE ... IS NOT NULL`, "partial unique
+    index," "filtered index," or "conditional unique index" anywhere in this
+    document or the parent contract, outside explicit historical/prohibition
+    callouts (§2 item 1's Round 2 recap, §4.2's own corrected-in-place
+    bullets, §5's checklist) — re-swept over the whole of both documents,
+    not only the tables named in the task that prompted this round.
+  * **Zero** remaining claim that `business_messaging_operations`'s shared
+    `(provider, provider_message_id)` index, or the row existing under it,
+    is itself proof of delivery-status replay — every surviving reference
+    (§4.6.3, §4.8's responsibility table, §4.9) states the corrected
+    status-transition-guard mechanism instead.
+  * **Zero** remaining claim that `canManage()` (or "Agency-tier"/"Agency or
+    Platform-tier" alone) is the relocated advanced-provider surface's
+    owner-equivalent check — every surviving reference (§4.7, §4.12's
+    T-MSG-29/55-62) names `WorkspaceCandidate::$isOwner` exactly.
+  * **Zero** remaining claim that `EloquentCampaignRepository.php`'s only
+    outbound-dispatch surface needing delegation is `quickSend()` — §2 item
+    1 and §3 now also name `campaignBuilder()`'s (structurally covered, now
+    tested) chain and disclose `sendApi()`/`SendScheduleAPIMessage.php`/`apiCampaignBuilder()`
+    as separately-scoped, undelegated findings.
+  * **Zero** implication that this round's governance reconciliation (§1.1)
+    edited, or needed to edit, `docs/automation/AI-AUTONOMY-STATE.json` —
+    the file is confirmed untouched by this branch's diff (§6, below).
+  * No real Telnyx call is authorized; no retail rate
     is activated; no Managed Accounts launch field exists.
 * Secret-shaped-string sweep over every line added/changed in this branch:
   none found.
@@ -1890,4 +2391,4 @@ necessary — not itself authorization to implement (§1).
 
 ---
 
-**CUSTOMER EXPERIENCE SLICE 3 MESSAGING PROVIDER CONTRACT — CORRECTION ROUND 2 READY FOR HUMAN/CHATGPT REVIEW**
+**CUSTOMER EXPERIENCE SLICE 3 MESSAGING PROVIDER CONTRACT — CORRECTION ROUND 3 (POST-MERGE) READY FOR HUMAN/CHATGPT REVIEW**
