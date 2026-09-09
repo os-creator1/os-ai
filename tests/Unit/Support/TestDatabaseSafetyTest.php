@@ -63,6 +63,8 @@ class TestDatabaseSafetyTest extends TestCase
             'app production database' => ['ultimatesms_production'],
             'live database' => ['ultimatesms_live'],
             'unrelated database' => ['mysql'],
+            'a connection URL, not a name' => ['mysql://root@db.example.com/ultimatesms'],
+            'a host-qualified name' => ['db.example.com.ultimatesms_testing'],
             'prefix collision' => ['ultimatesms_testingx'],
             'canonical as a suffix' => ['prod_ultimatesms_testing'],
             'suffix says production' => ['ultimatesms_testing_production'],
@@ -91,6 +93,8 @@ class TestDatabaseSafetyTest extends TestCase
     {
         return [
             'sql injection' => ['ultimatesms_testing_a;DROP DATABASE x'],
+            'grant wildcard' => ['ultimatesms_testing_%'],
+            'like wildcard' => ['ultimatesms_testing_a%b'],
             'backtick' => ['ultimatesms_testing_`x`'],
             'quote' => ["ultimatesms_testing_'x"],
             'space' => ['ultimatesms_testing_a b'],

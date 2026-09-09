@@ -20,6 +20,20 @@
 /bootstrap/cache/routes-v7.php
 /bootstrap/cache/events.php
 
+# Runtime uploads written by the application (and by the branding and
+# website test suites) into the build DESTINATION directory. Laravel Mix
+# indexes public/images when it copies resources/images, so anything left
+# here is swept into public/mix-manifest.json and can reach a commit —
+# four such entries did. Never tracked; tests/Unit/Assets/
+# MixManifestIntegrityTest.php fails the build if any reach the manifest.
+/public/images/websites/
+/public/images/branding/logo/
+/public/images/branding/logo_compact/
+/public/images/branding/logo_dark/
+/public/images/branding/favicon/
+/public/images/branding/auth_illustration/
+/public/images/branding/installer_illustration/
+
 /public/hot
 /public/storage
 /storage/*.key

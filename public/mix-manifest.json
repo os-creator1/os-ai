@@ -1126,7 +1126,6 @@
     "/images/branding/default-favicon.svg": "/images/branding/default-favicon.svg",
     "/images/branding/default-logo-compact.svg": "/images/branding/default-logo-compact.svg",
     "/images/branding/default-logo.svg": "/images/branding/default-logo.svg",
-    "/images/branding/logo_compact/727679202c88a1b0488772e8b14070e7b9145fd1aee905ac5da6482d9d4b3b49.png": "/images/branding/logo_compact/727679202c88a1b0488772e8b14070e7b9145fd1aee905ac5da6482d9d4b3b49.png",
     "/images/icons/audio.png": "/images/icons/audio.png",
     "/images/icons/doc.png": "/images/icons/doc.png",
     "/images/icons/file.png": "/images/icons/file.png",
@@ -1186,8 +1185,5 @@
     "/images/pages/verify-email-illustration-dark.svg": "/images/pages/verify-email-illustration-dark.svg",
     "/images/pages/verify-email-illustration.svg": "/images/pages/verify-email-illustration.svg",
     "/images/portrait/small/avatar-s-11.jpg": "/images/portrait/small/avatar-s-11.jpg",
-    "/images/profile/profile.jpg": "/images/profile/profile.jpg",
-    "/images/websites/1e5ec7d5-79b8-46d3-9c43-621e2748eea3/9557761a0b4820dda52ab2e4eb0743a4e5e1f8d9aaf9872fa377971d1a2242ff.png": "/images/websites/1e5ec7d5-79b8-46d3-9c43-621e2748eea3/9557761a0b4820dda52ab2e4eb0743a4e5e1f8d9aaf9872fa377971d1a2242ff.png",
-    "/images/websites/3d381b34-dec6-4712-bfe2-b0c80e6299e0/9557761a0b4820dda52ab2e4eb0743a4e5e1f8d9aaf9872fa377971d1a2242ff.png": "/images/websites/3d381b34-dec6-4712-bfe2-b0c80e6299e0/9557761a0b4820dda52ab2e4eb0743a4e5e1f8d9aaf9872fa377971d1a2242ff.png",
-    "/images/websites/868c4999-b473-4619-bfbf-172dd85a3244/9557761a0b4820dda52ab2e4eb0743a4e5e1f8d9aaf9872fa377971d1a2242ff.png": "/images/websites/868c4999-b473-4619-bfbf-172dd85a3244/9557761a0b4820dda52ab2e4eb0743a4e5e1f8d9aaf9872fa377971d1a2242ff.png"
+    "/images/profile/profile.jpg": "/images/profile/profile.jpg"
 }

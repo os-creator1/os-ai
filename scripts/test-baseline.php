@@ -238,7 +238,46 @@ foreach (['config:clear', 'cache:clear', 'view:clear', 'route:clear'] as $comman
 }
 
 // ---------------------------------------------------------------------
-// 3. Migrate — into the validated database and nothing else
+// 3. Validate the database LARAVEL RESOLVES — not the argument
+// ---------------------------------------------------------------------
+//
+// Step 1 validated the name the caller ASKED for. That is not the name
+// the framework will USE: `.env`, `.env.<APP_ENV>`, a stale
+// bootstrap/cache/config.php or a DATABASE_URL can all redirect the
+// connection. Migrations are destructive, so the resolved target is
+// checked immediately before them, in a process booted under exactly the
+// environment those migrations will run under.
+
+$resolved = $runStep(
+    'resolve the database Laravel actually uses',
+    [$php, 'scripts/resolve-test-database.php']
+);
+
+if ($resolved['code'] !== 0) {
+    fwrite(STDERR, "[test-baseline] The resolved database is not a permitted disposable test database.\n");
+    exit(EXIT_UNSAFE_DATABASE);
+}
+
+if (preg_match('/^RESOLVED_DATABASE=(.+)$/m', $resolved['output'], $matches) !== 1) {
+    fwrite(STDERR, "[test-baseline] Could not determine the resolved database.\n");
+    exit(EXIT_UNSAFE_DATABASE);
+}
+
+$resolvedDatabase = trim($matches[1]);
+
+if ($resolvedDatabase !== $database) {
+    fwrite(STDERR, sprintf(
+        "[test-baseline] Selected [%s] but Laravel resolved [%s]. Refusing to continue.\n",
+        $database,
+        $resolvedDatabase
+    ));
+    exit(EXIT_UNSAFE_DATABASE);
+}
+
+fwrite(STDOUT, "[test-baseline] resolved : {$resolvedDatabase}\n");
+
+// ---------------------------------------------------------------------
+// 4. Migrate — into the resolved, validated database and nothing else
 // ---------------------------------------------------------------------
 
 $migrate = $runStep('artisan migrate --force', [$php, 'artisan', 'migrate', '--force']);
@@ -249,7 +288,7 @@ if ($migrate['code'] !== 0) {
 }
 
 // ---------------------------------------------------------------------
-// 4. Assets the suite genuinely needs
+// 5. Assets the suite genuinely needs
 // ---------------------------------------------------------------------
 
 if (! $skipAssets) {
@@ -289,7 +328,7 @@ if (! $skipAssets) {
 }
 
 // ---------------------------------------------------------------------
-// 5. The suite itself
+// 6. The suite itself
 // ---------------------------------------------------------------------
 
 $phpunit = $root . '/vendor/bin/phpunit';

@@ -11,6 +11,31 @@ relaxed or made conditional in order to go green.
 
 ---
 
+## 0. Correction round 1 — synchronised with main
+
+| | |
+|---|---|
+| Pre-merge branch HEAD | `727158e312767c2442a20ad43a59cbb8ab49853c` |
+| Fetched `origin/main` | `98e063aabf0f8f67bc02190ce761064f8889ed22` |
+| Merge commit | `70c5b2db1e255ef08f3ff2c336309b8795858efd` |
+| Conflicts | **none** |
+
+Main had advanced by eight commits, all documentation: Lane B's Telnyx
+managed-messaging architecture decision (PR #219) and the automation
+trigger/recipe expansion contract (PR #220), plus edits to the customer
+experience contract. Exactly three files, none of which this branch
+touches, so the merge was clean and every merged contract is preserved
+byte-for-byte — verified by diffing each against `origin/main` after the
+merge. The merge changed no build input: `resources/`, `webpack.mix.js`,
+`package.json` and `package-lock.json` are identical before and after.
+
+All assets were regenerated **after** the merge, from the merged tree, on
+a clean dependency install. §2's baseline figures were measured on
+`d2b275ec` and are left as recorded; §6.1 carries the post-remediation
+result.
+
+---
+
 ## 1. Baseline
 
 | | |
@@ -82,8 +107,13 @@ Mechanically traced:
 * `webpack/lib/SizeFormatHelpers.js` was **removed in webpack 5.107.0**.
   Verified by downloading the published tarballs: 5.99.9, 5.101.3,
   5.102.1, 5.104.1, 5.105.4 and 5.106.2 contain it; 5.107.0, 5.107.1,
-  5.107.2, 5.108.4, 5.109.0 and 5.110.3 do not. **5.106.2 is the last
-  version that ships it.**
+  5.107.2, 5.108.4, 5.109.0 and 5.110.3 do not.
+
+**There is a SECOND, EARLIER boundary — see §2.1.** Pinning to 5.106.2
+(the last version shipping `SizeFormatHelpers`) still fails, because
+`webpack@5.106.0` began validating `ProgressPlugin` options and
+`webpackbar@5.0.2` passes `name`/`color`/`reporters`/`reporter`. The
+effective compatible ceiling is therefore **5.105.4**, not 5.106.2.
 
 Downstream consequences, all one defect:
 
@@ -100,6 +130,62 @@ Downstream consequences, all one defect:
 Confirmed instance:
 `BusinessKnowledgeProfileControllerTest::test_missing_stale_and_present_fields_are_all_displayed`.
 This is **not** a Business Knowledge Profile defect.
+
+### A.1 — The webpack pin, revalidated against the real dependency pair
+
+Both constraints re-proved against the tarballs published today, and
+against the actually-installed `laravel-mix@6.0.49` + `webpackbar@5.0.2`:
+
+| webpack | `lib/SizeFormatHelpers` | ProgressPlugin validates options | verdict |
+|---|---|---|---|
+| 5.104.1 | present | no | compatible |
+| 5.105.0 | present | no | compatible |
+| **5.105.4** | **present** | **no** | **compatible — the ceiling** |
+| 5.106.0 | present | **yes** | breaks `webpackbar@5.0.2` |
+| 5.106.2 | present | yes | breaks `webpackbar@5.0.2` |
+| 5.107.0 | **removed** | yes | breaks `laravel-mix@6.0.49` |
+| 5.110.3 | removed | yes | breaks both |
+
+`5.105.4` is the newest release in the compatible window, so the pin is
+the **narrowest** solution — the smallest possible step back from the
+floating `^5.60.0` that laravel-mix declares, not an arbitrary downgrade.
+
+Determinism and drift, both proved mechanically:
+
+* `npm ci` from the committed lock installs exactly `5.105.4`, and the
+  lock contains **one** `node_modules/webpack` entry resolved to the
+  5.105.4 tarball. Only one webpack copy exists on disk.
+* The override **cannot silently float**: changing it in `package.json`
+  without regenerating the lock makes `npm ci` fail loudly with
+  `EUSAGE … Invalid: lock file's webpack@5.105.4 does not satisfy
+  webpack@5.104.1`.
+* No package in the tree asks for a webpack newer than 5.105.4 — the most
+  restrictive declared range is laravel-mix's own `^5.60.0`.
+* Both `npm run development` and `npm run production` succeed.
+
+The wider frontend stack is deliberately untouched.
+
+### A.2 — The manifest indexed its own destination directory **(6)**, corrected
+
+`webpack.mix.js` copies `resources/images` into `public/images`, and Mix
+records what it finds in the **destination**. `resources/images/websites/`
+does not exist — but `public/images/websites/<uuid>/` does, because the
+website and branding suites upload real files there and never clean up.
+
+Consequences:
+
+* every build on a machine that has run the suite produced a **different**
+  manifest;
+* **four such entries reached the previous commit** — one
+  `/images/branding/logo_compact/<sha>.png` and three
+  `/images/websites/<uuid>/<sha>.png`.
+
+Corrected by removing the untracked uploads before building. The
+regenerated manifest has **1187 entries, zero runtime-upload entries**,
+and differs from the previously committed one by exactly those 4 removals
+— 0 added, 0 values changed. `tests/Unit/Assets/MixManifestIntegrityTest.php`
+now fails the suite if any reappear, and `.gitignore` keeps the upload
+directories out of a commit.
 
 ### B — Branding footer **(4)**
 
@@ -275,6 +361,44 @@ platform, plus a tail of that file for live progress. The step's raw log
 is now written by the child directly, which this command has to keep
 anyway.
 
+### H3 — The guard validated the ARGUMENT, not the resolved database **(3)**, corrected
+
+Correction round 1. `scripts/test-baseline.php` validated the name the
+caller asked for and then ran migrations — a destructive step — without
+ever asking Laravel what it would actually connect to. Between the two sit
+`.env`, `.env.<APP_ENV>`, a stale `bootstrap/cache/config.php` and
+`DATABASE_URL`, any of which redirects the connection.
+
+`scripts/resolve-test-database.php` now boots the framework under exactly
+the environment the destructive steps will use and reports the resolved
+database, refusing when it is not a permitted disposable one (exit 3),
+when it disagrees with the caller's selection (exit 4), when
+`DATABASE_URL` is set at all, or when the open connection's own
+`SELECT DATABASE()` disagrees with the configuration. The baseline command
+runs it **after** clearing caches and **before** migrating, and aborts on
+any mismatch.
+
+Proved, each as a real subprocess in
+`tests/Feature/Support/ResolvedTestDatabaseGuardTest.php`: empty name,
+production-looking name, bare application database, uppercase, quote,
+wildcard, path separator, connection URL, semicolon, excessive length,
+`DATABASE_URL` present, a **cached configuration that disagrees with the
+selection**, and a subprocess attempting to substitute a different
+database. The canonical name and an isolated sibling are both still
+accepted.
+
+### I2 — The isolation trait leaked on re-activation **(3)**, found by its own new test
+
+Correction round 1. `useTemporaryEnvironmentFile()` overwrote its record
+of the active temporary directory without deleting the previous one, so a
+second activation in the same process leaked a directory. Normal runs
+activate once per test via `Tests\TestCase`, so nothing leaked in
+practice — but the new
+`tests/Feature/Support/TemporaryEnvironmentFileTest.php` drives the trait
+directly and caught it. It now restores before re-activating, which also
+guarantees the new copy is seeded from the **real** environment file
+rather than from the copy already in force.
+
 ### J — Concurrency-test orchestration **(7)/(9)**
 
 Cross-process concurrency tests fail intermittently with
@@ -329,6 +453,13 @@ committed as churn.
 * `tests/Support/UsesTemporaryEnvironmentFile.php` *(new — env-file isolation)*
 * `tests/Unit/Support/TestDatabaseSafetyTest.php` *(new)*
 * `tests/TestCase.php` *(applies the env-file isolation to every test)*
+* `tests/Feature/Support/TemporaryEnvironmentFileTest.php` *(new — round 1)*
+* `tests/Feature/Support/ResolvedTestDatabaseGuardTest.php` *(new — round 1)*
+* `tests/Fixtures/EnvironmentIsolationProbeTest.php` *(new — round 1; outside both
+  phpunit testsuites, driven only as a subprocess)*
+* `tests/Unit/Assets/MixManifestIntegrityTest.php` *(new — round 1)*
+* `tests/Feature/Assets/AssetRenderSmokeTest.php` *(new — round 1)*
+* `tests/Feature/Branding/BrandingEnvPointerTest.php` *(new — round 1)*
 * `tests/Feature/Entitlement/Support/concurrent_business_slot_runner.php`
 * `tests/Feature/Workspace/Support/concurrent_workspace_resolver_runner.php`
 * `tests/Feature/Workspace/Support/concurrent_backfill_runner.php`
@@ -372,6 +503,8 @@ here so the next person does not rediscover it from scratch.
 ### 3.7 Reliable baseline command
 
 * `scripts/test-baseline.php` *(new — the whole implementation)*
+* `scripts/resolve-test-database.php` *(new — round 1; boots the framework
+  and reports the database it actually resolves)*
 * `composer.json` *(one script entry)*
 
 ### 3.8 Documentation
@@ -418,6 +551,25 @@ Until then, those four files pin the suite to the canonical
 exit code 3 when the suite runs against an isolated database. That is a
 known, recorded, Lane-A-owned deferral — not a silent failure.
 
+**Re-audited against `origin/main` `98e063aa` (correction round 1).** Lane
+A has **not** merged its fix: both runners in current main still carry
+`const EXPECTED_DATABASE = 'ultimatesms_testing';`. Its branch
+`agent/customer-experience-slice-5-wallet-payer-ux` remains unmerged.
+`git diff origin/main HEAD -- tests/Feature/Usage tests/Unit/Usage
+app/Library/Usage` is empty, so this branch has touched none of it.
+
+The four deferred failures therefore stand, each naming its own cause:
+
+| Test | Message |
+|---|---|
+| `ConversationsConcurrencyTest::test_same_idempotency_key_concurrent_reserve_calls_yield_exactly_one_reservation` | `Refusing to run: resolved database is [<isolated>], expected [ultimatesms_testing].` |
+| `ConversationsConcurrencyTest::test_concurrent_quicksend_produces_exactly_one_provider_invocation_and_one_accounting_outcome` | same |
+| `SlotAgreementConcurrencyTest::test_real_concurrent_allocation_never_double_allocates` | `Holder process never signaled lock acquisition: Refusing to run: …` |
+| `SlotAgreementConcurrencyTest::test_real_concurrent_retry_produces_exactly_one_failed_transition` | `P1 must succeed: Refusing to run: …` |
+
+**This branch does not claim a fully green suite.** It claims zero
+failures that this branch owns.
+
 ---
 
 ## 6. Acceptance criteria
@@ -443,16 +595,24 @@ known, recorded, Lane-A-owned deferral — not a silent failure.
 
 ## 6.1 Result
 
-| | Before (`d2b275e`) | After |
-|---|---|---|
-| Tests | 4992 | 5026 (+34 new safety tests) |
-| Assertions | 21 129 | 28 118 |
-| Errors | 911 | 0 |
-| Failures | 35 | 4 |
-| Distinct failing tests | **947** | **4** |
+| | Before (`d2b275e`) | Round 0 | **Round 1 (merged main)** |
+|---|---|---|---|
+| Tests | 4992 | 5026 | **5070** |
+| Assertions | 21 129 | 28 118 | **28 408** |
+| Errors | 911 | 0 | **0** |
+| Failures | 35 | 4 | **4** |
+| Distinct failing tests | **947** | 4 | **4** |
 
-Both runs used an isolated database (`ultimatesms_testing_mbr1`) on the
-same machine and toolchain.
+Every run used an isolated database on the same machine and toolchain —
+`ultimatesms_testing_mbr1` for the first two, a freshly created
+`ultimatesms_testing_r1` for round 1. The 44 additional tests are the
+correction-round-1 coverage: environment-file isolation (10), the
+resolved-database guard (16), manifest integrity (4), asset render smoke
+(4), branding env pointer (8), plus two further refused name shapes.
+
+`.env` and `.env.testing` are **byte-identical** before and after the
+5070-test run, and the working tree carries no vendor, upload, cache, log
+or temporary-database artifact.
 
 All four remaining failures are the **Lane-A-owned deferrals recorded in
 §5**, and each names its own cause:
@@ -502,6 +662,61 @@ it, one of the two runs would have silently corrupted the other.
 
 No schema change is made, so no migration fresh/rollback/forward cycle is
 required beyond the migrate step the baseline command performs.
+
+---
+
+## 7.1 Regenerated-asset classification (correction round 1)
+
+Every file the merged-tree rebuild touches, classified. Only the first
+three categories are committed.
+
+| Category | Files | Committed | Evidence |
+|---|---|---|---|
+| **Required new runtime output** | 0 | — | `theme-tokens.js`, `theme-settings.js` and the three Geist files were already added in the previous commit and rebuild **byte-identical** |
+| **Output of a changed source** | 0 | — | The merge changed no build input, and all 48 CSS + 24 JS + 3 font outputs rebuild byte-identical to the committed bytes |
+| **Manifest change** | 1 | **yes** | `public/mix-manifest.json` — removes 4 runtime-upload entries (§A.2); 0 added, 0 values changed |
+| **Pure rebuild noise** | 443 + 23 | **no** | 443 `public/vendors/**` re-minified by a newer terser (`(function(){…})` losing a redundant parenthesis pair); 23 `public/js/scripts/**` differing only by CRLF vs LF, which vanish under the `.gitattributes` clean filter |
+
+That the source-derived assets rebuild byte-identical is the important
+result: it proves the committed CSS/JS/fonts genuinely correspond to the
+merged sources rather than being stale artifacts of the old base.
+
+**Build determinism.** Three consecutive clean production builds produced
+byte-identical manifests. Every one of the 1187 manifest targets exists on
+disk.
+
+**Verified through the real application**, not just on disk:
+`tests/Feature/Assets/AssetRenderSmokeTest.php` renders an authenticated
+and an unauthenticated page under `APP_DEBUG=true` **and**
+`APP_DEBUG=false`, asserting each shell asset is referenced by the HTML,
+exists on disk, and that no "Unable to locate Mix file" text appears. Both
+modes matter and fail differently: with debug true a missing entry throws
+and every page-rendering test errors; with debug false the page renders
+while silently referencing an asset that 404s in a browser.
+
+## 7.2 `.gitattributes` hardening (correction round 1)
+
+Audited the tracked tree: **no** `.bat`, `.cmd`, `.ps1`, `.psm1`, `.psd1`,
+`.vbs`, `.reg`, `.sln`, `.csproj`, `.vcxproj`, `.vbproj`, `.props` or
+`.targets` files exist today. Explicit `text eol=crlf` rules are declared
+for all of them anyway, so the first one added cannot be corrupted by the
+global LF rule — `cmd.exe` mis-parses an LF batch file, `regedit` rejects
+a non-CRLF `.reg`, PowerShell signature blocks are line-ending sensitive,
+and Visual Studio rewrites `.sln`/`*proj` as CRLF on every save.
+
+Verified with `git check-attr`:
+
+* `*.woff2`, `*.ico`, `*.eot`, `*.ttf`, `*.zip` → `binary: set`,
+  `text: unset` — never line-ending converted;
+* `*.svg` stays `text: auto`, `eol: lf` — it is XML text, correctly so;
+* `build.bat`, `deploy.cmd`, `Install.ps1`, `App.sln`, `settings.reg` →
+  `text: set`, `eol: crlf`.
+
+**Renormalization preview.** `git add --renormalize .` changes the index
+content of **zero** files beyond the three this branch edits deliberately
+(`.gitattributes`, `.gitignore`, `public/mix-manifest.json`). The stored
+blobs were already LF, so adding `.gitattributes` introduces no
+repository-wide churn and none is staged.
 
 ---
 

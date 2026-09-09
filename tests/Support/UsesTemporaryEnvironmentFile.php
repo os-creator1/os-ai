@@ -56,6 +56,16 @@ trait UsesTemporaryEnvironmentFile
      */
     protected function useTemporaryEnvironmentFile(): string
     {
+        // Re-activating must never leak the previous copy, and must seed
+        // the new one from the REAL environment file rather than from the
+        // copy already in force. Restoring first guarantees both. (Normal
+        // runs activate exactly once per test via Tests\TestCase, so this
+        // only matters for a test that drives the trait directly — which
+        // is precisely how the leak was found.)
+        if ($this->temporaryEnvironmentDirectory !== null) {
+            $this->restoreEnvironmentFile();
+        }
+
         $sourcePath = $this->app->environmentFilePath();
 
         $this->originalEnvironmentPath = $this->app->environmentPath();

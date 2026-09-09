@@ -12,6 +12,31 @@
 # so "the bytes on disk" means the same thing everywhere.
 * text=auto eol=lf
 
+# Platform-specific scripts and project files that Windows tooling
+# requires — or strongly expects — to be CRLF. The global rule above must
+# never reach them. None of these are tracked today; they are declared up
+# front so the first one added cannot be silently corrupted on checkout.
+#
+#   *.bat/*.cmd  cmd.exe mis-parses a multi-line LF batch file, most
+#                visibly around labels and `goto`.
+#   *.reg        regedit rejects a .reg file that is not CRLF.
+#   *.ps1 etc.   Authenticode signature blocks are line-ending sensitive.
+#   MSBuild/VS   .sln and *proj files are rewritten as CRLF by the IDE,
+#                so LF guarantees a diff on every save.
+*.bat      text eol=crlf
+*.cmd      text eol=crlf
+*.reg      text eol=crlf
+*.ps1      text eol=crlf
+*.psm1     text eol=crlf
+*.psd1     text eol=crlf
+*.vbs      text eol=crlf
+*.sln      text eol=crlf
+*.csproj   text eol=crlf
+*.vbproj   text eol=crlf
+*.vcxproj  text eol=crlf
+*.props    text eol=crlf
+*.targets  text eol=crlf
+
 # Binary assets: never touched, never diffed as text.
 *.png binary
 *.jpg binary
