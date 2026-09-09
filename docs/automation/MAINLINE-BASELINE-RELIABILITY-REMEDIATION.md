@@ -43,8 +43,8 @@ Everything else from the earlier branch is deliberately absent and is
 introduced by this branch, and used by exactly the five test files below.
 Its class docblock describes the general problem it was written for; on
 this branch it is applied to the Usage and Blacklists subprocesses only.
-Four other subprocess scripts still compare against the literal canonical
-name and are untouched — see §5.
+Eight other test files still compare against the literal canonical name
+and are untouched — see §5.
 
 ---
 
@@ -155,9 +155,9 @@ the whole point of the change.
 
 ### 4.1 The guard, proven directly against the runners
 
-Fourteen probes, run against the real runner scripts rather than a
-restatement of them. Every refusal exits **3** and names its own reason,
-before any database write:
+Sixteen probes, run against the real runner scripts rather than a
+restatement of them — fourteen refusals and two positive controls. Every
+refusal exits **3** and names its own reason, before any database write:
 
 | Handoff | `concurrent_slot_agreement_runner.php` | `concurrent_conversations_send_runner.php` |
 |---|---|---|
@@ -282,8 +282,8 @@ claiming one.** 970 errors and 17 failures remain, every one of them
 | Errors | 968 | `MixFileNotFoundException: /js/core/theme-tokens.js` (§4.4) |
 | Error | 1 | `WorkspaceTransitionsMigrationSchemaTest` — `Workspace/Support/TemporaryTestDatabase.php` requires the literal canonical database and refuses on an isolated one |
 | Error | 1 | `OpportunityManagerBeginRunTest::test_heartbeat_one_second_past_the_timeout_cutoff_is_abandoned` — `RunAlreadyActiveException` |
-| Failures | 9 | `EntitlementManagerConcurrencyTest` (8) and `WorkspaceManagerConcurrencyTest` (1) — the same hardcoded-canonical-database defect this branch fixes for Usage, in support files outside its seven paths |
-| Failures | 8 | Branding upload validation, two Business Knowledge Profile, three Website, `WorkspaceManagerTest` — pre-existing defects in files this branch does not touch |
+| Failures | 10 | `EntitlementManagerConcurrencyTest` (8), `WorkspaceManagerConcurrencyTest` (1) and `WorkspaceManagerTest` (1) — the same hardcoded-canonical-database defect this branch fixes for Usage, in files outside its seven paths |
+| Failures | 7 | Branding upload validation, two Business Knowledge Profile and three Website — pre-existing defects in files this branch does not touch |
 
 For comparison: the withdrawn branch reported 5 196 tests and a green
 suite. It could, because it also carried the asset repair, the
@@ -345,20 +345,27 @@ seven-path allowlist:
   allowlisted path. The helper's behaviour is instead proven here by
   direct negative-case probes against the real runners (§4) — but the unit
   test should follow in the next change.
-* **A family of Workspace and Entitlement support files still pins the
-  canonical name.** `Entitlement/Support/concurrent_business_slot_runner.php`,
+* **Eight Workspace and Entitlement test files still pin the canonical
+  name** — six support scripts and two test classes:
+  `Entitlement/Support/concurrent_business_slot_runner.php`,
   `Workspace/Support/concurrent_workspace_resolver_runner.php`,
   `Workspace/Support/concurrent_backfill_runner.php`,
   `Workspace/Support/run_historical_m1a_suite.php`,
   `Workspace/Support/run_workspace_enforcement_suite.php`,
   `Workspace/Support/TemporaryTestDatabase.php`,
+  `Workspace/WorkspaceManagerConcurrencyTest.php` and
+  `Workspace/WorkspaceManagerTest.php` each compare against the literal
+  `ultimatesms_testing` in executable code — the last two through
+  `assertSame('ultimatesms_testing', DB::connection()->getDatabaseName())`.
+  They are safe as they stand — they refuse, or fail, rather than write to
+  the wrong place — but they cannot run on an isolated database, which is
+  visible in §4.5 as ten failures and one error whenever the suite is
+  pointed anywhere but the canonical database.
   `Workspace/Support/EnforcementWorkspaceTestCase.php` and
-  `Workspace/Support/VerifiesEnforcementWorkspaceDatabase.php` each compare
-  against the literal `ultimatesms_testing`. They are safe as they stand —
-  they refuse rather than write to the wrong place — but they cannot run on
-  an isolated database, which is visible in §4.5 as nine failures and one
-  error whenever the suite is pointed anywhere but the canonical database.
-  Converting them onto this helper is the natural next change, and is
+  `Workspace/Support/VerifiesEnforcementWorkspaceDatabase.php` are **not**
+  in this set: they name `ultimatesms_testing` only in a comment recording
+  that they deliberately never use it.
+  Converting the eight onto this helper is the natural next change, and is
   outside this branch's seven paths.
 
 ---
