@@ -11,6 +11,7 @@ use App\Models\BusinessGoogleLocation;
 use App\Models\BusinessGoogleOperation;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Tests\Feature\GoogleBusinessProfile\Concerns\CreatesGoogleBusinessProfileFixtures;
 use Tests\TestCase;
 
@@ -245,10 +246,21 @@ class GoogleBusinessProfileBudgetAndConfigTest extends TestCase
      * database state change, any provider call, and without exposing a
      * credential.
      *
+     * Security Remediation Slice 0 §16.A.4 (D-21) — this test predates the
+     * operator/customer message split: it originally asserted the setting
+     * fragment appeared in the CUSTOMER-facing session message, which is
+     * exactly the leak D-21 fixes. The customer now always sees the same
+     * plain, setting-free copy; the exact fragment this test used to
+     * expect on the customer response is asserted against the operator
+     * log instead, so this test still proves each specific fault is still
+     * diagnosable.
+     *
      * @dataProvider brokenConfigurations
      */
     public function test_incomplete_or_mismatched_configuration_fails_safely(string $key, mixed $value, string $expectedFragment): void
     {
+        Log::spy();
+
         [$customer, $business, $workspace] = $this->entitledTenant();
         $this->authenticateAsCustomer($customer);
 
@@ -258,7 +270,11 @@ class GoogleBusinessProfileBudgetAndConfigTest extends TestCase
             ->assertRedirect();
 
         $this->assertSame('error', session('status'));
-        $this->assertStringContainsString($expectedFragment, (string) session('message'));
+        $this->assertSame(
+            "Google connections aren't available right now. This is something we need to fix on our side — we've been notified.",
+            (string) session('message'),
+        );
+        $this->assertStringNotContainsString($expectedFragment, (string) session('message'));
 
         // NO state change, NO provider call.
         $this->assertDatabaseCount('business_google_connections', 0);
@@ -268,6 +284,11 @@ class GoogleBusinessProfileBudgetAndConfigTest extends TestCase
         // NO credential value is disclosed.
         $this->assertStringNotContainsString('test-client-secret', (string) session('message'));
         $this->assertStringNotContainsString('test-client-id', (string) session('message'));
+
+        // The exact fault is still diagnosable — by the operator, in logs.
+        Log::shouldHaveReceived('error')->once()->withArgs(
+            fn (string $message, array $context) => str_contains($context['operator_message'] ?? '', $expectedFragment),
+        );
     }
 
     /**
