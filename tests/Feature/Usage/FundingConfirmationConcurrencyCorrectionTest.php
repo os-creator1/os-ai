@@ -31,6 +31,7 @@ use App\Repositories\Contracts\BusinessRepository;
 use App\Repositories\Contracts\BusinessUsageAddonPurchaseRepository;
 use App\Repositories\Contracts\BusinessUsageAddonPurchaseTransitionRepository;
 use App\Repositories\Contracts\BusinessUsageLedgerEntryRepository;
+use App\Repositories\Contracts\BusinessUsageMeasurementRepository;
 use App\Repositories\Contracts\BusinessUsageLimitTransitionRepository;
 use App\Repositories\Contracts\BusinessUsageRateActivationRepository;
 use App\Repositories\Contracts\BusinessUsageRateRepository;
@@ -277,12 +278,16 @@ class FundingConfirmationConcurrencyCorrectionTest extends TestCase
         // the delegate for every genuine credit call.
         $realWalletManager = app(UsageWalletManager::class);
 
-        // Each of UsageWalletManager's own twelve constructor dependencies
-        // is resolved individually via the container, in exactly the
-        // order its own constructor declares them, so the mock below is
-        // genuinely, validly constructed — not left with twelve null
-        // properties, which is what happens when Mockery::mock() is given
-        // no constructor-argument array at all.
+        // Each of UsageWalletManager's own constructor dependencies is
+        // resolved individually via the container, in exactly the order its
+        // own constructor declares them, so the mock below is genuinely,
+        // validly constructed — not left with null properties, which is
+        // what happens when Mockery::mock() is given no
+        // constructor-argument array at all.
+        //
+        // Customer Experience Slice 3 §4.8 appended a thirteenth dependency,
+        // BusinessUsageMeasurementRepository, to that constructor; because
+        // this list is positional it must be extended in step.
         $mock = Mockery::mock(UsageWalletManager::class, [
             app(BusinessUsageWalletRepository::class),
             app(BusinessUsageRateRepository::class),
@@ -296,6 +301,7 @@ class FundingConfirmationConcurrencyCorrectionTest extends TestCase
             app(BusinessUsageLimitTransitionRepository::class),
             app(BusinessUsageWalletBillingStatusTransitionRepository::class),
             app(BusinessBillingReceiptRepository::class),
+            app(BusinessUsageMeasurementRepository::class),
         ])->makePartial();
 
         // Recursion guard: a single, closure-captured flag, set to true on

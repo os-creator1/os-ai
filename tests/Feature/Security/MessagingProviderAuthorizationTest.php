@@ -338,7 +338,13 @@ class MessagingProviderAuthorizationTest extends TestCase
         $customer->user->email_verified_at = now();
         $customer->user->save();
 
-        $this->withSession(['permissions' => collect(array_merge(['access_backend'], $permissions))]);
+        // Customer Experience Slice 3 §4.7 — the relocated surface stacks a
+        // granted manage_advanced_provider permission on top of Workspace
+        // ownership. Slice 0's own positive cases predate that permission
+        // existing at all, so it is granted here; every negative case in
+        // this file still fails on the ownership/tier/entitlement clause
+        // it was written to exercise, which is why they all still pass.
+        $this->withSession(['permissions' => collect(array_merge(['access_backend', 'manage_advanced_provider'], $permissions))]);
         $this->actingAs($customer->user);
     }
 
