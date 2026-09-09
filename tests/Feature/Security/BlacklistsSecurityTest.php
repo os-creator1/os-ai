@@ -11,6 +11,7 @@ use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Tests\Feature\Business\Concerns\CreatesBusinessTestData;
+use Tests\Support\TestDatabaseSafety;
 use Tests\TestCase;
 
 /**
@@ -413,12 +414,28 @@ class BlacklistsSecurityTest extends TestCase
         $fixturesJson = var_export(json_encode($fixtures), true);
         $outputPathExported = var_export($outputPath, true);
 
+        $expectedDatabaseExported = var_export(TestDatabaseSafety::activeTestDatabase(), true);
+
         $script = <<<PHP
             <?php
             require {$basePath} . '/vendor/autoload.php';
             \$app = require {$basePath} . '/bootstrap/app.php';
             \$kernel = \$app->make(Illuminate\\Contracts\\Console\\Kernel::class);
             \$kernel->bootstrap();
+
+            // This child CREATES AND DELETES users, customers and
+            // blacklist rows, so it must prove where it is pointed before
+            // writing anything — the same rule every other subprocess in
+            // this repository follows. The parent resolved and validated
+            // its own disposable database above and baked the exact name
+            // in here; TestDatabaseSafety refuses anything that is not
+            // that database.
+            try {
+                \\Tests\\Support\\TestDatabaseSafety::assertMatchesActiveTestDatabase({$expectedDatabaseExported});
+            } catch (\\Throwable \$e) {
+                fwrite(STDERR, 'Refusing to run: ' . \$e->getMessage() . " Aborting before any database write.\\n");
+                exit(3);
+            }
 
             \$createdUserIds = [];
             \$createdBlacklistIds = [];
