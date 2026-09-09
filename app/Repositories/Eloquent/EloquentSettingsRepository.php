@@ -309,7 +309,14 @@ BROADCAST_DRIVER=' . $driver . '
 ';
 
             // @ignoreCodingStandard
-            $env        = file_get_contents(base_path('.env'));
+            // Resolved ONCE and reused for both the read and the write,
+            // so a single operation can never straddle two different
+            // files. Was base_path('.env'), which under APP_ENV=testing
+            // is not the file the framework has loaded;
+            // app()->environmentFilePath() is the same path in production
+            // and the active one everywhere else.
+            $envPath    = app()->environmentFilePath();
+            $env        = is_file($envPath) ? file_get_contents($envPath) : '';
             $rows       = explode("\n", $env);
             $unwanted   = 'PUSHER_APP_ID|PUSHER_APP_KEY|PUSHER_APP_SECRET|PUSHER_APP_CLUSTER|BROADCAST_DRIVER';
             $cleanArray = preg_grep("/$unwanted/i", $rows, PREG_GREP_INVERT);
@@ -318,7 +325,7 @@ BROADCAST_DRIVER=' . $driver . '
             $env         = $cleanString . $pusher_setting;
 
             try {
-                file_put_contents(base_path('.env'), $env);
+                file_put_contents($envPath, $env);
 
                 return true;
 

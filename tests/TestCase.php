@@ -38,24 +38,40 @@ abstract class TestCase extends BaseTestCase
      */
     use UsesTemporaryEnvironmentFile;
 
-    protected function setUp(): void
-    {
-        parent::setUp();
-
-        $this->useTemporaryEnvironmentFile();
-    }
-
     /**
      * PHPUnit runs tearDown() after a passing test, after a failed
-     * assertion and after an uncaught exception, so restoring here
-     * covers every outcome a test can have. It runs BEFORE
-     * parent::tearDown() so the application container is still available
-     * to have its environment paths handed back.
+     * assertion and after an uncaught exception, so cleaning up here
+     * covers every outcome a test can have.
+     *
+     * ORDER MATTERS, AND IT IS THE OPPOSITE OF THE OBVIOUS ONE.
+     *
+     * parent::tearDown() runs
+     * Illuminate\...\InteractsWithTestCaseLifecycle::tearDownTheTestEnvironment(),
+     * which calls callBeforeApplicationDestroyedCallbacks() before it
+     * flushes and nulls the application. Real work happens in those
+     * callbacks: Tests\Feature\Automations\Concerns\UsesFreshSchema
+     * registers one that runs `migrate:fresh`, and this repository's
+     * migrations write the environment file.
+     *
+     * An earlier revision restored FIRST and then called
+     * parent::tearDown(). That handed the application back to the
+     * repository's own `.env.testing` and only then let those callbacks
+     * migrate — so the migrations correctly wrote "the active
+     * environment file", which by then was the real one. A full-suite run
+     * caught it: `.env.testing` came back carrying APP_TIME_FORMAT, the
+     * OPENAI_* keys, TERMS_OF_USE and PRIVACY_POLICY.
+     *
+     * Deferring until after parent::tearDown() keeps the disposable copy
+     * in force for the entire teardown, callbacks included. The
+     * application is null by then, which is exactly right: there is no
+     * longer anything to hand paths back to, restoreEnvironmentFile() is
+     * null-safe, and the remaining work is deleting the disposable
+     * directory.
      */
     protected function tearDown(): void
     {
-        $this->restoreEnvironmentFile();
-
         parent::tearDown();
+
+        $this->restoreEnvironmentFile();
     }
 }

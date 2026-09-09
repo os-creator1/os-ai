@@ -2,55 +2,62 @@
 
 namespace Tests\Support;
 
-use Illuminate\Support\Facades\File;
+use Illuminate\Contracts\Foundation\Application;
+use Illuminate\Support\Env;
+use Symfony\Component\Console\Input\ArgvInput;
 
 /**
- * Gives one test its own disposable copy of the environment file, and
- * reads values back out of that same copy.
+ * Gives one test application its own disposable copy of the environment
+ * file, installed BEFORE the console kernel bootstraps, and reads values
+ * back out of that same copy.
  *
- * WHY THIS EXISTS — reproduced on this branch, at this base commit,
+ * WHY THIS EXISTS — reproduced on this branch, at the base commit,
  * before a line of it was written.
  *
  * 1. THE SUITE REWROTE THE DEVELOPER'S OWN ENVIRONMENT FILES.
  *    Every platform-settings save, the branding upload service and the
  *    demo-mode toggle end at App\Helpers\write_env(), which rewrites
- *    `app()->environmentFilePath()` wholesale — `.env.testing` under
+ *    the active environment file wholesale — `.env.testing` under
  *    APP_ENV=testing. Running `tests/Feature/Settings` against a
- *    pristine checkout of this commit changed `.env.testing` from
+ *    pristine checkout changed `.env.testing` from
  *    APP_NAME="AI Business OS" to APP_NAME="Test App", set
  *    MAIL_DRIVER="smtp", deleted every blank line, and appended the
- *    suite's own fixture values — including secret-shaped ones such as
- *    the suite's fake OPENAI_API_KEY fixture. The next run, in this lane or any
- *    other lane sharing the machine, then started from an environment
- *    the previous run had edited.
+ *    suite's own fixture values, secret-shaped ones included.
  *
- * 2. A SECOND WRITER USED TO BYPASS THAT SEAM ENTIRELY — NOW FIXED AT
- *    THE SOURCE.
- *    App\Models\AppConfig::setEnv() hardcoded `base_path('.env')`. It is
- *    reached from SettingsController (TERMS_OF_USE, PRIVACY_POLICY,
- *    MAINTENANCE_SECRET_PATH) and from BrandingUploadService (the
- *    APP_LOGO family). The same pristine run also modified `.env`,
- *    collapsing the line endings of every line it matched.
+ * 2. WHY ACTIVATION HAD TO MOVE BEFORE BOOTSTRAP.
+ *    An earlier revision activated this trait from Tests\TestCase::setUp(),
+ *    after parent::setUp(). That is too late. Laravel's
+ *    Illuminate\Foundation\Testing\TestCase::setUpTheTestEnvironment()
+ *    calls refreshApplication() — which creates the Application and runs
+ *    `$app->make(Kernel::class)->bootstrap()` — and only then runs
+ *    setUpTraits(), where RefreshDatabase performs migrate:fresh.
  *
- *    An earlier revision of this trait tried to contain that by
- *    snapshotting the real `.env` and restoring it at teardown. **That
- *    was withdrawn, and must not come back.** Restoring damage is not
- *    isolation: two concurrent processes can write and restore the same
- *    shared file in conflicting orders; a kill, fatal or power loss
- *    leaves the damage in place; and another process can read the test's
- *    values out of the real file during the window before restoration.
- *    The requirement is that production writers never address the real
- *    file at all.
+ *    So configuration bootstrap and every migration ran while the
+ *    application still pointed at the repository's own files. Three
+ *    migrations write the environment file directly, and `migrate:fresh`
+ *    alone was measured moving the real `.env` mtime.
  *
- *    `AppConfig::setEnv()` now uses `app()->environmentFilePath()`, the
- *    same seam `write_env()` has always used, so redirecting the
- *    application's environment path redirects it too. This trait
- *    therefore never opens the real environment file for writing, and
- *    holds no snapshot of it.
+ *    Installation therefore happens inside Tests\CreatesApplication,
+ *    between `require bootstrap/app.php` and the kernel bootstrap. Every
+ *    later stage — LoadEnvironmentVariables, LoadConfiguration,
+ *    RefreshDatabase, the migrations, the test body — sees only the
+ *    disposable copy.
  *
- * 3. THE READ SIDE LOOKED AT A DIFFERENT FILE, AND PARSED IT NAIVELY.
- *    The shared helper read `base_path('.env')` — the file write_env()
- *    never touches under APP_ENV=testing — and trimmed with
+ * 3. NO SNAPSHOT-AND-RESTORE FALLBACK EXISTS, AND MUST NOT RETURN.
+ *    An earlier revision contained the second writer by snapshotting the
+ *    real `.env` and restoring it at teardown. That was withdrawn:
+ *    restoring damage is not isolation. Two concurrent processes can
+ *    write and restore the same shared file in conflicting orders; a
+ *    kill, fatal or power loss leaves the damage in place because
+ *    teardown never runs; and another process can read the test's values
+ *    out of the real file during the window before restoration. Every
+ *    production writer now resolves the active environment path instead,
+ *    so this trait never opens a repository environment file for
+ *    writing and holds no snapshot of one.
+ *
+ * 4. THE READ SIDE ADDRESSED A DIFFERENT FILE, AND PARSED IT NAIVELY.
+ *    The shared helper read `base_path('.env')` — the file the writers
+ *    never touch under APP_ENV=testing — and trimmed with
  *    `trim($v, "\"\n")`, which leaves a trailing `\r` on a CRLF file and
  *    therefore also leaves the closing quote.
  */
@@ -69,54 +76,89 @@ trait UsesTemporaryEnvironmentFile
     private static int $temporaryEnvironmentSequence = 0;
 
     /**
-     * Point the application at a disposable copy of the environment file
-     * that is actually in force for this process, seeded with its real
-     * contents so every key a test expects to already exist still does.
+     * PRE-BOOT ENTRY POINT. Called by Tests\CreatesApplication after the
+     * Application object exists and before the console kernel
+     * bootstraps.
+     *
+     * The application is not booted yet, so `$app->environmentPath()` is
+     * still the repository root and `$app->environmentFile()` is still
+     * `.env`. Which file Laravel *would* have loaded is decided by
+     * Illuminate\Foundation\Bootstrap\LoadEnvironmentVariables, so that
+     * decision is reproduced here rather than assumed (see
+     * frameworkSelectedEnvironmentFile()), the selected file is copied
+     * under its own name, and the application is pointed at the copy.
+     *
+     * Setting the filename as well as the directory matters: once
+     * `environmentFile()` is `.env.testing`, the bootstrapper's own
+     * re-check looks for `.env.testing.testing`, does not find it, and
+     * leaves the selection alone. The copy is what gets loaded.
      *
      * @return string the absolute path of the disposable copy
      */
-    protected function useTemporaryEnvironmentFile(): string
+    protected function installTemporaryEnvironmentFile(Application $app): string
     {
-        // Re-activating must never leak the previous copy, and must seed
-        // the new one from the REAL environment file rather than from the
-        // copy already in force. Restoring first guarantees both.
+        // A previous application instance in this same test must not
+        // leak its copy — refreshApplication() can run more than once.
         if ($this->temporaryEnvironmentDirectory !== null) {
-            $this->restoreEnvironmentFile();
+            $this->discardTemporaryEnvironmentDirectory();
         }
 
-        $sourcePath = $this->app->environmentFilePath();
+        self::registerProcessShutdownSweep();
 
-        $this->originalEnvironmentPath = $this->app->environmentPath();
-        $this->originalEnvironmentFile = basename($sourcePath);
+        $sourceDirectory = $app->environmentPath();
+        $selected = self::frameworkSelectedEnvironmentFile($app, $sourceDirectory, $app->environmentFile());
+
+        $this->originalEnvironmentPath = $sourceDirectory;
+        $this->originalEnvironmentFile = $selected;
+
+        $sourcePath = $sourceDirectory . DIRECTORY_SEPARATOR . $selected;
 
         $this->temporaryEnvironmentDirectory = self::makeTemporaryEnvironmentDirectory();
 
-        File::makeDirectory($this->temporaryEnvironmentDirectory, 0777, true, true);
+        // Native filesystem calls, not the File facade: this runs
+        // BEFORE the container is bootstrapped, so no facade root exists
+        // yet.
+        if (! is_dir($this->temporaryEnvironmentDirectory)) {
+            mkdir($this->temporaryEnvironmentDirectory, 0777, true);
+        }
 
-        // Keep the original basename. The application's notion of which
-        // environment file is in force must be restored exactly, and a
-        // test that inspects environmentFile() must see what it saw
-        // before.
-        $targetPath = $this->temporaryEnvironmentDirectory
-            . DIRECTORY_SEPARATOR
-            . $this->originalEnvironmentFile;
+        $targetPath = $this->temporaryEnvironmentDirectory . DIRECTORY_SEPARATOR . $selected;
 
-        File::put($targetPath, is_file($sourcePath) ? (string) File::get($sourcePath) : '');
+        // The copy carries exactly the bytes Laravel would otherwise
+        // have loaded. A missing source yields an empty copy, which
+        // Dotenv's safeLoad() tolerates identically — and the real file
+        // is never created.
+        file_put_contents($targetPath, is_file($sourcePath) ? (string) file_get_contents($sourcePath) : '');
 
-        $this->app->useEnvironmentPath($this->temporaryEnvironmentDirectory);
-        $this->app->loadEnvironmentFrom($this->originalEnvironmentFile);
+        $app->useEnvironmentPath($this->temporaryEnvironmentDirectory);
+        $app->loadEnvironmentFrom($selected);
 
         return $targetPath;
     }
 
     /**
-     * Always runs — after a pass, after a failed assertion, and after an
-     * uncaught exception — so a disposable copy can never outlive the
-     * test that made it, and the application is handed back exactly the
-     * paths it had.
+     * Re-activate from inside a test, after the application has booted.
      *
-     * Safe to call twice: every step is guarded and every field is
-     * cleared, so a second call is a no-op.
+     * Restores first, so the new copy is seeded from the repository's
+     * own file rather than from the copy already in force. That is what
+     * makes one test's writes unable to reach the next.
+     *
+     * @return string the absolute path of the new disposable copy
+     */
+    protected function useTemporaryEnvironmentFile(): string
+    {
+        $this->restoreEnvironmentFile();
+
+        return $this->installTemporaryEnvironmentFile($this->app);
+    }
+
+    /**
+     * Hands the application back the path and filename the bootstrap
+     * left it with, and deletes the disposable directory.
+     *
+     * Always runs — after a pass, after a failed assertion and after an
+     * uncaught exception. Safe to call twice: every step is guarded and
+     * every field cleared, so a second call is a no-op.
      */
     protected function restoreEnvironmentFile(): void
     {
@@ -128,11 +170,8 @@ trait UsesTemporaryEnvironmentFile
             $this->app?->loadEnvironmentFrom($this->originalEnvironmentFile);
         }
 
-        if ($this->temporaryEnvironmentDirectory !== null && is_dir($this->temporaryEnvironmentDirectory)) {
-            File::deleteDirectory($this->temporaryEnvironmentDirectory);
-        }
+        $this->discardTemporaryEnvironmentDirectory();
 
-        $this->temporaryEnvironmentDirectory = null;
         $this->originalEnvironmentPath = null;
         $this->originalEnvironmentFile = null;
     }
@@ -153,9 +192,24 @@ trait UsesTemporaryEnvironmentFile
     }
 
     /**
+     * The repository file this copy was seeded from — used by tests that
+     * assert the real file was not touched, and never written to.
+     */
+    protected function realEnvironmentFilePath(): ?string
+    {
+        if ($this->originalEnvironmentPath === null || $this->originalEnvironmentFile === null) {
+            return null;
+        }
+
+        return $this->originalEnvironmentPath
+            . DIRECTORY_SEPARATOR
+            . $this->originalEnvironmentFile;
+    }
+
+    /**
      * Read one key back out of the environment file currently in force —
-     * the same file write_env() writes — decoding the quoting that
-     * App\Helpers\format_dotenv_value() actually produces.
+     * the same file every corrected writer writes — decoding the quoting
+     * that App\Helpers\format_dotenv_value() actually produces.
      *
      * Returns null when the key is absent, which is a genuinely
      * different outcome from an empty value and must stay
@@ -173,7 +227,7 @@ trait UsesTemporaryEnvironmentFile
         // Handles LF, CRLF and lone-CR files identically, so a value on a
         // CRLF line never keeps a trailing \r — which is what used to
         // leave the closing quote attached to the decoded value.
-        $lines = preg_split("/\r\n|\n|\r/", (string) File::get($path)) ?: [];
+        $lines = preg_split("/\r\n|\n|\r/", (string) file_get_contents($path)) ?: [];
 
         $needle = $key . '=';
 
@@ -189,6 +243,123 @@ trait UsesTemporaryEnvironmentFile
     }
 
     /**
+     * Which environment file Laravel itself would load from $directory.
+     *
+     * A faithful reproduction of
+     * Illuminate\Foundation\Bootstrap\LoadEnvironmentVariables::checkForSpecificEnvironmentFile():
+     * a console `--env` option wins, otherwise the process-level APP_ENV
+     * is appended to the base filename, and in both cases the suffixed
+     * file is only chosen when it actually exists. Anything else keeps
+     * the base name.
+     *
+     * Deliberately not guessed at: reading APP_ENV through
+     * Illuminate\Support\Env uses the same repository and adapter chain
+     * the bootstrapper uses, so a value supplied by phpunit.xml's
+     * `<server>` element resolves identically here.
+     */
+    private static function frameworkSelectedEnvironmentFile(
+        Application $app,
+        string $directory,
+        string $baseFile,
+    ): string {
+        $exists = static fn (string $candidate): bool => is_file($directory . DIRECTORY_SEPARATOR . $candidate);
+
+        if ($app->runningInConsole()) {
+            $input = new ArgvInput();
+
+            if ($input->hasParameterOption('--env')) {
+                $candidate = $baseFile . '.' . $input->getParameterOption('--env');
+
+                if ($exists($candidate)) {
+                    return $candidate;
+                }
+            }
+        }
+
+        $environment = Env::get('APP_ENV');
+
+        if ($environment) {
+            $candidate = $baseFile . '.' . $environment;
+
+            if ($exists($candidate)) {
+                return $candidate;
+            }
+        }
+
+        return $baseFile;
+    }
+
+    /**
+     * A last-resort sweep, registered once per process.
+     *
+     * tearDown() handles a pass, a failed assertion and an exception
+     * thrown from the test body. It does NOT handle an exception thrown
+     * from setUp(): PHPUnit skips tearDown() entirely in that case, and
+     * the application has already been created — so its disposable
+     * directory would outlive the process. A full-suite run left exactly
+     * one such orphan behind.
+     *
+     * The sweep removes only directories carrying THIS process's pid, so
+     * it can never disturb a concurrent process's copy. It runs at normal
+     * shutdown, including after a fatal error; a process killed with
+     * SIGKILL runs no shutdown function at all, which is precisely why
+     * these directories live outside the repository and why the
+     * forced-termination test cleans up after itself.
+     */
+    private static function registerProcessShutdownSweep(): void
+    {
+        static $registered = false;
+
+        if ($registered) {
+            return;
+        }
+
+        $registered = true;
+
+        $pattern = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'aibos-env-' . getmypid() . '-*';
+
+        register_shutdown_function(static function () use ($pattern): void {
+            foreach (glob($pattern) ?: [] as $directory) {
+                self::removeDirectory($directory);
+            }
+        });
+    }
+
+    /**
+     * Recursive delete with native calls only, for the same pre-boot
+     * reason the create side avoids the File facade. The directory this
+     * removes holds exactly one file, but the walk is written generally
+     * so a stray artifact can never keep it alive.
+     */
+    private static function removeDirectory(string $directory): void
+    {
+        if (! is_dir($directory)) {
+            return;
+        }
+
+        foreach (scandir($directory) ?: [] as $entry) {
+            if ($entry === '.' || $entry === '..') {
+                continue;
+            }
+
+            $path = $directory . DIRECTORY_SEPARATOR . $entry;
+
+            is_dir($path) ? self::removeDirectory($path) : @unlink($path);
+        }
+
+        @rmdir($directory);
+    }
+
+    private function discardTemporaryEnvironmentDirectory(): void
+    {
+        if ($this->temporaryEnvironmentDirectory !== null && is_dir($this->temporaryEnvironmentDirectory)) {
+            self::removeDirectory($this->temporaryEnvironmentDirectory);
+        }
+
+        $this->temporaryEnvironmentDirectory = null;
+    }
+
+    /**
      * The exact inverse of App\Helpers\format_dotenv_value().
      *
      * That writer escapes in a fixed order — backslash, then double
@@ -196,13 +367,12 @@ trait UsesTemporaryEnvironmentFile
      * quotes. Decoding therefore has to be a single left-to-right scan
      * that consumes each escape sequence whole.
      *
-     * A pass of str_replace(['\\n', '\\"', '\\\\'], ...) is NOT
-     * equivalent and is wrong: the encoding of the four characters
-     * `C:\new` is `C:\\new`, and a leading `\n` replacement matches the
-     * SECOND backslash together with the `n`, decoding it to
-     * `C:` + backslash + a real newline + `ew`. The scan below cannot do
-     * that, because it consumes `\\` as one unit before it ever looks at
-     * the `n`.
+     * A pass of str_replace(['\\n', '\\"', '\\\\'], …) is NOT equivalent
+     * and is wrong: the encoding of the six characters `C:\new` is
+     * `C:\\new`, and a leading `\n` replacement matches the SECOND
+     * backslash together with the `n`, decoding it to `C:` + backslash +
+     * a real newline + `ew`. The scan below cannot do that, because it
+     * consumes `\\` as one unit before it ever looks at the `n`.
      *
      * An unquoted value is returned as-is apart from surrounding
      * whitespace: dotenv applies no escaping outside quotes, so a
@@ -253,7 +423,8 @@ trait UsesTemporaryEnvironmentFile
     /**
      * Outside the repository, unique per process AND per activation, so
      * two concurrent PHPUnit processes can never be handed the same
-     * directory and a single process re-activating never reuses one.
+     * directory and a single process recreating its application never
+     * reuses one.
      */
     private static function makeTemporaryEnvironmentDirectory(): string
     {
@@ -266,5 +437,4 @@ trait UsesTemporaryEnvironmentFile
             . '-' . self::$temporaryEnvironmentSequence
             . '-' . bin2hex(random_bytes(8));
     }
-
 }

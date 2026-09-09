@@ -847,7 +847,15 @@ TRAI_DLT=false' . '
 ';
 
                     // @ignoreCodingStandard
-                    $env        = file_get_contents(base_path('.env'));
+                    // Resolved ONCE and reused for both the read and the
+                    // write, so a single operation can never straddle two
+                    // different files. Was base_path('.env'), which under
+                    // APP_ENV=testing is not the file the framework has
+                    // loaded; app()->environmentFilePath() is the same
+                    // path in production and the active one everywhere
+                    // else.
+                    $envPath    = app()->environmentFilePath();
+                    $env        = is_file($envPath) ? file_get_contents($envPath) : '';
                     $rows       = explode("\n", $env);
                     $unwanted   = 'TERMS_OF_USE|PRIVACY_POLICY|TRAI_DLT';
                     $cleanArray = preg_grep("/$unwanted/i", $rows, PREG_GREP_INVERT);
@@ -856,7 +864,7 @@ TRAI_DLT=false' . '
                     $env         = $cleanString . $envSettings;
 
                     try {
-                        file_put_contents(base_path('.env'), $env);
+                        file_put_contents($envPath, $env);
 
                         $categories = collect(config('customer-permissions'))->map(function ($value, $key) {
                             $value['name'] = $key;
