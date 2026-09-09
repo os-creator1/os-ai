@@ -7,9 +7,27 @@
 * **§28.4** — the exact launch-country, number-type and compliance scope.
 * **§28.1a** — the complete retail telecom rate-card policy.
 
-**Out of scope, deliberately.** The provider architecture is locked and is not revisited (§1). Voice/calling is excluded (parent contract §10.5). Managed Accounts are excluded at launch (architecture decision §5.2). No code is written, no contract document is edited, and no pull request is opened by this lane.
+**Out of scope, deliberately.** The provider architecture is locked and is not revisited (§1). Voice/calling is excluded (parent contract §10.5). RCS is excluded for the same reason. Managed Accounts are excluded at launch (architecture decision §5.2). No code is written, no contract document is edited, and no pull request is opened by this lane.
 
 **Evidence date for every external claim in this document: 2026-09-09.** Prices move; see §13.4 for the re-verification rule.
+
+---
+
+## Correction Round 1 — 2026-09-09
+
+This document was corrected on the same day it was first written, after review. The corrections are recorded here rather than silently folded in, because two of them changed a factual claim and one changed a recommendation's supporting evidence.
+
+| # | What was wrong | What it now says | Where |
+|---|---|---|---|
+| **C1** | Brand/campaign cardinality was stated as "one brand and one campaign per Business", which invented a limit the sources do not impose | A brand may hold **up to five campaigns**, a campaign may hold **up to 49 numbers**, and a number belongs to exactly one campaign and its parent brand. Multiple use cases are legitimately served by multiple campaigns or by one Mixed campaign | §2.2 T11, §3.1, §3.6 |
+| **C2** | Canadian pricing was described as not existing | Corrected to the narrower evidenced claim: **no authoritative Canadian price sufficient for activation was found in the published material reviewed**, which is not the same as confirmed absent. A Canadian local number price *was* subsequently found and is now cited. The pricing endpoint was deliberately not called | §2.2 T3, T33, §4.3, §5.1, §5.4, §6.7, §8.7, §13.5 |
+| **C3** | The negative-balance consequence was overstated as "every Business's numbers are deleted" with restoration impossible | Corrected to the provider's own terminology and timeline, with restoration classified as **known and possible during a two-week hold** and **unknown thereafter** | §2.2 T30, §8.12, §11.8 |
+| **C4** | MMS was priced "per part" by analogy to SMS without checking | Verified: Telnyx's published unit is "per message part" for **both** SMS and MMS. The term is supported; the *segmentation rule* behind it is defined only for SMS. Terminology is now unified across rate card, reservation, display copy and tests | §2.2 T1, T32, §7.7, §7.21 |
+| **C5** | Base rates were treated as sender-type-independent | Corrected: local, toll-free and short-code senders carry **different** base rates. §5's comparison and §6's inventory now say so | §2.2 T1, §5.1, §6.2 |
+| **C6** | The funding sequence relied on splitting an upfront reservation but did not state the rule precisely enough | Rewritten as an explicit provider-commitment-boundary sequence with a full-amount funding gate before any provider cost, and a stated rule that the platform never incurs an unfunded provider cost | §11.4, §9 |
+| **C7** | Charge classes were described but not separated as a single normative list | Added an explicit five-class separation | §7.21 |
+
+Everything not listed above is unchanged from the original pass. The **US-only launch recommendation is preserved**; the corrections strengthened rather than weakened its evidence, and §5.4 records why.
 
 ---
 
@@ -71,17 +89,17 @@ Two access limits did apply and are disclosed rather than hidden:
 
 | # | Claim | URL | Page title | Access date | Confidence | Price nature |
 |---|---|---|---|---|---|---|
-| T1 | Outbound SMS $0.004 per message part; inbound SMS $0.004 per part; outbound MMS $0.015 per part; inbound MMS $0.005 per part — all plus carrier fees, USD | `https://telnyx.com/pricing/messaging` | Messaging pricing | 2026-09-09 | Proven | Variable base + pass-through |
+| T1 | **Base rates differ by sender type**, all quoted verbatim as "per message part" for **both SMS and MMS**. **Local (10DLC):** SMS outbound $0.004, SMS inbound $0.004, MMS outbound $0.015, MMS inbound $0.005. **Toll-free:** SMS outbound $0.0055, SMS inbound $0.0055, MMS outbound $0.016, MMS inbound $0.016. **Short code:** SMS outbound $0.007, SMS inbound $0.007, MMS outbound $0.018, MMS inbound $0.009. All plus carrier fees, USD. "Prices are applied per message part" | `https://telnyx.com/pricing/messaging` | Messaging pricing | 2026-09-09 | Proven | Variable base + pass-through |
 | T2 | US carrier fees per part — AT&T out/in SMS $0.0035/$0.0035, MMS $0.009/$0.009; T-Mobile USA $0.0045/$0.0025, MMS $0.01/$0.01; Verizon $0.0045/none, MMS $0.007/none; U.S. Cellular $0.005/none, MMS $0.01/none; Dish Wireless $0.0045/none, MMS $0.01/none | same as T1 | Messaging pricing | 2026-09-09 | Proven | Pass-through |
-| T3 | Canadian carriers (Telus, Bell & Virgin, EastLink) appear **only** in the inbound table with no carrier fee; no Canadian outbound carrier fee and no Canada base rate is published on this page | same as T1 | Messaging pricing | 2026-09-09 | Proven (as an absence) | Unknown / quote-only |
+| T3 | Canadian carriers (Telus, Bell & Virgin, EastLink) appear **only** in the inbound table with no carrier fee. **No Canadian outbound carrier fee and no Canada-destination base rate appears on this page**, and the page carries no country or destination selector; requesting the CAD-currency variant of the page changes no rate table. The page directs destination-specific enquiries to sales | same as T1, plus `https://telnyx.com/pricing/messaging?currency=CAD` | Messaging pricing | 2026-09-09 | **Proven that the page does not publish it — NOT proven that no such price exists.** See §4.3 | Not found in reviewed material / quote-only |
 | T4 | The highest per-part outbound SMS carrier fee shown anywhere is Digicel at $0.20; every US and Canadian carrier listed is below $0.01 | same as T1 | Messaging pricing | 2026-09-09 | Proven | Pass-through |
 | T5 | "Carrier passthrough and taxes vary by destination." A machine-readable endpoint `GET /v2/public/pricing` (and `?primitive=numbers`) is published as the authoritative per-destination rate source | same as T1 | Messaging pricing | 2026-09-09 | Proven | Variable |
 | T6 | Local numbers "From $1 per month" on pay-as-you-go, volume tiers to $0.25/month; "An additional charge of $0.10 per month applies to add SMS and MMS capabilities to a number." No one-time purchase fee for local numbers. No Canada-specific number price published | `https://telnyx.com/pricing/numbers` | Phone number pricing | 2026-09-09 | Proven | Recurring fixed; Canada unknown |
 | T7 | 800-prefix toll-free numbers carry "$500 OTC (covers 12-mo term) + $40 MRC (after 12 months)" | same as T6 | Phone number pricing | 2026-09-09 | Proven | One-time + recurring fixed |
 | T8 | 10DLC brand registration application fee $4.50; campaign review $15 "per Campaign Review (manual review fee passed through from carriers)"; monthly campaign fees — Low Volume Mixed $1.5/mo, Standard $10/month, Charity $3/mo, Emergency $5; sole-proprietor campaign monthly $2. "Campaign fees are billed for three months initially, then subsequently on a monthly recurring basis." "Telnyx does not currently charge a markup on 10DLC fees. All 10DLC-related fees are passed on to the customer at cost." | `https://support.telnyx.com/en/articles/5634625-10dlc-fees-and-charges` | 10DLC Fees and Charges | 2026-09-09 | Proven | Compliance fee, pass-through |
 | T9 | Sole-proprietor path: brand registration $4.00 one-time charged post-verification, campaign vetting $15 per submission, monthly maintenance $2.00; 1 campaign per brand, **1 phone number per campaign**, max 3 SP brands per mobile number; throughput "Low-volume (varies by carrier)"; OTP valid for a 24-hour window; "Sole Proprietor campaigns are typically auto-approved and become ACTIVE immediately" | `https://developers.telnyx.com/docs/messaging/10dlc/sole-proprietor` | Sole Proprietor 10DLC Registration | 2026-09-09 | Proven | Compliance fee; **conflicts with T8 on the brand fee** |
-| T10 | "An Independent Service Vendor (ISV) is a type of business that sells products and services to other end users who are also businesses." "for every end-user you're reselling to, you will need to create a separate brand." "no two brands can be on the same number." A campaign accommodates at most 49 phone numbers. Onboarding sequence: Messaging Profile → dedicated number → brand → campaign → link campaign to number | `https://support.telnyx.com/en/articles/5593977-isvs-10dlc` | ISVs & 10DLC | 2026-09-09 | Proven | n/a |
-| T11 | "From February 3rd 2025, any 10DLC traffic which is not registered will be blocked altogether." AT&T throughput 75–4500 TPM by vetting score; "T-Mobile sets limits at the Brand level, not Campaign", daily caps 2,000 (low) to 200,000 (top tier, 75–100 vetting score); brand and campaign data go to TCR for manual review; **no mention of Canada anywhere in this FAQ** | `https://support.telnyx.com/en/articles/3679260-frequently-asked-questions-about-10dlc` | Frequently asked questions about 10DLC | 2026-09-09 | Proven | n/a |
+| T10 | "An Independent Service Vendor (ISV) is a type of business that sells products and services to other end users who are also businesses." "for every end-user you're reselling to, you will need to create a separate brand." "No two brands can be on the same number. If you are currently sharing numbers across brands, unless you have a special arrangement with the mobile network operators, you will need to update your messaging architecture such that only one brand is using any given number to send messages." "each campaign can only be associated with one brand." "You can assign a maximum number of 49 phone numbers." Onboarding sequence: create a Messaging Profile → buy or use a dedicated number for it → create the brand for the end-user → create the campaign → assign the campaign to the number | `https://support.telnyx.com/en/articles/5593977-isvs-10dlc` | ISVs & 10DLC | 2026-09-09 | Proven. **Corrected in Round 1:** the constraint is *campaign→one brand*, which does **not** imply one campaign per brand. The original pass read it as if it did | n/a |
+| T11 | **Cardinality, verbatim:** "A Brand can have multiple Campaigns, with a maximum of five Campaigns per Brand." "A Campaign can have multiple Numbers. As of September 2023, the T-Mobile Limit is 49 numbers." "A Number can only be used in one Campaign and its parent Brand." **Blocking:** "From February 3rd 2025, any 10DLC traffic which is not registered will be blocked altogether." **Throughput:** AT&T — "Each Campaign's throughput is determined by its AT&T 'Message Class' (a score determined by Use Case and, in many cases, a Vetting Score)", 75–4500 TPM by vetting score. T-Mobile — "T-Mobile sets limits at the Brand level, not Campaign", and "T-Mobile determines throughput as a daily messaging limit at the Brand level, meaning that all your Campaigns combined must share the daily limit", daily caps 2,000 (low) to 200,000 (top tier, 75–100 vetting score). "The same MPS limit applies whether you send all traffic through one number or split it up across multiple numbers." Brand and campaign data go to TCR for manual review. **No mention of Canada anywhere in this FAQ** | `https://support.telnyx.com/en/articles/3679260-frequently-asked-questions-about-10dlc` | Frequently asked questions about 10DLC | 2026-09-09 | Proven. **This row carries the Round 1 cardinality correction (C1)** | n/a |
 | T12 | Required brand fields: Legal Company Name, DBA/Brand Name, organization legal form, vertical, Country of Registration, Website, EIN Issuing Country, EIN, business address/city/state/postal, stock symbol and exchange (public only), authorized-representative email and phone. Entity types: Charity/Non-Profit, Government, Private Company, Publicly Traded Company. **Canadian companies supply "Provincial or Federal Corporation/Registry ID Numbers" instead of an EIN**, and "Please avoid using your Canadian Federal Business Number (BN) or Canadian Revenue Agency Tax Account Numbers in the EIN section" | `https://support.telnyx.com/en/articles/5896911-how-to-create-a-10dlc-brand` | How to create a 10DLC brand | 2026-09-09 | Proven | n/a |
 | T13 | Required campaign fields: Brand, Use case, Vertical, Campaign description, Sample messages, campaign/content attributes, Message Flow, Opt-in Keywords, Opt-in Message, Opt-out Keywords, Opt-out Message, Help Keywords, Help Message. "You need one sample message for each selected use case. A marketing use case requires 2 sample messages." Field lengths — description 40–4096, help message 20–320, message flow 40–2048, opt-in message 20–320, opt-out message 20–320 | `https://support.telnyx.com/en/articles/6339152-how-to-create-a-10dlc-campaign` | How to create a 10DLC campaign | 2026-09-09 | Proven | n/a |
 | T14 | Campaign compliance: opt-in via keyword, website form (phone field must be optional, not mandatory), verbal consent, or signed written consent. "Opt-in language must be specific just for text messages. It can not include e-mail or phone calls, this should be separate." CTA must show program/brand name, "Message frequency may vary", "Standard Message and Data Rates may apply", "Reply STOP to opt out", "Reply Help for help", and links (not pop-ups) to Terms and Privacy Policy. Privacy policy must contain: "We will not share your opt-in to an SMS campaign with any third party for purposes unrelated to providing you with the services of that campaign." Opt-out reply must confirm no further messages; HELP reply must give program name and customer-care contact. "Popups are not a method for displaying terms and conditions." | `https://support.telnyx.com/en/articles/9940291-10dlc-campaign-compliance-requirements` | 10DLC Campaign Compliance Requirements | 2026-09-09 | Proven | n/a |
@@ -100,7 +118,17 @@ Two access limits did apply and are disclosed rather than hidden:
 | T27 | Telnyx considers "4 decimal points for billing"; the article's own worked example quotes an SMS rate of $0.0025 | `https://support.telnyx.com/en/articles/3317613-billing-decimal-values-considered` | Billing: Decimal Values Considered | 2026-09-09 | Proven — but the $0.0025 example is **stale** against T1's current $0.004, and T26's example carries **five** decimals | Variable |
 | T28 | US customers are subject to sales and telecommunications taxes (state/county/municipal), USF and TRS fees. "Telnyx will calculate and apply taxes to your account daily. We will deduct the tax amount from the customer's balance based on usage and purchases on the following calendar day." "Since taxes are calculated based on multiple factors like service usage and effective tax rates, there is no way to provide an accurate estimate in advance." The page does not address Canadian GST/HST | `https://support.telnyx.com/en/articles/6420959-sales-gst-telecommunication-taxes-usf-fees-trf` | Sales, GST, Telecommunication Taxes, USF Fees & TRF | 2026-09-09 | Proven | **Uncertain tax — explicitly not estimable in advance** |
 | T29 | Required documents to acquire numbers: the Canada row shows Local "Not required" and Toll-free "Not required"; the United States row shows "Not required" across Local, National, Mobile and Toll-free. No address or local-presence rule is stated for either country | `https://support.telnyx.com/en/articles/5469551-international-numbers-required-documents` | International Numbers - Required Documents | 2026-09-09 | Proven | n/a |
-| T30 | "If your account is left with a negative balance for a period of 1 month, an abolishing process will take place. In this process the numbers in your account will be deleted from the account." Deleted numbers go to hold (2 weeks, repurchasable only by the original account), then Aging (2 weeks, nobody can buy — "part of the number recycling process required by the FCC"), then public release. "if your account was abolished, you will not be able to get your numbers back by simply adding balance to your account" | `https://support.telnyx.com/en/articles/8648864-what-happens-with-my-numbers-after-my-account-gets-abolished-for-negative-balance` | What happens with my numbers after my account gets abolished for negative balance? | 2026-09-09 | Proven | n/a |
+| T30 | **Verbatim, in the provider's own terminology.** Trigger: "If your account is left with a negative balance for a period of 1 month, an abolishing process will take place. In this process the numbers in your account will be deleted from the account." Then: "After the numbers are deleted from the account they are set to a 'hold' status for the next two weeks." "While the numbers are in this 'hold' status you can still buy them again"; "During this period of time, only you will be able to search for and purchase the numbers." Then: "If you do not buy back your numbers when they are in the 'hold' status, the status will change to 'Aging' and will remain like that for the next two weeks." "While the numbers are in an 'Aging' status no one (including you) can buy them." Finally: "After the numbers have been left in 'Aging' for two weeks they will be released so that they are generally available." Constraint on recovery: "If your account was abolished, you will not be able to get your numbers back by simply adding balance to your account." For numbers in Aging the article directs the reader to `numbering@telnyx.com` or `support@telnyx.com` | `https://support.telnyx.com/en/articles/8648864-what-happens-with-my-numbers-after-my-account-gets-abolished-for-negative-balance` | What happens with my numbers after my account gets abolished for negative balance? | 2026-09-09 | Proven for the quoted wording. **Corrected in Round 1 (C3).** The article says "the numbers in your account", carving out no exception — reading that as *all* the account's numbers is an **inference**, not a quotation. Restoration during hold is **known and possible** by repurchase; the outcome of a support request during Aging is **unknown** | n/a |
+
+**Rows added in Correction Round 1:**
+
+| # | Claim | URL | Page title | Access date | Confidence | Price nature |
+|---|---|---|---|---|---|---|
+| T31 | "A **messaging profile** is the central configuration object for your Telnyx messaging setup." It groups "your phone numbers, defines webhook URLs, and controls features like number pooling, smart encoding, and spend limits." "Every phone number you use for messaging must be assigned to a messaging profile." **A per-profile daily spend cap exists**: fields `daily_spend_limit_enabled` and `daily_spend_limit`, **disabled by default**; when the limit is reached "New messages are rejected with error `40333`, a webhook notification is sent, an email alert is sent to your account. The limit resets at midnight UTC daily." The page states no relationship between messaging profiles and 10DLC brands or campaigns, and no per-profile throughput cap | `https://developers.telnyx.com/docs/messaging/messages/messaging-profiles-overview` | Messaging Profiles Overview | 2026-09-09 | Proven | Operational control, not a price |
+| T32 | Definition of the billing unit: "A message part is either an entire SMS message or a component of one, depending on message characters and encoding. Longer messages may be split into multiple parts, and you are billed per-part." Prices "are applied per message part based on the destination, the number type used, and the carrier the message is sent to" | `https://developers.telnyx.com/docs/v1/messaging/configuration-and-limitations/character-and-rate-limits` and `https://telnyx.com/pricing/messaging` | Character and Rate Limits; Messaging pricing | 2026-09-09 | Proven. **Note the asymmetry:** the definition is written in terms of an *SMS* message, while the pricing page applies the same unit label to MMS | n/a |
+| T33 | "Local numbers for Canada start at $1 per month." No setup fee, SMS/MMS capability cost, per-message rate, or documentation/local-presence requirement appears on this page | `https://telnyx.com/phone-numbers/canada` | Buy Canada virtual phone numbers | 2026-09-09 | Proven for the quoted price. It is a "start at" figure, so it is a **floor, not a firm rate** | Recurring fixed, lower bound only |
+| T34 | MMS attachment limits: "Total attachment size must be less than 1 MB. Ideally, it should be 1MB minus 100KB to give some space for encoding overhead." Carrier tiers differ — Tier 1 up to 1 MB, Tier 2 up to 600 KB, Tier 3 up to 300 KB. "MMS allows for a significantly higher number of characters per message compared to SMS", with no standardized universal limit. The article does not state how MMS is billed or whether an MMS can be more than one part | `https://support.telnyx.com/en/articles/4450150-faqs-about-mms-at-telnyx` | FAQs about MMS at Telnyx | 2026-09-09 | Proven | Constrains MMS payload, not price |
+| T35 | "T-Mobile charges an additional $0.001 for every MB over 5MB in media size on outbound Rich Media messages" — this applies to **RCS Rich Media**, not MMS. "RCS Rich text messages are charged per segment and RCS Rich Media is charged per message." No other carrier imposes a per-megabyte surcharge in the published rate tables | `https://telnyx.com/pricing/messaging` | Messaging pricing | 2026-09-09 | Proven. Relevant only to confirm that **no per-megabyte surcharge applies to MMS**; RCS is out of scope | Pass-through, out of scope |
 
 ### 2.3 Regulatory and industry sources
 
@@ -136,6 +164,8 @@ Every repository citation was read in this lane's worktree at base commit `6c820
 | E12 | The phone normalizer parses to E.164 with **no default region** and rejects any number lacking an explicit country code; it does **not** hardcode `+1` | `app/Library/AgencyProspecting/AgencyProspectPhoneNormalizer.php` |
 | E13 | `BusinessMessagingIdentity` does not exist yet; `SendingServer::TYPE_TELNYX` is only a legacy/BYO credential holder | `app/Models/SendingServer.php:96`; absence verified across `app/` and `database/` |
 | E14 | The only existing metered feature is the RFC-005 Milestone 5 pilot, keyed `conversations.pilot.{businessId}` against `PlatformFeature::Conversations`; no telecom meter exists | `app/Console/Commands/ActivateConversationsUsageRate.php:111` |
+| E15 | **Auto-recharge is off by default**, in both the schema default and wallet initialisation — `boolean('auto_recharge_enabled')->default(false)` and `'auto_recharge_enabled' => false` | `database/migrations/2026_08_16_120001_create_business_usage_wallets_table.php:44`; `app/Library/Usage/UsageWalletManager.php:99` |
+| E16 | **A reservation's `expires_at` is written once at `reserve()` and is never updated anywhere.** No extension or renewal path exists; `findExpiredPending()` selects purely on `expires_at < now()`. The 30-minute TTL is a hard ceiling, and `RESERVATION_TTL_MINUTES` is a single global constant shared by every metered feature | `app/Library/Usage/UsageWalletManager.php:461`; `app/Repositories/Eloquent/EloquentBusinessUsageReservationRepository.php:35` |
 
 ---
 
@@ -149,9 +179,9 @@ Every repository citation was read in this lane's worktree at base commit `6c820
 |---|---|---|
 | A2P 10DLC | Mandatory for A2P traffic on US long codes. "From February 3rd 2025, any 10DLC traffic which is not registered will be blocked altogether." | T11, T19, T20 |
 | Separate brand per end Business | "for every end-user you're reselling to, you will need to create a separate brand." A number may never carry two brands: "no two brands can be on the same number." | T10 |
-| Campaign registration | One campaign per brand minimum, with declared use case, vertical, description, message flow, sample messages, and opt-in/opt-out/HELP keyword and message text | T13 |
-| Number-to-campaign assignment | "Each number can only be assigned to one campaign at a time." A campaign accommodates at most 49 numbers (T10); the sole-proprietor path allows exactly **1** | T10, T9, T18 |
-| Messaging Profile relationship | A number "must be assigned to a messaging profile first" before campaign assignment. This is exactly the locked architecture's per-Business profile (§1 item 2) | T18, T10 |
+| Campaign registration | **At least one** campaign per brand, each with a declared use case, vertical, description, message flow, sample messages, and opt-in/opt-out/HELP keyword and message text. **A brand may hold up to five campaigns** — see §3.6 | T11, T13 |
+| Number-to-campaign assignment | "A Number can only be used in one Campaign and its parent Brand." A campaign may hold multiple numbers, up to a T-Mobile limit of 49 stated as of September 2023; the sole-proprietor path allows exactly **1** | T11, T10, T9, T18 |
+| Messaging Profile relationship | "Every phone number you use for messaging must be assigned to a messaging profile", and a number "must be assigned to a messaging profile first" before campaign assignment. The profile is the locked architecture's per-Business boundary (§1 item 2). **Profiles are orthogonal to brands and campaigns** — the messaging-profile documentation states no relationship to either | T31, T18, T10 |
 | Sole proprietor vs EIN | Both paths exist. Standard registration needs an EIN; the sole-proprietor path needs no EIN but is capped at 1 campaign and 1 number, carries low-volume throughput, and requires SMS OTP identity verification within a 24-hour window | T9, T12 |
 | Opt-in evidence | Opt-in must be explicit and text-specific: "Opt-in language must be specific just for text messages. It can not include e-mail or phone calls." Accepted methods: keyword, web form with an **optional** phone field, verbal, or signed written consent. Purchased or repurposed lists are invalid | T14, T15, R7 |
 | Privacy policy and terms | Both must be reachable by **link, not pop-up**. The privacy policy must state that opt-in is not shared with third parties for unrelated purposes. Terms must carry program name, message frequency, product description, customer-care contact, opt-out instructions and rate notices | T14 |
@@ -163,7 +193,8 @@ Every repository citation was read in this lane's worktree at base commit `6c820
 | Recurring and one-time fees | See §6 | T8, T9 |
 | Resubmission fees | $15 "per Campaign Review" — the fee attaches to the submission, not the outcome | T8 |
 | Inactivity suspension | 15 consecutive days with no activity and no active assigned numbers auto-suspends the campaign, avoiding T-Mobile's "$250 per month fine". Reactivation is free but needs a documented double-assignment | T17 |
-| Throughput | AT&T assigns 75–4,500 TPM by vetting score; T-Mobile caps daily volume **at the brand level** at 2,000–200,000. Sole proprietor gets 15 TPM on AT&T. **The whole platform account is additionally capped at 50 MPS SMS and 15 MPS MMS across every Business** | T11, T24 |
+| Throughput | **AT&T assigns throughput per campaign** by Message Class, 75–4,500 TPM by vetting score; **T-Mobile caps daily volume per brand**, 2,000–200,000, and "all your Campaigns combined must share the daily limit". Sole proprietor gets 15 TPM on AT&T. Splitting traffic across more numbers does not raise the MPS limit. **The whole platform account is additionally capped at 50 MPS SMS and 15 MPS MMS across every Business** | T11, T24 |
+| Per-Business provider-side spend cap | A messaging profile carries an optional `daily_spend_limit`, **disabled by default**, that rejects further messages with error `40333` and fires a webhook and email. Because one profile maps to one Business, this is a provider-side per-Business cap that complements the wallet-side cap | T31 |
 | Carrier filtering | Unregistered traffic is blocked outright. Generic URL shorteners are "a major source of message blocking" | T11, T16 |
 | Record retention | Telnyx's compliance guide states US retention is "Recommended 4+ years"; CTIA says senders "should retain and maintain all opt-in and opt-out requests". The FCC do-not-call rule keeps requests valid five years | T19, R7, R4 |
 
@@ -193,7 +224,45 @@ This has a direct product consequence. The onboarding flow must never present se
 
 This document does not guess. It is question Q1 in §10, and it is a **launch blocker for the Canadian half of the proposed scope** — see §4.6.
 
-### 3.5 What requires counsel or Telnyx confirmation
+### 3.5 Entity model and exact cardinality — Correction Round 1
+
+The original pass wrote "one brand and one campaign per Business". The brand half is right and required; **the campaign half was an invented limit.** The sources impose a maximum, not a minimum of one, and a Business with two genuinely distinct approved use cases may legitimately need two campaigns.
+
+**Four distinct entities, deliberately not conflated:**
+
+| Entity | What it is | Whose identity it carries |
+|---|---|---|
+| **Brand** | The legal registration of the end Business with The Campaign Registry | The **end Business's** legal identity — name, entity type, EIN or registry ID, address, website |
+| **Campaign** | A registered messaging programme for a declared **use case**, with its own sample messages, message flow and opt-in/opt-out/HELP copy | A *purpose* of that Business's messaging, not the Business itself |
+| **Messaging Profile** | Telnyx's configuration object: groups numbers, defines webhook URLs, carries smart encoding and the daily spend limit | The **platform's** per-Business routing and control boundary |
+| **Phone number** | The sender address | Assigned to one profile and one campaign |
+
+**Exact supported relationships, each traceable to a quotation:**
+
+| Relationship | Cardinality | Source |
+|---|---|---|
+| Business → Brand | **Exactly 1.** "for every end-user you're reselling to, you will need to create a separate brand" | T10 |
+| Brand → Campaign | **1 to 5.** "A Brand can have multiple Campaigns, with a maximum of five Campaigns per Brand" | T11 |
+| Campaign → Brand | **Exactly 1.** "each campaign can only be associated with one brand" | T10 |
+| Campaign → Numbers | **1 to 49.** "A Campaign can have multiple Numbers. As of September 2023, the T-Mobile Limit is 49 numbers" | T11, T10 |
+| Number → Campaign | **Exactly 1.** "A Number can only be used in one Campaign and its parent Brand" | T11, T18 |
+| Number → Brand | **Exactly 1, derived** via its campaign. "No two brands can be on the same number" | T10, T11 |
+| Number → Messaging Profile | **Exactly 1.** "Every phone number you use for messaging must be assigned to a messaging profile" | T31 |
+| Messaging Profile ↔ Brand or Campaign | **No documented relationship.** The profile is orthogonal | T31 |
+| Sole proprietor brand → Campaign | **Exactly 1**, and that campaign holds **exactly 1** number | T9 |
+
+**Two ways to serve multiple use cases, both supported:**
+
+1. **One Mixed-use-case campaign**, which Telnyx recommends specifically "in order to reuse the same phone number", requiring a sample message for each declared use case. One number, one campaign, several use cases.
+2. **Several campaigns under the one brand**, up to five, **each needing its own number** — because a number belongs to exactly one campaign. This costs an extra number rental and an extra monthly campaign fee per campaign.
+
+**The platform rule that follows.** Do not model "one campaign per Business" in the schema or the onboarding flow. Model **one brand per Business** as the hard invariant that prevents cross-Business sharing, and treat campaigns as a **collection under that brand**, bounded at five, with each campaign owning its own numbers. Cross-Business sharing is prevented by the brand boundary and by the number-to-one-campaign rule, neither of which requires capping a Business at one campaign.
+
+**Cost and throughput consequences of a second campaign**, which the customer must be told before choosing it: one extra number rental and one extra monthly campaign fee (§6.3); AT&T throughput is assigned **per campaign**, so a second campaign gets its own AT&T allowance; T-Mobile's daily cap is **per brand**, so a second campaign gets no extra T-Mobile headroom and the two share one allowance (T11).
+
+**Unresolved.** Whether the five-campaign ceiling and the 49-number figure are still current — the 49 is explicitly dated "as of September 2023" in the source. Question Q10.
+
+### 3.6 What requires counsel or Telnyx confirmation
 
 * Whether TCPA quiet hours (R4) apply to A2P text messages as opposed to voice solicitations, and whether a given customer's messages are "telephone solicitations" — **counsel**.
 * Whether a customer's specific opt-in flow constitutes prior express written consent — **counsel**.
@@ -239,6 +308,22 @@ This is the central Canadian unknown, and the evidence conflicts:
 
 **Conclusion:** Telnyx's own published material is internally consistent that Canada needs no long-code pre-registration, but it is silent on the carrier filtering that R9 describes and on why the brand form accommodates Canadian registries at all. Silence is not permission. §4.6 states the consequence.
 
+### 4.3a Canadian pricing — what was and was not found (Correction Round 1)
+
+The original pass said Canadian pricing "does not exist" and that Canadian costs are "simply not published". **That overstated the evidence.** The accurate statement separates two different things:
+
+| | Status |
+|---|---|
+| **Canadian local number monthly rental** | **Found, as a lower bound.** "Local numbers for Canada start at $1 per month" (T33). A "start at" figure is a floor, not a firm rate for a specific number, so it is not yet sufficient to derive a margin floor |
+| **Whether the $0.10 monthly SMS/MMS capability charge applies to Canadian numbers** | **Not found** in the material reviewed |
+| **Canada-destination SMS base rate** | **Not found.** The messaging pricing page publishes no Canada-destination rate and carries no destination selector (T3) |
+| **Canada-destination MMS base rate** | **Not found**, same source |
+| **Canadian outbound carrier surcharges** | **Not found.** Canadian carriers appear only in the inbound table, showing no fee (T3) |
+
+**"Not found" is not "confirmed absent."** Telnyx publishes `GET /v2/public/pricing` as the authoritative machine-readable per-destination rate source (T5), and directs destination-specific enquiries to sales (T3). Both routes very probably do carry Canadian rates. **This lane deliberately did not call that endpoint**, because the task forbids calling the Telnyx API, and did not contact sales. So the honest position is that an authoritative Canadian price **sufficient for rate activation was not located in the published material reviewed on 2026-09-09** — not that none exists.
+
+**The consequence for the gate is unchanged.** §7.13 forbids activating a rate whose worst-case provider cost is not evidenced. A "start at $1" floor and four unfound figures do not meet that bar. Canada therefore stays blocked on §7.13 for a reason that is now stated precisely: the evidence has not been gathered, and gathering it requires owner authorisation (D10) rather than more searching.
+
 ### 4.4 Canadian-origin and US-origin cross-border traffic
 
 Neither direction is documented by a primary source read in this pass:
@@ -280,12 +365,12 @@ Both are question Q1.
 | Availability | Yes, instant provisioning (T6, T19) | Yes, no documentation required (T29, T19) | Yes, US and Canada (T22) | US only in Telnyx's docs; no Canada mention (T23) | **Not supported for US or Canadian destinations** (T19) |
 | Registration | 10DLC brand + campaign, mandatory (T11) | **Unresolved** (§4.3) | Toll-free verification, plus three new business-registration fields from 17 Feb 2026 (T21) | Carrier certification (T23) | n/a |
 | Setup time | Brand then campaign review, then 24–72h carrier propagation (T18); sole proprietor auto-approves (T9) | Unresolved | 1–2 weeks verification (T21), 2 weeks use-case approval (T22) | **8–12 weeks** random, 10–12 weeks vanity (T23) | n/a |
-| Recurring cost | $1.00 number + $0.10 messaging + $1.50–$10 campaign (T6, T8) | Number rental, campaign fees and whether the $0.10 messaging capability charge even applies are all **unknown** (T3, T6, Q3) | $1.00 number + $0.10 messaging; $500 OTC + $40 MRC for 800-prefix (T6, T7) | "monthly lease" — **no figure published** (T23) | n/a |
-| Message cost | $0.004 base + up to $0.005 carrier, per part (T1, T2) | **Unknown** (T3) | Same base rates; carrier fee table is sender-type specific | Same base rates plus lease | n/a |
+| Recurring cost | $1.00 number + $0.10 messaging + $1.50–$10 campaign (T6, T8) | Number rental published only as **"start at $1 per month"** (T33); campaign fees and whether the $0.10 capability charge applies were **not found** (T3, T6, Q3) | $1.00 number + $0.10 messaging; $500 OTC + $40 MRC for 800-prefix (T6, T7) | "monthly lease" — **no figure published** (T23) | n/a |
+| Message cost, per message part | Local sender: $0.004 SMS base + up to $0.005 carrier (T1, T2) | Canada-destination base rate and carrier surcharge **not found in the material reviewed** (T3, §4.3a) | **Different base rates** — SMS $0.0055, MMS out $0.016 (T1) | **Different base rates** — SMS $0.007, MMS out $0.018 (T1), plus lease | n/a |
 | Deliverability | High once registered; blocked entirely if not (T11) | Carrier filtering asserted but unquantified (R9) | "may result in spam blocks" if unverified (T22) | Highest | n/a |
 | Two-way | Yes | Yes | Yes | Yes, keyword-based (T23) | Typically one-way |
 | Customer fit | Excellent — a local business wants a local number recipients recognise | Excellent, same reason | Poor — a toll-free number reads as a call centre, not a neighbourhood business | Very poor — cost and lead time are absurd for a single local business | n/a |
-| Operational complexity | High but bounded: one brand, one campaign, one number per Business | Unknown until §4.3 resolves | Medium: verification per number, no brand/campaign tree | Very high | n/a |
+| Operational complexity | High but bounded: one brand per Business, one to five campaigns under it, each campaign owning its own numbers (§3.5) | Unknown until §4.3 resolves | Medium: verification per number, no brand/campaign tree | Very high | n/a |
 | Supported by the locked architecture? | **Yes** — this is exactly Telnyx's documented ISV pattern (T10) | Yes architecturally; blocked on compliance facts | Yes | Yes, but one short code cannot be shared across Businesses without violating the one-brand-per-number rule (T10) | No |
 
 ### 5.2 What the evidence eliminates
@@ -307,7 +392,7 @@ The task anticipated **US and Canada local long-code**, and instructed that the 
 **Why the narrowing is the narrowest *safe* scope, not a retreat:**
 
 * Every US requirement is proven from primary sources and every US price is published (§3, §6). Nothing about US launch rests on an unresolved fact.
-* Canada's *compliance* rules are proven from the statute (§4.1), but its *registration* status is contested between two Telnyx pages and a body of secondary reporting (§4.3), and **its provider costs are simply not published** (T3, T6). §7's margin floor cannot be evaluated for a cost that is unknown, so §28.1a cannot be satisfied for Canadian meters. Activating a Canadian rate today would mean inventing a price — which this document is forbidden to do and which §7.13 explicitly prohibits.
+* Canada's *compliance* rules are proven from the statute (§4.1), but its *registration* status is contested between two Telnyx pages and a body of secondary reporting (§4.3), and **no authoritative Canadian price sufficient for activation was found in the published material reviewed** (§4.3a). One Canadian figure was located — "Local numbers for Canada start at $1 per month" (T33) — but a "start at" floor is not a rate, and the four remaining figures were not found. §7's margin floor cannot be evaluated against evidence that has not been gathered, so §28.1a cannot be satisfied for Canadian meters. Activating a Canadian rate today would mean inventing a price, which this document is forbidden to do and which §7.13 prohibits.
 * The two blockers are the same short list of questions (Q1–Q4). This is a days-to-weeks deferral contingent on a support reply, not a roadmap change.
 
 **What "US only" concretely means at launch:** managed numbers are US local long codes; the outbound destination allowlist is US-only (§7.12); Canadian recipients are refused with a clear, task-oriented message naming Canada as coming soon, never a silent failure. Canada's local long-code option ships the moment Q1–Q4 are answered and Canadian rates clear §7's margin floor.
@@ -331,16 +416,29 @@ All figures USD, accessed 2026-09-09, pay-as-you-go tier, no volume discount ass
 | **Variable usage** | Per message, depends on volume, encoding and destination carrier | SMS/MMS |
 | **Unknown / quote-only** | Not published; must be obtained before any rate activates | All Canadian rates; short code lease |
 
-### 6.2 Variable usage — United States
+### 6.2 Variable usage — United States, local (10DLC) sender
+
+**Base rates depend on sender type** (T1), corrected in Round 1. The launch sender type is the local long code, so the local column governs every calculation in this document. The others are shown once, to make the dependency explicit and to prevent a later toll-free or short-code decision from silently reusing local numbers.
+
+| Telnyx base, per message part | Local (10DLC) | Toll-free | Short code |
+|---|---|---|---|
+| SMS outbound | **$0.0040** | $0.0055 | $0.0070 |
+| SMS inbound | **$0.0040** | $0.0055 | $0.0070 |
+| MMS outbound | **$0.0150** | $0.0160 | $0.0180 |
+| MMS inbound | **$0.0050** | $0.0160 | $0.0090 |
+
+**Total cost for the launch sender type**, base plus carrier surcharge:
 
 | Item | Telnyx base | Carrier surcharge range | Total range | Class |
 |---|---|---|---|---|
-| SMS outbound, per part | $0.0040 | $0.0035 (AT&T) – $0.0050 (U.S. Cellular) | **$0.0075 – $0.0090** | Base + pass-through |
-| SMS inbound, per part | $0.0040 | $0.0000 (Verizon, U.S. Cellular, Dish) – $0.0035 (AT&T) | **$0.0040 – $0.0075** | Base + pass-through |
-| MMS outbound, per part | $0.0150 | $0.0070 (Verizon) – $0.0100 (T-Mobile, U.S. Cellular, Dish) | **$0.0220 – $0.0250** | Base + pass-through |
-| MMS inbound, per part | $0.0050 | $0.0000 (Verizon, U.S. Cellular, Dish) – $0.0100 (T-Mobile) | **$0.0050 – $0.0150** | Base + pass-through |
+| SMS outbound, per message part | $0.0040 | $0.0035 (AT&T) – $0.0050 (U.S. Cellular) | **$0.0075 – $0.0090** | Base + pass-through |
+| SMS inbound, per message part | $0.0040 | $0.0000 (Verizon, U.S. Cellular, Dish) – $0.0035 (AT&T) | **$0.0040 – $0.0075** | Base + pass-through |
+| MMS outbound, per message part | $0.0150 | $0.0070 (Verizon) – $0.0100 (T-Mobile, U.S. Cellular, Dish) | **$0.0220 – $0.0250** | Base + pass-through |
+| MMS inbound, per message part | $0.0050 | $0.0000 (Verizon, U.S. Cellular, Dish) – $0.0100 (T-Mobile) | **$0.0050 – $0.0150** | Base + pass-through |
 
 Sources: T1, T2. The relevant worst cases are the upper bounds, and every one is below one cent per part — a direct consequence of confining the destination scope to the US (T4).
+
+**No per-megabyte MMS surcharge applies.** The $0.001-per-MB-over-5MB charge in the pass-through table is a **T-Mobile RCS Rich Media** charge, and RCS is out of scope (T35). MMS payloads are instead bounded by attachment size — under 1 MB, and as low as 300 KB on Tier 3 carriers (T34) — which is a delivery constraint, not a cost variable.
 
 ### 6.3 Recurring fixed — per Business per month
 
@@ -385,9 +483,21 @@ Within the US the total per-part cost never exceeds $0.0090 outbound (§6.2). **
 
 **Consequence.** Provider cost is not final at send time. The per-message cost arrives with `message.finalized` (T26); taxes arrive a day later against the account as a whole and are never attributable to one message (T28). Any rate-card rule that promised exact per-message tax attribution would be unimplementable. §7.9 handles this.
 
-### 6.7 What is not available and was not invented
+### 6.7 What was not found, and was not invented
 
-Canadian SMS and MMS base rates; Canadian outbound carrier surcharges; Canadian local number monthly rental; Canadian toll-free verification applicability; short code monthly lease. All are **quote-only** and appear in §10 as questions. Telnyx publishes `GET /v2/public/pricing` as the authoritative machine-readable source (T5); **this lane did not call it**, because the task forbids calling the Telnyx API. It is the recommended first action once the owner authorizes provider contact.
+**Corrected in Round 1 (C2).** The distinction below is between *not located in the material reviewed* and *confirmed not to exist*. Only the first is claimed.
+
+| Item | Status | Note |
+|---|---|---|
+| Canada-destination SMS base rate | **Not found** | No destination selector on the pricing page (T3) |
+| Canada-destination MMS base rate | **Not found** | Same |
+| Canadian outbound carrier surcharges | **Not found** | Canadian carriers appear only in the inbound table, showing no fee (T3) |
+| Canadian local number monthly rental | **Partially found** — "start at $1 per month" (T33) | A floor, not a firm rate |
+| Whether the $0.10 messaging capability charge applies to Canadian numbers | **Not found** | |
+| Canadian toll-free verification applicability | **Not found** | T21 frames verification as a US carrier requirement |
+| Short code monthly lease | **Not published** — the page says "Higher (monthly lease + per-message)" with no figure (T23) | Quote-only by the provider's own framing |
+
+**Nothing here is asserted to be absent.** Telnyx publishes `GET /v2/public/pricing` as the authoritative machine-readable per-destination source (T5) and directs destination enquiries to sales (T3); both very probably carry the missing figures. **This lane did not call that endpoint and did not contact sales**, because the task forbids calling the Telnyx API. Doing so is owner decision D10 and is the recommended first action once provider contact is authorized.
 
 ---
 
@@ -444,8 +554,8 @@ published_price = minimum_publishable, rounded UP to a clean increment
 
 | Meter | Unit | Worst-case provider cost | Formula floor | **Published retail** | Retail micros |
 |---|---|---|---|---|---|
-| `telecom.sms.us` | per SMS message part, **inbound or outbound** | $0.0090 | $0.0145 | **$0.0150** | 15,000 |
-| `telecom.mms.us` | per MMS message part, **inbound or outbound** | $0.0250 | $0.0400 | **$0.0450** | 45,000 |
+| `telecom.sms.us` | per SMS message part, **inbound or outbound** — `unit_label` = `message part` | $0.0090 | $0.0145 | **$0.0150** | 15,000 |
+| `telecom.mms.us` | per MMS message part, **inbound or outbound** — `unit_label` = `message part` | $0.0250 | $0.0400 | **$0.0450** | 45,000 |
 | `telecom.number.monthly.us` | per number per month | $1.10 | $2.00 | **$2.50** | 2,500,000 |
 | `telecom.registration.brand.us` | one-time per Business | $4.50 | $7.50 | **$9.00** | 9,000,000 |
 | `telecom.registration.campaign_review.us` | per submission | $15.00 | $24.00 | **$25.00** | 25,000,000 |
@@ -483,18 +593,27 @@ Under that invariant `retail_rate_micro × quantity` is exactly an integer, `bcR
 
 **This invariant is load-bearing and must be stated in the implementation contract.** If a fractional telecom quantity is ever introduced — a prorated part-month of number rental is the obvious candidate — half-up would round a `.5` micro toward the customer, and a `Ceiling` case must be added to `RoundingRule` **before** that happens. §11 records this.
 
-### 7.7 Segmentation
+### 7.7 The billing unit, and segmentation
+
+**Corrected in Round 1 (C4).** The original pass called an MMS a "part" by analogy to SMS without verifying it. Verification found the term **is** the provider's own, for both channels — but with an asymmetry that must be stated rather than smoothed over.
+
+> **The billing unit is the *message part*, for both SMS and MMS.** Telnyx's pricing page uses the identical wording — "per message part" — for SMS outbound, SMS inbound, MMS outbound and MMS inbound (T1), and states that "Prices are applied per message part."
+
+**The asymmetry.** The *definition* of a message part is written in SMS terms: "A message part is either an entire SMS message or a component of one, depending on message characters and encoding. Longer messages may be split into multiple parts, and you are billed per-part" (T32). No published rule explains what would make an MMS more than one part. So the unit label is proven for MMS; the segmentation rule behind it is not. That gap is question Q8, and until it closes MMS is **estimated at one part and settled on the provider's own count**, never on a local assumption.
 
 | Rule | Value | Basis |
 |---|---|---|
-| Billing unit for SMS | The **message part** (segment), never the message | T1, T25 |
-| GSM-7 | 160 characters single, 153 per part when concatenated | T25 |
-| Unicode (UCS-2) | 70 characters single, 67 per part when concatenated | T25 |
+| **Billing unit, both channels** | The **message part**. Never the message, and never the character | T1, T32 |
+| SMS part in GSM-7 | 160 characters single, 153 per part when concatenated | T25 |
+| SMS part in Unicode (UCS-2) | 70 characters single, 67 per part when concatenated | T25 |
 | Encoding trigger | One non-GSM-7 character switches the **whole** message to UCS-2 | T25 |
-| Authoritative part count | The `parts` field on `message.finalized`, never a local estimate | T26 |
+| MMS part rule | **Undefined by the provider.** MMS uses UTF-8 and is not subject to SMS segment limits | T25, T34 |
+| MMS payload bound | Attachment under 1 MB, ideally 100 KB below that; Tier 2 carriers 600 KB, Tier 3 300 KB. This is a **delivery** constraint, not a pricing one | T34 |
+| Authoritative part count | The `parts` field on `message.finalized`, never a local estimate, for **both** channels | T26 |
 | Estimate vs settlement | The reservation uses a locally computed estimate; `commit()` settles on the provider's `parts` value | E9, T26 |
 | Smart encoding | Available and **recommended on by default**, since it reduces both customer cost and provider cost with no downside | T25 |
-| MMS | Priced per message part at the MMS rate; MMS uses UTF-8 and is not subject to SMS segment limits. **Whether an MMS is ever more than one part is unresolved** — question Q8. Until answered, MMS is estimated at 1 part and settled on the provider's `parts` value | T25, T26 |
+
+**One term, everywhere.** The rate card, the reservation quantity, the ledger `unit_label`, the customer-facing display copy and the tests must all say **message part**. Not "segment" in one place and "part" in another, and not "message" for MMS. `unit_label` on the rate row is the single place this string is defined, and the display copy must render it rather than restating it. Suggested customer wording: *"1.5¢ per message part — a text counts as more than one part if it is long or uses emoji."*
 
 **Unicode disclosure is a product requirement, not a pricing one.** The same 160-character message costs 1 part in GSM-7 and 3 parts in UCS-2 — a 3× cost swing caused by one emoji. The composer must show the live part count and warn on the encoding switch before sending. Margin is unaffected (§8.6); the customer's bill is not.
 
@@ -589,6 +708,26 @@ Runtime monitoring: a finalized cost at or above 65% of retail is an alert; at o
 * **Promotional credit** is granted only by explicit, audited owner action, is bounded and expiring, uses the existing `PromotionalCredit` ledger type, and is consumed before paid balance. It is never granted automatically by plan, trial, Business creation or Agency Business count (E2 §12.5, §20 C-4/C-6).
 * **BYO transport takes no retail transport rate at all.** No telecom meter is reserved, no transport charge is settled, and none of §7 applies. Paid non-transport operations on a BYO Business are charged normally (E2 §11.5).
 
+### 7.21 The five charge classes, separated (Correction Round 1)
+
+**Corrected in Round 1 (C7).** These five were described across §6 and §7 but never set out as one normative list. Each is a distinct meter family with its own unit, its own cadence and its own markup treatment. **No two may be merged into one ledger line, and none may be presented to the customer as another.**
+
+| # | Class | What it is | Unit | Cadence | Markup? | Meters |
+|---|---|---|---|---|---|---|
+| **1** | **Pass-through compliance charges** | Registry and carrier fees Telnyx passes on at cost — "Telnyx does not currently charge a markup on 10DLC fees" (T8) | One brand registration; one campaign review **per submission**; one campaign month | One-time, per-submission, and monthly | **Yes** — the platform performs the registration labour, carries resubmission risk and monitors dormancy (§8.13) | `…registration.brand.us`, `…registration.campaign_review.us`, `…registration.campaign_monthly.us.*` |
+| **2** | **Recurring provider costs** | The standing cost of holding a provisioned number | One number-month, covering rental plus the messaging capability charge | Monthly, on the Business's renewal anniversary | **Yes** | `telecom.number.monthly.us` |
+| **3** | **Telecom usage rates** | Per-message transport | The **message part** (§7.7), inbound or outbound | Per operation | **Yes** | `telecom.sms.us`, `telecom.mms.us` |
+| **4** | **Taxes and surcharges** | Two different things that must not be conflated. **(a) Carrier surcharges** are per-part, destination-dependent, and **absorbed into class 3's published price** (§7.8) — never a separate customer line. **(b) Taxes, USF and TRS** are levied on the platform's own purchase, computed daily against the account, and "there is no way to provide an accurate estimate in advance" (T28) | (a) per part; (b) not attributable to any message | (a) per operation; (b) daily, account-wide | **Neither is marked up.** (a) is inside class 3's price; (b) is absorbed by margin (§7.9) | None — (b) has no customer-facing meter at launch |
+| **5** | **Platform markup** | The margin between classes 1–3's published retail and their provider cost | Not a chargeable unit | n/a | It **is** the markup | Never its own meter or ledger line |
+
+**Rules that follow from the separation:**
+
+* Class 5 is **never** a line item. It is the difference between two numbers the customer and the admin see respectively, and it must not appear as a "service fee" or "platform fee" anywhere.
+* Class 4(b) is **never** a customer line at launch, because the provider states it cannot be estimated in advance. Inventing an estimated tax line would be a fabricated charge.
+* Class 4(a) is **never** a separate line either, because it would expose the recipient's carrier to the sender and vary unpredictably at estimate time.
+* Classes 1, 2 and 3 each get their **own** meter, their own `unit_label` and their own line in the parent contract §10.6 itemised estimate. A customer must be able to see what they paid for registration, what they pay monthly, and what they pay per message, as three separate figures.
+* **Provider cost is administrative only** for every class, per cost-control invariant C-9 (E2 §20). None of the provider-cost figures in §6 is ever shown to a customer.
+
 ---
 
 ## 8. Margin and failure analysis
@@ -599,10 +738,10 @@ All scenarios use §7.4's published retail and §6.2's provider ranges. Where a 
 
 | Unit | Retail | Provider cost range | Gross margin range | Margin as % of retail | Effective markup on worst case |
 |---|---|---|---|---|---|
-| SMS part, outbound | $0.0150 | $0.0075 – $0.0090 | $0.0060 – $0.0075 | 40.0% – 50.0% | 66.7% |
-| SMS part, inbound | $0.0150 | $0.0040 – $0.0075 | $0.0075 – $0.0110 | 50.0% – 73.3% | 100.0% |
-| MMS part, outbound | $0.0450 | $0.0220 – $0.0250 | $0.0200 – $0.0230 | 44.4% – 51.1% | 80.0% |
-| MMS part, inbound | $0.0450 | $0.0050 – $0.0150 | $0.0300 – $0.0400 | 66.7% – 88.9% | 200.0% |
+| SMS message part, outbound | $0.0150 | $0.0075 – $0.0090 | $0.0060 – $0.0075 | 40.0% – 50.0% | 66.7% |
+| SMS message part, inbound | $0.0150 | $0.0040 – $0.0075 | $0.0075 – $0.0110 | 50.0% – 73.3% | 100.0% |
+| MMS message part, outbound | $0.0450 | $0.0220 – $0.0250 | $0.0200 – $0.0230 | 44.4% – 51.1% | 80.0% |
+| MMS message part, inbound | $0.0450 | $0.0050 – $0.0150 | $0.0300 – $0.0400 | 66.7% – 88.9% | 200.0% |
 | Number month | $2.50 | $1.10 | $1.40 | 56.0% | 127.3% |
 | Brand registration | $9.00 | $4.00 – $4.50 | $4.50 – $5.00 | 50.0% – 55.6% | 100.0% |
 | Campaign review | $25.00 | $15.00 | $10.00 | 40.0% | 66.7% |
@@ -685,7 +824,9 @@ Onboarding, charged once: brand $9.00, campaign review $25.00, three prepaid cam
 
 ### 8.7 Scenario — Canadian traffic
 
-**Not computable.** No Canadian base rate, carrier surcharge or number rental is published (T3, T6). Presenting a Canadian margin here would require inventing a provider price, which §7.13 forbids and the task forbids. This is the concrete reason Canada is deferred (§5.4), and the concrete thing Q2 and Q3 unblock.
+**Not computable on the evidence gathered.** Of the five figures a Canadian scenario needs, one was found as a lower bound only — "Local numbers for Canada start at $1 per month" (T33) — and four were **not found in the material reviewed**: the Canada-destination SMS base rate, the MMS base rate, the outbound carrier surcharges, and whether the $0.10 capability charge applies (§4.3a, §6.7).
+
+**Not found is not confirmed absent.** These figures very probably exist behind `GET /v2/public/pricing` (T5) or a sales enquiry, neither of which this lane was authorized to use. Presenting a Canadian margin from a "start at" floor plus four gaps would be inventing a provider price, which §7.13 and the task both forbid. This is the concrete reason Canada is deferred (§5.4), and the concrete thing Q2, Q3 and owner decision D10 unblock.
 
 ### 8.8 Scenario — carrier-surcharge spike
 
@@ -738,7 +879,7 @@ A Business has funded $84.00 in total, was charged $34.00 in registration fees a
 | Dormant campaign fine | A campaign sits inactive 15 days and T-Mobile fines $250/month | Dormancy monitoring and the `DORMANT` webhook (T17); an alert per identity |
 | Provider price increase past the floor | Cost rises above retail ÷ 1.60 | §7.17 rate revision; §7.19 alerting |
 | Tax drift | Unestimable taxes consume margin | §7.9's 10%-of-margin revision trigger |
-| **Platform balance abolishment** | The shared Telnyx balance stays negative one month and **every Business's numbers are deleted** (T30) | Platform balance monitoring is not optional (E1 §10). This is the most severe financial and reputational failure mode in the whole design |
+| **Platform balance abolishment** | The shared Telnyx balance stays negative for one month, after which "the numbers in your account will be deleted from the account" (T30) — see §11.8 for the exact wording and timeline | Platform balance monitoring is not optional (E1 §10). Severe, but recoverable during a two-week hold |
 
 ### 8.13 Pass through exactly, or mark up?
 
@@ -755,17 +896,20 @@ A Business has funded $84.00 in total, was charged $34.00 in registration fees a
 
 ## 9. Compliance onboarding state machine
 
-Mapped onto parent contract §7.7's activation states. Every row obeys three invariants: **no provider success is ever inferred from a local row**; **no funds are reserved before the customer has seen an itemised estimate**; and **sending is blocked until the carrier can actually deliver**.
+Mapped onto parent contract §7.7's activation states. Every row obeys four invariants: **no provider success is ever inferred from a local row**; **no funds are reserved before the customer has seen an itemised estimate**; **no provider cost is incurred that is not already covered by an open reservation or an existing commit** (§11.4); and **sending is blocked until the carrier can actually deliver**.
+
+The "Funds reserved" column follows §11.4's corrected sequence: reservations are **short and repeated**, taken immediately before each irreversible provider cost, never held across the multi-day carrier review.
 
 | State | §7.7 | Customer sees | Platform may | Sending | Funds reserved | Fees charged | Notification | Retry / resubmission | Audit evidence |
 |---|---|---|---|---|---|---|---|---|---|
 | `not_started` | `available` | "Set up your business phone" with the full itemised cost preview | Show the estimate. Nothing else | Blocked | No | No | None | n/a | Entitlement check only |
+| `funding_required` | `available` | The complete itemised upfront total, and the shortfall if any. Auto-recharge stays off unless the customer turns it on (E15) | Compare the total against available balance. **No provider contact** | Blocked | No — this is a **balance sufficiency gate**, not a reservation | No | Prompt to fund at least the shortfall, $5 manual minimum | Free retry | Estimate snapshot, shortfall, funding attempt ids |
 | `business_information_required` | `available` | A form for legal name, entity type, EIN or registry ID, address, website, contact (T12) | Validate and store. No provider call | Blocked | No | No | Reminder after 7 days idle | Free re-edit | Field-level change log |
 | `consent_evidence_required` | `available` | Opt-in method, CTA text, privacy policy URL, terms URL, sample messages, opt-in/opt-out/HELP copy (T13, T14) | Validate against every checkable T14 rule, including that policy links resolve and are not pop-ups | Blocked | No | No | Reminder after 7 days idle | Free re-edit | Submitted evidence retained immutably |
-| `submitted` | `activating` | "Submitted for review" with the exact amount reserved and what it covers | Reserve, then call the provider. **Reserve first, always** (E2 §10.3) | Blocked | **Yes** | Brand and campaign review fees committed on provider acceptance | Confirmation with itemised receipt | n/a | Reservation id, provider request/response ids |
-| `under_review` | `activating` | "Under carrier review", with an honest range and no invented completion date | Poll or await provider callbacks only | Blocked | Registration portion **already committed** (§11.4) | Already charged | Notify on any state change | n/a | Every provider status transition, timestamped |
+| `submitted` | `activating` | "Submitted for review", with an itemised receipt for what was just charged | Two short reserve → call → commit cycles: brand, then campaign. **Reserve immediately before each, always** (E2 §10.3, §11.4) | Blocked | **Yes, briefly** — one short reservation per cycle, each committed within seconds | Brand registration, campaign review and three prepaid campaign months, **committed on provider acceptance of the submission** because Telnyx charges on submission regardless of outcome (T8) | Confirmation with itemised receipt and an explicit non-refundable notice | n/a | Reservation ids, provider request/response ids, commit ledger ids |
+| `under_review` | `activating` | "Under carrier review", with an honest range and no invented completion date | Poll or await provider callbacks only | Blocked | **None open, deliberately** — registration is already committed, and nothing is owed until the number is bought, so no reservation can expire here (§11.4) | Already charged | Notify on any state change | n/a | Every provider status transition, timestamped |
 | `action_required` | `activating` | The exact rejection reason and precisely what to change | Accept corrections and resubmit | Blocked | No new reservation until resubmission | **A further review fee applies per submission** (T8) — disclosed before the customer confirms | Immediate, with the reason | Explicit, customer-confirmed, never automatic | Rejection reason and correction diff |
-| `approved` | `activating` | "Approved — assigning your number" | Purchase and assign the number, link the campaign | **Still blocked** | Yes, for the number | Number's first period on success | Notify | Provider-driven | Brand and campaign identifiers |
+| `approved` | `activating` | "Approved — assigning your number" | **Re-check available balance first** (§11.4), then one short reserve → buy → commit cycle | **Still blocked** | Yes, briefly, for the number only | Number's first period, committed on successful purchase | Notify. If the balance is now short, ask for a top-up well inside the 15-day dormancy window (T17) | Provider-driven | Brand and campaign identifiers, balance re-check result |
 | `number_assignment_pending` | `activating` | "Finalising with carriers — usually 24 to 72 hours" (T18) | Wait for propagation | **Still blocked** — this is where premature sends silently fail (§3.2) | Already reserved | Already charged | Notify on completion | Bounded automatic retry, then `action_required` | Assignment id, propagation start |
 | `ready` | `active` | "Your business phone is live", with the number and current balance | Send, receive, meter, settle | **Allowed** | Per operation | Per operation at published rates | Low-balance alerts | n/a | Every message with `parts`, `encoding` and finalized cost |
 | `suspended` | `suspended` | The specific reason: funds, compliance, dormancy, or admin | Retain the number; keep inbound handling and STOP/HELP alive (E2 §13.3) | **New paid outbound blocked**; legally required inbound preserved | No new reservations | Recurring number and campaign fees continue — **disclosed** | Immediate, with the remedy | Automatic on remedy for funds; manual for compliance | Reason, actor, timestamp, transition source |
@@ -791,8 +935,8 @@ These block the Canadian half of the proposed §28.4 scope. **None blocks a US-o
 | # | Question | Blocks |
 |---|---|---|
 | **Q1** | Is A2P registration required for a Telnyx Canadian local long code to reach Canadian subscribers, and is it required for a US 10DLC-registered number to reach Canadian subscribers? Your International SMS Compliance Guide lists Canada's only pre-registration requirement as short-code approval, but your 10DLC brand form accommodates Canadian corporate registry identifiers, and several downstream platforms state that Canadian long codes bought on or after 26 March 2025 require registration | Canada launch; §3.4; §4.3; §4.4 |
-| **Q2** | What are the current Telnyx base rates for SMS and MMS, outbound and inbound, to Canadian destinations, and what Canadian carrier surcharges apply? Your public messaging pricing page lists Canadian carriers only in the inbound table with no fee, and publishes no Canadian base rate | Canada rate card; §6.7; §8.7 |
-| **Q3** | What is the monthly rental for a Canadian local number, and does the $0.10 monthly SMS/MMS capability charge apply to Canadian numbers? | Canada rate card; §6.7 |
+| **Q2** | What are the current Telnyx base rates for SMS and MMS, outbound and inbound, to Canadian destinations, and what Canadian carrier surcharges apply? Your public messaging pricing page lists Canadian carriers only in the inbound table with no fee, publishes no Canada-destination base rate, and offers no destination selector. Is `GET /v2/public/pricing` the correct authoritative source for these, and does it require authentication? | Canada rate card; §4.3a; §6.7; §8.7 |
+| **Q3** | Your Canada numbers page says "Local numbers for Canada start at $1 per month" (T33). What is the actual monthly rental for a Canadian local number in a given rate centre, and does the $0.10 monthly SMS/MMS capability charge apply to Canadian numbers? | Canada rate card; §4.3a; §6.7 |
 | **Q4** | Does toll-free verification apply to, and is it honoured by, Canadian carriers — or is it a US-carrier requirement only? | Canada fallback path; §4.2 |
 | **Q5** | For a Canadian brand, should we submit the Provincial or Federal Corporation/Registry ID as your brand-creation article instructs, or the first nine digits of the CRA Business Number as The Campaign Registry's guidance states? These directly conflict | Canada onboarding correctness; §4.3 |
 
@@ -804,7 +948,7 @@ These block the Canadian half of the proposed §28.4 scope. **None blocks a US-o
 | **Q7** | What record-retention obligation attaches to 10DLC consent evidence as a **requirement**, as distinct from the "recommended 4+ years" in your compliance guide? | §3.1; §13.2 |
 | **Q8** | Can a single MMS ever be billed as more than one message part, and if so what determines the count? Your encoding documentation says MMS is not subject to SMS segment limits, but pricing is quoted per message part | §7.7; MMS estimation |
 | **Q9** | Do the account-wide 50 MPS SMS and 15 MPS MMS ceilings apply per account, per messaging profile, or per API key? We operate one account with one messaging profile per end customer | §3.1; §8.4; capacity planning |
-| **Q10** | Your ISV article states a campaign accommodates at most 49 phone numbers; the developer documentation states only that a number belongs to one campaign at a time. Is 49 the current limit? | Capacity planning |
+| **Q10** | Two cardinality figures need confirming as current. (a) Is "a maximum of five Campaigns per Brand" still the limit? (b) Your FAQ gives the T-Mobile number-per-campaign limit as 49 "as of September 2023" — is 49 still correct in 2026? | §3.5; capacity planning |
 | **Q11** | Is the `cost` value on `message.finalized` final and immutable, or can it be adjusted by later reconciliation? Can the provider price for an in-flight message change between send and finalization? | §7.15; §7.18; ledger settlement |
 
 ### 10.3 Operational questions
@@ -815,7 +959,9 @@ These block the Canadian half of the proposed §28.4 scope. **None blocks a US-o
 | **Q13** | Is there a documented way to avoid a duplicate $15 campaign review fee when resubmitting after a rejection — for example a pre-submission review by your team? | §8.10; owner decision D5 |
 | **Q14** | Are taxes ever attributable to an individual message or number, or only to the account's daily aggregate? | §7.9 |
 | **Q15** | What notification is sent, and to which address, before the one-month negative-balance abolishment process deletes an account's numbers? | §8.12; balance monitoring |
-| **Q16** | Are there per-messaging-profile spend or velocity controls, so one end customer cannot consume the whole account's throughput? | §8.4; per-Business limits |
+| **Q16** | **Partly answered by your own documentation** — a messaging profile carries `daily_spend_limit`, disabled by default, resetting at midnight UTC (T31). Two gaps remain: is there any per-profile *throughput* control, as distinct from a spend cap? And does the daily spend limit count retail spend or provider cost? | §3.1; §8.4; per-Business limits |
+| **Q17** | Does a 10DLC brand or campaign registered through Telnyx impose any constraint on which messaging profile its assigned numbers may belong to, or are profiles fully orthogonal to brands and campaigns? Your messaging-profile documentation states no relationship | §3.5; per-Business isolation |
+| **Q18** | When a Business needs several use cases, is a single Mixed-use-case campaign or several separate campaigns the preferred structure for an ISV, and does a Mixed campaign carry any throughput or approval penalty relative to single-use-case campaigns? | §3.5; onboarding design; §8 cost modelling |
 
 ### 10.4 Future Managed Accounts questions
 
@@ -830,10 +976,11 @@ Carried forward unchanged from the architecture decision's §18 items 1–5. The
 > We operate a SaaS platform that will provision one messaging profile and one dedicated long-code number per end-customer business from a single Telnyx account, registering a separate 10DLC brand and campaign per end customer, per your ISVs & 10DLC guidance. We are finalising our launch country scope and our retail pricing, and your published documentation leaves five points unresolved. We have not yet created an account resource, purchased a number, or submitted a registration.
 >
 > 1. **Canada A2P registration.** Your International SMS Compliance Guide lists Canada's only pre-registration requirement as short-code approval and marks long code as supported. Your 10DLC quickstart scopes 10DLC to US long-code numbers. However, your brand-creation article gives specific guidance for Canadian entities, and several downstream platforms state that Canadian long codes purchased on or after 26 March 2025 require A2P registration or persona verification before reaching Canadian subscribers. Which is correct today, for (a) a Canadian long code sending to Canadian subscribers, (b) a Canadian long code sending to US subscribers, and (c) a US 10DLC-registered number sending to Canadian subscribers?
-> 2. **Canadian pricing.** Your public messaging pricing page publishes no Canadian base rate, and lists Canadian carriers only in the inbound table with no carrier fee. What are the current outbound and inbound SMS and MMS base rates for Canadian destinations, and what Canadian carrier surcharges apply?
-> 3. **Canadian numbers.** What is the monthly rental for a Canadian local number, and does the $0.10 monthly SMS/MMS capability charge apply to it?
+> 2. **Canadian pricing.** Your public messaging pricing page publishes no Canada-destination base rate, offers no destination selector, and lists Canadian carriers only in the inbound table with no carrier fee. What are the current outbound and inbound SMS and MMS base rates for Canadian destinations, and what Canadian carrier surcharges apply? Is `GET /v2/public/pricing` the authoritative source for these, and does it require authentication?
+> 3. **Canadian numbers.** Your Canada numbers page says local numbers "start at $1 per month". What is the actual monthly rental, and does the $0.10 monthly SMS/MMS capability charge apply to Canadian numbers?
 > 4. **Canadian brand identifiers.** Your brand-creation article tells Canadian companies to supply a Provincial or Federal Corporation/Registry ID and to avoid the CRA Business Number. The Campaign Registry's guidance is to supply the first nine digits of the CRA Business Number. Which should we submit?
-> 5. **Fee and limit clarifications.** (a) Is the brand registration fee $4.50 per your fees article or $4.00 per your sole-proprietor developer documentation? (b) Do the account-wide 50 MPS SMS and 15 MPS MMS ceilings apply per account, per messaging profile, or per API key? (c) Is 49 phone numbers per campaign the current limit? (d) Is the `cost` value on `message.finalized` final and immutable, or can it be adjusted by later reconciliation?
+> 5. **Cardinality and structure.** (a) Is "a maximum of five Campaigns per Brand" still current? (b) Your FAQ gives the T-Mobile limit as 49 numbers per campaign "as of September 2023" — is that still correct? (c) For an ISV whose end customer needs several use cases, do you recommend one Mixed-use-case campaign or several separate campaigns, and does a Mixed campaign carry any throughput or approval penalty? (d) Do brands or campaigns constrain which messaging profile their numbers may belong to, or are profiles fully orthogonal?
+> 6. **Fee, limit and billing clarifications.** (a) Is the brand registration fee $4.50 per your fees article or $4.00 per your sole-proprietor developer documentation? (b) Do the account-wide 50 MPS SMS and 15 MPS MMS ceilings apply per account, per messaging profile, or per API key, and is there any per-profile throughput control to complement `daily_spend_limit`? (c) Can a single MMS ever be billed as more than one message part, and if so what determines the count? (d) Is the `cost` value on `message.finalized` final and immutable, or can it be adjusted by later reconciliation? (e) Are number monthly charges billed on a calendar boundary or a purchase anniversary, and are partial months prorated?
 >
 > Thank you.
 
@@ -881,14 +1028,41 @@ Consequences the implementation contract must state:
 
 **A single reservation covering the whole upfront total cannot survive compliance approval.** It will be auto-released mid-flight, and the platform will have paid Telnyx with the customer's funds already returned. Parent contract §10.6's "reserve the complete amount, provision, then settle" sequence is written as though provisioning were synchronous. It is not.
 
-**Required resolution — split the upfront charge along the provider's own commitment boundary:**
+**Round 1 correction (C6).** `expires_at` is written once at `reserve()` and is **never updated anywhere in the codebase** — there is no extension mechanism, so the 30-minute ceiling is hard, not a tunable. Verified across the repository.
 
-| Group | Items | Reserve/commit timing |
-|---|---|---|
-| **A — committed at submission** | Brand registration, campaign review, prepaid campaign months | Reserved and **committed within the 30-minute window**, because Telnyx charges these on submission regardless of outcome (T8). The customer is told before confirming that these are non-refundable |
-| **B — committed at provisioning** | Number purchase and first period | A **separate, short** reservation taken only once the campaign is approved and the number is about to be purchased, comfortably inside the TTL |
+**Required resolution — a funding gate, then reserve-commit cycles at each provider commitment boundary.** The sequence below satisfies every element of the locked policy simultaneously.
 
-Group A's estimate and Group B's estimate are shown together as one itemised total before anything is charged, preserving §10.6's disclosure intent while respecting what the ledger can actually hold. The alternative — lengthening the TTL to days — would strand customer funds across the whole platform and is not recommended.
+**Stage 0 — estimate and fund, before any provider contact.**
+
+1. Show the **complete** itemised upfront estimate: brand registration, campaign review, the three prepaid campaign months, the number's first period, and the initial usable balance. One line per item at its retail rate, no provider cost shown (E2 §10.6, §20 C-9). **No tax line appears**, because Telnyx states taxes cannot be estimated in advance (T28); §7.9 records that the platform absorbs them.
+2. **Required available funding = the greater of (a) $5, or (b) that complete displayed upfront total** — the locked rule, unchanged (E2 §10.6).
+3. Compare against **available** balance, meaning balance minus existing reservations. Sufficient means no top-up is requested. Short means the customer funds at least the shortfall, subject to the $5 manual minimum. **Auto-recharge stays off by default** — verified in both the migration default and wallet initialisation (E15).
+4. **Nothing has touched the provider yet.** Abandoning here leaves no reservation, no charge and no provider resource.
+
+**Stages 1 to 3 — one short reserve → provider call → commit cycle per irreversible cost.**
+
+| Stage | Provider commitment boundary | Reserve | Provider call | Commit | Within TTL? |
+|---|---|---|---|---|---|
+| **1** | Brand registration fee is incurred on submission | Immediately before | Create brand | On provider acceptance | Yes — seconds |
+| **2** | Campaign review fee plus three prepaid months are incurred **on submission, regardless of outcome** (T8) | Immediately before | Submit campaign | On provider acceptance of the submission, not of the review | Yes — seconds |
+| **—** | **Multi-day carrier review runs here with no reservation open** | — | — | — | **The TTL is never in play** |
+| **3** | Number purchase and its first period | Immediately before | Buy number, assign to profile, link campaign | On successful purchase | Yes — seconds |
+
+**The invariant that makes this safe:**
+
+> **The platform never incurs a provider cost that is not already covered by an open reservation or an existing commit.** Every irreversible provider cost is preceded, in the same second, by a reservation that covers it.
+
+This is the "never pay a provider fee first and hope the customer funds it later" rule, stated so it can be tested.
+
+**Why no reservation is held across the review.** Stage 2 commits at submission because that is when Telnyx's charge becomes real. After that the platform is owed nothing until stage 3, so there is nothing to hold. The reservation therefore cannot expire during the review, because none is open — which satisfies the requirement without lengthening the TTL. Lengthening it to days was considered and rejected: `RESERVATION_TTL_MINUTES` is a single global constant, so raising it would strand funds behind **every** feature's abandoned reservations platform-wide, not just telecom's.
+
+**The one residual exposure, stated rather than hidden.** Between stage 2 and stage 3 the customer's remaining balance is not reserved, so another metered feature could consume it, and at approval time the number purchase could find insufficient funds. The platform is never out of pocket — stage 3 simply does not run — but the customer would have paid for a campaign that has no number, and a campaign with no active number auto-suspends after 15 days (T17). Mitigations, in order of cost:
+
+1. **Re-check at approval and ask for a top-up** before stage 3. No new code beyond the check. **Recommended for launch.**
+2. Alert the customer as soon as the approval arrives and the balance is short, well inside the 15-day dormancy window.
+3. A distinct non-expiring onboarding hold, which would be a genuine new ledger concept and is **not** recommended for launch.
+
+This is owner decision D11.
 
 ### 11.5 Settlement semantics
 
@@ -912,9 +1086,47 @@ Recorded here for a future contract-editing lane. **Not edited by this lane** (t
 2. **§28.4's recorded answer needs narrowing.** It records "US and Canada, local long-code only". §5.4 recommends **US only at launch**, with Canada following on Q1–Q4.
 3. **§20 invariant C-8 needs a precise reading.** "A dormant Business produces zero external cost over any period" is false once a number is provisioned: rental, messaging capability and the campaign monthly all accrue regardless of activity, and dormancy can additionally attract a $250/month T-Mobile fine (T17). C-8 is true only for a Business in §7.7's `available` state, which has never activated the capability. The contract should say so, or C-8 will be read as forbidding something the design requires.
 4. **§10.6's sequence needs the §11.4 split.** As written it assumes synchronous provisioning.
-5. **§28.1a should record §7 as its answer**, including the integer-quantity invariant (§7.6), the destination allowlist (§7.12) and the margin floor (§7.19).
+5. **§28.1a should record §7 as its answer**, including the integer-quantity invariant (§7.6), the destination allowlist (§7.12), the margin floor (§7.19) and the five-class charge separation (§7.21).
+6. **§10.6's funding sequence should record §11.4's corrected shape** — a balance sufficiency gate for the complete upfront total, then short reserve-commit cycles at each provider commitment boundary, with the invariant that the platform never incurs an unfunded provider cost.
+7. **Nothing in the schema or the onboarding flow may cap a Business at one campaign** (§3.5). The hard invariant is one brand per Business; campaigns are a bounded collection under it.
 
-### 11.8 What does not change
+### 11.8 Shared-account balance failure — exact wording and blast radius (Correction Round 1)
+
+**Corrected in Round 1 (C3).** The original pass wrote that "every Business's numbers are deleted" and that restoration was impossible by adding funds. Both overstated the source. Here is what the article actually says, in its own terminology, and what follows.
+
+**The provider's terminology and timeline, quoted (T30):**
+
+| Phase | Duration | The article's exact words |
+|---|---|---|
+| Trigger | Negative balance sustained **1 month** | "If your account is left with a negative balance for a period of 1 month, an abolishing process will take place." |
+| **Deleted** | Immediately on abolishment | "In this process the numbers in your account will be deleted from the account." |
+| **Hold** | 2 weeks | "After the numbers are deleted from the account they are set to a 'hold' status for the next two weeks." "While the numbers are in this 'hold' status you can still buy them again"; "only you will be able to search for and purchase the numbers." |
+| **Aging** | 2 weeks | "If you do not buy back your numbers when they are in the 'hold' status, the status will change to 'Aging'…" "While the numbers are in an 'Aging' status no one (including you) can buy them." |
+| **Released** | After Aging | "After the numbers have been left in 'Aging' for two weeks they will be released so that they are generally available." |
+
+**The four terms are not interchangeable, and the document uses them precisely from here on.** *Deleted* is what happens to the numbers at abolishment. *Hold* is a two-week exclusive repurchase window. *Aging* is a two-week window in which nobody can buy them. *Released* is the final return to general availability. Nothing in the article says numbers are *suspended* or *disconnected*, and this document does not use those words for this failure.
+
+**Restoration, classified honestly:**
+
+| Phase | Restoration | Status |
+|---|---|---|
+| Hold (first 2 weeks) | **Possible, by repurchasing** — and only the original account can, so the platform has exclusive first refusal | **Known** |
+| Aging (next 2 weeks) | The article directs the reader to `numbering@telnyx.com` or `support@telnyx.com` but **does not state whether such a request succeeds** | **Unknown** |
+| After release | Numbers are generally available; anyone may buy them | **Known — effectively lost** |
+
+**One constraint that is stated, and was previously over-generalised:** "If your account was abolished, you will not be able to get your numbers back by simply adding balance to your account." That rules out *topping up alone* as a remedy. It does **not** say restoration is impossible — the same article describes repurchase during hold as the remedy.
+
+**The blast radius, without exaggeration.** The launch architecture puts every Business on one Telnyx account with one balance (§1), so this failure is **account-wide by construction**: it is not scoped to the Business whose usage caused the shortfall. The article's phrase is "the numbers in your account", carving out no exception, so reading it as reaching every provisioned number is a reasonable **inference** — and it is labelled as an inference, not a quotation.
+
+**What makes it manageable rather than catastrophic:**
+
+* The trigger requires a negative balance sustained for a **month**, not an instant. That is a long runway for the balance monitoring the architecture decision already requires (E1 §10).
+* Deletion is followed by a **two-week window in which only the platform can repurchase** the numbers.
+* AI Business OS reserves against the customer's wallet before every provider call, so provider spend is bounded by funds already collected. The platform balance should not drift negative at all if monitoring keeps it ahead of committed spend.
+
+**What remains genuinely severe.** Numbers repurchased after deletion are the same numbers only if repurchased within the hold window; a Business whose number changed would have to re-tell its customers. And the 10DLC campaign's number assignment would need re-establishing, with 24 to 72 hours of carrier propagation (T18) and a dormancy risk if the gap exceeds 15 days (T17). **The correct mitigation is preventive, not curative:** alert on the platform balance long before it approaches zero, and treat "platform balance sufficient" as its own precondition, distinct from the customer wallet check (E1 §10). Question Q15 asks what notification precedes abolishment.
+
+### 11.9 What does not change
 
 RFC-005's wallet, ledger, reservation, refund, dispute and promotional-credit primitives are sufficient as they stand. This rate card adds meters and rates; it does not need a new ledger, a new entry type, or a change to reservation or settlement semantics beyond the TTL sequencing in §11.4.
 
@@ -933,9 +1145,12 @@ RFC-005's wallet, ledger, reservation, refund, dispute and promotional-credit pr
 | **D7** | Destination allowlist as a rate-card rule | Approve (§7.12) | A single out-of-scope message can lose 31 messages' margin (§8.8) |
 | **D8** | Smart encoding default | **On** (§7.7) | Customers pay up to 3× for invisible characters (§8.6) |
 | **D9** | Authorize a Telnyx support enquiry | Approve sending §10.5's draft | Q1–Q4 stay open and Canada cannot be scoped or priced |
-| **D10** | Authorize reading the public pricing endpoint | Approve a read-only fetch of `GET /v2/public/pricing` before any activation | Canadian costs stay unknown; §7.13 keeps Canada blocked |
+| **D10** | Authorize reading the public pricing endpoint | Approve a read-only fetch of `GET /v2/public/pricing` before any activation | The Canadian figures §4.3a lists as not found stay ungathered; §7.13 keeps Canada blocked |
+| **D11** | Whether to protect the post-approval balance between campaign submission and number purchase | **Re-check the balance at approval and ask for a top-up if short** (§11.4). Do not build a new non-expiring hold for launch | A customer could pay for a campaign, run the balance down, and end up with a campaign that has no number and goes dormant in 15 days |
+| **D12** | Whether a Business may hold more than one campaign at launch | **Allow up to the provider's limit, but default the onboarding flow to one campaign**, offering a second only when a genuinely distinct use case is declared (§3.5). Disclose the extra number rental and campaign monthly before the customer commits | Either a needless cap that blocks a legitimate second use case, or an unbounded flow that multiplies recurring cost silently |
+| **D13** | Whether to enable the provider-side per-Business daily spend cap | **Enable `daily_spend_limit` on every Business's messaging profile**, set above that Business's wallet-side cap, as defence in depth (T31) | The only spend control is wallet-side; a bug there has no provider-side backstop |
 
-Decisions D1–D8 are documentary and can be recorded immediately. D9 and D10 involve contacting or reading from the provider and are therefore outside what this lane was authorized to do.
+Decisions D1–D8 and D11–D13 are documentary and can be recorded immediately. D9 and D10 involve contacting or reading from the provider and are therefore outside what this lane was authorized to do.
 
 ---
 
@@ -945,9 +1160,11 @@ Decisions D1–D8 are documentary and can be recorded immediately. D9 and D10 in
 
 | Category | Where |
 |---|---|
-| Proven current facts | §2.2 and §2.3 rows marked Proven; §3.1, §4.1, §4.5, §6.2–§6.4 |
-| Conditional facts | R6, R7, R8, R9; §3.4; §4.2–§4.4; §6.6; §6.7 |
+| Proven current facts | §2.2 and §2.3 rows marked Proven; §3.1, §3.5, §4.1, §4.5, §6.2–§6.4, §11.8 |
+| Conditional facts | R6, R7, R8, R9; §3.4; §4.2–§4.4; §6.6 |
 | Recommendations | §5.4, §7 entire, §8.13, §9, §11 |
+| Not found, and explicitly **not** claimed absent | §4.3a; §6.7; §8.7 |
+| Inferences, labelled as such | T30's "all numbers" reading (§11.8); the platform-responsibility split (§3.3) |
 | Owner decisions required | §12 |
 | Telnyx questions | §10 |
 | Implementation consequences | §11 |
@@ -979,6 +1196,11 @@ Counsel must see, before US launch traffic:
 | No rate described as activated | Yes — §7 is labelled a recommendation in its opening line and again in §12 |
 | No live API or provider operation occurred | Yes — no Telnyx API call was made. The public pricing endpoint was deliberately **not** called; it is recommended to the owner as D10 |
 | Documentation-only change | Yes — exactly one new file |
+| **Round 1: every claim re-verified against the exact wording it rests on** | Yes. T1, T3, T10, T11, T30 were re-opened and re-quoted; T31–T35 were added from newly opened pages; E15 and E16 were verified in the repository |
+| **Round 1: inference separated from quotation** | Yes. T30's "all numbers" reading and R6/R8/R9's status are labelled inferences or Conditional, not quotations |
+| **Round 1: all arithmetic recomputed** | Yes. Every §7.3 formula floor, all ten §8.1 per-unit margins and all seven §8.2–§8.6 scenarios were recomputed from the micro-unit inputs and match the published figures exactly |
+| **Round 1: billing-unit terminology unified** | Yes. Rate card, `unit_label`, reservation quantity, display copy and tests all specify **message part** (§7.7) |
+| **Round 1: stale-phrase scan** | Yes. Every surviving occurrence of a superseded phrase sits inside a Correction Round 1 record that quotes the old wording deliberately |
 
 ### 13.4 Price re-verification rule
 
@@ -988,17 +1210,17 @@ Every price in §6 and §7 carries the access date 2026-09-09. **No rate may be 
 
 **§28.4 — recommended, not yet recorded.**
 
-* Launch countries: **United States only**, narrowed from the anticipated US and Canada on the evidence in §4.3, §5.4 and §6.7.
+* Launch countries: **United States only**, narrowed from the anticipated US and Canada on the evidence in §4.3, §4.3a, §5.4 and §6.7. **Round 1 re-tested this and preserved it** — the corrections narrowed the Canada *claim* from "no pricing exists" to "no sufficient pricing was found", which changes the wording but not the gate: §7.13 still bars activating a rate whose worst-case cost has not been evidenced.
 * Number type: **local long-code only**. Toll-free, short code and alphanumeric sender ID are excluded, alphanumeric by primary evidence (T19) rather than judgement.
-* Compliance scope: A2P 10DLC with one brand and one campaign per Business, per §3.
-* Canada: deferred, not cancelled. Gated solely on Q1–Q4.
-* Awaiting owner decisions D1, D2 and D9.
+* Compliance scope: A2P 10DLC with **exactly one brand per Business** and **one to five campaigns under that brand**, each campaign owning its own numbers, per §3.5.
+* Canada: deferred, not cancelled. Gated on Q1–Q4 **and** on gathering the four Canadian cost figures §4.3a lists as not found, which requires owner decision D10.
+* Awaiting owner decisions D1, D2, D9 and D12.
 
 **§28.1a — recommended, not yet recorded.**
 
 * The complete policy is §7 and covers every element §28.1a enumerates.
 * **No rate is activated.** Parent contract §21.2's prohibition remains fully in force.
-* Awaiting owner decisions D3–D8, and D10 for Canadian pricing.
+* Awaiting owner decisions D3–D8, D11 and D13, plus D10 for Canadian pricing.
 
 **Slice 4 remains blocked.** Its prerequisites are 3 and 5 complete plus §28.4 and §28.1 recorded (parent contract §21.1). This document supplies the research and the recommendation for two of those; recording them is the owner's act, not this document's.
 
@@ -1006,4 +1228,4 @@ Every price in §6 and §7 carries the access date 2026-09-09. **No rate may be 
 
 ---
 
-`TELNYX US/CANADA COMPLIANCE AND RETAIL RATE-CARD DECISION — READY FOR HUMAN/CHATGPT REVIEW`
+`TELNYX US/CANADA COMPLIANCE AND RETAIL RATE-CARD DECISION — CORRECTION ROUND 1 READY FOR HUMAN/CHATGPT REVIEW`
