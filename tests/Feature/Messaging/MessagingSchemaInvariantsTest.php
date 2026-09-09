@@ -1,0 +1,489 @@
+<?php
+
+namespace Tests\Feature\Messaging;
+
+use App\Enums\Messaging\BusinessMessagingIdentityStatus;
+use App\Enums\Messaging\BusinessMessagingNumberStatus;
+use App\Enums\Messaging\MessagingProvider;
+use App\Models\Business;
+use Illuminate\Database\QueryException;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Str;
+use Tests\Feature\Business\Concerns\CreatesBusinessTestData;
+use Tests\TestCase;
+
+/**
+ * Customer Experience Slice 3 §4.2 — T-MSG-1, 2, 5, 6, 7, 14, 39, 43, 44,
+ * 45, 46, 63, 64.
+ *
+ * Every uniqueness assertion here is made with a RAW DB::table() insert or
+ * update, deliberately bypassing every application layer, because the
+ * contract's claim is that MySQL itself rejects these rows — the resolver's
+ * pre-checks are a courtesy, not the mechanism. If a test here passed only
+ * because application code intervened, the claim would be untested.
+ *
+ * These run against the repository's real configured MySQL connection, not a
+ * driver-agnostic in-memory substitute, since generated columns and MySQL's
+ * NULL-tolerant unique-index semantics are exactly what is being proven.
+ */
+class MessagingSchemaInvariantsTest extends TestCase
+{
+    use RefreshDatabase;
+    use CreatesBusinessTestData;
+
+    private function business(): Business
+    {
+        return $this->createBusinessWithWorkspace($this->createCustomer(), $this->businessAttributes());
+    }
+
+    /**
+     * @return array{0: int, 1: Business}
+     */
+    private function identityRow(Business $business, string $status = 'active', ?string $profileId = null): array
+    {
+        $id = DB::table('business_messaging_identities')->insertGetId([
+            'uid' => (string) Str::uuid(),
+            'business_id' => $business->id,
+            'provider' => MessagingProvider::Telnyx->value,
+            'status' => $status,
+            'messaging_profile_id' => $profileId ?? ('mp_' . Str::random(12)),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        return [$id, $business];
+    }
+
+    // ---------------------------------------------------------------
+    // T-MSG-5 — schema shape
+    // ---------------------------------------------------------------
+
+    public function test_all_four_tables_exist_with_their_generated_guard_columns(): void
+    {
+        foreach ([
+            'business_messaging_identities',
+            'business_messaging_numbers',
+            'business_messaging_operations',
+            'business_usage_measurements',
+            'messaging_webhook_rejections',
+        ] as $table) {
+            $this->assertTrue(Schema::hasTable($table), "Missing table [{$table}].");
+        }
+
+        $this->assertTrue(Schema::hasColumn('business_messaging_identities', 'active_or_pending_business_id'));
+        $this->assertTrue(Schema::hasColumn('business_messaging_numbers', 'active_or_pending_phone_number'));
+        $this->assertTrue(Schema::hasColumn('business_messaging_numbers', 'active_primary_identity_id'));
+
+        // The guard columns must be STORED generated, not ordinary columns —
+        // an ordinary column would not recompute on an archival UPDATE.
+        $generated = DB::table('information_schema.COLUMNS')
+            ->select('TABLE_NAME', 'COLUMN_NAME')
+            ->where('TABLE_SCHEMA', DB::connection()->getDatabaseName())
+            ->where('EXTRA', 'STORED GENERATED')
+            ->whereIn('TABLE_NAME', ['business_messaging_identities', 'business_messaging_numbers'])
+            ->get()
+            ->map(fn ($r) => $r->TABLE_NAME . '.' . $r->COLUMN_NAME)
+            ->sort()
+            ->values()
+            ->all();
+
+        $this->assertSame([
+            'business_messaging_identities.active_or_pending_business_id',
+            'business_messaging_numbers.active_or_pending_phone_number',
+            'business_messaging_numbers.active_primary_identity_id',
+        ], $generated);
+    }
+
+    public function test_no_identity_or_number_column_can_hold_a_credential(): void
+    {
+        // T-MSG-4 at the schema level: there is no column a credential could
+        // even be written into, and no Managed-Account-shaped identifier.
+        foreach (['business_messaging_identities', 'business_messaging_numbers'] as $table) {
+            foreach (Schema::getColumnListing($table) as $column) {
+                $this->assertDoesNotMatchRegularExpression(
+                    '/(secret|token|api_key|password|credential|auth|private_key|managed_account)/i',
+                    $column,
+                    "Column [{$table}.{$column}] is credential-shaped.",
+                );
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // T-MSG-1 / T-MSG-39 — one active-or-pending identity per Business
+    // ---------------------------------------------------------------
+
+    public function test_a_second_active_identity_for_one_business_is_rejected_by_mysql(): void
+    {
+        $business = $this->business();
+        $this->identityRow($business, 'active');
+
+        $this->expectException(QueryException::class);
+        $this->identityRow($business, 'active');
+    }
+
+    public function test_pending_and_active_conflict_in_both_directions(): void
+    {
+        $businessA = $this->business();
+        $this->identityRow($businessA, 'active');
+
+        $conflicted = false;
+        try {
+            $this->identityRow($businessA, 'pending');
+        } catch (QueryException) {
+            $conflicted = true;
+        }
+        $this->assertTrue($conflicted, 'A pending row must conflict with an existing active row.');
+
+        // …and the reverse ordering conflicts identically.
+        $businessB = $this->business();
+        $this->identityRow($businessB, 'pending');
+
+        $reverseConflicted = false;
+        try {
+            $this->identityRow($businessB, 'active');
+        } catch (QueryException) {
+            $reverseConflicted = true;
+        }
+        $this->assertTrue($reverseConflicted, 'An active row must conflict with an existing pending row.');
+    }
+
+    public function test_suspended_and_archived_rows_never_collide(): void
+    {
+        $business = $this->business();
+
+        // Any number of historical rows may accumulate, because their guard
+        // column is NULL and MySQL permits unlimited NULLs.
+        $this->identityRow($business, 'archived');
+        $this->identityRow($business, 'archived');
+        $this->identityRow($business, 'suspended');
+        $this->identityRow($business, 'active');
+
+        $this->assertSame(4, DB::table('business_messaging_identities')->where('business_id', $business->id)->count());
+    }
+
+    // ---------------------------------------------------------------
+    // T-MSG-45 / T-MSG-46 — archival, replacement, reactivation
+    // ---------------------------------------------------------------
+
+    public function test_archiving_frees_the_slot_and_a_replacement_succeeds(): void
+    {
+        $business = $this->business();
+        [$identityA] = $this->identityRow($business, 'active');
+
+        DB::table('business_messaging_identities')->where('id', $identityA)
+            ->update(['status' => 'archived', 'archived_at' => now()]);
+
+        [$identityB] = $this->identityRow($business, 'pending');
+
+        $this->assertNotSame($identityA, $identityB);
+        // A's row is neither deleted nor altered beyond its own status.
+        $rowA = DB::table('business_messaging_identities')->where('id', $identityA)->first();
+        $this->assertSame('archived', $rowA->status);
+        $this->assertNull($rowA->active_or_pending_business_id);
+    }
+
+    public function test_reactivation_re_runs_the_same_invariant(): void
+    {
+        $business = $this->business();
+        [$identityA] = $this->identityRow($business, 'active');
+        DB::table('business_messaging_identities')->where('id', $identityA)->update(['status' => 'archived']);
+        [$identityB] = $this->identityRow($business, 'active');
+
+        // Reactivating A while B is active must be rejected by the very same
+        // index that would have blocked a fresh creation.
+        $blocked = false;
+        try {
+            DB::table('business_messaging_identities')->where('id', $identityA)->update(['status' => 'active']);
+        } catch (QueryException) {
+            $blocked = true;
+        }
+        $this->assertTrue($blocked, 'Reactivation must re-run the uniqueness invariant.');
+
+        // With B archived first, the identical reactivation succeeds.
+        DB::table('business_messaging_identities')->where('id', $identityB)->update(['status' => 'archived']);
+        DB::table('business_messaging_identities')->where('id', $identityA)->update(['status' => 'active']);
+
+        $this->assertSame('active', DB::table('business_messaging_identities')->where('id', $identityA)->value('status'));
+    }
+
+    // ---------------------------------------------------------------
+    // T-MSG-6 / T-MSG-7 / T-MSG-43 — number ownership
+    // ---------------------------------------------------------------
+
+    public function test_one_business_may_hold_several_active_numbers(): void
+    {
+        [$identityId] = $this->identityRow($this->business(), 'active');
+
+        foreach (['+14155550001', '+14155550002', '+14155550003'] as $number) {
+            DB::table('business_messaging_numbers')->insert([
+                'business_messaging_identity_id' => $identityId,
+                'phone_number' => $number,
+                'status' => BusinessMessagingNumberStatus::Active->value,
+                'is_primary' => false,
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
+
+        $this->assertSame(3, DB::table('business_messaging_numbers')
+            ->where('business_messaging_identity_id', $identityId)->count());
+    }
+
+    public function test_one_number_cannot_belong_to_two_businesses(): void
+    {
+        [$identityA] = $this->identityRow($this->business(), 'active');
+        [$identityB] = $this->identityRow($this->business(), 'active');
+
+        DB::table('business_messaging_numbers')->insert([
+            'business_messaging_identity_id' => $identityA,
+            'phone_number' => '+14155559999',
+            'status' => 'active',
+            'is_primary' => false,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        // A different Business's identity claiming the same E.164 value is
+        // rejected by MySQL, not by application code.
+        $this->expectException(QueryException::class);
+        DB::table('business_messaging_numbers')->insert([
+            'business_messaging_identity_id' => $identityB,
+            'phone_number' => '+14155559999',
+            'status' => 'pending',
+            'is_primary' => false,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
+    public function test_a_released_number_frees_its_claim_without_being_deleted(): void
+    {
+        [$identityA] = $this->identityRow($this->business(), 'active');
+        [$identityB] = $this->identityRow($this->business(), 'active');
+
+        $releasedId = DB::table('business_messaging_numbers')->insertGetId([
+            'business_messaging_identity_id' => $identityA,
+            'phone_number' => '+14155558888',
+            'status' => 'active',
+            'is_primary' => false,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        DB::table('business_messaging_numbers')->where('id', $releasedId)
+            ->update(['status' => 'released', 'released_at' => now()]);
+
+        DB::table('business_messaging_numbers')->insert([
+            'business_messaging_identity_id' => $identityB,
+            'phone_number' => '+14155558888',
+            'status' => 'active',
+            'is_primary' => false,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        // The released row is retained, never deleted to "free" the index.
+        $this->assertDatabaseHas('business_messaging_numbers', ['id' => $releasedId, 'status' => 'released']);
+        $this->assertSame(2, DB::table('business_messaging_numbers')->where('phone_number', '+14155558888')->count());
+    }
+
+    // ---------------------------------------------------------------
+    // T-MSG-14 / T-MSG-44 — at most one active primary per identity
+    // ---------------------------------------------------------------
+
+    public function test_a_second_active_primary_number_is_rejected_by_mysql(): void
+    {
+        [$identityId] = $this->identityRow($this->business(), 'active');
+
+        DB::table('business_messaging_numbers')->insert([
+            'business_messaging_identity_id' => $identityId,
+            'phone_number' => '+14155557001',
+            'status' => 'active',
+            'is_primary' => true,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $secondId = DB::table('business_messaging_numbers')->insertGetId([
+            'business_messaging_identity_id' => $identityId,
+            'phone_number' => '+14155557002',
+            'status' => 'active',
+            'is_primary' => false,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->expectException(QueryException::class);
+        DB::table('business_messaging_numbers')->where('id', $secondId)->update(['is_primary' => true]);
+    }
+
+    // ---------------------------------------------------------------
+    // T-MSG-63 / T-MSG-64 — ordinary NULL-tolerant unique indexes
+    // ---------------------------------------------------------------
+
+    public function test_operation_key_is_unique_but_null_tolerant(): void
+    {
+        $business = $this->business();
+
+        // Two inbound-shaped rows both leaving operation_key NULL coexist.
+        foreach (['pm_a', 'pm_b'] as $providerMessageId) {
+            DB::table('business_messaging_operations')->insert([
+                'business_id' => $business->id,
+                'transport_mode' => 'managed',
+                'provider' => MessagingProvider::Telnyx->value,
+                'direction' => 'inbound',
+                'message_type' => 'sms',
+                'operation_key' => null,
+                'provider_message_id' => $providerMessageId,
+                'status' => 'delivered',
+                'occurred_at' => now(),
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        }
+        $this->assertSame(2, DB::table('business_messaging_operations')->whereNull('operation_key')->count());
+
+        DB::table('business_messaging_operations')->insert([
+            'business_id' => $business->id,
+            'transport_mode' => 'managed',
+            'provider' => MessagingProvider::Telnyx->value,
+            'direction' => 'outbound',
+            'message_type' => 'sms',
+            'operation_key' => 'op_dup',
+            'status' => 'attempted',
+            'occurred_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->expectException(QueryException::class);
+        DB::table('business_messaging_operations')->insert([
+            'business_id' => $business->id,
+            'transport_mode' => 'managed',
+            'provider' => MessagingProvider::Telnyx->value,
+            'direction' => 'outbound',
+            'message_type' => 'sms',
+            'operation_key' => 'op_dup',
+            'status' => 'attempted',
+            'occurred_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
+    public function test_provider_message_id_uniqueness_is_composite_and_null_tolerant(): void
+    {
+        $business = $this->business();
+
+        $insert = function (?string $providerMessageId, string $provider = 'telnyx') use ($business): void {
+            DB::table('business_messaging_operations')->insert([
+                'business_id' => $business->id,
+                'transport_mode' => 'managed',
+                'provider' => $provider,
+                'direction' => 'outbound',
+                'message_type' => 'sms',
+                'operation_key' => 'op_' . Str::random(10),
+                'provider_message_id' => $providerMessageId,
+                'status' => 'attempted',
+                'occurred_at' => now(),
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+        };
+
+        // Several not-yet-accepted rows share provider with a NULL id.
+        $insert(null);
+        $insert(null);
+        $insert(null);
+        $this->assertSame(3, DB::table('business_messaging_operations')->whereNull('provider_message_id')->count());
+
+        $insert('pm_shared');
+
+        // The same id under a DIFFERENT provider does not conflict, proving
+        // the index is composite rather than single-column.
+        $insert('pm_shared', 'other_provider');
+        $this->assertSame(2, DB::table('business_messaging_operations')->where('provider_message_id', 'pm_shared')->count());
+
+        $this->expectException(QueryException::class);
+        $insert('pm_shared');
+    }
+
+    // ---------------------------------------------------------------
+    // Rejection-audit idempotency key
+    // ---------------------------------------------------------------
+
+    public function test_rejection_rows_are_unique_per_reason_provider_and_hash(): void
+    {
+        $row = [
+            'reason' => 'unknown_mapping',
+            'provider' => MessagingProvider::Telnyx->value,
+            'payload_hash' => hash('sha256', 'body'),
+            'occurrence_count' => 1,
+            'first_seen_at' => now(),
+            'last_seen_at' => now(),
+            'created_at' => now(),
+        ];
+
+        DB::table('messaging_webhook_rejections')->insert($row);
+
+        // A different reason over the same body is a genuinely different
+        // rejection and is allowed.
+        DB::table('messaging_webhook_rejections')->insert(array_merge($row, ['reason' => 'invalid_signature']));
+
+        $this->expectException(QueryException::class);
+        DB::table('messaging_webhook_rejections')->insert($row);
+    }
+
+    public function test_the_rejection_table_cannot_attribute_or_store_a_body(): void
+    {
+        $columns = Schema::getColumnListing('messaging_webhook_rejections');
+
+        // No business_id at all: a row here is by definition unattributable.
+        $this->assertNotContains('business_id', $columns);
+
+        foreach ($columns as $column) {
+            $this->assertDoesNotMatchRegularExpression(
+                '/(body|payload_raw|content|message|secret|token|credential)/i',
+                $column,
+                "Column [messaging_webhook_rejections.{$column}] could retain a body or credential.",
+            );
+        }
+    }
+
+    public function test_measurement_rows_are_idempotent_by_key(): void
+    {
+        $business = $this->business();
+
+        $row = [
+            'business_id' => $business->id,
+            'feature_key' => 'messaging_transport',
+            'quantity' => '1',
+            'unit' => 'segment',
+            'transport_marker' => 'managed',
+            'idempotency_key' => 'op_measure_1',
+            'occurred_at' => now(),
+            'created_at' => now(),
+        ];
+
+        DB::table('business_usage_measurements')->insert($row);
+
+        $this->expectException(QueryException::class);
+        DB::table('business_usage_measurements')->insert($row);
+    }
+
+    public function test_identity_statuses_cover_exactly_the_contracted_set(): void
+    {
+        $this->assertSame(
+            ['pending', 'active', 'suspended', 'archived'],
+            array_map(fn (BusinessMessagingIdentityStatus $c) => $c->value, BusinessMessagingIdentityStatus::cases()),
+        );
+
+        $this->assertSame(
+            ['pending', 'active', 'suspended', 'released'],
+            array_map(fn (BusinessMessagingNumberStatus $c) => $c->value, BusinessMessagingNumberStatus::cases()),
+        );
+    }
+}
