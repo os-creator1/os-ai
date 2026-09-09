@@ -1,5 +1,6 @@
 {
     "/js/core/app-menu.js": "/js/core/app-menu.js",
+    "/js/core/theme-tokens.js": "/js/core/theme-tokens.js",
     "/js/core/app.js": "/js/core/app.js",
     "/js/core/scripts.js": "/js/core/scripts.js",
     "/css/base/plugins/extensions/ext-component-ratings.css": "/css/base/plugins/extensions/ext-component-ratings.css",
@@ -87,6 +88,7 @@
     "/js/scripts/pages/chat.js": "/js/scripts/pages/chat.js",
     "/js/scripts/pages/checkout.js": "/js/scripts/pages/checkout.js",
     "/js/scripts/pages/content-sidebar.js": "/js/scripts/pages/content-sidebar.js",
+    "/js/scripts/pages/theme-settings.js": "/js/scripts/pages/theme-settings.js",
     "/js/scripts/sms-counter.js": "/js/scripts/sms-counter.js",
     "/vendors/js/ace/ace/ace.js": "/vendors/js/ace/ace/ace.js",
     "/vendors/js/ace/ace/ext-static_highlight.js": "/vendors/js/ace/ace/ext-static_highlight.js",
