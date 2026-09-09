@@ -1014,9 +1014,13 @@ $chatBox->touch();
             $url = $request->fullUrl();
             $params = $request->isMethod('POST') ? $request->post() : [];
 
+            // The provider discriminator lives in `settings`, not in the
+            // `type` column — `type` is the transport enum
+            // (http/smpp/whatsapp/viber/otp). getSendingServer() above reads
+            // the same `settings` column for exactly this reason.
             $servers = SendingServer::query()
                 ->where('status', true)
-                ->where('type', SendingServer::TYPE_TWILIO)
+                ->where('settings', SendingServer::TYPE_TWILIO)
                 ->get();
 
             foreach ($servers as $server) {
