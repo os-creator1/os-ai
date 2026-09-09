@@ -2,13 +2,20 @@
 
 namespace App\Http\Controllers\Customer\Business;
 
+use App\Enums\Business\BusinessStatus;
+use App\Enums\Entitlement\PlatformFeature;
+use App\Exceptions\Workspace\BusinessWorkspaceMismatchException;
+use App\Exceptions\Workspace\WorkspaceBusinessNotFoundException;
 use App\Http\Controllers\Customer\CustomerBaseController;
+use App\Library\Entitlement\EntitlementManager;
+use App\Library\Navigation\CustomerContext;
 use App\Library\Workspace\WorkspaceManager;
 use App\Models\Business;
 use App\Models\CustomerBasedSendingServer;
 use App\Models\PhoneNumbers;
 use App\Models\Senderid;
 use App\Models\SendingServer;
+use App\Models\Workspace;
 use App\Repositories\Contracts\SendingServerRepository;
 use App\Repositories\Contracts\WorkspaceRepository;
 use Illuminate\Contracts\Foundation\Application;
@@ -36,6 +43,23 @@ use Illuminate\Support\Facades\DB;
  * WorkspaceManager::userCanAccessBusiness()), mirroring
  * OutreachController::resolveAccessibleBusiness() verbatim — never
  * business.customer_id === Auth::id().
+ *
+ * Security Remediation Slice 0 §16.A.3 (D-9). Menu visibility
+ * (CustomerMenuBuilder::advancedItems() hiding this entry unless
+ * isAgency() && canManageWorkspace()) was never the authorization
+ * boundary — every one of the eight public methods below previously
+ * gated only on the existing `view_numbers` permission (default true for
+ * every customer) plus ordinary Business tenancy, so any Core or Growth
+ * customer, or any Business-scoped staff member, could reach this
+ * provider-credential surface by direct URL. guardAdvancedProviderAccess()
+ * is the actual, additive, fail-closed boundary now: Agency tier, owner-or-
+ * active-admin role, the account's own entitlement (checked, not inferred
+ * from tier), active Workspace/Business state, all before the existing
+ * tenancy resolution and `view_numbers` check — neither of which this
+ * change relocates, weakens or replaces. Slice 3's contract §4.7 owns
+ * relocating this surface, introducing `manage_advanced_provider`, and
+ * removing these routes entirely; this guard does not anticipate or
+ * duplicate that work.
  */
 class MessagingChannelsController extends CustomerBaseController
 {
@@ -67,6 +91,7 @@ class MessagingChannelsController extends CustomerBaseController
         private readonly SendingServerRepository $sendingServers,
         private readonly WorkspaceRepository $workspaceRepository,
         private readonly WorkspaceManager $workspaceManager,
+        private readonly EntitlementManager $entitlementManager,
     ) {
     }
 
@@ -77,7 +102,18 @@ class MessagingChannelsController extends CustomerBaseController
     {
         $this->authorize('view_numbers');
 
-        $accessible = $this->accessibleBusinesses();
+        // Security Remediation Slice 0 §16.A.3 — entry() has no
+        // {workspaceUid}/{businessUid} to guard directly, so the same
+        // predicate the other seven methods enforce via
+        // guardAdvancedProviderAccess() is applied here as a filter:
+        // a Core/Growth-only actor's accessible list becomes empty
+        // (rendering the existing empty state below, never a redirect
+        // into the surface); an Agency actor with mixed-tier access sees
+        // only the Business(es) they are actually authorized for.
+        $accessible = array_values(array_filter(
+            $this->accessibleBusinesses(),
+            fn (array $pair): bool => $this->hasAdvancedProviderAccess($pair[0], $pair[1]),
+        ));
 
         if (count($accessible) === 0) {
             return view('customer.business.MessagingChannels.entry', ['accessible' => []]);
@@ -95,6 +131,7 @@ class MessagingChannelsController extends CustomerBaseController
     public function channels(string $workspaceUid, string $businessUid): View|Factory|Application
     {
         $this->authorize('view_numbers');
+        $this->guardAdvancedProviderAccess($workspaceUid, $businessUid);
 
         $business = $this->resolveAccessibleBusiness($workspaceUid, $businessUid);
 
@@ -126,6 +163,7 @@ class MessagingChannelsController extends CustomerBaseController
     public function connect(string $workspaceUid, string $businessUid, string $provider): View|Factory|Application|RedirectResponse
     {
         $this->authorize('view_numbers');
+        $this->guardAdvancedProviderAccess($workspaceUid, $businessUid);
 
         $business = $this->resolveAccessibleBusiness($workspaceUid, $businessUid);
 
@@ -145,6 +183,7 @@ class MessagingChannelsController extends CustomerBaseController
     public function storeConnect(Request $request, string $workspaceUid, string $businessUid, string $provider): RedirectResponse
     {
         $this->authorize('view_numbers');
+        $this->guardAdvancedProviderAccess($workspaceUid, $businessUid);
 
         $business = $this->resolveAccessibleBusiness($workspaceUid, $businessUid);
 
@@ -199,6 +238,7 @@ class MessagingChannelsController extends CustomerBaseController
     public function show(string $workspaceUid, string $businessUid, CustomerBasedSendingServer $connection): View|Factory|Application
     {
         $this->authorize('view_numbers');
+        $this->guardAdvancedProviderAccess($workspaceUid, $businessUid);
 
         $business = $this->resolveAccessibleBusiness($workspaceUid, $businessUid);
         $this->resolveOwnedConnection($connection, $business);
@@ -222,6 +262,7 @@ class MessagingChannelsController extends CustomerBaseController
     public function update(Request $request, string $workspaceUid, string $businessUid, CustomerBasedSendingServer $connection): RedirectResponse
     {
         $this->authorize('view_numbers');
+        $this->guardAdvancedProviderAccess($workspaceUid, $businessUid);
 
         $business = $this->resolveAccessibleBusiness($workspaceUid, $businessUid);
         $this->resolveOwnedConnection($connection, $business);
@@ -262,6 +303,7 @@ class MessagingChannelsController extends CustomerBaseController
     public function enable(string $workspaceUid, string $businessUid, CustomerBasedSendingServer $connection): RedirectResponse
     {
         $this->authorize('view_numbers');
+        $this->guardAdvancedProviderAccess($workspaceUid, $businessUid);
 
         $business = $this->resolveAccessibleBusiness($workspaceUid, $businessUid);
         $this->resolveOwnedConnection($connection, $business);
@@ -283,6 +325,7 @@ class MessagingChannelsController extends CustomerBaseController
     public function disable(string $workspaceUid, string $businessUid, CustomerBasedSendingServer $connection): RedirectResponse
     {
         $this->authorize('view_numbers');
+        $this->guardAdvancedProviderAccess($workspaceUid, $businessUid);
 
         $business = $this->resolveAccessibleBusiness($workspaceUid, $businessUid);
         $this->resolveOwnedConnection($connection, $business);
@@ -296,6 +339,87 @@ class MessagingChannelsController extends CustomerBaseController
             'status' => 'success',
             'message' => 'Connection disabled.',
         ]);
+    }
+
+    // -----------------------------------------------------------------
+    // Security Remediation Slice 0 §16.A.3 — the actual authorization
+    // boundary.
+    // -----------------------------------------------------------------
+
+    /**
+     * Fails closed (404) unless every one of §16.A.3's conditions holds
+     * for the exact {workspaceUid}/{businessUid} pair in the URL. Additive
+     * to, never a replacement for, resolveAccessibleBusiness() (called
+     * again, unchanged, by the caller immediately after this returns) and
+     * the existing `view_numbers` permission check.
+     *
+     * 404, never 403 — matching the existence-disclosure discipline
+     * already established in resolveAccessibleBusiness() and the GBP
+     * controller: a Core or Growth actor must not learn this surface
+     * exists at all.
+     */
+    private function guardAdvancedProviderAccess(string $workspaceUid, string $businessUid): void
+    {
+        $workspace = $this->workspaceRepository->findByUid($workspaceUid);
+        $business = $this->resolveAccessibleBusiness($workspaceUid, $businessUid);
+
+        abort_unless($workspace !== null && $this->hasAdvancedProviderAccess($workspace, $business), 404);
+    }
+
+    /**
+     * The non-aborting predicate guardAdvancedProviderAccess() enforces,
+     * reused by entry() to filter its accessible-Business list across
+     * potentially several Workspaces at once.
+     *
+     * Deliberately looks the matching WorkspaceCandidate up in
+     * CustomerContext::$workspaces by uid, rather than trusting
+     * frameWorkspace()/isAgency()/canManageWorkspace() directly: those
+     * reflect only the single AMBIENT selected Workspace (the route's own
+     * {workspaceUid} for the other seven methods, but a remembered
+     * preference or "the only one" for entry(), which has no route
+     * parameter). entry() filters across every Workspace the actor can
+     * access, which may include more than one Agency-tier Workspace, or a
+     * mix of tiers — looking each one up individually is what makes the
+     * filter correct for all of them, not only whichever one happens to
+     * be ambient.
+     */
+    private function hasAdvancedProviderAccess(Workspace $workspace, Business $business): bool
+    {
+        $context = app(CustomerContext::class);
+        $workspaceCandidate = null;
+
+        foreach ($context->workspaces as $candidate) {
+            if ($candidate->uid === $workspace->uid) {
+                $workspaceCandidate = $candidate;
+
+                break;
+            }
+        }
+
+        if ($workspaceCandidate === null || ! $workspaceCandidate->isAgency() || ! $workspaceCandidate->isActive) {
+            return false;
+        }
+
+        if (! $workspaceCandidate->canManage()) {
+            return false;
+        }
+
+        if ($business->status !== BusinessStatus::Active) {
+            return false;
+        }
+
+        try {
+            $decision = $this->entitlementManager->decide(
+                $workspace,
+                $business,
+                PlatformFeature::Conversations->value,
+                (int) Auth::id(),
+            );
+        } catch (WorkspaceBusinessNotFoundException|BusinessWorkspaceMismatchException) {
+            return false;
+        }
+
+        return $decision->allowed;
     }
 
     // -----------------------------------------------------------------

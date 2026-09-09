@@ -2,6 +2,9 @@
 
 namespace Tests\Feature\Business;
 
+use App\Enums\Business\BusinessStatus;
+use App\Enums\Entitlement\WorkspacePlanTier;
+use App\Library\Entitlement\EntitlementManager;
 use App\Models\AppConfig;
 use App\Models\Business;
 use App\Models\Customer;
@@ -9,6 +12,7 @@ use App\Models\CustomerBasedSendingServer;
 use App\Models\SendingServer;
 use App\Models\User;
 use App\Models\WorkspaceMembership;
+use App\Repositories\Contracts\BusinessRepository;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\Feature\Business\Concerns\CreatesBusinessTestData;
 use Tests\TestCase;
@@ -31,11 +35,17 @@ class MessagingChannelsTest extends TestCase
     use RefreshDatabase;
     use CreatesBusinessTestData;
 
+    /**
+     * Security Remediation Slice 0 §16.A.3 — the same platform-admin id
+     * every EntitlementManager::assignFirstPlan() call in this file needs.
+     */
+    private int $platformAdminId;
+
     protected function setUp(): void
     {
         parent::setUp();
 
-        User::create([
+        $this->platformAdminId = User::create([
             'first_name' => 'Placeholder',
             'last_name' => 'SuperAdmin',
             'email' => 'placeholder-superadmin' . uniqid('', true) . '@example.test',
@@ -43,9 +53,40 @@ class MessagingChannelsTest extends TestCase
             'is_admin' => true,
             'is_customer' => false,
             'active_portal' => 'admin',
-        ]);
+        ])->id;
 
         $this->ensureRequiredAppConfigRowsExist();
+    }
+
+    /**
+     * Security Remediation Slice 0 §16.A.3 — every existing test in this
+     * file predates the fail-closed Agency-tier/entitlement guard added to
+     * MessagingChannelsController; this fixture makes each Business's
+     * Workspace an Agency account with the Conversations feature packaged
+     * (already true of the real, unmodified Agency catalog seed,
+     * database/migrations/2026_08_13_120007_seed_workspace_plan_catalog_and_features.php),
+     * and activates the Business — the guard also requires active
+     * Business state, but createForCustomerInWorkspace() always starts a
+     * Business in Draft (real onboarding's transient starting state, not
+     * a state a real, usable Business stays in) — so this file continues
+     * to exercise real owner/staff access to the surface rather than
+     * being blocked by fixture state this suite never intended to test
+     * one way or the other.
+     */
+    private function makeAgencyReady(Business $business): Business
+    {
+        app(EntitlementManager::class)->assignFirstPlan(
+            $business->workspace,
+            WorkspacePlanTier::Agency,
+            $this->platformAdminId,
+            'MessagingChannelsTest fixture assignment.',
+            true,
+            0,
+        );
+
+        app(BusinessRepository::class)->updateStatus($business, BusinessStatus::Active);
+
+        return $business->fresh();
     }
 
     // -----------------------------------------------------------------
@@ -122,8 +163,8 @@ class MessagingChannelsTest extends TestCase
     public function test_entry_route_shows_a_chooser_for_multiple_businesses(): void
     {
         $tenant = $this->createCustomer();
-        $this->createBusinessWithWorkspace($tenant, $this->businessAttributes(['name' => 'Business One']));
-        $this->createBusinessWithWorkspace($tenant, $this->businessAttributes(['name' => 'Business Two']));
+        $this->makeAgencyReady($this->createBusinessWithWorkspace($tenant, $this->businessAttributes(['name' => 'Business One'])));
+        $this->makeAgencyReady($this->createBusinessWithWorkspace($tenant, $this->businessAttributes(['name' => 'Business Two'])));
         $this->authenticateAsCustomer($tenant, ['view_numbers']);
 
         $response = $this->get(route('customer.channels.index'));
@@ -327,8 +368,8 @@ class MessagingChannelsTest extends TestCase
     public function test_business_a_does_not_see_business_bs_connection_on_the_channels_page(): void
     {
         $tenant = $this->createCustomer();
-        $businessA = $this->createBusinessWithWorkspace($tenant, $this->businessAttributes(['name' => 'Business A']));
-        $businessB = $this->createBusinessWithWorkspace($tenant, $this->businessAttributes(['name' => 'Business B']));
+        $businessA = $this->makeAgencyReady($this->createBusinessWithWorkspace($tenant, $this->businessAttributes(['name' => 'Business A'])));
+        $businessB = $this->makeAgencyReady($this->createBusinessWithWorkspace($tenant, $this->businessAttributes(['name' => 'Business B'])));
         $connectionB = $this->createDedicatedConnection($businessB, SendingServer::TYPE_TWILIO);
 
         $this->authenticateAsCustomer($tenant, ['view_numbers']);
@@ -342,8 +383,8 @@ class MessagingChannelsTest extends TestCase
     public function test_business_a_cannot_view_business_bs_connection_directly(): void
     {
         $tenant = $this->createCustomer();
-        $businessA = $this->createBusinessWithWorkspace($tenant, $this->businessAttributes(['name' => 'Business A']));
-        $businessB = $this->createBusinessWithWorkspace($tenant, $this->businessAttributes(['name' => 'Business B']));
+        $businessA = $this->makeAgencyReady($this->createBusinessWithWorkspace($tenant, $this->businessAttributes(['name' => 'Business A'])));
+        $businessB = $this->makeAgencyReady($this->createBusinessWithWorkspace($tenant, $this->businessAttributes(['name' => 'Business B'])));
         $connectionB = $this->createDedicatedConnection($businessB, SendingServer::TYPE_TWILIO);
 
         $this->authenticateAsCustomer($tenant, ['view_numbers']);
@@ -355,8 +396,8 @@ class MessagingChannelsTest extends TestCase
     public function test_business_a_cannot_edit_business_bs_credentials(): void
     {
         $tenant = $this->createCustomer();
-        $businessA = $this->createBusinessWithWorkspace($tenant, $this->businessAttributes(['name' => 'Business A']));
-        $businessB = $this->createBusinessWithWorkspace($tenant, $this->businessAttributes(['name' => 'Business B']));
+        $businessA = $this->makeAgencyReady($this->createBusinessWithWorkspace($tenant, $this->businessAttributes(['name' => 'Business A'])));
+        $businessB = $this->makeAgencyReady($this->createBusinessWithWorkspace($tenant, $this->businessAttributes(['name' => 'Business B'])));
         $connectionB = $this->createDedicatedConnection($businessB, SendingServer::TYPE_TWILIO);
         $originalToken = SendingServer::find($connectionB->sending_server)->auth_token;
 
@@ -372,8 +413,8 @@ class MessagingChannelsTest extends TestCase
     public function test_business_a_cannot_disable_business_bs_connection(): void
     {
         $tenant = $this->createCustomer();
-        $businessA = $this->createBusinessWithWorkspace($tenant, $this->businessAttributes(['name' => 'Business A']));
-        $businessB = $this->createBusinessWithWorkspace($tenant, $this->businessAttributes(['name' => 'Business B']));
+        $businessA = $this->makeAgencyReady($this->createBusinessWithWorkspace($tenant, $this->businessAttributes(['name' => 'Business A'])));
+        $businessB = $this->makeAgencyReady($this->createBusinessWithWorkspace($tenant, $this->businessAttributes(['name' => 'Business B'])));
         $connectionB = $this->createDedicatedConnection($businessB, SendingServer::TYPE_TWILIO);
 
         $this->authenticateAsCustomer($tenant, ['view_numbers']);
@@ -387,8 +428,8 @@ class MessagingChannelsTest extends TestCase
     public function test_business_a_cannot_enable_business_bs_connection(): void
     {
         $tenant = $this->createCustomer();
-        $businessA = $this->createBusinessWithWorkspace($tenant, $this->businessAttributes(['name' => 'Business A']));
-        $businessB = $this->createBusinessWithWorkspace($tenant, $this->businessAttributes(['name' => 'Business B']));
+        $businessA = $this->makeAgencyReady($this->createBusinessWithWorkspace($tenant, $this->businessAttributes(['name' => 'Business A'])));
+        $businessB = $this->makeAgencyReady($this->createBusinessWithWorkspace($tenant, $this->businessAttributes(['name' => 'Business B'])));
         $connectionB = $this->createDedicatedConnection($businessB, SendingServer::TYPE_TWILIO);
         $connectionB->update(['status' => false]);
 
@@ -513,7 +554,7 @@ class MessagingChannelsTest extends TestCase
     public function test_disabling_business_bs_assignment_does_not_disable_business_as_or_the_global_server(): void
     {
         [$tenant, $businessA] = $this->tenantWithBusiness();
-        $businessB = $this->createBusinessWithWorkspace($tenant, $this->businessAttributes(['name' => 'Business B']));
+        $businessB = $this->makeAgencyReady($this->createBusinessWithWorkspace($tenant, $this->businessAttributes(['name' => 'Business B'])));
 
         $server = SendingServer::create(['name' => 'Shared', 'settings' => SendingServer::TYPE_TWILIO, 'status' => true, 'plain' => true, 'mms' => true, 'user_id' => $tenant->user_id]);
         $connectionA = CustomerBasedSendingServer::create(['user_id' => $tenant->user_id, 'business_id' => $businessA->id, 'sending_server' => $server->id, 'status' => true]);
@@ -683,8 +724,8 @@ class MessagingChannelsTest extends TestCase
     public function test_business_a_outreach_does_not_see_business_bs_connection(): void
     {
         $tenant = $this->createCustomer();
-        $businessA = $this->createBusinessWithWorkspace($tenant, $this->businessAttributes(['name' => 'Business A']));
-        $businessB = $this->createBusinessWithWorkspace($tenant, $this->businessAttributes(['name' => 'Business B']));
+        $businessA = $this->makeAgencyReady($this->createBusinessWithWorkspace($tenant, $this->businessAttributes(['name' => 'Business A'])));
+        $businessB = $this->makeAgencyReady($this->createBusinessWithWorkspace($tenant, $this->businessAttributes(['name' => 'Business B'])));
         $this->createDedicatedConnection($businessB, SendingServer::TYPE_TWILIO);
 
         $this->assertFalse(
@@ -716,7 +757,7 @@ class MessagingChannelsTest extends TestCase
     {
         $this->ensureRequiredAppConfigRowsExist();
         $tenant = $this->createCustomer();
-        $business = $this->createBusinessWithWorkspace($tenant, $this->businessAttributes());
+        $business = $this->makeAgencyReady($this->createBusinessWithWorkspace($tenant, $this->businessAttributes()));
 
         return [$tenant, $business];
     }
@@ -752,12 +793,24 @@ class MessagingChannelsTest extends TestCase
         $this->actingAs($customer->user);
     }
 
-    private function makeStaff(Business $business, Customer $staffCustomer, string $scope): WorkspaceMembership
+    /**
+     * Security Remediation Slice 0 §16.A.3 — defaults to 'admin' now, not
+     * 'staff': both existing callers below assert successful access to the
+     * provider-credential surface for a non-owner actor, and the new
+     * guard's "authorized owner or Agency-wide active Admin role"
+     * condition means a plain 'staff' role — regardless of business_access_scope
+     * — no longer qualifies for that surface specifically (it still
+     * qualifies for ordinary Business access elsewhere, unchanged). The
+     * plain-'staff'-is-now-denied case is covered by
+     * tests/Feature/Security/MessagingProviderAuthorizationTest.php, not
+     * duplicated here.
+     */
+    private function makeStaff(Business $business, Customer $staffCustomer, string $scope, string $role = 'admin'): WorkspaceMembership
     {
         return WorkspaceMembership::create([
             'workspace_id' => $business->workspace_id,
             'user_id' => $staffCustomer->user_id,
-            'role' => 'staff',
+            'role' => $role,
             'business_access_scope' => $scope,
             'is_active' => true,
         ]);

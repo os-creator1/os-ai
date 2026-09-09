@@ -5,6 +5,7 @@
     use App\Http\Controllers\Controller;
     use App\Library\Workspace\WorkspaceManager;
     use App\Models\Business;
+    use App\Models\Invoices;
     use App\Repositories\Contracts\OpportunityRepository;
     use App\Repositories\Contracts\UserRepository;
     use App\Repositories\Contracts\WorkspaceRepository;
@@ -79,10 +80,32 @@
                     ->get();
             });
 
+            // Security Remediation Slice 0 §16.A.2 (D-19) — computed here,
+            // once, with an explicit actor argument, rather than left as an
+            // inline Blade query. whereIn() replaces the former
+            // ->where('status', UNPAID)->orWhere('status', PENDING), whose
+            // ungrouped OR let the second disjunct run with no ownership
+            // predicate at all (AND binds tighter than OR), disclosing every
+            // tenant's unpaid/pending invoice count to every other tenant.
+            // whereIn() applies the SAME $userId predicate to both statuses
+            // by construction, not by a closure a future edit could
+            // unbalance again. The invoices table has only user_id — no
+            // business_id/workspace_id — so this is Business/Account-scoped
+            // only by way of $userId already identifying one paying user;
+            // re-keying invoices to a Business or Account is a schema
+            // migration and a billing-model change, out of this slice's
+            // scope (§16.A.2), tracked at the navigation layer in §9/Slice 5.
+            $unpaidAndPendingInvoiceCount = Invoices::where('user_id', $userId)
+                ->whereIn('status', [Invoices::STATUS_UNPAID, Invoices::STATUS_PENDING])
+                ->count();
+            $totalInvoiceCount = Invoices::where('user_id', $userId)->count();
+
             return view('customer.dashboard', compact(
                 'breadcrumbs',
                 'userAnnouncements',
-                'opportunities'
+                'opportunities',
+                'unpaidAndPendingInvoiceCount',
+                'totalInvoiceCount'
             ));
         }
 

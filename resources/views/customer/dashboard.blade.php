@@ -317,8 +317,8 @@
                     <div class="card-header">
                         <div>
                             <h2 class="fw-bolder mb-0">
-                                <sup>{{ \App\Models\Invoices::where('user_id', Auth::user()->id)->where('status', \App\Models\Invoices::STATUS_UNPAID)->orWhere('status', \App\Models\Invoices::STATUS_PENDING)->count() }}</sup>
-                                / {{ \App\Models\Invoices::where('user_id', Auth::user()->id)->count() }}</h2>
+                                <sup>{{ $unpaidAndPendingInvoiceCount }}</sup>
+                                / {{ $totalInvoiceCount }}</h2>
                             <p class="card-text">{{ str_plural(__('locale.menu.Invoices')) }}</p>
                         </div>
                         <a href="{{ route('customer.subscriptions.index') }}">
