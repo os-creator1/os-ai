@@ -24,24 +24,29 @@ use Illuminate\Support\Facades\File;
  *    other lane sharing the machine, then started from an environment
  *    the previous run had edited.
  *
- * 2. A SECOND WRITER BYPASSES THAT SEAM ENTIRELY.
- *    App\Models\AppConfig::setEnv() does not use
- *    `app()->environmentFilePath()`; it hardcodes `base_path('.env')`.
- *    It is reached from SettingsController (TERMS_OF_USE,
- *    PRIVACY_POLICY, MAINTENANCE_SECRET_PATH) and from
- *    BrandingUploadService (the APP_LOGO family). The same pristine run
- *    also modified `.env`, collapsing the line endings of every line it
- *    matched.
+ * 2. A SECOND WRITER USED TO BYPASS THAT SEAM ENTIRELY — NOW FIXED AT
+ *    THE SOURCE.
+ *    App\Models\AppConfig::setEnv() hardcoded `base_path('.env')`. It is
+ *    reached from SettingsController (TERMS_OF_USE, PRIVACY_POLICY,
+ *    MAINTENANCE_SECRET_PATH) and from BrandingUploadService (the
+ *    APP_LOGO family). The same pristine run also modified `.env`,
+ *    collapsing the line endings of every line it matched.
  *
- *    Redirecting the environment path cannot reach that writer, and this
- *    branch is forbidden from changing production code. So the real
- *    `.env` is additionally snapshotted byte-for-byte on activation and
- *    restored on teardown. The write still happens during the test —
- *    which is exactly what BrandingUploadValidationTest's own
- *    `base_path('.env')` reader depends on — but the file the developer
- *    owns is byte-identical afterwards. See the remediation note for why
- *    the stronger "never opened for writing at all" property is not
- *    reachable without a production change.
+ *    An earlier revision of this trait tried to contain that by
+ *    snapshotting the real `.env` and restoring it at teardown. **That
+ *    was withdrawn, and must not come back.** Restoring damage is not
+ *    isolation: two concurrent processes can write and restore the same
+ *    shared file in conflicting orders; a kill, fatal or power loss
+ *    leaves the damage in place; and another process can read the test's
+ *    values out of the real file during the window before restoration.
+ *    The requirement is that production writers never address the real
+ *    file at all.
+ *
+ *    `AppConfig::setEnv()` now uses `app()->environmentFilePath()`, the
+ *    same seam `write_env()` has always used, so redirecting the
+ *    application's environment path redirects it too. This trait
+ *    therefore never opens the real environment file for writing, and
+ *    holds no snapshot of it.
  *
  * 3. THE READ SIDE LOOKED AT A DIFFERENT FILE, AND PARSED IT NAIVELY.
  *    The shared helper read `base_path('.env')` — the file write_env()
@@ -56,17 +61,6 @@ trait UsesTemporaryEnvironmentFile
     private ?string $originalEnvironmentPath = null;
 
     private ?string $originalEnvironmentFile = null;
-
-    /**
-     * Byte-exact snapshot of `base_path('.env')` as it was when this
-     * test activated, or null when no such file existed. Guards the
-     * hardcoded AppConfig::setEnv() writer described above.
-     */
-    private ?string $realDotEnvSnapshot = null;
-
-    private bool $realDotEnvExisted = false;
-
-    private bool $realDotEnvGuarded = false;
 
     /**
      * Distinguishes two activations inside a single process even if the
@@ -86,7 +80,7 @@ trait UsesTemporaryEnvironmentFile
         // Re-activating must never leak the previous copy, and must seed
         // the new one from the REAL environment file rather than from the
         // copy already in force. Restoring first guarantees both.
-        if ($this->temporaryEnvironmentDirectory !== null || $this->realDotEnvGuarded) {
+        if ($this->temporaryEnvironmentDirectory !== null) {
             $this->restoreEnvironmentFile();
         }
 
@@ -94,8 +88,6 @@ trait UsesTemporaryEnvironmentFile
 
         $this->originalEnvironmentPath = $this->app->environmentPath();
         $this->originalEnvironmentFile = basename($sourcePath);
-
-        $this->guardRealDotEnvFile();
 
         $this->temporaryEnvironmentDirectory = self::makeTemporaryEnvironmentDirectory();
 
@@ -139,8 +131,6 @@ trait UsesTemporaryEnvironmentFile
         if ($this->temporaryEnvironmentDirectory !== null && is_dir($this->temporaryEnvironmentDirectory)) {
             File::deleteDirectory($this->temporaryEnvironmentDirectory);
         }
-
-        $this->restoreRealDotEnvFile();
 
         $this->temporaryEnvironmentDirectory = null;
         $this->originalEnvironmentPath = null;
@@ -277,42 +267,4 @@ trait UsesTemporaryEnvironmentFile
             . '-' . bin2hex(random_bytes(8));
     }
 
-    /**
-     * Snapshot `base_path('.env')` so the hardcoded AppConfig::setEnv()
-     * writer cannot leave a permanent edit behind.
-     */
-    private function guardRealDotEnvFile(): void
-    {
-        $path = base_path('.env');
-
-        $this->realDotEnvExisted = is_file($path);
-        $this->realDotEnvSnapshot = $this->realDotEnvExisted ? (string) File::get($path) : null;
-        $this->realDotEnvGuarded = true;
-    }
-
-    /**
-     * Put the real `.env` back exactly as it was — including deleting it
-     * again if the test created it — and only touch the file at all when
-     * something actually changed.
-     */
-    private function restoreRealDotEnvFile(): void
-    {
-        if (! $this->realDotEnvGuarded) {
-            return;
-        }
-
-        $path = base_path('.env');
-
-        if (! $this->realDotEnvExisted) {
-            if (is_file($path)) {
-                File::delete($path);
-            }
-        } elseif (! is_file($path) || File::get($path) !== $this->realDotEnvSnapshot) {
-            File::put($path, (string) $this->realDotEnvSnapshot);
-        }
-
-        $this->realDotEnvSnapshot = null;
-        $this->realDotEnvExisted = false;
-        $this->realDotEnvGuarded = false;
-    }
 }

@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Support;
 
+use App\Models\AppConfig;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use PHPUnit\Framework\Attributes\DataProvider;
@@ -162,27 +163,142 @@ class TemporaryEnvironmentFileTest extends TestCase
         $this->useTemporaryEnvironmentFile();
     }
 
-    public function test_the_real_dot_env_is_restored_even_when_a_hardcoded_writer_edits_it(): void
+    /**
+     * AppConfig::setEnv() used to hardcode base_path('.env'). An earlier
+     * revision of the harness contained that by snapshotting and
+     * restoring the real file, which is NOT isolation — see the trait's
+     * docblock. The writer now uses app()->environmentFilePath(), and
+     * these assertions run BEFORE any teardown, so they prove the real
+     * file is never touched in the first place rather than proving it was
+     * repaired afterwards.
+     */
+    public function test_app_config_set_env_writes_the_disposable_file_and_never_the_real_one(): void
     {
-        // App\Models\AppConfig::setEnv() hardcodes base_path('.env') and
-        // cannot be redirected without changing production code, so the
-        // trait snapshots that file instead. This proves the snapshot
-        // actually restores it.
         $realEnv = base_path('.env');
-        $before = is_file($realEnv) ? File::get($realEnv) : null;
+        $realTestingEnv = base_path('.env.testing');
 
-        File::put($realEnv, "AIBOS_DIRECT_WRITE=1\n");
-        $this->assertSame("AIBOS_DIRECT_WRITE=1\n", File::get($realEnv));
+        clearstatcache();
+        $before = [
+            'envBytes' => is_file($realEnv) ? File::get($realEnv) : null,
+            'envMtime' => is_file($realEnv) ? filemtime($realEnv) : null,
+            'testingBytes' => is_file($realTestingEnv) ? File::get($realTestingEnv) : null,
+            'testingMtime' => is_file($realTestingEnv) ? filemtime($realTestingEnv) : null,
+        ];
 
-        $this->restoreEnvironmentFile();
+        // A key that already exists in the seeded copy, because
+        // setEnv()'s substring find/replace only rewrites matching lines.
+        write_env('AIBOS_APPCONFIG_TARGET', 'seeded');
+        AppConfig::setEnv('AIBOS_APPCONFIG_TARGET', 'written-by-appconfig');
 
-        $this->assertSame(
-            $before,
-            is_file($realEnv) ? File::get($realEnv) : null,
-            'The real .env was not restored byte-for-byte.'
+        // 1. The disposable file changed.
+        $this->assertSame('written-by-appconfig', $this->readActiveEnvValue('AIBOS_APPCONFIG_TARGET'));
+        $this->assertStringContainsString(
+            'written-by-appconfig',
+            (string) File::get($this->app->environmentFilePath())
         );
 
-        $this->useTemporaryEnvironmentFile();
+        clearstatcache();
+
+        // 2. The real .env bytes are unchanged.
+        $this->assertSame(
+            $before['envBytes'],
+            is_file($realEnv) ? File::get($realEnv) : null,
+            'AppConfig::setEnv() modified the real .env.'
+        );
+
+        // 3. The real .env mtime is unchanged — proves it was not even
+        //    opened for writing, which a bytes-only check cannot show.
+        $this->assertSame(
+            $before['envMtime'],
+            is_file($realEnv) ? filemtime($realEnv) : null,
+            'The real .env was opened for writing (its mtime moved).'
+        );
+
+        // 4. The same for the real .env.testing.
+        $this->assertSame(
+            $before['testingBytes'],
+            is_file($realTestingEnv) ? File::get($realTestingEnv) : null,
+            'AppConfig::setEnv() modified the real .env.testing.'
+        );
+        $this->assertSame(
+            $before['testingMtime'],
+            is_file($realTestingEnv) ? filemtime($realTestingEnv) : null,
+            'The real .env.testing was opened for writing (its mtime moved).'
+        );
+
+        // 5. Neither real file can be read to discover the test value.
+        $this->assertStringNotContainsString(
+            'written-by-appconfig',
+            is_file($realEnv) ? (string) File::get($realEnv) : ''
+        );
+        $this->assertStringNotContainsString(
+            'written-by-appconfig',
+            is_file($realTestingEnv) ? (string) File::get($realTestingEnv) : ''
+        );
+    }
+
+    public function test_app_config_set_env_does_not_create_a_real_dot_env_that_did_not_exist(): void
+    {
+        $realEnv = base_path('.env');
+
+        if (is_file($realEnv)) {
+            // The file exists in this checkout, so the "must not create
+            // it" property is asserted the only honest way available:
+            // prove the writer resolves somewhere else entirely.
+            $this->assertNotSame(
+                realpath($realEnv),
+                realpath($this->app->environmentFilePath()),
+                'The active environment file resolves to the real .env.'
+            );
+            $this->assertStringNotContainsString(
+                base_path(),
+                $this->app->environmentFilePath(),
+                'The active environment file is inside the repository.'
+            );
+
+            return;
+        }
+
+        AppConfig::setEnv('AIBOS_SHOULD_NOT_CREATE', 'x');
+
+        clearstatcache();
+        $this->assertFileDoesNotExist(
+            $realEnv,
+            'AppConfig::setEnv() created a real .env that did not exist before.'
+        );
+    }
+
+    public function test_another_process_cannot_observe_a_test_value_through_the_real_files(): void
+    {
+        // A second PHP process, reading the real files directly the way
+        // any other tool on the machine would, must see nothing this test
+        // wrote. This is the property snapshot-and-restore could never
+        // provide, because the value is present in the real file for the
+        // whole window before teardown.
+        write_env('AIBOS_CROSS_PROCESS', 'leaked-value');
+        AppConfig::setEnv('AIBOS_CROSS_PROCESS', 'leaked-value-appconfig');
+
+        $php = (new PhpExecutableFinder())->find() ?: 'php';
+        $script = <<<'PHP'
+$paths = [$argv[1], $argv[2]];
+$seen = '';
+foreach ($paths as $path) {
+    if (is_file($path)) {
+        $seen .= file_get_contents($path);
+    }
+}
+echo str_contains($seen, 'AIBOS_CROSS_PROCESS') ? 'LEAKED' : 'CLEAN';
+PHP;
+
+        $process = new Process([$php, '-r', $script, base_path('.env'), base_path('.env.testing')]);
+        $process->setTimeout(60);
+        $process->run();
+
+        $this->assertSame(
+            'CLEAN',
+            trim($process->getOutput()),
+            'Another process read this test\'s value out of a real environment file.'
+        );
     }
 
     /**
@@ -328,10 +444,18 @@ class TemporaryEnvironmentFileTest extends TestCase
             is_file($realTestingEnv) ? md5_file($realTestingEnv) : null,
             "The [{$outcome}] outcome modified the real .env.testing."
         );
-        $this->assertStringNotContainsString(
-            'AIBOS_PROBE_MARKER',
-            is_file($realTestingEnv) ? (string) File::get($realTestingEnv) : ''
-        );
+        foreach (['AIBOS_PROBE_MARKER', 'AIBOS_PROBE_APPCONFIG', 'appconfig-' . $outcome] as $needle) {
+            $this->assertStringNotContainsString(
+                $needle,
+                is_file($realTestingEnv) ? (string) File::get($realTestingEnv) : '',
+                "The [{$outcome}] outcome leaked [{$needle}] into the real .env.testing."
+            );
+            $this->assertStringNotContainsString(
+                $needle,
+                is_file($realEnv) ? (string) File::get($realEnv) : '',
+                "The [{$outcome}] outcome leaked [{$needle}] into the real .env."
+            );
+        }
     }
 
     public static function probeOutcomes(): array
@@ -377,6 +501,147 @@ class TemporaryEnvironmentFileTest extends TestCase
         $this->assertFileDoesNotExist($pathTwo);
         $this->assertDirectoryDoesNotExist(dirname($pathOne));
         $this->assertDirectoryDoesNotExist(dirname($pathTwo));
+    }
+
+    /**
+     * The concurrency case the review named: two processes both driving
+     * AppConfig::setEnv(), overlapping in time, against a shared real
+     * file that neither may touch.
+     */
+    public function test_two_concurrent_app_config_writers_never_collide(): void
+    {
+        $realEnv = base_path('.env');
+        $realTestingEnv = base_path('.env.testing');
+
+        clearstatcache();
+        $before = [
+            'envBytes' => is_file($realEnv) ? md5_file($realEnv) : null,
+            'envMtime' => is_file($realEnv) ? filemtime($realEnv) : null,
+            'testingBytes' => is_file($realTestingEnv) ? md5_file($realTestingEnv) : null,
+            'testingMtime' => is_file($realTestingEnv) ? filemtime($realTestingEnv) : null,
+        ];
+
+        $one = $this->startProbe('test_probe_passing');
+        $two = $this->startProbe('test_probe_passing');
+
+        $one->wait();
+        $two->wait();
+
+        $pathOne = $this->probeEnvPath($one);
+        $pathTwo = $this->probeEnvPath($two);
+
+        // Different disposable environment paths.
+        $this->assertNotSame($pathOne, $pathTwo);
+        $this->assertNotSame(dirname($pathOne), dirname($pathTwo));
+        $this->assertNotSame($this->probePid($one), $this->probePid($two));
+
+        // No cross-process value leakage: neither child's value is
+        // visible anywhere but its own (already-deleted) copy.
+        clearstatcache();
+        foreach ([$realEnv, $realTestingEnv] as $path) {
+            $contents = is_file($path) ? (string) File::get($path) : '';
+            $this->assertStringNotContainsString('AIBOS_PROBE_APPCONFIG', $contents);
+            $this->assertStringNotContainsString('appconfig-passing', $contents);
+        }
+
+        // No real-file mutation, by bytes and by mtime.
+        $this->assertSame($before['envBytes'], is_file($realEnv) ? md5_file($realEnv) : null);
+        $this->assertSame($before['envMtime'], is_file($realEnv) ? filemtime($realEnv) : null);
+        $this->assertSame($before['testingBytes'], is_file($realTestingEnv) ? md5_file($realTestingEnv) : null);
+        $this->assertSame($before['testingMtime'], is_file($realTestingEnv) ? filemtime($realTestingEnv) : null);
+
+        // Complete temporary-directory cleanup.
+        $this->assertFileDoesNotExist($pathOne);
+        $this->assertFileDoesNotExist($pathTwo);
+        $this->assertDirectoryDoesNotExist(dirname($pathOne));
+        $this->assertDirectoryDoesNotExist(dirname($pathTwo));
+    }
+
+    /**
+     * Forced termination. A killed process runs no tearDown at all, so
+     * its disposable directory necessarily survives — that is expected,
+     * and it is exactly why the directory must live outside the
+     * repository and why the real files must never have been written.
+     *
+     * What is asserted here is the part that matters: a kill mid-test
+     * leaves the developer's real files untouched. The orphaned
+     * directory is then cleaned up by this test so the machine is left
+     * as it was found.
+     */
+    public function test_a_forcibly_terminated_process_leaves_the_real_files_untouched(): void
+    {
+        $realEnv = base_path('.env');
+        $realTestingEnv = base_path('.env.testing');
+
+        clearstatcache();
+        $before = [
+            'envBytes' => is_file($realEnv) ? md5_file($realEnv) : null,
+            'envMtime' => is_file($realEnv) ? filemtime($realEnv) : null,
+            'testingBytes' => is_file($realTestingEnv) ? md5_file($realTestingEnv) : null,
+            'testingMtime' => is_file($realTestingEnv) ? filemtime($realTestingEnv) : null,
+        ];
+
+        $process = $this->startProbe('test_probe_passing');
+
+        // Wait until the child has reported its path, which means it has
+        // booted, activated isolation and run both writers.
+        $deadline = microtime(true) + 120;
+        $reported = '';
+
+        while (microtime(true) < $deadline) {
+            $reported = $process->getIncrementalOutput() . $reported;
+
+            if (str_contains($reported, 'ENVPATH=')) {
+                break;
+            }
+
+            usleep(50_000);
+        }
+
+        preg_match('/PROBE \S+ PID=(\d+) ENVPATH=(.+)/', $reported, $matches);
+
+        if ($matches === []) {
+            $process->stop(0);
+            $this->markTestSkipped('The probe did not report before the deadline; nothing to force-terminate.');
+        }
+
+        $childEnvPath = trim($matches[2]);
+
+        // SIGKILL-equivalent: no signal handler, no shutdown function, no
+        // tearDown.
+        $process->stop(0, 9);
+
+        clearstatcache();
+
+        $this->assertSame(
+            $before['envBytes'],
+            is_file($realEnv) ? md5_file($realEnv) : null,
+            'A forcibly terminated test modified the real .env.'
+        );
+        $this->assertSame(
+            $before['envMtime'],
+            is_file($realEnv) ? filemtime($realEnv) : null,
+            'A forcibly terminated test opened the real .env for writing.'
+        );
+        $this->assertSame(
+            $before['testingBytes'],
+            is_file($realTestingEnv) ? md5_file($realTestingEnv) : null,
+            'A forcibly terminated test modified the real .env.testing.'
+        );
+        $this->assertSame(
+            $before['testingMtime'],
+            is_file($realTestingEnv) ? filemtime($realTestingEnv) : null,
+            'A forcibly terminated test opened the real .env.testing for writing.'
+        );
+
+        // The orphan is outside the repository, so it can never
+        // contaminate the working tree. Remove it so this test leaves
+        // nothing behind either.
+        if ($childEnvPath !== '' && is_dir(dirname($childEnvPath))) {
+            File::deleteDirectory(dirname($childEnvPath));
+        }
+
+        $this->assertDirectoryDoesNotExist(dirname($childEnvPath));
     }
 
     public function test_no_temporary_environment_directory_outlives_the_suite(): void

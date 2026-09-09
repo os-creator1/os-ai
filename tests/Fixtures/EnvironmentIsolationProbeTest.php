@@ -2,6 +2,7 @@
 
 namespace Tests\Fixtures;
 
+use App\Models\AppConfig;
 use Tests\TestCase;
 
 use function App\Helpers\write_env;
@@ -51,13 +52,26 @@ class EnvironmentIsolationProbeTest extends TestCase
     }
 
     /**
-     * Writes through the real production writer, so the probe exercises
-     * the exact path that used to edit the developer's own environment
-     * file rather than a stand-in for it.
+     * Writes through BOTH real production writers, so the probe
+     * exercises the exact paths that used to edit the developer's own
+     * environment files rather than a stand-in for them.
+     *
+     * App\Helpers\write_env() has always used
+     * app()->environmentFilePath(). App\Models\AppConfig::setEnv() used
+     * to hardcode base_path('.env') and now uses the same seam; it is
+     * included here precisely so a regression in that fix shows up as a
+     * mutated real file, in a separate process, under every test
+     * outcome.
+     *
+     * setEnv() rewrites only lines that already match its key, so the
+     * key is seeded through write_env() first.
      */
     private function writeMarker(string $case): void
     {
         write_env('AIBOS_PROBE_MARKER', 'probe-' . $case);
+
+        write_env('AIBOS_PROBE_APPCONFIG', 'seeded');
+        AppConfig::setEnv('AIBOS_PROBE_APPCONFIG', 'appconfig-' . $case);
     }
 
     private function reportEnvironmentPath(string $case): void
