@@ -112,6 +112,39 @@ by this branch, and **the Routine's canonical-database restriction is not
 weakened** — it is stated as binding routes 1 and 2, exactly as it always
 did.
 
+### Every CLAUDE.md rule audited for route applicability
+
+An intermediate revision of this branch scoped the database rule but left a
+catch-all: *"where it does not say so, the rule binds route 3 identically."*
+That was wrong for four items, because several rules describe autonomous-loop
+**mechanics** a manual lane does not use — a route-3 lane has no
+`ai:needs-human` label to set, no GitHub Actions gate running locked focused
+commands, and no label transition to report. The catch-all quietly asserted
+otherwise.
+
+The catch-all is removed. `CLAUDE.md` now states that **every rule carries an
+explicit route tag, with no default**, and that an untagged rule is a defect
+in the document rather than a rule binding everything. All ten rules, the
+"State labels" section and the "Three workflows" preamble were audited one by
+one:
+
+| Rule | Routes 1 & 2 | Route 3 | Note |
+|---|---|---|---|
+| **State labels** section | ✅ governs | ❌ does not apply | Route 3 does not use, transition or claim these labels |
+| Branch-only development | ✅ | ✅ | Same prohibition on `main`; branch source differs — automation state vs the lane's task contract |
+| Never merge or open a PR | ✅ | ✅ | Identical on every route |
+| No metered model credentials | ✅ | ✅ | Identical on every route |
+| Which database | ✅ canonical only | ✅ task-authorized canonical **or** validated sibling | Distinct siblings required for concurrent writers |
+| Never a production-looking database | ✅ | ✅ | Identical on every route |
+| Never touch production data or secrets | ✅ | ✅ | Prohibition identical; **stop mechanism differs** — `ai:needs-human` vs stopping and reporting the blocker in the manual report, without claiming a label transition |
+| Do not claim unverified tests | ✅ | ✅ | Prohibition identical; **verification differs** — GitHub Actions locked focused commands vs the exact verification the lane's task contract requires |
+| Reject zero-test success | ✅ | ✅ | Identical on every route |
+| Require real progress | ✅ | ✅ | Both must commit and push when implementation or correction was requested; route 3 may report without a commit **only** when its task explicitly prohibited changes |
+| Report exact evidence | ✅ with label transition | ✅ without | Route 3 reports starting and final SHA, exact changed paths, tests and clean status, and never invents a label transition |
+
+The correction is semantic, not cosmetic: the sentence that exposed the
+problem was not merely deleted, and no bullet was left ambiguous.
+
 Across all three routes, without exception: Claude never opens the PR and
 never merges it; ChatGPT reviews the pushed branch and opens the PR; the
 human alone merges; and no production-looking database, real data, or
