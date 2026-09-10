@@ -43,6 +43,7 @@
     use Illuminate\Http\JsonResponse;
     use Illuminate\Support\Facades\Auth;
     use Illuminate\Support\Facades\DB;
+    use Illuminate\Support\Str;
     use libphonenumber\NumberParseException;
     use libphonenumber\PhoneNumberUtil;
     use Throwable;
@@ -558,6 +559,15 @@
                         ]);
 
                         if ( ! $chatbox->exists) {
+                            // The same missing-uid defect as the raw insert
+                            // further down this file: ChatBox mints no uid of
+                            // its own, so a row created here also relied on
+                            // non-strict MySQL to store an empty string in a
+                            // NOT NULL char(36). Fixed at both writers rather
+                            // than only at the one Lane E happened to catch,
+                            // since leaving the second live would reintroduce
+                            // blank uids the moment a two-way quick send runs.
+                            $chatbox->uid = (string) Str::uuid();
                             $chatbox->reply_by_customer = false;
                             $chatbox->save();
                         }
@@ -1250,7 +1260,27 @@
                     foreach ($contacts as $contact) {
                         $phone = preg_replace('/\D+/', '', $contact->phone);
 
+                        // `chat_boxes.uid` is a NOT NULL char(36) with no
+                        // database default, and this raw insert never
+                        // supplied it. Nothing failed only because this
+                        // installation's MySQL connection is non-strict, so
+                        // MySQL silently coerced the missing value to the
+                        // empty string — every row this loop has ever
+                        // written shares a blank, non-unique uid. `ChatBox`
+                        // has no `creating` hook to mint one, and this is a
+                        // query-builder insert that would bypass one anyway,
+                        // so the writer supplies it.
+                        //
+                        // `(string) Str::uuid()` is the convention this
+                        // repository uses wherever a uid is minted at the
+                        // write site rather than by a model hook — see
+                        // WorkspaceBackfillV1, ViewAsSession and the
+                        // Business* models. The older `uniqid()` hook on
+                        // Contacts is deliberately not followed: it does not
+                        // produce a valid UUID and it is not what a char(36)
+                        // column is shaped for.
                         $boxId = DB::table('chat_boxes')->insertGetId([
+                            'uid'        => (string) Str::uuid(),
                             'user_id'    => $user->id,
                             'to'         => $phone,
                             'from'       => $sender_id[0] ?? null,

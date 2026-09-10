@@ -11,47 +11,50 @@ production code, model, route or existing test is edited.
 
 ---
 
-## ⚠️ 1. One blocker requires an owner decision before this can merge green
+## 1. Resolved — integrated into Lane A and delivered atomically
 
-**This branch turns exactly one merged test red, and no in-scope change can
-prevent it, because that test asserts the bug this lane exists to fix.**
+**The blocker this section used to describe is closed.** An earlier revision
+recorded that merging this branch necessarily left `tests/Feature/Outreach`
+at one failure, and asked for an owner decision. That decision was taken:
+this branch was **not** given a standalone PR. It was merged into Lane A
+(`agent/customer-experience-slice-3-messaging-provider-implementation`), so
+the migration, the production writer correction and the positive Outreach
+regression ship as one change.
 
-`tests/Feature/Outreach/OutreachCorrection1Test::test_legacy_campaign_builder_still_creates_ai_prospecting_rows_unchanged`
-proves the legacy AI-prospecting hook is *not* gated for legacy callers. It
-proves it by asserting the hook **throws**, and that the exception names the
-missing schema:
+**Why they could not ship separately.** The migration makes
+`chat_boxes.uid` a real, enforced, non-nullable column. The writer that had
+been relying on a non-strict MySQL connection to store an empty string there
+lives in `EloquentCampaignRepository`, which Lane A owns. And the merged test
+`OutreachCorrection1Test::test_legacy_campaign_builder_still_creates_ai_prospecting_rows_unchanged`
+asserted the *crash* — it proved the legacy hook is not gated by proving it
+throws on the missing schema. Any correct schema makes that test fail,
+because the test asserted that the code does not work.
 
-```php
-$this->fail('Expected the legacy AI-prospecting hook to attempt chat_boxes/ai_box_campaign_map and fail on a pre-existing missing schema piece.');
-} catch (\Illuminate\Database\QueryException $exception) {
-    $this->assertTrue(
-        str_contains($exception->getMessage(), 'ai_box_campaign_map') || str_contains($exception->getMessage(), 'ai_stage'),
-        ...
-```
+Shipping any one of those three alone leaves the repository worse than
+shipping none of them. So all three landed together:
 
-Its own comment says the gap is *"out of scope to fix here"* — written when
-nobody intended to fix it. Once the schema exists the hook succeeds, no
-exception is thrown, and `$this->fail(...)` fires. **Measured, not
-predicted:** that is the exact failure this branch produces.
+1. **This migration**, merged into Lane A unchanged. Lane A did not
+   reimplement it.
+2. **The UUID writer correction**, in
+   `app/Repositories/Eloquent/EloquentCampaignRepository.php`. Both
+   `chat_boxes` writers in that file now mint `(string) Str::uuid()` — the
+   raw `insertGetId` in the AI-prospecting hook that Lane E found, and the
+   `ChatBox::firstOrNew` writer in the two-way quick-send path, which had
+   exactly the same defect and would have reintroduced blank uids the moment
+   a two-way send ran. `ChatBox` has no `creating` hook to mint one, and a
+   query-builder insert would bypass one anyway, so the writers supply it.
+   The uid column was **not** made nullable, given a default, or otherwise
+   loosened; nothing depends on non-strict MySQL any more.
+3. **The rewritten Outreach test**, now asserting the positive behaviour:
+   `campaignBuilder()` completes, one `chat_boxes` row is created per
+   subscribed contact at `ai_stage = 1`, each row's `uid` is present,
+   non-empty and a well-formed UUID, separately created rows receive
+   *different* uuids, the `ai_box_campaign_map` rows point at exactly those
+   boxes, and ownership stays with the acting tenant. Two further tests were
+   added alongside it: the hook creates no row for another tenant, and a
+   request naming a foreign contact group is refused and writes nothing.
 
-This is not a defect in the migration and not something a different schema
-shape avoids. Any correct schema makes the code work, and the test asserts
-the code does not work.
-
-**What it needs.** The test's intent — "the legacy path is not gated" — is
-still worth proving, and is now provable *positively*: assert that the hook
-created the `chat_boxes` and `ai_box_campaign_map` rows, instead of asserting
-it crashed. That is a rewrite of one test method in
-`tests/Feature/Outreach/OutreachCorrection1Test.php`, **which is outside this
-lane's three-path allowlist**, so this lane did not make it. It needs either
-an allowlist extension or a follow-up authorized lane.
-
-**Until then, merging this branch leaves `tests/Feature/Outreach` at 1
-failure.** That is stated here rather than buried so the decision is taken
-deliberately.
-
----
-
+The empty-uid behaviour is not preserved or encoded anywhere.
 ## 2. The gap, traced mechanically
 
 Every executable reference in the repository, excluding `vendor/` and
@@ -169,11 +172,18 @@ and MySQL silently substitutes `''`. Verified: the Laravel session's
 `@@SESSION.sql_mode` is `NO_ENGINE_SUBSTITUTION`.
 
 So the schema completed here **is** sufficient for the application as
-configured, and this branch's verification proves that end to end. But the
-row it writes carries an empty `uid` where every other chat box carries a
-UUID. Fixing that means editing `EloquentCampaignRepository`, which this
-lane is explicitly forbidden to touch, so it is recorded here for whoever
-owns that stop-listed producer.
+configured, and this branch's verification proves that end to end. The row it
+wrote also carried an empty `uid` where every other chat box carries a UUID.
+
+**That is now fixed, in the same change.** Lane E could not fix it —
+`EloquentCampaignRepository` was outside its allowlist — but Lane A owns that
+file, and this branch was merged into Lane A precisely so the two halves ship
+together (§1). Both `chat_boxes` writers in that repository now mint
+`(string) Str::uuid()`: the raw `insertGetId` in the AI-prospecting hook that
+Lane E found, and the `ChatBox::firstOrNew` writer in the two-way quick-send
+path, which had the identical defect. Nothing in this repository relies on
+non-strict MySQL to fill that column any more, and the column itself was not
+loosened to accommodate the writers.
 
 ---
 

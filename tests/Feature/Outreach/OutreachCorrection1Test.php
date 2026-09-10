@@ -25,6 +25,7 @@ use App\Models\WorkspaceMembership;
 use App\Repositories\Contracts\CampaignRepository;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Tests\Feature\Business\Concerns\CreatesBusinessTestData;
 use Tests\TestCase;
 
@@ -112,46 +113,148 @@ class OutreachCorrection1Test extends TestCase
     // semantics unchanged (no explicit Business context)
     // -----------------------------------------------------------------
 
-    public function test_legacy_campaign_builder_still_creates_ai_prospecting_rows_unchanged(): void
+    /**
+     * Rewritten once Lane E supplied the schema this hook always needed.
+     *
+     * The previous version of this test treated a crash as success: with
+     * `chat_boxes.ai_stage` and `ai_box_campaign_map` missing, campaignBuilder
+     * threw, and the test asserted the throw. That encoded a schema gap as
+     * intended behaviour. With Lane E's migration merged the legacy path
+     * completes, so this asserts what it was always meant to assert — and
+     * additionally pins the UUID writer correction that ships alongside it.
+     */
+    public function test_legacy_campaign_builder_creates_ai_prospecting_rows_with_valid_unique_uuids(): void
     {
-        [$tenant, $business, $fixture] = $this->sendableTenant();
+        [$tenant, , $fixture] = $this->sendableTenant();
         $this->actingAs($tenant->user);
 
         $group = ContactGroups::create(['customer_id' => $tenant->user_id, 'name' => 'VIPs Legacy', 'status' => true]);
-        Contacts::create(['customer_id' => $tenant->user_id, 'group_id' => $group->id, 'phone' => '14155552672', 'status' => 'subscribe']);
-        Senderid::create(['user_id' => $tenant->user_id, 'sender_id' => 'LEGACYSENDER', 'status' => 'active']);
 
-        // chat_boxes.ai_stage and ai_box_campaign_map both have no
-        // migration in this codebase (a pre-existing gap in the untouched
-        // legacy hook, out of scope to fix here) — so the legacy path
-        // still reaches and executes the AI-prospecting block (proving it
-        // is NOT gated for legacy callers) and fails on one of those
-        // missing schema pieces — an unrelated environment limitation,
-        // not a regression introduced by this correction. The
-        // Business-scoped test above proves the same block is skipped
-        // entirely (no exception at all) when businessId is explicit.
-        try {
-            app(CampaignRepository::class)->campaignBuilder(new Campaigns(), [
-                'name' => 'Legacy Blast',
-                'message' => 'Hello',
-                'sms_type' => 'plain',
-                'contact_groups' => [$group->id],
-                'originator' => 'sender_id',
-                'sender_id' => ['LEGACYSENDER'],
-                'plan_id' => $fixture['plan']->id,
-            ]);
-            $this->fail('Expected the legacy AI-prospecting hook to attempt chat_boxes/ai_box_campaign_map and fail on a pre-existing missing schema piece.');
-        } catch (\Illuminate\Database\QueryException $exception) {
-            $this->assertTrue(
-                str_contains($exception->getMessage(), 'ai_box_campaign_map') || str_contains($exception->getMessage(), 'ai_stage'),
-                'Expected the failure to originate from the legacy AI-prospecting hook, got: ' . $exception->getMessage()
-            );
+        // Two contacts, so "separate rows get different uuids" is a real
+        // assertion rather than a vacuous one.
+        foreach (['14155552672', '14155552673'] as $phone) {
+            Contacts::create(['customer_id' => $tenant->user_id, 'group_id' => $group->id, 'phone' => $phone, 'status' => 'subscribe']);
         }
 
+        Senderid::create(['user_id' => $tenant->user_id, 'sender_id' => 'LEGACYSENDER', 'status' => 'active']);
+
+        $result = app(CampaignRepository::class)->campaignBuilder(new Campaigns(), [
+            'name' => 'Legacy Blast',
+            'message' => 'Hello',
+            'sms_type' => 'plain',
+            'contact_groups' => [$group->id],
+            'originator' => 'sender_id',
+            'sender_id' => ['LEGACYSENDER'],
+            'plan_id' => $fixture['plan']->id,
+        ]);
+
+        // 1. It completes, rather than throwing on missing schema.
+        $this->assertSame('success', $result->getData()->status, (string) ($result->getData()->message ?? ''));
+
         $campaign = Campaigns::where('campaign_name', 'Legacy Blast')->first();
-        $this->assertNotNull($campaign, 'The campaign itself must still be created before the legacy AI-prospecting hook runs.');
+        $this->assertNotNull($campaign);
+
+        // 2. The AI-prospecting rows the legacy hook exists to create.
+        $boxes = DB::table('chat_boxes')->orderBy('id')->get();
+        $this->assertCount(2, $boxes, 'The legacy hook creates one chat box per subscribed contact.');
+
+        foreach ($boxes as $box) {
+            $this->assertSame(1, (int) $box->ai_stage, 'Stage 1 is what makes these rows AI-prospecting rows.');
+
+            // 3. A genuine UUID — present, non-empty, well-formed. Before the
+            //    writer correction this column held '' on every row: a
+            //    non-strict MySQL connection coerced the missing NOT NULL
+            //    value instead of rejecting it.
+            $this->assertNotNull($box->uid);
+            $this->assertNotSame('', $box->uid);
+            $this->assertMatchesRegularExpression(
+                '/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i',
+                (string) $box->uid,
+                'chat_boxes.uid must be a real UUID, not an empty string.',
+            );
+            $this->assertTrue(Str::isUuid((string) $box->uid));
+        }
+
+        // 4. Separately created rows receive DIFFERENT uuids.
+        $uids = $boxes->pluck('uid')->all();
+        $this->assertCount(2, array_unique($uids), 'Each chat box must receive its own uuid.');
+
+        // 5. The campaign mapping is created, and points at exactly these boxes.
+        $mapped = array_map('intval', DB::table('ai_box_campaign_map')->where('campaign_id', $campaign->id)->pluck('box_id')->all());
+        $expected = array_map('intval', $boxes->pluck('id')->all());
+        sort($mapped);
+        sort($expected);
+        $this->assertSame($expected, $mapped);
+
+        // 6. Ownership stays with the acting tenant.
+        foreach ($boxes as $box) {
+            $this->assertSame((int) $tenant->user_id, (int) $box->user_id);
+        }
+        $this->assertSame((int) $tenant->user_id, (int) $campaign->user_id);
     }
 
+    public function test_the_legacy_hook_creates_no_row_for_another_tenant(): void
+    {
+        [$tenant, , $fixture] = $this->sendableTenant();
+
+        // A second, entirely separate tenant with its own group and contact.
+        $other = $this->createCustomer();
+        $otherGroup = ContactGroups::create(['customer_id' => $other->user_id, 'name' => 'Other Tenant', 'status' => true]);
+        Contacts::create(['customer_id' => $other->user_id, 'group_id' => $otherGroup->id, 'phone' => '14155559001', 'status' => 'subscribe']);
+
+        $this->actingAs($tenant->user);
+
+        $group = ContactGroups::create(['customer_id' => $tenant->user_id, 'name' => 'Mine', 'status' => true]);
+        Contacts::create(['customer_id' => $tenant->user_id, 'group_id' => $group->id, 'phone' => '14155559002', 'status' => 'subscribe']);
+        Senderid::create(['user_id' => $tenant->user_id, 'sender_id' => 'LEGACYSENDER', 'status' => 'active']);
+
+        app(CampaignRepository::class)->campaignBuilder(new Campaigns(), [
+            'name' => 'Mine Only',
+            'message' => 'Hello',
+            'sms_type' => 'plain',
+            'contact_groups' => [$group->id],
+            'originator' => 'sender_id',
+            'sender_id' => ['LEGACYSENDER'],
+            'plan_id' => $fixture['plan']->id,
+        ]);
+
+        $this->assertSame(
+            0,
+            DB::table('chat_boxes')->where('user_id', $other->user_id)->count(),
+            'The legacy hook must never create a row belonging to another tenant.',
+        );
+        $this->assertSame(1, DB::table('chat_boxes')->count());
+        $this->assertSame((int) $tenant->user_id, (int) DB::table('chat_boxes')->first()->user_id);
+    }
+
+    public function test_a_foreign_contact_group_is_refused_and_writes_nothing(): void
+    {
+        [$tenant, , $fixture] = $this->sendableTenant();
+
+        $other = $this->createCustomer();
+        $foreignGroup = ContactGroups::create(['customer_id' => $other->user_id, 'name' => 'Not Yours', 'status' => true]);
+        Contacts::create(['customer_id' => $other->user_id, 'group_id' => $foreignGroup->id, 'phone' => '14155559003', 'status' => 'subscribe']);
+
+        $this->actingAs($tenant->user);
+        Senderid::create(['user_id' => $tenant->user_id, 'sender_id' => 'LEGACYSENDER', 'status' => 'active']);
+
+        // Naming another tenant's contact group in the request body must be
+        // refused, and must leave no campaign and no AI-prospecting row.
+        $result = app(CampaignRepository::class)->campaignBuilder(new Campaigns(), [
+            'name' => 'Cross Tenant Attempt',
+            'message' => 'Hello',
+            'sms_type' => 'plain',
+            'contact_groups' => [$foreignGroup->id],
+            'originator' => 'sender_id',
+            'sender_id' => ['LEGACYSENDER'],
+            'plan_id' => $fixture['plan']->id,
+        ]);
+
+        $this->assertSame('error', $result->getData()->status);
+        $this->assertDatabaseMissing('campaigns', ['campaign_name' => 'Cross Tenant Attempt']);
+        $this->assertSame(0, DB::table('chat_boxes')->count());
+        $this->assertSame(0, DB::table('ai_box_campaign_map')->count());
+    }
     // -----------------------------------------------------------------
     // 2 & 3. Business create-template stays in the explicit Business,
     // and keeps the Business owner's legacy user_id even for staff.
