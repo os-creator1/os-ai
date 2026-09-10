@@ -10,6 +10,7 @@
     use App\Library\Messaging\InboundWebhookAttributionResolver;
     use App\Library\Messaging\ManagedMessageDispatcher;
     use App\Library\Messaging\MessagingWebhookRejectionRecorder;
+    use App\Library\Messaging\TransportProviderIdentifier;
     use Illuminate\Support\Str;
     use App\Models\CustomerBasedSendingServer;
     use App\Library\SMSCounter;
@@ -48,8 +49,34 @@
         /**
          * update dlr
          */
-        public static function updateDLR($message_id, $status, ?SendingServer $sendingServer = null): JsonResponse
+        /**
+         * @param mixed $sendingServer the authoritative connection this
+         *        callback arrived on, when the caller knows it.
+         *
+         * DELIBERATELY UNTYPED, and this is a correction of my own mistake.
+         *
+         * Security Correction 36 declared this parameter `?SendingServer`.
+         * That looked harmless because it was optional — but roughly fifteen
+         * legacy handlers in this file, and one console command, have always
+         * passed extra positional arguments here (a phone number, a sender
+         * id) which the historic two-parameter method silently ignored, as
+         * PHP allows. A typed parameter turned every one of those dead
+         * arguments into a fatal TypeError, so the correction that hardened
+         * this method would have crashed a dozen live delivery-callback
+         * routes.
+         *
+         * Accepting `mixed` and narrowing at runtime restores exactly the
+         * historic behaviour — anything that is not a SendingServer is
+         * ignored, as it always was — while still letting a caller that
+         * genuinely knows its connection pass one. A caller's phone number
+         * can never be mistaken for connection identity, because only an
+         * actual SendingServer instance is honoured.
+         */
+        public static function updateDLR($message_id, $status, $sendingServer = null): JsonResponse
         {
+            // Narrowed here, once, rather than trusted from the call site.
+            $sendingServer = $sendingServer instanceof SendingServer ? $sendingServer : null;
+
 
             $status = ucfirst(strtolower($status));
 
@@ -155,25 +182,61 @@
 
             $providerMessageId = trim($providerMessageId);
 
-            if ($providerMessageId === '') {
+            // Bounded BEFORE either query (Security Correction 37).
+            //
+            // The legacy fallback below is `LIKE '%|<id>'`, whose leading
+            // wildcard makes it inherently unindexable, so an enormous id
+            // would have MySQL scan the reports table for a value that could
+            // not possibly be stored anywhere.
+            //
+            // The bound is derived from this repository's actual schema, not
+            // invented: every column that stores a provider message id —
+            // `reports.status`, `reports.customer_status` and
+            // `business_messaging_operations.provider_message_id` — is
+            // varchar(191). An id longer than that cannot have been persisted
+            // by either correlation, so it cannot match, so it is refused
+            // without a query.
+            if ($providerMessageId === '' || strlen($providerMessageId) > self::MAX_PROVIDER_MESSAGE_ID_LENGTH) {
                 return null;
             }
 
-            // 1. Managed correlation — exact, unique, durable.
-            $operations = DB::table(ManagedMessageDispatcher::TABLE)
-                ->where('provider_message_id', $providerMessageId)
-                ->whereNotNull('report_id')
-                ->limit(2)
-                ->get();
+            // 1. Managed correlation — exact, and PROVIDER-SCOPED.
+            //
+            // Correction 36 queried this table by provider_message_id alone
+            // and its comment claimed that column was globally unique. It is
+            // not: the index is `UNIQUE(provider, provider_message_id)`, so
+            // two providers may legitimately carry the same id. Querying by
+            // id alone therefore let ANY unauthenticated legacy webhook —
+            // one for a completely different provider — resolve a managed
+            // operation, and through it a managed Report, by guessing or
+            // replaying an id.
+            //
+            // The managed strategy is now only available to a caller that
+            // supplied an AUTHORITATIVE connection. Without one there is no
+            // provider to scope by, so this strategy is skipped entirely and
+            // resolution falls through to the legacy path, which fails
+            // closed on its own terms.
+            $provider = $sendingServer !== null
+                ? TransportProviderIdentifier::normalize($sendingServer->settings)
+                : null;
 
-            if ($operations->count() === 1) {
-                return Reports::find((int) $operations->first()->report_id);
-            }
+            if ($provider !== null) {
+                $operations = DB::table(ManagedMessageDispatcher::TABLE)
+                    ->where('provider', $provider)
+                    ->where('provider_message_id', $providerMessageId)
+                    ->whereNotNull('report_id')
+                    ->limit(2)
+                    ->get();
 
-            if ($operations->count() > 1) {
-                // Structurally impossible under the global unique index, and
-                // if it ever happens it is ambiguity, not a tie to break.
-                return null;
+                if ($operations->count() > 1) {
+                    // Cannot happen under the composite unique index; if it
+                    // ever does it is ambiguity, not a tie to break.
+                    return null;
+                }
+
+                if ($operations->count() === 1) {
+                    return self::integrityCheckedManagedReport($operations->first());
+                }
             }
 
             // 2. Legacy packed-status correlation, bounded and escaped.
@@ -198,6 +261,45 @@
             })->values();
 
             return $exact->count() === 1 ? $exact->first() : null;
+        }
+
+        /**
+         * The integrity checks a resolved managed operation must pass before
+         * its Report is handed back.
+         *
+         * Finding a row is not the same as trusting it. Each check below is
+         * something the schema makes mechanically provable, and any mismatch
+         * fails closed rather than being repaired: a malformed row is a
+         * signal that something is wrong, and quietly fixing it up in a
+         * delivery callback would hide exactly the problem worth seeing.
+         */
+        private static function integrityCheckedManagedReport(object $operation): ?Reports
+        {
+            if ($operation->report_id === null) {
+                return null;
+            }
+
+            $report = Reports::find((int) $operation->report_id);
+
+            if ($report === null) {
+                return null;
+            }
+
+            // The operation carries a Business; the Report must be the same
+            // Business's. A Report with no business_id is legacy data that
+            // predates Business tenancy and is not contradicted by this.
+            if ($operation->business_id !== null && $report->business_id !== null
+                && (int) $report->business_id !== (int) $operation->business_id) {
+                return null;
+            }
+
+            // A managed send writes no legacy sending_server_id (§4.5), so a
+            // Report correlated to a managed operation must not claim one.
+            if ($report->sending_server_id !== null) {
+                return null;
+            }
+
+            return $report;
         }
 
         /**
@@ -273,19 +375,39 @@
                 $credited = false;
                 $debited = false;
 
-                if ($isNonDelivered && ! $wasNonDelivered) {
-                    // First entry into a non-delivered terminal state.
-                    $locked->user?->update([
-                        'sms_unit' => $locked->user->sms_unit + $locked->cost,
-                    ]);
-                    $credited = true;
-                } elseif (! $isNonDelivered && $wasNonDelivered && $customerStatus === 'Delivered') {
-                    // A late delivery after a refund — take the cost back,
-                    // or the message was free.
-                    $locked->user?->update([
-                        'sms_unit' => $locked->user->sms_unit - $locked->cost,
-                    ]);
-                    $debited = true;
+                // ATOMIC AT SQL LEVEL, and this too corrects my own mistake.
+                //
+                // Correction 36 read `$locked->user->sms_unit` into PHP, added
+                // the cost, and wrote the computed value back. The Reports row
+                // lock above protects THAT REPORT — it says nothing about the
+                // User row. Two callbacks for two DIFFERENT reports owned by
+                // the same customer therefore both read the same balance and
+                // the second overwrote the first: with costs C1 and C2 the
+                // customer was credited max(C1, C2) instead of C1 + C2.
+                //
+                // `increment()`/`decrement()` compile to
+                // `sms_unit = sms_unit + ?` in one statement, so the database
+                // serializes the two writers on the User row and neither can
+                // lose the other's update. Nothing is read into PHP and
+                // written back.
+                //
+                // The transition semantics above are unchanged: WHETHER to
+                // move money is still decided once, under the Report row
+                // lock, from the previous durable customer_status.
+                $userId = $locked->user_id;
+                $cost = (float) $locked->cost;
+
+                if ($userId !== null && $cost > 0) {
+                    if ($isNonDelivered && ! $wasNonDelivered) {
+                        // First entry into a non-delivered terminal state.
+                        User::whereKey($userId)->increment('sms_unit', $cost);
+                        $credited = true;
+                    } elseif (! $isNonDelivered && $wasNonDelivered && $customerStatus === 'Delivered') {
+                        // A late delivery after a refund — take the cost back,
+                        // or the message was free.
+                        User::whereKey($userId)->decrement('sms_unit', $cost);
+                        $debited = true;
+                    }
                 }
 
                 return [
@@ -340,7 +462,7 @@
                 $status = 'Delivered';
             }
 
-            $this::updateDLR($message_id, $status, $sender_id, $phone);
+            $this::updateDLR($message_id, $status);
         }
 
         /**
@@ -368,7 +490,7 @@
                 default => 'Unknown',
             };
 
-            $this::updateDLR($message_id, $status, null, $phone);
+            $this::updateDLR($message_id, $status);
         }
 
         /**
@@ -392,7 +514,7 @@
                 $status = 'Delivered';
             }
 
-            $this::updateDLR($message_id, $status, $phone, $sender_id);
+            $this::updateDLR($message_id, $status);
         }
 
         /**
@@ -438,7 +560,7 @@
                 $status = 'Delivered';
             }
 
-            $this::updateDLR($message_id, $status, $phone, $sender_id);
+            $this::updateDLR($message_id, $status);
         }
 
         /**
@@ -462,7 +584,7 @@
                 $status = 'Delivered';
             }
 
-            $this::updateDLR($message_id, $status, $phone, $sender_id);
+            $this::updateDLR($message_id, $status);
         }
 
         /**
@@ -508,7 +630,7 @@
                 $status = 'Delivered';
             }
 
-            $this::updateDLR($message_id, $status, $phone, $sender_id);
+            $this::updateDLR($message_id, $status);
 
             return $status;
         }
@@ -533,7 +655,7 @@
                 $status = 'Delivered';
             }
 
-            $this::updateDLR($message_id, $status, $phone);
+            $this::updateDLR($message_id, $status);
         }
 
         /**
@@ -557,7 +679,7 @@
                 $status = 'Delivered';
             }
 
-            $this::updateDLR($message_id, $status, $phone, $sender_id);
+            $this::updateDLR($message_id, $status);
         }
 
         /**
@@ -605,7 +727,7 @@
                 $status = ucfirst(strtolower($status));
             }
 
-            $this::updateDLR($message_id, $status, $phone);
+            $this::updateDLR($message_id, $status);
         }
 
         /**
@@ -1280,6 +1402,111 @@ $chatBox->touch();
          * Read-only by design: no column, cast or method is added to
          * SendingServer or CustomerBasedSendingServer.
          */
+        /**
+         * The widest provider message id any correlation in this repository
+         * can actually store.
+         *
+         * Derived from the schema, in one place, rather than guessed:
+         * `reports.status` and `reports.customer_status` (the packed legacy
+         * correlation) and
+         * `business_messaging_operations.provider_message_id` (the managed
+         * one) are all `varchar(191)`. Anything longer was never persisted
+         * and therefore cannot match.
+         *
+         * Moving legacy delivery callbacks off the packed `status` column
+         * entirely — which would make this correlation indexable instead of
+         * merely bounded — remains future provider-retirement work and is
+         * deliberately not attempted here.
+         */
+        public const MAX_PROVIDER_MESSAGE_ID_LENGTH = 191;
+
+        /** The ONE host the Whatsender media token may ever be sent to. */
+        public const WHATSENDER_MEDIA_HOST = 'api.whatsender.io';
+
+        /**
+         * Build the Whatsender media URL from a provider-supplied value that
+         * is treated strictly as a RELATIVE PATH.
+         *
+         * A credential-bearing request must reach exactly one host. Every
+         * rejection below is a way the provider's string could otherwise have
+         * changed the authority of the URL it was concatenated into, or
+         * smuggled something past the parser:
+         *
+         *   `@attacker.example/x`   userinfo — authority becomes attacker
+         *   `//attacker.example/x`  protocol-relative authority
+         *   `https://attacker/x`    an absolute URL of its own
+         *   `\evil`                 backslash, which some parsers fold to `/`
+         *   CR / LF / NUL           header and request smuggling
+         *
+         * The result is re-parsed and its scheme, host and absence of
+         * userinfo re-asserted, so the guarantee does not rest on the
+         * validation above having been exhaustive.
+         *
+         * @return string|null null when the value cannot be represented as a
+         *                     safe relative provider path, in which case NO
+         *                     network call is made
+         */
+        public static function buildWhatsenderMediaUrl($mediaPath): ?string
+        {
+            if ( ! is_string($mediaPath)) {
+                return null;
+            }
+
+            // No trimming: leading whitespace is itself suspicious here, and
+            // trimming would let ` //attacker` become `//attacker`.
+            if ($mediaPath === '' || $mediaPath[0] !== '/') {
+                return null;
+            }
+
+            // A second leading slash is a protocol-relative authority.
+            if (str_starts_with($mediaPath, '//')) {
+                return null;
+            }
+
+            foreach (['@', '\\', '?', '#'] as $forbidden) {
+                if (str_contains($mediaPath, $forbidden)) {
+                    return null;
+                }
+            }
+
+            // Control characters, CR, LF and NUL.
+            if (preg_match('/[\x00-\x1F\x7F]/', $mediaPath) === 1) {
+                return null;
+            }
+
+            // A scheme of its own, in any casing.
+            if (preg_match('#^/*[a-z][a-z0-9+.\-]*:#i', $mediaPath) === 1) {
+                return null;
+            }
+
+            // Nothing that parses as having a host of its own.
+            $parsedPath = parse_url($mediaPath);
+
+            if ($parsedPath === false
+                || isset($parsedPath['host'], $parsedPath['scheme'], $parsedPath['user'], $parsedPath['pass'])
+                || ! isset($parsedPath['path'])
+                || $parsedPath['path'] !== $mediaPath) {
+                return null;
+            }
+
+            $url = 'https://' . self::WHATSENDER_MEDIA_HOST . $mediaPath;
+
+            // Re-parsed, so the guarantee is asserted about the FINAL string
+            // rather than inferred from the checks above.
+            $parsed = parse_url($url);
+
+            if ($parsed === false
+                || ($parsed['scheme'] ?? null) !== 'https'
+                || ($parsed['host'] ?? null) !== self::WHATSENDER_MEDIA_HOST
+                || isset($parsed['user'])
+                || isset($parsed['pass'])
+                || isset($parsed['port'])) {
+                return null;
+            }
+
+            return $url;
+        }
+
         /**
          * The only media types this inbound handler genuinely supports —
          * the image/video/audio cases its own switch declares — mapped to
@@ -2613,7 +2840,7 @@ $chatBox->touch();
                 return 'Message ID and status not found';
             }
 
-            $this::updateDLR($message_id, $status, $phone);
+            $this::updateDLR($message_id, $status);
 
             return $status;
 
@@ -2639,7 +2866,7 @@ $chatBox->touch();
                 $status = 'Delivered';
             }
 
-            $this::updateDLR($message_id, $status, $phone);
+            $this::updateDLR($message_id, $status);
 
             return $status;
 
@@ -2687,7 +2914,36 @@ $chatBox->touch();
                             $message     = $get_data['data']['media']['caption'];
                             $media_url   = $get_data['data']['media']['links']['download'];
                             $file_name   = $get_data['data']['media']['filename'];
-                            $gateway_url = 'https://api.whatsender.io' . $media_url;
+                            // Security Correction 37 — SSRF / token
+                            // exfiltration.
+                            //
+                            // `$media_url` is attacker-controlled
+                            // (`data.media.links.download`) and was
+                            // concatenated straight onto the provider host,
+                            // then sent WITH the tenant's Whatsender Token in
+                            // a header. A value beginning `@attacker.example/`
+                            // makes the concatenated string's authority
+                            // `attacker.example` — the token goes to the
+                            // attacker. `//attacker.example/` does the same
+                            // via a protocol-relative authority, and a
+                            // followed redirect carried the credential
+                            // off-host regardless.
+                            //
+                            // The value is now treated as a RELATIVE PATH and
+                            // nothing else, validated before any network call
+                            // (see buildWhatsenderMediaUrl), and the final URL
+                            // is re-parsed to prove its scheme, host and
+                            // absence of userinfo.
+                            $gateway_url = self::buildWhatsenderMediaUrl($media_url);
+
+                            if ($gateway_url === null) {
+                                // Nothing is fetched and nothing is written;
+                                // the message still arrives without media.
+                                $mediaUrl = '';
+
+                                break;
+                            }
+
 
                             if ($message == null) {
                                 $message = $file_name;
@@ -2698,7 +2954,20 @@ $chatBox->touch();
                                 CURLOPT_URL            => $gateway_url,
                                 CURLOPT_RETURNTRANSFER => true,
                                 CURLOPT_ENCODING       => '',
-                                CURLOPT_MAXREDIRS      => 10,
+                                // REDIRECTS DISABLED (Security Correction 37).
+                                //
+                                // This request carries the tenant's Whatsender
+                                // Token. Following a redirect would let the
+                                // provider — or anyone who can influence its
+                                // response — send that credential to another
+                                // host, which is the same exfiltration the URL
+                                // validation above prevents, arriving one hop
+                                // later. cURL is explicitly told not to follow,
+                                // and the redirect budget is zeroed so the
+                                // setting cannot be defeated by an option
+                                // ordering change.
+                                CURLOPT_FOLLOWLOCATION => false,
+                                CURLOPT_MAXREDIRS      => 0,
                                 CURLOPT_TIMEOUT        => 30,
                                 CURLOPT_HTTP_VERSION   => CURL_HTTP_VERSION_1_1,
                                 CURLOPT_CUSTOMREQUEST  => 'GET',
@@ -2829,7 +3098,7 @@ $chatBox->touch();
                 $status = 'Delivered';
             }
 
-            $this::updateDLR($message_id, $status, $phone);
+            $this::updateDLR($message_id, $status);
 
             return $status;
 
@@ -3011,7 +3280,7 @@ $chatBox->touch();
                 '3' => 'Expired',
             };
 
-            $this::updateDLR($message_id, $status, $phone);
+            $this::updateDLR($message_id, $status);
 
             return $status;
         }
