@@ -476,3 +476,174 @@ Zero changes under `app/`, `public/`, `vendor/`, `node_modules/`, `database/`,
 `routes/`, `config/`, `resources/`, dependency files, generated assets,
 `tests/Support/TestDatabaseSafety.php`, the merged PR #229 Usage files, or
 `CLAUDE.md`/`docs/automation/AI-AUTONOMY-STATE.json`.
+
+---
+
+## 7. Post-merge correction — PR #232 P1 finding (generated-name validation)
+
+**Merged as:** `e5499df2d304572d49b26cdc35c05f32c26ac98a`. Automated review of
+PR #232 found a real P1 defect in the branch this document otherwise
+describes as complete: `TemporaryTestDatabase::isValidGeneratedName()`
+validated only the captured base portion of a generated name through
+`TestDatabaseSafety`, never the complete generated name.
+
+### 7.1 The defect, precisely
+
+A base can independently pass every `TestDatabaseSafety` check — safe
+characters, no forbidden segment, and (critically) itself under MySQL's
+64-character identifier limit — and still, once this class's own
+`_historical_<pid>_<hex>` / `_enforcement_<pid>_<hex>` suffix (22–28
+characters, depending on pid length) is appended, produce a **complete**
+name that exceeds that same 64-character limit. The original
+`isValidGeneratedName()` checked only the base, so it returned `true` for
+such a name even though `TestDatabaseSafety::isSafeTestDatabaseName()`
+itself would refuse the exact string this class was about to create,
+register a connection for, or drop.
+
+This was not a theoretical gap. `concurrent_backfill_runner.php` (§2.3 of
+this document, entirely unrelated to production data) trusts
+`TemporaryTestDatabase::isValidHistoricalName()` as one of its two
+authorization branches over an **externally-supplied**
+`EXPECTED_TEST_DATABASE` environment value — a value the runner's own
+caller controls. A crafted value shaped exactly like a generated historical
+name, with a base that independently passes `TestDatabaseSafety` on its own
+but pushes the combined length over 64, would have been accepted as
+authorized by the pre-correction code. §7.4 reproduces this exact shape
+directly against the real runner and confirms the corrected code refuses it.
+
+Compounding the same root issue, `generateName()` carried its own
+`MYSQL_IDENTIFIER_MAX_LENGTH = 64` constant and an explicit length check —
+a **second, competing** length policy duplicating `TestDatabaseSafety`'s own
+private `MAX_LENGTH = 64`, rather than delegating to the repository's single
+authority.
+
+### 7.2 The fix
+
+`isValidGeneratedName()` now performs three checks, all required, matching
+the task's own enumeration exactly:
+
+1. the name matches the exact historical- or enforcement-specific shape
+   (the existing `preg_match()` against the named-capture pattern, unchanged);
+2. the captured base is approved by `TestDatabaseSafety::isSafeTestDatabaseName()`
+   (unchanged from the PR #232 version);
+3. **new** — the complete generated name is independently approved by
+   `TestDatabaseSafety::isSafeTestDatabaseName()` as well.
+
+Requirement 4 from the task (the MySQL identifier-length limit) is **not**
+a fourth, separate check — it falls out of requirement 3 for free, because
+`TestDatabaseSafety::isSafeTestDatabaseName()` already enforces its own
+64-character limit internally on whatever string it is given. This is why
+`generateName()`'s own competing `MYSQL_IDENTIFIER_MAX_LENGTH` constant and
+explicit `strlen()` check were **removed outright**, not merely relaxed —
+delegating the length check to the same call that already proves the
+complete name's other properties is what "do not create a competing
+database policy" requires, not a second constant that happens to hold the
+same number. `generateName()`'s own failure path now calls
+`TestDatabaseSafety::assertSafeTestDatabaseName()` purely to obtain its
+descriptive reason string for the exception message — the authorization
+decision itself was already made by `isValidGeneratedName()`.
+
+No other method changed. `TestDatabaseSafety` itself remains completely
+unmodified (§7.5 confirms this mechanically). `concurrent_backfill_runner.php`
+required **zero** changes — `git diff origin/main -- tests/Feature/Workspace/Support/concurrent_backfill_runner.php`
+is empty — because it already delegated to `isValidHistoricalName()` as one
+of its two authorization branches; fixing that one shared method
+automatically closed the gap at every call site, exactly as intended by
+having a single authority.
+
+### 7.3 Boundary tests
+
+Nine new test methods were added to
+`tests/Feature/Workspace/WorkspaceTransitionsMigrationSchemaTest.php` (the
+one test file in this task's allowlist, and an existing direct consumer of
+`TemporaryTestDatabase`), exercising the public `isValidHistoricalName()`/
+`isValidEnforcementName()` entry points directly — the same surface both
+this class's own internal callers and the external
+`concurrent_backfill_runner.php` use, requiring no live database connection
+since both methods are pure string functions:
+
+| # | Test | Proves |
+|---|---|---|
+| 1 | `test_ordinary_canonical_generated_name_is_valid` | The base case remains accepted after this correction |
+| 2 | `test_ordinary_validated_sibling_generated_name_is_valid` | A real disposable sibling as the base remains accepted |
+| 3 | `test_maximum_accepted_complete_length_is_valid` | Exactly 64 characters (the boundary itself) is accepted |
+| 4 | `test_one_character_over_the_limit_is_refused` | Exactly 65 characters is refused — **the direct, minimal reproduction of the P1 finding**: the fixture asserts the 43-character base is independently safe on its own before asserting the complete name is refused, proving the refusal comes from the new complete-name check, not the (unchanged) base check |
+| 5 | `test_safe_base_whose_added_suffix_makes_the_full_name_unsafe` | The same safe-base/unsafe-complete-name property, restated against `isValidEnforcementName()` (the second purpose-specific pattern this class owns) with a longer pid, so the fix is proven on both patterns, not only one |
+| 6 | `test_production_looking_captured_base_is_refused` | A base carrying a forbidden segment (`prod`) is refused via the base-safety check (unchanged behavior) |
+| 7 | `test_production_looking_complete_name_is_refused` | A distinct forbidden segment (`staging`), asserted against `isValidEnforcementName()` exactly as an external caller would supply an already-assembled complete string (never constructed via this class's own `generateName()`) |
+| 8 | `test_malformed_purpose_suffix_is_refused` | Shape violations (7 hex characters instead of 8; an enforcement-shaped name fed to the historical checker) are still refused exactly as before this correction |
+| 9 | `test_correct_handoff_still_succeeds_end_to_end` | This correction changes only what is refused, never what is accepted for a genuine run — `withHistoricalDatabase()` end-to-end (create, connect, drop) against the real active test database, with the generated name itself re-verified via `isValidHistoricalName()` from inside the callback |
+
+Run together with the file's original migration-schema test: **10 tests, 28
+assertions, green** (§7.6).
+
+### 7.4 Direct proof against the real runner
+
+The exact P1 attack shape — a 43-character base independently safe under
+`TestDatabaseSafety`, combined with a valid-shaped historical suffix,
+producing a 65-character complete name — was constructed and handed
+directly to `concurrent_backfill_runner.php` as `EXPECTED_TEST_DATABASE`/
+`DB_DATABASE`:
+
+```
+ultimatesms_testing_aaaaaaaaaaaaaaaaaaaaaaa_historical_1_deadbeef
+```
+
+(65 characters). Result: **refused, exit 3**, before any database write —
+*"EXPECTED_TEST_DATABASE [...] is neither a validated disposable test
+database nor a valid historical temporary database name."* A genuinely
+valid name (the real active base, `ultimatesms_testing_pmc`) handed to the
+same runner the same way: **accepted**, `OK created=0 reused=0 assigned=0`,
+exit 0 — proving the correction refuses exactly the attack shape and
+nothing more.
+
+### 7.5 `TestDatabaseSafety` confirmed unmodified
+
+`git diff origin/main -- tests/Support/TestDatabaseSafety.php` is empty.
+The single authority gained no new method, no modified method, and no
+relaxed check.
+
+### 7.6 Verification
+
+All runs against a **new, distinct** isolated database created for this
+correction, `ultimatesms_testing_pmc` — never reusing the prior round's
+`ultimatesms_testing_lf` — validated through
+`TestDatabaseSafety::isSafeTestDatabaseName()` before creation,
+`migrate:fresh`: 250 migrations, 0 pending.
+
+| Check | Result |
+|---|---|
+| `tests/Unit/Support/TestDatabaseSafetyTest.php` (unchanged file) | 60 tests, 122 assertions, green — identical to every prior report |
+| `tests/Feature/Workspace/WorkspaceTransitionsMigrationSchemaTest.php` (original test + all 9 new boundary tests) | 10 tests, 28 assertions, green |
+| Direct negative probe against `concurrent_backfill_runner.php` (the P1 attack shape) | refused, exit 3, before any write |
+| Direct positive probe against `concurrent_backfill_runner.php` (genuinely valid name) | accepted, exit 0 |
+| `WorkspaceBackfillV1ConcurrencyTest` (real cross-process concurrency, the actual production consumer of this runner), run via `run_historical_m1a_suite.php` (run twice for reproducibility) | Both runs: **44 tests, 123 assertions, 3 errors** — identical, both times, to the pre-existing `WorkspaceManagerPreEnforcementTest` schema-drift errors this document's §3.4 already established as unrelated to the Workspace/Entitlement database-naming work; `WorkspaceBackfillV1ConcurrencyTest`'s own 2 tests are absent from both error lists — confirmed passing |
+| Affected `tests/Feature/Workspace` + `tests/Feature/Entitlement` regression (full output captured, not a tail) | **1,109 tests, 2,351 assertions, 227 errors, 0 failures** — the same 227 pre-existing `MixFileNotFoundException` errors (227/227 exact match) across the identical 16 unrelated HTTP/Controller test classes this document's §3.8 already recorded; test count is up by exactly 9 (this correction's own new boundary tests); no class touched by this correction (`TemporaryTestDatabase`, `WorkspaceTransitionsMigrationSchemaTest`, `concurrent_backfill_runner.php`, `WorkspaceBackfillV1ConcurrencyTest`, `EntitlementManagerConcurrencyTest`) appears anywhere in the error list |
+
+**Pristine-main comparison.** As in §3.4/§3.8, a live side-by-side run was
+judged unnecessary: `git diff origin/main --stat` (§7.7) shows this
+correction touches only three files, none of them reachable from the 3
+historical-suite errors or the 227 regression errors — both error sets are
+already independently established, in this same document, as pre-existing
+and outside the Workspace/Entitlement database-naming scope. Their exact
+reproduction here, unchanged in count and membership, is itself the
+comparison.
+
+### 7.7 Scope
+
+Three of the four allowlisted paths changed:
+
+1. `tests/Feature/Workspace/Support/TemporaryTestDatabase.php` — the fix (§7.2)
+2. `tests/Feature/Workspace/WorkspaceTransitionsMigrationSchemaTest.php` — the nine boundary tests (§7.3)
+3. `docs/automation/WORKSPACE-ENTITLEMENT-DATABASE-SAFETY-COMPLETION.md` — this section
+
+`tests/Feature/Workspace/Support/concurrent_backfill_runner.php` was
+inspected and confirmed to require **no** change — `git diff origin/main
+-- tests/Feature/Workspace/Support/concurrent_backfill_runner.php` is
+empty — since it already delegated to the one shared method this
+correction fixes. `tests/Support/TestDatabaseSafety.php` remains
+completely unmodified (§7.5).
+
+Zero changes under `app/`, `public/`, `vendor/`, `node_modules/`,
+`database/`, `routes/`, `config/`, `resources/`, dependency files,
+generated assets, or any file outside this four-path allowlist.
