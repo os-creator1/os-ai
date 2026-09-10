@@ -7,12 +7,27 @@ is implemented by this lane. One path changes: this document.
 §13 (dashboard redesign), §16 Slice 4, §17 (T-DASH-1..4, T-PERF-1), §14
 (states), §9 (screen placement).
 
-**Base:** `origin/main` at `823448994c2586d3818ad8333088e4976bcbc309`
-(PR #237, the Slice 2A navigation contract). The theme-asset predecessor
-PR #236 is merged and its consequences are re-verified in §2.
+**Base:** `origin/main` at `634ff2b0d4840ecb4cdd1304d8083647cfcd16b9`
+(PR #238, the Legacy Provider webhook-measurement contract — documentation
+only, one new file, no product code). Originally written against
+`823448994c2586d3818ad8333088e4976bcbc309` (PR #237, the Slice 2A navigation
+contract) and merged forward normally. The theme-asset predecessor PR #236 is
+merged and its consequences are re-verified in §2.
+
+**This correction does not modify the S0/S1 measurement contract** that
+PR #238 landed; it is inherited unchanged through the merge.
 
 **Authorises nothing to run.** This contract may merge; §17 states exactly
 what must merge before a single line of Slice 4 is written.
+
+**Correction 1 (this revision)** closes one concrete defect: the first
+revision required a period comparison on every headline while authorising no
+implementation seam for one. `BusinessAnalyticsPresenter::buildOverview()`
+accepts a single `AnalyticsDateRange` and assembles a single period, and no
+previous-period DTO, presenter or service exists anywhere in the repository.
+§4.2–§4.6 lock the architecture instead of dropping the requirement.
+Correction 1 also converts Conversations from "not available" to a locked
+Slice 2B read seam, and replaces the single query ceiling with three.
 
 ---
 
@@ -70,6 +85,12 @@ Three consequences, each verified:
 | F18 | The query-budget house pattern is established | `DB::listen` via `tests/Feature/Analytics/Concerns/CreatesAnalyticsFixtures::capturedSql()`; `AnalyticsPerformanceTest` asserts ≤ 7 KPI and ≤ 12 tenancy+KPI; `AnalyticsCampaignTest` asserts ≤ 9 |
 | F19 | Slice 2A defines the entitlement seam this slice must consume | `App\Library\Navigation\MenuEntitlements` (immutable, request-local, `allows(string $featureKey): bool`, **no policy of its own**) built from `EntitlementManager::snapshotBusinessFeatureDecisions()`, contracted at **≤ 6 queries per request** and **0** in the Account frame |
 | F20 | `dashboard-ecommerce.css` has **exactly one caller** | `resources/views/customer/dashboard.blade.php:8`. The only other tracked references are the `public/mix-manifest.json` entry and the SCSS source `resources/scss/base/pages/dashboard-ecommerce.scss`. `webpack.mix.js:43` compiles `scss/base/pages/**/!(_)*.scss` by glob |
+| F21 | **There is no previous-period seam.** `buildOverview()` takes one `AnalyticsDateRange` and `assemble()` builds one period from it | `BusinessAnalyticsPresenter::buildOverview()`, `::assemble()`. No comparison DTO, presenter or service exists in `app/DTO/Analytics/**` or `app/Library/Analytics/**` |
+| F22 | `assemble()` costs 7 queries | `messageKpis`, `messageVolumeSeries`, `campaignKpis`, `contactKpis`, `contactGrowthSeries`, `advisorKpis` (only when `opportunity.enabled`), `automationKpis` — matching `AnalyticsPerformanceTest`'s ≤ 7 |
+| F23 | B5's cache is already Business-scoped, never global | `BusinessAnalyticsPresenter::cacheKey()` = `'b5_analytics_' . business_id . '_' . $range->cacheKey()`, TTL 300 s. `AnalyticsDateRange::cacheKey()` returns the preset name, or `custom_<start>_<end>` for a custom range |
+| F24 | `AnalyticsDateRange` already carries correct Business-local, DST-safe semantics | `PRESET_LAST_30_DAYS`; `DEFAULT_PRESET = PRESET_LAST_30_DAYS`; `MAX_CUSTOM_DAYS = 92`; `build()` derives `startUtc`/`endUtc` through `localDayStartInStorageTz()` as a **half-open** interval `>= startUtc AND < endUtc`; each daily bucket boundary is derived from its own local date, "never by adding a fixed 86 400-second offset". Its docblock forbids `whereDate()`, `DATE()/DAY()`, date-only `whereBetween`, `strtotime()` fallback and `CONVERT_TZ()` in the range filter |
+| F25 | The exact DTO fields the headlines need | `MessageKpis{outbound, api, inbound, accepted, confirmedFailed}` with `acceptedRate(): ?float` and `confirmedFailedRate(): ?float` — **both already null when `outbound` is 0**. `ContactKpis{totalNow, newInRange, subscribedNow, unsubscribedNow, groupCount}`. `AutomationKpis{executionsInRange, byStatus, byTrigger}` with `succeeded()`, `failed()`, `skipped()`, `pending()` |
+| F26 | B5 states its own acceptance vocabulary | `MessageKpis` docblock: *"'Accepted' means accepted by the provider at send time (M4), never handset delivery."* |
 
 ---
 
@@ -108,7 +129,9 @@ interpretation beside it.**
 ```
 1  Attention              only when non-empty; ordered by severity then scope
 2  Recommended next steps Advisor only; absent when there is nothing to say
-3  Recent / headline      B5 headline figures, each with a period comparison
+3  Recent / headline      a small fixed set of figures, each with a
+                          current-vs-previous comparison and an honest
+                          interpretation (§4.2 – §4.6)
 4  Spend / account health payer-authorised actors only
 5  Quick actions          at most four
 ```
@@ -118,37 +141,202 @@ to `…businesses.analytics.overview`; it never renders a series.
 
 ### 4.1 Headline metrics — B5 only, never re-implemented
 
-Every headline figure comes from `BusinessAnalyticsPresenter` or the existing
-`BusinessAnalyticsQueries` service seam. **No SQL against `reports`,
-`campaigns`, `contacts`, `contact_groups` or `automation_executions` may be
-written inside `app/Library/Dashboard/**`.** If a needed headline is not
-already a B5 method, the correct move is to add it to B5 under B5's own
-contract — not to write a parallel query here.
+Every headline figure comes from the existing `BusinessAnalyticsQueries`
+methods, composed by the Analytics-owned seam of §4.3. **No SQL against
+`reports`, `campaigns`, `contacts`, `contact_groups` or
+`automation_executions` may be written inside `app/Library/Dashboard/**`.**
+If a needed headline is not already a B5 method, the correct move is to add
+it to B5 under B5's own contract — not to write a parallel query here.
 
-Permitted concepts, and only these:
+**The headline row is deliberately restrained.** These, and only these:
 
-| Concept | B5 source |
-|---|---|
-| Messages out / in | `messageKpis()` |
-| **Provider accepted** | `messageKpis()` |
-| **Confirmed failed** | `messageKpis()` |
-| New contacts | `contactKpis()` |
-| Campaigns created | `campaignKpis()` |
-| Automation executions and failures | `automationKpis()` — **absent, not zeroed, when it returns null** (F10) |
-| Advisor open / completed | `advisorKpis()` |
+| Headline | B5 source | Field |
+|---|---|---|
+| **Messages sent** | `messageKpis()` | `MessageKpis::$outbound` — the honest outbound-attempted count. **Never called "delivered"** |
+| **New contacts** | `contactKpis()` | `ContactKpis::$newInRange` |
+| **Automation runs** | `automationKpis()` | `AutomationKpis::$executionsInRange` — only when Automations data exists and the feature is entitled; **absent, not zeroed, when the method returns null** (F10) |
+| **Conversations started** | Slice 2B's read seam (§9) | not a B5 concept — Conversations owns `chat_boxes` |
+| Provider accepted *(optional)* | `messageKpis()` | `MessageKpis::$accepted` / `acceptedRate()` |
+| Confirmed failed *(optional)* | `messageKpis()` | `MessageKpis::$confirmedFailed` / `confirmedFailedRate()` |
+
+**Campaigns created and Advisor counts do not occupy the headline row**,
+even though B5 exposes both. Campaigns has a better destination in Results,
+and Advisor has its own band (§6). Exposure is not a reason to display.
 
 **The vocabulary is B5's, verbatim.** The word for a message the provider
-took is **"provider accepted"**. The word **"delivered"** must not appear as
-a customer-facing dashboard metric, because F9's predicate proves the
-repository does not know handset delivery.
+took is **"provider accepted"** — B5 states it itself: *"'Accepted' means
+accepted by the provider at send time (M4), never handset delivery"* (F26).
+The word **"delivered"** must not appear as a customer-facing dashboard
+metric, because F9's predicate proves the repository does not know handset
+delivery.
 
 **Forbidden outright**, because no authoritative source exists anywhere in
 this repository: **revenue, ROI, reply rate, handset delivery, pipeline
 value, bookings, conversion.** A test asserts their absence from the rendered
 response (§18 #23).
 
-**Not available, and not this slice's to solve:** any conversation metric
-(F7, §9).
+### 4.2 The dashboard period — exactly last 30 days, both windows
+
+**Current period: B5's `AnalyticsDateRange::PRESET_LAST_30_DAYS`** — the 30
+Business-local calendar dates ending today. This is already B5's
+`DEFAULT_PRESET` (F24), so Dashboard and Results agree by construction rather
+than by coincidence.
+
+**There is no Dashboard range picker.** Range selection stays in
+Results/Analytics. One fixed period keeps the cache key small, the budget
+predictable and the comparison meaningful.
+
+**Previous period: the immediately preceding 30 Business-local calendar
+dates.** With a current window of 12 Aug – 10 Sep, the previous window is
+13 Jul – 11 Aug.
+
+Constructed **only** from local calendar dates, reusing
+`AnalyticsDateRange`'s own semantics:
+
+```
+previousEndLocal   = current.startLocal->subDay()
+previousStartLocal = previousEndLocal->subDays(29)
+previousRange      = AnalyticsDateRange::fromInput(
+                         ['range' => 'custom',
+                          'start' => previousStartLocal->format('Y-m-d'),
+                          'end'   => previousEndLocal->format('Y-m-d')],
+                         $businessTimezone,
+                     )
+```
+
+Thirty days is far inside `MAX_CUSTOM_DAYS = 92`, and routing the previous
+window through `fromInput()` means its `startUtc`/`endUtc` come from
+`AnalyticsDateRange::localDayStartInStorageTz()` — the same half-open
+`>= startUtc AND < endUtc` interval B5 already uses.
+
+**Prohibited, explicitly:**
+
+* subtracting `30 * 86400` seconds, or any fixed-second offset — a
+  spring-forward day is 23 hours and a fall-back day is 25, and B5's own
+  docblock already forbids this mechanic;
+* `whereDate()`, `DATE()`, `DAY()`, date-only `whereBetween`, a `strtotime()`
+  fallback, or `CONVERT_TZ()` in a range filter;
+* **any new timezone implementation.** Carbon's own DST resolution, through
+  `AnalyticsDateRange`, is the only one.
+
+### 4.3 The comparison seam — Analytics-owned, narrow, composing only
+
+One new class is authorised, and it belongs to **Analytics, not Dashboard**:
+
+```
+app/Library/Analytics/BusinessDashboardAnalyticsPresenter.php
+```
+
+That exact name, unless a mechanically stronger existing naming convention in
+`app/Library/Analytics/**` requires an equivalent one — in which case the
+implementation records why.
+
+**Its only purpose** is to provide the bounded Business Home
+current-versus-previous headline dataset.
+
+**It composes the existing B5 query methods and writes no KPI formula of its
+own.** It may call, once per range:
+
+* `BusinessAnalyticsQueries::messageKpis()`
+* `BusinessAnalyticsQueries::contactKpis()`
+* `BusinessAnalyticsQueries::automationKpis()`
+
+**It must not** independently query `reports`, `campaigns`, `contacts`,
+`contact_groups` or `automation_executions` with newly written formulas.
+
+**It must not load** message volume series, contact-growth series, campaign
+performance pages or any other chart payload merely to compute a headline
+delta. `messageVolumeSeries()`, `contactGrowthSeries()`, `campaignKpis()`,
+`advisorKpis()` and `campaignPerformancePage()` are **not** called by this
+seam.
+
+**It must not alter B5's public Results behaviour.** `buildOverview()`,
+`buildSeries()`, `buildCampaignsPage()` and every existing query method keep
+their present signatures and semantics.
+
+**No generic comparison engine. No generic metrics registry.** This seam
+serves one page's one row.
+
+If either period's `automationKpis()` returns null (F10), the automation
+headline is **absent for both periods** — never zeroed on one side and
+populated on the other, which would fabricate a delta.
+
+### 4.4 The comparison value shape
+
+Each headline carries one bounded, immutable comparison value:
+
+| Field | Rule |
+|---|---|
+| `current` | integer, from the current range |
+| `previous` | integer, from the previous range |
+| `absoluteDelta` | `current - previous`, always computed |
+| `percentDelta` | **nullable.** Computed **only** when `previous != 0` |
+| `trend` | `up`, `down` or `unchanged` — derived from `absoluteDelta`, never from `percentDelta` |
+
+**When `previous == 0`, `percentDelta` is null and the page renders plain
+wording** — *"Up from 0 in the previous 30 days"*, or equivalent. It must
+**never** render infinity, `NaN`, a division-by-zero artefact, or a
+fabricated 100%.
+
+**No arbitrary floating precision.** `percentDelta` is rounded to one decimal
+place, matching `MessageKpis::acceptedRate()`, which already returns `?float`
+rounded to one decimal and **already returns null when its denominator is
+zero** (F25). That is the repository's own precedent and this contract
+follows it rather than inventing a second rule.
+
+When both periods are 0 the comparison is `unchanged`, `absoluteDelta = 0`,
+`percentDelta = null`, and the copy says so plainly.
+
+### 4.5 Interpretation — code-backed polarity, never a blanket "up is good"
+
+The parent requires a sentence saying whether a change is good. That is
+implemented **honestly**, from a code-backed polarity per metric — not as
+`up = good, down = bad` for everything.
+
+| Metric | Polarity | Rule |
+|---|---|---|
+| Provider-accepted **rate** | **directional** | higher = positive · lower = negative · same = neutral |
+| Confirmed failures | **directional, inverted** | lower = positive · higher = negative · same = neutral |
+| Messages sent | **descriptive only** | never claims higher volume is good |
+| Conversations started | **descriptive only** | same |
+| Automation runs | **descriptive only** | same |
+| New contacts | **descriptive growth** | may describe growth precisely; must not imply revenue or lead quality |
+
+Volume and activity metrics get neutral, descriptive copy — *"Message
+activity increased from the previous 30 days"* — and, where it helps,
+*"Volume is activity, not a success measure."*
+
+**No AI determines polarity.** No generated business-health judgement, no
+success score, no composite index. Polarity is a property of the metric,
+declared in code, and a test pins it.
+
+Every raw number still carries context beside it, which satisfies the
+parent's "no raw count without an interpretation" principle without lying
+about what the number means.
+
+### 4.6 Cache policy for the comparison seam
+
+The seam caches **per Business and per range**, reusing B5's own shape rather
+than inventing a second strategy. B5's key is
+`'b5_analytics_' . business_id . '_' . $range->cacheKey()` at a 300-second
+TTL (F23), and `AnalyticsDateRange::cacheKey()` already yields a distinct
+value for the current preset (`last_30_days`) and the previous custom window
+(`custom_<start>_<end>`).
+
+**Locked:**
+
+* the key **must** carry the Business id and the range key;
+* **current and previous periods have distinct keys** — never one blended
+  entry;
+* **never a global key** such as `dashboard_headlines`. Business A must not
+  be able to receive Business B's comparison, and a tenant-isolation test
+  asserts it (§18 #45);
+* **no persistent aggregate table**, no denormalisation, no warehouse;
+* the existing five-minute Analytics cache strategy is reused where it is
+  safe to do so, rather than recomputing on every render.
+
+The narrowest correct cache implementation is chosen mechanically during
+product work; this contract fixes the isolation properties, not the class.
 
 ---
 
@@ -314,23 +502,58 @@ rather than dropped. **Coverage may move; it may not decrease.**
 
 ---
 
-## 9. Conversations
+## 9. Conversations — consumed from Slice 2B, not solved here
 
-**No conversation metric and no Inbox quick action in Slice 4.**
+**Slice 2B is a hard predecessor of Slice 4 (§17).** By the time Slice 4 can
+begin, Business-scoped Conversations is not hypothetical, so this contract
+states runtime behaviour outright rather than conditionally.
 
-`chat_boxes` has no `business_id` (F7), so a Business-scoped conversation
-figure is not computable. **Slice 4 must not solve that** — Slice 2A records
-it as Slice 2B's debt, to be paid "as one atomic move: route, controller,
-links, tests", and Slice 2A is itself forbidden from touching ChatBox.
+`chat_boxes` has no `business_id` today (F7). **Slice 4 must not solve
+that** — Slice 2A records it as Slice 2B's debt, to be paid "as one atomic
+move: route, controller, links, tests".
 
-If Slice 2B has merged before implementation begins, Slice 4 **consumes** the
-resulting Business-scoped route and seam, adding the Inbox quick action and,
-if 2B exposes one, a conversation headline. Otherwise Slice 4 remains
-blocked, because **2B is a hard predecessor** under the parent redesign order
-(§17).
+### 9.1 The read seam Slice 2B must expose
 
-Under no circumstance does Slice 4 link the account-scoped
-`customer.chatbox.index` from a Business Home and call it Business-scoped.
+Slice 2B delivers a narrow, Business-scoped read seam answering, for one
+Business and one half-open UTC range:
+
+```
+conversationsStarted(Business $business, CarbonImmutable $startUtc, CarbonImmutable $endUtc): int
+```
+
+**Exact semantics**, once 2B has established authoritative Business tenancy:
+
+```
+COUNT(chat_boxes)
+WHERE business_id = <selected Business>.id
+  AND created_at >= range.startUtc
+  AND created_at <  range.endUtc
+```
+
+Dashboard calls it twice — once for the current range, once for the previous
+range (§4.2) — and the two counts feed the same comparison value shape as
+every other headline (§4.4). Polarity is **descriptive only** (§4.5).
+
+**This method does not belong in B5.** Conversations owns `chat_boxes`;
+putting a chat-box query in `BusinessAnalyticsQueries` would give one table
+two owners. The Slice 2B implementation contract is being prepared
+concurrently and carries the obligation to provide this exact bounded read.
+
+### 9.2 What Dashboard must never do
+
+* **Dashboard never queries `chat_boxes` directly** — not in
+  `app/Library/Dashboard/**`, not in a view, not anywhere. A test asserts it
+  (§18 #44).
+* Dashboard never adds `business_id` to `chat_boxes`, never edits
+  `ChatBoxController` or any ChatBox model, and never attempts tenancy
+  remediation.
+* Dashboard never links the account-scoped `customer.chatbox.index` and calls
+  it Business-scoped. After 2B, **no account-scoped chat-box link survives on
+  the dashboard at all** (§18 #47).
+
+If the seam 2B lands differs in name or signature from §9.1, Slice 4 consumes
+what 2B actually shipped and records the difference — it does not build its
+own.
 
 ---
 
@@ -370,8 +593,12 @@ Slice 4 weakens no controller gate.
 | Send | `customer.workspaces.businesses.outreach.index` | outreach permission |
 | Add contact | `customer.workspaces.businesses.contacts.index` | contact permission |
 | Add funds | the Business-scoped usage-billing top-up surface | **payer only** |
-| Inbox | the Business-scoped Conversations route **2B delivers** | only after 2B (§9) |
+| Inbox | **the canonical Business-scoped Conversations route Slice 2B lands** | normal permission, entitlement and view-as rules |
 | One high-value setup action | e.g. publish the website, connect Google — only where the same status column that raises the matching attention item proves it | mechanically justified only |
+
+Inbox is **not conditional**: Slice 2B is a hard predecessor (§17), so its
+route exists before Slice 4 begins. `customer.chatbox.index` — the
+account-scoped legacy route — must not appear on the dashboard.
 
 **Only Business-scoped canonical routes.** Linking
 `customer.sms.quick_send` or `customer.sms.campaign_builder` is **prohibited** —
@@ -422,23 +649,46 @@ view. `soleAccessibleBusiness()` and `opportunityPanel()` are deleted with it.
   website and GBP rows, the Opportunity repository and `MenuEntitlements`.
 * `App\Enums\Dashboard\AttentionType` and `AttentionSeverity`.
 
-**Budget, excluding the shared shell** — the same exclusion convention
+**Budgets are ceilings, not targets.** Use fewer whenever cache or reuse
+permits. The Analytics comparison seam and the Conversations read seam are
+product read services *consumed by* the dashboard, so a dashboard-owned
+figure alone would understate the real cost of the page. Three ceilings are
+locked, and a total.
+
+| Layer | Ceiling |
+|---|---|
+| Dashboard-owned status and assembly queries | **≤ 10** |
+| Analytics current + previous headline queries (§4.3) | **≤ 6** |
+| Conversations current + previous counts (§9.1) | **≤ 2** |
+| **Total Business Home product-data queries** | **≤ 18** |
+| Agency Account Home, dashboard-owned | **≤ 12** |
+
+The Analytics ceiling of 6 is three query methods × two ranges (F22 shows
+each is one query); the Conversations ceiling of 2 is one count per range.
+
+**Excluded from every figure above**, following the exclusion convention
 `AnalyticsPerformanceTest` already uses (F18):
 
-| Home | Ceiling |
-|---|---|
-| Business Home | **≤ 10** dashboard-owned queries |
-| Agency Account Home | **≤ 12** dashboard-owned queries |
+* the shared shell (auth, `CustomerContextSnapshot`, view-as, menu);
+* Slice 2A's entitlement snapshot, which is already amortised across the
+  request at its own contracted ≤ 6 (F19) and to which Slice 4 adds nothing.
 
-**No growth with the number of Businesses. No growth with the number of
-campaigns or contacts.** Asserted by doubling the fixture and asserting an
-identical count (§18 #27).
+**The two B5 periods are not free.** They are counted, in full, against the
+Analytics ceiling — a service call is still a query.
 
-Reuse B5's cache and service (`CACHE_TTL_SECONDS = 300`); do not add a second
-cache layer. **No aggregate tables, no warehouse, no dashboard-specific
-denormalisation.** The budget is achievable because each B5 KPI is one query
-and the wallet, website and GBP reads are all `business_id`-unique single
-rows.
+**If the mechanical implementation proves the existing B5 methods perform
+fewer queries than these ceilings allow, the stricter observed number is
+what the test asserts.** A ceiling is permission to cost that much, never an
+instruction to.
+
+**No N+feature. No N+conversation. No N+campaign. No N+Business.** Asserted
+by doubling the fixture and asserting an identical count (§18 #27).
+
+Reuse B5's cache and service (`CACHE_TTL_SECONDS = 300`, §4.6); do not add a
+second cache layer. **No aggregate tables, no warehouse, no
+dashboard-specific denormalisation.** The dashboard-owned ceiling is
+achievable because the wallet, website and GBP reads are all
+`business_id`-unique single rows.
 
 **Correctness outranks the budget.** If a required figure cannot be produced
 within the ceiling, the implementation stops and reports rather than
@@ -533,25 +783,45 @@ Acceptance criteria, exactly:
   per §8.1; deletion prohibited**
 * The four `dashboard-ecommerce` artefacts of §14.1 — **only** after the
   zero-caller proof is re-run
+* **Correction 1 delta — exactly two additions:**
+  * `app/Library/Analytics/BusinessDashboardAnalyticsPresenter.php` *(new,
+    §4.3)*
+  * its focused Analytics test
+
+  These are **exact paths, not a directory grant.**
+  `app/Library/Analytics/**` and `app/Library/Conversations/**` are **not**
+  broadly authorised for this redesign.
 
 ### May consume, never modify
 
-B5 Analytics services · Slice 2A's `MenuEntitlements` and the navigation
-context · usage-wallet models and read APIs · Website and GBP status models ·
-the Opportunity repository · `EntitlementManager::decideBusinessSlotCapacity()`
+B5 Analytics query methods and DTOs · Slice 2A's `MenuEntitlements` and the
+navigation context · **the exact Conversations read interface Slice 2B
+lands (§9.1)** · usage-wallet models and read APIs · Website and GBP status
+models · the Opportunity repository ·
+`EntitlementManager::decideBusinessSlotCapacity()`
+
+**No modification to a B5 KPI formula is authorised.** If an existing B5
+formula proves wrong, the implementation lane **stops and returns that defect
+to B5 ownership** rather than correcting it here — a KPI fixed in two places
+is a KPI that will disagree with itself.
 
 ### Stop-list — not authorised
 
 `routes/**` · `database/migrations/**` · any ChatBox route, controller or
-model · `app/Library/Usage/UsageWalletManager.php` and
-`BillingProfileManager.php` · `app/Library/Analytics/**` (including changing
-a B5 query "for convenience") · `app/Library/Navigation/**` ·
-`app/Library/Entitlement/**` · `resources/lang/en/locale.php` (Slice 1) ·
+model, and **any direct `chat_boxes` query** · `app/Library/Usage/UsageWalletManager.php` and
+`BillingProfileManager.php` · `app/Library/Analytics/**` **except** the one
+new file named above — including changing a B5 query "for convenience", and
+including `BusinessAnalyticsQueries`, `BusinessAnalyticsPresenter`,
+`AnalyticsDateRange` and every `app/DTO/Analytics/**` type ·
+`app/Library/Navigation/**` · `app/Library/Entitlement/**` ·
+`resources/lang/en/locale.php` (Slice 1) ·
 `resources/views/components/empty-state.blade.php` and
 `layouts/partials/empty-state.blade.php` · `resources/views/panels/**` ·
 `resources/views/layouts/**` · provider or messaging runtime · Website or GBP
 behaviour · mobile navigation · `public/**` and `resources/scss/**` beyond
-§14.1's proven set · `docs/automation/AI-AUTONOMY-STATE.json`
+§14.1's proven set · `docs/automation/AI-AUTONOMY-STATE.json` ·
+`docs/automation/LEGACY-PROVIDER-WEBHOOK-MEASUREMENT-CONTRACT.md` and the
+S0/S1 measurement design it carries
 
 If any stop-listed change looks mechanically unavoidable, the implementation
 lane **stops and reports the exact consumer and the necessary path** rather
@@ -571,10 +841,17 @@ than widening scope.
    consumes `MenuEntitlements`; without it, Slice 4 would have to build the
    second decision engine §10 forbids.
 3. **Slice 2B — Business-scoped Conversations.** A hard predecessor under the
-   parent redesign order (§9).
+   parent redesign order. Slice 4 consumes its read seam (§9.1) and its
+   canonical route (§11); neither is optional and neither is conditional.
 
-**Chat A is not otherwise a hard predecessor.** If the final Slice 3
-messaging identity exists at implementation time, add **only** the
+**Because 2B is hard, no runtime behaviour in this contract is written as
+"if 2B has merged".** The conversations-started headline and the Inbox quick
+action are unconditional features of Slice 4 at implementation time.
+
+**Chat A remains an indirect dependency only.** Slice 2B itself waits on the
+final Slice 3 messaging/provider state; Slice 4 inherits that ordering
+through 2B and adds **no** direct Chat A dependency of its own. If the final
+Slice 3 messaging identity exists at implementation time, add **only** the
 `BusinessPhoneMissing` attention type (§5.2). Nothing else in Slice 4 waits
 on it, and the attention list is designed so that adding a type is additive.
 
@@ -608,9 +885,9 @@ on it, and the attention list is designed so that adding a type is additive.
 | 22 | Provider-accepted vocabulary | the rendered response uses "provider accepted"; the bare word "delivered" never labels a metric |
 | 23 | **No fake metrics** | no revenue, ROI, reply rate, handset delivery, pipeline value, bookings or conversion string |
 | 24 | No inline Blade queries | the dashboard views execute zero Eloquent or query-builder calls |
-| 25 | **Business Home budget** | ≤ **10** dashboard-owned queries, counted with `DB::listen`, shell excluded |
+| 25 | **Business Home dashboard-owned budget** | ≤ **10**, counted with `DB::listen`, shell and 2A snapshot excluded |
 | 26 | **Agency Account Home budget** | ≤ **12**, same method |
-| 27 | **No N+1 growth** | doubling Businesses, contacts and campaigns leaves both counts identical |
+| 27 | **No N+1 growth** | doubling Businesses, contacts, campaigns and conversations leaves every count identical |
 | 28 | No charts | no `apexcharts` and no chart markup |
 | 29 | No legacy quick-send links | `customer.sms.quick_send` and `customer.sms.campaign_builder` absent |
 | 30 | Quick actions bounded | at most four; none cost-producing during view-as |
@@ -621,6 +898,30 @@ on it, and the attention list is designed so that adding a type is additive.
 | 35 | Empty and locked states | zero-Business shows one create action; a locked band shows a reason and an owner hint, never a 404 |
 | 36 | No raw locale keys | no rendered string matches `locale.` |
 | 37 | `dashboard-ecommerce` | the rebuilt view loads no page stylesheet; if §14.1's deletion ran, `ThemeAssetPublicationTest` is still green |
+
+**Correction 1 additions — every row above is preserved.**
+
+| # | Test | Asserts |
+|---|---|---|
+| 38 | Current range | Business Home uses `PRESET_LAST_30_DAYS`, and offers no range picker |
+| 39 | Previous range | exactly the 30 Business-local calendar dates immediately preceding the current window (12 Aug – 10 Sep ⇒ 13 Jul – 11 Aug) |
+| 40 | **DST boundary** | across a spring-forward and a fall-back transition in a non-UTC Business timezone, both windows still cover 30 local dates and the half-open UTC bounds stay correct; no fixed-second arithmetic is used |
+| 41 | Messages sent equality | current and previous both equal `MessageKpis::$outbound` from the same B5 fixture |
+| 42 | New contacts equality | current and previous both equal `ContactKpis::$newInRange` from the same B5 fixture |
+| 43 | Automation runs equality | current and previous both equal `AutomationKpis::$executionsInRange`; when either period is null the headline is **absent for both** |
+| 44 | Conversations equality **and** no direct query | the figure equals Slice 2B's read seam for the same range, **and** no `chat_boxes` query originates in `app/Library/Dashboard/**` or a dashboard view |
+| 45 | **Comparison cache is tenant-isolated** | Business A's rendered comparison can never be served to Business B; current and previous periods use distinct keys; no global `dashboard_headlines`-style key exists |
+| 46 | **Total product-data ceiling** | Business Home total ≤ **18** — dashboard-owned ≤ 10, Analytics ≤ 6, Conversations ≤ 2 — counted with `DB::listen`, shell and 2A snapshot excluded |
+| 47 | Inbox route | the Inbox quick action targets Slice 2B's canonical Business-scoped route, and **no account-scoped `customer.chatbox.index` link survives anywhere on the dashboard** |
+| 48 | Previous = 0 | `percentDelta` is null and the copy reads plainly; no `INF`, no `NaN`, no fabricated 100% appears in the rendered response |
+| 49 | Both = 0 | `unchanged`, `absoluteDelta = 0`, `percentDelta = null` |
+| 50 | Increase / decrease / unchanged | `absoluteDelta` and `trend` correct in all three directions for every headline |
+| 51 | Directional polarity | a rising provider-accepted rate reads positive; a rising confirmed-failure count reads negative; equal reads neutral |
+| 52 | **Volume is never "good"** | an increase in messages sent, conversations started or automation runs is never labelled good, successful or healthy; the copy is descriptive |
+| 53 | Acceptance vocabulary | the rendered response uses B5's "provider accepted" wording verbatim and never labels a metric "delivered" |
+| 54 | **B5 SQL is not duplicated** | no query against `reports`, `campaigns`, `contacts`, `contact_groups` or `automation_executions` originates in `app/Library/Dashboard/**` |
+| 55 | Seam restraint | the comparison seam calls only `messageKpis()`, `contactKpis()` and `automationKpis()` — never `messageVolumeSeries()`, `contactGrowthSeries()`, `campaignKpis()`, `advisorKpis()` or `campaignPerformancePage()` |
+| 56 | B5 Results unchanged | `buildOverview()`, `buildSeries()` and `buildCampaignsPage()` behave identically before and after; the existing Analytics suite is green |
 
 Focused suites run first, then `tests/Feature/Dashboards`,
 `tests/Feature/Security`, `tests/Feature/Analytics`, `tests/Feature/Assets`
