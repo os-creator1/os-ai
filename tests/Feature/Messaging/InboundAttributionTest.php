@@ -127,6 +127,7 @@ class InboundAttributionTest extends TestCase
         $this->assertSame(0, DB::table('business_messaging_operations')->count());
     }
 
+    /** T-MSG-18 — unknown Profile with a known number fails closed. */
     public function test_unknown_profile_with_known_number_fails_closed(): void
     {
         [, , $number] = $this->managedBusiness();
@@ -139,6 +140,7 @@ class InboundAttributionTest extends TestCase
         $this->assertSame(0, DB::table('business_messaging_operations')->count());
     }
 
+    /** T-MSG-19 — Profile A with Business B's number is a conflict, attributed to neither. */
     public function test_profile_of_business_a_with_number_of_business_b_is_a_conflict(): void
     {
         [, $identityA] = $this->managedBusiness();
@@ -313,6 +315,7 @@ class InboundAttributionTest extends TestCase
         $this->assertSame(0, DB::table('messaging_webhook_rejections')->count());
     }
 
+    /** T-MSG-50 — an exact replay is a no-op only after the first transition. */
     public function test_an_exact_delivery_replay_is_a_no_op_only_after_the_first_transition(): void
     {
         [$operation, $providerMessageId] = $this->acceptedOutboundOperation();
@@ -327,6 +330,7 @@ class InboundAttributionTest extends TestCase
         $this->assertSame(1, $this->rejectionCount('duplicate'));
     }
 
+    /** T-MSG-52 — a regressive callback can never move a terminal row backward. */
     public function test_a_regressive_delivery_callback_cannot_move_a_terminal_row_backward(): void
     {
         [$operation, $providerMessageId] = $this->acceptedOutboundOperation();
@@ -343,6 +347,7 @@ class InboundAttributionTest extends TestCase
         $this->assertSame(1, $this->rejectionCount('regressive_transition'));
     }
 
+    /** T-MSG-51 — attempted -> accepted -> delivered, each applied exactly once. */
     public function test_the_full_lifecycle_applies_each_transition_exactly_once(): void
     {
         [$operation, $providerMessageId] = $this->acceptedOutboundOperation();
@@ -439,6 +444,7 @@ class InboundAttributionTest extends TestCase
         );
     }
 
+    /** T-MSG-22 — delivery evidence cross-check against the stored operation's identity. */
     public function test_delivery_evidence_resolving_to_another_business_is_refused(): void
     {
         [$operation, $providerMessageId] = $this->acceptedOutboundOperation();

@@ -456,6 +456,50 @@ class MessagingTransportMeasurementLayeringTest extends TestCase
         ]);
     }
     // ---------------------------------------------------------------
+    // T-MSG-38 — the two named regression suites are UNMODIFIED
+    // ---------------------------------------------------------------
+
+    /**
+     * "`ConversationsPlainSmsMeteringTest.php` and
+     * `AgencyProspectingRuntimeTest.php` pass unmodified after every change
+     * in this correction."
+     *
+     * Passing is proven by running them, and their counts are recorded in
+     * the implementation document. UNMODIFIED is the half a test run cannot
+     * prove — a suite edited to accommodate a regression still passes — so
+     * it is asserted here, mechanically, by comparing each file's content
+     * hash against the same file on `origin/main`.
+     *
+     * If a future change to this slice needs either file edited, this test
+     * fails and the requirement gets re-read rather than quietly dropped.
+     */
+    public function test_the_two_named_regression_suites_are_byte_identical_to_main(): void
+    {
+        foreach ([
+            'tests/Feature/Usage/ConversationsPlainSmsMeteringTest.php',
+            'tests/Feature/AgencyProspecting/AgencyProspectingRuntimeTest.php',
+        ] as $path) {
+            $absolute = base_path($path);
+            $this->assertFileExists($absolute);
+
+            $onMain = shell_exec('git -C ' . escapeshellarg(base_path()) . ' show origin/main:' . escapeshellarg($path) . ' 2>&1');
+
+            if (! is_string($onMain) || $onMain === '' || str_contains($onMain, 'fatal:')) {
+                $this->markTestSkipped('origin/main is not reachable from this checkout, so the comparison cannot run.');
+            }
+
+            // Normalized for line endings only: git stores LF, the working
+            // copy may carry CRLF, and that difference is not a modification
+            // to the test's behaviour.
+            $this->assertSame(
+                hash('sha256', str_replace("\r\n", "\n", $onMain)),
+                hash('sha256', str_replace("\r\n", "\n", (string) file_get_contents($absolute))),
+                "[{$path}] must pass UNMODIFIED; it differs from origin/main.",
+            );
+        }
+    }
+
+    // ---------------------------------------------------------------
     // Audit P2 — no stranded Conversations reservation
     // ---------------------------------------------------------------
 

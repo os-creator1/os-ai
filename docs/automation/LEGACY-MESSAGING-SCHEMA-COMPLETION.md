@@ -46,16 +46,26 @@ shipping none of them. So all three landed together:
 
 1. **This migration**, merged into Lane A unchanged. Lane A did not
    reimplement it.
-2. **The UUID writer correction**, in
-   `app/Repositories/Eloquent/EloquentCampaignRepository.php`. Both
-   `chat_boxes` writers in that file now mint `(string) Str::uuid()` — the
-   raw `insertGetId` in the AI-prospecting hook that Lane E found, and the
-   `ChatBox::firstOrNew` writer in the two-way quick-send path, which had
-   exactly the same defect and would have reintroduced blank uids the moment
-   a two-way send ran. `ChatBox` has no `creating` hook to mint one, and a
-   query-builder insert would bypass one anyway, so the writers supply it.
-   The uid column was **not** made nullable, given a default, or otherwise
-   loosened; nothing depends on non-strict MySQL any more.
+2. **The UUID writer correction.** A later adversarial audit found a THIRD
+   writer, so this item is larger than it first appeared, and an earlier
+   revision of this document saying "both writers" was wrong. All three now
+   mint `(string) Str::uuid()`:
+
+   * `EloquentCampaignRepository` — the raw `insertGetId` in the
+     AI-prospecting hook, which is the one Lane E found;
+   * `EloquentCampaignRepository` — `ChatBox::firstOrNew()` in the two-way
+     quick-send path, which had the identical defect and would have
+     reintroduced blank uids the moment a two-way send ran;
+   * `DLRController` — the inbound writer, rewritten from `updateOrCreate`
+     to `firstOrNew`/`save` so a replayed inbound message keeps its
+     conversation's original identifier instead of being re-issued one.
+     `updateOrCreate` applies its values on UPDATE as well as on create,
+     which would have done exactly that.
+
+   `ChatBox` has no `creating` hook to mint a uid, and a query-builder
+   insert would bypass one anyway, so each writer supplies it. The uid
+   column was **not** made nullable, given a default, or otherwise loosened;
+   nothing depends on non-strict MySQL any more.
 3. **The rewritten Outreach test**, now asserting the positive behaviour:
    `campaignBuilder()` completes, one `chat_boxes` row is created per
    subscribed contact at `ai_stage = 1`, each row's `uid` is present,
