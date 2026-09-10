@@ -994,10 +994,16 @@
             );
 
             if ($managedResult !== null) {
-                return (object) [
-                    'status' => $managedResult->accepted ? 'Delivered' : 'Failed',
-                    'cost'   => $preparedData['cost'] ?? 0,
-                ];
+                // §4.5 step 9 — hand the caller the same kind of value the
+                // legacy provider methods below return (a Reports model), so
+                // track_message(), the delivered/failed counters and the
+                // sms_unit accounting keep working unchanged on managed
+                // traffic. See ManagedDispatchDelegate::recordLegacyReport().
+                return \App\Library\Messaging\ManagedDispatchDelegate::recordLegacyReport(
+                    $this,
+                    $preparedData,
+                    $managedResult,
+                );
             }
 
             if ($this->sms_type == 'plain' || $this->sms_type == 'unicode') {

@@ -12,6 +12,7 @@ use App\Models\Reports;
 use App\Models\SendingServer;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
+use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 use Tests\Feature\Messaging\Concerns\CreatesMessagingFixtures;
 use Tests\TestCase;
 use Twilio\Security\RequestValidator;
@@ -319,7 +320,22 @@ class LegacyInboundFailClosedTest extends TestCase
 
         // routes/web.php's `/telnyx/webhook` line is gone outright.
         $this->assertNotContains('telnyx/webhook', $telnyxRoutes);
-        $this->post('/telnyx/webhook', [])->assertNotFound();
+
+        // Asserted at the router, not by rendering the 404 page: the error
+        // view depends on frontend build artifacts that are not committed,
+        // so rendering it would make this test fail for a reason that has
+        // nothing to do with routing. withoutExceptionHandling() lets the
+        // router's own refusal surface directly.
+        $this->withoutExceptionHandling();
+
+        try {
+            $this->post('/telnyx/webhook', []);
+            $this->fail('The removed duplicate route must no longer resolve.');
+        } catch (NotFoundHttpException $e) {
+            $this->assertStringContainsString('telnyx/webhook', $e->getMessage());
+        } finally {
+            $this->withExceptionHandling();
+        }
 
         // routes/web.php's second line registered a SECOND route for
         // `POST /inbound/telnyx`, duplicating routes/public.php's canonical

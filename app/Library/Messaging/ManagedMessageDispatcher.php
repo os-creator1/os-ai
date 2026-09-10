@@ -70,6 +70,23 @@ class ManagedMessageDispatcher
         array $mediaUrls = [],
         string $quantity = '1',
     ): OutboundMessageResult {
+        // §4.4 — the platform kill switch, enforced HERE and not only inside
+        // TelnyxMessagingAdapter's constructor.
+        //
+        // Relying on the adapter alone made the switch depend on which
+        // adapter happened to be bound: the real one refuses to construct,
+        // but any adapter that does not self-check — the deterministic fake
+        // the suite binds, or any future one — sails straight past it. A
+        // platform-wide switch that only works for one implementation is not
+        // a switch. Checking first also means a disabled platform writes no
+        // operation row and no measurement row at all, rather than recording
+        // an attempt it never intended to make.
+        if (! (bool) config('messaging.managed_messaging_enabled')) {
+            throw new MessagingProviderNotConfiguredException(
+                'Managed messaging is disabled by [messaging.managed_messaging_enabled].',
+            );
+        }
+
         // §4.9 — a confirmed acceptance is never re-sent to the provider
         // under the same operation key; the recorded result is returned.
         $existing = DB::table(self::TABLE)->where('operation_key', $operationKey)->first();

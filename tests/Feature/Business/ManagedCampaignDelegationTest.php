@@ -111,6 +111,9 @@ class ManagedCampaignDelegationTest extends TestCase
 
         $campaign = new Campaigns();
         $campaign->business_id = $business->id;
+        // The Reports row the delegation returns is attributed to the
+        // campaign's own owner, exactly as the legacy path attributes it.
+        $campaign->user_id = $business->customer->user_id;
         $campaign->sms_type = 'plain';
 
         $result = $campaign->sendSMS([
@@ -151,11 +154,11 @@ class ManagedCampaignDelegationTest extends TestCase
         ]), $this->campaignPayload($group));
 
         $campaign = Campaigns::query()->where('campaign_name', 'Managed Blast')->first();
-        $this->assertNotNull($campaign, $this->flashDiagnostic($response));
+        $this->assertNotNull($campaign, 'The campaign must have been created and dispatched.');
 
         // (a) the managed adapter handled it, and no legacy provider was
         //     contacted over HTTP
-        $this->assertCount(1, $this->fakeAdapter->sentRequests, $this->campaignDiagnostic($campaign));
+        $this->assertCount(1, $this->fakeAdapter->sentRequests, 'The managed adapter must have handled the send.');
         Http::assertNothingSent();
 
         // (b) the identity/number used are this Business's own
@@ -194,7 +197,7 @@ class ManagedCampaignDelegationTest extends TestCase
 
         $this->assertNotNull(
             Campaigns::query()->where('campaign_name', 'Managed Blast')->first(),
-            $this->flashDiagnostic($response),
+            'The campaign must have been created and dispatched.',
         );
 
         $this->assertCount(1, $this->fakeAdapter->sentRequests);
@@ -260,44 +263,6 @@ class ManagedCampaignDelegationTest extends TestCase
     // ---------------------------------------------------------------
     // Helpers
     // ---------------------------------------------------------------
-
-    /**
-     * A campaign route answers with a redirect carrying a flashed status
-     * message, so a refusal is otherwise silent. This turns it into a
-     * readable failure message instead of "expected not null, got null".
-     */
-    private function flashDiagnostic(\Illuminate\Testing\TestResponse $response): string
-    {
-        return sprintf(
-            'The campaign must have been created and dispatched. Route answered %d -> %s; flashed: %s | %s; errors: %s; exception: %s',
-            $response->getStatusCode(),
-            (string) $response->headers->get('Location'),
-            (string) (session('status') ?? '-'),
-            (string) (session('message') ?? '-'),
-            (string) json_encode(session('errors')?->getBag('default')?->all() ?? []),
-            $response->exception === null
-                ? '-'
-                : get_class($response->exception) . ': ' . $response->exception->getMessage()
-                    . ' @ ' . $response->exception->getFile() . ':' . $response->exception->getLine(),
-        );
-    }
-
-    private function campaignDiagnostic(Campaigns $campaign): string
-    {
-        $fresh = $campaign->fresh();
-
-        return sprintf(
-            'The managed adapter must have handled the send. Campaign status=%s, business_id=%s, isManaged=%s, ops=%d, measurements=%d, reports=%s, last_error=%s, cache=%s',
-            (string) ($fresh->status ?? '-'),
-            var_export($fresh->business_id, true),
-            var_export(\App\Library\Messaging\ManagedDispatchDelegate::isManaged($fresh->business_id), true),
-            $this->operationCount(),
-            DB::table('business_usage_measurements')->count(),
-            (string) json_encode(Reports::query()->get(['status', 'business_id', 'sending_server_id'])->toArray()),
-            (string) ($fresh->last_error ?? '-'),
-            (string) ($fresh->cache ?? '-'),
-        );
-    }
 
     private function operationCount(): int
     {

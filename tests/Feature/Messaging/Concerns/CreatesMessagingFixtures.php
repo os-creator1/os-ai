@@ -32,6 +32,18 @@ trait CreatesMessagingFixtures
         $this->fakeAdapter = new FakeMessagingAdapter();
         $this->app->instance(MessagingProviderAdapter::class, $this->fakeAdapter);
 
+        // §4.4 — the platform kill switch is enforced by
+        // ManagedMessageDispatcher itself, not only by the real adapter's
+        // constructor, so binding an adapter is no longer enough on its own
+        // to make managed dispatch run. Binding a managed adapter IS the
+        // statement "managed messaging is on for this test", so the switch
+        // is turned on here rather than repeated in every caller.
+        //
+        // A test that deliberately exercises the switch being OFF still
+        // sets `messaging.managed_messaging_enabled` to false after calling
+        // this, and that continues to win.
+        config(['messaging.managed_messaging_enabled' => true]);
+
         return $this->fakeAdapter;
     }
 

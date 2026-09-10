@@ -5,6 +5,8 @@ namespace App\Library\Messaging;
 use App\Library\Messaging\DTO\OutboundMessageResult;
 use App\Library\Messaging\Exceptions\MessagingIdentityConflictException;
 use App\Models\Business;
+use App\Models\Campaigns;
+use App\Models\Reports;
 use Illuminate\Support\Str;
 
 /**
@@ -69,6 +71,64 @@ class ManagedDispatchDelegate
             $mediaUrls,
             $quantity,
         );
+    }
+
+    /**
+     * §4.5 step 9 — "the calling flow's existing conversation/message
+     * persistence proceeds using the confirmed providerMessageId".
+     *
+     * `Campaigns::send()` hands whatever `sendSMS()` returns straight to
+     * `track_message()`, which reads `->id`, `->status`, `->sms_count` and
+     * `->cost` AND ALSO indexes it as an array (`$response['status']`,
+     * `$response['cost']`, Campaigns.php:741-743). The legacy provider path
+     * satisfies both because it returns a `Reports` Eloquent model, which is
+     * ArrayAccess. A plain stdClass is not, so returning one threw
+     * "Cannot use object of type stdClass as array" — and because the sync
+     * queue runs `SendMessage` inside `Batch::add()`'s own bookkeeping
+     * transaction, that throw rolled back the batch transaction and took the
+     * operation and measurement rows with it. The rows were never the
+     * problem; the return shape was.
+     *
+     * So a managed send returns the same kind of value a legacy send does.
+     * The tracking log, the delivered/failed counters and the sms_unit
+     * accounting all keep working, unchanged, on managed traffic.
+     *
+     * `sending_server_id` is deliberately null: managed transport has no
+     * legacy SendingServer, the column is nullable, and inventing one would
+     * be a lie about which server carried the message.
+     */
+    public static function recordLegacyReport(
+        Campaigns $campaign,
+        array $preparedData,
+        OutboundMessageResult $result,
+    ): Reports {
+        $attributes = [
+            'user_id' => $campaign->user_id,
+            'business_id' => $campaign->business_id,
+            'to' => str_replace(['(', ')', '+', '-', ' '], '', (string) ($preparedData['phone'] ?? '')),
+            'message' => $preparedData['message'] ?? null,
+            'sms_type' => $preparedData['sms_type'] ?? $campaign->sms_type,
+            'status' => $result->accepted ? 'Delivered' : 'Failed',
+            'customer_status' => $result->accepted ? 'Delivered' : 'Failed',
+            'direction' => Reports::DIRECTION_OUTGOING,
+            'cost' => $preparedData['cost'] ?? 0,
+            'sms_count' => $preparedData['sms_count'] ?? 1,
+            'sending_server_id' => null,
+        ];
+
+        if (isset($preparedData['sender_id'])) {
+            $attributes['from'] = $preparedData['sender_id'];
+        }
+
+        if (isset($preparedData['campaign_id'])) {
+            $attributes['campaign_id'] = $preparedData['campaign_id'];
+        }
+
+        if (isset($preparedData['media_url'])) {
+            $attributes['media_url'] = $preparedData['media_url'];
+        }
+
+        return Reports::create($attributes);
     }
 
     /**
