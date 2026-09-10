@@ -37,6 +37,35 @@ class MessagingSchemaInvariantsTest extends TestCase
     use RefreshDatabase;
     use CreatesBusinessTestData;
 
+    /**
+     * Customer Experience Slice 3's five migrations plus Lane E's one,
+     * named exactly rather than located by position.
+     *
+     * WHY THIS EXISTS (pre-merge correction to PR #244). This test used to
+     * roll back "the last 6 migrations" by `--step`, which is only correct
+     * while these six happen to be the newest migrations on the tree. The
+     * Legacy Provider Webhook Measurement contract's S0 slice legitimately
+     * adds a migration after them (per that contract's own §3.4 timestamp
+     * rule: always strictly after whatever is currently latest), which
+     * immediately broke the position-based assumption — rolling back "the
+     * last 6" then reached only 5 of these six and one unrelated migration
+     * from a different slice instead.
+     *
+     * Naming the exact files here, and rolling back by `--path` instead of
+     * `--step` (see test_the_slice_three_schema_survives_forward_rollback_and_replay()),
+     * means this test keeps exercising precisely Slice 3 + Lane E's own
+     * migrations no matter how many further migrations land after them —
+     * this slice's, or any later one's.
+     */
+    private const SLICE_THREE_AND_LANE_E_MIGRATIONS = [
+        'database/migrations/2026_09_12_100001_create_business_messaging_identities_table.php',
+        'database/migrations/2026_09_12_100002_create_business_messaging_numbers_table.php',
+        'database/migrations/2026_09_12_100003_create_business_messaging_operations_table.php',
+        'database/migrations/2026_09_12_100004_create_business_usage_measurements_table.php',
+        'database/migrations/2026_09_12_100005_create_messaging_webhook_rejections_table.php',
+        'database/migrations/2026_09_12_100006_complete_legacy_ai_messaging_schema.php',
+    ];
+
     private function business(): Business
     {
         return $this->createBusinessWithWorkspace($this->createCustomer(), $this->businessAttributes());
@@ -666,11 +695,29 @@ class MessagingSchemaInvariantsTest extends TestCase
             $this->assertTrue(Schema::connection($target)->hasTable('businesses'));
 
             // --- 2. Rollback, reverse dependency order ----------------
-            // Six migrations: Slice 3's five plus Lane E's one, which are
-            // the last six by execution order. The command unwinds them in
-            // reverse, which is the only order in which the mapping table's
-            // foreign keys can be dropped before the columns they reference.
-            Artisan::call('migrate:rollback', ['--database' => $target, '--step' => 6, '--force' => true]);
+            // Named exactly, not "the last 6 migrations" (see
+            // SLICE_THREE_AND_LANE_E_MIGRATIONS's docblock) — this must
+            // roll back precisely Slice 3 + Lane E's own six migrations,
+            // never more and never fewer, regardless of what else has been
+            // migrated on this disposable database before or after them.
+            //
+            // Omitting --step here is deliberate: without it, Laravel's
+            // rollback targets the last migration BATCH from the repository
+            // (every migration this test's own forward `migrate` call just
+            // ran landed in that one batch, on this fresh disposable
+            // database) — but --path restricts which of those the command
+            // actually loads a file for, so only the six named here ever
+            // have down() invoked; everything else in that batch is walked
+            // and silently skipped as "not found" for this path set. That
+            // is what makes this robust to more migrations arriving later:
+            // an unrelated migration is never a name in this list, so it is
+            // never touched, no matter where it sorts.
+            Artisan::call('migrate:rollback', [
+                '--database' => $target,
+                '--path' => self::SLICE_THREE_AND_LANE_E_MIGRATIONS,
+                '--realpath' => false,
+                '--force' => true,
+            ]);
 
             foreach ([
                 'business_messaging_identities',
