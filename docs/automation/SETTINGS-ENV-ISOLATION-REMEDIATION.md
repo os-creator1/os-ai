@@ -40,6 +40,35 @@ complementary and touch different files.
 generated asset or environment file is touched, and no schema or migration
 ordering changes.
 
+### 1.2 Post-merge corrections, and synchronization with current main
+
+The fourteen-path work above merged as PR #233
+(`1928306271c26bb8464f795e0a10eeb5f14df581`). Two review findings against it
+were valid and are corrected on
+`agent/settings-env-isolation-post-merge-correction`:
+
+| Finding | Correction |
+|---|---|
+| The focused suite hardcoded `.env.testing` as the selected file, and would fail on a clean checkout where that untracked file is absent | Selection is derived the way the framework derives it, and both checkout shapes are proven (§4.2, §6.2a) |
+| Forced termination killed the child on `ENVPATH=`, which prints *before* the writers run, so the kill often landed before either had written | The probe signals only after both writers have run and both values have been read back; the parent waits for that signal (§6.3) |
+
+A third defect was found while verifying and corrected in the same round: an
+over-strict assertion that the repository `.env.testing` must not *contain* the
+migration keys, which fails on any machine where `artisan migrate` has ever
+been run normally — correct behaviour, not a defect (§6.2b).
+
+A fourth was closed in the round after that: the cleanup race that occasionally
+left an empty directory (§6.9).
+
+**Synchronization.** `origin/main` advanced to
+`b8bab0a677406c9bb98ba5f22fb97f0ba312fac5` (Lane F, PR #234) and was brought in
+with an ordinary merge — no rebase, no force-push. Lane F touches
+`docs/automation/WORKSPACE-ENTITLEMENT-DATABASE-SAFETY-COMPLETION.md`,
+`tests/Feature/Workspace/Support/TemporaryTestDatabase.php` and
+`tests/Feature/Workspace/WorkspaceTransitionsMigrationSchemaTest.php`;
+**overlap with this branch is zero**, computed by intersecting the two changed-
+path sets, and the merge reported no conflicts.
+
 ### 1.1 Two withdrawn positions, recorded so neither returns
 
 **Withdrawn: snapshot-and-restore.** An early revision left
@@ -649,6 +678,66 @@ full-run totals were also reproduced across two independent runs
 (5118 / 22006 / 976 / 28 both times), so the baseline itself is stable; it is
 these individual subprocess-timing tests that are not.
 
+### 6.9 The cleanup race, closed
+
+**The defect.** `UsesTemporaryEnvironmentFile::removeDirectory()` ended with a
+single suppressed `@rmdir()`. Under repeated forced-termination runs on Windows
+that lost a race with a just-released handle roughly **one run in eight**,
+leaving an **empty** `aibos-env-*` directory: the contained file was gone, only
+the directory remained.
+
+**The fix.** The final `rmdir` is now retried over a short, deterministic
+bound. Nothing else about the deletion changes.
+
+| Property | Value |
+|---|---|
+| Maximum attempts | `REMOVE_ATTEMPTS = 20` |
+| Delay between attempts | `REMOVE_RETRY_MICROSECONDS = 10_000` (10 ms) |
+| Worst-case duration | ~200 ms, and only when the directory genuinely refuses |
+| Stops early when | `rmdir` succeeds, or the directory has gone by any other means |
+| Stat cache | cleared before the first check and between attempts, so a retry never re-reads a stale `is_dir()` |
+| Return value | `true` only when the directory is actually gone; a survivor returns `false` |
+
+**The safety boundary is unchanged, and deliberately narrow.**
+
+* It operates only on the exact directory it is handed — one this trait created
+  under `sys_get_temp_dir()`, named with the creating process's own pid.
+* Contained files are removed by the same recursive walk as before.
+* It never widens to a parent, never globs a directory to delete, never shells
+  out, and never touches the system temp directory itself.
+* The process-level sweep remains pid-scoped, so a concurrent lane's directory
+  can never be a candidate.
+* A directory that survives every attempt is **left in place and reported as
+  not removed**. Success is never claimed for a directory that is still there.
+* Neither the sweep nor the teardown path throws, so a shutdown function can
+  never mask a test result. Tests still assert their own directory is gone.
+
+**Evidence.**
+
+| Run | Count | Result | Orphans from this lane |
+|---|---|---|---|
+| Forced termination, consecutive | **20** | all pass, 17 assertions each | **0**, and 0 at every intermediate check |
+| Focused suite, consecutive | 5 | 48 tests, 456 assertions each | **0** |
+| Concurrent probe coverage | 5 | 2 tests, 30 assertions each | **0** |
+| Focused suite, clean-checkout shape | 2 | 48 tests, 456 assertions each | **0** |
+| Settings / Branding / Automations | 1 each | 57 / 53 / 86 tests, baseline errors only | **0** |
+
+Before the fix, twenty forced-termination runs would have been expected to
+leave two or three empty directories; they left none.
+
+**A measurement correction worth recording.** An initial count reported one or
+two leftovers after the focused suite and briefly looked like a surviving leak.
+It was not. The counter globbed `aibos-env-*` across the whole system temp
+directory, so it was also counting the **live** directories of a concurrent
+lane running its own suite in `cx-slice-3-messaging-impl-worktree` — process id
+4500 was confirmed alive and mid-run, holding the directory in question. The
+pid-scoped sweep is correct to leave those alone.
+
+Every count in the table above is therefore **lane-scoped**: the directory set
+is captured before and after each run, and a new directory counts as an orphan
+only if the process that created it is no longer alive. That is the measurement
+the guarantee actually needs, and it is what the final sweep uses.
+
 ## 7. Changed paths
 
 Exactly fourteen, matching the allowlist.
@@ -743,21 +832,8 @@ them all.
 
 ## 9. Known conditions observed, and not changed here
 
-**An occasional empty leftover directory, reported rather than fixed.** Under
-repeated forced-termination runs on Windows, roughly one run in eight left an
-**empty** `aibos-env-*` directory behind. Its file had been removed; only the
-directory remained. The cause is `UsesTemporaryEnvironmentFile::removeDirectory()`
-using a suppressed `@rmdir()`, which can lose a race with a just-released
-handle. It is harmless — the directory holds no environment data, sits outside
-the repository, and no repository file is affected — and single runs from a
-cleared state leave nothing at all.
-
-It is **not** the forced-termination test's child: that directory is deleted by
-the parent and the deletion is asserted, in every repetition. Fixing the
-`@rmdir` race would mean editing `tests/Support/UsesTemporaryEnvironmentFile.php`,
-which is outside this round's three-path allowlist, so it is recorded here for a
-round that includes it. A retry-with-backoff around `rmdir`, or tolerating an
-empty directory in the sweep, would close it.
+**The empty-leftover-directory race is CLOSED.** It is documented in §6.9 and
+is no longer deferred.
 
 
 

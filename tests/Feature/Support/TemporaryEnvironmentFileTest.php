@@ -1177,6 +1177,136 @@ PHP;
         return $fingerprint;
     }
 
+    // --- Cleanup boundaries and the bounded rmdir retry ---
+
+    /**
+     * Normal teardown removes the file AND the directory.
+     *
+     * Asserted here from inside the test by driving one full
+     * activate/restore cycle, so the property is proven rather than
+     * inferred from the absence of leftovers at the end of a run.
+     */
+    public function test_normal_cleanup_removes_both_the_file_and_the_directory(): void
+    {
+        $copy = $this->useTemporaryEnvironmentFile();
+        $directory = dirname($copy);
+
+        $this->assertFileExists($copy);
+        $this->assertDirectoryExists($directory);
+
+        $this->restoreEnvironmentFile();
+
+        clearstatcache();
+        $this->assertFileDoesNotExist($copy, 'Cleanup left the environment file behind.');
+        $this->assertDirectoryDoesNotExist($directory, 'Cleanup left an empty directory behind.');
+
+        // Leave this test's own isolation in place for tearDown.
+        $this->useTemporaryEnvironmentFile();
+    }
+
+    /**
+     * Re-activation removes the previous file and the previous
+     * directory, not merely the file.
+     */
+    public function test_reactivation_removes_the_previous_file_and_directory(): void
+    {
+        $first = $this->app->environmentFilePath();
+        $firstDirectory = dirname($first);
+
+        $second = $this->useTemporaryEnvironmentFile();
+
+        clearstatcache();
+        $this->assertNotSame($first, $second);
+        $this->assertFileDoesNotExist($first);
+        $this->assertDirectoryDoesNotExist($firstDirectory, 'Re-activation left the previous directory behind.');
+        $this->assertDirectoryExists(dirname($second));
+    }
+
+    /**
+     * The bounded retry must not have widened what may be deleted.
+     *
+     * Two boundaries are asserted directly: a directory belonging to
+     * another process id is never touched, and nothing outside the
+     * system temp directory is ever a candidate. The sweep is
+     * pid-scoped by construction; this proves it.
+     */
+    public function test_cleanup_never_touches_another_process_directory(): void
+    {
+        // A decoy shaped exactly like a sibling process's directory,
+        // with a pid that is not ours.
+        $foreignPid = getmypid() + 1;
+        $decoy = sys_get_temp_dir()
+            . DIRECTORY_SEPARATOR
+            . 'aibos-env-' . $foreignPid . '-decoy-' . bin2hex(random_bytes(6));
+
+        mkdir($decoy, 0777, true);
+        file_put_contents($decoy . DIRECTORY_SEPARATOR . '.env.testing', "DECOY=1\n");
+
+        try {
+            // A full activate/restore cycle, which runs the same cleanup
+            // the sweep uses.
+            $copy = $this->useTemporaryEnvironmentFile();
+            $this->restoreEnvironmentFile();
+
+            clearstatcache();
+            $this->assertDirectoryDoesNotExist(dirname($copy), 'Our own directory should be gone.');
+            $this->assertDirectoryExists($decoy, "Cleanup removed another process's directory.");
+            $this->assertFileExists($decoy . DIRECTORY_SEPARATOR . '.env.testing');
+        } finally {
+            @unlink($decoy . DIRECTORY_SEPARATOR . '.env.testing');
+            @rmdir($decoy);
+            $this->useTemporaryEnvironmentFile();
+        }
+    }
+
+    /**
+     * Every directory this trait creates is inside the system temp
+     * directory and carries this process's pid — the two facts the
+     * pid-scoped sweep depends on for safety.
+     */
+    public function test_every_disposable_directory_is_pid_scoped_and_inside_the_system_temp_directory(): void
+    {
+        $temp = rtrim(sys_get_temp_dir(), '\\/');
+
+        foreach (range(1, 3) as $ignored) {
+            $copy = $this->useTemporaryEnvironmentFile();
+            $directory = dirname($copy);
+
+            $this->assertStringStartsWith($temp, $directory);
+            $this->assertStringNotContainsString(base_path(), $directory);
+            $this->assertStringContainsString('aibos-env-' . getmypid() . '-', basename($directory));
+        }
+    }
+
+    /**
+     * Repeated activation leaves nothing belonging to THIS process.
+     *
+     * Scoped to this pid on purpose: a concurrent lane's directories are
+     * none of this test's business, and asserting on them would make the
+     * suite fail for reasons outside its control.
+     */
+    public function test_repeated_activation_leaves_no_directory_belonging_to_this_process(): void
+    {
+        foreach (range(1, 12) as $ignored) {
+            $copy = $this->useTemporaryEnvironmentFile();
+            $this->assertFileExists($copy);
+        }
+
+        $current = rtrim(dirname($this->app->environmentFilePath()), '\\/');
+
+        clearstatcache();
+        $leftovers = array_values(array_filter(
+            glob(sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'aibos-env-' . getmypid() . '-*') ?: [],
+            static fn (string $path): bool => rtrim($path, '\\/') !== $current
+        ));
+
+        $this->assertSame(
+            [],
+            $leftovers,
+            "Repeated activation left directories behind:\n" . implode("\n", $leftovers)
+        );
+    }
+
     public function test_no_temporary_environment_directory_outlives_the_suite(): void
     {
         // Every directory this trait creates carries this process's own
