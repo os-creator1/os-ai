@@ -187,6 +187,162 @@ final class EntitlementManager
     }
 
     /**
+     * Slice 2A §6.3 — decide(), evaluated for many features against ONE
+     * bulk-loaded snapshot.
+     *
+     * WHY THIS LIVES HERE. The navigation menu must hide an entry whose
+     * feature is not entitled, and answering that per entry through decide()
+     * costs three per-feature reads each (override, plan mapping, toggle) —
+     * around 35 queries for one render. The alternative a menu resolver
+     * might reach for is re-deriving the answer itself, which would create a
+     * SECOND entitlement authority that can drift from RFC-004 §14. That is
+     * the outcome this method exists to prevent: the precedence below is the
+     * same eight steps decide() applies, in the same order, in the same
+     * class, over data that was loaded once instead of per feature.
+     *
+     * Only the data ACCESS changes shape. If decide()'s policy changes, this
+     * must change with it — they are deliberately adjacent so a reader
+     * cannot miss that.
+     *
+     * Cost: three constant reads plus three bulk reads = 6, regardless of how
+     * many feature keys are asked for. The usage-authorization step adds 0
+     * while every feature stays unmetered, exactly as in decide(); if that
+     * ever changes, correctness wins and the ceiling is raised in a
+     * follow-up — this must never skip step 11 to stay under a number.
+     *
+     * @param  array<int, string>  $featureKeys
+     * @return array<string, EntitlementDecision> keyed by feature key
+     */
+    public function snapshotBusinessFeatureDecisions(
+        Workspace $workspace,
+        Business $business,
+        array $featureKeys,
+        int $actorUserId,
+    ): array {
+        $decisions = [];
+
+        // Steps 1-3 need no database at all, so anything the registry already
+        // refuses is answered before a single read is issued.
+        $evaluable = [];
+
+        foreach (array_unique($featureKeys) as $featureKey) {
+            $feature = PlatformFeature::tryFrom($featureKey);
+
+            if ($feature === null) {
+                $decisions[$featureKey] = new EntitlementDecision(false, 'platform_feature_unknown');
+
+                continue;
+            }
+
+            if (! PlatformFeatureRegistry::isAvailable($feature->value)) {
+                $decisions[$featureKey] = new EntitlementDecision(false, 'platform_feature_unavailable');
+
+                continue;
+            }
+
+            if (! PlatformFeatureRegistry::isBusinessScoped($feature->value)) {
+                $decisions[$featureKey] = new EntitlementDecision(false, 'wrong_feature_scope');
+
+                continue;
+            }
+
+            $evaluable[$featureKey] = $feature;
+        }
+
+        if ($evaluable === []) {
+            return $decisions;
+        }
+
+        // Read 1 — the Business, and the same consistency guard decide()
+        // applies. Throwing here matches decide() exactly; a caller that
+        // hands over a mismatched pair has a bug, not an unentitled feature.
+        $currentBusiness = $this->businessRepository->findById($business->id);
+
+        if ($currentBusiness === null) {
+            throw new WorkspaceBusinessNotFoundException($business->id);
+        }
+
+        if ((int) $currentBusiness->workspace_id !== (int) $workspace->id) {
+            throw new BusinessWorkspaceMismatchException(
+                $currentBusiness->id,
+                (int) $workspace->id,
+                (int) $currentBusiness->workspace_id,
+            );
+        }
+
+        // Read 2 — the plan assignment.
+        $assignment = $this->assignmentRepository->findByWorkspaceId((int) $workspace->id);
+
+        if ($assignment === null) {
+            foreach ($evaluable as $featureKey => $feature) {
+                $decisions[$featureKey] = new EntitlementDecision(false, 'workspace_plan_unassigned');
+            }
+
+            return $decisions;
+        }
+
+        // Read 3 — the catalog. Reads 4-6 — the three per-feature tables, in
+        // bulk. featureKeysForCatalog() is the pre-existing bulk seam and is
+        // reused rather than duplicated.
+        $catalog = $this->catalogRepository->findById($assignment->workspace_plan_catalog_id);
+        $overrides = $this->overrideRepository->allForWorkspace((int) $workspace->id);
+        $planFeatureKeys = $catalog !== null
+            ? $this->planFeatureRepository->featureKeysForCatalog($catalog)->all()
+            : [];
+        $toggles = $this->toggleRepository->allForBusiness((int) $currentBusiness->id);
+
+        $planFeatureKeys = array_flip(array_map('strval', $planFeatureKeys));
+
+        foreach ($evaluable as $featureKey => $feature) {
+            $override = $overrides->get($feature->value);
+
+            if ($override !== null) {
+                $workspaceEntitled = $override->state === WorkspaceEntitlementOverrideState::Allow;
+                $denialReasonIfNot = 'denied_by_workspace_override';
+            } else {
+                $workspaceEntitled = $catalog !== null && isset($planFeatureKeys[$feature->value]);
+                $denialReasonIfNot = 'not_entitled_by_plan';
+            }
+
+            if (! $workspaceEntitled) {
+                $decisions[$featureKey] = new EntitlementDecision(false, $denialReasonIfNot);
+
+                continue;
+            }
+
+            if ($toggles->get($feature->value) !== null) {
+                $decisions[$featureKey] = new EntitlementDecision(false, 'disabled_for_business');
+
+                continue;
+            }
+
+            if ($assignment->status === WorkspacePlanAssignmentStatus::Suspended) {
+                $decisions[$featureKey] = new EntitlementDecision(false, 'plan_suspended');
+
+                continue;
+            }
+
+            if ($assignment->status === WorkspacePlanAssignmentStatus::Inactive) {
+                $decisions[$featureKey] = new EntitlementDecision(false, 'plan_inactive');
+
+                continue;
+            }
+
+            $usageResult = $this->usageAuthorizationGateway->check($currentBusiness, $feature);
+
+            if (! $usageResult->authorized) {
+                $decisions[$featureKey] = new EntitlementDecision(false, $usageResult->reason ?? 'usage_unauthorized');
+
+                continue;
+            }
+
+            $decisions[$featureKey] = new EntitlementDecision(true, null);
+        }
+
+        return $decisions;
+    }
+
+    /**
      * Agency AI Prospecting foundation — decide()'s Business-independent
      * subset, for a PlatformFeature that is Workspace-level and has no
      * owning Business at all (unlike every feature decide() was written

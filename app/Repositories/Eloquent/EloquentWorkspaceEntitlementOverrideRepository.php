@@ -5,6 +5,7 @@ namespace App\Repositories\Eloquent;
 use App\Enums\Entitlement\PlatformFeature;
 use App\Enums\Entitlement\WorkspaceEntitlementOverrideState;
 use App\Models\WorkspaceEntitlementOverride;
+use Illuminate\Support\Collection;
 use App\Repositories\Contracts\WorkspaceEntitlementOverrideRepository;
 use InvalidArgumentException;
 
@@ -21,6 +22,19 @@ class EloquentWorkspaceEntitlementOverrideRepository extends EloquentBaseReposit
             ->where('workspace_id', $workspaceId)
             ->where('feature_key', $featureKey)
             ->first();
+    }
+
+    public function allForWorkspace(int $workspaceId): Collection
+    {
+        return $this->query()
+            ->where('workspace_id', $workspaceId)
+            ->get()
+            // feature_key is enum-cast on the model (see the toggle
+            // repository's sibling read) — key by ->value so the caller can
+            // always look up with a plain string.
+            ->keyBy(static fn (WorkspaceEntitlementOverride $override): string => $override->feature_key instanceof PlatformFeature
+                ? $override->feature_key->value
+                : (string) $override->feature_key);
     }
 
     public function create(array $attributes): WorkspaceEntitlementOverride
