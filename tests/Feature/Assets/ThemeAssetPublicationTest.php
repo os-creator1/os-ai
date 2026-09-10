@@ -2,6 +2,10 @@
 
 namespace Tests\Feature\Assets;
 
+use App\Library\Theme\PlatformThemeManager;
+use App\Models\PlatformThemePreset;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Cache;
 use Tests\TestCase;
 
 /**
@@ -38,6 +42,18 @@ use Tests\TestCase;
  */
 class ThemeAssetPublicationTest extends TestCase
 {
+    use RefreshDatabase;
+
+    /**
+     * The token source, and the one authoritative value for the secondary
+     * surface. `--color-surface-secondary` was compiled as `var()` on
+     * itself, which is a cycle: consumers such as `.footer` lost their
+     * background whenever no runtime override was present.
+     */
+    private const COLOR_TOKENS_SOURCE = 'resources/scss/base/tokens/_colors.scss';
+
+    private const SECONDARY_SURFACE_FALLBACK = '#FBFAF7';
+
     /**
      * Assets a clean checkout must ship compiled, with the source that
      * produces each one and the webpack.mix.js fragment that compiles it.
@@ -421,5 +437,116 @@ class ThemeAssetPublicationTest extends TestCase
         }
 
         $this->assertSame([], array_values(array_unique($unresolved)));
+    }
+
+    /**
+     * A custom property whose value is `var()` on itself forms a cycle.
+     * CSS makes such a property invalid at computed-value time, so every
+     * consumer of it falls back to `unset` — the declaration using it is
+     * dropped entirely. `--color-surface-secondary` shipped that way, so
+     * `.footer` lost its background whenever PlatformThemeManager supplied
+     * no runtime override.
+     */
+    public function test_the_compiled_stylesheet_declares_no_self_referential_custom_property(): void
+    {
+        preg_match_all(
+            '/(--[a-z0-9-]+)\s*:\s*var\(\s*\1\s*\)/i',
+            $this->compiledCoreCss(),
+            $cycles
+        );
+
+        $this->assertSame(
+            [],
+            array_values(array_unique($cycles[1])),
+            'public/css/core.css declares a custom property in terms of itself. Such a property is invalid at '
+            . 'computed-value time, so every var() consumer of it silently resolves to unset.'
+        );
+    }
+
+    public function test_the_secondary_surface_token_compiles_to_a_concrete_fallback(): void
+    {
+        $css = $this->compiledCoreCss();
+
+        $this->assertMatchesRegularExpression(
+            '/--color-surface-secondary\s*:\s*#[0-9a-f]{3,8}\b/i',
+            $css,
+            '--color-surface-secondary must compile to a concrete colour, not to another var() reference.'
+        );
+
+        preg_match('/--color-surface-secondary\s*:\s*([^;}]+)/i', $css, $value);
+
+        $this->assertSame(
+            strtolower(self::SECONDARY_SURFACE_FALLBACK),
+            strtolower(trim($value[1] ?? '')),
+            'The compiled fallback must equal the authoritative Sass value $color-surface-secondary.'
+        );
+    }
+
+    public function test_the_scss_source_defines_the_secondary_surface_token_from_its_sass_variable(): void
+    {
+        $scss = (string) file_get_contents(base_path(self::COLOR_TOKENS_SOURCE));
+
+        $this->assertStringContainsString(
+            '$color-surface-secondary: ' . self::SECONDARY_SURFACE_FALLBACK . ';',
+            $scss,
+            self::COLOR_TOKENS_SOURCE . ' must keep one authoritative Sass value for the secondary surface.'
+        );
+
+        $this->assertStringContainsString(
+            '--color-surface-secondary: #{$color-surface-secondary};',
+            $scss,
+            'The custom property must be interpolated from the Sass variable so the compiled stylesheet carries a '
+            . 'usable fallback.'
+        );
+
+        $this->assertStringNotContainsString(
+            '--color-surface-secondary: var(--color-surface-secondary);',
+            $scss,
+            'The self-referential definition must not come back.'
+        );
+    }
+
+    public function test_the_footer_keeps_its_secondary_surface_background(): void
+    {
+        $this->assertStringContainsString(
+            '.footer{background-color:var(--color-surface-secondary)',
+            $this->compiledCoreCss(),
+            'The footer must still take its background from the secondary-surface token.'
+        );
+    }
+
+    /**
+     * The fallback condition itself: with no usable preset,
+     * PlatformThemeManager emits no runtime style block at all —
+     * `resources/views/panels/styles.blade.php` renders it behind
+     * `@if ($platformThemeStyleBlock)` — so the compiled stylesheet is the
+     * only source of the token, and it has to carry a real value.
+     */
+    public function test_the_compiled_fallback_is_what_applies_when_no_runtime_style_block_exists(): void
+    {
+        Cache::flush();
+
+        $this->assertSame(
+            0,
+            PlatformThemePreset::query()->where('status', 'active')->count(),
+            'This test describes the no-active-preset state.'
+        );
+
+        $this->assertNull(
+            app(PlatformThemeManager::class)->currentStyleBlock(),
+            'With no active preset there is no runtime override, so the compiled stylesheet is the fallback.'
+        );
+
+        $this->assertStringContainsString(
+            '@if ($platformThemeStyleBlock)',
+            (string) file_get_contents(resource_path('views/panels/styles.blade.php')),
+            'The styles partial must keep emitting the runtime block only when one exists.'
+        );
+
+        $this->assertStringContainsString(
+            '--color-surface-secondary:' . strtolower(self::SECONDARY_SURFACE_FALLBACK),
+            str_replace(' ', '', strtolower($this->compiledCoreCss())),
+            'In that state the compiled value is the only one in play, so it must be concrete.'
+        );
     }
 }

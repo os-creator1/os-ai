@@ -95,6 +95,69 @@ at the root and in `packages[""]`.
 
 ---
 
+### 1.4 The secondary-surface token was defined in terms of itself
+
+`resources/scss/base/tokens/_colors.scss` line 77 read:
+
+```scss
+--color-surface-secondary: var(--color-surface-secondary);
+```
+
+That is a custom-property cycle. CSS makes a cyclic custom property
+**invalid at computed-value time**, so every `var(--color-surface-secondary)`
+consumer resolves to the guaranteed-invalid value and the declaration using
+it is dropped. The compiled stylesheet therefore supplied *no* usable value.
+
+It only matters when the compiled stylesheet is what is in play, which is
+precisely the case `resources/views/panels/styles.blade.php` documents:
+
+> Design System M2 §6.3: runtime platform theme override, applied before
+> visible rendering. **Fails safe to the compiled defaults above** whenever
+> no active preset exists or its token data is unusable.
+
+`PlatformThemeManager::currentStyleBlock()` returns `null` when
+`platform_theme_presets` does not exist yet, when no preset is active, or
+when the active preset's `derived_tokens_json` is empty, and the partial
+emits the block only behind `@if ($platformThemeStyleBlock)`. In every one
+of those states the compiled default was the fallback — and it was a cycle,
+so `.footer` (`resources/scss/base/components/ds-components.scss:150`,
+`background-color: var(--color-surface-secondary)`) lost its background.
+
+The authoritative Sass value already existed at line 32,
+`$color-surface-secondary: #FBFAF7;`. The fix is the idiom every sibling
+token in the same block already uses:
+
+```scss
+--color-surface-secondary: #{$color-surface-secondary};
+```
+
+No second hex literal was introduced. The three neighbouring aliases —
+`--color-sidebar-bg: var(--color-sidebar)`,
+`--color-surface-primary: var(--color-surface)` and
+`--color-border-neutral: var(--color-border)` — point at *different* tokens
+that the same `:root` block defines concretely (`#f2f0eb`, `#fff`,
+`#e5e1da`), so they resolve correctly and are left alone. A sweep of
+`resources/scss/` confirms line 77 was the **only** self-referential custom
+property in the SCSS sources.
+
+**Compiled result.** `public/css/core.css` now carries
+`--color-surface-secondary:#fbfaf7` — Sass lower-cases the hex, which is the
+same colour. The rebuilt file differs from the previous one by exactly that
+substitution: `var(--color-surface-secondary)` → `#fbfaf7`, −23 bytes, with
+376 589 bytes of identical prefix and 15 546 of identical suffix and nothing
+else changed.
+
+**Scope note.** A production build also emits the token into 48 other
+compiled stylesheets that import the tokens partial. At the branch head
+those files do not contain `--color-surface-secondary` at all — not even the
+broken form — so leaving them as they are cannot reintroduce the cycle:
+`core.css` both defines the token and carries the `.footer` rule, and it is
+the file `panels/styles.blade.php` loads. Those 48 are the pre-existing
+stale-compiled-tree condition recorded in §7.1 and are outside this
+correction's authorized scope; they were restored path by path.
+
+---
+
 ## 2. Every missing source → rule → output → manifest relationship
 
 All 91 asset references a tracked view can make were cross-checked — the 90
@@ -139,7 +202,8 @@ ship.
 |---|---|
 | `public/js/core/theme-tokens.js` | Required by every authenticated render. 676 bytes committed |
 | `public/js/scripts/pages/theme-settings.js` | Required by the admin theme-settings page. 7 767 bytes committed |
-| `public/css/core.css` | Rebuilt from current tracked source so it carries the two Geist `@font-face` rules and the Geist primary stack |
+| `resources/scss/base/tokens/_colors.scss` | The one-line fix in §1.4 — the secondary-surface custom property is interpolated from its Sass variable instead of from itself |
+| `public/css/core.css` | Rebuilt from current tracked source so it carries the two Geist `@font-face` rules, the Geist primary stack, and the concrete `--color-surface-secondary` fallback of §1.4 |
 | `public/fonts/geist/geist-latin-wght-normal.woff2` | The latin face `_typography.scss` points at. 29 400 bytes committed |
 | `public/fonts/geist/geist-latin-ext-wght-normal.woff2` | The latin-ext face. 16 512 bytes committed |
 | `public/fonts/geist/LICENSE` | SIL OFL 1.1, copied by the same rule and emitted into the manifest by the build. 4 486 bytes committed |
@@ -187,7 +251,7 @@ Identical across builds #1, #2 **and** #3, byte for byte:
 
 | Output | Source | Rule | SHA-256 (worktree bytes) | Bytes |
 |---|---|---|---|---|
-| `public/css/core.css` | `resources/scss/core.scss` | `webpack.mix.js:77` | `6cb0d7ce4a39cd323b130e3f18bf6b7317f2a4c1b359b1dcf6ad735821e1ba98` | 392 170 |
+| `public/css/core.css` | `resources/scss/core.scss` | `webpack.mix.js:77` | `9aba3d31baef6253694e4201eb9817ca34af0acefd3a70e59e468b9c24f7845f` | 392 147 |
 | `public/fonts/geist/geist-latin-wght-normal.woff2` | `resources/fonts/geist/…` | `webpack.mix.js:65` | `19f9c92546aa300c312235e3125af1b81394d8db9a4bc4a425cd5b641d2d54e1` | 29 400 |
 | `public/fonts/geist/geist-latin-ext-wght-normal.woff2` | `resources/fonts/geist/…` | `webpack.mix.js:65` | `824f485b5d26e2f2da3c2b236132ece1bc8e4e43373452950bb0e40548b4313f` | 16 512 |
 | `public/fonts/geist/LICENSE` | `resources/fonts/geist/LICENSE` | `webpack.mix.js:65` | `03f7731e1f962a91216320e38a5fe00a3236b19a15b486b629e65aa82010907c` | 4 579 |
@@ -209,7 +273,7 @@ GitHub/Linux checkout receives.**
 
 | Published artifact | Git blob OID | Committed bytes | SHA-256 of the committed blob |
 |---|---|---|---|
-| `public/css/core.css` | `7ad1309f8eb459ca1419e833f7a231a0c68a5d94` | **392 170** | `6cb0d7ce4a39cd323b130e3f18bf6b7317f2a4c1b359b1dcf6ad735821e1ba98` |
+| `public/css/core.css` | `a9aff4e8546ffa067ab5375bd757ee43dc6873b8` | **392 147** | `9aba3d31baef6253694e4201eb9817ca34af0acefd3a70e59e468b9c24f7845f` |
 | `public/fonts/geist/geist-latin-wght-normal.woff2` | `991445d78ae619a7378ff219385588c7811c88ab` | **29 400** | `19f9c92546aa300c312235e3125af1b81394d8db9a4bc4a425cd5b641d2d54e1` |
 | `public/fonts/geist/geist-latin-ext-wght-normal.woff2` | `ba90e209496d19069f05deeedac672fe02e1314e` | **16 512** | `824f485b5d26e2f2da3c2b236132ece1bc8e4e43373452950bb0e40548b4313f` |
 | `public/fonts/geist/LICENSE` | `98835ac3f04ec0c9484468424c62e1ea2cdae498` | **4 486** | `71609cbb5c78b5870d712eab73a31d76622635c6ed034ab5cee3b9ecbda8685f` |
@@ -297,7 +361,7 @@ Database: **`ultimatesms_testing_geist`**, a dedicated sibling accepted by
 
 ### 6.1 The guard actually guards
 
-`ThemeAssetPublicationTest` — 13 tests, 127 assertions, green. More
+`ThemeAssetPublicationTest` — **18 tests, 142 assertions**, green. More
 usefully, it was proven to **fail** under every condition it exists to
 catch. Each was broken in turn, the suite re-run, and the condition
 restored:
@@ -310,7 +374,22 @@ restored:
 | Package identity set to a worktree directory name | 1 failure |
 | `package.json` `name` removed entirely | 1 failure |
 | A mandatory JavaScript asset deleted | 4 failures |
-| **all restored** | **13 tests, 127 assertions, green** |
+| Compiled `core.css` reverted to the §1.4 self-reference | 3 failures |
+| The SCSS source reverted to the §1.4 self-reference | 1 failure |
+| The compiled fallback changed to a different colour | 2 failures |
+| `.footer` stops consuming `--color-surface-secondary` | 1 failure |
+| **all restored** | **18 tests, 142 assertions, green** |
+
+The five checks added for §1.4 are: no custom property in `core.css` may
+be defined in terms of itself (a general rule, not just this token); the
+compiled `--color-surface-secondary` must be a concrete colour equal to
+`$color-surface-secondary`; the SCSS source must interpolate it from that
+variable and must not carry the self-reference; `.footer` must still
+consume the token; and — the fallback condition itself — with no active
+preset, `PlatformThemeManager::currentStyleBlock()` returns `null`,
+`panels/styles.blade.php` emits the runtime block only behind
+`@if ($platformThemeStyleBlock)`, and the compiled value is therefore the
+only one in play, so it has to be concrete.
 
 ### 6.2 Focused suites
 
@@ -405,7 +484,7 @@ blanket `git add -A` was run — every path was staged explicitly.
 
 `origin/main` advanced from this branch's merge base `559a8200` to
 **`b8bab0a6`** — 10 commits, 28 files, PRs #232, #233 and #234 — while this
-work was in progress. Changed-path overlap with this branch's 11 paths was
+work was in progress. Changed-path overlap with this branch's paths was
 re-confirmed **zero**, and `origin/main` was then merged in with a normal
 `--no-ff` merge: **no conflicts**, merge commit
 `6344a5a834930e4b65972a75187e4113bffb0a1d`.

@@ -74,7 +74,7 @@ $color-chart-neutral: #A8A29A;
     --color-canvas: #{$color-canvas};
     --color-sidebar-bg: var(--color-sidebar);
     --color-surface-primary: var(--color-surface);
-    --color-surface-secondary: var(--color-surface-secondary);
+    --color-surface-secondary: #{$color-surface-secondary};
     --color-border-neutral: var(--color-border);
 
     --color-text-primary: #{$color-text-primary};
