@@ -27,9 +27,16 @@ use Illuminate\Support\Carbon;
  */
 class MessagingWebhookRejectionRecorder
 {
+    /**
+     * @param MessagingProvider|string|null $provider the provider the
+     *        traffic ACTUALLY came from — a managed-adapter case, or a
+     *        legacy `SendingServer::$settings` label such as 'Twilio'.
+     *        Never coerced to the managed provider: see
+     *        TransportProviderIdentifier for why the two are separate.
+     */
     public function record(
         WebhookRejectionReason $reason,
-        MessagingProvider $provider,
+        MessagingProvider|string|null $provider,
         string $rawBody,
         ?string $messagingProfileId = null,
         ?string $destinationNumber = null,
@@ -37,11 +44,12 @@ class MessagingWebhookRejectionRecorder
         ?int $numberResolvedIdentityId = null,
     ): MessagingWebhookRejection {
         $payloadHash = hash('sha256', $rawBody);
+        $providerIdentifier = TransportProviderIdentifier::normalize($provider);
         $now = Carbon::now();
 
         $existing = MessagingWebhookRejection::query()
             ->where('reason', $reason->value)
-            ->where('provider', $provider->value)
+            ->where('provider', $providerIdentifier)
             ->where('payload_hash', $payloadHash)
             ->first();
 
@@ -52,7 +60,7 @@ class MessagingWebhookRejectionRecorder
         try {
             $rejection = new MessagingWebhookRejection([
                 'reason' => $reason->value,
-                'provider' => $provider->value,
+                'provider' => $providerIdentifier,
                 'payload_hash' => $payloadHash,
                 'messaging_profile_id' => self::trimmedOrNull($messagingProfileId),
                 // Stored E.164-normalized when normalizable, so support
@@ -73,7 +81,7 @@ class MessagingWebhookRejectionRecorder
             // on its row and count this occurrence against it.
             $winner = MessagingWebhookRejection::query()
                 ->where('reason', $reason->value)
-                ->where('provider', $provider->value)
+                ->where('provider', $providerIdentifier)
                 ->where('payload_hash', $payloadHash)
                 ->firstOrFail();
 

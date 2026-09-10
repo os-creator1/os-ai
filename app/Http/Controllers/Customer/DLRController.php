@@ -932,9 +932,12 @@ $chatBox->touch();
                 // This is deliberately NOT a claim that the other ~58
                 // providers now have signature verification — they do not.
                 // Only the unattributed write is removed.
+                // The provider is taken from the calling server, never
+                // assumed: this method serves ~60 gateways and a row that
+                // named the wrong one would be worse than no row at all.
                 app(MessagingWebhookRejectionRecorder::class)->record(
                     WebhookRejectionReason::UnknownMapping,
-                    MessagingProvider::Telnyx,
+                    $sending_server->settings,
                     (string) json_encode([
                         'sending_server_id' => $sending_server->id,
                         'to' => $to,
@@ -1108,9 +1111,13 @@ $chatBox->touch();
             // account produced the request. A request that validates against
             // none of them never reaches inboundDLR().
             if (! $this->twilioSignatureIsValid($request)) {
+                // Twilio, recorded as Twilio. This row exists to answer
+                // "which provider is sending us traffic we cannot verify?",
+                // so naming a different company in it would defeat its
+                // entire purpose.
                 app(MessagingWebhookRejectionRecorder::class)->record(
                     WebhookRejectionReason::InvalidSignature,
-                    MessagingProvider::Telnyx,
+                    SendingServer::TYPE_TWILIO,
                     $request->getContent(),
                     null,
                     $from,
@@ -1554,9 +1561,13 @@ $chatBox->touch();
                     // keeps its pre-existing behaviour, including the
                     // now-fixed shared default-to-user-1 removal.
                     if ($sendingServer && $this->isBusinessFacingByoConnection($sendingServer)) {
+                        // Derived from the server rather than hardcoded.
+                        // This one really is Telnyx, but taking it from the
+                        // row keeps every rejection site honest by the same
+                        // mechanism instead of by the reader's trust.
                         app(MessagingWebhookRejectionRecorder::class)->record(
                             WebhookRejectionReason::UnknownMapping,
-                            MessagingProvider::Telnyx,
+                            $sendingServer->settings,
                             $request->getContent(),
                             null,
                             $from,

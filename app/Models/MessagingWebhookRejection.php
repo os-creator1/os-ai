@@ -38,7 +38,15 @@ class MessagingWebhookRejection extends Model
 
     protected $casts = [
         'reason' => WebhookRejectionReason::class,
-        'provider' => MessagingProvider::class,
+        // NOT cast to MessagingProvider. This column records which provider
+        // the refused traffic actually came from, and §4.6.5 writes rows here
+        // from inboundTwilio() and from inboundDLR() on behalf of ~60 legacy
+        // gateways — none of which has, or will have, a managed adapter.
+        // Casting to the one-case managed-adapter enum would either throw on
+        // every legacy row or force this lane to record Twilio as Telnyx,
+        // which is a false security-audit record.
+        // See App\Library\Messaging\TransportProviderIdentifier.
+        'provider' => 'string',
         'occurrence_count' => 'integer',
         'profile_resolved_identity_id' => 'integer',
         'number_resolved_identity_id' => 'integer',

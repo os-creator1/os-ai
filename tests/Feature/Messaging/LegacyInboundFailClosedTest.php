@@ -2,7 +2,10 @@
 
 namespace Tests\Feature\Messaging;
 
+use App\Enums\Messaging\MessagingProvider;
 use App\Enums\Messaging\WebhookRejectionReason;
+use App\Library\Messaging\MessagingWebhookRejectionRecorder;
+use App\Library\Messaging\TransportProviderIdentifier;
 use App\Models\Blacklists;
 use App\Models\ChatBox;
 use App\Models\CustomerBasedSendingServer;
@@ -301,6 +304,85 @@ class LegacyInboundFailClosedTest extends TestCase
 
         $response->assertOk();
         $response->assertDontSee('Inbound processing is disabled for this connection');
+    }
+
+    // ---------------------------------------------------------------
+    // A rejection row must name the provider it actually came from
+    // ---------------------------------------------------------------
+
+    public function test_a_twilio_rejection_never_claims_to_be_telnyx(): void
+    {
+        $this->twilioServer();
+
+        $this->post(route('inbound.twilio'), [
+            'From' => '+14155550005',
+            'To' => '+' . self::UNATTRIBUTABLE,
+            'Body' => 'unsigned',
+            'NumMedia' => '0',
+        ])->assertOk();
+
+        $rejection = MessagingWebhookRejection::query()->firstOrFail();
+
+        $this->assertSame('twilio', $rejection->provider);
+        $this->assertNotSame(
+            MessagingProvider::Telnyx->value,
+            $rejection->provider,
+            'A Twilio signature rejection recorded as Telnyx is a false security-audit record.',
+        );
+        $this->assertFalse(TransportProviderIdentifier::isManagedProvider($rejection->provider));
+    }
+
+    public function test_a_legacy_gateway_rejection_records_that_gateways_own_name(): void
+    {
+        // A provider with no managed adapter and no relationship to Telnyx
+        // at all, proving the column's domain is genuinely the whole legacy
+        // fleet rather than the one-case managed-adapter enum.
+        SendingServer::create([
+            'name' => 'Legacy Plivo',
+            'settings' => 'Plivo',
+            'status' => true,
+            'plain' => true,
+        ]);
+
+        app(MessagingWebhookRejectionRecorder::class)->record(
+            WebhookRejectionReason::UnknownMapping,
+            'Plivo',
+            '{"probe":true}',
+        );
+
+        $this->assertSame('plivo', MessagingWebhookRejection::query()->firstOrFail()->provider);
+    }
+
+    public function test_provider_identifiers_are_normalized_without_collapsing_distinct_gateways(): void
+    {
+        // Same gateway, different spellings — one identifier.
+        $this->assertSame('twilio', TransportProviderIdentifier::normalize('Twilio'));
+        $this->assertSame('twilio', TransportProviderIdentifier::normalize('  twilio '));
+        $this->assertSame('twilio', TransportProviderIdentifier::normalize(SendingServer::TYPE_TWILIO));
+
+        // Different gateways stay different — TwilioCopilot is a separate
+        // connection with separate credentials, not a spelling of Twilio.
+        $this->assertSame('twiliocopilot', TransportProviderIdentifier::normalize('TwilioCopilot'));
+        $this->assertNotSame(
+            TransportProviderIdentifier::normalize('Twilio'),
+            TransportProviderIdentifier::normalize('TwilioCopilot'),
+        );
+
+        // Labels that are not plain words still reduce to a stable slug.
+        $this->assertSame('800com', TransportProviderIdentifier::normalize('800com'));
+        $this->assertSame('d7networks', TransportProviderIdentifier::normalize('D7Networks'));
+
+        // The managed enum round-trips unchanged, so the managed path is not
+        // a special case in the storage layer.
+        $this->assertSame(
+            MessagingProvider::Telnyx->value,
+            TransportProviderIdentifier::normalize(MessagingProvider::Telnyx),
+        );
+
+        // An unnameable provider is recorded as unknown, never as a real one.
+        foreach ([null, '', '   ', '///'] as $unnameable) {
+            $this->assertSame(TransportProviderIdentifier::UNKNOWN, TransportProviderIdentifier::normalize($unnameable));
+        }
     }
 
     // ---------------------------------------------------------------
