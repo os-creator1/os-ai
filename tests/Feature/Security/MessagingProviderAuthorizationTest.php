@@ -184,6 +184,355 @@ class MessagingProviderAuthorizationTest extends TestCase
     }
 
     // -----------------------------------------------------------------
+    // T-PROV-1 / T-PROV-2 — inherited from the parent contract §24
+    //
+    // T-PROV-1: no customer-role response body contains any provider
+    //           credential field name or value.
+    // T-PROV-2: provider credentials are readable by no customer role, in
+    //           any serialization.
+    // -----------------------------------------------------------------
+
+    /**
+     * Every credential-shaped needle these tests hunt for. The field NAMES
+     * matter as much as the values (T-PROV-1 names both), because a response
+     * that echoes `"auth_token": null` still tells an attacker the shape of
+     * what it is hiding.
+     *
+     * @return array{names: list<string>, values: list<string>}
+     */
+    private function credentialNeedles(): array
+    {
+        return [
+            'names' => ['auth_token', 'api_key', 'api_secret', 'secret_access', 'access_token', 'user_token', 'auth_key', 'private_key'],
+            'values' => ['AC_PROV_SID', 'prov_auth_token_value', 'prov_api_key_value', 'prov_profile_c1', 'platform_telnyx_api_key', 'platform_webhook_public_key'],
+        ];
+    }
+
+    private function assertCarriesNoCredential(string $haystack, string $context): void
+    {
+        $needles = $this->credentialNeedles();
+
+        foreach ([...$needles['names'], ...$needles['values']] as $needle) {
+            $this->assertStringNotContainsString(
+                $needle,
+                $haystack,
+                "{$context} exposed the credential-shaped string [{$needle}].",
+            );
+        }
+    }
+
+    /**
+     * T-PROV-1 names both the field NAME and the value, and the distinction
+     * between them matters here, so this test draws it explicitly rather
+     * than blurring it.
+     *
+     * A response that DISPLAYS existing connections must carry neither: a
+     * field name there would tell a reader what secret is stored even when
+     * the value is masked. The connect FORM is the one legitimate exception
+     * — it exists so the customer can type their own credential in, and an
+     * `<input name="auth_token">` with no value is the mechanism, not a
+     * leak. So the form is held to the stricter half of the requirement
+     * instead: no credential VALUE anywhere, and every credential-named
+     * input provably empty.
+     */
+    public function test_no_customer_role_response_carries_a_provider_credential_name_or_value(): void
+    {
+        [$owner, $business] = $this->tenantWithPlan(WorkspacePlanTier::Agency);
+        $connection = $this->createDedicatedConnection($business, SendingServer::TYPE_TWILIO, [
+            'account_sid' => 'AC_PROV_SID',
+            'auth_token' => 'prov_auth_token_value',
+        ]);
+
+        // The platform's own managed credentials are configured too, so a
+        // leak of EITHER the customer's BYO secret or the platform's Telnyx
+        // key would be caught.
+        config([
+            'services.telnyx.api_key' => 'platform_telnyx_api_key',
+            'services.telnyx.webhook_public_key' => 'platform_webhook_public_key',
+        ]);
+
+        $this->authenticateAsCustomer($owner, ['view_numbers', 'manage_advanced_provider']);
+        $args = [$business->workspace->uid, $business->uid];
+
+        // (a) The pure display surface: neither names nor values. It lists
+        //     connections and must not describe what secret each holds.
+        $this->assertCarriesNoCredential(
+            $this->get(route('customer.workspaces.businesses.channels.index', $args))->getContent() ?? '',
+            'the connections index',
+        );
+
+        // (b) The two credential-entry forms — connect and manage. Both
+        //     legitimately name their inputs so the customer can type a
+        //     secret in, so they are held to the stricter half instead: no
+        //     credential VALUE anywhere, and every credential-named input
+        //     provably empty.
+        foreach ([
+            'the connect form' => route('customer.workspaces.businesses.channels.connect', [...$args, SendingServer::TYPE_TWILIO]),
+            'the manage form' => route('customer.workspaces.businesses.channels.connections.show', [...$args, $connection->uid]),
+        ] as $context => $url) {
+            $form = $this->get($url)->getContent() ?? '';
+
+            foreach ($this->credentialNeedles()['values'] as $value) {
+                $this->assertStringNotContainsString($value, $form, "{$context} leaked the credential value [{$value}].");
+            }
+
+            if (preg_match_all('/<input\b[^>]*>/i', $form, $matches)) {
+                foreach ($matches[0] as $input) {
+                    // Laravel's CSRF field is named `_token` and legitimately
+                    // carries a value; it is not a provider credential.
+                    if (preg_match('/\bname=["\']_token["\']/i', $input)) {
+                        continue;
+                    }
+
+                    if (! preg_match('/\bname=["\'][^"\']*(secret|token|api_key|password|auth)[^"\']*["\']/i', $input)) {
+                        continue;
+                    }
+
+                    $this->assertDoesNotMatchRegularExpression(
+                        '/\bvalue=["\'](?!["\'])/i',
+                        $input,
+                        "{$context} pre-fills a credential input: {$input}",
+                    );
+                }
+            }
+        }
+    }
+
+    public function test_provider_credentials_survive_no_serialization_reachable_by_a_customer(): void
+    {
+        [, $business] = $this->tenantWithPlan(WorkspacePlanTier::Agency);
+        $connection = $this->createDedicatedConnection($business, SendingServer::TYPE_TELNYX, [
+            'api_key' => 'prov_api_key_value',
+            'c1' => 'prov_profile_c1',
+        ]);
+
+        // T-PROV-2 is about SERIALIZATION, so this asserts on the shapes a
+        // customer-reachable surface could actually hand out — the Slice 3
+        // models' own array/JSON forms — rather than only on rendered HTML.
+        $identity = $this->sliceThreeIdentityFor($business);
+
+        foreach ([
+            'BusinessMessagingIdentity::toArray' => (string) json_encode($identity->toArray()),
+            'BusinessMessagingIdentity::toJson' => $identity->toJson(),
+            'BusinessMessagingNumber' => (string) json_encode($identity->numbers()->get()->toArray()),
+            'MessagingWebhookRejection' => (string) json_encode(\App\Models\MessagingWebhookRejection::query()->get()->toArray()),
+            'BusinessUsageMeasurement' => (string) json_encode(\App\Models\BusinessUsageMeasurement::query()->get()->toArray()),
+            'business_messaging_operations' => (string) json_encode(\Illuminate\Support\Facades\DB::table('business_messaging_operations')->get()),
+        ] as $context => $serialized) {
+            $this->assertCarriesNoCredential($serialized, $context);
+        }
+
+        // The connection the customer really does own still holds its
+        // secret in the database — so the assertions above are proving
+        // non-exposure, not merely that no credential exists anywhere.
+        $this->assertSame(
+            'prov_api_key_value',
+            SendingServer::find($connection->sending_server)->api_key,
+            'The fixture must genuinely hold a secret for this test to mean anything.',
+        );
+    }
+
+    public function test_no_slice_three_model_declares_a_credential_shaped_attribute(): void
+    {
+        // The structural half of T-PROV-2: there is no attribute a
+        // credential could be written into in the first place.
+        foreach ([
+            \App\Models\BusinessMessagingIdentity::class,
+            \App\Models\BusinessMessagingNumber::class,
+            \App\Models\MessagingWebhookRejection::class,
+            \App\Models\BusinessUsageMeasurement::class,
+        ] as $model) {
+            $instance = new $model();
+
+            foreach ([...$instance->getFillable(), ...array_keys($instance->getCasts()), ...$instance->getHidden()] as $attribute) {
+                $this->assertDoesNotMatchRegularExpression(
+                    '/(secret|token|api_key|password|credential|auth|private_key)/i',
+                    $attribute,
+                    "[{$model}] declares the credential-shaped attribute [{$attribute}].",
+                );
+            }
+        }
+    }
+
+    public function test_a_customer_cannot_read_the_platform_telnyx_configuration_through_any_messaging_endpoint(): void
+    {
+        [$owner, $business] = $this->tenantWithPlan(WorkspacePlanTier::Agency);
+
+        config([
+            'messaging.managed_messaging_enabled' => true,
+            'services.telnyx.api_key' => 'platform_telnyx_api_key',
+            'services.telnyx.webhook_public_key' => 'platform_webhook_public_key',
+        ]);
+
+        $this->authenticateAsCustomer($owner, ['view_numbers', 'manage_advanced_provider']);
+        $args = [$business->workspace->uid, $business->uid];
+
+        // Every customer-reachable messaging endpoint this slice exposes or
+        // relocates, read and mutation alike.
+        $probes = [
+            ['GET', route('customer.channels.index'), []],
+            ['GET', route('customer.workspaces.businesses.channels.index', $args), []],
+            ['GET', route('customer.workspaces.businesses.channels.connect', [...$args, SendingServer::TYPE_TELNYX]), []],
+            ['POST', route('customer.workspaces.businesses.channels.connect', [...$args, SendingServer::TYPE_TELNYX]), [
+                'api_key' => 'prov_api_key_value', 'c1' => 'prov_profile_c1',
+            ]],
+        ];
+
+        foreach ($probes as [$method, $url, $payload]) {
+            $response = $this->call($method, $url, $payload);
+
+            $this->assertStringNotContainsString('platform_telnyx_api_key', $response->getContent() ?? '', "{$method} {$url}");
+            $this->assertStringNotContainsString('platform_webhook_public_key', $response->getContent() ?? '', "{$method} {$url}");
+        }
+
+        // A credential the customer just submitted is not echoed back either.
+        $this->assertStringNotContainsString(
+            'prov_api_key_value',
+            $this->get(route('customer.workspaces.businesses.channels.index', $args))->getContent() ?? '',
+        );
+    }
+
+    public function test_the_deterministic_fake_does_not_weaken_the_real_production_binding(): void
+    {
+        // The fake exists for tests only. Outside a test that binds it, the
+        // container must still resolve the REAL adapter — otherwise every
+        // credential assertion in this suite would be proving something
+        // about a stub rather than about production.
+        config([
+            'messaging.managed_messaging_enabled' => true,
+            'services.telnyx.api_key' => 'platform_telnyx_api_key',
+            'services.telnyx.webhook_public_key' => base64_encode(str_repeat("\0", SODIUM_CRYPTO_SIGN_PUBLICKEYBYTES)),
+        ]);
+
+        \Illuminate\Support\Facades\Http::fake();
+
+        $adapter = app(\App\Library\Messaging\Contracts\MessagingProviderAdapter::class);
+
+        $this->assertInstanceOf(\App\Library\Messaging\TelnyxMessagingAdapter::class, $adapter);
+        $this->assertNotInstanceOf(\App\Library\Messaging\FakeMessagingAdapter::class, $adapter);
+
+        // And the real adapter keeps its credential to itself.
+        $this->assertCarriesNoCredential((string) json_encode($adapter), 'the real adapter, serialized');
+    }
+
+    // -----------------------------------------------------------------
+    // T-SCOPE-1 — inherited from the parent contract §24
+    //
+    // "No customer-facing surface in any slice offers, prices, provisions
+    // or meters a voice call (§10.5)."
+    //
+    // Scoped, deliberately, to what SLICE 3 exposes. The legacy platform's
+    // own unrelated voice functionality is not removed and is not this
+    // requirement's subject — the requirement is that this slice offers
+    // none of it.
+    // -----------------------------------------------------------------
+
+    public function test_slice_three_exposes_no_voice_capability_anywhere(): void
+    {
+        // 1. The provider allowlist the relocated surface offers.
+        $reflection = new \ReflectionClass(\App\Http\Controllers\Customer\Business\MessagingChannelsController::class);
+        $allowed = $reflection->getConstant('ALLOWED_PROVIDERS');
+
+        $this->assertIsArray($allowed);
+        foreach ($allowed as $provider => $definition) {
+            $this->assertDoesNotMatchRegularExpression('/voice|call|dial|sip|ivr/i', (string) $provider);
+            $this->assertDoesNotMatchRegularExpression('/voice|call|dial|sip|ivr/i', (string) ($definition['label'] ?? ''));
+
+            foreach (array_keys($definition['credential_fields'] ?? []) as $field) {
+                $this->assertDoesNotMatchRegularExpression('/voice|dial|sip|ivr/i', (string) $field);
+            }
+        }
+
+        // 2. Slice 3's own enums offer no voice case.
+        foreach ([
+            \App\Enums\Messaging\MessagingProvider::class,
+            \App\Enums\Messaging\MessagingTransportMode::class,
+            \App\Enums\Messaging\MessageDispatchStatus::class,
+            \App\Enums\Messaging\MessagingOperationStatus::class,
+            \App\Enums\Messaging\InboundWebhookEventKind::class,
+            \App\Enums\Messaging\BusinessMessagingIdentityStatus::class,
+            \App\Enums\Messaging\BusinessMessagingNumberStatus::class,
+            \App\Enums\Messaging\ProviderErrorCategory::class,
+            \App\Enums\Messaging\WebhookRejectionReason::class,
+        ] as $enum) {
+            foreach ($enum::cases() as $case) {
+                $this->assertDoesNotMatchRegularExpression(
+                    '/voice|call|dial|sip|ivr/i',
+                    $case->value,
+                    "[{$enum}] offers the voice-shaped case [{$case->value}].",
+                );
+            }
+        }
+
+        // 3. The provider adapter is structurally incapable of a voice call.
+        $methods = array_map(
+            fn (\ReflectionMethod $m): string => $m->getName(),
+            (new \ReflectionClass(\App\Library\Messaging\Contracts\MessagingProviderAdapter::class))->getMethods(),
+        );
+
+        foreach ($methods as $method) {
+            $this->assertDoesNotMatchRegularExpression('/voice|call|dial|sip|ivr/i', $method);
+        }
+
+        // 4. Slice 3's routes name no voice surface.
+        foreach (app('router')->getRoutes() as $route) {
+            $uri = $route->uri();
+
+            if (! str_contains($uri, 'settings/advanced') && ! str_contains($uri, 'inbound/telnyx-managed')) {
+                continue;
+            }
+
+            $this->assertDoesNotMatchRegularExpression('/voice|dial|sip|ivr/i', $uri, "Slice 3 route [{$uri}] is voice-shaped.");
+        }
+
+        // 5. Nothing in Slice 3's own library or views mentions provisioning,
+        //    pricing or metering a call.
+        foreach ([app_path('Library/Messaging'), resource_path('views/customer/settings/advanced')] as $directory) {
+            foreach (new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($directory, \FilesystemIterator::SKIP_DOTS)) as $file) {
+                if (! in_array($file->getExtension(), ['php'], true)) {
+                    continue;
+                }
+
+                $source = (string) file_get_contents($file->getPathname());
+                $relative = str_replace(base_path() . DIRECTORY_SEPARATOR, '', $file->getPathname());
+
+                $this->assertDoesNotMatchRegularExpression(
+                    '/(voice_sms|voice_sending_server|sendVoiceSMS|voice_call|provision_voice)/i',
+                    $source,
+                    "[{$relative}] reaches a voice capability.",
+                );
+            }
+        }
+
+        // 6. And no voice usage is metered by this slice.
+        $this->assertSame(
+            0,
+            \Illuminate\Support\Facades\DB::table('business_usage_measurements')
+                ->where('feature_key', 'like', '%voice%')
+                ->count(),
+        );
+    }
+
+    /**
+     * A Slice 3 identity with one number, created through the resolver, so
+     * the serialization assertions run against real rows.
+     */
+    private function sliceThreeIdentityFor(Business $business): \App\Models\BusinessMessagingIdentity
+    {
+        $identity = app(\App\Library\Messaging\BusinessMessagingIdentityResolver::class)
+            ->create($business, 'mp_prov_' . uniqid());
+
+        $identity->numbers()->create([
+            'phone_number' => '+14155559800',
+            'status' => \App\Enums\Messaging\BusinessMessagingNumberStatus::Active->value,
+            'is_primary' => true,
+            'activated_at' => now(),
+        ]);
+
+        return $identity->fresh();
+    }
+
+    // -----------------------------------------------------------------
     // Fixtures
     // -----------------------------------------------------------------
 
