@@ -30,7 +30,7 @@
                         <div class="card-body">
 
                             @if(config('app.trai_dlt')  && Auth::user()->customer->activeSubscription() !== null  && Auth::user()->customer->activeSubscription()->plan->is_dlt)
-                                <p><code>{!!  __('locale.templates.dlt_description') !!}</code></p>
+                                <p><code>{!!  __('locale.templates.dlt_description_customer') !!}</code></p>
                             @endif
 
                             <form class="form form-vertical"

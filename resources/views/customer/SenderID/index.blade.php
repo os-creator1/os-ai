@@ -348,7 +348,7 @@
 
           Swal.fire({
             title: "{{__('locale.labels.are_you_sure')}}",
-            text: "{{__('locale.sender_id.delete_senderids')}}",
+            text: "{{__('locale.sender_id.delete_senderids_customer')}}",
             icon: "warning",
             showCancelButton: true,
             confirmButtonText: "{{__('locale.labels.delete_selected')}}",

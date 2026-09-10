@@ -131,7 +131,7 @@
 
                     <div class="mb-1">
                         <div class="form-check form-switch form-check-primary">
-                            <label for="sender_id" class="mr-1">{{__('locale.labels.sender_id')}} <x-ds-icon name="help-circle" data-bs-toggle='tooltip' data-bs-placement='top' title='{{__('locale.customer.sender_id_verification')}}' /> </label>
+                            <label for="sender_id" class="mr-1">{{__('locale.labels.sender_identity')}} <x-ds-icon name="help-circle" data-bs-toggle='tooltip' data-bs-placement='top' title='{{__('locale.customer.sender_id_verification')}}' /> </label>
                             <input type="checkbox" name="notifications[sender_id]" value="yes" class="form-check-input" id="sender_id" {{ $user->customer->getNotifications()['sender_id'] == 'yes' ? 'checked':null }}>
                             <label class="form-check-label" for="sender_id">
                                 <span class="switch-icon-left"><x-ds-icon name="check" /> </span>

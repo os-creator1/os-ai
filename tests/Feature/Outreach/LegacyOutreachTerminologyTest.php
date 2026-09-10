@@ -37,29 +37,20 @@ use Tests\TestCase;
  * keeping the others green.
  *
  * ON ASSERTION MECHANICS. "Sender identity" contains the substring
- * "Sender id". Every negative assertion here is therefore CASE-SENSITIVE and
- * targets the exact legacy display casing ("Sender ID", "Sending Server",
- * "Originator"), which the new copy cannot produce. A naive
- * case-insensitive check would report a false leak on the very term the
- * contract requires.
+ * "Sender id". Sections 1–4 below assert CASE-SENSITIVELY on the exact legacy
+ * display casing ("Sender ID", "Sending Server", "Originator"), which the new
+ * copy cannot produce; section 5's absolute sweep matches case-insensitively
+ * and then discards hits that are really part of the approved term. Either
+ * way, a naive case-insensitive `str_contains` would report a false leak on
+ * the very term the contract requires.
  *
- * KNOWN OUT-OF-SCOPE RESIDUALS, reported rather than silently fixed. These
- * screens still render three forbidden strings that arrive through keys the
- * Slice 1B allowlist does not authorize, and `resources/lang/en/locale.php`
- * is a Slice 1A path whose permitted mutation is explicitly "no other
- * existing value":
- *
- *   - `locale.labels.single_sender_id` = "You can insert only one sender
- *     id." — a JS validation message on 18 of the 27 screens.
- *   - `locale.sender_id.payment_for_sender_id` = "Payment for Sender ID" —
- *     `SenderID/checkout.blade.php` lines 88 and 92.
- *   - `locale.templates.dlt_description` = "…Sender ID fields will be
- *     available for TRAI DLT feature only" — `Templates/create.blade.php`
- *     line 33.
- *
- * These tests therefore assert what this slice actually owns — the labels
- * fed by the three repointed keys — and do not claim a page-wide absence of
- * the legacy nouns, which would be untrue.
+ * SECTION 5 — FINAL CLOSURE. The first pass through this slice reported three
+ * residual forbidden strings as out of allowlist scope, and PR #243 carried
+ * two of its own. T-TERM-2 admits no reachable-screen exception, so a later
+ * correction authorized the minimum extra scope and closed all five, plus a
+ * further set an absolute repo-wide audit turned up. Section 5 holds that
+ * closure, including the delegated-access invitation email — the one customer
+ * surface whose copy lives in the database rather than in locale.php.
  */
 class LegacyOutreachTerminologyTest extends TestCase
 {
@@ -433,5 +424,332 @@ class LegacyOutreachTerminologyTest extends TestCase
                 "[{$routeName}] must refuse an unauthenticated visitor, got {$status}.",
             );
         }
+    }
+
+    // =================================================================
+    // 5. Final terminology closure — T-TERM-2 is absolute
+    //
+    // The contract admits no reachable-customer-screen exception, so the
+    // residuals the first pass reported are closed here rather than carried.
+    // Two mechanisms, chosen per key by who actually consumes it: a
+    // customer-only key has its English value corrected in place, and a key
+    // shared with admin keeps its value and gains a customer-only sibling, so
+    // admin vocabulary is preserved exactly.
+    //
+    // The one customer surface whose copy does not come from locale.php is
+    // the delegated-access invitation email; it lives in an `email_templates`
+    // row and is corrected by an additive, idempotent data migration.
+    // =================================================================
+
+    /** Every forbidden noun, as the contract lists them. */
+    private const T_TERM_2 = [
+        'Sending Server', 'Sender ID', 'Originator',
+        'Sub Account', 'Sub-Account', 'Account SID', 'Auth Token', 'API Key',
+    ];
+
+    /**
+     * Case-insensitive, but "Sender identity"/"Sender identities" are the
+     * approved replacements and contain "sender id" — so a hit that is really
+     * part of the approved term is not a leak.
+     */
+    private function forbiddenTermsIn(string $text): array
+    {
+        $found = [];
+
+        foreach (self::T_TERM_2 as $term) {
+            $offset = 0;
+
+            while (($pos = stripos($text, $term, $offset)) !== false) {
+                $offset = $pos + 1;
+
+                if (preg_match('/^sender[ -]?identit/i', substr($text, $pos, 20)) === 1) {
+                    continue;
+                }
+
+                $found[$term] = true;
+            }
+        }
+
+        return array_keys($found);
+    }
+
+    /**
+     * What a person actually reads.
+     *
+     * T-TERM-2 governs rendered customer COPY, not HTML source. Markup the
+     * customer never sees is stripped first — attributes (`name="originator"`),
+     * URL paths (`href=".../sub-accounts"`, an identifier the contract keeps
+     * on purpose), HTML comments and JavaScript comments.
+     *
+     * JavaScript STRING literals are deliberately kept: the confirm dialogs on
+     * these screens are Blade-rendered JS messages, and the contract names
+     * them explicitly as customer-visible copy. `strip_tags()` keeps the body
+     * of a <script> block while discarding every tag and attribute around it,
+     * which is exactly the line we want.
+     */
+    private function visibleText(string $html): string
+    {
+        $text = preg_replace('/<!--.*?-->/s', '', $html);
+        $text = preg_replace('#^\s*//.*$#m', '', $text);
+        $text = preg_replace('#/\*.*?\*/#s', '', $text);
+        $text = strip_tags($text);
+
+        return html_entity_decode($text, ENT_QUOTES | ENT_HTML5);
+    }
+
+    public function test_the_visible_text_helper_drops_markup_but_keeps_rendered_javascript_copy(): void
+    {
+        $html = '<a href="http://x/sub-accounts">Team members</a>'
+            . '<input name="originator" value="sender_id"/>'
+            . '<!-- Sender ID in an HTML comment -->'
+            . "<script>\n"
+            . "    // sender id in a JS comment\n"
+            . '    Swal.fire({text: "Delete selected sender identities?"});' . "\n"
+            . '</script>';
+
+        $visible = $this->visibleText($html);
+
+        $this->assertStringNotContainsString('sub-accounts', $visible, 'URL paths are not copy.');
+        $this->assertStringNotContainsString('originator', $visible, 'Attributes are not copy.');
+        $this->assertStringNotContainsString('HTML comment', $visible);
+        $this->assertStringNotContainsString('JS comment', $visible);
+
+        // …but the message a customer actually sees survives.
+        $this->assertStringContainsString('Delete selected sender identities?', $visible);
+        $this->assertStringContainsString('Team members', $visible);
+    }
+
+    public function test_the_helper_does_not_mistake_the_approved_term_for_a_leak(): void
+    {
+        // Guards the guard: if this ever starts flagging, every assertion
+        // below becomes meaningless.
+        $this->assertSame([], $this->forbiddenTermsIn('Sender identity'));
+        $this->assertSame([], $this->forbiddenTermsIn('Delete selected sender identities?'));
+        $this->assertSame(['Sender ID'], $this->forbiddenTermsIn('Payment for Sender ID'));
+        $this->assertSame(['Sub-Account'], $this->forbiddenTermsIn('join as a Sub-Account'));
+    }
+
+    /** The three residuals the first pass reported. */
+    public function test_the_three_reported_residuals_are_clean(): void
+    {
+        $this->assertSame('You can select only one sender identity.', __('locale.labels.single_sender_id'));
+        $this->assertSame('Payment for sender identity', __('locale.sender_id.payment_for_sender_id'));
+
+        $this->assertSame([], $this->forbiddenTermsIn(__('locale.templates.dlt_description_customer')));
+        $this->assertStringContainsString('TRAI DLT', __('locale.templates.dlt_description_customer'), 'The sentence must be preserved.');
+    }
+
+    /** …and the further leaks the absolute audit turned up. */
+    public function test_every_customer_only_value_the_audit_found_is_clean(): void
+    {
+        $keys = [
+            'locale.customer.sender_id_verification',
+            'locale.developers.select_sending_server_for_api_messages',
+            'locale.labels.new_sender_id_notification',
+            'locale.plans.need_sender_id_verification_customer',
+            'locale.plans.sending_server_for_sms_customer',
+            'locale.sending_servers.have_no_sending_server_customer',
+            'locale.sender_id.delete_senderids_customer',
+        ];
+
+        foreach ($keys as $key) {
+            $value = __($key);
+
+            $this->assertNotSame($key, $value, "{$key} must resolve.");
+            $this->assertSame([], $this->forbiddenTermsIn($value), "{$key} renders \"{$value}\".");
+        }
+    }
+
+    /** The admin half of every shared key is deliberately untouched. */
+    public function test_admin_keeps_the_legacy_vocabulary_on_every_shared_key(): void
+    {
+        $this->assertSame('Sending Server', __('locale.labels.sending_server'));
+        $this->assertSame('Originator', __('locale.labels.originator'));
+        $this->assertSame('Sender ID', __('locale.labels.sender_id'));
+        $this->assertSame('Sender ID', __('locale.menu.Sender ID'));
+        $this->assertSame('API Key', __('locale.labels.api_key'));
+        $this->assertSame('Need Sender ID Verification', __('locale.plans.need_sender_id_verification'));
+        $this->assertSame('Sending server for :sms_type sms', __('locale.plans.sending_server_for_sms'));
+        $this->assertSame('You have no sending server', __('locale.sending_servers.have_no_sending_server'));
+        $this->assertSame('Delete selected sender IDs?', __('locale.sender_id.delete_senderids'));
+        $this->assertStringContainsString('Sender ID', __('locale.templates.dlt_description'));
+    }
+
+    /** Task B1 — the customer breadcrumb, driven through the real routes. */
+    public function test_the_customer_sender_identity_screens_render_a_clean_breadcrumb(): void
+    {
+        [$customer] = $this->tenant(WorkspacePlanTier::Growth);
+        $this->authenticateAs($customer);
+
+        foreach (['customer.senderid.index', 'customer.senderid.request'] as $routeName) {
+            $html = $this->get(route($routeName))->assertOk()->getContent();
+
+            $this->assertSame(
+                [],
+                $this->forbiddenTermsIn($this->visibleText($html)),
+                "[{$routeName}] still renders a forbidden term.",
+            );
+
+            $this->assertStringContainsString('Sender identities', $html);
+        }
+    }
+
+    /** The admin controller's own breadcrumb key was NOT moved. */
+    public function test_the_admin_sender_id_controller_still_uses_the_legacy_menu_key(): void
+    {
+        $admin = file_get_contents(base_path('app/Http/Controllers/Admin/SenderIDController.php'));
+
+        $this->assertStringContainsString("locale.menu.Sender ID'", $admin);
+
+        $customer = file_get_contents(base_path('app/Http/Controllers/Customer/SenderIDController.php'));
+
+        $this->assertStringNotContainsString("locale.menu.Sender ID'", $customer);
+        $this->assertStringContainsString("locale.menu.Sender identities'", $customer);
+    }
+
+    // -----------------------------------------------------------------
+    // Task B2 — the invitation email, whose copy lives in the database
+    // -----------------------------------------------------------------
+
+    private function invitationTemplate(): object
+    {
+        $row = \Illuminate\Support\Facades\DB::table('email_templates')
+            ->where('slug', 'subaccount_invitation_notification')
+            ->first();
+
+        $this->assertNotNull($row, 'The invitation template row must exist after migrating.');
+
+        return $row;
+    }
+
+    public function test_the_invitation_email_row_carries_no_forbidden_noun_after_migrating(): void
+    {
+        $row = $this->invitationTemplate();
+
+        $this->assertSame([], $this->forbiddenTermsIn((string) $row->subject), "subject: {$row->subject}");
+        $this->assertSame([], $this->forbiddenTermsIn((string) $row->content));
+    }
+
+    /** The correction must not damage what the mailable substitutes. */
+    public function test_the_invitation_email_keeps_every_placeholder_and_its_identifiers(): void
+    {
+        $row = $this->invitationTemplate();
+
+        $this->assertStringContainsString('{app_name}', (string) $row->subject);
+
+        foreach (['{first_name}', '{last_name}', '{invitation_link}'] as $placeholder) {
+            $this->assertStringContainsString($placeholder, (string) $row->content);
+        }
+
+        $this->assertSame('subaccount_invitation_notification', $row->slug, 'The slug is an identifier and must not move.');
+        $this->assertTrue((bool) $row->status);
+    }
+
+    /**
+     * Replay safety: the migration keys its substitution on the forbidden
+     * noun, so running it again finds nothing to change.
+     */
+    public function test_the_invitation_correction_is_idempotent_on_replay(): void
+    {
+        $before = $this->invitationTemplate();
+
+        $migration = require base_path('database/migrations/2026_09_13_100001_correct_sub_account_invitation_email_terminology.php');
+        $migration->up();
+        $migration->up();
+
+        $after = $this->invitationTemplate();
+
+        $this->assertSame($before->subject, $after->subject);
+        $this->assertSame($before->content, $after->content);
+        $this->assertSame($before->uid, $after->uid, 'Replay must not reissue the row.');
+    }
+
+    /**
+     * Rollback is a deliberate no-op — reversing would reintroduce copy the
+     * contract forbids — and must neither error nor disturb the row.
+     */
+    public function test_the_invitation_correction_rollback_is_an_inert_no_op(): void
+    {
+        $before = $this->invitationTemplate();
+
+        $migration = require base_path('database/migrations/2026_09_13_100001_correct_sub_account_invitation_email_terminology.php');
+        $migration->down();
+
+        $after = $this->invitationTemplate();
+
+        $this->assertSame($before->subject, $after->subject);
+        $this->assertSame($before->content, $after->content);
+    }
+
+    /** A fresh installation converges on the same clean row. */
+    public function test_a_freshly_seeded_row_is_corrected_by_the_migration(): void
+    {
+        \Illuminate\Support\Facades\DB::table('email_templates')
+            ->where('slug', 'subaccount_invitation_notification')
+            ->update([
+                'subject' => 'You are invited to join as a Sub-Account on {app_name}',
+                'content' => 'Hi {first_name} {last_name},<br><br>You have been invited to join as a sub-account. Please click {invitation_link}<br><br>',
+            ]);
+
+        $migration = require base_path('database/migrations/2026_09_13_100001_correct_sub_account_invitation_email_terminology.php');
+        $migration->up();
+
+        $row = $this->invitationTemplate();
+
+        $this->assertSame([], $this->forbiddenTermsIn((string) $row->subject));
+        $this->assertSame([], $this->forbiddenTermsIn((string) $row->content));
+        $this->assertStringContainsString('{invitation_link}', (string) $row->content);
+    }
+
+    // -----------------------------------------------------------------
+    // The absolute sweep, over the surfaces this correction can reach
+    // -----------------------------------------------------------------
+
+    public function test_no_reachable_customer_screen_renders_a_forbidden_term(): void
+    {
+        $this->subscribedCustomer();
+
+        $routes = array_merge(
+            array_column(self::slice1bRouteProvider(), 0),
+            ['customer.senderid.index', 'customer.senderid.request'],
+        );
+
+        foreach ($routes as $routeName) {
+            $html = $this->get(route($routeName))->assertOk()->getContent();
+
+            $this->assertSame(
+                [],
+                $this->forbiddenTermsIn($this->visibleText($html)),
+                "[{$routeName}] renders a T-TERM-2 forbidden term.",
+            );
+        }
+    }
+
+    /** Identifiers stay put, however much the copy moved. */
+    public function test_internal_identifiers_are_unchanged_by_the_closure(): void
+    {
+        // Locale KEY names survive; only English values moved.
+        $locale = require base_path('resources/lang/en/locale.php');
+
+        foreach ([['labels', 'sender_id'], ['labels', 'sending_server'], ['labels', 'originator'],
+            ['labels', 'single_sender_id'], ['sender_id', 'payment_for_sender_id'],
+            ['templates', 'dlt_description'], ['menu', 'Sender ID']] as [$block, $key]) {
+            $this->assertArrayHasKey($key, $locale[$block], "locale.{$block}.{$key} must still exist.");
+        }
+
+        // Routes still resolve to their original handlers.
+        foreach ([
+            'customer.senderid.index' => 'SenderIDController@index',
+            'customer.senderid.request' => 'SenderIDController@request',
+        ] as $name => $handler) {
+            $route = app('router')->getRoutes()->getByName($name);
+
+            $this->assertNotNull($route, "Route [{$name}] must still be registered.");
+            $this->assertStringEndsWith($handler, $route->getActionName());
+        }
+
+        // The email template is addressed by slug, and the column names the
+        // mailable reads are untouched.
+        $this->assertTrue(\Illuminate\Support\Facades\Schema::hasColumns('email_templates', ['slug', 'subject', 'content', 'status']));
     }
 }

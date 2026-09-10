@@ -59,7 +59,7 @@
             $breadcrumbs = [
                 ['link' => url('dashboard'), 'name' => __('locale.menu.Dashboard')],
                 ['link' => url('dashboard'), 'name' => __('locale.menu.Sending')],
-                ['name' => __('locale.menu.Sender ID')],
+                ['name' => __('locale.menu.Sender identities')],
             ];
 
             $sender_id_plan = SenderidPlan::count();
@@ -188,7 +188,7 @@
             $breadcrumbs = [
                 ['link' => url('dashboard'), 'name' => __('locale.menu.Dashboard')],
                 ['link' => url('dashboard'), 'name' => __('locale.menu.Sending')],
-                ['name' => __('locale.menu.Sender ID')],
+                ['name' => __('locale.menu.Sender identities')],
             ];
 
             $sender_id_plans = SenderidPlan::cursor();
@@ -290,7 +290,7 @@
             $breadcrumbs = [
                 ['link' => url('dashboard'), 'name' => __('locale.menu.Dashboard')],
                 ['link' => url('dashboard'), 'name' => __('locale.menu.Sending')],
-                ['link' => url('senderid'), 'name' => __('locale.menu.Sender ID')],
+                ['link' => url('senderid'), 'name' => __('locale.menu.Sender identities')],
                 ['name' => __('locale.labels.checkout')],
             ];
 
