@@ -23,7 +23,7 @@
                             @if($sendingServers->count() > 0)
                                 <a href="#" class="btn btn-success me-1 mb-1" data-bs-toggle="modal"
                                    data-bs-target="#sendingServer"><i
-                                            data-feather="server"></i> {{ __('locale.labels.sending_server') }}</a>
+                                            data-feather="server"></i> {{ __('locale.labels.messaging_provider') }}</a>
                             @endif
 
                             <a href="{{ route('customer.developer.docs') }}"

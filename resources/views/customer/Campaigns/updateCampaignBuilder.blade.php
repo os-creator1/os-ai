@@ -60,7 +60,7 @@
                                     @if($sendingServers->count() > 0)
                                         <div class="col-12">
                                             <div class="mb-1">
-                                                <label for="sending_server" class="form-label required">{{ __('locale.labels.sending_server') }}</label>
+                                                <label for="sending_server" class="form-label required">{{ __('locale.labels.messaging_provider') }}</label>
                                                 <select class="select2 form-select" name="sending_server">
                                                     @foreach($sendingServers as $server)
                                                         @if(isset($server->sendingServer) && $server->sendingServer->status == 1 && $server->sendingServer->{$campaign->sms_type})
@@ -81,13 +81,13 @@
                                     @can('view_sender_id')
                                         @if(auth()->user()->customer->getOption('sender_id_verification') == 'yes')
                                             <div class="col-12">
-                                                <p class="text-uppercase">{{ __('locale.labels.originator') }}</p>
+                                                <p class="text-uppercase">{{ __('locale.labels.sender_identity') }}</p>
                                             </div>
 
 
                                             <div class="col-md-6 col-12 customized_select2">
                                                 <div class="mb-1">
-                                                    <label for="sender_id" class="form-label">{{ __('locale.labels.sender_id') }}</label>
+                                                    <label for="sender_id" class="form-label">{{ __('locale.labels.sender_identity') }}</label>
                                                     <div class="input-group">
                                                         <div class="input-group-text">
                                                             <div class="form-check">
@@ -114,7 +114,7 @@
                                                 <div class="col-md-6 col-12 customized_select2">
 
                                                     <div class="mb-1">
-                                                        <label for="sender_id" class="form-label">{{ __('locale.labels.sender_id') }}</label>
+                                                        <label for="sender_id" class="form-label">{{ __('locale.labels.sender_identity') }}</label>
                                                         <div class="input-group">
                                                             <div class="input-group-text">
                                                                 <div class="form-check">
@@ -139,7 +139,7 @@
                                             @else
                                                 <div class="col-12">
                                                     <div class="mb-1">
-                                                        <label for="sender_id" class="form-label">{{__('locale.labels.sender_id')}}</label>
+                                                        <label for="sender_id" class="form-label">{{__('locale.labels.sender_identity')}}</label>
                                                         <input type="text" id="sender_id"
                                                                value="{{ $exist_sender_id }}"
                                                                class="form-control @error('sender_id') is-invalid @enderror"

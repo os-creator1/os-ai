@@ -104,7 +104,7 @@
                                             <div class="col-12">
                                                 <div class="mb-1">
                                                     <label for="sender_id"
-                                                           class="form-label required">{{__('locale.labels.sender_id')}}</label>
+                                                           class="form-label required">{{__('locale.labels.sender_identity')}}</label>
                                                     <select class="form-select select2" name="sender_id">
                                                         @foreach($sender_ids as $sender_id)
                                                             <option value="{{$sender_id->id}}"
