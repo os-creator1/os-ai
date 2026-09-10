@@ -1,4 +1,5 @@
 {
+    "name": "os-ai",
     "private": true,
     "scripts": {
         "development": "mix",
