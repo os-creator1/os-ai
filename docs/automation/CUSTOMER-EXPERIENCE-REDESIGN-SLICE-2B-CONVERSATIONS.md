@@ -11,9 +11,10 @@
 | B1 (`agent/b1-outreach-business-scoped`) | **Merged**, PR #200, merge commit `30f43bfc85e3c44c28c5fed6044af1160c17c5b0` |
 | This document's own branch | `agent/customer-experience-redesign-slice-2b-conversations-contract`, created fresh from `origin/main` at the SHA above |
 | Predecessor: Slice 2A navigation | Contract merged (`docs/automation/CUSTOMER-EXPERIENCE-REDESIGN-SLICE-2A-NAVIGATION.md`, PR #237). **Implementation not yet observed on `origin/main`** — §20 depends on it landing first. |
-| Predecessor: Slice 1 terminology | Contract exists on unmerged branch `agent/customer-experience-redesign-slice-1-terminology-contract`. **Implementation not yet observed on `origin/main`.** |
+| Predecessor: Slice 1 terminology | **Contract merged**, PR #240, merge commit `1d4c859afc3a5341e8db332f5dd982be95bcd463`. **Implementation still not yet observed on `origin/main`** — the contract merging is not the same thing as the implementation landing; §17's dependency order is unaffected. |
 | Governance | Route 3 (AGENTS.md, "Explicitly human-authorized manual lanes") — scope comes from this task's own instructions, not from `AI-AUTONOMY-STATE.json`, which remains `gate_label: "ai:paused"` and grants no standing authority. This document does not change any field in that state file. |
-| **Correction 1** (this pass) | `origin/main` normal-merged from `634ff2b0` to `826d2310face763256937235231b4f15139a7850` (PR #239, the Slice 4 Dashboard contract — doc-only, one file, no conflict). Chat A re-inspected at its newest head `8893e9f31ccbe8ab27a8ab90d0fa4cb6b9178a29`. Corrects §4's backfill counterpart rule and adds §5's explicit live-write orientation invariant; every other locked decision (§1-§3, §6-§20) is re-checked and confirmed unchanged. |
+| **Correction 1** (prior pass) | `origin/main` normal-merged from `634ff2b0` to `826d2310face763256937235231b4f15139a7850` (PR #239, the Slice 4 Dashboard contract — doc-only, one file, no conflict). Chat A re-inspected at its newest head `8893e9f31ccbe8ab27a8ab90d0fa4cb6b9178a29`. Corrected §4's backfill counterpart rule and added §5's explicit live-write orientation invariant; every other locked decision (§1-§3, §6-§20) was re-checked and confirmed unchanged. |
+| **Correction 2** (this pass) | Status-sync only, no architecture change. `origin/main` normal-merged from `826d2310` to `1d4c859afc3a5341e8db332f5dd982be95bcd463` (PR #240, the Slice 1 terminology contract — doc-only, one file, no conflict). Updates this row and §17's overlap note to reflect that the Slice 1 terminology **contract** is now merged, while the Slice 1 terminology **implementation** — the actual code change to `resources/views/customer/ChatBox/new.blade.php` and the rest of that contract's allowlist — still has not landed on `origin/main`. Every decision from Correction 1 (§1-§20, including §3's tenancy column, §4's backfill algorithm, §5's live-write orientation invariant, §10's Contact display rule, §11's block rule, §21's test matrix) is unchanged. |
 
 ---
 
@@ -451,15 +452,19 @@ gated additionally on `$menuEntitlements->allows('conversations')` per 2A's own 
 ```
 1. Chat A / Customer Experience Slice 3 (messaging-provider-implementation) — final merge
 2. Slice 1 terminology — IMPLEMENTATION complete
-     (concrete, mechanically-confirmed overlap: the Slice-1-terminology
-     contract, read directly from its own unmerged branch in this pass,
-     authorizes two label changes inside
+     (the Slice-1-terminology contract is now merged as PR #240; during
+     the earlier audit that produced this dependency, it had been
+     inspected directly on its own branch, before that merge. The
+     mechanically-confirmed overlap this dependency rests on is
+     unchanged either way: it authorizes two label changes inside
      resources/views/customer/ChatBox/new.blade.php — "sending_server"→
      "messaging_provider" at its line 44, "originator"→"sender_identity"
      at its line 65. Slice 2B's own controller/view rewrite touches this
-     same file. Landing Slice 2B before Slice 1's terminology pass would
-     either overwrite that pending relabel or force Slice 2B to
-     re-implement it ad hoc — land strictly after.)
+     same file. The contract merging does not mean this relabel has been
+     implemented — it has not yet landed on origin/main. Landing Slice
+     2B before Slice 1's terminology IMPLEMENTATION would either
+     overwrite that pending relabel or force Slice 2B to re-implement it
+     ad hoc — land strictly after.)
 3. Slice 2A navigation — IMPLEMENTATION complete (§16)
         │
         ▼
