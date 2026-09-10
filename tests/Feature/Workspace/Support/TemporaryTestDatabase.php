@@ -50,14 +50,6 @@ class TemporaryTestDatabase
 
     private const ENFORCEMENT_NAME_PATTERN = '/^(?<base>.+)_enforcement_[0-9]+_[0-9a-f]{8}$/';
 
-    /**
-     * MySQL's own identifier limit (matches TestDatabaseSafety's own
-     * documented rationale) — checked explicitly before CREATE DATABASE so
-     * a long validated base plus this class's own purpose/pid/hex suffix
-     * fails with a clear message rather than an opaque driver error.
-     */
-    private const MYSQL_IDENTIFIER_MAX_LENGTH = 64;
-
     public static function isValidHistoricalName(string $name): bool
     {
         return self::isValidGeneratedName($name, self::HISTORICAL_NAME_PATTERN);
@@ -71,9 +63,28 @@ class TemporaryTestDatabase
     /**
      * A generated name is valid only when it matches the purpose-specific
      * suffix shape AND its own captured base portion is itself a name
-     * TestDatabaseSafety independently approves — so a caller can never
-     * satisfy this check by prefixing an unsafe/production-looking string
-     * with "_historical_<pid>_<hex>".
+     * TestDatabaseSafety independently approves AND the *complete* name is
+     * itself independently approved by TestDatabaseSafety.
+     *
+     * The third check is not redundant with the second. A base can pass
+     * TestDatabaseSafety entirely on its own — safe characters, no
+     * forbidden segment, within the length limit — and still, once this
+     * class's own `_historical_<pid>_<hex>` / `_enforcement_<pid>_<hex>`
+     * suffix is appended, produce a complete name that exceeds MySQL's
+     * 64-character identifier limit. Checking only the base let such a
+     * name through as "valid" even though TestDatabaseSafety itself would
+     * refuse the exact string this class was about to create, migrate or
+     * drop — and `concurrent_backfill_runner.php` trusts
+     * isValidHistoricalName() as an authorization path over an
+     * externally-supplied EXPECTED_TEST_DATABASE value, so that gap was a
+     * real bypass of the repository's single database-name authority, not
+     * merely a theoretical one.
+     *
+     * No competing policy is introduced by this: both calls below go
+     * through TestDatabaseSafety::isSafeTestDatabaseName() — the same,
+     * single, unmodified authority every other caller in this repository
+     * uses. This class still owns nothing but the purpose-specific suffix
+     * shape (the `preg_match()` below).
      */
     private static function isValidGeneratedName(string $name, string $namePattern): bool
     {
@@ -81,7 +92,11 @@ class TemporaryTestDatabase
             return false;
         }
 
-        return TestDatabaseSafety::isSafeTestDatabaseName($matches['base']);
+        if (! TestDatabaseSafety::isSafeTestDatabaseName($matches['base'])) {
+            return false;
+        }
+
+        return TestDatabaseSafety::isSafeTestDatabaseName($name);
     }
 
     /**
@@ -150,17 +165,29 @@ class TemporaryTestDatabase
     {
         $name = sprintf('%s_%s_%d_%s', $baseDatabase, $purpose, getmypid(), bin2hex(random_bytes(4)));
 
-        if (strlen($name) > self::MYSQL_IDENTIFIER_MAX_LENGTH) {
-            throw new RuntimeException(
-                "Refusing to create a temporary database: generated name [{$name}] would exceed MySQL's "
-                . self::MYSQL_IDENTIFIER_MAX_LENGTH . '-character identifier limit.'
-            );
-        }
-
         if (! self::isValidGeneratedName($name, $namePattern)) {
-            // Unreachable given an already-validated $baseDatabase and the
-            // sprintf format above — defense in depth so a future edit can
-            // never silently produce an unvalidated name.
+            // $baseDatabase was already proven safe by withGeneratedDatabase()
+            // before this method was ever called, so reaching here means the
+            // combination of that base with this class's own purpose/pid/hex
+            // suffix is what TestDatabaseSafety refuses — almost always
+            // because the *combined* length exceeds MySQL's identifier
+            // limit (a short, safe base can still overflow once suffixed;
+            // see isValidGeneratedName()'s own docblock). Delegate to
+            // TestDatabaseSafety::assertSafeTestDatabaseName() purely for
+            // its descriptive reason string — the authorization decision
+            // itself was already made by isValidGeneratedName() above, the
+            // exact same check every other caller in this class goes
+            // through, so no second, competing length/safety policy is
+            // introduced here.
+            TestDatabaseSafety::assertSafeTestDatabaseName($name);
+
+            // Unreachable: assertSafeTestDatabaseName() always throws when
+            // isValidGeneratedName() returned false, because the only way
+            // isValidGeneratedName() can fail past the shape check is a
+            // TestDatabaseSafety refusal on the base or the complete name,
+            // and assertSafeTestDatabaseName() re-derives the same
+            // rejection. Defense in depth so a future edit can never
+            // silently return an unvalidated name.
             throw new RuntimeException("Generated temporary database name failed its own validation: {$name}");
         }
 
