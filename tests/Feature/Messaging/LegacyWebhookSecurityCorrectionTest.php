@@ -2,13 +2,16 @@
 
 namespace Tests\Feature\Messaging;
 
+use App\Enums\Messaging\MessagingOperationStatus;
 use App\Enums\Messaging\WebhookRejectionReason;
 use App\Http\Controllers\Customer\DLRController;
 use App\Models\MessagingWebhookRejection;
 use App\Models\Reports;
 use App\Models\SendingServer;
 use App\Models\User;
+use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Tests\Feature\Messaging\Concerns\CreatesMessagingFixtures;
 use Tests\TestCase;
@@ -642,5 +645,255 @@ class LegacyWebhookSecurityCorrectionTest extends TestCase
                 ->exists(),
             'A correctly signed Twilio request must still pass.',
         );
+    }
+
+    // =================================================================
+    // Security Correction 38 — managed operation ↔ Report Business integrity
+    //
+    // The managed strategy joins EXACTLY: (provider, provider_message_id)
+    // → report_id. Finding that row is not the same as being allowed to act
+    // on it. The operation and the Report it points at must belong to the
+    // SAME Business, and both must actually have one.
+    //
+    // Correction 37's guard rejected only a MISMATCH between two non-null
+    // values, so `operation.business_id = A` pointing at a Report carrying
+    // no business_id passed. These are the regressions for that.
+    //
+    // Every Report below carries the MANAGED shape that
+    // ManagedDispatchDelegate::recordLegacyReport() writes — a plain status,
+    // never the legacy `"{status}|{id}"` packing, and a NULL
+    // sending_server_id — so the legacy fallback cannot resolve it and mask
+    // a managed failure. A null result here therefore means the managed
+    // strategy REFUSED, not that some other path happened to miss.
+    // =================================================================
+
+    private function telnyxServer(): SendingServer
+    {
+        return SendingServer::create([
+            'name' => 'Legacy Telnyx',
+            'settings' => SendingServer::TYPE_TELNYX,
+            'status' => true,
+            'plain' => true,
+        ]);
+    }
+
+    /**
+     * @return array{0: int, 1: User} the Business id and the User who owns it
+     */
+    private function businessWithOwner(): array
+    {
+        $business = $this->makeBusiness();
+
+        return [(int) $business->id, User::findOrFail($business->customer->user_id)];
+    }
+
+    /**
+     * A Report in the managed shape: a Business, no packed status, and no
+     * legacy sending server.
+     */
+    private function managedReport(?int $businessId, int $userId, int $cost = 6): Reports
+    {
+        return Reports::create([
+            'user_id' => $userId,
+            'business_id' => $businessId,
+            'to' => '14155551234',
+            'message' => 'managed',
+            'sms_type' => 'plain',
+            'status' => 'Sent',
+            'customer_status' => 'Sent',
+            'direction' => Reports::DIRECTION_OUTGOING,
+            'cost' => $cost,
+            'sms_count' => 1,
+            'sending_server_id' => null,
+        ]);
+    }
+
+    private function managedOperation(
+        ?int $businessId,
+        string $providerMessageId,
+        ?int $reportId,
+        string $provider = 'telnyx',
+    ): void {
+        DB::table('business_messaging_operations')->insert([
+            'business_id' => $businessId,
+            'transport_mode' => 'managed',
+            'provider' => $provider,
+            'direction' => 'outbound',
+            'message_type' => 'sms',
+            'operation_key' => uniqid('op_', true),
+            'provider_message_id' => $providerMessageId,
+            'report_id' => $reportId,
+            'status' => MessagingOperationStatus::Accepted->value,
+            'occurred_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
+    /** A. The legitimate case still works, end to end. */
+    public function test_a_managed_callback_resolves_and_transitions_when_both_businesses_agree(): void
+    {
+        [$businessId, $owner] = $this->businessWithOwner();
+        $owner->sms_unit = 100;
+        $owner->save();
+
+        $report = $this->managedReport($businessId, (int) $owner->id, cost: 6);
+        $this->managedOperation($businessId, 'PM_AGREE_001', (int) $report->id);
+
+        $server = $this->telnyxServer();
+
+        // The seam resolves it…
+        $this->assertSame((int) $report->id, (int) $this->resolve('PM_AGREE_001', $server)?->id);
+
+        // …and the real delivery callback still does its whole job.
+        DLRController::updateDLR('PM_AGREE_001', 'Failed', $server);
+
+        $this->assertSame('Failed', $report->fresh()->customer_status);
+        $this->assertSame(106, (int) $owner->fresh()->sms_unit, 'A genuine failure still credits its cost.');
+    }
+
+    /** B. A foreign Business must never be reachable. */
+    public function test_a_managed_operation_cannot_reach_another_businesss_report(): void
+    {
+        [$businessA] = $this->businessWithOwner();
+        [$businessB, $ownerB] = $this->businessWithOwner();
+
+        $ownerB->sms_unit = 100;
+        $ownerB->save();
+
+        // The Report belongs to B; the operation claims A.
+        $report = $this->managedReport($businessB, (int) $ownerB->id, cost: 6);
+        $this->managedOperation($businessA, 'PM_FOREIGN_001', (int) $report->id);
+
+        $server = $this->telnyxServer();
+
+        $this->assertNull($this->resolve('PM_FOREIGN_001', $server), 'A foreign Business must never resolve.');
+
+        DLRController::updateDLR('PM_FOREIGN_001', 'Failed', $server);
+
+        $fresh = $report->fresh();
+        $this->assertSame('Sent', $fresh->status, 'No mutation.');
+        $this->assertSame('Sent', $fresh->customer_status, 'No transition.');
+        $this->assertSame(100, (int) $ownerB->fresh()->sms_unit, 'No credit.');
+    }
+
+    /**
+     * C. The regression Correction 37 was missing.
+     *
+     * operation.business_id = A, report.business_id = NULL. The old guard
+     * required BOTH to be non-null before it would reject, so this passed.
+     */
+    public function test_a_managed_operation_cannot_reach_a_report_with_no_business(): void
+    {
+        [$businessId, $owner] = $this->businessWithOwner();
+        $owner->sms_unit = 100;
+        $owner->save();
+
+        $report = $this->managedReport(null, (int) $owner->id, cost: 6);
+        $this->managedOperation($businessId, 'PM_NULLBIZ_001', (int) $report->id);
+
+        $server = $this->telnyxServer();
+
+        $this->assertNull(
+            $this->resolve('PM_NULLBIZ_001', $server),
+            'A Report with no Business is an integrity failure, not a legacy-compatible state.',
+        );
+
+        DLRController::updateDLR('PM_NULLBIZ_001', 'Failed', $server);
+
+        $fresh = $report->fresh();
+        $this->assertSame('Sent', $fresh->status, 'No mutation.');
+        $this->assertSame('Sent', $fresh->customer_status, 'No transition.');
+        $this->assertSame(100, (int) $owner->fresh()->sms_unit, 'No credit.');
+    }
+
+    /**
+     * D. A managed operation with no Business is refused by the SCHEMA.
+     *
+     * The non-null column is the real guarantee. It is asserted directly
+     * from information_schema so the proof does not depend on the session's
+     * SQL mode, and the schema is never weakened to manufacture the state.
+     */
+    public function test_the_schema_itself_refuses_a_managed_operation_with_no_business(): void
+    {
+        $column = DB::selectOne(
+            'select IS_NULLABLE as is_nullable from information_schema.columns
+             where table_schema = database() and table_name = ? and column_name = ?',
+            ['business_messaging_operations', 'business_id'],
+        );
+
+        $this->assertNotNull($column, 'business_messaging_operations.business_id must exist.');
+        $this->assertSame('NO', $column->is_nullable, 'Every managed operation is Business-owned.');
+
+        [$businessId, $owner] = $this->businessWithOwner();
+        $report = $this->managedReport($businessId, (int) $owner->id);
+
+        $this->expectException(QueryException::class);
+
+        $this->managedOperation(null, 'PM_NULLOP_001', (int) $report->id);
+    }
+
+    /**
+     * D (defence in depth). The runtime guard does not lean on that column.
+     *
+     * This drives the guard directly rather than storing a row the database
+     * refuses — no fake persisted state is invented for coverage.
+     */
+    public function test_the_runtime_guard_also_refuses_an_operation_carrying_no_business(): void
+    {
+        [$businessId, $owner] = $this->businessWithOwner();
+        $report = $this->managedReport($businessId, (int) $owner->id);
+
+        $method = new \ReflectionMethod(DLRController::class, 'integrityCheckedManagedReport');
+        $method->setAccessible(true);
+
+        $this->assertNull($method->invoke(null, (object) [
+            'report_id' => (int) $report->id,
+            'business_id' => null,
+        ]));
+    }
+
+    /** E. Without an authoritative connection the managed strategy is skipped. */
+    public function test_a_managed_report_is_unreachable_without_an_authoritative_connection(): void
+    {
+        [$businessId, $owner] = $this->businessWithOwner();
+        $owner->sms_unit = 100;
+        $owner->save();
+
+        $report = $this->managedReport($businessId, (int) $owner->id, cost: 6);
+        $this->managedOperation($businessId, 'PM_UNSCOPED_001', (int) $report->id);
+
+        // No SendingServer means no provider to scope by, so the managed
+        // strategy is skipped entirely rather than guessed at.
+        $this->assertNull($this->resolve('PM_UNSCOPED_001'));
+
+        DLRController::updateDLR('PM_UNSCOPED_001', 'Failed');
+
+        $this->assertSame('Sent', $report->fresh()->customer_status, 'No transition.');
+        $this->assertSame(100, (int) $owner->fresh()->sms_unit, 'No credit.');
+    }
+
+    /**
+     * F. The composite index in practice, at the resolution seam.
+     *
+     * MessagingSchemaInvariantsTest proves the INDEX permits one id under
+     * two providers. This proves the resolver keeps those two apart.
+     */
+    public function test_one_provider_message_id_under_two_providers_stays_isolated(): void
+    {
+        [$businessA, $ownerA] = $this->businessWithOwner();
+        [$businessB, $ownerB] = $this->businessWithOwner();
+
+        $reportA = $this->managedReport($businessA, (int) $ownerA->id);
+        $reportB = $this->managedReport($businessB, (int) $ownerB->id);
+
+        $this->managedOperation($businessA, 'PM_COLLIDE', (int) $reportA->id, 'telnyx');
+        $this->managedOperation($businessB, 'PM_COLLIDE', (int) $reportB->id, 'twilio');
+
+        $telnyx = $this->telnyxServer();
+        $twilio = $this->twilioServer();
+
+        $this->assertSame((int) $reportA->id, (int) $this->resolve('PM_COLLIDE', $telnyx)?->id);
+        $this->assertSame((int) $reportB->id, (int) $this->resolve('PM_COLLIDE', $twilio)?->id);
     }
 }

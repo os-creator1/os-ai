@@ -436,7 +436,10 @@ billing-credit primitive.
 *Resolution strategy, exactly:* one shared seam,
 `resolveReportForProviderMessage()`, strongest first — (1) the managed
 `business_messaging_operations` provider-message → `report_id` correlation
-(globally unique index, durable foreign key, exact join, no string matching);
+(composite `UNIQUE(provider, provider_message_id)` index — a provider message
+id ALONE is not globally unique, so this strategy runs only for a caller that
+supplied authoritative provider context and is skipped entirely otherwise —
+plus a durable foreign key, an exact join, and no string matching);
 (2) failing that, the legacy packed `status` column under four constraints
 together: the id is escaped so `%` and `_` are literal, the pattern anchors
 it to the END of the packed value (`%|<id>`), the candidate set is scoped to

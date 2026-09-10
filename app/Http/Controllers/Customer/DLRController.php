@@ -150,9 +150,17 @@
          *
          * 1. The managed correlation this branch introduced:
          *    `business_messaging_operations` carries the provider message id
-         *    under a GLOBAL unique index and a durable `report_id` foreign
-         *    key. That is an exact, unambiguous join and needs no string
-         *    matching at all.
+         *    beside a durable `report_id` foreign key.
+         *
+         *    Its uniqueness is COMPOSITE — `UNIQUE(provider,
+         *    provider_message_id)`. A provider message id ALONE is NOT
+         *    globally unique: two different providers may legitimately issue
+         *    the same id, and nothing in this schema prevents that.
+         *
+         *    Authoritative provider context is therefore REQUIRED for a
+         *    managed lookup. Given it, the join is exact and unambiguous and
+         *    needs no string matching at all; without it this strategy is
+         *    skipped entirely rather than guessed at.
          *
          * 2. Failing that, the legacy packed `status` column, which stores
          *    `"{status}|{provider_message_id}"`. This is the only correlation
@@ -285,11 +293,34 @@
                 return null;
             }
 
-            // The operation carries a Business; the Report must be the same
-            // Business's. A Report with no business_id is legacy data that
-            // predates Business tenancy and is not contradicted by this.
-            if ($operation->business_id !== null && $report->business_id !== null
-                && (int) $report->business_id !== (int) $operation->business_id) {
+            // Both Businesses must be PRESENT and EQUAL.
+            //
+            // The earlier form rejected only a mismatch between two non-null
+            // values, so a managed operation owned by Business A pointing at
+            // a Report carrying no business_id passed — the exact fail-open
+            // this guard exists to prevent.
+            //
+            // NULL is not a legacy-compatibility state inside the MANAGED
+            // strategy. Every managed operation is Business-owned:
+            // `business_messaging_operations.business_id` is NOT NULL behind
+            // a restricting foreign key, and the sole writer of `report_id`
+            // (ManagedDispatchDelegate::recordLegacyReport) sets it on a row
+            // it matched BY business_id, having just created that Report
+            // with the same Campaign's business_id. A linked managed
+            // operation whose Report has no Business therefore cannot arise
+            // from the legitimate seam: it is an integrity failure, and a
+            // delivery callback is the last place that should repair or
+            // infer tenancy.
+            //
+            // Genuinely legacy, pre-Business Reports keep their support in
+            // the separate packed-status correlation, which is where legacy
+            // compatibility belongs.
+            $operationBusinessId = $operation->business_id ?? null;
+            $reportBusinessId = $report->business_id;
+
+            if ($operationBusinessId === null
+                || $reportBusinessId === null
+                || (int) $reportBusinessId !== (int) $operationBusinessId) {
                 return null;
             }
 
