@@ -81,6 +81,9 @@
             $schedule->command('campaign:scheduled')->everyMinute();
             $schedule->command('sms:schedule-api-message')->everyMinute();
             $schedule->command('subscription:check')->hourly();
+            // Customer Experience Slice 3 §4.2 — retention/disposal for the
+            // bounded webhook rejection audit.
+            $schedule->command('messaging:purge-webhook-rejections')->daily();
             //   $schedule->command('imartgroup:dlr')->hourly();
             $schedule->command('dashboard:warm')->hourly();
             $schedule->command('keywords:check')->daily();

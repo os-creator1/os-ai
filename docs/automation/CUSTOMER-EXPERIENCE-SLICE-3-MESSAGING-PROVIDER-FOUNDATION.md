@@ -1856,14 +1856,41 @@ outside its own owning layer.
 * **Never** calls `setActiveRate()` or `activateMetering()`.
 * **Never** inserts into `business_usage_rates`, `business_usage_rate_activations`,
   `business_usage_reservations`, or any ledger-entry table.
-* **Never** reads or writes `platform_feature_usage_classifications` — no
-  classification row is created for `PlatformFeature::MessagingTransport`
-  in Slice 3. A future slice that activates a retail rate for this feature
-  is the one that inserts a classification row and decides how
+* **Never** reads or writes `platform_feature_usage_classifications` from
+  Slice 3's own code. A future slice that activates a retail rate for this
+  feature is the one that inserts a rate and an activation and decides how
   already-recorded `business_usage_measurements` rows feed any
   reconciliation/backfill billing process — Slice 3 makes no promise about
   that mechanism, only that this table's generic shape (`feature_key`,
   `quantity`, `unit`) does not block one being built later.
+
+  **Correction — Implementation Round 1.** An earlier revision of this
+  bullet, and of T-MSG-36 in §4.12, required that
+  `platform_feature_usage_classifications` carry **no row at all** for
+  `PlatformFeature::MessagingTransport`. That requirement is not reachable,
+  and asserting it would have meant either editing merged migration history
+  or failing the suite for a reason unrelated to Slice 3's guarantees.
+
+  The already-merged migration
+  `2026_08_16_120008_backfill_platform_feature_usage_classifications`
+  inserts one classification row for **every** `PlatformFeature` case and
+  **throws** `PlatformFeatureUsageClassificationBackfillIncompleteException`
+  if any case lacks one. Adding the contracted
+  `PlatformFeature::MessagingTransport` case therefore necessarily creates
+  that row on any fresh `migrate`, and merged migrations may not be edited.
+  One row per feature is that architecture's deliberate invariant, not an
+  accident.
+
+  **The corrected invariant, which is the one that actually protects the
+  guarantee:** the classification row exists, and is **inactive, unmetered
+  and unpriced** — `is_metered = 0` and `active_rate_id = NULL` — with zero
+  rows in `business_usage_rates` and zero in
+  `business_usage_rate_activations` for the feature. That is byte-identical
+  to how every other unpriced feature (`conversations` among them) sits in
+  this table, and it is what "no retail charging" means mechanically. The
+  absence of a row was only ever a proxy for it, and a worse one: a row
+  present but unmetered is directly assertable, whereas an absent row proves
+  nothing about whether a rate was activated elsewhere.
 
 **Responsibility separation, stated exactly (corrected this round):**
 
@@ -1897,10 +1924,11 @@ in a new, ad hoc, easily-missed note.
 
 **Tests demonstrate measurement while no retail rate is active** by
 asserting directly against `business_usage_measurements` row counts/fields,
-and by asserting `platform_feature_usage_classifications` carries no row at
-all for `PlatformFeature::MessagingTransport` throughout the test run —
-proving the RFC-005 rate/reservation machinery was never touched, not merely
-unasserted-on.
+and — per the Implementation Round 1 correction above — by asserting that
+`PlatformFeature::MessagingTransport`'s classification row is inactive and
+unmetered (`is_metered = 0`, `active_rate_id = NULL`) with zero rate and
+zero activation rows throughout the test run, proving the RFC-005
+rate/reservation machinery was never touched, not merely unasserted-on.
 
 ## 4.9 CONCURRENCY, IDEMPOTENCY AND TRANSACTION BOUNDARIES
 
@@ -2015,7 +2043,28 @@ unasserted-on.
 `app/Models/BusinessMessagingNumber.php` (new, corrected this round);
 `app/Models/BusinessUsageMeasurement.php` (new, corrected this round —
 RFC-005-owned model); `app/Models/MessagingWebhookRejection.php` (new,
-corrected this round); `app/Repositories/Contracts/BusinessUsageMeasurementRepository.php`
+corrected this round);
+
+**`business_messaging_operations` — Query-Builder access, no model
+(corrected, Security Correction 36).** This allowlist named models for the
+identity, number, measurement and rejection tables and none for the
+operations table, while §4.5/§4.6 name `ManagedMessageDispatcher` and
+`InboundWebhookAttributionResolver` as its only writers. That was an
+omission in the prose, not an instruction to add a fifth model.
+
+The authorized access path is stated here so the branch and the contract stop
+telling different stories: **`business_messaging_operations` is reached
+through the query builder, from inside those two contract-named classes and
+`DLRController`'s shared delivery-callback resolution seam, and no Eloquent
+model exists for it.** That is deliberate. The table is operational
+transport state with no domain behaviour, no relationships a caller needs to
+traverse, and exactly two writers; a model would add an attribute surface
+that §4.11's own credential-minimization rules would then have to police for
+no benefit. A model is NOT to be invented merely to satisfy the shape of a
+sentence. `ManagedMessageDispatcher::TABLE` is the single place the table
+name is written.
+
+`app/Repositories/Contracts/BusinessUsageMeasurementRepository.php`
 (new, corrected Round 2 — RFC-005-owned repository contract);
 `app/Repositories/Eloquent/EloquentBusinessUsageMeasurementRepository.php`
 (new, corrected Round 2 — the sole writer of `business_usage_measurements`);
@@ -2168,7 +2217,7 @@ Slice 3, none reused as a new ID below.
 | T-MSG-33 | `Http::preventStrayRequests()` is active for the base test class; a deliberately unmatched HTTP call anywhere in a sample test fails immediately | `tests/Feature/Messaging/` |
 | T-MSG-34 | A managed send writes exactly one `business_messaging_operations` row and exactly one `business_usage_measurements` row (via `recordMeasurement()`), with no row in either table serving the other's purpose | `tests/Feature/Messaging/` |
 | T-MSG-35 | A BYO send (through the relocated advanced-settings path) writes exactly one `business_usage_measurements` row with `transport_marker = byo` and creates no wallet reservation/debit | `tests/Feature/Business/` |
-| T-MSG-36 | Throughout the full Slice 3 suite run, `platform_feature_usage_classifications` carries no row at all for `PlatformFeature::MessagingTransport`, and no telecom feature's `is_metered` becomes `true` | `tests/Feature/Usage/` |
+| T-MSG-36 | **Corrected, Implementation Round 1 (§4.8).** Throughout the full Slice 3 suite run, `PlatformFeature::MessagingTransport`'s `platform_feature_usage_classifications` row is inactive and unpriced — `is_metered = 0` and `active_rate_id = NULL`, with zero `business_usage_rates` and zero `business_usage_rate_activations` rows for the feature — and no telecom feature's `is_metered` becomes `true`. The prior wording required **no row at all**, which the merged `2026_08_16_120008` backfill migration makes unreachable: it inserts one row per `PlatformFeature` case and throws if any case lacks one. Merged migrations are not edited; the corrected invariant is strictly the stronger assertion, since an absent row proves nothing about whether a rate was activated elsewhere | `tests/Feature/Usage/` |
 | T-MSG-37 | **Rejection records obey retention/minimization** — a `messaging_webhook_rejections` row never contains a raw message body or any credential; a repeated identical rejection increments `occurrence_count` rather than inserting a new row; the purge command removes rows past the configured retention window and leaves newer ones | `tests/Feature/Messaging/` |
 | T-MSG-38 | `tests/Feature/Usage/ConversationsPlainSmsMeteringTest.php` and `tests/Feature/AgencyProspecting/AgencyProspectingRuntimeTest.php` pass unmodified after every change in this correction | `tests/Feature/Usage/`, `tests/Feature/AgencyProspecting/` (regression) |
 | T-MSG-39 | **Two simultaneous first-identity creations for the same Business cannot both succeed.** Two sequential raw inserts of a `pending` `business_messaging_identities` row for the same Business (mirroring `ProviderCustomerOwnershipTest::test_unique_provider_and_active_business_id_rejects_a_second_active_row` exactly) prove MySQL's own unique-index conflict detection rejects the second, regardless of statement ordering — the database is the mechanism, not application code (§2 item 20, §4.2) | `tests/Feature/Messaging/` |

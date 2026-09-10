@@ -972,7 +972,35 @@
             Route::put('/locations/{locationUid}/hours', 'Business\BusinessKnowledgeProfileController@updateHours')->name('locations.hours');
         });
 
-        Route::prefix('{workspaceUid}/businesses/{businessUid}/channels')->name('businesses.channels.')->group(function () {
+        /*
+        |----------------------------------------------------------------
+        | Advanced (BYO) provider settings — relocated by Customer
+        | Experience Slice 3 §4.7
+        |----------------------------------------------------------------
+        |
+        | This block previously lived at
+        | `{workspaceUid}/businesses/{businessUid}/channels`. Slice 3
+        | relocates the surface under the Business's `settings/advanced`
+        | namespace and REMOVES the old path — a genuine rename, not a
+        | second, permanently duplicated entry point, so a request to
+        | `.../channels` now falls through to Laravel's ordinary 404 for
+        | an undefined route. No redirect is added; the old path was only
+        | ever reachable by an actor who finds the new one from the same
+        | menu entry.
+        |
+        | The route NAMES are deliberately unchanged. They are internal
+        | identifiers, not the surface, and two files outside Slice 3's
+        | allowlist bind to them by name — CustomerMenuBuilder.php:132,222
+        | (the menu entry and its active-state prefix match) and
+        | ViewAsProhibitedActions.php:71 (the View-As prohibition prefix).
+        | Renaming them would force this slice to edit files it is not
+        | authorized to touch, for no gain: §4.7 requires that the old
+        | PATH stop resolving, which changing the prefix below achieves on
+        | its own. Both files keep pointing at this surface, and the
+        | View-As prohibition keeps covering it, with no edit.
+        |
+        */
+        Route::prefix('{workspaceUid}/businesses/{businessUid}/settings/advanced')->name('businesses.channels.')->group(function () {
             Route::get('/', 'Business\MessagingChannelsController@channels')->name('index');
             Route::get('/connect/{provider}', 'Business\MessagingChannelsController@connect')->name('connect');
             Route::post('/connect/{provider}', 'Business\MessagingChannelsController@storeConnect');

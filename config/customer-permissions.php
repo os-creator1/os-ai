@@ -51,6 +51,25 @@
             'category'     => 'Google Business Profile',
             'default'      => false,
         ],
+        /*
+         * Customer Experience Slice 3 §4.7 — advanced / BYO provider settings.
+         *
+         * Conservative default of false, following the
+         * manage_google_business_profile precedent above, and registered as a
+         * Gate automatically by AuthServiceProvider's existing generic loop.
+         *
+         * This permission is necessary but never sufficient: the relocated
+         * advanced-settings surface additionally requires authoritative
+         * Workspace OWNERSHIP (WorkspaceCandidate::$isOwner), not
+         * canManage(), not plan tier, and not admin membership. Holding the
+         * permission alone never grants access, and ownership alone never
+         * grants access without it.
+         */
+        'manage_advanced_provider' => [
+            'display_name' => 'manage_advanced_provider',
+            'category'     => 'Messaging',
+            'default'      => false,
+        ],
         //contacts module
         'view_contact_group'        => [
             'display_name' => 'read_contact_group',

@@ -27,4 +27,31 @@ enum PlatformFeature: string
     case WhiteLabel = 'white_label';
     case AgencyPackageCapabilities = 'agency_package_capabilities';
     case ProspectOutreach = 'prospect_outreach';
+
+    /**
+     * Customer Experience Slice 3 §4.8 — additive, measurement-only.
+     *
+     * Messaging transport is measured (quantity and unit) without any retail
+     * rate: Slice 3 activates no rate and takes no wallet reservation for
+     * telecom transport.
+     *
+     * CORRECTED — Implementation Round 1. An earlier revision of this
+     * docblock claimed Slice 3 "creates no
+     * platform_feature_usage_classifications row for this case". That was
+     * never achievable and is no longer what the contract asks for. The
+     * merged migration
+     * `2026_08_16_120008_backfill_platform_feature_usage_classifications`
+     * inserts one row per PlatformFeature case and THROWS if any case lacks
+     * one, so adding this case necessarily creates the row on any fresh
+     * migrate, and merged migrations are not edited.
+     *
+     * The row therefore EXISTS, and is inactive, unmetered and unpriced —
+     * `is_metered = 0`, `active_rate_id = NULL`, with zero rate and zero
+     * activation rows. That is the invariant §4.8 and T-MSG-36 now state,
+     * and it is strictly stronger than an absent row, which would prove
+     * nothing about whether a rate was activated elsewhere. A later slice
+     * that decides to price this feature is the one that changes those
+     * fields.
+     */
+    case MessagingTransport = 'messaging_transport';
 }

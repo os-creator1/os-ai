@@ -2,9 +2,17 @@
 
     namespace App\Http\Controllers\Customer;
 
+    use App\Enums\Messaging\MessagingProvider;
+    use App\Enums\Messaging\WebhookRejectionReason;
     use App\Events\MessageReceived;
     use App\Http\Controllers\Controller;
     use App\Library\Business\LegacyBusinessResolver;
+    use App\Library\Messaging\InboundWebhookAttributionResolver;
+    use App\Library\Messaging\ManagedMessageDispatcher;
+    use App\Library\Messaging\MessagingWebhookRejectionRecorder;
+    use App\Library\Messaging\TransportProviderIdentifier;
+    use Illuminate\Support\Str;
+    use App\Models\CustomerBasedSendingServer;
     use App\Library\SMSCounter;
     use App\Library\SpinText;
     use App\Models\Blacklists;
@@ -41,8 +49,34 @@
         /**
          * update dlr
          */
-        public static function updateDLR($message_id, $status): JsonResponse
+        /**
+         * @param mixed $sendingServer the authoritative connection this
+         *        callback arrived on, when the caller knows it.
+         *
+         * DELIBERATELY UNTYPED, and this is a correction of my own mistake.
+         *
+         * Security Correction 36 declared this parameter `?SendingServer`.
+         * That looked harmless because it was optional — but roughly fifteen
+         * legacy handlers in this file, and one console command, have always
+         * passed extra positional arguments here (a phone number, a sender
+         * id) which the historic two-parameter method silently ignored, as
+         * PHP allows. A typed parameter turned every one of those dead
+         * arguments into a fatal TypeError, so the correction that hardened
+         * this method would have crashed a dozen live delivery-callback
+         * routes.
+         *
+         * Accepting `mixed` and narrowing at runtime restores exactly the
+         * historic behaviour — anything that is not a SendingServer is
+         * ignored, as it always was — while still letting a caller that
+         * genuinely knows its connection pass one. A caller's phone number
+         * can never be mistaken for connection identity, because only an
+         * actual SendingServer instance is honoured.
+         */
+        public static function updateDLR($message_id, $status, $sendingServer = null): JsonResponse
         {
+            // Narrowed here, once, rather than trusted from the call site.
+            $sendingServer = $sendingServer instanceof SendingServer ? $sendingServer : null;
+
 
             $status = ucfirst(strtolower($status));
 
@@ -73,25 +107,32 @@
             };
 
 
-            $get_data = Reports::whereLike(['status'], $message_id)->first();
+            // Customer Experience Slice 3 — Security Correction 36, P0.
+            //
+            // What was here: `Reports::whereLike(['status'], $message_id)
+            // ->first()`. On an UNAUTHENTICATED delivery-callback route that
+            // was a platform-wide wildcard search over every tenant's
+            // reports, where `%` and `_` in the attacker's own message id
+            // were live LIKE metacharacters and `->first()` picked a victim
+            // by insertion order. Combined with the unconditional
+            // sms_unit credit below it, it was a repeatable
+            // billing-credit primitive: send the same failed callback N
+            // times, get N refunds.
+            $get_data = self::resolveReportForProviderMessage($message_id, $sendingServer);
 
             if ( ! $get_data) {
+                // Zero matches, several matches, or an unresolvable id — all
+                // fail closed, with no mutation and no refund.
                 return response()->json([
                     'status'  => 'error',
                     'message' => 'Message not found',
                 ]);
             }
 
-            $get_data->update(['status' => $status . '|' . $message_id, 'customer_status' => $customer_status]);
+            $applied = self::applyDeliveryTransition($get_data, $status, $customer_status, $message_id);
 
-            if ($get_data->campaign_id) {
-                Campaigns::find($get_data->campaign_id)->updateCache();
-            }
-
-            if ($status !== 'Delivered') {
-                $get_data->user->update([
-                    'sms_unit' => $get_data->user->sms_unit + $get_data->cost,
-                ]);
+            if ($applied['campaign_id']) {
+                Campaigns::find($applied['campaign_id'])?->updateCache();
             }
 
             return response()->json([
@@ -99,6 +140,313 @@
                 'message' => $status . ' | ' . $message_id,
             ]);
 
+        }
+
+        /**
+         * The single authoritative resolution seam for a provider delivery
+         * callback, shared by every legacy DLR path.
+         *
+         * TWO STRATEGIES, STRONGEST FIRST.
+         *
+         * 1. The managed correlation this branch introduced:
+         *    `business_messaging_operations` carries the provider message id
+         *    beside a durable `report_id` foreign key.
+         *
+         *    Its uniqueness is COMPOSITE — `UNIQUE(provider,
+         *    provider_message_id)`. A provider message id ALONE is NOT
+         *    globally unique: two different providers may legitimately issue
+         *    the same id, and nothing in this schema prevents that.
+         *
+         *    Authoritative provider context is therefore REQUIRED for a
+         *    managed lookup. Given it, the join is exact and unambiguous and
+         *    needs no string matching at all; without it this strategy is
+         *    skipped entirely rather than guessed at.
+         *
+         * 2. Failing that, the legacy packed `status` column, which stores
+         *    `"{status}|{provider_message_id}"`. This is the only correlation
+         *    a pre-Slice-3 report has, so it cannot simply be dropped — but
+         *    it is now used under four constraints together:
+         *
+         *      * the attacker's id is ESCAPED, so `%` and `_` are literal
+         *        characters and not wildcards;
+         *      * the pattern anchors the id to the END of the packed value
+         *        (`%|<id>`), so it cannot match a substring anywhere else;
+         *      * the candidate set is scoped to the resolved SendingServer
+         *        whenever the caller knows one;
+         *      * every candidate is then re-checked by EXACT parsed
+         *        equality, and the lookup succeeds only if EXACTLY ONE
+         *        survives.
+         *
+         * Zero or several survivors fail closed. There is no "first row", no
+         * cross-tenant fallback and no default tenant.
+         */
+        private static function resolveReportForProviderMessage(
+            $providerMessageId,
+            ?SendingServer $sendingServer = null
+        ): ?Reports {
+            if ( ! is_string($providerMessageId)) {
+                return null;
+            }
+
+            $providerMessageId = trim($providerMessageId);
+
+            // Bounded BEFORE either query (Security Correction 37).
+            //
+            // The legacy fallback below is `LIKE '%|<id>'`, whose leading
+            // wildcard makes it inherently unindexable, so an enormous id
+            // would have MySQL scan the reports table for a value that could
+            // not possibly be stored anywhere.
+            //
+            // The bound is derived from this repository's actual schema, not
+            // invented: every column that stores a provider message id —
+            // `reports.status`, `reports.customer_status` and
+            // `business_messaging_operations.provider_message_id` — is
+            // varchar(191). An id longer than that cannot have been persisted
+            // by either correlation, so it cannot match, so it is refused
+            // without a query.
+            if ($providerMessageId === '' || strlen($providerMessageId) > self::MAX_PROVIDER_MESSAGE_ID_LENGTH) {
+                return null;
+            }
+
+            // 1. Managed correlation — exact, and PROVIDER-SCOPED.
+            //
+            // Correction 36 queried this table by provider_message_id alone
+            // and its comment claimed that column was globally unique. It is
+            // not: the index is `UNIQUE(provider, provider_message_id)`, so
+            // two providers may legitimately carry the same id. Querying by
+            // id alone therefore let ANY unauthenticated legacy webhook —
+            // one for a completely different provider — resolve a managed
+            // operation, and through it a managed Report, by guessing or
+            // replaying an id.
+            //
+            // The managed strategy is now only available to a caller that
+            // supplied an AUTHORITATIVE connection. Without one there is no
+            // provider to scope by, so this strategy is skipped entirely and
+            // resolution falls through to the legacy path, which fails
+            // closed on its own terms.
+            $provider = $sendingServer !== null
+                ? TransportProviderIdentifier::normalize($sendingServer->settings)
+                : null;
+
+            if ($provider !== null) {
+                $operations = DB::table(ManagedMessageDispatcher::TABLE)
+                    ->where('provider', $provider)
+                    ->where('provider_message_id', $providerMessageId)
+                    ->whereNotNull('report_id')
+                    ->limit(2)
+                    ->get();
+
+                if ($operations->count() > 1) {
+                    // Cannot happen under the composite unique index; if it
+                    // ever does it is ambiguity, not a tie to break.
+                    return null;
+                }
+
+                if ($operations->count() === 1) {
+                    return self::integrityCheckedManagedReport($operations->first());
+                }
+            }
+
+            // 2. Legacy packed-status correlation, bounded and escaped.
+            $escaped = addcslashes($providerMessageId, '%_\\');
+
+            $query = Reports::query()->where('status', 'like', '%|' . $escaped);
+
+            if ($sendingServer !== null) {
+                $query->where('sending_server_id', $sendingServer->id);
+            }
+
+            // Three is enough to tell "one" from "more than one" without
+            // reading an unbounded candidate set into memory.
+            $candidates = $query->limit(3)->get();
+
+            $exact = $candidates->filter(static function ($report) use ($providerMessageId): bool {
+                $packed = (string) $report->status;
+                $separator = strrpos($packed, '|');
+
+                return $separator !== false
+                    && substr($packed, $separator + 1) === $providerMessageId;
+            })->values();
+
+            return $exact->count() === 1 ? $exact->first() : null;
+        }
+
+        /**
+         * The integrity checks a resolved managed operation must pass before
+         * its Report is handed back.
+         *
+         * Finding a row is not the same as trusting it. Each check below is
+         * something the schema makes mechanically provable, and any mismatch
+         * fails closed rather than being repaired: a malformed row is a
+         * signal that something is wrong, and quietly fixing it up in a
+         * delivery callback would hide exactly the problem worth seeing.
+         */
+        private static function integrityCheckedManagedReport(object $operation): ?Reports
+        {
+            if ($operation->report_id === null) {
+                return null;
+            }
+
+            $report = Reports::find((int) $operation->report_id);
+
+            if ($report === null) {
+                return null;
+            }
+
+            // Both Businesses must be PRESENT and EQUAL.
+            //
+            // The earlier form rejected only a mismatch between two non-null
+            // values, so a managed operation owned by Business A pointing at
+            // a Report carrying no business_id passed — the exact fail-open
+            // this guard exists to prevent.
+            //
+            // NULL is not a legacy-compatibility state inside the MANAGED
+            // strategy. Every managed operation is Business-owned:
+            // `business_messaging_operations.business_id` is NOT NULL behind
+            // a restricting foreign key, and the sole writer of `report_id`
+            // (ManagedDispatchDelegate::recordLegacyReport) sets it on a row
+            // it matched BY business_id, having just created that Report
+            // with the same Campaign's business_id. A linked managed
+            // operation whose Report has no Business therefore cannot arise
+            // from the legitimate seam: it is an integrity failure, and a
+            // delivery callback is the last place that should repair or
+            // infer tenancy.
+            //
+            // Genuinely legacy, pre-Business Reports keep their support in
+            // the separate packed-status correlation, which is where legacy
+            // compatibility belongs.
+            $operationBusinessId = $operation->business_id ?? null;
+            $reportBusinessId = $report->business_id;
+
+            if ($operationBusinessId === null
+                || $reportBusinessId === null
+                || (int) $reportBusinessId !== (int) $operationBusinessId) {
+                return null;
+            }
+
+            // A managed send writes no legacy sending_server_id (§4.5), so a
+            // Report correlated to a managed operation must not claim one.
+            if ($report->sending_server_id !== null) {
+                return null;
+            }
+
+            return $report;
+        }
+
+        /**
+         * `customer_status` values that mean "this message did not arrive",
+         * and therefore that the legacy path has credited its cost back.
+         *
+         * Derived from updateDLR()'s own mapping above, so the two cannot
+         * drift: every branch of that match() except 'Delivered' lands here,
+         * plus 'Enroute' and 'Accepted', which are NOT terminal and must
+         * never trigger a credit.
+         */
+        private const NON_DELIVERED_TERMINAL_STATUSES = [
+            'Undelivered',
+            'Expired',
+            'Skipped',
+            'Rejected',
+            'Failed',
+        ];
+
+        /**
+         * Apply a delivery-status transition and any legitimate legacy
+         * credit, exactly once, under a row lock.
+         *
+         * THE BUG THIS REPLACES. The credit used to be unconditional on
+         * `$status !== 'Delivered'`, with no record of whether it had already
+         * happened. Replaying one failed callback ten times credited the
+         * customer ten times. On a route with no authenticity check, that is
+         * free money.
+         *
+         * WHAT MAKES IT IDEMPOTENT NOW. The refund fires only on the
+         * TRANSITION INTO a non-delivered terminal state — the row is
+         * re-read under `lockForUpdate()` inside the transaction, and the
+         * previous `customer_status` decides. A second identical callback
+         * finds the row already terminal and credits nothing. That state is
+         * durable and already persisted; no new column is invented, and
+         * nothing is inferred from a value that could be lost.
+         *
+         * THE REVERSE DIRECTION IS HANDLED TOO. A late 'Delivered' after a
+         * refund would otherwise leave the customer with a free message, so
+         * the cost is re-debited on that transition. Existing legacy billing
+         * semantics are preserved rather than quietly changed.
+         *
+         * No provider or network work happens inside this transaction.
+         *
+         * @return array{campaign_id: int|null, credited: bool, debited: bool}
+         */
+        private static function applyDeliveryTransition(
+            Reports $report,
+            string $status,
+            string $customerStatus,
+            string $providerMessageId
+        ): array {
+            return DB::transaction(static function () use ($report, $status, $customerStatus, $providerMessageId): array {
+                $locked = Reports::whereKey($report->getKey())->lockForUpdate()->first();
+
+                if ($locked === null) {
+                    return ['campaign_id' => null, 'credited' => false, 'debited' => false];
+                }
+
+                $wasNonDelivered = in_array(
+                    (string) $locked->customer_status,
+                    self::NON_DELIVERED_TERMINAL_STATUSES,
+                    true
+                );
+
+                $isNonDelivered = in_array($customerStatus, self::NON_DELIVERED_TERMINAL_STATUSES, true);
+
+                $locked->update([
+                    'status'          => $status . '|' . $providerMessageId,
+                    'customer_status' => $customerStatus,
+                ]);
+
+                $credited = false;
+                $debited = false;
+
+                // ATOMIC AT SQL LEVEL, and this too corrects my own mistake.
+                //
+                // Correction 36 read `$locked->user->sms_unit` into PHP, added
+                // the cost, and wrote the computed value back. The Reports row
+                // lock above protects THAT REPORT — it says nothing about the
+                // User row. Two callbacks for two DIFFERENT reports owned by
+                // the same customer therefore both read the same balance and
+                // the second overwrote the first: with costs C1 and C2 the
+                // customer was credited max(C1, C2) instead of C1 + C2.
+                //
+                // `increment()`/`decrement()` compile to
+                // `sms_unit = sms_unit + ?` in one statement, so the database
+                // serializes the two writers on the User row and neither can
+                // lose the other's update. Nothing is read into PHP and
+                // written back.
+                //
+                // The transition semantics above are unchanged: WHETHER to
+                // move money is still decided once, under the Report row
+                // lock, from the previous durable customer_status.
+                $userId = $locked->user_id;
+                $cost = (float) $locked->cost;
+
+                if ($userId !== null && $cost > 0) {
+                    if ($isNonDelivered && ! $wasNonDelivered) {
+                        // First entry into a non-delivered terminal state.
+                        User::whereKey($userId)->increment('sms_unit', $cost);
+                        $credited = true;
+                    } elseif (! $isNonDelivered && $wasNonDelivered && $customerStatus === 'Delivered') {
+                        // A late delivery after a refund — take the cost back,
+                        // or the message was free.
+                        User::whereKey($userId)->decrement('sms_unit', $cost);
+                        $debited = true;
+                    }
+                }
+
+                return [
+                    'campaign_id' => $locked->campaign_id ? (int) $locked->campaign_id : null,
+                    'credited'    => $credited,
+                    'debited'     => $debited,
+                ];
+            });
         }
 
         /**
@@ -145,7 +493,7 @@
                 $status = 'Delivered';
             }
 
-            $this::updateDLR($message_id, $status, $sender_id, $phone);
+            $this::updateDLR($message_id, $status);
         }
 
         /**
@@ -173,7 +521,7 @@
                 default => 'Unknown',
             };
 
-            $this::updateDLR($message_id, $status, null, $phone);
+            $this::updateDLR($message_id, $status);
         }
 
         /**
@@ -197,7 +545,7 @@
                 $status = 'Delivered';
             }
 
-            $this::updateDLR($message_id, $status, $phone, $sender_id);
+            $this::updateDLR($message_id, $status);
         }
 
         /**
@@ -243,7 +591,7 @@
                 $status = 'Delivered';
             }
 
-            $this::updateDLR($message_id, $status, $phone, $sender_id);
+            $this::updateDLR($message_id, $status);
         }
 
         /**
@@ -267,7 +615,7 @@
                 $status = 'Delivered';
             }
 
-            $this::updateDLR($message_id, $status, $phone, $sender_id);
+            $this::updateDLR($message_id, $status);
         }
 
         /**
@@ -313,7 +661,7 @@
                 $status = 'Delivered';
             }
 
-            $this::updateDLR($message_id, $status, $phone, $sender_id);
+            $this::updateDLR($message_id, $status);
 
             return $status;
         }
@@ -338,7 +686,7 @@
                 $status = 'Delivered';
             }
 
-            $this::updateDLR($message_id, $status, $phone);
+            $this::updateDLR($message_id, $status);
         }
 
         /**
@@ -362,7 +710,7 @@
                 $status = 'Delivered';
             }
 
-            $this::updateDLR($message_id, $status, $phone, $sender_id);
+            $this::updateDLR($message_id, $status);
         }
 
         /**
@@ -410,7 +758,7 @@
                 $status = ucfirst(strtolower($status));
             }
 
-            $this::updateDLR($message_id, $status, $phone);
+            $this::updateDLR($message_id, $status);
         }
 
         /**
@@ -497,15 +845,34 @@
             $message_data = $sms_counter->count($message, $sms_type == 'whatsapp' ? 'WHATSAPP' : null);
             $sms_count    = $message_data->messages;
 
-            $phone_number = PhoneNumbers::where('number', $from)
+            // Customer Experience Slice 3 §4.6.5 — the substring fallback is
+            // GONE, and this is a security fix rather than a tidy-up.
+            //
+            // What used to be here, after an exact match failed:
+            //
+            //     PhoneNumbers::where('number', 'like', "%$from%")->first()
+            //
+            // On an UNAUTHENTICATED webhook, that attributed an inbound
+            // message to whichever assigned number merely CONTAINED the
+            // submitted string. A caller who sent `555` reached any tenant
+            // whose number contains 555; two tenants on similar numbers
+            // could receive each other's messages; and `->first()` picked a
+            // winner by insertion order.
+            //
+            // Attribution is now exactly what its name says: one exact match
+            // on an assigned number, or nothing. Zero matches fail closed.
+            // Several matches fail closed too — an ambiguous mapping is not
+            // resolved by picking one, which was the whole defect.
+            //
+            // `$from` was already normalized above by the same
+            // str_replace() the rest of this method uses, so no second
+            // normalization scheme is introduced here.
+            $assignedMatches = PhoneNumbers::where('number', $from)
                 ->where('status', 'assigned')
-                ->first();
+                ->limit(2)
+                ->get();
 
-            if ( ! $phone_number) {
-                $phone_number = PhoneNumbers::where('number', 'like', "%$from%")
-                    ->where('status', 'assigned')
-                    ->first();
-            }
+            $phone_number = $assignedMatches->count() === 1 ? $assignedMatches->first() : null;
 
             if ($phone_number) {
                 $user_id = $phone_number->user_id;
@@ -528,17 +895,33 @@
                     'sending_server_id' => $sending_server->id,
                 ]);
 
-                $chatBox = ChatBox::updateOrCreate(
-                    [
-                        'user_id' => $user_id,
-                        'from'    => $from,
-                        'to'      => $to,
-                    ],
-                    [
-                        'reply_by_customer' => true,
-                        'sending_server_id' => $sending_server->id,
-                    ]
-                );
+                // The THIRD blank-uid writer. `chat_boxes.uid` is a NOT NULL
+                // char(36) with no database default and ChatBox mints none,
+                // so this inbound writer was also relying on a non-strict
+                // MySQL connection to coerce the missing value to ''. The
+                // other two live in EloquentCampaignRepository.
+                //
+                // The uid goes in the UPDATE-OR-CREATE VALUES, not in the
+                // match attributes, and `updateOrCreate` only applies those
+                // values to a row it CREATES... which is not true — it
+                // applies them on update too. So it is supplied through the
+                // firstOrNew/save pair instead, which lets an existing
+                // conversation keep the uid it already has: replaying an
+                // inbound message must not re-issue a new identifier for a
+                // conversation that already exists.
+                $chatBox = ChatBox::firstOrNew([
+                    'user_id' => $user_id,
+                    'from'    => $from,
+                    'to'      => $to,
+                ]);
+
+                if (! $chatBox->exists) {
+                    $chatBox->uid = (string) Str::uuid();
+                }
+
+                $chatBox->reply_by_customer = true;
+                $chatBox->sending_server_id = $sending_server->id;
+                $chatBox->save();
                 
                 
                 
@@ -915,22 +1298,39 @@ $chatBox->touch();
                 }
 
             } else {
+                // Customer Experience Slice 3 §4.6.5 — the shared fail-open
+                // boundary fix, for every provider that flows through this
+                // method. Previously an unattributable inbound message was
+                // written against whatever $user_id happened to be in scope
+                // (defaulting to 1), silently handing one tenant's message to
+                // another. There is no authoritative attribution here, so
+                // nothing is attributed: no Reports row, no ChatBox row, and
+                // no STOP/blacklist processing.
+                //
+                // This is deliberately NOT a claim that the other ~58
+                // providers now have signature verification — they do not.
+                // Only the unattributed write is removed.
+                // The provider is taken from the calling server, never
+                // assumed: this method serves ~60 gateways and a row that
+                // named the wrong one would be worse than no row at all.
+                app(MessagingWebhookRejectionRecorder::class)->record(
+                    WebhookRejectionReason::UnknownMapping,
+                    $sending_server->settings,
+                    (string) json_encode([
+                        'sending_server_id' => $sending_server->id,
+                        'to' => $to,
+                    ]),
+                    null,
+                    $from,
+                );
 
-                Reports::create([
-                    'user_id'           => $user_id,
-                    'business_id'       => app(LegacyBusinessResolver::class)->resolveForCustomer((int) $user_id)?->id,
-                    'from'              => $from,
-                    'to'                => $to,
-                    'message'           => $message,
-                    'sms_type'          => $sms_type,
-                    'status'            => 'Delivered',
-                    'customer_status'   => 'Delivered',
-                    'direction'         => Reports::DIRECTION_INCOMING,
-                    'cost'              => $cost,
-                    'sms_count'         => $sms_count,
-                    'media_url'         => $media_url,
-                    'sending_server_id' => $sending_server->id,
-                ]);
+                // The method's existing generic "processed" response shape, so
+                // no legacy provider's polling/webhook expectations break.
+                if ($failed == null) {
+                    return $success;
+                }
+
+                return $failed;
             }
 
 
@@ -963,6 +1363,294 @@ $chatBox->touch();
             }
 
             return $failed;
+        }
+
+        /**
+         * Customer Experience Slice 3 §4.6.1 — the managed Telnyx inbound
+         * route's entry point.
+         *
+         * Delegates immediately to the dual-signal attribution resolver: this
+         * method deliberately contains no attribution logic of its own, so the
+         * fail-closed rules live in exactly one place.
+         */
+        public function inboundTelnyxManaged(Request $request): JsonResponse
+        {
+            return app(InboundWebhookAttributionResolver::class)->handle($request);
+        }
+
+        /**
+         * Slice 3 §4.6.5 — true Twilio request-signature verification.
+         *
+         * Returns false when no active Twilio sending server's auth_token
+         * validates the signature, including when the header is absent.
+         */
+        private function twilioSignatureIsValid(Request $request, string $provider = SendingServer::TYPE_TWILIO): bool
+        {
+            $signature = $request->header('X-Twilio-Signature');
+
+            if (! is_string($signature) || $signature === '') {
+                return false;
+            }
+
+            $url = $request->fullUrl();
+            $params = $request->isMethod('POST') ? $request->post() : [];
+
+            // The provider discriminator lives in `settings`, not in the
+            // `type` column — `type` is the transport enum
+            // (http/smpp/whatsapp/viber/otp). getSendingServer() above reads
+            // the same `settings` column for exactly this reason.
+            //
+            // `$provider` lets the TwilioCopilot sibling reuse this exact
+            // validator rather than growing a second copy of it (Security
+            // Correction 36). It defaults to plain Twilio, so every existing
+            // caller is unchanged.
+            $servers = SendingServer::query()
+                ->where('status', true)
+                ->where('settings', $provider)
+                ->get();
+
+            foreach ($servers as $server) {
+                $authToken = $server->auth_token ?? null;
+
+                if (! is_string($authToken) || $authToken === '') {
+                    continue;
+                }
+
+                $validator = new \Twilio\Security\RequestValidator($authToken);
+
+                if ($validator->validate($signature, $url, $params)) {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /**
+         * Slice 3 §4.6.5 — read-only check for whether a sending server is a
+         * Business-facing BYO connection.
+         *
+         * Read-only by design: no column, cast or method is added to
+         * SendingServer or CustomerBasedSendingServer.
+         */
+        /**
+         * The widest provider message id any correlation in this repository
+         * can actually store.
+         *
+         * Derived from the schema, in one place, rather than guessed:
+         * `reports.status` and `reports.customer_status` (the packed legacy
+         * correlation) and
+         * `business_messaging_operations.provider_message_id` (the managed
+         * one) are all `varchar(191)`. Anything longer was never persisted
+         * and therefore cannot match.
+         *
+         * Moving legacy delivery callbacks off the packed `status` column
+         * entirely — which would make this correlation indexable instead of
+         * merely bounded — remains future provider-retirement work and is
+         * deliberately not attempted here.
+         */
+        public const MAX_PROVIDER_MESSAGE_ID_LENGTH = 191;
+
+        /** The ONE host the Whatsender media token may ever be sent to. */
+        public const WHATSENDER_MEDIA_HOST = 'api.whatsender.io';
+
+        /**
+         * Build the Whatsender media URL from a provider-supplied value that
+         * is treated strictly as a RELATIVE PATH.
+         *
+         * A credential-bearing request must reach exactly one host. Every
+         * rejection below is a way the provider's string could otherwise have
+         * changed the authority of the URL it was concatenated into, or
+         * smuggled something past the parser:
+         *
+         *   `@attacker.example/x`   userinfo — authority becomes attacker
+         *   `//attacker.example/x`  protocol-relative authority
+         *   `https://attacker/x`    an absolute URL of its own
+         *   `\evil`                 backslash, which some parsers fold to `/`
+         *   CR / LF / NUL           header and request smuggling
+         *
+         * The result is re-parsed and its scheme, host and absence of
+         * userinfo re-asserted, so the guarantee does not rest on the
+         * validation above having been exhaustive.
+         *
+         * @return string|null null when the value cannot be represented as a
+         *                     safe relative provider path, in which case NO
+         *                     network call is made
+         */
+        public static function buildWhatsenderMediaUrl($mediaPath): ?string
+        {
+            if ( ! is_string($mediaPath)) {
+                return null;
+            }
+
+            // No trimming: leading whitespace is itself suspicious here, and
+            // trimming would let ` //attacker` become `//attacker`.
+            if ($mediaPath === '' || $mediaPath[0] !== '/') {
+                return null;
+            }
+
+            // A second leading slash is a protocol-relative authority.
+            if (str_starts_with($mediaPath, '//')) {
+                return null;
+            }
+
+            foreach (['@', '\\', '?', '#'] as $forbidden) {
+                if (str_contains($mediaPath, $forbidden)) {
+                    return null;
+                }
+            }
+
+            // Control characters, CR, LF and NUL.
+            if (preg_match('/[\x00-\x1F\x7F]/', $mediaPath) === 1) {
+                return null;
+            }
+
+            // A scheme of its own, in any casing.
+            if (preg_match('#^/*[a-z][a-z0-9+.\-]*:#i', $mediaPath) === 1) {
+                return null;
+            }
+
+            // Nothing that parses as having a host of its own.
+            $parsedPath = parse_url($mediaPath);
+
+            if ($parsedPath === false
+                || isset($parsedPath['host'], $parsedPath['scheme'], $parsedPath['user'], $parsedPath['pass'])
+                || ! isset($parsedPath['path'])
+                || $parsedPath['path'] !== $mediaPath) {
+                return null;
+            }
+
+            $url = 'https://' . self::WHATSENDER_MEDIA_HOST . $mediaPath;
+
+            // Re-parsed, so the guarantee is asserted about the FINAL string
+            // rather than inferred from the checks above.
+            $parsed = parse_url($url);
+
+            if ($parsed === false
+                || ($parsed['scheme'] ?? null) !== 'https'
+                || ($parsed['host'] ?? null) !== self::WHATSENDER_MEDIA_HOST
+                || isset($parsed['user'])
+                || isset($parsed['pass'])
+                || isset($parsed['port'])) {
+                return null;
+            }
+
+            return $url;
+        }
+
+        /**
+         * The only media types this inbound handler genuinely supports —
+         * the image/video/audio cases its own switch declares — mapped to
+         * the extension the STORED file gets.
+         *
+         * Deliberately small. A type that is not here cannot be stored,
+         * which is the point: an allowlist that grows to accommodate
+         * whatever arrives is not an allowlist.
+         */
+        private const INBOUND_MEDIA_ALLOWLIST = [
+            'image/jpeg' => 'jpg',
+            'image/png'  => 'png',
+            'image/gif'  => 'gif',
+            'image/webp' => 'webp',
+            'video/mp4'  => 'mp4',
+            'video/3gpp' => '3gp',
+            'audio/mpeg' => 'mp3',
+            'audio/ogg'  => 'ogg',
+            'audio/mp4'  => 'm4a',
+            'audio/aac'  => 'aac',
+        ];
+
+        /** 16 MB, comfortably above any real MMS and far below a disk-filling one. */
+        private const INBOUND_MEDIA_MAX_BYTES = 16 * 1024 * 1024;
+
+        /**
+         * Store inbound media under a generated name, deriving the extension
+         * from the bytes actually received rather than from anything the
+         * provider claimed.
+         *
+         * @return string|null the generated filename, or null when the
+         *                     payload is missing, oversized, or of a type
+         *                     this handler does not support — in which case
+         *                     NOTHING is written
+         */
+        private static function storeInboundMediaSafely($payload): ?string
+        {
+            if ( ! is_string($payload) || $payload === '') {
+                return null;
+            }
+
+            if (strlen($payload) > self::INBOUND_MEDIA_MAX_BYTES) {
+                return null;
+            }
+
+            // The real type, from the content. finfo reads magic bytes; it
+            // does not ask the caller what they think they sent.
+            $mime = (new \finfo(FILEINFO_MIME_TYPE))->buffer($payload);
+
+            if ( ! is_string($mime) || ! array_key_exists($mime, self::INBOUND_MEDIA_ALLOWLIST)) {
+                return null;
+            }
+
+            $extension = self::INBOUND_MEDIA_ALLOWLIST[$mime];
+
+            // Generated, not derived from provider input. No separators, no
+            // traversal, no NUL, nothing to sanitize — because nothing the
+            // caller sent reaches this name.
+            $storedName = bin2hex(random_bytes(16)) . '.' . $extension;
+
+            $directory = public_path('mms');
+
+            if ( ! is_dir($directory) && ! mkdir($directory, 0755, true) && ! is_dir($directory)) {
+                return null;
+            }
+
+            $target = $directory . DIRECTORY_SEPARATOR . $storedName;
+
+            // Belt and braces: the resolved parent must be the directory we
+            // intended, so no symlink or race can redirect the write.
+            if (realpath($directory) === false || dirname($target) !== $directory) {
+                return null;
+            }
+
+            if (file_put_contents($target, $payload) === false) {
+                return null;
+            }
+
+            @chmod($target, 0644);
+
+            return $storedName;
+        }
+
+        /**
+         * Security Correction 36 — whether a legacy Telnyx callback on this
+         * connection can be proven authentic AT ALL.
+         *
+         * It cannot. This application stores no per-connection Ed25519
+         * public key for a legacy Telnyx SendingServer — there is no column
+         * for one — so nothing about such a request is verifiable, whether
+         * the connection is a customer's BYO one or an admin/legacy one.
+         *
+         * The honest consequence is that neither gets to change state. An
+         * admin connection is not given an unauthenticated exception merely
+         * to preserve old behaviour: "we have always done it" is not a
+         * signature. Managed Telnyx traffic has the signed managed route
+         * (§4.6.1) and does not come through here.
+         *
+         * When BYO Telnyx inbound is upgraded in Slice 9 and real
+         * verification material exists, this is the one place that changes.
+         */
+        private function hasVerifiableTelnyxAuthenticity(SendingServer $sendingServer): bool
+        {
+            return false;
+        }
+
+        private function isBusinessFacingByoConnection(SendingServer $sendingServer): bool
+        {
+            // The link column is `sending_server`, holding the SendingServer's
+            // own id — see CustomerBasedSendingServer::sendingServer().
+            return CustomerBasedSendingServer::query()
+                ->where('sending_server', $sendingServer->id)
+                ->exists();
         }
 
         private function getSendingServer(string $gateway, string $type)
@@ -1007,6 +1695,38 @@ $chatBox->touch();
                 $gateway ?: SendingServer::TYPE_TWILIO,
                 $gateway ? 'uid' : SendingServer::TYPE_TWILIO
             );
+
+            // Customer Experience Slice 3 §4.6.5 — BYO Twilio, Option A.
+            // The route carries no tenant identifier and more than one Twilio
+            // SendingServer may be active, so verification iterates the active
+            // Twilio servers and accepts the first whose auth_token validates
+            // this request's signature. A genuine HMAC match against an
+            // independently-set secret is itself strong evidence of which
+            // account produced the request. A request that validates against
+            // none of them never reaches inboundDLR().
+            if (! $this->twilioSignatureIsValid($request)) {
+                // Twilio, recorded as Twilio. This row exists to answer
+                // "which provider is sending us traffic we cannot verify?",
+                // so naming a different company in it would defeat its
+                // entire purpose.
+                // NOTE ON `$from`, because it reads backwards and an audit
+                // has already misread it once: this method assigns
+                // `$to = $request->input('From')` and
+                // `$from = $request->input('To')` (see the top of this
+                // method). The local `$from` therefore holds the RECEIVING
+                // number — our own — which is exactly what
+                // `destinationNumber` wants. `$to` is the external sender
+                // and must NOT be recorded here.
+                app(MessagingWebhookRejectionRecorder::class)->record(
+                    WebhookRejectionReason::InvalidSignature,
+                    SendingServer::TYPE_TWILIO,
+                    $request->getContent(),
+                    null,
+                    destinationNumber: $from,
+                );
+
+                return $response->message('Invalid signature');
+            }
 
             $NumMedia = (int) $request->input('NumMedia');
             if ($NumMedia > 0) {
@@ -1116,6 +1836,28 @@ $chatBox->touch();
                 $gateway ?: SendingServer::TYPE_TWILIOCOPILOT,
                 $gateway ? 'uid' : SendingServer::TYPE_TWILIOCOPILOT
             );
+
+            // Security Correction 36 — the Twilio sibling bypass.
+            //
+            // TwilioCopilot IS a Twilio webhook: same signature scheme, same
+            // `X-Twilio-Signature` header, same validator this repository
+            // already uses for inboundTwilio(). It simply never called it, so
+            // the gate §4.6.5 put on one Twilio door left the identical door
+            // beside it open.
+            //
+            // No new signature scheme is invented here; the canonical
+            // validator is reused, scoped to the TwilioCopilot servers.
+            if (! $this->twilioSignatureIsValid($request, SendingServer::TYPE_TWILIOCOPILOT)) {
+                app(MessagingWebhookRejectionRecorder::class)->record(
+                    WebhookRejectionReason::InvalidSignature,
+                    SendingServer::TYPE_TWILIOCOPILOT,
+                    $request->getContent(),
+                    null,
+                    destinationNumber: $from,
+                );
+
+                return $response->message('Invalid signature');
+            }
 
 
             $NumMedia = (int) $request->input('NumMedia');
@@ -1428,6 +2170,44 @@ $chatBox->touch();
                         $gateway ? 'uid' : SendingServer::TYPE_TELNYX
                     );
 
+                    // Customer Experience Slice 3 §4.6.5 — BYO Telnyx,
+                    // Option B: fail closed until upgraded. No SendingServer
+                    // column exists to hold a BYO customer's own Ed25519
+                    // webhook public key, so this request's authenticity
+                    // cannot be verified at all. Rather than process an
+                    // unverifiable inbound message, a Business-facing BYO
+                    // connection has inbound processing disabled outright.
+                    // Outbound sending is unaffected, and the relocated
+                    // advanced-settings UI states this honestly.
+                    //
+                    // An admin-only/legacy Telnyx connection with no
+                    // CustomerBasedSendingServer link is outside this gate and
+                    // keeps its pre-existing behaviour, including the
+                    // now-fixed shared default-to-user-1 removal.
+                    if ($sendingServer && $this->isBusinessFacingByoConnection($sendingServer)) {
+                        // Derived from the server rather than hardcoded.
+                        // This one really is Telnyx, but taking it from the
+                        // row keeps every rejection site honest by the same
+                        // mechanism instead of by the reader's trust.
+                        // As in inboundTwilio(): this method assigns
+                        // `$to = payload.from.phone_number` and
+                        // `$from = payload.to[0].phone_number`, so the local
+                        // `$from` is the RECEIVING number and is the correct
+                        // value for `destinationNumber`. Named explicitly so
+                        // the inverted legacy naming cannot mislead again.
+                        app(MessagingWebhookRejectionRecorder::class)->record(
+                            WebhookRejectionReason::UnknownMapping,
+                            $sendingServer->settings,
+                            $request->getContent(),
+                            null,
+                            destinationNumber: $from,
+                        );
+
+                        // Nothing actionable to tell Telnyx: this is not a
+                        // signature-verified party we owe a retry signal to.
+                        return 'Inbound processing is disabled for this connection';
+                    }
+
 
 
 
@@ -1444,6 +2224,41 @@ $chatBox->touch();
                     
                 }
                 if ($get_data['data']['payload']['direction'] == 'outbound') {
+                    // Security Correction 36, P0 — the sibling branch's
+                    // bypass.
+                    //
+                    // §4.6.5 already disabled the INBOUND branch above for a
+                    // Business-facing BYO Telnyx connection, because this
+                    // application holds no per-connection Ed25519 material
+                    // and therefore cannot verify that a callback really came
+                    // from Telnyx. This branch was left calling updateDLR()
+                    // directly — so the same unverifiable request could still
+                    // mutate a customer-visible Report and move sms_unit,
+                    // just through the delivery-status door instead of the
+                    // inbound one. Closing one and leaving the other open
+                    // closes nothing.
+                    //
+                    // Authenticity is a property of the CONNECTION, not of
+                    // the payload's direction field, so the same gate
+                    // applies. A managed Telnyx callback belongs on the
+                    // signed managed route and does not need this path.
+                    $telnyxServer = $this->getSendingServer(
+                        $gateway ?: SendingServer::TYPE_TELNYX,
+                        $gateway ? 'uid' : SendingServer::TYPE_TELNYX
+                    );
+
+                    if ($telnyxServer === null || ! $this->hasVerifiableTelnyxAuthenticity($telnyxServer)) {
+                        app(MessagingWebhookRejectionRecorder::class)->record(
+                            WebhookRejectionReason::InvalidSignature,
+                            $telnyxServer?->settings ?? SendingServer::TYPE_TELNYX,
+                            $request->getContent(),
+                            null,
+                            destinationNumber: $get_data['data']['payload']['to'][0]['phone_number'] ?? null,
+                        );
+
+                        return 'Delivery callbacks are disabled for this connection';
+                    }
+
                     $message_id = $get_data['data']['payload']['id'];
                     $status     = $get_data['data']['payload']['to'][0]['status'];
 
@@ -1451,7 +2266,7 @@ $chatBox->touch();
                         $status = 'Delivered';
                     }
 
-                    $this::updateDLR($message_id, $status);
+                    $this::updateDLR($message_id, $status, $telnyxServer);
                 }
 
                 return 'Invalid request';
@@ -1839,12 +2654,11 @@ $chatBox->touch();
         public function inboundSolucoesdigitais(Request $request, $gateway = null): bool
         {
             $data        = $request->all();
-            $id_campanha = $data['id_campanha'];
-            $report      = Reports::where('status', 'LIKE', "%$id_campanha%")->first();
+            $id_campanha = $data['id_campanha'] ?? null;
 
-            $message       = $data['sms_resposta'];
-            $to            = $data['nro_telefone'];
-            $message_count = strlen(preg_replace('/\s+/', ' ', trim($message))) / 160;
+            $message       = $data['sms_resposta'] ?? null;
+            $to            = $data['nro_telefone'] ?? null;
+            $message_count = strlen(preg_replace('/\s+/', ' ', trim((string) $message))) / 160;
             $cost          = ceil($message_count);
 
 
@@ -1852,6 +2666,24 @@ $chatBox->touch();
                 $gateway ?: SendingServer::TYPE_SOLUCOESDIGITAIS,
                 $gateway ? 'uid' : SendingServer::TYPE_SOLUCOESDIGITAIS
             );
+
+            // Security Correction 36, P0.
+            //
+            // What was here: `Reports::where('status','LIKE',"%$id_campanha%")
+            // ->first()`, on an unauthenticated route, with the matched row's
+            // `from` then trusted as this Business's own sender. A caller who
+            // sent `id_campanha=1` matched any tenant whose packed status
+            // contained a 1 — and `%`/`_` were live wildcards, so a single
+            // `%` matched everything. The winner was chosen by insertion
+            // order, and the inbound message was then written against that
+            // stranger's identity, with its STOP/keyword/blacklist side
+            // effects.
+            //
+            // It now goes through the same exact, escaped,
+            // sending-server-scoped, exactly-one resolution seam every other
+            // delivery callback uses. Zero or ambiguous matches resolve to
+            // null and nothing is written.
+            $report = self::resolveReportForProviderMessage($id_campanha, $sendingServer);
 
             if ($report) {
                 $from = $report->from;
@@ -2039,7 +2871,7 @@ $chatBox->touch();
                 return 'Message ID and status not found';
             }
 
-            $this::updateDLR($message_id, $status, $phone);
+            $this::updateDLR($message_id, $status);
 
             return $status;
 
@@ -2065,7 +2897,7 @@ $chatBox->touch();
                 $status = 'Delivered';
             }
 
-            $this::updateDLR($message_id, $status, $phone);
+            $this::updateDLR($message_id, $status);
 
             return $status;
 
@@ -2113,7 +2945,36 @@ $chatBox->touch();
                             $message     = $get_data['data']['media']['caption'];
                             $media_url   = $get_data['data']['media']['links']['download'];
                             $file_name   = $get_data['data']['media']['filename'];
-                            $gateway_url = 'https://api.whatsender.io' . $media_url;
+                            // Security Correction 37 — SSRF / token
+                            // exfiltration.
+                            //
+                            // `$media_url` is attacker-controlled
+                            // (`data.media.links.download`) and was
+                            // concatenated straight onto the provider host,
+                            // then sent WITH the tenant's Whatsender Token in
+                            // a header. A value beginning `@attacker.example/`
+                            // makes the concatenated string's authority
+                            // `attacker.example` — the token goes to the
+                            // attacker. `//attacker.example/` does the same
+                            // via a protocol-relative authority, and a
+                            // followed redirect carried the credential
+                            // off-host regardless.
+                            //
+                            // The value is now treated as a RELATIVE PATH and
+                            // nothing else, validated before any network call
+                            // (see buildWhatsenderMediaUrl), and the final URL
+                            // is re-parsed to prove its scheme, host and
+                            // absence of userinfo.
+                            $gateway_url = self::buildWhatsenderMediaUrl($media_url);
+
+                            if ($gateway_url === null) {
+                                // Nothing is fetched and nothing is written;
+                                // the message still arrives without media.
+                                $mediaUrl = '';
+
+                                break;
+                            }
+
 
                             if ($message == null) {
                                 $message = $file_name;
@@ -2124,7 +2985,20 @@ $chatBox->touch();
                                 CURLOPT_URL            => $gateway_url,
                                 CURLOPT_RETURNTRANSFER => true,
                                 CURLOPT_ENCODING       => '',
-                                CURLOPT_MAXREDIRS      => 10,
+                                // REDIRECTS DISABLED (Security Correction 37).
+                                //
+                                // This request carries the tenant's Whatsender
+                                // Token. Following a redirect would let the
+                                // provider — or anyone who can influence its
+                                // response — send that credential to another
+                                // host, which is the same exfiltration the URL
+                                // validation above prevents, arriving one hop
+                                // later. cURL is explicitly told not to follow,
+                                // and the redirect budget is zeroed so the
+                                // setting cannot be defeated by an option
+                                // ordering change.
+                                CURLOPT_FOLLOWLOCATION => false,
+                                CURLOPT_MAXREDIRS      => 0,
                                 CURLOPT_TIMEOUT        => 30,
                                 CURLOPT_HTTP_VERSION   => CURL_HTTP_VERSION_1_1,
                                 CURLOPT_CUSTOMREQUEST  => 'GET',
@@ -2134,20 +3008,45 @@ $chatBox->touch();
                             ]);
 
                             $response = curl_exec($curl);
+                            curl_close($curl);
 
-                            $path        = 'mms/';
-                            $upload_path = public_path($path);
+                            // Security Correction 36, P0 — arbitrary file
+                            // write into the public web root.
+                            //
+                            // What was here: the PROVIDER-SUPPLIED
+                            // `media.filename` concatenated straight onto
+                            // `public_path('mms/')` and handed to
+                            // file_put_contents(). A filename of
+                            // `../../evil.php` wrote outside the directory
+                            // entirely; a filename of `evil.php` wrote
+                            // executable PHP inside the web root. On an
+                            // unauthenticated route that is remote code
+                            // execution, not a path bug.
+                            //
+                            // basename() alone would not have been a fix: it
+                            // stops traversal but still lets the caller
+                            // choose `.php`, and it still trusts the
+                            // provider's claimed extension over the bytes
+                            // actually received.
+                            //
+                            // The provider's filename now controls nothing.
+                            // The stored name is generated, the extension is
+                            // derived from the VERIFIED content, and content
+                            // outside a small allowlist for the media types
+                            // this handler genuinely supports is refused —
+                            // in which case nothing is written at all.
+                            $storedName = self::storeInboundMediaSafely($response);
 
-                            if ( ! file_exists($upload_path)) {
-                                mkdir($upload_path, 0777, true);
+                            if ($storedName === null) {
+                                // Failed validation writes nothing, and the
+                                // message is still delivered without media
+                                // rather than dropped.
+                                $mediaUrl = '';
+
+                                break;
                             }
 
-                            $saveTo = $upload_path . $file_name;
-
-                            file_put_contents($saveTo, $response);
-
-                            $mediaUrl = asset('/mms') . '/' . $file_name;
-                            curl_close($curl);
+                            $mediaUrl = asset('/mms') . '/' . $storedName;
 
                             break;
 
@@ -2230,7 +3129,7 @@ $chatBox->touch();
                 $status = 'Delivered';
             }
 
-            $this::updateDLR($message_id, $status, $phone);
+            $this::updateDLR($message_id, $status);
 
             return $status;
 
@@ -2412,7 +3311,7 @@ $chatBox->touch();
                 '3' => 'Expired',
             };
 
-            $this::updateDLR($message_id, $status, $phone);
+            $this::updateDLR($message_id, $status);
 
             return $status;
         }
@@ -2714,7 +3613,23 @@ $chatBox->touch();
             }
             $message_id = $request->input('textId');
 
-            $get_data = Reports::whereLike(['status'], $message_id)->first();
+            // Security Correction 36, P0 — the identical defect
+            // inboundSolucoesdigitais had. `whereLike(['status'], $textId)`
+            // on an unauthenticated route selected any tenant's report whose
+            // packed status merely contained the attacker's string, with
+            // `%`/`_` live as wildcards, and its `from` was then trusted as
+            // the sender for a forged inbound message.
+            //
+            // Resolved through the same exact, escaped,
+            // sending-server-scoped, exactly-one seam. A foreign, partial,
+            // wildcard or ambiguous textId resolves to nothing and writes
+            // nothing.
+            $textbeltServer = $this->getSendingServer(
+                $gateway ?: SendingServer::TYPE_TEXTBELT,
+                $gateway ? 'uid' : SendingServer::TYPE_TEXTBELT
+            );
+
+            $get_data = self::resolveReportForProviderMessage($message_id, $textbeltServer);
 
             if ( ! $get_data) {
                 return 'Message ID not found';
@@ -3214,7 +4129,36 @@ $chatBox->touch();
                 $message_count = strlen(preg_replace('/\s+/', ' ', trim($message))) / 160;
                 $cost          = ceil($message_count);
 
-                $feedback = $this::inboundDLR($to, $message, 'Twilio', $cost, $from);
+                // Security Correction 36 — the second Twilio bypass.
+                //
+                // This passed the literal STRING 'Twilio' where every other
+                // caller passes a resolved SendingServer. A provider name
+                // typed into an argument is not evidence that the request
+                // came from that provider; it just skipped the signature
+                // path entirely, and inboundDLR() then dereferenced a string
+                // as if it were a model.
+                //
+                // The connection is resolved authoritatively and the request
+                // is validated with the same canonical Twilio validator, or
+                // nothing happens.
+                $webhookServer = $this->getSendingServer(
+                    SendingServer::TYPE_TWILIO,
+                    SendingServer::TYPE_TWILIO
+                );
+
+                if ($webhookServer === null || ! $this->twilioSignatureIsValid($request)) {
+                    app(MessagingWebhookRejectionRecorder::class)->record(
+                        WebhookRejectionReason::InvalidSignature,
+                        SendingServer::TYPE_TWILIO,
+                        $request->getContent(),
+                        null,
+                        destinationNumber: $from,
+                    );
+
+                    return $response->message('Invalid signature');
+                }
+
+                $feedback = $this::inboundDLR($to, $message, $webhookServer, $cost, $from);
 
                 return $response->message($feedback);
             } catch (Exception|Throwable|NotFoundHttpException $e) {
@@ -3472,9 +4416,27 @@ $chatBox->touch();
          */
         public function inboundWhatsapp(Request $request, $gateway = null)
         {
+            // Customer Experience Slice 3 — secret-logging fix.
+            //
+            // This used to log `$request->all()`, which on the Meta
+            // verification handshake below contains `hub_verify_token` — the
+            // shared secret this endpoint exists to check. Logging the whole
+            // request wrote that secret, in clear, to a log file that
+            // outlives the request and is read by people who have no
+            // business seeing it.
+            //
+            // Only minimized, non-secret metadata is recorded now: enough to
+            // tell an operator that a request arrived and roughly what shape
+            // it had, and nothing that could be replayed. The payload's
+            // top-level KEYS are safe to name; its values are not, so they
+            // are never touched.
             logger()->info('Inbound WhatsApp Payload', [
                 'gateway' => $gateway,
-                'data'    => $request->all(),
+                'mode' => $request->get('hub_mode'),
+                'payload_keys' => array_values(array_diff(
+                    array_keys($request->all()),
+                    ['hub_verify_token', 'hub.verify_token'],
+                )),
             ]);
 
             // Load the server config

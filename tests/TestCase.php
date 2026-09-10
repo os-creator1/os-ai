@@ -3,6 +3,7 @@
 namespace Tests;
 
 use Illuminate\Foundation\Testing\TestCase as BaseTestCase;
+use Illuminate\Support\Facades\Http;
 use Tests\Support\UsesTemporaryEnvironmentFile;
 
 abstract class TestCase extends BaseTestCase
@@ -37,6 +38,45 @@ abstract class TestCase extends BaseTestCase
      * @see docs/automation/SETTINGS-ENV-ISOLATION-REMEDIATION.md
      */
     use UsesTemporaryEnvironmentFile;
+
+    /**
+     * NO TEST MAY REACH A REAL NETWORK ENDPOINT.
+     *
+     * Customer Experience Slice 3 §4.4 item 19 / §4.13 step 3, asserted by
+     * T-MSG-33 in tests/Feature/Messaging/StrayRequestGuardTest.php.
+     *
+     * Slice 3 introduces a real provider adapter that talks to Telnyx. A
+     * test that forgets its `Http::fake()` would otherwise issue a genuine
+     * outbound request — against a live messaging provider, from a
+     * developer's machine or CI — and the failure mode is silent: the call
+     * succeeds, the test passes, and nobody learns that traffic left the
+     * building. `preventStrayRequests()` converts exactly that case into an
+     * immediate, loud `StrayRequestException` naming the URL.
+     *
+     * ORDER, AND WHY THIS DOES NOT DISTURB THE ISOLATION ABOVE.
+     *
+     * This must run AFTER parent::setUp(), because it writes to the
+     * Http facade's underlying factory, which only exists once the
+     * application container does. That is the opposite constraint to
+     * UsesTemporaryEnvironmentFile, which must be installed BEFORE
+     * bootstrap and is therefore activated from Tests\CreatesApplication,
+     * not from here — see that trait's docblock, item 2. The two do not
+     * compete: this method neither activates, replaces nor reorders the
+     * environment isolation, and tearDown()'s deliberate parent-first
+     * ordering below is untouched. Faking is per-test state on the
+     * application instance, so it dies with the container and needs no
+     * teardown of its own.
+     *
+     * A test that legitimately needs an outbound call still calls
+     * `Http::fake()` — which supersedes this guard for that test — and a
+     * test wanting a specific response still fakes that specific URL.
+     */
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        Http::preventStrayRequests();
+    }
 
     /**
      * PHPUnit runs tearDown() after a passing test, after a failed

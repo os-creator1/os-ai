@@ -1,0 +1,677 @@
+<?php
+
+namespace Tests\Feature\Messaging;
+
+use App\Enums\Messaging\MessagingProvider;
+use App\Enums\Messaging\WebhookRejectionReason;
+use App\Library\Messaging\MessagingWebhookRejectionRecorder;
+use App\Library\Messaging\TransportProviderIdentifier;
+use App\Models\Blacklists;
+use App\Models\ChatBox;
+use App\Models\CustomerBasedSendingServer;
+use App\Models\MessagingWebhookRejection;
+use App\Models\PhoneNumbers;
+use App\Models\Reports;
+use App\Models\SendingServer;
+use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
+use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
+use Tests\Feature\Messaging\Concerns\CreatesMessagingFixtures;
+use Tests\TestCase;
+use Twilio\Security\RequestValidator;
+
+/**
+ * Customer Experience Slice 3 §4.6.5 — T-MSG-24, 25, 26, 27, 28.
+ *
+ * The legacy `inbound/*` surface, which predates managed messaging and still
+ * carries live BYO traffic. Before this slice, an inbound message that
+ * matched no assigned `phone_numbers` row was written anyway against
+ * `inboundDLR()`'s `int $user_id = 1` default — silently handing one
+ * tenant's message to whoever holds user 1. These tests pin the fix at the
+ * real production entry points (§4.6.6), by real HTTP requests through the
+ * real routes, never by calling the controller method directly.
+ *
+ * No live provider is contacted: `Http::fake()` is active throughout and
+ * every credential below is an obvious fixture string.
+ */
+class LegacyInboundFailClosedTest extends TestCase
+{
+    use RefreshDatabase;
+    use CreatesMessagingFixtures;
+
+    /** A platform-owned number nobody has been assigned. */
+    private const UNATTRIBUTABLE = '14155559999';
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        Http::fake();
+    }
+
+    private function twilioServer(string $authToken = 'fixture_twilio_auth_token'): SendingServer
+    {
+        return SendingServer::create([
+            'name' => 'Legacy Twilio',
+            'settings' => SendingServer::TYPE_TWILIO,
+            'status' => true,
+            'plain' => true,
+            'account_sid' => 'AC_FIXTURE_SID',
+            'auth_token' => $authToken,
+        ]);
+    }
+
+    private function telnyxServer(): SendingServer
+    {
+        return SendingServer::create([
+            'name' => 'Legacy Telnyx',
+            'settings' => SendingServer::TYPE_TELNYX,
+            'status' => true,
+            'plain' => true,
+            'api_key' => 'fixture_telnyx_api_key',
+        ]);
+    }
+
+    /** The exact Telnyx inbound payload shape `inboundTelnyx()` parses. */
+    private function telnyxInboundPayload(string $destination, string $origin = '+14155550001'): array
+    {
+        return [
+            'data' => [
+                'event_type' => 'message.received',
+                'payload' => [
+                    'id' => 'pm_legacy_fixture',
+                    'direction' => 'inbound',
+                    'text' => 'hello from the legacy path',
+                    'from' => ['phone_number' => $origin],
+                    'to' => [['phone_number' => $destination, 'status' => 'delivered']],
+                ],
+            ],
+        ];
+    }
+
+    private function assertNothingWasAttributed(string $context): void
+    {
+        $this->assertSame(
+            0,
+            Reports::query()->where('direction', Reports::DIRECTION_INCOMING)->count(),
+            "{$context}: an unattributable inbound message must write no Reports row.",
+        );
+        $this->assertSame(0, ChatBox::query()->count(), "{$context}: no ChatBox row either.");
+        $this->assertSame(0, Blacklists::query()->count(), "{$context}: no STOP/blacklist entry either.");
+    }
+
+    // ---------------------------------------------------------------
+    // T-MSG-24 — legacy Telnyx cannot default to user 1
+    // ---------------------------------------------------------------
+
+    public function test_the_legacy_telnyx_route_cannot_attribute_an_unknown_number_to_user_one(): void
+    {
+        $this->telnyxServer();
+
+        // Deliberately present, and deliberately NOT matching: proving the
+        // fix is "no attribution found" rather than "no rows exist at all".
+        PhoneNumbers::create([
+            'number' => '14155551111',
+            'status' => 'assigned',
+            'user_id' => $this->createCustomer()->user_id,
+        ]);
+
+        $response = $this->postJson(
+            route('inbound.telnyx'),
+            $this->telnyxInboundPayload('+' . self::UNATTRIBUTABLE),
+        );
+
+        $response->assertOk();
+        $this->assertNothingWasAttributed('legacy Telnyx');
+
+        $rejection = MessagingWebhookRejection::query()->first();
+        $this->assertNotNull($rejection, 'The refusal must leave an auditable trace.');
+        $this->assertSame(WebhookRejectionReason::UnknownMapping, $rejection->reason);
+    }
+
+    // ---------------------------------------------------------------
+    // T-MSG-25 — legacy Twilio cannot default to user 1
+    // ---------------------------------------------------------------
+
+    public function test_the_legacy_twilio_route_cannot_attribute_an_unknown_number_to_user_one(): void
+    {
+        $authToken = 'fixture_twilio_auth_token';
+        $this->twilioServer($authToken);
+
+        $params = [
+            'From' => '+14155550002',
+            'To' => '+' . self::UNATTRIBUTABLE,
+            'Body' => 'hello from the legacy path',
+            'NumMedia' => '0',
+        ];
+
+        // A genuinely valid signature, so the request reaches inboundDLR()
+        // and the assertion is about attribution, not about the new
+        // signature gate rejecting it first.
+        $this->postWithTwilioSignature($authToken, $params)->assertOk();
+
+        $this->assertNothingWasAttributed('legacy Twilio');
+    }
+
+    // ---------------------------------------------------------------
+    // T-MSG-26 — BYO Twilio inbound is securely verified
+    // ---------------------------------------------------------------
+
+    /**
+     * The two halves are told apart by WHICH refusal each produces, which is
+     * a sharper discrimination than "one wrote a row and one did not":
+     *
+     * - a validly signed request gets past the new gate and is refused
+     *   deeper, by `inboundDLR()`'s attribution rules → `unknown_mapping`;
+     * - an invalidly signed one never reaches `inboundDLR()` at all → only
+     *   `invalid_signature`.
+     *
+     * Both use the same unattributable number on purpose. Asserting the
+     * fully-attributed happy path end-to-end is not possible on any
+     * migration-built database: `inboundDLR()`'s attributed branch issues
+     * `UPDATE chat_boxes SET ... ai_replied = 0` (DLRController.php:620-625)
+     * and no migration in the repository defines `chat_boxes.ai_replied`.
+     * That statement is byte-identical on pristine `origin/main`, and the
+     * column is absent from the pristine baseline database too — a
+     * pre-existing defect, in a branch of `inboundDLR()` outside this
+     * slice's allowlist. It is reported rather than worked around here.
+     */
+    public function test_a_valid_twilio_signature_passes_the_gate_and_an_invalid_one_never_reaches_it(): void
+    {
+        $authToken = 'fixture_twilio_auth_token';
+        $this->twilioServer($authToken);
+
+        $params = [
+            'From' => '+14155550003',
+            'To' => '+' . self::UNATTRIBUTABLE,
+            'Body' => 'a genuinely signed inbound message',
+            'NumMedia' => '0',
+        ];
+
+        // (a) Valid signature — the request is admitted, and the only
+        //     refusal recorded is the one inboundDLR() itself makes.
+        $this->postWithTwilioSignature($authToken, $params)->assertOk();
+
+        $this->assertSame(
+            [WebhookRejectionReason::UnknownMapping->value],
+            MessagingWebhookRejection::query()->pluck('reason')->map(
+                fn ($reason) => $reason instanceof WebhookRejectionReason ? $reason->value : $reason,
+            )->all(),
+            'A correctly signed request must pass the signature gate and be judged on attribution alone.',
+        );
+
+        MessagingWebhookRejection::query()->delete();
+
+        // (b) Invalid signature — refused before inboundDLR() runs, so the
+        //     attribution rules never get to speak.
+        $this->call('POST', route('inbound.twilio'), $params, [], [], [
+            'HTTP_X-Twilio-Signature' => base64_encode('this is not the right signature'),
+        ])->assertOk();
+
+        $reasons = MessagingWebhookRejection::query()->pluck('reason')->map(
+            fn ($reason) => $reason instanceof WebhookRejectionReason ? $reason->value : $reason,
+        )->all();
+
+        $this->assertContains(WebhookRejectionReason::InvalidSignature->value, $reasons);
+        $this->assertNotContains(
+            WebhookRejectionReason::UnknownMapping->value,
+            $reasons,
+            'An unverifiable request must never reach inboundDLR().',
+        );
+
+        $this->assertSame(
+            0,
+            Reports::query()->where('direction', Reports::DIRECTION_INCOMING)->count(),
+        );
+    }
+
+    public function test_a_missing_twilio_signature_header_is_refused_outright(): void
+    {
+        $this->twilioServer();
+
+        $this->post(route('inbound.twilio'), [
+            'From' => '+14155550004',
+            'To' => '+' . self::UNATTRIBUTABLE,
+            'Body' => 'unsigned',
+            'NumMedia' => '0',
+        ])->assertOk();
+
+        $this->assertSame(0, Reports::query()->where('direction', Reports::DIRECTION_INCOMING)->count());
+        $this->assertTrue(
+            MessagingWebhookRejection::query()
+                ->where('reason', WebhookRejectionReason::InvalidSignature->value)
+                ->exists(),
+        );
+    }
+
+    // ---------------------------------------------------------------
+    // T-MSG-27 — BYO Telnyx inbound is disabled, fail-closed
+    // ---------------------------------------------------------------
+
+    public function test_byo_telnyx_inbound_writes_nothing_regardless_of_payload_and_records_the_disablement(): void
+    {
+        $server = $this->telnyxServer();
+        $customer = $this->createCustomer();
+        $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
+
+        // What makes this connection Business-facing BYO: the customer-owned
+        // assignment row. The link column is `sending_server`.
+        CustomerBasedSendingServer::create([
+            'user_id' => $customer->user_id,
+            'business_id' => $business->id,
+            'sending_server' => $server->id,
+            'status' => true,
+        ]);
+
+        // Deliberately a payload that WOULD attribute successfully: the
+        // disablement must not depend on the message being unattributable.
+        PhoneNumbers::create([
+            'number' => self::UNATTRIBUTABLE,
+            'status' => 'assigned',
+            'user_id' => $customer->user_id,
+        ]);
+
+        $response = $this->postJson(
+            route('inbound.telnyx'),
+            $this->telnyxInboundPayload('+' . self::UNATTRIBUTABLE),
+        );
+
+        $response->assertOk();
+        $response->assertSee('Inbound processing is disabled for this connection');
+
+        $this->assertNothingWasAttributed('BYO Telnyx');
+
+        $rejection = MessagingWebhookRejection::query()->first();
+        $this->assertNotNull($rejection, 'The disablement itself must be recorded.');
+        $this->assertSame(WebhookRejectionReason::UnknownMapping, $rejection->reason);
+    }
+
+    public function test_a_legacy_telnyx_connection_with_no_business_link_is_not_caught_by_the_byo_gate(): void
+    {
+        // The gate is deliberately narrow: an admin/legacy Telnyx server
+        // with no CustomerBasedSendingServer row keeps its pre-existing
+        // behaviour. It still cannot fall back to user 1 (T-MSG-24), but it
+        // is not refused up-front as a BYO connection either — proving the
+        // two mechanisms are distinct and neither is doing the other's job.
+        // The response body is the discriminator: the BYO gate returns its
+        // own disablement string and nothing else does.
+        $this->telnyxServer();
+
+        $response = $this->postJson(
+            route('inbound.telnyx'),
+            $this->telnyxInboundPayload('+' . self::UNATTRIBUTABLE),
+        );
+
+        $response->assertOk();
+        $response->assertDontSee('Inbound processing is disabled for this connection');
+    }
+
+    // ---------------------------------------------------------------
+    // A rejection row must name the provider it actually came from
+    // ---------------------------------------------------------------
+
+    public function test_a_twilio_rejection_never_claims_to_be_telnyx(): void
+    {
+        $this->twilioServer();
+
+        $this->post(route('inbound.twilio'), [
+            'From' => '+14155550005',
+            'To' => '+' . self::UNATTRIBUTABLE,
+            'Body' => 'unsigned',
+            'NumMedia' => '0',
+        ])->assertOk();
+
+        $rejection = MessagingWebhookRejection::query()->firstOrFail();
+
+        $this->assertSame('twilio', $rejection->provider);
+        $this->assertNotSame(
+            MessagingProvider::Telnyx->value,
+            $rejection->provider,
+            'A Twilio signature rejection recorded as Telnyx is a false security-audit record.',
+        );
+        $this->assertFalse(TransportProviderIdentifier::isManagedProvider($rejection->provider));
+    }
+
+    public function test_a_legacy_gateway_rejection_records_that_gateways_own_name(): void
+    {
+        // A provider with no managed adapter and no relationship to Telnyx
+        // at all, proving the column's domain is genuinely the whole legacy
+        // fleet rather than the one-case managed-adapter enum.
+        SendingServer::create([
+            'name' => 'Legacy Plivo',
+            'settings' => 'Plivo',
+            'status' => true,
+            'plain' => true,
+        ]);
+
+        app(MessagingWebhookRejectionRecorder::class)->record(
+            WebhookRejectionReason::UnknownMapping,
+            'Plivo',
+            '{"probe":true}',
+        );
+
+        $this->assertSame('plivo', MessagingWebhookRejection::query()->firstOrFail()->provider);
+    }
+
+    public function test_provider_identifiers_are_normalized_without_collapsing_distinct_gateways(): void
+    {
+        // Same gateway, different spellings — one identifier.
+        $this->assertSame('twilio', TransportProviderIdentifier::normalize('Twilio'));
+        $this->assertSame('twilio', TransportProviderIdentifier::normalize('  twilio '));
+        $this->assertSame('twilio', TransportProviderIdentifier::normalize(SendingServer::TYPE_TWILIO));
+
+        // Different gateways stay different — TwilioCopilot is a separate
+        // connection with separate credentials, not a spelling of Twilio.
+        $this->assertSame('twiliocopilot', TransportProviderIdentifier::normalize('TwilioCopilot'));
+        $this->assertNotSame(
+            TransportProviderIdentifier::normalize('Twilio'),
+            TransportProviderIdentifier::normalize('TwilioCopilot'),
+        );
+
+        // Labels that are not plain words still reduce to a stable slug.
+        $this->assertSame('800com', TransportProviderIdentifier::normalize('800com'));
+        $this->assertSame('d7networks', TransportProviderIdentifier::normalize('D7Networks'));
+
+        // The managed enum round-trips unchanged, so the managed path is not
+        // a special case in the storage layer.
+        $this->assertSame(
+            MessagingProvider::Telnyx->value,
+            TransportProviderIdentifier::normalize(MessagingProvider::Telnyx),
+        );
+
+        // An unnameable provider is recorded as unknown, never as a real one.
+        foreach ([null, '', '   ', '///'] as $unnameable) {
+            $this->assertSame(TransportProviderIdentifier::UNKNOWN, TransportProviderIdentifier::normalize($unnameable));
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // T-MSG-28 — the duplicate/dead Telnyx routes cannot bypass the
+    // canonical handler
+    // ---------------------------------------------------------------
+
+    public function test_the_removed_duplicate_telnyx_routes_no_longer_resolve(): void
+    {
+        $telnyxRoutes = [];
+
+        foreach (app('router')->getRoutes() as $route) {
+            if (str_contains($route->uri(), 'telnyx')) {
+                $telnyxRoutes[] = $route->uri();
+            }
+        }
+
+        // routes/web.php's `/telnyx/webhook` line is gone outright.
+        $this->assertNotContains('telnyx/webhook', $telnyxRoutes);
+
+        // Asserted at the router, not by rendering the 404 page: the error
+        // view depends on frontend build artifacts that are not committed,
+        // so rendering it would make this test fail for a reason that has
+        // nothing to do with routing. withoutExceptionHandling() lets the
+        // router's own refusal surface directly.
+        $this->withoutExceptionHandling();
+
+        try {
+            $this->post('/telnyx/webhook', []);
+            $this->fail('The removed duplicate route must no longer resolve.');
+        } catch (NotFoundHttpException $e) {
+            $this->assertStringContainsString('telnyx/webhook', $e->getMessage());
+        } finally {
+            $this->withExceptionHandling();
+        }
+
+        // routes/web.php's second line registered a SECOND route for
+        // `POST /inbound/telnyx`, duplicating routes/public.php's canonical
+        // `inbound.telnyx`. The path still resolves — it is the real,
+        // supported legacy endpoint — but now to exactly one route, the
+        // named canonical one, so nothing can reach inboundTelnyx() while
+        // bypassing the middleware and gates that route carries.
+        $matching = array_values(array_filter(
+            $telnyxRoutes,
+            fn (string $uri): bool => $uri === 'inbound/telnyx/{gateway?}' || $uri === 'inbound/telnyx',
+        ));
+
+        $this->assertSame(['inbound/telnyx/{gateway?}'], $matching);
+        $this->assertSame(
+            'inbound/telnyx/{gateway?}',
+            app('router')->getRoutes()->getByName('inbound.telnyx')?->uri(),
+        );
+    }
+
+    /**
+     * Sign a form POST exactly the way Twilio does, using the fixture
+     * auth_token, and send it to the real legacy route.
+     */
+    private function postWithTwilioSignature(string $authToken, array $params): \Illuminate\Testing\TestResponse
+    {
+        $url = route('inbound.twilio');
+        $signature = (new RequestValidator($authToken))->computeSignature($url, $params);
+
+        return $this->call('POST', $url, $params, [], [], [
+            'HTTP_X-Twilio-Signature' => $signature,
+        ]);
+    }
+
+    // ---------------------------------------------------------------
+    // Audit finding — no partial phone-number tenant guessing
+    // ---------------------------------------------------------------
+
+    /**
+     * The defect, on an UNAUTHENTICATED webhook:
+     *
+     *     PhoneNumbers::where('number', 'like', "%$from%")->first()
+     *
+     * ran whenever an exact match failed. A caller who submitted a short
+     * substring reached any tenant whose assigned number merely CONTAINED
+     * it, and `->first()` chose the victim by insertion order. These tests
+     * drive the real, unauthenticated legacy route — not a helper — because
+     * the route is what an attacker has.
+     */
+    public function test_a_submitted_substring_never_attributes_to_a_tenant_whose_number_contains_it(): void
+    {
+        $this->telnyxServer();
+
+        $owner = $this->createCustomer();
+        PhoneNumbers::create([
+            'number' => '14155551234',
+            'status' => 'assigned',
+            'user_id' => $owner->user_id,
+        ]);
+
+        // `5555` is a substring of the assigned number above. Under the old
+        // LIKE fallback this reached that tenant.
+        $this->postJson(
+            route('inbound.telnyx'),
+            $this->telnyxInboundPayload('+5555'),
+        )->assertOk();
+
+        $this->assertNothingWasAttributed('substring probe');
+        $this->assertSame(
+            0,
+            Reports::query()->where('user_id', $owner->user_id)->count(),
+            'A substring must never reach the tenant whose number contains it.',
+        );
+    }
+
+    public function test_two_businesses_on_similar_numbers_never_receive_each_others_messages(): void
+    {
+        $this->telnyxServer();
+
+        $tenantA = $this->createCustomer();
+        $tenantB = $this->createCustomer();
+
+        // Deliberately overlapping: B's number CONTAINS A's as a suffix.
+        PhoneNumbers::create(['number' => '5551234', 'status' => 'assigned', 'user_id' => $tenantA->user_id]);
+        PhoneNumbers::create(['number' => '14155551234', 'status' => 'assigned', 'user_id' => $tenantB->user_id]);
+
+        // An exact match for A must attribute to A and to nobody else.
+        $this->postJson(route('inbound.telnyx'), $this->telnyxInboundPayload('+5551234'))->assertOk();
+
+        $reports = Reports::query()->where('direction', Reports::DIRECTION_INCOMING)->get();
+        $this->assertCount(1, $reports, 'Exactly one attribution.');
+        $this->assertSame((int) $tenantA->user_id, (int) $reports->first()->user_id);
+        $this->assertSame(0, Reports::query()->where('user_id', $tenantB->user_id)->count());
+    }
+
+    public function test_an_ambiguous_assigned_number_fails_closed_rather_than_picking_one(): void
+    {
+        $this->telnyxServer();
+
+        $tenantA = $this->createCustomer();
+        $tenantB = $this->createCustomer();
+
+        // The same number assigned to two tenants — a data state the legacy
+        // schema permits. `->first()` used to hand it to whoever was
+        // inserted earlier; ambiguity must fail closed instead.
+        PhoneNumbers::create(['number' => '14155559123', 'status' => 'assigned', 'user_id' => $tenantA->user_id]);
+        PhoneNumbers::create(['number' => '14155559123', 'status' => 'assigned', 'user_id' => $tenantB->user_id]);
+
+        $this->postJson(route('inbound.telnyx'), $this->telnyxInboundPayload('+14155559123'))->assertOk();
+
+        $this->assertNothingWasAttributed('ambiguous mapping');
+        $this->assertTrue(
+            MessagingWebhookRejection::query()
+                ->where('reason', WebhookRejectionReason::UnknownMapping->value)
+                ->exists(),
+            'The ambiguous mapping must be recorded as a refusal.',
+        );
+    }
+
+    public function test_an_exact_unique_assigned_number_still_attributes_correctly(): void
+    {
+        // The positive control. Removing a fallback is only correct if the
+        // legitimate case still works.
+        $this->telnyxServer();
+
+        $owner = $this->createCustomer();
+        PhoneNumbers::create([
+            'number' => self::UNATTRIBUTABLE,
+            'status' => 'assigned',
+            'user_id' => $owner->user_id,
+        ]);
+
+        $this->postJson(
+            route('inbound.telnyx'),
+            $this->telnyxInboundPayload('+' . self::UNATTRIBUTABLE),
+        )->assertOk();
+
+        $report = Reports::query()->where('direction', Reports::DIRECTION_INCOMING)->first();
+        $this->assertNotNull($report, 'An exact, unique, assigned match must still be attributed.');
+        $this->assertSame((int) $owner->user_id, (int) $report->user_id);
+    }
+
+    public function test_an_unassigned_exact_match_is_not_attribution(): void
+    {
+        $this->telnyxServer();
+
+        $owner = $this->createCustomer();
+        PhoneNumbers::create([
+            'number' => self::UNATTRIBUTABLE,
+            'status' => 'available',
+            'user_id' => $owner->user_id,
+        ]);
+
+        $this->postJson(
+            route('inbound.telnyx'),
+            $this->telnyxInboundPayload('+' . self::UNATTRIBUTABLE),
+        )->assertOk();
+
+        $this->assertNothingWasAttributed('unassigned number');
+    }
+
+    // ---------------------------------------------------------------
+    // Audit finding — rejection rows record the RECEIVING number
+    // ---------------------------------------------------------------
+
+    /**
+     * `inboundTwilio()` and `inboundTelnyx()` both assign
+     * `$to = <the external sender>` and `$from = <our receiving number>` —
+     * inverted against every intuition, which is how an audit came to read
+     * the rejection calls as recording the sender.
+     *
+     * They do not, and these two tests pin that so the question is settled
+     * by execution rather than by reading variable names.
+     */
+    public function test_a_twilio_signature_rejection_records_the_receiving_number(): void
+    {
+        $this->twilioServer();
+
+        $this->post(route('inbound.twilio'), [
+            'From' => '+14155550088',                 // the external sender
+            'To' => '+' . self::UNATTRIBUTABLE,       // our receiving number
+            'Body' => 'unsigned',
+            'NumMedia' => '0',
+        ])->assertOk();
+
+        $rejection = MessagingWebhookRejection::query()
+            ->where('reason', WebhookRejectionReason::InvalidSignature->value)
+            ->firstOrFail();
+
+        $this->assertStringContainsString(self::UNATTRIBUTABLE, (string) $rejection->destination_number);
+        $this->assertStringNotContainsString('4155550088', (string) $rejection->destination_number);
+    }
+
+    public function test_a_byo_telnyx_disablement_records_the_receiving_number(): void
+    {
+        $server = $this->telnyxServer();
+        $customer = $this->createCustomer();
+        $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
+
+        CustomerBasedSendingServer::create([
+            'user_id' => $customer->user_id,
+            'business_id' => $business->id,
+            'sending_server' => $server->id,
+            'status' => true,
+        ]);
+
+        $this->postJson(route('inbound.telnyx'), $this->telnyxInboundPayload(
+            '+' . self::UNATTRIBUTABLE,
+            '+14155550099',
+        ))->assertOk();
+
+        $rejection = MessagingWebhookRejection::query()->firstOrFail();
+
+        $this->assertStringContainsString(self::UNATTRIBUTABLE, (string) $rejection->destination_number);
+        $this->assertStringNotContainsString('4155550099', (string) $rejection->destination_number);
+    }
+
+    // ---------------------------------------------------------------
+    // Audit finding — the WhatsApp verification secret is never logged
+    // ---------------------------------------------------------------
+
+    public function test_the_whatsapp_verification_token_is_never_written_to_the_log(): void
+    {
+        $secret = 'FAKE-HUB-VERIFY-TOKEN-9c1f7a';
+
+        SendingServer::create([
+            'name' => 'Legacy WhatsApp',
+            'settings' => SendingServer::TYPE_WHATSAPP,
+            'status' => true,
+            'plain' => true,
+            'c1' => $secret,
+        ]);
+
+        $captured = [];
+        Log::listen(function ($message) use (&$captured) {
+            $captured[] = $message->message . ' ' . (string) json_encode($message->context);
+        });
+
+        $this->get(route('inbound.whatsapp') . '?' . http_build_query([
+            'hub_mode' => 'subscribe',
+            'hub_verify_token' => $secret,
+            'hub_challenge' => 'challenge-value',
+        ]));
+
+        $this->assertNotEmpty($captured, 'The handler still logs, so this test is exercising the real path.');
+
+        foreach ($captured as $line) {
+            $this->assertStringNotContainsString($secret, $line, 'The verification secret reached the log.');
+            $this->assertStringNotContainsString('hub_verify_token', $line, 'Even the key name is not logged.');
+        }
+
+        // And nothing persisted it either.
+        foreach (MessagingWebhookRejection::query()->get() as $rejection) {
+            $this->assertStringNotContainsString($secret, (string) json_encode($rejection->toArray()));
+        }
+    }
+}

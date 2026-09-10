@@ -24,6 +24,7 @@ use Illuminate\Contracts\View\View;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Gate;
 use Illuminate\Support\Facades\DB;
 
 /**
@@ -116,7 +117,7 @@ class MessagingChannelsController extends CustomerBaseController
         ));
 
         if (count($accessible) === 0) {
-            return view('customer.business.MessagingChannels.entry', ['accessible' => []]);
+            return view('customer.settings.advanced.entry', ['accessible' => []]);
         }
 
         if (count($accessible) === 1) {
@@ -125,7 +126,7 @@ class MessagingChannelsController extends CustomerBaseController
             return redirect()->route('customer.workspaces.businesses.channels.index', [$workspace->uid, $business->uid]);
         }
 
-        return view('customer.business.MessagingChannels.entry', ['accessible' => $accessible]);
+        return view('customer.settings.advanced.entry', ['accessible' => $accessible]);
     }
 
     public function channels(string $workspaceUid, string $businessUid): View|Factory|Application
@@ -151,7 +152,7 @@ class MessagingChannelsController extends CustomerBaseController
             ];
         }
 
-        return view('customer.business.MessagingChannels.index', [
+        return view('customer.settings.advanced.index', [
             'workspaceUid' => $workspaceUid,
             'businessUid' => $businessUid,
             'providers' => $providers,
@@ -171,7 +172,7 @@ class MessagingChannelsController extends CustomerBaseController
             return $this->channelsError($workspaceUid, $businessUid, 'Unsupported provider.');
         }
 
-        return view('customer.business.MessagingChannels.connect', [
+        return view('customer.settings.advanced.connect', [
             'workspaceUid' => $workspaceUid,
             'businessUid' => $businessUid,
             'provider' => $provider,
@@ -245,7 +246,7 @@ class MessagingChannelsController extends CustomerBaseController
 
         $provider = $connection->sendingServer->settings;
 
-        return view('customer.business.MessagingChannels.show', [
+        return view('customer.settings.advanced.show', [
             'workspaceUid' => $workspaceUid,
             'businessUid' => $businessUid,
             'connection' => $connection,
@@ -400,7 +401,28 @@ class MessagingChannelsController extends CustomerBaseController
             return false;
         }
 
-        if (! $workspaceCandidate->canManage()) {
+        // Customer Experience Slice 3 §4.7 — the one-clause tightening.
+        //
+        // Slice 0 used canManage() (owner-or-active-admin) to close an
+        // immediately exploitable fail-open gap quickly; that was correct for
+        // its purpose and is not a defect. Slice 3 relocates this surface and
+        // narrows it to its final, contractually-correct rule: the parent
+        // contract's §6 row marks Agency ADMIN as denied and only Agency
+        // OWNER as allowed, so authoritative Workspace ownership is what
+        // decides here.
+        //
+        // This can only narrow Slice 0's merged behaviour — every actor it
+        // already denied stays denied, and the only newly denied actor is an
+        // Agency-wide active Admin who is not the Workspace owner.
+        if (! $workspaceCandidate->isOwner) {
+            return false;
+        }
+
+        // Stacked, independent requirement: the granted permission is
+        // necessary but never sufficient, and ownership is never sufficient
+        // without it. Neither check may substitute for or widen past the
+        // other.
+        if (! Gate::allows('manage_advanced_provider')) {
             return false;
         }
 

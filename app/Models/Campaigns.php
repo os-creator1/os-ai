@@ -969,11 +969,87 @@
         }
 
         /**
+         * Slice 3 §4.9 — the DURABLE operation key for a campaign send.
+         *
+         * The defect this replaces: the delegate used to invent
+         * `managed:<businessId>:<random uuid>` when a caller supplied no
+         * key, and this caller supplied none. `SendMessage` is a queued job
+         * with retries, so every retry of the SAME logical send minted a
+         * fresh key and therefore produced another provider call, another
+         * operation row, another measurement and another Reports row. The
+         * idempotency that §4.9 promises was, on the one path that actually
+         * retries, not there at all.
+         *
+         * A campaign send's durable identity is the campaign it belongs to
+         * plus the recipient it is going to — which is exactly the pair
+         * `subscribersToSend()` already uses to decide who still needs
+         * sending, so a retry and the original agree by construction.
+         *
+         * Returns null rather than throwing when neither is available; the
+         * delegate decides what to do about that, and only once it knows the
+         * send is actually managed. Throwing here would break every legacy
+         * send that has no business with this method at all.
+         */
+        private function managedOperationKeyFor(array $preparedData): ?string
+        {
+            $campaignId = $preparedData['campaign_id'] ?? $this->id ?? null;
+            $recipient = $preparedData['phone'] ?? null;
+
+            if ($campaignId === null || ! is_string($recipient) || $recipient === '') {
+                return null;
+            }
+
+            return 'managed:campaign:' . $campaignId . ':' . preg_replace('/\D+/', '', $recipient);
+        }
+
+        /**
          * @throws Exception
          */
         public function sendSMS($preparedData)
         {
             $getData = null;
+
+            // Customer Experience Slice 3 §4.5 — managed-messaging
+            // delegation, before any provider send method runs.
+            //
+            // This is the single point the bulk/scheduled path AND
+            // campaignBuilder()'s async chain (RunCampaign -> LoadCampaign ->
+            // SendMessage -> processSend -> here) both converge on, so one
+            // insertion covers every campaign entry route. A Business
+            // without a managed identity returns null and the legacy
+            // provider methods below run exactly as before.
+            // The sms_type is passed so the delegate can refuse a type
+            // managed messaging does not carry. This insertion sits ABOVE
+            // the type switch below, which is exactly how a managed
+            // Business's VOICE campaign was previously handed to the SMS
+            // adapter and billed as messaging transport — the delegate now
+            // refuses it and the voice branch below runs unchanged.
+            $managedResult = \App\Library\Messaging\ManagedDispatchDelegate::attempt(
+                $this->business_id ?? null,
+                $preparedData['phone'] ?? null,
+                $preparedData['message'] ?? null,
+                $this->managedOperationKeyFor($preparedData),
+                isset($preparedData['media_url']) ? [(string) $preparedData['media_url']] : [],
+                (string) ($preparedData['sms_count'] ?? 1),
+                $preparedData['sms_type'] ?? $this->sms_type,
+            );
+
+            if ($managedResult !== null) {
+                // §4.5 step 9 — hand the caller the same kind of value the
+                // legacy provider methods below return (a Reports model), so
+                // track_message(), the delivered/failed counters and the
+                // sms_unit accounting keep working unchanged on managed
+                // traffic. See ManagedDispatchDelegate::recordLegacyReport().
+                return \App\Library\Messaging\ManagedDispatchDelegate::recordLegacyReport(
+                    $this,
+                    $preparedData,
+                    $managedResult,
+                    // The operation key, so the Report can be correlated to
+                    // its operation row and a later delivery callback can
+                    // update both consistently.
+                    $this->managedOperationKeyFor($preparedData),
+                );
+            }
 
             if ($this->sms_type == 'plain' || $this->sms_type == 'unicode') {
                 $getData = $this->sendPlainSMS($preparedData);
@@ -998,6 +1074,18 @@
             if ($this->sms_type == 'otp') {
                 $getData = $this->sendOTP($preparedData);
             }
+
+            // Slice 3 §4.7/§4.8 — T-MSG-35, T-BYO-1/2. The campaign-side
+            // half of the BYO measurement seam, at the same authoritative
+            // boundary the quick-send path uses: the legacy provider layer
+            // has returned, and the delegate decides from persisted state
+            // alone whether this was a customer's own BYO gateway and
+            // whether it actually delivered.
+            \App\Library\Messaging\ManagedDispatchDelegate::recordByoMeasurement(
+                is_object($preparedData['sending_server'] ?? null) ? $preparedData['sending_server']->id : null,
+                $getData,
+                (string) ($preparedData['sms_count'] ?? 1),
+            );
 
             return $getData;
         }

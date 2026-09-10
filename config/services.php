@@ -122,4 +122,25 @@
             'project'      => env('OPENAI_PROJECT'),
             'role'         => env('OPENAI_ROLE', 'user'),
         ],
+
+        /*
+        |--------------------------------------------------------------------------
+        | Telnyx — the single platform managed-messaging credential
+        |--------------------------------------------------------------------------
+        |
+        | Customer Experience Slice 3 §4.4. Under the §28.3 Candidate B
+        | architecture there is exactly one platform Telnyx credential, shared
+        | by every managed Business and never stored per-Business.
+        |
+        | Keys only — no value appears here, in any migration, or in any
+        | seeder. Presence alone does not activate anything: sending also
+        | requires config('messaging.managed_messaging_enabled') to be true.
+        |
+        */
+
+        'telnyx' => [
+            'api_key'             => env('TELNYX_API_KEY'),
+            'webhook_public_key'  => env('TELNYX_WEBHOOK_PUBLIC_KEY'),
+            'mode'                => env('TELNYX_MODE', 'sandbox'),
+        ],
     ];

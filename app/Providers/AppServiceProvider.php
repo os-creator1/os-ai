@@ -111,6 +111,28 @@
          */
         public function register()
         {
+            // Customer Experience Slice 3 §4.13 step 4 — the default
+            // messaging-adapter binding, behind the adapter's own
+            // fail-closed constructor check.
+            //
+            // This is deliberately a `bind()` rather than an entry in the
+            // repository map below, because it must NOT be resolved eagerly
+            // or shared: TelnyxMessagingAdapter's constructor throws
+            // MessagingProviderNotConfiguredException when the platform kill
+            // switch is off or a credential is absent, and that refusal has
+            // to happen at the moment of use, on the caller's terms, not at
+            // container-build time for every request in the application.
+            //
+            // Without this line `app(MessagingProviderAdapter::class)` cannot
+            // resolve at all in production — the interface has no concrete
+            // default — while every test that binds FakeMessagingAdapter
+            // masks the gap. T-PROV's real-binding assertion is what caught
+            // that.
+            $this->app->bind(
+                \App\Library\Messaging\Contracts\MessagingProviderAdapter::class,
+                \App\Library\Messaging\TelnyxMessagingAdapter::class,
+            );
+
             $bindings = [
                 UserRepository::class           => EloquentUserRepository::class,
                 AccountRepository::class        => EloquentAccountRepository::class,
@@ -157,6 +179,10 @@
                 \App\Repositories\Contracts\BusinessFeatureToggleRepository::class => \App\Repositories\Eloquent\EloquentBusinessFeatureToggleRepository::class,
                 \App\Repositories\Contracts\WorkspaceEntitlementTransitionRepository::class => \App\Repositories\Eloquent\EloquentWorkspaceEntitlementTransitionRepository::class,
                 \App\Repositories\Contracts\BusinessUsageWalletRepository::class => \App\Repositories\Eloquent\EloquentBusinessUsageWalletRepository::class,
+                // Customer Experience Slice 3 §4.8 — RFC-005's additive,
+                // measurement-only repository; the sole writer of
+                // business_usage_measurements.
+                \App\Repositories\Contracts\BusinessUsageMeasurementRepository::class => \App\Repositories\Eloquent\EloquentBusinessUsageMeasurementRepository::class,
                 \App\Repositories\Contracts\BusinessUsageRateRepository::class => \App\Repositories\Eloquent\EloquentBusinessUsageRateRepository::class,
                 \App\Repositories\Contracts\BusinessUsageRateActivationRepository::class => \App\Repositories\Eloquent\EloquentBusinessUsageRateActivationRepository::class,
                 \App\Repositories\Contracts\PlatformFeatureUsageClassificationRepository::class => \App\Repositories\Eloquent\EloquentPlatformFeatureUsageClassificationRepository::class,

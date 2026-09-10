@@ -71,6 +71,46 @@
          * @param Request $request
          *
          * @return Application|Factory|View|RedirectResponse
+         * Customer Experience Slice 3 — tenant-escape fix.
+         *
+         * Every method in this controller used to forward
+         * `$request->except('_token', ...)` straight into the campaign
+         * repository. The repository reads `business_id` and `user_id` out of
+         * that array as TENANCY AUTHORITY — they select the sending server,
+         * the sender id, the balance that gets debited, the blacklist scope,
+         * the contact groups, the owner written onto the campaign, and
+         * whether managed transport is used at all.
+         *
+         * Those two keys are legitimate when the OUTREACH controller sets
+         * them, because it sets them itself, after resolving the Business
+         * through the RFC-003 §14.1 boundary. They are never legitimate
+         * coming from a browser: a customer could name another tenant's
+         * Business and user and send on their account, at their cost.
+         *
+         * This controller has no Business in its route at all — it is the
+         * legacy, actor-scoped surface — so the correct authority here is
+         * whatever `Auth::user()` and the LegacyBusinessResolver already
+         * resolve. Both keys are therefore stripped from every forwarded
+         * payload, on every entry point (SMS, MMS, WhatsApp, Viber, OTP,
+         * voice and their file/import siblings), rather than at the handful
+         * that happened to be reported.
+         *
+         * Stripping rather than rejecting is deliberate: a stray key from a
+         * stale form should not turn into a 4xx for a legitimate customer,
+         * and the repository's own fail-closed check (added alongside this)
+         * is what catches a caller that bypasses the controller entirely.
+         *
+         * @param list<string> $except further keys this caller strips for its
+         *                             own reasons, unrelated to tenancy
+         *
+         * @return array<string, mixed>
+         */
+        private function tenantSafeInput(Request $request, array $except = []): array
+        {
+            return $request->except(array_merge(['_token', 'business_id', 'user_id'], $except));
+        }
+
+        /**
          * @throws AuthorizationException
          */
         public function quickSend(Request $request): View|Factory|RedirectResponse|Application
@@ -215,7 +255,7 @@
                 return $this->quickSendError('sms', 'Please select your sending server.');
             }
 
-            $sendData            = $request->except('_token', 'recipients', 'delimiter');
+            $sendData            = $this->tenantSafeInput($request, ['recipients', 'delimiter']);
             $sendData['message'] = str_replace("\r", '', $sendData['message']);
 
             $validateData = $this->campaigns->checkQuickSendValidation($sendData);
@@ -448,7 +488,7 @@
                 ]);
             }
 
-            $data = $this->campaigns->campaignBuilder($campaign, $request->except('_token'));
+            $data = $this->campaigns->campaignBuilder($campaign, $this->tenantSafeInput($request));
 
             if (isset($data->getData()->status)) {
 
@@ -533,7 +573,7 @@
                 ['name' => __('locale.menu.Send Using File')],
             ];
 
-            $form_data = $request->except('_token', 'import_file');
+            $form_data = $this->tenantSafeInput($request, ['import_file']);
             $file      = $request->file('import_file');
             $ref_id    = uniqid();
 
@@ -639,7 +679,7 @@
 
             $form_data = json_decode($request->input('form_data'), true);
 
-            $data = $this->campaigns->sendUsingFile($campaign, $request->except('_token'));
+            $data = $this->campaigns->sendUsingFile($campaign, $this->tenantSafeInput($request));
 
             $sms_type = $form_data['sms_type'] == 'plain' ? 'sms' : $form_data['sms_type'];
             $status   = isset($data->getData()->status) ? $data->getData()->status : 'error';
@@ -747,7 +787,7 @@
                 ];
             }
 
-            $data = $request->except('_token');
+            $data = $this->tenantSafeInput($request);
             $v    = Validator::make($data, $rules);
 
             if ($v->fails()) {
@@ -775,7 +815,7 @@
                 return $this->quickSendError('voice', __('locale.campaigns.too_many_numbers'));
             }
 
-            $sendData = $request->except('_token', 'recipients', 'delimiter');
+            $sendData = $this->tenantSafeInput($request, ['recipients', 'delimiter']);
 
             $errors  = [];
             $success = [];
@@ -912,7 +952,7 @@
                 ];
             }
 
-            $data = $request->except('_token');
+            $data = $this->tenantSafeInput($request);
             $v    = Validator::make($data, $rules);
 
             if ($v->fails()) {
@@ -939,7 +979,7 @@
                 ]);
             }
 
-            $sendData = $request->except('_token');
+            $sendData = $this->tenantSafeInput($request);
 
             if ($request->has('show_manual_input') && $request->hasFile('voice_file')) {
                 $sendData['media_url'] = Tool::uploadImage($request->file('voice_file'));
@@ -1027,7 +1067,7 @@
                     ['name' => __('locale.menu.Send Using File')],
                 ];
 
-                $form_data = $request->except('_token', 'import_file');
+                $form_data = $this->tenantSafeInput($request, ['import_file']);
                 $file      = $request->file('import_file');
                 $ref_id    = uniqid();
 
@@ -1184,7 +1224,7 @@
                 return $this->quickSendError('mms', 'MMS media file is required.');
             }
 
-            $sendData              = $request->except('_token', 'recipients', 'delimiter');
+            $sendData              = $this->tenantSafeInput($request, ['recipients', 'delimiter']);
             $sendData['media_url'] = Tool::uploadImage($request->file('mms_file'));
 
             // Validate sending server
@@ -1407,7 +1447,7 @@
                 ];
 
                 $media_url              = Tool::uploadImage($request->file('mms_file'));
-                $form_data              = $request->except('_token', 'import_file', 'mms_file');
+                $form_data              = $this->tenantSafeInput($request, ['import_file', 'mms_file']);
                 $form_data['media_url'] = $media_url;
                 $file                   = $request->file('import_file');
 
@@ -1561,7 +1601,7 @@
                 return $this->quickSendError('whatsapp', __('locale.campaigns.too_many_numbers'));
             }
 
-            $sendData = $request->except('_token', 'recipients', 'delimiter', 'mms_file', 'language');
+            $sendData = $this->tenantSafeInput($request, ['recipients', 'delimiter', 'mms_file', 'language']);
 
             if (isset($request->language) && $request->language != '0') {
                 $sendData['language'] = $request->language;
@@ -1712,7 +1752,7 @@
                 ]);
             }
 
-            $data = $this->campaigns->campaignBuilder($campaign, $request->except('_token'));
+            $data = $this->campaigns->campaignBuilder($campaign, $this->tenantSafeInput($request));
 
             if (isset($data->getData()->status)) {
 
@@ -1787,7 +1827,7 @@
                     ['name' => __('locale.menu.Send Using File')],
                 ];
 
-                $form_data = $request->except('_token', 'import_file', 'mms_file');
+                $form_data = $this->tenantSafeInput($request, ['import_file', 'mms_file']);
 
                 if ($request->hasFile('mms_file') && $request->file('mms_file')->isValid()) {
                     $media_url              = Tool::uploadImage($request->file('mms_file'));
@@ -2133,7 +2173,7 @@
                 return $this->quickSendError('viber', __('locale.campaigns.too_many_numbers'));
             }
 
-            $sendData = $request->except('_token', 'recipients', 'delimiter', 'mms_file');
+            $sendData = $this->tenantSafeInput($request, ['recipients', 'delimiter', 'mms_file']);
 
             if ($request->hasFile('mms_file')) {
                 $sendData['media_url'] = Tool::uploadImage($request->file('mms_file'));
@@ -2283,7 +2323,7 @@
                 ]);
             }
 
-            $data = $this->campaigns->campaignBuilder($campaign, $request->except('_token'));
+            $data = $this->campaigns->campaignBuilder($campaign, $this->tenantSafeInput($request));
 
             if (isset($data->getData()->status)) {
 
@@ -2367,7 +2407,7 @@
                     ['name' => __('locale.menu.Send Using File')],
                 ];
 
-                $form_data = $request->except('_token', 'import_file', 'mms_file');
+                $form_data = $this->tenantSafeInput($request, ['import_file', 'mms_file']);
 
                 if ($request->hasFile('mms_file') && $request->file('mms_file')->isValid()) {
                     $media_url              = Tool::uploadImage($request->file('mms_file'));
@@ -2542,7 +2582,7 @@
                 return $this->quickSendError('otp', __('locale.campaigns.too_many_numbers'));
             }
 
-            $sendData = $request->except('_token', 'recipients', 'delimiter');
+            $sendData = $this->tenantSafeInput($request, ['recipients', 'delimiter']);
 
             // Validate sending server
             $sendingServersExist = CustomerBasedSendingServer::where('user_id', $user->id)
@@ -2704,7 +2744,7 @@
                 ]);
             }
 
-            $data = $this->campaigns->campaignBuilder($campaign, $request->except('_token'));
+            $data = $this->campaigns->campaignBuilder($campaign, $this->tenantSafeInput($request));
 
             if (isset($data->getData()->status)) {
 
@@ -2787,7 +2827,7 @@
                     ['name' => __('locale.menu.Send Using File')],
                 ];
 
-                $form_data = $request->except('_token', 'import_file');
+                $form_data = $this->tenantSafeInput($request, ['import_file']);
                 $file      = $request->file('import_file');
                 $ref_id    = uniqid();
 

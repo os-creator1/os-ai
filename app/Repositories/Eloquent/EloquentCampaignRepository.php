@@ -43,6 +43,7 @@
     use Illuminate\Http\JsonResponse;
     use Illuminate\Support\Facades\Auth;
     use Illuminate\Support\Facades\DB;
+    use Illuminate\Support\Str;
     use libphonenumber\NumberParseException;
     use libphonenumber\PhoneNumberUtil;
     use Throwable;
@@ -92,8 +93,70 @@
          *
          * @throws Throwable
          */
+        /**
+         * Customer Experience Slice 3 — the repository half of the
+         * tenant-escape fix.
+         *
+         * `CampaignController` now strips `business_id`/`user_id` from every
+         * forwarded payload, but a controller-only fix is one refactor away
+         * from being undone. This is the layer that actually owns the
+         * consequence, so it verifies the claim rather than trusting it.
+         *
+         * The rule matches what the legitimate caller already does.
+         * `OutreachController` resolves its Business through the RFC-003
+         * §14.1 boundary and only then sets these keys, passing the BUSINESS
+         * OWNER's user_id while the actor may be a staff member — so the
+         * invariant cannot be "user_id equals the authenticated id". It is:
+         *
+         *   - the ACTING user (Auth::user(), never the supplied user_id)
+         *     must be authorized for the supplied Business, through
+         *     WorkspaceManager — the same single authority the Outreach
+         *     controller uses; and
+         *   - a supplied user_id may only ever be that Business's own owner.
+         *
+         * A console or queued caller has no authenticated actor and supplies
+         * no request input, so it is left alone; the guard exists for input
+         * that crossed an HTTP boundary.
+         *
+         * Failure is a 404, matching the rest of this codebase's tenancy
+         * boundary, so a probe learns nothing about whether the Business
+         * exists.
+         */
+        private function assertSuppliedTenancyIsAuthorized(array $input): void
+        {
+            $businessId = $input['business_id'] ?? null;
+
+            if ($businessId === null) {
+                return;
+            }
+
+            $actorId = Auth::id();
+
+            if ($actorId === null) {
+                return;
+            }
+
+            $business = \App\Models\Business::query()->find($businessId);
+
+            abort_if($business === null, 404);
+            abort_unless(
+                app(\App\Library\Workspace\WorkspaceManager::class)->userCanAccessBusiness((int) $actorId, $business),
+                404,
+            );
+
+            $suppliedUserId = $input['user_id'] ?? null;
+
+            if ($suppliedUserId !== null) {
+                abort_unless(
+                    (int) $suppliedUserId === (int) ($business->customer?->user_id),
+                    404,
+                );
+            }
+        }
+
         public function quickSend(Campaigns $campaign, array $input, bool $conversationContext = false): JsonResponse
         {
+            $this->assertSuppliedTenancyIsAuthorized($input);
 
             $user        = $input['user'];
             $sms_type    = $input['sms_type'];
@@ -220,14 +283,43 @@
                 $sending_server = $coverage->{$serverKey};
             }
 
-            if ( ! $sending_server) {
+            // Customer Experience Slice 3 §4.5/§4.7 — a managed Business
+            // carries its own transport and has no legacy SendingServer.
+            //
+            // Every guard below this point asks a question about a legacy
+            // gateway: does one exist, does it support this SMS type, can it
+            // handle a file-less send. For a Business the PLATFORM sends for,
+            // all three are the wrong question, and the first of them was
+            // refusing managed sends outright with "No sending server
+            // available for your subscribed plan" — so managed messaging,
+            // which §4.7 calls the normal experience, could only work for a
+            // Business that also happened to keep a legacy gateway
+            // configured. That is the defect this resolves.
+            //
+            // Everything the managed path genuinely depends on has already
+            // run above: the caller's tenancy and entitlement resolution,
+            // the active subscription, the country, and the plan coverage.
+            // The blacklist check and spintax processing below still run for
+            // managed sends, and the delegation itself stays where it is —
+            // after those and after the RFC-005 block — so this widens
+            // nothing and skips no safety check.
+            //
+            // RFC-005 accounting is preserved by the existing code, not by
+            // an exception carved for this: qualifyConversationsMeterReservation()
+            // already declares $sendingServer nullable and already treats
+            // null as non-qualifying, and it only ever qualifies for the one
+            // configured pilot sending server — which a Business with no
+            // legacy server can never be.
+            $managedTransport = \App\Library\Messaging\ManagedDispatchDelegate::isManaged($input['business_id'] ?? null);
+
+            if ( ! $sending_server && ! $managedTransport) {
                 return response()->json([
                     'status'  => 'error',
                     'message' => __('locale.campaigns.sending_server_not_available'),
                 ]);
             }
 
-            if ( ! $sending_server->{$db_sms_type}) {
+            if ($sending_server && ! $sending_server->{$db_sms_type}) {
                 return response()->json([
                     'status'  => 'error',
                     'message' => __('locale.sending_servers.sending_server_sms_capabilities', ['type' => strtoupper($db_sms_type)]),
@@ -235,7 +327,7 @@
             }
 
 
-            if ($sending_server->settings != SendingServer::TYPE_VOICEANDTEXT && $sending_server->settings != SendingServer::TYPE_TERMII && $sending_server->settings != SendingServer::TYPE_ARKESEL && $message == null) {
+            if ($sending_server && $sending_server->settings != SendingServer::TYPE_VOICEANDTEXT && $sending_server->settings != SendingServer::TYPE_TERMII && $sending_server->settings != SendingServer::TYPE_ARKESEL && $message == null) {
                 return response()->json([
                     'status'  => 'error',
                     'message' => 'Your sending server is not capable to send upload file option. Please try with text to space option',
@@ -270,7 +362,10 @@
             // Decode the options
             $priceOption = json_decode($coverage['options'], true);
 
-            if (config('app.gateway_wise_billing')) {
+            // Gateway-wise billing prices per legacy gateway. A managed send
+            // has none, so it keeps the plan's own coverage price rather
+            // than dereferencing a null server.
+            if (config('app.gateway_wise_billing') && $sending_server) {
                 $getCoverage = SendingServerBasedPricingPlans::where('sending_server', $sending_server->id)->where('country_id', $country->id)->first();
                 if ( ! $getCoverage) {
                     return response()->json([
@@ -337,7 +432,30 @@
             // queries, zero new columns written for a non-qualifying send.
             $m5 = null;
 
-            if ($conversationContext && ($sms_type === 'plain' || $sms_type === 'unicode')) {
+            // TRANSPORT CLASSIFICATION COMES FIRST (audit P2).
+            //
+            // `$managedTransport` was resolved far above, before the legacy
+            // gateway guards. It is re-used here so a managed send never
+            // enters this block at all.
+            //
+            // The defect: this block RESERVES against the Conversations
+            // meter, and the managed delegation returns early further down —
+            // so the reservation was created and then never committed or
+            // released. It sat pending forever, holding funds against a
+            // wallet for a send the Conversations meter had nothing to do
+            // with, because managed transport is measured under §4.8 and
+            // takes no RFC-005 reservation at all.
+            //
+            // The fix is to avoid creating the invalid reservation rather
+            // than to compensate for it after the early return. A
+            // compensating release is a second thing that can fail, and it
+            // fails exactly when the first one did.
+            //
+            // BYO and legacy sends are deliberately NOT excluded: they
+            // continue through the legacy path below, so their reservation
+            // reaches settlement normally, and excluding them would change
+            // the merged Conversations pilot's behaviour.
+            if (! $managedTransport && $conversationContext && ($sms_type === 'plain' || $sms_type === 'unicode')) {
                 $m5 = $this->qualifyConversationsMeterReservation(
                     $user,
                     $country,
@@ -392,6 +510,59 @@
             }
 
             $data = null;
+
+            // Customer Experience Slice 3 §4.5 — managed-messaging
+            // delegation, before any legacy provider switch runs.
+            //
+            // A Business with an active managed identity sends through the
+            // platform's own transport, resolved entirely from the Business
+            // model, and never reaches SendCampaignSMS's provider case
+            // blocks. A Business without one returns null here and the
+            // legacy path below proceeds exactly as before.
+            //
+            // A managed Business whose identity cannot be used fails closed
+            // rather than falling back to a legacy provider.
+            // The durable key for a quick send.
+            //
+            // A Conversations-context call already carries a client
+            // idempotency token, and that is the right identity when it
+            // exists. When it does not, the key is derived deterministically
+            // from the send's own content — Business, recipient and message
+            // — rather than from a random UUID, so a repeated delivery of
+            // the same request converges instead of double-charging.
+            //
+            // The bound is stated honestly: quick send is a synchronous,
+            // user-initiated action that no queue retries, so this is
+            // duplicate-suppression rather than retry-recovery, and two
+            // genuinely separate sends of identical text to the same
+            // recipient collapse to one operation. The alternative — a fresh
+            // random key per call — is what produced the double-billing this
+            // replaces.
+            $quickSendKey = $input['idempotency_token'] ?? null;
+
+            if (! is_string($quickSendKey) || $quickSendKey === '') {
+                $quickSendKey = 'managed:quicksend:' . ($input['business_id'] ?? '0')
+                    . ':' . hash('sha256', $phone . '|' . (string) $message . '|' . (string) $sender_id);
+            }
+
+            $managedResult = \App\Library\Messaging\ManagedDispatchDelegate::attempt(
+                $input['business_id'] ?? null,
+                $phone,
+                $message,
+                $quickSendKey,
+                isset($input['media_url']) ? [(string) $input['media_url']] : [],
+                (string) $sms_count,
+                $sms_type,
+            );
+
+            if ($managedResult !== null) {
+                return response()->json([
+                    'status'  => $managedResult->accepted ? 'success' : 'error',
+                    'message' => $managedResult->accepted
+                        ? __('locale.campaigns.campaign_successfully_sent')
+                        : __('locale.campaigns.campaign_sending_failed'),
+                ]);
+            }
 
             // RFC-005 Milestone 5 §C — null means "not an M5-qualifying
             // send, do not attach m5_token_action to the response at all";
@@ -473,6 +644,19 @@
 
             if (is_object($data) && ! empty($data->status)) {
                 if (substr_count($data->status, 'Delivered') == 1) {
+                    // Slice 3 §4.7/§4.8 — T-MSG-35, T-BYO-1/2. A BYO send
+                    // is measured, at a zero rate, with no reservation and
+                    // no wallet debit. This is the authoritative successful
+                    // dispatch boundary: the provider layer has returned a
+                    // persisted Reports row that says Delivered. Ownership
+                    // is resolved inside the delegate from the sending
+                    // server's own assignment row, never from $input.
+                    \App\Library\Messaging\ManagedDispatchDelegate::recordByoMeasurement(
+                        $sending_server?->id,
+                        $data,
+                        (string) $sms_count,
+                    );
+
                     // RFC-005 Milestone 5 §H — charging exclusivity: a
                     // qualifying M5 send already charged the RFC-005
                     // wallet via settleConversationsMeterReservation()
@@ -497,6 +681,15 @@
                         ]);
 
                         if ( ! $chatbox->exists) {
+                            // The same missing-uid defect as the raw insert
+                            // further down this file: ChatBox mints no uid of
+                            // its own, so a row created here also relied on
+                            // non-strict MySQL to store an empty string in a
+                            // NOT NULL char(36). Fixed at both writers rather
+                            // than only at the one Lane E happened to catch,
+                            // since leaving the second live would reintroduce
+                            // blank uids the moment a two-way quick send runs.
+                            $chatbox->uid = (string) Str::uuid();
                             $chatbox->reply_by_customer = false;
                             $chatbox->save();
                         }
@@ -846,6 +1039,11 @@
 
         public function campaignBuilder(Campaigns $campaign, array $input): JsonResponse
         {
+            // The same fail-closed check as quickSend(): a supplied Business
+            // must belong to the acting user's authority, and a supplied
+            // user_id may only be that Business's owner.
+            $this->assertSuppliedTenancyIsAuthorized($input);
+
             // Pass 2 — Business-aware Outreach passes 'user_id' explicitly
             // (the selected Business's owning customer id), matching
             // checkQuickSendValidation()'s existing override convention, so
@@ -1189,7 +1387,27 @@
                     foreach ($contacts as $contact) {
                         $phone = preg_replace('/\D+/', '', $contact->phone);
 
+                        // `chat_boxes.uid` is a NOT NULL char(36) with no
+                        // database default, and this raw insert never
+                        // supplied it. Nothing failed only because this
+                        // installation's MySQL connection is non-strict, so
+                        // MySQL silently coerced the missing value to the
+                        // empty string — every row this loop has ever
+                        // written shares a blank, non-unique uid. `ChatBox`
+                        // has no `creating` hook to mint one, and this is a
+                        // query-builder insert that would bypass one anyway,
+                        // so the writer supplies it.
+                        //
+                        // `(string) Str::uuid()` is the convention this
+                        // repository uses wherever a uid is minted at the
+                        // write site rather than by a model hook — see
+                        // WorkspaceBackfillV1, ViewAsSession and the
+                        // Business* models. The older `uniqid()` hook on
+                        // Contacts is deliberately not followed: it does not
+                        // produce a valid UUID and it is not what a char(36)
+                        // column is shaped for.
                         $boxId = DB::table('chat_boxes')->insertGetId([
+                            'uid'        => (string) Str::uuid(),
                             'user_id'    => $user->id,
                             'to'         => $phone,
                             'from'       => $sender_id[0] ?? null,

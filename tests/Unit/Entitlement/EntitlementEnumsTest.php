@@ -61,7 +61,7 @@ class EntitlementEnumsTest extends TestCase
         $this->assertSame($expected, $actual);
     }
 
-    public function test_platform_feature_has_exactly_sixteen_cases_matching_rfc_004_and_slice_a(): void
+    public function test_platform_feature_has_exactly_seventeen_cases_matching_rfc_004_slice_a_and_slice_3(): void
     {
         $expected = [
             'crm',
@@ -80,11 +80,17 @@ class EntitlementEnumsTest extends TestCase
             'white_label',
             'agency_package_capabilities',
             'prospect_outreach',
+            // Customer Experience Slice 3 §4.11 — one additive case, for the
+            // measurement-only telecom transport meter (§4.8). It is
+            // deliberately unpriced: its classification row exists with
+            // is_metered = 0 and active_rate_id = NULL, asserted by
+            // T-MSG-36 in MessagingTransportMeasurementLayeringTest.
+            'messaging_transport',
         ];
 
         $actual = array_map(fn ($case) => $case->value, PlatformFeature::cases());
 
-        $this->assertCount(16, PlatformFeature::cases());
+        $this->assertCount(17, PlatformFeature::cases());
         $this->assertSame($expected, $actual);
     }
 
