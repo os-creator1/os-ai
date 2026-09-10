@@ -1027,7 +1027,14 @@ class InboundAttributionTest extends TestCase
     }
 
     // ---------------------------------------------------------------
-    // Audit P4 — concurrent duplicate inbound delivery
+    // Audit P4 — sequential duplicate inbound replay
+    //
+    // Naming corrected in Security Correction 39: this is SEQUENTIAL replay
+    // and idempotency coverage, not concurrency coverage. The loop below
+    // issues one request after another in a single process, so it proves the
+    // guard is idempotent under repetition — it proves nothing about two
+    // callbacks arriving at once. Genuine contention for one operation row is
+    // covered separately, under "Security Correction 39" below.
     // ---------------------------------------------------------------
 
     /**
@@ -1083,5 +1090,306 @@ class InboundAttributionTest extends TestCase
                 'Every inbound operation must have exactly its own measurement.',
             );
         }
+    }
+
+    // =================================================================
+    // Security Correction 39 — the delivery-status lost-update race, and
+    // the correlated Report's Business integrity.
+    //
+    // handleDeliveryStatus() used to decide the transition from an UNLOCKED
+    // read taken at the top of the method, then write in a later
+    // transaction. Two callbacks for one operation could both read
+    // 'accepted', both validate independently — one to Delivered, one to
+    // Failed, each legal FROM 'accepted' — and the later write won. The
+    // result was a Delivered/Failed clash the state machine forbids.
+    //
+    // ON THE SHAPE OF THE CONCURRENCY PROOF. This repository does have an
+    // established cross-process concurrency harness
+    // (UsageWalletManagerConcurrencyTest), and it was examined first. It is
+    // built on a TIMED lock hold — usleep() for a fixed number of seconds
+    // plus a 20ms poll — which this correction's instruction forbids, and
+    // Security Correction 38 documented that mechanism as non-deterministic
+    // under full-suite load: three runs at one commit produced zero, one and
+    // two failures, naming different tests each time. Importing it into the
+    // messaging security suite would trade a real guarantee for a flaky one.
+    //
+    // So the race is staged deterministically instead, at exactly the point
+    // where it lives: the competing transition is committed BETWEEN the
+    // handler's unlocked read and its locked re-read. That is the actual
+    // interleaving, not a sequential loop — the second worker's write lands
+    // inside the first worker's execution, which is the only thing that made
+    // the old code wrong.
+    // =================================================================
+
+    /**
+     * The race itself. Worker A reads 'accepted'. Worker B completes
+     * accepted → failed. Worker A then proceeds with 'delivered'.
+     *
+     * Old behaviour: A's decision used its stale 'accepted', so Delivered
+     * was permitted and A overwrote B — leaving 'delivered' on a row that
+     * had committed 'failed', which is not a transition 'failed' allows.
+     *
+     * New behaviour: A re-reads the row FOR UPDATE inside its transaction,
+     * sees 'failed', and is refused.
+     */
+    public function test_a_transition_committed_mid_flight_is_seen_by_the_locked_re_read(): void
+    {
+        [$operation, $providerMessageId, $report] = $this->acceptedOperationWithReport();
+
+        $competingWriteDone = false;
+
+        // Fires after the handler's UNLOCKED lookup of the operation row and
+        // before it opens its transaction: the exact race window. The locked
+        // re-read carries "for update", so it is excluded here.
+        DB::listen(function ($query) use (&$competingWriteDone, $operation) {
+            if ($competingWriteDone) {
+                return;
+            }
+
+            $sql = strtolower(ltrim($query->sql));
+
+            if (! str_starts_with($sql, 'select')
+                || ! str_contains($sql, 'business_messaging_operations')
+                || ! str_contains($sql, 'provider_message_id')
+                || str_contains($sql, 'for update')) {
+                return;
+            }
+
+            $competingWriteDone = true;
+
+            // The other worker's transition, applied in full.
+            DB::table('business_messaging_operations')
+                ->where('id', $operation->id)
+                ->update(['status' => MessagingOperationStatus::Failed->value]);
+        });
+
+        $response = $this->postEvent($this->deliveryStatus($providerMessageId, 'delivered'));
+
+        $this->assertTrue($competingWriteDone, 'The competing transition must have been staged inside the handler.');
+
+        // Refused, not applied.
+        $response->assertOk()->assertJson(['status' => 'rejected']);
+
+        // The forbidden end state is the one that must not exist.
+        $this->assertSame(
+            MessagingOperationStatus::Failed->value,
+            DB::table('business_messaging_operations')->where('id', $operation->id)->value('status'),
+            'The committed transition must survive; the stale one must not overwrite it.',
+        );
+
+        $this->assertNotSame('Delivered', $report->fresh()->status, 'The customer-visible record must not claim delivery.');
+
+        $this->assertGreaterThanOrEqual(
+            1,
+            $this->rejectionCount(\App\Enums\Messaging\WebhookRejectionReason::RegressiveTransition->value),
+        );
+    }
+
+    /**
+     * Structural: the lock is real, it is taken INSIDE the transaction, and
+     * the write follows it while it is still held.
+     *
+     * Transaction depth is captured per statement rather than inferred.
+     * RefreshDatabase already holds one transaction open, so the assertion
+     * is relative — the locked read must run strictly deeper than the
+     * unlocked one — which holds whatever the harness's own depth happens
+     * to be.
+     */
+    public function test_the_transition_row_is_locked_inside_the_transaction_before_it_is_written(): void
+    {
+        [, $providerMessageId] = $this->acceptedOperationWithReport();
+
+        $statements = [];
+
+        DB::listen(function ($query) use (&$statements) {
+            $sql = strtolower(ltrim($query->sql));
+
+            if (! str_contains($sql, 'business_messaging_operations')) {
+                return;
+            }
+
+            $statements[] = ['sql' => $sql, 'level' => DB::transactionLevel()];
+        });
+
+        $this->postEvent($this->deliveryStatus($providerMessageId, 'delivered'))
+            ->assertOk()
+            ->assertJson(['status' => 'accepted']);
+
+        $unlockedRead = null;
+        $lockedRead = null;
+        $write = null;
+
+        foreach ($statements as $index => $statement) {
+            if (str_contains($statement['sql'], 'for update')) {
+                $lockedRead ??= $index;
+
+                continue;
+            }
+
+            if (str_starts_with($statement['sql'], 'update') && $lockedRead !== null) {
+                $write ??= $index;
+
+                continue;
+            }
+
+            if (str_starts_with($statement['sql'], 'select') && $lockedRead === null) {
+                $unlockedRead ??= $index;
+            }
+        }
+
+        $this->assertNotNull($lockedRead, 'The transition must re-select the operation row FOR UPDATE.');
+        $this->assertNotNull($unlockedRead, 'The initial lookup should still happen outside the lock.');
+        $this->assertNotNull($write, 'The operation must be written after it is locked.');
+
+        $this->assertGreaterThan(
+            $statements[$unlockedRead]['level'],
+            $statements[$lockedRead]['level'],
+            'The locked read must run inside a transaction the unlocked read was not in.',
+        );
+
+        $this->assertGreaterThan($lockedRead, $write, 'The write must follow the lock, never precede it.');
+
+        $this->assertSame(
+            $statements[$lockedRead]['level'],
+            $statements[$write]['level'],
+            'The lock must still be held when the row is written.',
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Finding 2 — the correlated Report's Business integrity
+    // ------------------------------------------------------------------
+
+    /** SAME BUSINESS — the legitimate case still moves both records. */
+    public function test_a_correlated_report_of_the_same_business_transitions_normally(): void
+    {
+        [$operation, $providerMessageId, $report] = $this->acceptedOperationWithReport();
+
+        $this->assertSame(
+            (int) $report->business_id,
+            (int) DB::table('business_messaging_operations')->where('id', $operation->id)->value('business_id'),
+            'Fixture precondition: the two agree.',
+        );
+
+        $this->postEvent($this->deliveryStatus($providerMessageId, 'delivered'))
+            ->assertOk()
+            ->assertJson(['status' => 'accepted']);
+
+        $this->assertSame(
+            MessagingOperationStatus::Delivered->value,
+            DB::table('business_messaging_operations')->where('id', $operation->id)->value('status'),
+        );
+        $this->assertSame('Delivered', $report->fresh()->status);
+        $this->assertSame('Delivered', $report->fresh()->customer_status);
+    }
+
+    /** FOREIGN BUSINESS — refused, and NOTHING partially commits. */
+    public function test_a_correlated_report_of_a_foreign_business_refuses_the_whole_transition(): void
+    {
+        [$operation, $providerMessageId, $report] = $this->acceptedOperationWithReport();
+
+        [$other] = $this->managedBusiness();
+        DB::table('reports')->where('id', $report->id)->update(['business_id' => (int) $other->id]);
+
+        $this->postEvent($this->deliveryStatus($providerMessageId, 'delivered'))
+            ->assertOk()
+            ->assertJson(['status' => 'rejected']);
+
+        // §5 — the operation must NOT have moved on its own.
+        $this->assertSame(
+            MessagingOperationStatus::Accepted->value,
+            DB::table('business_messaging_operations')->where('id', $operation->id)->value('status'),
+            'A refused Report must not leave a committed operation transition behind.',
+        );
+        $this->assertSame('Sent', $report->fresh()->status);
+        $this->assertSame('Sent', $report->fresh()->customer_status);
+    }
+
+    /** NULL REPORT BUSINESS — refused, both unchanged. */
+    public function test_a_correlated_report_with_no_business_refuses_the_whole_transition(): void
+    {
+        [$operation, $providerMessageId, $report] = $this->acceptedOperationWithReport();
+
+        DB::table('reports')->where('id', $report->id)->update(['business_id' => null]);
+
+        $this->postEvent($this->deliveryStatus($providerMessageId, 'delivered'))
+            ->assertOk()
+            ->assertJson(['status' => 'rejected']);
+
+        $this->assertSame(
+            MessagingOperationStatus::Accepted->value,
+            DB::table('business_messaging_operations')->where('id', $operation->id)->value('status'),
+        );
+        $this->assertSame('Sent', $report->fresh()->status);
+    }
+
+    /**
+     * The managed shape — §4.5. A managed send writes no legacy
+     * sending_server_id, so a Report claiming one is not this operation's
+     * Report however well the Business matches.
+     */
+    public function test_a_correlated_report_claiming_a_legacy_sending_server_is_refused(): void
+    {
+        [$operation, $providerMessageId, $report] = $this->acceptedOperationWithReport();
+
+        $server = \App\Models\SendingServer::create([
+            'name' => 'Legacy Twilio',
+            'settings' => \App\Models\SendingServer::TYPE_TWILIO,
+            'status' => true,
+            'plain' => true,
+        ]);
+
+        DB::table('reports')->where('id', $report->id)->update(['sending_server_id' => $server->id]);
+
+        $this->postEvent($this->deliveryStatus($providerMessageId, 'delivered'))
+            ->assertOk()
+            ->assertJson(['status' => 'rejected']);
+
+        $this->assertSame(
+            MessagingOperationStatus::Accepted->value,
+            DB::table('business_messaging_operations')->where('id', $operation->id)->value('status'),
+        );
+        $this->assertSame('Sent', $report->fresh()->status);
+    }
+
+    /**
+     * MISSING REPORT — proven impossible rather than manufactured.
+     *
+     * report_id is a foreign key declared nullOnDelete, so deleting the
+     * Report NULLs the correlation instead of orphaning it. A non-null
+     * report_id pointing at no live row cannot be persisted while the
+     * constraint is enforced, so no fixture is invented for it.
+     */
+    public function test_a_deleted_report_nulls_the_correlation_rather_than_orphaning_it(): void
+    {
+        [$operation, $providerMessageId, $report] = $this->acceptedOperationWithReport();
+
+        $rule = DB::selectOne(
+            'select DELETE_RULE as delete_rule from information_schema.referential_constraints
+             where constraint_schema = database() and constraint_name = ?',
+            ['bmo_report_foreign'],
+        );
+
+        $this->assertNotNull($rule, 'The report_id foreign key must exist.');
+        $this->assertSame('SET NULL', $rule->delete_rule);
+
+        DB::table('reports')->where('id', $report->id)->delete();
+
+        $this->assertNull(
+            DB::table('business_messaging_operations')->where('id', $operation->id)->value('report_id'),
+            'Deleting the Report must null the correlation, never leave it dangling.',
+        );
+
+        // A NULL correlation is a legitimate managed state — every operation
+        // starts that way, and inbound rows never leave it — so the
+        // transition still applies, with no Report to move.
+        $this->postEvent($this->deliveryStatus($providerMessageId, 'delivered'))
+            ->assertOk()
+            ->assertJson(['status' => 'accepted']);
+
+        $this->assertSame(
+            MessagingOperationStatus::Delivered->value,
+            DB::table('business_messaging_operations')->where('id', $operation->id)->value('status'),
+        );
     }
 }

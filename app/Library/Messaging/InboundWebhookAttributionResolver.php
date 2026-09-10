@@ -54,6 +54,25 @@ class InboundWebhookAttributionResolver
      */
     public const EARLY_DLR_RETRY_BUDGET = 3;
 
+    /**
+     * The outcome of one locked delivery-status transition.
+     *
+     * These exist so the decision can be made while the operation row is held
+     * FOR UPDATE while the rejection record and the HTTP answer are produced
+     * after the lock is released. They are not a second transition policy:
+     * MessagingOperationStatus remains the only authority, and each value
+     * below is simply the answer it already gave.
+     */
+    private const TRANSITION_APPLIED = 'applied';
+
+    private const TRANSITION_MALFORMED = 'malformed';
+
+    private const TRANSITION_DUPLICATE = 'duplicate';
+
+    private const TRANSITION_REGRESSIVE = 'regressive';
+
+    private const TRANSITION_REPORT_INTEGRITY = 'report_integrity';
+
     public function __construct(
         private readonly BusinessMessagingIdentityResolver $resolver,
         private readonly MessagingWebhookRejectionRecorder $rejections,
@@ -247,10 +266,13 @@ class InboundWebhookAttributionResolver
 
         // 3. Status-transition guard. Replay for a delivery-status event is a
         // function of the row's CURRENT status, never of the row existing.
-        $current = MessagingOperationStatus::tryFrom((string) $operation->status);
+        //
+        // The TARGET is a pure function of the payload, so it is parsed here.
+        // The CURRENT status is not: it is durable state two callbacks can
+        // contend for, and it is therefore read under a lock below.
         $target = self::targetStatus($event->deliveryStatus);
 
-        if ($current === null || $target === null) {
+        if ($target === null) {
             $this->rejections->record(
                 WebhookRejectionReason::MalformedPayload,
                 MessagingProvider::Telnyx,
@@ -262,42 +284,76 @@ class InboundWebhookAttributionResolver
             return response()->json(['status' => 'rejected'], 400);
         }
 
-        if ($current === $target) {
-            // Exact replay — a no-op, recognized only AFTER the first valid
-            // transition into that status has actually been applied.
-            $this->rejections->record(
-                WebhookRejectionReason::Duplicate,
-                MessagingProvider::Telnyx,
-                $rawBody,
-                $event->messagingProfileId,
-                $event->destinationNumber,
-            );
-
-            return response()->json(['status' => 'duplicate'], 200);
-        }
-
-        if (! $current->allowsDeliveryTransitionTo($target)) {
-            // Regressive or otherwise invalid — the operation can never move
-            // backward through a delivery-status callback.
-            $this->rejections->record(
-                WebhookRejectionReason::RegressiveTransition,
-                MessagingProvider::Telnyx,
-                $rawBody,
-                $event->messagingProfileId,
-                $event->destinationNumber,
-            );
-
-            return response()->json(['status' => 'rejected'], 200);
-        }
-
-        // The operation row and the customer-visible Report move together,
-        // in one transaction. A window in which they disagree is a window in
-        // which support tells a customer something the platform does not
-        // believe — and, before this, a failed DLR updated only the
-        // operation, leaving the Report permanently saying Delivered.
-        DB::transaction(function () use ($operation, $target, $event): void {
-            DB::table(ManagedMessageDispatcher::TABLE)
+        // THE DELIVERY-STATUS LOST-UPDATE RACE (Security Correction 39).
+        //
+        // This method used to decide the transition from the UNLOCKED read at
+        // the top: two callbacks for one operation could both read
+        // 'accepted', both independently validate — one to Delivered, one to
+        // Failed, each legal from 'accepted' — and then both write. The later
+        // write won, landing Delivered → Failed (or the reverse), a
+        // transition MessagingOperationStatus forbids outright. Validating a
+        // decision against a value another worker is already changing is not
+        // a guard.
+        //
+        // The row is now re-selected FOR UPDATE inside the transaction and
+        // the current status is derived from THAT row, so the second caller
+        // blocks until the first commits and then sees its result — 'failed'
+        // is no longer 'accepted', so the second transition is refused as the
+        // policy already says it should be.
+        //
+        // The lock is held across BOTH the operation update and the
+        // correlated Report synchronization, because they are one transition.
+        // No provider or network call happens inside it: every branch below
+        // is a database read or write, and rejection recording and the JSON
+        // response both happen after the lock is released.
+        $outcome = DB::transaction(function () use ($operation, $target, $event): string {
+            $locked = DB::table(ManagedMessageDispatcher::TABLE)
                 ->where('id', $operation->id)
+                ->lockForUpdate()
+                ->first();
+
+            if ($locked === null) {
+                // The row existed for the unlocked read and does not now.
+                return self::TRANSITION_MALFORMED;
+            }
+
+            $current = MessagingOperationStatus::tryFrom((string) $locked->status);
+
+            if ($current === null) {
+                return self::TRANSITION_MALFORMED;
+            }
+
+            if ($current === $target) {
+                // Exact replay — a no-op, recognized only AFTER the first
+                // valid transition into that status has actually been applied.
+                return self::TRANSITION_DUPLICATE;
+            }
+
+            if (! $current->allowsDeliveryTransitionTo($target)) {
+                // Regressive or otherwise invalid — the operation can never
+                // move backward through a delivery-status callback.
+                return self::TRANSITION_REGRESSIVE;
+            }
+
+            // Finding 2 — the correlated Report is validated BEFORE the
+            // operation moves, deliberately.
+            //
+            // Returning an outcome from this closure COMMITS the transaction,
+            // so discovering a Report integrity failure after updating the
+            // operation would commit that update and leave the pair
+            // disagreeing — exactly the partial transition §5 forbids. The
+            // operation and its customer-visible Report are one transition:
+            // either both move or neither does.
+            $report = $locked->report_id !== null
+                ? $this->integrityCheckedCorrelatedReport($locked)
+                : null;
+
+            if ($locked->report_id !== null && $report === null) {
+                return self::TRANSITION_REPORT_INTEGRITY;
+            }
+
+            DB::table(ManagedMessageDispatcher::TABLE)
+                ->where('id', $locked->id)
                 ->update([
                     'status' => $target->value,
                     // The callback's own timestamp, never the original send's.
@@ -305,10 +361,89 @@ class InboundWebhookAttributionResolver
                     'updated_at' => Carbon::now(),
                 ]);
 
-            $this->syncCorrelatedReport($operation, $target);
+            if ($report !== null) {
+                $this->syncCorrelatedReport($report, $target);
+            }
+
+            return self::TRANSITION_APPLIED;
         });
 
-        return response()->json(['status' => 'accepted'], 200);
+        // Rejection recording and the response happen outside the lock. The
+        // transition policy is not duplicated here — every decision above was
+        // made by MessagingOperationStatus against the locked row, and this
+        // only translates that one decision into an answer.
+        return match ($outcome) {
+            self::TRANSITION_MALFORMED => $this->refuseDeliveryStatus(
+                WebhookRejectionReason::MalformedPayload, $event, $rawBody, 'rejected', 400,
+            ),
+            self::TRANSITION_DUPLICATE => $this->refuseDeliveryStatus(
+                WebhookRejectionReason::Duplicate, $event, $rawBody, 'duplicate', 200,
+            ),
+            self::TRANSITION_REGRESSIVE => $this->refuseDeliveryStatus(
+                WebhookRejectionReason::RegressiveTransition, $event, $rawBody, 'rejected', 200,
+            ),
+            self::TRANSITION_REPORT_INTEGRITY => $this->refuseDeliveryStatus(
+                WebhookRejectionReason::ConflictingMapping, $event, $rawBody, 'rejected', 200,
+            ),
+            default => response()->json(['status' => 'accepted'], 200),
+        };
+    }
+
+    /**
+     * Record one delivery-status refusal and answer it, outside the lock.
+     */
+    private function refuseDeliveryStatus(
+        WebhookRejectionReason $reason,
+        InboundWebhookEvent $event,
+        string $rawBody,
+        string $status,
+        int $code,
+    ): JsonResponse {
+        $this->rejections->record(
+            $reason,
+            MessagingProvider::Telnyx,
+            $rawBody,
+            $event->messagingProfileId,
+            $event->destinationNumber,
+        );
+
+        return response()->json(['status' => $status], $code);
+    }
+
+    /**
+     * Finding 2 — the correlated Report must pass the same Business integrity
+     * Correction 38 applies at the DLR seam.
+     *
+     * The database cannot express `operation.business_id == report.business_id`
+     * as a constraint, and the current tree is safe only because exactly one
+     * application writer sets `report_id`. That is an argument about today's
+     * callers, not a guarantee, so the invariant is enforced where the Report
+     * is actually mutated.
+     */
+    private function integrityCheckedCorrelatedReport(object $operation): ?Reports
+    {
+        $report = Reports::find((int) $operation->report_id);
+
+        if ($report === null) {
+            return null;
+        }
+
+        $operationBusinessId = $operation->business_id ?? null;
+        $reportBusinessId = $report->business_id;
+
+        if ($operationBusinessId === null
+            || $reportBusinessId === null
+            || (int) $reportBusinessId !== (int) $operationBusinessId) {
+            return null;
+        }
+
+        // A managed send writes no legacy sending_server_id (§4.5), so a
+        // Report correlated to a managed operation must not claim one.
+        if ($report->sending_server_id !== null) {
+            return null;
+        }
+
+        return $report;
     }
 
     /**
@@ -406,12 +541,8 @@ class InboundWebhookAttributionResolver
      * sends a callback belongs to is not something a billing record should
      * ever do.
      */
-    private function syncCorrelatedReport(object $operation, MessagingOperationStatus $target): void
+    private function syncCorrelatedReport(Reports $report, MessagingOperationStatus $target): void
     {
-        if ($operation->report_id === null) {
-            return;
-        }
-
         $status = match ($target) {
             MessagingOperationStatus::Delivered => 'Delivered',
             MessagingOperationStatus::Failed => 'Failed',
@@ -422,8 +553,12 @@ class InboundWebhookAttributionResolver
             return;
         }
 
+        // Keyed by the Report this caller already resolved AND integrity
+        // checked, never by a primary key taken straight off the operation
+        // row: whereKey($operation->report_id) would mutate whatever sits at
+        // that id, which is the whole point of the check upstream.
         Reports::query()
-            ->whereKey((int) $operation->report_id)
+            ->whereKey($report->getKey())
             ->update([
                 'status' => $status,
                 'customer_status' => $status,
