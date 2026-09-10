@@ -1,13 +1,24 @@
 # LEGACY MESSAGING SCHEMA COMPLETION
 
-**Status:** Schema-completion lane, independent of Chat A. Three paths: one
-forward-only migration, one focused schema test, and this document. No
-production code, model, route or existing test is edited.
+**Status: integrated into Lane A and delivered atomically.** This lane
+produced three paths — one forward-only migration, one focused schema test,
+and this document — and edited no production code, model, route or existing
+test itself. It was then merged into Lane A
+(`agent/customer-experience-slice-3-messaging-provider-implementation`) at
+its head `28810ae430d7bd985ab3c192967425c456382a9d`, rather than shipped as a
+standalone PR, so that the migration lands together with the production
+`chat_boxes.uid` writer correction and the rewritten Outreach regression that
+depend on it. §1 explains why none of the three could ship alone.
 
-**Base:** `origin/main` at `e5499df2d304572d49b26cdc35c05f32c26ac98a`
-(PR #232). Database: `ultimatesms_testing_lane_e_schema` — a validated
-`TestDatabaseSafety` sibling, owned by this lane alone, 251 migrations,
-0 pending.
+**Lane E base:** `origin/main` at `e5499df2d304572d49b26cdc35c05f32c26ac98a`
+(PR #232). Lane E's own verification database was
+`ultimatesms_testing_lane_e_schema` — a validated `TestDatabaseSafety`
+sibling, owned by that lane alone, 251 migrations, 0 pending.
+
+**Final combined verification** (§5.4) ran in Lane A's own isolated database,
+`ultimatesms_testing_lane_a_msg`, at 256 migrations, 0 pending. The canonical
+`ultimatesms_testing` was never created, reset, migrated or written by either
+lane.
 
 ---
 
@@ -239,20 +250,37 @@ keeping a null stage; campaign delete removing only its own mapping rows;
 chat-box delete removing only its own; and a neighbouring chat-box row
 surviving a full lifecycle byte-identical.
 
-### 5.4 Head-to-head against pristine `origin/main`
+### 5.4 Final combined results, after integration into Lane A
 
-Same machine, same database, `migrate:fresh` before each side. The migration
-and the new test were moved aside for the pristine run and restored after.
+The head-to-head table an earlier revision carried is superseded. It measured
+this branch **alone**, where the Outreach collision described in the old §1
+still existed; it recorded one failure and an owner decision still to take.
+Both are obsolete. The numbers below are the real ones, measured after the
+migration, the UUID writer correction and the rewritten Outreach test were
+integrated and run together.
 
-| Suite | pristine `main` | this branch | delta |
-|---|---|---|---|
-| `tests/Feature/Messaging` | did not exist | 12 tests, 38 assertions, green | **+12 tests, +38 assertions** |
-| `tests/Feature/Dashboards` | 14 tests, 41 assertions, green | 14 tests, 41 assertions, green | **identical** |
-| `tests/Feature/Outreach` | 35 tests, 98 assertions, green | 35 tests, 97 assertions, **1 failure** | **the §1 collision** |
+All runs on `ultimatesms_testing_lane_a_msg`, a validated
+`TestDatabaseSafety` sibling owned by Lane A alone, after `migrate:fresh`
+(**256 migrations, 0 pending**). The canonical `ultimatesms_testing` was
+never created, reset, migrated or written.
 
-The single failure is
-`OutreachCorrection1Test::test_legacy_campaign_builder_still_creates_ai_prospecting_rows_unchanged`,
-for the reason §1 gives. There is no second delta.
+| Suite | Result |
+|---|---|
+| `OutreachCorrection1Test` + `LegacyAiMessagingSchemaTest` | **24 passed, 92 assertions** |
+| `tests/Feature/Outreach` + `tests/Feature/Messaging` + `ManagedCampaignDelegationTest` + `MessagingChannelsTest` | **184 passed, 690 assertions** |
+| `tests/Feature/Security` + `tests/Feature/Usage` + `tests/Feature/Workspace` + `tests/Feature/Settings` | **2025 passed, 9110 assertions** |
+
+**`tests/Feature/Outreach` is green — zero failures.** The one failure the
+old table predicted is gone, because the test that produced it no longer
+asserts a crash.
+
+Migration mechanics were re-verified in Lane A's database: forward,
+`rollback --step=1`, re-forward. The two `chat_boxes` columns and the mapping
+table appear, disappear and reappear exactly, and nothing else moves.
+
+`chat_boxes.uid` is asserted directly, on rows the real production writer
+created: present, non-empty, matching the UUID grammar, accepted by
+`Str::isUuid()`, and different between two separately created rows.
 
 ---
 
