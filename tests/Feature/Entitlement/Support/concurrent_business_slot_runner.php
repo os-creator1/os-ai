@@ -6,9 +6,11 @@
  * scenarios exercise genuinely independent database connections racing for
  * the same row lock — something a single PHPUnit process cannot do on its
  * own. Boots the app in the testing environment so it shares the same
- * ultimatesms_testing database and .env.testing credentials as the parent
- * PHPUnit process, following concurrent_backfill_runner.php's exact
- * bootstrap/database-guard/exit-code shape.
+ * database and .env.testing credentials as the parent PHPUnit process —
+ * the canonical ultimatesms_testing database or any Tests\Support\
+ * TestDatabaseSafety-validated disposable sibling the parent hands down —
+ * following the merged Usage subprocess runners' exact bootstrap/database-
+ * guard/exit-code shape (PR #229).
  *
  * A single selectable-mode script, not one file per scenario — every M2
  * concurrency scenario (§6 scenarios 1-2, 6-11) is expressed as one of the
@@ -61,17 +63,24 @@ $_SERVER['APP_ENV'] = 'testing';
 $app = require __DIR__ . '/../../../../bootstrap/app.php';
 $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
 
-const EXPECTED_DATABASE = 'ultimatesms_testing';
 const WRONG_DATABASE_EXIT_CODE = 3;
 
-$resolvedDatabase = Illuminate\Support\Facades\DB::connection()->getDatabaseName();
+// EXPECTED_TEST_DATABASE is mandatory: a missing or empty value means the
+// handoff did not happen, so this child cannot know which database it is
+// authorized to write to and must refuse rather than silently falling back
+// to any ambient value. Tests\Support\TestDatabaseSafety is the single
+// authority on which names are permitted.
+$expectedDatabase = getenv('EXPECTED_TEST_DATABASE');
 
-if ($resolvedDatabase !== EXPECTED_DATABASE) {
-    fwrite(STDERR, sprintf(
-        "Refusing to run: resolved database is [%s], expected [%s]. Aborting before any database write.\n",
-        $resolvedDatabase,
-        EXPECTED_DATABASE
-    ));
+if ($expectedDatabase === false || $expectedDatabase === '') {
+    fwrite(STDERR, "Refusing to run: EXPECTED_TEST_DATABASE was not handed down by the parent test. Aborting before any database write.\n");
+    exit(WRONG_DATABASE_EXIT_CODE);
+}
+
+try {
+    Tests\Support\TestDatabaseSafety::assertMatchesActiveTestDatabase($expectedDatabase);
+} catch (RuntimeException $e) {
+    fwrite(STDERR, 'Refusing to run: ' . $e->getMessage() . " Aborting before any database write.\n");
     exit(WRONG_DATABASE_EXIT_CODE);
 }
 

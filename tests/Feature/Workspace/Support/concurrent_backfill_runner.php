@@ -8,10 +8,12 @@
  * PHPUnit process cannot do on its own. Boots the app in the testing
  * environment so it shares the same database and .env.testing credentials
  * as the parent PHPUnit process — which, since RFC-003 M1B Slice 4A, is
- * either the primary ultimatesms_testing database (when this script is
- * exercised directly) or a generated ultimatesms_testing_historical_*
- * database (when the parent test runs inside the isolated historical
- * suite) — never an arbitrary caller-supplied value.
+ * either any Tests\Support\TestDatabaseSafety-validated disposable
+ * database (the canonical ultimatesms_testing database or a validated
+ * sibling, when this script is exercised directly) or a generated
+ * ultimatesms_testing_historical_* database (when the parent test runs
+ * inside the isolated historical suite) — never an arbitrary
+ * caller-supplied value.
  *
  * Before doing anything else, this process independently re-verifies its
  * own resolved database connection name against EXPECTED_TEST_DATABASE,
@@ -36,10 +38,9 @@ $app = require __DIR__ . '/../../../../bootstrap/app.php';
 $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
 
 use Tests\Feature\Workspace\Support\TemporaryTestDatabase;
+use Tests\Support\TestDatabaseSafety;
 
 const WRONG_DATABASE_EXIT_CODE = 3;
-
-const PRIMARY_TEST_DATABASE = 'ultimatesms_testing';
 
 $expectedDatabase = getenv('EXPECTED_TEST_DATABASE');
 
@@ -48,14 +49,21 @@ if ($expectedDatabase === false || $expectedDatabase === '') {
     exit(WRONG_DATABASE_EXIT_CODE);
 }
 
-$isPrimaryTestDatabase = $expectedDatabase === PRIMARY_TEST_DATABASE;
+// Accepted in either of two shapes: any Tests\Support\TestDatabaseSafety-
+// validated disposable database (the canonical ultimatesms_testing
+// database, or a validated sibling such as ultimatesms_testing_lf), or a
+// generated historical temporary database — the two lifecycles this
+// runner is actually invoked under (§ docblock above). A historical name
+// already satisfies the general validated-sibling shape too; both checks
+// are kept so the historical suite's own stricter, drop-safety-scoped
+// name pattern is never silently loosened by this widening.
+$isValidatedTestDatabase = TestDatabaseSafety::isSafeTestDatabaseName($expectedDatabase);
 $isHistoricalTemporaryDatabase = TemporaryTestDatabase::isValidHistoricalName($expectedDatabase);
 
-if (! $isPrimaryTestDatabase && ! $isHistoricalTemporaryDatabase) {
+if (! $isValidatedTestDatabase && ! $isHistoricalTemporaryDatabase) {
     fwrite(STDERR, sprintf(
-        "Refusing to run WorkspaceBackfillV1: EXPECTED_TEST_DATABASE [%s] is neither [%s] nor a valid historical temporary database name. Aborting before any database write.\n",
-        $expectedDatabase,
-        PRIMARY_TEST_DATABASE
+        "Refusing to run WorkspaceBackfillV1: EXPECTED_TEST_DATABASE [%s] is neither a validated disposable test database nor a valid historical temporary database name. Aborting before any database write.\n",
+        $expectedDatabase
     ));
     exit(WRONG_DATABASE_EXIT_CODE);
 }

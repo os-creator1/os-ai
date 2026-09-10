@@ -207,10 +207,39 @@ with these requirements:
 | Reports must state the exact database used | yes |
 
 This restates no policy of its own: `TestDatabaseSafety` remains the single
-authority, and it is **unchanged by this branch**. The pin that genuinely
-still requires the canonical database —
-`tests/Feature/Workspace/Support/TemporaryTestDatabase.php` — is named in
-`AGENTS.md` so the exception is concrete rather than theoretical.
+authority, and it is **unchanged by this branch**.
+
+**Correction
+(`docs/automation/WORKSPACE-ENTITLEMENT-DATABASE-SAFETY-COMPLETION.md`,
+raised as a P2 finding on this branch's own PR #230).** The paragraph this
+replaces named `tests/Feature/Workspace/Support/TemporaryTestDatabase.php`
+as *the* pin that genuinely still required the canonical database, as if it
+were the only one. It was not — at this document's own base
+(`b54441ed53540f085114946715985db1c565b6a7`), eight files genuinely pinned
+the literal canonical name, exactly as
+`docs/automation/MAINLINE-BASELINE-RELIABILITY-REMEDIATION.md` §5 had
+already enumerated correctly:
+`tests/Feature/Entitlement/Support/concurrent_business_slot_runner.php`,
+`tests/Feature/Workspace/Support/concurrent_workspace_resolver_runner.php`,
+`tests/Feature/Workspace/Support/concurrent_backfill_runner.php`,
+`tests/Feature/Workspace/Support/run_historical_m1a_suite.php`,
+`tests/Feature/Workspace/Support/run_workspace_enforcement_suite.php`,
+`tests/Feature/Workspace/Support/TemporaryTestDatabase.php`,
+`tests/Feature/Workspace/WorkspaceManagerConcurrencyTest.php` and
+`tests/Feature/Workspace/WorkspaceManagerTest.php`. This section's own
+earlier wording narrowed that eight-file finding down to one example
+without saying so, which is exactly the kind of inconsistency this
+document's own §1 exists to remove rather than explain away. The
+`agent/baseline-workspace-entitlement-db-safety` branch converts all eight
+onto `TestDatabaseSafety`; a full repository sweep performed on that branch
+after the conversion found no executable literal canonical-name pin
+remaining anywhere, outside `TestDatabaseSafety::CANONICAL` itself and its
+own unit test's fixture data. **The general policy row above — "a task may
+explicitly require the canonical database for exact canonical-baseline
+reproduction" — is unaffected by this correction and remains true**: it was
+never conditioned on any one file continuing to pin it, and a future task
+may still explicitly require the canonical database for its own stated
+reason.
 
 ---
 

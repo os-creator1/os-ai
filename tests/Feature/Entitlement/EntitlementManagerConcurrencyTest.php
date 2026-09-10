@@ -18,6 +18,7 @@ use App\Repositories\Contracts\BusinessRepository;
 use Illuminate\Support\Facades\DB;
 use Symfony\Component\Process\PhpExecutableFinder;
 use Symfony\Component\Process\Process;
+use Tests\Support\TestDatabaseSafety;
 use Tests\TestCase;
 
 /**
@@ -138,6 +139,22 @@ class EntitlementManagerConcurrencyTest extends TestCase
         return (new PhpExecutableFinder())->find() ?: 'php';
     }
 
+    /**
+     * Forwarded explicitly to every spawned runner process, mirroring
+     * PR #229's proven Usage-runner pattern — the child must resolve the
+     * very same validated disposable database this parent process itself
+     * is running against, never a hardcoded literal.
+     */
+    private function childEnvironment(): array
+    {
+        $database = TestDatabaseSafety::activeTestDatabase();
+
+        return [
+            'DB_DATABASE' => $database,
+            'EXPECTED_TEST_DATABASE' => $database,
+        ];
+    }
+
     private function createAdminUserId(): int
     {
         $id = DB::table('users')->insertGetId([
@@ -229,7 +246,7 @@ class EntitlementManagerConcurrencyTest extends TestCase
         $holder = new Process(array_merge(
             [$this->phpBinary(), self::RUNNER, 'hold-then', $lockSpecsRaw, (string) $holdSeconds],
             $delegateModeAndArgs
-        ));
+        ), null, $this->childEnvironment());
         $holder->start();
 
         $deadline = microtime(true) + 5.0;
@@ -255,8 +272,8 @@ class EntitlementManagerConcurrencyTest extends TestCase
 
         $customer = Customer::where('user_id', $owner)->first();
 
-        $p1 = new Process([$this->phpBinary(), self::RUNNER, 'create-business', (string) $workspace->id, (string) $customer->id, (string) $owner]);
-        $p2 = new Process([$this->phpBinary(), self::RUNNER, 'create-business', (string) $workspace->id, (string) $customer->id, (string) $owner]);
+        $p1 = new Process([$this->phpBinary(), self::RUNNER, 'create-business', (string) $workspace->id, (string) $customer->id, (string) $owner], null, $this->childEnvironment());
+        $p2 = new Process([$this->phpBinary(), self::RUNNER, 'create-business', (string) $workspace->id, (string) $customer->id, (string) $owner], null, $this->childEnvironment());
         $p1->start();
         $p2->start();
         $p1->wait();
@@ -281,8 +298,8 @@ class EntitlementManagerConcurrencyTest extends TestCase
         $this->assignAtBoundary($sourceWorkspace, 1, 0);
         $movingBusiness = DB::table('businesses')->where('workspace_id', $sourceWorkspace->id)->first();
 
-        $p1 = new Process([$this->phpBinary(), self::RUNNER, 'create-business', (string) $workspace->id, (string) $customer->id, (string) $owner]);
-        $p2 = new Process([$this->phpBinary(), self::RUNNER, 'reassign-business', (string) $movingBusiness->id, (string) $workspace->id, (string) $sourceOwner]);
+        $p1 = new Process([$this->phpBinary(), self::RUNNER, 'create-business', (string) $workspace->id, (string) $customer->id, (string) $owner], null, $this->childEnvironment());
+        $p2 = new Process([$this->phpBinary(), self::RUNNER, 'reassign-business', (string) $movingBusiness->id, (string) $workspace->id, (string) $sourceOwner], null, $this->childEnvironment());
         $p1->start();
         $p2->start();
         $p1->wait();
@@ -309,7 +326,7 @@ class EntitlementManagerConcurrencyTest extends TestCase
         $workspaceA = $this->createWorkspace($ownerA);
 
         $holderA = $this->startHolderAndWaitForLock([['workspace_plan_catalog', 'id', $catalog->id]], 1, ['catalog-clear', (string) $catalog->id, (string) $admin]);
-        $waiterA = new Process([$this->phpBinary(), self::RUNNER, 'assign-first-plan', (string) $workspaceA->id, 'core', (string) $admin, '0']);
+        $waiterA = new Process([$this->phpBinary(), self::RUNNER, 'assign-first-plan', (string) $workspaceA->id, 'core', (string) $admin, '0'], null, $this->childEnvironment());
         $waiterA->start();
         $holderA->wait();
         $waiterA->wait();
@@ -340,7 +357,7 @@ class EntitlementManagerConcurrencyTest extends TestCase
         $workspaceB = $this->createWorkspace($ownerB);
 
         $holderB = $this->startHolderAndWaitForLock([['workspaces', 'id', $workspaceB->id], ['workspace_plan_catalog', 'id', $catalog->id]], 1, ['assign-first-plan', (string) $workspaceB->id, 'core', (string) $admin, '0']);
-        $waiterB = new Process([$this->phpBinary(), self::RUNNER, 'catalog-clear', (string) $catalog->id, (string) $admin]);
+        $waiterB = new Process([$this->phpBinary(), self::RUNNER, 'catalog-clear', (string) $catalog->id, (string) $admin], null, $this->childEnvironment());
         $waiterB->start();
         $holderB->wait();
         $waiterB->wait();
@@ -370,7 +387,7 @@ class EntitlementManagerConcurrencyTest extends TestCase
         app(EntitlementManager::class)->assignFirstPlan($workspaceA, WorkspacePlanTier::Core, $admin, 'Fixture.', true, 0);
 
         $holderA = $this->startHolderAndWaitForLock([['workspace_plan_catalog', 'id', $catalog->id]], 1, ['catalog-clear', (string) $catalog->id, (string) $admin]);
-        $waiterA = new Process([$this->phpBinary(), self::RUNNER, 'revoke-complimentary', (string) $workspaceA->id, (string) $admin]);
+        $waiterA = new Process([$this->phpBinary(), self::RUNNER, 'revoke-complimentary', (string) $workspaceA->id, (string) $admin], null, $this->childEnvironment());
         $waiterA->start();
         $holderA->wait();
         $waiterA->wait();
@@ -397,7 +414,7 @@ class EntitlementManagerConcurrencyTest extends TestCase
         app(EntitlementManager::class)->assignFirstPlan($workspaceB, WorkspacePlanTier::Core, $admin, 'Fixture.', true, 0);
 
         $holderB = $this->startHolderAndWaitForLock([['workspaces', 'id', $workspaceB->id], ['workspace_plan_catalog', 'id', $catalog->id]], 1, ['revoke-complimentary', (string) $workspaceB->id, (string) $admin]);
-        $waiterB = new Process([$this->phpBinary(), self::RUNNER, 'catalog-clear', (string) $catalog->id, (string) $admin]);
+        $waiterB = new Process([$this->phpBinary(), self::RUNNER, 'catalog-clear', (string) $catalog->id, (string) $admin], null, $this->childEnvironment());
         $waiterB->start();
         $holderB->wait();
         $waiterB->wait();
@@ -434,7 +451,7 @@ class EntitlementManagerConcurrencyTest extends TestCase
         // Business lock is left for the delegate's own natural, undisturbed
         // acquisition.
         $holderA = $this->startHolderAndWaitForLock([['workspaces', 'id', $sourceWorkspaceA->id]], 1, ['toggle-disable', (string) $businessA->id, PlatformFeature::Crm->value, (string) $sourceOwnerA]);
-        $waiterA = new Process([$this->phpBinary(), self::RUNNER, 'reassign-business', (string) $businessA->id, (string) $targetWorkspaceA->id, (string) $sourceOwnerA]);
+        $waiterA = new Process([$this->phpBinary(), self::RUNNER, 'reassign-business', (string) $businessA->id, (string) $targetWorkspaceA->id, (string) $sourceOwnerA], null, $this->childEnvironment());
         $waiterA->start();
         $holderA->wait();
         $waiterA->wait();
@@ -469,7 +486,7 @@ class EntitlementManagerConcurrencyTest extends TestCase
         // faithful prefix, not an inversion.
         $this->assertLessThan($targetWorkspaceB->id, $sourceWorkspaceB->id, 'Fixture invariant: source must have the lower Workspace ID so it is genuinely the first lock reassignBusiness() itself would take.');
         $holderB = $this->startHolderAndWaitForLock([['workspaces', 'id', $sourceWorkspaceB->id]], 1, ['reassign-business', (string) $businessB->id, (string) $targetWorkspaceB->id, (string) $sourceOwnerB]);
-        $waiterB = new Process([$this->phpBinary(), self::RUNNER, 'toggle-disable', (string) $businessB->id, PlatformFeature::Crm->value, (string) $sourceOwnerB]);
+        $waiterB = new Process([$this->phpBinary(), self::RUNNER, 'toggle-disable', (string) $businessB->id, PlatformFeature::Crm->value, (string) $sourceOwnerB], null, $this->childEnvironment());
         $waiterB->start();
         $holderB->wait();
         $waiterB->wait();
@@ -498,8 +515,8 @@ class EntitlementManagerConcurrencyTest extends TestCase
         // (transferOwnership) lock order this scenario exists to prove.
         $customer = Customer::where('user_id', $owner)->first();
 
-        $p1 = new Process([$this->phpBinary(), self::RUNNER, 'transfer-ownership', (string) $workspace->id, (string) $owner, (string) $newOwner]);
-        $p2 = new Process([$this->phpBinary(), self::RUNNER, 'legacy-create', (string) $customer->id]);
+        $p1 = new Process([$this->phpBinary(), self::RUNNER, 'transfer-ownership', (string) $workspace->id, (string) $owner, (string) $newOwner], null, $this->childEnvironment());
+        $p2 = new Process([$this->phpBinary(), self::RUNNER, 'legacy-create', (string) $customer->id], null, $this->childEnvironment());
         // Bounded execution: neither subprocess may hang past the bounded
         // 3-attempt retry policy actually resolving the deadlock.
         $p1->setTimeout(30);
@@ -595,7 +612,7 @@ class EntitlementManagerConcurrencyTest extends TestCase
         // Workspace's row lock; business2's reassignment is forced to be
         // the waiter and must observe the now-exhausted destination.
         $holder = $this->startHolderAndWaitForLock([['workspaces', 'id', $destWorkspace->id]], 1, ['reassign-business', (string) $business1->id, (string) $destWorkspace->id, (string) $sourceOwner1]);
-        $waiter = new Process([$this->phpBinary(), self::RUNNER, 'reassign-business', (string) $business2->id, (string) $destWorkspace->id, (string) $sourceOwner2]);
+        $waiter = new Process([$this->phpBinary(), self::RUNNER, 'reassign-business', (string) $business2->id, (string) $destWorkspace->id, (string) $sourceOwner2], null, $this->childEnvironment());
         $waiter->start();
         $holder->wait();
         $waiter->wait();
@@ -670,7 +687,7 @@ class EntitlementManagerConcurrencyTest extends TestCase
         // forced to be the waiter and must observe the now-exhausted
         // capacity once the holder's Workspace lock is finally released.
         $holder = $this->startHolderAndWaitForLock([['users', 'id', $owner], ['workspaces', 'id', $workspace->id]], 1, ['legacy-create', (string) $customer->id]);
-        $waiter = new Process([$this->phpBinary(), self::RUNNER, 'create-business', (string) $workspace->id, (string) $customer->id, (string) $owner]);
+        $waiter = new Process([$this->phpBinary(), self::RUNNER, 'create-business', (string) $workspace->id, (string) $customer->id, (string) $owner], null, $this->childEnvironment());
         $waiter->start();
         $holder->wait();
         $waiter->wait();
