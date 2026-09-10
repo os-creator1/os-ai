@@ -455,6 +455,183 @@ class MessagingTransportMeasurementLayeringTest extends TestCase
             'sending_server_id' => $server->id,
         ]);
     }
+    // ---------------------------------------------------------------
+    // Audit P2 — no stranded Conversations reservation
+    // ---------------------------------------------------------------
+
+    /**
+     * The defect: quickSend() reserved against the Conversations meter and
+     * the managed delegation then returned early further down, so the
+     * reservation was created and never committed or released. It sat
+     * pending forever, holding funds against a wallet for a send the
+     * Conversations meter had nothing to do with.
+     *
+     * The fix avoids CREATING the invalid reservation rather than
+     * compensating after the early return — a compensating release is a
+     * second thing that can fail, and it fails exactly when the first one
+     * did.
+     */
+    public function test_a_managed_send_leaves_no_pending_conversations_reservation(): void
+    {
+        [$tenant, $business] = $this->managedQuickSendTenant();
+
+        // The Conversations pilot is configured and pointed at this very
+        // Business, so the reservation WOULD have been taken but for the
+        // transport classification now running first.
+        config([
+            'usage_billing.conversations_metering.pilot_business_id' => $business->id,
+            'usage_billing.conversations_metering.pilot_country_id' => 1,
+            'usage_billing.conversations_metering.pilot_sending_server_id' => 1,
+        ]);
+
+        app(\App\Repositories\Contracts\CampaignRepository::class)->quickSend(
+            new \App\Models\Campaigns(),
+            [
+                'user' => $tenant->user,
+                'user_id' => $tenant->user_id,
+                'business_id' => $business->id,
+                'sms_type' => 'plain',
+                'sender_id' => 'TESTSENDER',
+                'originator' => 'sender_id',
+                'recipient' => '14155559901',
+                'phone' => '14155559901',
+                'country_code' => '1',
+                'region_code' => 'US',
+                'message' => 'managed conversation send',
+                'idempotency_token' => 'client-token-managed-1',
+            ],
+            conversationContext: true,
+        );
+
+        // The send happened through managed transport…
+        $this->assertCount(1, $this->fakeAdapter->sentRequests);
+
+        // …and left nothing pending behind it.
+        $this->assertSame(0, DB::table('business_usage_reservations')->count(), 'No reservation of any state.');
+        $this->assertSame(0, DB::table('business_usage_ledger_entries')->count(), 'No Conversations debit.');
+
+        // Measured under §4.8 instead, exactly once.
+        $this->assertSame(1, DB::table('business_usage_measurements')->count());
+        $this->assertSame('managed', DB::table('business_usage_measurements')->value('transport_marker'));
+    }
+
+    public function test_every_reservation_that_is_created_still_reaches_a_terminal_state(): void
+    {
+        // The invariant stated over the whole table rather than one row: at
+        // no point may a reservation be left in a non-terminal state by a
+        // managed or BYO send.
+        [$tenant, $business] = $this->managedQuickSendTenant();
+
+        app(\App\Repositories\Contracts\CampaignRepository::class)->quickSend(
+            new \App\Models\Campaigns(),
+            [
+                'user' => $tenant->user,
+                'user_id' => $tenant->user_id,
+                'business_id' => $business->id,
+                'sms_type' => 'plain',
+                'sender_id' => 'TESTSENDER',
+                'originator' => 'sender_id',
+                'recipient' => '14155559902',
+                'phone' => '14155559902',
+                'country_code' => '1',
+                'region_code' => 'US',
+                'message' => 'terminal state probe',
+                'idempotency_token' => 'client-token-managed-2',
+            ],
+            conversationContext: true,
+        );
+
+        $pending = DB::table('business_usage_reservations')
+            ->whereNotIn('status', ['committed', 'released', 'cancelled', 'expired'])
+            ->count();
+
+        $this->assertSame(0, $pending, 'No reservation may be left holding funds.');
+    }
+
+    public function test_a_byo_send_consumes_no_reservation_debit_or_spending_cap(): void
+    {
+        [$business, $server] = $this->byoBusiness();
+
+        $walletBefore = DB::table('business_usage_wallets')->where('business_id', $business->id)->first();
+
+        ManagedDispatchDelegate::recordByoMeasurement($server->id, $this->deliveredReport($business, $server), '2');
+
+        $this->assertSame(0, DB::table('business_usage_reservations')->count());
+        $this->assertSame(0, DB::table('business_usage_ledger_entries')->count());
+        $this->assertEquals(
+            $walletBefore,
+            DB::table('business_usage_wallets')->where('business_id', $business->id)->first(),
+            'A BYO send must not move the wallet, and therefore consumes no spending cap.',
+        );
+
+        $this->assertSame(1, DB::table('business_usage_measurements')->count());
+        $this->assertSame('byo', DB::table('business_usage_measurements')->value('transport_marker'));
+    }
+
+    /**
+     * A managed Business that can actually reach quickSend(): plan coverage,
+     * an active subscription, a sender id and a managed identity.
+     *
+     * @return array{0: \App\Models\Customer, 1: Business}
+     */
+    private function managedQuickSendTenant(): array
+    {
+        $tenant = $this->createCustomer();
+        $business = $this->createBusinessWithWorkspace($tenant, $this->businessAttributes());
+
+        $identity = $this->attachIdentity($business);
+        $this->attachNumber($identity, $this->uniqueNumber(), true);
+
+        $country = \App\Models\Country::firstOrCreate(
+            ['country_code' => '1', 'iso_code' => 'US'],
+            ['name' => 'United States', 'status' => 1],
+        );
+        $currency = \App\Models\Currency::firstOrCreate(
+            ['code' => 'USD'],
+            ['name' => 'US Dollar', 'format' => '$', 'status' => true],
+        );
+
+        $plan = \App\Models\Plan::create([
+            'currency_id' => $currency->id,
+            'name' => 'P2 Plan ' . uniqid(),
+            'price' => 10,
+            'billing_cycle' => 'monthly',
+            'frequency_amount' => 1,
+            'frequency_unit' => 'month',
+            'options' => json_encode([]),
+            'status' => true,
+        ]);
+
+        \App\Models\PlansCoverageCountries::create([
+            'plan_id' => $plan->id,
+            'country_id' => $country->id,
+            'status' => true,
+            'sending_server' => null,
+            'options' => json_encode(['plain' => true, 'plain_sms' => 0.05]),
+        ]);
+
+        \App\Models\Subscription::create([
+            'user_id' => $tenant->user_id,
+            'plan_id' => $plan->id,
+            'status' => \App\Models\Subscription::STATUS_ACTIVE,
+            'paid' => true,
+            'start_at' => now(),
+            'end_at' => null,
+        ]);
+
+        \App\Models\Senderid::create([
+            'user_id' => $tenant->user_id,
+            'business_id' => $business->id,
+            'sender_id' => 'TESTSENDER',
+            'status' => 'active',
+        ]);
+
+        $tenant->user->sms_unit = 1000;
+        $tenant->user->save();
+
+        return [$tenant, $business->fresh()];
+    }
+
     private function dispatchOnce(Business $business, string $operationKey): void
     {
         app(\App\Library\Messaging\ManagedMessageDispatcher::class)

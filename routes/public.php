@@ -27,7 +27,19 @@
     // Customer Experience Slice 3 §4.6.1 — the managed Telnyx inbound
     // route. Distinct from the legacy BYO route above, which §4.6.5
     // disables for Business-facing BYO connections.
-    Route::post('inbound/telnyx-managed', 'Customer\DLRController@inboundTelnyxManaged')->name('inbound.telnyx_managed');
+    //
+    // THROTTLED (audit P8). This endpoint is public and unauthenticated
+    // until its Ed25519 signature is verified, so an attacker can drive it
+    // as hard as they like. The bound is deliberately generous rather than
+    // tight: it has to sit comfortably above a real provider's delivery AND
+    // retry rate — Telnyx redelivers on 5xx, which §4.6's early-DLR budget
+    // now deliberately relies on — while still refusing the volume a
+    // resource-exhaustion attempt needs. 600/minute is roughly ten webhooks
+    // a second sustained, far past this platform's real inbound rate and
+    // far below what an attacker would want.
+    Route::post('inbound/telnyx-managed', 'Customer\DLRController@inboundTelnyxManaged')
+        ->middleware('throttle:600,1')
+        ->name('inbound.telnyx_managed');
     Route::any('inbound/teletopiasms/{gateway?}', 'Customer\DLRController@inboundTeletopiasms')->name('inbound.teletopiasms');
     Route::any('inbound/flowroute/{gateway?}', 'Customer\DLRController@inboundFlowRoute')->name('inbound.flowroute');
     Route::any('dlr/easysendsms', 'Customer\DLRController@dlrEasySendSMS')->name('dlr.easysendsms');

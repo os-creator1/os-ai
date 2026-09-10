@@ -44,8 +44,29 @@ class MessagingWebhookRejectionRecorder
         ?int $profileResolvedIdentityId = null,
         ?int $numberResolvedIdentityId = null,
     ): MessagingWebhookRejection {
-        $payloadHash = hash('sha256', $rawBody);
+        // BOUNDED FINGERPRINT (audit P8), not a body hash.
+        //
+        // This used to be `hash('sha256', $rawBody)`. The unique key is
+        // (reason, provider, payload_hash), so every DISTINCT body an
+        // unauthenticated caller sent created its own durable row — and
+        // these endpoints are public. A few thousand requests with a
+        // different random byte each produced a few thousand permanent rows.
+        // The table meant to bound abuse was itself the amplifier.
+        //
+        // The fingerprint is now derived only from low-cardinality facts the
+        // caller does not control: the reason and the normalized provider.
+        // That caps the table at one row per (reason, provider) pair —
+        // roughly sixty times a dozen, forever — while `occurrence_count`
+        // carries the volume, which is the number an operator actually wants
+        // ("how much unverifiable traffic is Twilio sending us?", not "how
+        // many distinct random bodies did it contain").
+        //
+        // $rawBody is still accepted, and still deliberately NOT stored or
+        // hashed. Keeping the parameter means callers cannot start passing
+        // a body somewhere it would be retained, and the signature stays
+        // honest about what this class is handed.
         $providerIdentifier = TransportProviderIdentifier::normalize($provider);
+        $payloadHash = hash('sha256', $reason->value . '|' . $providerIdentifier);
         $now = Carbon::now();
 
         $existing = MessagingWebhookRejection::query()

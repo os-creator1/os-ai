@@ -432,7 +432,30 @@
             // queries, zero new columns written for a non-qualifying send.
             $m5 = null;
 
-            if ($conversationContext && ($sms_type === 'plain' || $sms_type === 'unicode')) {
+            // TRANSPORT CLASSIFICATION COMES FIRST (audit P2).
+            //
+            // `$managedTransport` was resolved far above, before the legacy
+            // gateway guards. It is re-used here so a managed send never
+            // enters this block at all.
+            //
+            // The defect: this block RESERVES against the Conversations
+            // meter, and the managed delegation returns early further down —
+            // so the reservation was created and then never committed or
+            // released. It sat pending forever, holding funds against a
+            // wallet for a send the Conversations meter had nothing to do
+            // with, because managed transport is measured under §4.8 and
+            // takes no RFC-005 reservation at all.
+            //
+            // The fix is to avoid creating the invalid reservation rather
+            // than to compensate for it after the early return. A
+            // compensating release is a second thing that can fail, and it
+            // fails exactly when the first one did.
+            //
+            // BYO and legacy sends are deliberately NOT excluded: they
+            // continue through the legacy path below, so their reservation
+            // reaches settlement normally, and excluding them would change
+            // the merged Conversations pilot's behaviour.
+            if (! $managedTransport && $conversationContext && ($sms_type === 'plain' || $sms_type === 'unicode')) {
                 $m5 = $this->qualifyConversationsMeterReservation(
                     $user,
                     $country,

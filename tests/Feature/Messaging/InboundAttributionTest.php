@@ -172,6 +172,67 @@ class InboundAttributionTest extends TestCase
         $this->assertSame(0, DB::table('business_messaging_operations')->count());
     }
 
+    /**
+     * T-MSG-20 completed. The contract asks for "inactive/suspended/released
+     * number mapping" and only `released` was covered; a number can also be
+     * `suspended` or `pending`, and an otherwise-valid Profile must not
+     * rescue any of them. The identity's own non-active states are covered
+     * here too, since the same requirement reads on both sides of the
+     * mapping.
+     */
+    public function test_every_non_active_number_state_fails_closed(): void
+    {
+        foreach ([
+            BusinessMessagingNumberStatus::Released,
+            BusinessMessagingNumberStatus::Suspended,
+            BusinessMessagingNumberStatus::Pending,
+        ] as $state) {
+            DB::table('messaging_webhook_rejections')->delete();
+            DB::table('business_messaging_operations')->delete();
+
+            $business = $this->makeBusiness();
+            $identity = $this->attachIdentity($business);
+            $number = $this->attachNumber($identity, $this->uniqueNumber(), true, $state);
+
+            $this->postEvent($this->messageReceived($identity->messaging_profile_id, $number->phone_number, 'pm_' . $state->value))
+                ->assertOk()
+                ->assertJson(['status' => 'unattributed']);
+
+            $this->assertSame(
+                0,
+                DB::table('business_messaging_operations')->count(),
+                "A [{$state->value}] number must never be attributed to.",
+            );
+            $this->assertGreaterThan(0, $this->rejectionCount('unknown_mapping'));
+        }
+    }
+
+    public function test_every_non_active_identity_state_fails_closed_on_inbound(): void
+    {
+        foreach ([
+            \App\Enums\Messaging\BusinessMessagingIdentityStatus::Pending,
+            \App\Enums\Messaging\BusinessMessagingIdentityStatus::Suspended,
+            \App\Enums\Messaging\BusinessMessagingIdentityStatus::Archived,
+        ] as $state) {
+            DB::table('messaging_webhook_rejections')->delete();
+            DB::table('business_messaging_operations')->delete();
+
+            $business = $this->makeBusiness();
+            $identity = $this->attachIdentity($business, null, $state);
+            $number = $this->attachNumber($identity, $this->uniqueNumber(), true);
+
+            $this->postEvent($this->messageReceived($identity->messaging_profile_id, $number->phone_number, 'pm_id_' . $state->value))
+                ->assertOk()
+                ->assertJson(['status' => 'unattributed']);
+
+            $this->assertSame(
+                0,
+                DB::table('business_messaging_operations')->count(),
+                "A [{$state->value}] identity must never be attributed to.",
+            );
+        }
+    }
+
     public function test_a_missing_signal_is_a_malformed_payload(): void
     {
         [, $identity, $number] = $this->managedBusiness();
@@ -439,8 +500,62 @@ class InboundAttributionTest extends TestCase
         $rows = DB::table('messaging_webhook_rejections')->where('reason', 'unknown_mapping')->get();
         $this->assertCount(1, $rows, 'An identical rejection must increment, not insert.');
         $this->assertSame(3, (int) $rows[0]->occurrence_count);
-        $this->assertNotNull($rows[0]->payload_hash);
-        $this->assertSame(hash('sha256', json_encode($body)), $rows[0]->payload_hash);
+
+        // The fingerprint is bounded (audit P8): derived from the reason and
+        // the provider, NEVER from the body. Asserted positively, so a
+        // regression back to hashing the payload fails here.
+        $this->assertSame(hash('sha256', 'unknown_mapping|telnyx'), $rows[0]->payload_hash);
+        $this->assertNotSame(hash('sha256', (string) json_encode($body)), $rows[0]->payload_hash);
+    }
+
+    /**
+     * Audit P8 — the DoS boundary. Every distinct unsigned body used to
+     * create its own durable row on a public endpoint, so a few thousand
+     * requests with one random byte changed produced a few thousand
+     * permanent rows. The table meant to bound abuse was the amplifier.
+     */
+    public function test_many_distinct_invalid_payloads_cannot_create_unbounded_rejection_rows(): void
+    {
+        [, $identity] = $this->managedBusiness();
+
+        for ($i = 0; $i < 40; $i++) {
+            // A different body every time — exactly the attack.
+            $this->postEvent(
+                $this->messageReceived($identity->messaging_profile_id, '+14155556666', 'pm_' . $i),
+                ['nonce' => bin2hex(random_bytes(16)), 'i' => $i],
+            );
+        }
+
+        $rows = DB::table('messaging_webhook_rejections')->get();
+
+        $this->assertCount(1, $rows, 'Forty distinct bodies must not become forty durable rows.');
+        $this->assertSame(40, (int) $rows[0]->occurrence_count, 'The volume is carried by the counter instead.');
+        $this->assertStringNotContainsString('nonce', (string) json_encode($rows));
+    }
+
+    public function test_the_managed_webhook_route_is_throttled(): void
+    {
+        $route = collect(app('router')->getRoutes()->getRoutes())
+            ->first(fn ($r) => $r->getName() === 'inbound.telnyx_managed');
+
+        $this->assertNotNull($route);
+
+        $throttles = array_values(array_filter(
+            $route->gatherMiddleware(),
+            fn ($m) => is_string($m) && str_starts_with($m, 'throttle:'),
+        ));
+
+        $this->assertNotEmpty($throttles, 'A public unauthenticated webhook must be rate limited.');
+
+        // A floor, not an exact number: the bound must stay generous enough
+        // not to throttle a real provider's delivery and retry rate, which
+        // the early-DLR budget deliberately relies on.
+        [$limit] = explode(',', substr($throttles[0], strlen('throttle:')));
+        $this->assertGreaterThanOrEqual(
+            120,
+            (int) $limit,
+            'Throttling legitimate provider retries into failure would be worse than the DoS.',
+        );
     }
 
     public function test_a_rejection_row_never_retains_the_message_body(): void
