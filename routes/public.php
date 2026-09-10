@@ -63,8 +63,12 @@
     Route::any('dlr/keccelsms', 'Customer\DLRController@dlrKeccelSMS')->name('dlr.keccelsms');
 
     Route::any('dlr/gatewayapi', 'Customer\DLRController@dlrGatewayApi')->name('dlr.gatewayapi');
-    Route::any('inbound/gatewayapi/{gateway?}', 'Customer\DLRController@inboundGatewayApi')->name('inbound.gatewayapi');
 
+    // Legacy Provider Webhook Measurement Contract §4 (S1): this route was
+    // registered twice, identical URI/verb/controller/method/name. Laravel's
+    // later registration always won, so the earlier declaration was already
+    // unreachable dead code. Removed; the surviving line below is the one
+    // that was already serving traffic — behaviour is unchanged.
     Route::any('inbound/gatewayapi/{gateway?}', 'Customer\DLRController@inboundGatewayApi')->name('inbound.gatewayapi');
     Route::any('dlr/smsvas', 'Customer\DLRController@dlrSMSVas')->name('dlr.smsvas');
 

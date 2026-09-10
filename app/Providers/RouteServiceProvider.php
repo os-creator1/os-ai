@@ -60,7 +60,7 @@
                 ->namespace($this->namespace)
                 ->group(base_path('routes/web.php'));
 
-            Route::middleware('web')
+            Route::middleware(['web', \App\Http\Middleware\RecordLegacyWebhookUsage::class])
                 ->namespace($this->namespace)
                 ->group(base_path('routes/public.php'));
 

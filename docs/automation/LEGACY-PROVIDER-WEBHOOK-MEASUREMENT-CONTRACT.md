@@ -1,7 +1,12 @@
 # LEGACY PROVIDER WEBHOOK SURFACE — S0 MEASUREMENT AND S1 HYGIENE CONTRACT
 
-**Status:** Implementation contract. It authorizes exactly two slices, S0 and
-S1, and nothing else. **It does not authorize provider retirement.**
+**Status:** Implemented on branch
+`agent/legacy-provider-webhook-measurement-s0-s1`, cut from `origin/main` at
+`3b3476a8cd204b75b38bf10459b653fa37aae627` (Customer Experience Slice 3 —
+PR #242 — confirmed merged). S0 and S1 as specified below are complete; the
+30-day observation window (§5) has started, not finished. **Provider
+retirement is still not authorized by this contract or by this
+implementation.**
 
 **Base:** `origin/main` at `b87b669d55de97957d3583407ec2b69cd75d2eaa`.
 
