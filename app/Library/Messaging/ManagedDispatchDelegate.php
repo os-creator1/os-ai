@@ -11,6 +11,8 @@ use App\Models\Business;
 use App\Models\Campaigns;
 use App\Models\CustomerBasedSendingServer;
 use App\Models\Reports;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 
 /**
@@ -168,15 +170,33 @@ class ManagedDispatchDelegate
         Campaigns $campaign,
         array $preparedData,
         OutboundMessageResult $result,
+        ?string $operationKey = null,
     ): Reports {
+        // ACCEPTANCE IS NOT DELIVERY (audit P7).
+        //
+        // This used to write 'Delivered' the moment the provider ACCEPTED
+        // the message. Three things went wrong at once: the customer was
+        // shown a delivery that had not happened; `track_message()` reads
+        // this exact string and debited legacy SMS credit for it, so managed
+        // transport consumed legacy balance merely because a provider said
+        // "queued"; and a later FAILED delivery callback updated only the
+        // operation row, leaving the Report permanently claiming Delivered.
+        //
+        // 'Sent' is the honest state, and it deliberately does not contain
+        // the substring 'Delivered' — which is what every legacy consumer,
+        // the sms_unit debit included, tests for. The Report becomes
+        // Delivered or Failed only when a real delivery callback says so,
+        // through syncCorrelatedReport().
+        $status = $result->accepted ? 'Sent' : 'Failed';
+
         $attributes = [
             'user_id' => $campaign->user_id,
             'business_id' => $campaign->business_id,
             'to' => str_replace(['(', ')', '+', '-', ' '], '', (string) ($preparedData['phone'] ?? '')),
             'message' => $preparedData['message'] ?? null,
             'sms_type' => $preparedData['sms_type'] ?? $campaign->sms_type,
-            'status' => $result->accepted ? 'Delivered' : 'Failed',
-            'customer_status' => $result->accepted ? 'Delivered' : 'Failed',
+            'status' => $status,
+            'customer_status' => $status,
             'direction' => Reports::DIRECTION_OUTGOING,
             'cost' => $preparedData['cost'] ?? 0,
             'sms_count' => $preparedData['sms_count'] ?? 1,
@@ -195,7 +215,21 @@ class ManagedDispatchDelegate
             $attributes['media_url'] = $preparedData['media_url'];
         }
 
-        return Reports::create($attributes);
+        $report = Reports::create($attributes);
+
+        // The durable correlation. Without it a delivery callback has no way
+        // to find the customer-visible record except by guessing from
+        // (Business, phone, roughly when) — ambiguous the moment a Business
+        // messages the same recipient twice.
+        if ($operationKey !== null && $campaign->business_id !== null) {
+            DB::table(ManagedMessageDispatcher::TABLE)
+                ->where('business_id', (int) $campaign->business_id)
+                ->where('operation_key', $operationKey)
+                ->whereNull('report_id')
+                ->update(['report_id' => (int) $report->id, 'updated_at' => Carbon::now()]);
+        }
+
+        return $report;
     }
 
     /**

@@ -37,7 +37,21 @@ return new class extends Migration
 
             $table->foreign('business_id')->references('id')->on('businesses')->restrictOnDelete();
 
-            $table->unique('idempotency_key', 'bum_idempotency_key_unique');
+            // Scoped by Business AND feature, for the same reason the
+            // operations table's client key is scoped by Business: the key
+            // is chosen by the caller, so two Businesses can legitimately
+            // produce the same string, and under a global index the second
+            // Business's measurement resolved to the FIRST Business's row —
+            // silently attributing one tenant's usage to another and losing
+            // the second measurement entirely.
+            //
+            // The feature is in the key too because one send can be measured
+            // against more than one feature, and those measurements are not
+            // duplicates of each other.
+            $table->unique(
+                ['business_id', 'feature_key', 'idempotency_key'],
+                'bum_business_feature_idempotency_unique',
+            );
             $table->index(['business_id', 'feature_key', 'occurred_at'], 'bum_business_feature_occurred_index');
         });
     }

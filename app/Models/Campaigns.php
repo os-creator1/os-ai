@@ -1044,6 +1044,10 @@
                     $this,
                     $preparedData,
                     $managedResult,
+                    // The operation key, so the Report can be correlated to
+                    // its operation row and a later delivery callback can
+                    // update both consistently.
+                    $this->managedOperationKeyFor($preparedData),
                 );
             }
 

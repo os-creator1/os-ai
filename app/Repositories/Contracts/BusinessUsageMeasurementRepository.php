@@ -30,5 +30,20 @@ interface BusinessUsageMeasurementRepository extends BaseRepository
         ?string $transportMarker = null,
     ): BusinessUsageMeasurement;
 
+    /**
+     * The scoped lookup, matching the table's unique index column for
+     * column. Every write path uses this; the caller-chosen key alone is
+     * not unique across Businesses.
+     */
+    public function findScopedByIdempotencyKey(
+        Business $business,
+        PlatformFeature $featureKey,
+        string $idempotencyKey,
+    ): ?BusinessUsageMeasurement;
+
+    /**
+     * Unscoped lookup, for administrative/diagnostic callers holding a
+     * genuinely global key. Never used to decide idempotency.
+     */
     public function findByIdempotencyKey(string $idempotencyKey): ?BusinessUsageMeasurement;
 }

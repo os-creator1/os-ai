@@ -185,7 +185,7 @@ class ManagedCampaignDelegationTest extends TestCase
             'sms_count' => 1,
         ]);
 
-        $this->assertSame('Delivered', $result->status);
+        $this->assertSame('Sent', $result->status, 'Provider acceptance is not delivery.');
         $this->assertCount(1, $this->fakeAdapter->sentRequests);
         Http::assertNothingSent();
 
@@ -593,7 +593,7 @@ class ManagedCampaignDelegationTest extends TestCase
 
         // The recorded result is returned to every retry, so the caller's
         // own accounting sees one delivery rather than three.
-        $this->assertSame('Delivered', $first->status);
+        $this->assertSame('Sent', $first->status, 'Provider acceptance is not delivery.');
 
         // And the durable key really is derived from campaign + recipient,
         // not from chance.

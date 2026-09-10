@@ -89,9 +89,28 @@ class ManagedMessageDispatcher
 
         // §4.9 — a confirmed acceptance is never re-sent to the provider
         // under the same operation key; the recorded result is returned.
-        $existing = DB::table(self::TABLE)->where('operation_key', $operationKey)->first();
+        //
+        // SCOPED BY BUSINESS, matching the table's unique index column for
+        // column. The key is caller-chosen — a campaign id and recipient, or
+        // a client token — so two Businesses can legitimately produce the
+        // same string. Looking it up globally meant the second Business's
+        // send resolved to the FIRST Business's row and was handed its
+        // provider message id: one tenant reading another's send, and its
+        // own send silently never happening.
+        $existing = DB::table(self::TABLE)
+            ->where('business_id', (int) $business->id)
+            ->where('operation_key', $operationKey)
+            ->first();
 
         if ($existing !== null) {
+            // Verified after retrieval as well as in the WHERE clause: a row
+            // returned to this caller must provably be this Business's.
+            if ((int) $existing->business_id !== (int) $business->id) {
+                throw new MessagingIdentityConflictException(
+                    'A recorded operation was resolved for the wrong Business; refusing to return it.',
+                );
+            }
+
             return self::resultFromRecordedOperation($existing);
         }
 

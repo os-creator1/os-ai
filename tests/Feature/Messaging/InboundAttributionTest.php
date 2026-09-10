@@ -4,7 +4,9 @@ namespace Tests\Feature\Messaging;
 
 use App\Enums\Messaging\BusinessMessagingNumberStatus;
 use App\Enums\Messaging\InboundWebhookEventKind;
+use App\Enums\Messaging\MessagingOperationStatus;
 use App\Enums\Messaging\MessagingProvider;
+use App\Library\Messaging\InboundWebhookAttributionResolver;
 use App\Library\Messaging\DTO\InboundWebhookEvent;
 use Carbon\CarbonImmutable;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -300,16 +302,80 @@ class InboundAttributionTest extends TestCase
     // T-MSG-53 — unknown and cross-Business delivery evidence
     // ---------------------------------------------------------------
 
-    public function test_an_unknown_provider_message_id_fails_closed(): void
+    /**
+     * Updated for the early-DLR race (audit P10).
+     *
+     * An unattributable DELIVERY callback is now asked for redelivery first,
+     * because the commonest cause is legitimate: the callback beat its own
+     * operation's finalization, and by the next attempt the correlation
+     * exists. Answering 200 immediately — as this used to — told the
+     * provider not to send it again, and the callback was lost for good.
+     *
+     * The retry budget is bounded, so a genuinely foreign provider message
+     * id cannot make a provider retry forever. Both halves are asserted.
+     */
+    public function test_an_unknown_provider_message_id_is_retried_and_then_finally_refused(): void
     {
         $this->managedBusiness();
 
+        // Within the budget: ask the provider to redeliver.
+        for ($attempt = 1; $attempt <= InboundWebhookAttributionResolver::EARLY_DLR_RETRY_BUDGET; $attempt++) {
+            $this->postEvent($this->deliveryStatus('pm_never_seen', 'delivered'))
+                ->assertStatus(503)
+                ->assertJson(['status' => 'retry']);
+        }
+
+        // Past it: stop asking, and accept it as genuinely unattributable.
         $this->postEvent($this->deliveryStatus('pm_never_seen', 'delivered'))
             ->assertOk()
             ->assertJson(['status' => 'unattributed']);
 
-        $this->assertSame(1, $this->rejectionCount('unknown_mapping'));
+        // One fingerprint, counted — not one row per redelivery.
+        $this->assertSame(1, DB::table('messaging_webhook_rejections')->count());
+        $this->assertSame(
+            InboundWebhookAttributionResolver::EARLY_DLR_RETRY_BUDGET + 1,
+            $this->rejectionCount('unknown_mapping'),
+        );
         $this->assertSame(0, DB::table('business_messaging_operations')->count());
+    }
+
+    /**
+     * The race this budget exists for, deterministically staged: the
+     * callback arrives while the operation has no provider_message_id yet,
+     * and succeeds on redelivery once finalization has attached it.
+     */
+    public function test_a_delivery_callback_that_beats_finalization_succeeds_on_redelivery(): void
+    {
+        [$operation, $providerMessageId] = $this->acceptedOutboundOperation();
+
+        // Rewind to the instant before finalization committed.
+        DB::table('business_messaging_operations')
+            ->where('id', $operation->id)
+            ->update(['provider_message_id' => null, 'status' => MessagingOperationStatus::Attempted->value]);
+
+        $this->postEvent($this->deliveryStatus($providerMessageId, 'delivered'))
+            ->assertStatus(503)
+            ->assertJson(['status' => 'retry']);
+
+        $this->assertSame(
+            MessagingOperationStatus::Attempted->value,
+            DB::table('business_messaging_operations')->where('id', $operation->id)->value('status'),
+        );
+
+        // Finalization completes, then the provider redelivers.
+        DB::table('business_messaging_operations')
+            ->where('id', $operation->id)
+            ->update(['provider_message_id' => $providerMessageId, 'status' => MessagingOperationStatus::Accepted->value]);
+
+        $this->postEvent($this->deliveryStatus($providerMessageId, 'delivered'))
+            ->assertOk()
+            ->assertJson(['status' => 'accepted']);
+
+        $this->assertSame(
+            MessagingOperationStatus::Delivered->value,
+            DB::table('business_messaging_operations')->where('id', $operation->id)->value('status'),
+            'The early callback must not be lost; redelivery applies it.',
+        );
     }
 
     public function test_delivery_evidence_resolving_to_another_business_is_refused(): void
@@ -557,5 +623,344 @@ class InboundAttributionTest extends TestCase
             ->where('direction', 'inbound')
             ->where('provider_message_id', $providerMessageId)
             ->count();
+    }
+
+    // ---------------------------------------------------------------
+    // Audit P6 — two Businesses may safely reuse the same client key
+    // ---------------------------------------------------------------
+
+    /**
+     * `operation_key` and `idempotency_key` are chosen by the CALLER — a
+     * campaign id and recipient, or a client token — so two Businesses can
+     * legitimately produce the same string. Under the old global unique
+     * indexes the second Business's send resolved to the FIRST Business's
+     * recorded row and was handed its provider message id: one tenant
+     * reading another's send, and its own send silently never happening.
+     */
+    public function test_two_businesses_using_the_same_operation_key_never_see_each_others_rows(): void
+    {
+        [$businessA, $identityA, $numberA] = $this->managedBusiness();
+        [$businessB, $identityB, $numberB] = $this->managedBusiness();
+
+        $sharedKey = 'managed:campaign:1:14155550000';
+        $dispatcher = app(\App\Library\Messaging\ManagedMessageDispatcher::class);
+
+        $resultA = $dispatcher->dispatch($businessA, '+14155557001', 'for A', $sharedKey);
+        $resultB = $dispatcher->dispatch($businessB, '+14155557002', 'for B', $sharedKey);
+
+        // Each got its OWN send, not the other's recorded result.
+        $this->assertTrue($resultA->accepted);
+        $this->assertTrue($resultB->accepted);
+        $this->assertNotSame(
+            $resultA->providerMessageId,
+            $resultB->providerMessageId,
+            'Business B must not be handed Business A\'s provider message id.',
+        );
+        $this->assertSame(2, $this->fakeAdapter->sentCount(), 'Both sends really happened.');
+
+        // Two operation rows, one per Business, each owned correctly.
+        $rows = DB::table('business_messaging_operations')->where('operation_key', $sharedKey)->get();
+        $this->assertCount(2, $rows);
+        $this->assertEqualsCanonicalizing(
+            [(int) $businessA->id, (int) $businessB->id],
+            $rows->map(fn ($r) => (int) $r->business_id)->all(),
+        );
+
+        // Two measurements, one per Business.
+        $measurements = DB::table('business_usage_measurements')->get();
+        $this->assertCount(2, $measurements);
+        $this->assertEqualsCanonicalizing(
+            [(int) $businessA->id, (int) $businessB->id],
+            $measurements->map(fn ($r) => (int) $r->business_id)->all(),
+        );
+
+        // And each Business's OWN repeat is still suppressed.
+        $repeatA = $dispatcher->dispatch($businessA, '+14155557001', 'for A', $sharedKey);
+        $this->assertSame($resultA->providerMessageId, $repeatA->providerMessageId);
+        $this->assertSame(2, $this->fakeAdapter->sentCount(), 'A repeat within one Business still sends nothing new.');
+        $this->assertSame(2, DB::table('business_messaging_operations')->where('operation_key', $sharedKey)->count());
+    }
+
+    public function test_provider_message_id_uniqueness_stays_global_for_unambiguous_attribution()
+    {
+        // The counterpart to the scoping above: a webhook carries only a
+        // provider message id, so if that were scoped per Business it could
+        // match several rows and attribution would become ambiguous. It must
+        // stay globally unique.
+        [$businessA] = $this->managedBusiness();
+        [$businessB] = $this->managedBusiness();
+
+        $dispatcher = app(\App\Library\Messaging\ManagedMessageDispatcher::class);
+        $dispatcher->dispatch($businessA, '+14155557003', 'a', 'key-a');
+
+        $providerMessageId = (string) DB::table('business_messaging_operations')->value('provider_message_id');
+
+        $this->expectException(\Illuminate\Database\QueryException::class);
+
+        DB::table('business_messaging_operations')->insert([
+            'business_id' => (int) $businessB->id,
+            'transport_mode' => 'managed',
+            'provider' => MessagingProvider::Telnyx->value,
+            'direction' => 'outbound',
+            'message_type' => 'sms',
+            'operation_key' => 'key-b',
+            'provider_message_id' => $providerMessageId,
+            'status' => MessagingOperationStatus::Accepted->value,
+            'occurred_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+    }
+
+    // ---------------------------------------------------------------
+    // Audit P7 — acceptance is not delivery, and both records agree
+    // ---------------------------------------------------------------
+
+    /**
+     * @return array{0: object, 1: string, 2: \App\Models\Reports}
+     */
+    private function acceptedOperationWithReport(): array
+    {
+        [$business, $identity] = $this->managedBusiness();
+
+        $campaign = \App\Models\Campaigns::create([
+            'user_id' => $business->customer->user_id,
+            'business_id' => $business->id,
+            'campaign_name' => 'Lifecycle ' . uniqid(),
+            'message' => 'lifecycle',
+            'sms_type' => 'plain',
+            'status' => \App\Models\Campaigns::STATUS_NEW,
+        ]);
+
+        $report = $campaign->sendSMS([
+            'user_id' => $business->customer_id,
+            'campaign_id' => $campaign->id,
+            'phone' => '14155557100',
+            'sender_id' => 'TESTSENDER',
+            'message' => 'lifecycle',
+            'sms_type' => 'plain',
+            'cost' => 0,
+            'sms_count' => 1,
+        ]);
+
+        $operation = DB::table('business_messaging_operations')->where('direction', 'outbound')->first();
+
+        return [$operation, (string) $operation->provider_message_id, $report];
+    }
+
+    public function test_provider_acceptance_is_recorded_as_sent_and_correlated_to_its_report(): void
+    {
+        [$operation, , $report] = $this->acceptedOperationWithReport();
+
+        // The customer-visible record does NOT claim delivery.
+        $this->assertSame('Sent', $report->fresh()->status);
+        $this->assertStringNotContainsString('Delivered', (string) $report->fresh()->status);
+
+        // The operation says accepted, and the two are durably correlated.
+        $this->assertSame(MessagingOperationStatus::Accepted->value, $operation->status);
+        $this->assertSame((int) $report->id, (int) $operation->report_id);
+    }
+
+    public function test_a_delivered_callback_updates_both_records_exactly_once(): void
+    {
+        [$operation, $providerMessageId, $report] = $this->acceptedOperationWithReport();
+
+        $this->postEvent($this->deliveryStatus($providerMessageId, 'delivered'))->assertOk();
+
+        $this->assertSame(
+            MessagingOperationStatus::Delivered->value,
+            DB::table('business_messaging_operations')->where('id', $operation->id)->value('status'),
+        );
+        $this->assertSame('Delivered', $report->fresh()->status, 'The customer-visible record follows the callback.');
+        $this->assertSame('Delivered', $report->fresh()->customer_status);
+
+        // A duplicate changes nothing and is recorded as a duplicate.
+        $this->postEvent($this->deliveryStatus($providerMessageId, 'delivered'))->assertOk();
+
+        $this->assertSame('Delivered', $report->fresh()->status);
+        $this->assertSame(1, $this->rejectionCount('duplicate'));
+    }
+
+    public function test_a_failed_callback_updates_the_customer_visible_record_too(): void
+    {
+        [$operation, $providerMessageId, $report] = $this->acceptedOperationWithReport();
+
+        $this->assertSame('Sent', $report->fresh()->status);
+
+        $this->postEvent($this->deliveryStatus($providerMessageId, 'delivery_failed'))->assertOk();
+
+        // THE DEFECT THIS CLOSES: a failed DLR used to update only the
+        // operation row, leaving the Report permanently saying Delivered.
+        $this->assertSame(
+            MessagingOperationStatus::Failed->value,
+            DB::table('business_messaging_operations')->where('id', $operation->id)->value('status'),
+        );
+        $this->assertSame('Failed', $report->fresh()->status);
+        $this->assertSame('Failed', $report->fresh()->customer_status);
+    }
+
+    public function test_a_regressive_delivered_after_failed_changes_nothing(): void
+    {
+        [$operation, $providerMessageId, $report] = $this->acceptedOperationWithReport();
+
+        $this->postEvent($this->deliveryStatus($providerMessageId, 'delivery_failed'))->assertOk();
+        $this->assertSame('Failed', $report->fresh()->status);
+
+        $this->postEvent($this->deliveryStatus($providerMessageId, 'delivered'))->assertOk();
+
+        $this->assertSame(
+            MessagingOperationStatus::Failed->value,
+            DB::table('business_messaging_operations')->where('id', $operation->id)->value('status'),
+            'A terminal failure is never reversed by a later callback.',
+        );
+        $this->assertSame('Failed', $report->fresh()->status);
+        $this->assertSame(1, $this->rejectionCount('regressive_transition'));
+    }
+
+    public function test_managed_transport_never_consumes_legacy_sms_credit(): void
+    {
+        [$business, $identity] = $this->managedBusiness();
+        $user = $business->customer->user;
+        $user->sms_unit = 500;
+        $user->save();
+
+        $campaign = \App\Models\Campaigns::create([
+            'user_id' => $user->id,
+            'business_id' => $business->id,
+            'campaign_name' => 'Credit ' . uniqid(),
+            'message' => 'credit',
+            'sms_type' => 'plain',
+            'status' => \App\Models\Campaigns::STATUS_NEW,
+        ]);
+
+        $report = $campaign->sendSMS([
+            'user_id' => $business->customer_id,
+            'campaign_id' => $campaign->id,
+            'phone' => '14155557200',
+            'sender_id' => 'TESTSENDER',
+            'message' => 'credit',
+            'sms_type' => 'plain',
+            'cost' => 7,
+            'sms_count' => 1,
+        ]);
+
+        // Every legacy debit in this codebase is gated on the SAME test:
+        // `substr_count($status, 'Delivered') == 1` — track_message()'s
+        // sms_unit deduction and quickSend()'s both. Asserting the gate
+        // itself is what proves no debit can fire, and it does so without
+        // fabricating the unrelated arguments track_message() also needs.
+        $this->assertSame(0, substr_count((string) $report->status, 'Delivered'));
+        $this->assertSame(0, substr_count((string) $report->fresh()->customer_status, 'Delivered'));
+
+        $this->assertSame(500, (int) $user->fresh()->sms_unit, 'Managed transport must not consume legacy SMS credit.');
+
+        // And it is measured instead, exactly once.
+        $this->assertSame(1, DB::table('business_usage_measurements')->count());
+    }
+
+    // ---------------------------------------------------------------
+    // Audit P5 — the real segment count, from SMSCounter
+    // ---------------------------------------------------------------
+
+    public function test_a_multi_segment_inbound_message_records_its_real_segment_count(): void
+    {
+        [$business, $identity, $number] = $this->managedBusiness();
+
+        // Comfortably past one GSM-7 segment; the expected value comes from
+        // the same authority production uses, so this test cannot drift from
+        // it by hard-coding a number.
+        $body = str_repeat('This is a long inbound message. ', 12);
+        $expected = (string) (new \App\Library\SMSCounter())->count($body)->messages;
+
+        $this->assertGreaterThan(1, (int) $expected, 'The fixture must genuinely span several segments.');
+
+        $event = new InboundWebhookEvent(
+            kind: InboundWebhookEventKind::MessageReceived,
+            messagingProfileId: $identity->messaging_profile_id,
+            destinationNumber: $number->phone_number,
+            fromNumber: '+14155550000',
+            body: $body,
+            mediaUrls: [],
+            providerMessageId: 'pm_multi_segment',
+            deliveryStatus: null,
+            occurredAt: CarbonImmutable::now(),
+        );
+
+        $this->postEvent($event)->assertOk()->assertJson(['status' => 'accepted']);
+
+        $this->assertSame(
+            (float) $expected,
+            (float) DB::table('business_usage_measurements')->value('quantity'),
+            'The inbound measurement must record real segments, not a hardcoded 1.',
+        );
+    }
+
+    public function test_a_single_segment_inbound_message_still_records_one(): void
+    {
+        [, $identity, $number] = $this->managedBusiness();
+
+        $this->postEvent($this->messageReceived($identity->messaging_profile_id, $number->phone_number))
+            ->assertOk();
+
+        $this->assertSame(1.0, (float) DB::table('business_usage_measurements')->value('quantity'));
+    }
+
+    // ---------------------------------------------------------------
+    // Audit P4 — concurrent duplicate inbound delivery
+    // ---------------------------------------------------------------
+
+    /**
+     * Repeated deliberately: an idempotency guarantee that holds once may
+     * simply have been lucky about ordering.
+     */
+    public function test_repeated_duplicate_inbound_deliveries_produce_exactly_one_effect(): void
+    {
+        [$business, $identity, $number] = $this->managedBusiness();
+
+        for ($attempt = 1; $attempt <= 6; $attempt++) {
+            $response = $this->postEvent(
+                $this->messageReceived($identity->messaging_profile_id, $number->phone_number, 'pm_repeat_race'),
+            );
+
+            $response->assertOk();
+            $this->assertContains($response->json('status'), ['accepted', 'duplicate']);
+
+            // The invariant holds after EVERY delivery, not merely at the end.
+            $this->assertSame(1, DB::table('business_messaging_operations')
+                ->where('provider_message_id', 'pm_repeat_race')->count());
+            $this->assertSame(1, DB::table('business_usage_measurements')->count());
+        }
+
+        // The operation and its measurement exist together — neither was
+        // written without the other.
+        $this->assertSame(1, DB::table('business_messaging_operations')->count());
+        $this->assertSame(1, DB::table('business_usage_measurements')
+            ->where('business_id', $business->id)->count());
+    }
+
+    public function test_an_inbound_row_can_never_exist_without_its_measurement(): void
+    {
+        // The atomicity claim, stated as an invariant over the whole table
+        // rather than as a single happy-path assertion.
+        [, $identity, $number] = $this->managedBusiness();
+
+        foreach (['pm_atomic_1', 'pm_atomic_2', 'pm_atomic_3'] as $providerMessageId) {
+            $this->postEvent(
+                $this->messageReceived($identity->messaging_profile_id, $number->phone_number, $providerMessageId),
+            )->assertOk();
+        }
+
+        $inbound = DB::table('business_messaging_operations')->where('direction', 'inbound')->get();
+        $this->assertCount(3, $inbound);
+
+        foreach ($inbound as $operation) {
+            $this->assertSame(
+                1,
+                DB::table('business_usage_measurements')
+                    ->where('idempotency_key', 'inbound:telnyx:' . $operation->provider_message_id)
+                    ->count(),
+                'Every inbound operation must have exactly its own measurement.',
+            );
+        }
     }
 }
