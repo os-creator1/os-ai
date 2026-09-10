@@ -14,6 +14,7 @@ use App\Models\User;
 use App\Models\WorkspaceMembership;
 use App\Repositories\Contracts\BusinessRepository;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 use Tests\Feature\Business\Concerns\CreatesBusinessTestData;
 use Tests\TestCase;
 
@@ -850,5 +851,104 @@ class MessagingChannelsTest extends TestCase
             'sending_server' => $sendingServer->id,
             'status' => true,
         ]);
+    }
+
+    // ---------------------------------------------------------------
+    // T-MSG-30 — the pre-relocation route family is gone
+    // ---------------------------------------------------------------
+
+    /**
+     * §4.7 requires the old `businesses/{businessUid}/channels` surface to be
+     * REMOVED, not left standing beside the relocated one. This drives the
+     * old URIs directly rather than grepping the routes file, because a
+     * source search cannot tell the difference between a line that is absent
+     * and a line that is absent but re-added by some other group.
+     *
+     * withoutExceptionHandling() lets the router's own refusal surface: the
+     * rendered 404 page needs frontend build artifacts this branch does not
+     * commit, so rendering it would fail for a reason unrelated to routing.
+     */
+    public function test_every_former_business_scoped_channel_route_no_longer_resolves(): void
+    {
+        [, $business] = $this->tenantWithBusiness();
+        $connection = $this->createDedicatedConnection($business, SendingServer::TYPE_TWILIO);
+
+        $workspaceUid = $business->workspace->uid;
+        $businessUid = $business->uid;
+        $base = "/workspaces/{$workspaceUid}/businesses/{$businessUid}/channels";
+
+        // Every verb the old surface exposed, on every one of its URIs —
+        // index, connect form, connect store, show, update (both verbs it
+        // accepted), enable and disable.
+        $attempts = [
+            ['GET', $base],
+            ['GET', "{$base}/connect/" . SendingServer::TYPE_TWILIO],
+            ['POST', "{$base}/connect/" . SendingServer::TYPE_TWILIO],
+            ['GET', "{$base}/connections/{$connection->uid}"],
+            ['PUT', "{$base}/connections/{$connection->uid}"],
+            ['PATCH', "{$base}/connections/{$connection->uid}"],
+            ['POST', "{$base}/connections/{$connection->uid}/enable"],
+            ['POST', "{$base}/connections/{$connection->uid}/disable"],
+            // Method variations the old block never declared must not have
+            // become reachable either.
+            ['DELETE', "{$base}/connections/{$connection->uid}"],
+            ['GET', "{$base}/"],
+        ];
+
+        $this->withoutExceptionHandling();
+
+        foreach ($attempts as [$method, $uri]) {
+            try {
+                $this->call($method, $uri);
+                $this->fail("The removed route {$method} {$uri} still resolves.");
+            } catch (NotFoundHttpException $e) {
+                // The router names the unmatched request in its message, so
+                // asserting the URI appears there proves the refusal is
+                // about THIS path and not some incidental 404 raised deeper
+                // in a controller that did match.
+                // rtrim because Laravel normalizes a trailing slash away
+                // before it builds the message; the trailing-slash variant
+                // is still a real, separately attempted request.
+                $this->assertStringContainsString(
+                    rtrim($uri, '/'),
+                    $e->getMessage(),
+                    "{$method} {$uri} raised a 404 that does not name this URI, so the route may still have matched.",
+                );
+            }
+        }
+
+        $this->withExceptionHandling();
+    }
+
+    public function test_no_registered_route_uri_still_carries_the_old_business_channels_path(): void
+    {
+        $offenders = [];
+
+        foreach (app('router')->getRoutes() as $route) {
+            $uri = $route->uri();
+
+            // The Agency prospecting surface has its own, unrelated
+            // `prospecting/channels` family which this slice never touched.
+            if (str_contains($uri, 'businesses/{businessUid}/channels')) {
+                $offenders[] = implode('|', $route->methods()) . ' ' . $uri;
+            }
+        }
+
+        $this->assertSame([], $offenders, 'The old Business-scoped channels URI family must be gone entirely.');
+    }
+
+    public function test_the_relocated_surface_is_reachable_at_its_new_path(): void
+    {
+        // The other half of the rename: the old path being gone is only
+        // correct if the surface actually moved rather than vanished.
+        [$tenant, $business] = $this->tenantWithBusiness();
+        $this->authenticateAsCustomer($tenant, ['view_numbers', 'manage_advanced_provider']);
+
+        $url = route('customer.workspaces.businesses.channels.index', [$business->workspace->uid, $business->uid]);
+
+        $this->assertStringContainsString('/settings/advanced', $url);
+        $this->assertStringNotContainsString('/channels', $url);
+
+        $this->get($url)->assertOk();
     }
 }

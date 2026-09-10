@@ -5,6 +5,8 @@ namespace Tests\Feature\Messaging;
 use App\Enums\Messaging\BusinessMessagingIdentityStatus;
 use App\Enums\Messaging\BusinessMessagingNumberStatus;
 use App\Enums\Messaging\MessagingProvider;
+use App\Library\Messaging\BusinessMessagingIdentityResolver;
+use App\Library\Messaging\Exceptions\MessagingIdentityConflictException;
 use App\Models\Business;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -474,6 +476,118 @@ class MessagingSchemaInvariantsTest extends TestCase
         DB::table('business_usage_measurements')->insert($row);
     }
 
+    // ---------------------------------------------------------------
+    // T-MSG-2 — both uniqueness conflicts, at BOTH layers
+    // ---------------------------------------------------------------
+
+    /**
+     * The contract asks for the same invariant proven twice over: through
+     * the resolver, which must convert MySQL's refusal into the contracted
+     * MessagingIdentityConflictException; and through a raw insert that
+     * bypasses the resolver entirely, which must still be refused, by MySQL
+     * itself, as an uncaught QueryException.
+     *
+     * The second half is the one that matters most. It is what proves the
+     * guarantee lives in the database rather than in application code that a
+     * future caller could forget to go through.
+     */
+    public function test_a_duplicate_messaging_profile_id_conflicts_at_both_layers(): void
+    {
+        $businessA = $this->business();
+        $businessB = $this->business();
+        $profileId = 'mp_shared_' . Str::random(10);
+
+        $first = $this->resolver()->create($businessA, $profileId);
+        $this->assertNotNull($first->id);
+
+        // (a) Through the resolver: the contracted exception, not a silent
+        //     overwrite and not a raw QueryException leaking out.
+        try {
+            $this->resolver()->create($businessB, $profileId);
+            $this->fail('A second identity must never take an already-used messaging_profile_id.');
+        } catch (MessagingIdentityConflictException $e) {
+            $this->assertNoCredentialShapedValue($e->getMessage());
+        }
+
+        // (b) Bypassing the resolver: MySQL refuses it directly.
+        try {
+            DB::table('business_messaging_identities')->insert($this->rawIdentityRow($businessB, $profileId));
+            $this->fail('The database itself must refuse a duplicate messaging_profile_id.');
+        } catch (QueryException $e) {
+            $this->assertStringContainsStringIgnoringCase('messaging_profile_id', $e->getMessage());
+        }
+
+        // Neither path overwrote or duplicated anything.
+        $rows = DB::table('business_messaging_identities')->where('messaging_profile_id', $profileId)->get();
+        $this->assertCount(1, $rows);
+        $this->assertSame((int) $businessA->id, (int) $rows->first()->business_id);
+        $this->assertSame((int) $first->id, (int) $rows->first()->id);
+    }
+
+    public function test_a_second_active_or_pending_identity_for_one_business_conflicts_at_both_layers(): void
+    {
+        $business = $this->business();
+
+        $first = $this->resolver()->create($business, 'mp_first_' . Str::random(8));
+
+        // (a) Through the resolver.
+        try {
+            $this->resolver()->create($business, 'mp_second_' . Str::random(8));
+            $this->fail('A Business must never hold two active-or-pending identities.');
+        } catch (MessagingIdentityConflictException $e) {
+            $this->assertNoCredentialShapedValue($e->getMessage());
+        }
+
+        // (b) Bypassing the resolver — this is the assertion that proves the
+        //     guard column plus UNIQUE index, not the application lock above,
+        //     is what actually enforces it.
+        try {
+            DB::table('business_messaging_identities')->insert(
+                $this->rawIdentityRow($business, 'mp_raw_' . Str::random(8)),
+            );
+            $this->fail('The database itself must refuse a second active-or-pending identity.');
+        } catch (QueryException $e) {
+            $this->assertStringContainsStringIgnoringCase('bmi_provider_active_or_pending_business_unique', $e->getMessage());
+        }
+
+        $rows = DB::table('business_messaging_identities')->where('business_id', $business->id)->get();
+        $this->assertCount(1, $rows);
+        $this->assertSame((int) $first->id, (int) $rows->first()->id);
+        $this->assertSame($first->messaging_profile_id, $rows->first()->messaging_profile_id);
+    }
+
+    private function resolver(): BusinessMessagingIdentityResolver
+    {
+        return app(BusinessMessagingIdentityResolver::class);
+    }
+
+    /**
+     * A pending row identical in every way that matters to what create()
+     * would have written, so the only thing under test is the constraint.
+     */
+    private function rawIdentityRow(\App\Models\Business $business, string $profileId): array
+    {
+        return [
+            'uid' => (string) Str::uuid(),
+            'business_id' => (int) $business->id,
+            'provider' => MessagingProvider::Telnyx->value,
+            'status' => BusinessMessagingIdentityStatus::Pending->value,
+            'messaging_profile_id' => $profileId,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ];
+    }
+
+    private function assertNoCredentialShapedValue(string $message): void
+    {
+        foreach (['api_key', 'auth_token', 'secret', 'password', 'Bearer', 'AC_', 'sk_live', 'sk_test'] as $needle) {
+            $this->assertStringNotContainsString(
+                $needle,
+                $message,
+                "A conflict exception must never carry a credential-shaped value; found [{$needle}].",
+            );
+        }
+    }
     public function test_identity_statuses_cover_exactly_the_contracted_set(): void
     {
         $this->assertSame(
