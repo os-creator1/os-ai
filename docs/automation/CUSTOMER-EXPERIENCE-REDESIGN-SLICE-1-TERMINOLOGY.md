@@ -1,6 +1,6 @@
 # Customer Experience Redesign — Slice 1: Terminology + Customer Shell Implementation Contract
 
-**Status: CONTRACT ONLY.** No product code, migration, route, or test change is made or authorized by this document. This is Correction 1 of the contract: every SHA, count and claim below was re-derived mechanically against the current remote heads at review time, not copied from the prior pass.
+**Status: CONTRACT ONLY.** No product code, migration, route, or test change is made or authorized by this document. This is Correction 2 — the final contract correction. All three previously-open human decisions are resolved and applied mechanically below; one new, additional discovery from this correction's exhaustive sweep is reported separately and is not one of the three resolved items.
 
 ---
 
@@ -10,269 +10,282 @@
 contract_type: implementation_contract
 docs_only: true
 implementation_authorized_by_this_document: false
-correction: 1
+correction: 2
 ```
 
-- **Starting HEAD of this correction**: `1fc2a5340dbd3a046f49ea6b448184f87c0307e1` (the prior contract pass, commit `docs(ux): define customer terminology redesign slice`).
-- **Authoritative `origin/main` at this review**: `b87b669d55de97957d3583407ec2b69cd75d2eaa` — unchanged since the prior pass. Confirmed via `git rev-parse origin/main` after `git fetch origin`. **No merge into this branch is required or performed.**
-- **Chat A remote head observed at issuance of this correction**: `9dd47b3744d18f98f0c065ac2de91fae10790f9e` ("fix(messaging): close legacy webhook P0 security gaps").
-- **Chat A remote head actually observed by this correction, newer than the one named in the correction request**: `122f3301f235dad35c1e457afdfa8d5ca097bb95` ("docs(messaging): reconcile the allowlist and record Security Correction 36"). Per the correction instruction ("If Chat A has advanced beyond 9dd47b3 by the time you run this: inspect the newest remote head and use that instead"), **this contract is re-derived against `122f330`**, not `9dd47b3`. Confirmed `git merge-base --is-ancestor 9dd47b3 122f330` (exit 0) and `git merge-base --is-ancestor b87b669 122f330` (exit 0, via merge commit `50f2725` — Chat A has already merged current `origin/main` into its own branch). Confirmed `git merge-base --is-ancestor 122f330 origin/main` fails (exit 1) — **Chat A is still not merged into `origin/main`**.
-- **The prior pass's own inspected head, `403c5f83c33d4a6b19a9d45587a3a832002ed681`, is confirmed stale** by 11 commits (`git log 403c5f8..122f330 --oneline`) and is superseded throughout this correction.
-- **Inspection method**: a detached, read-only worktree was created at `122f330` in the scratchpad directory (never inside this contract's own worktree, never a checkout of this branch) to `git diff`/`grep`/read files directly, in addition to `git show 122f330:<path>` spot checks. No file in this branch's own worktree was touched by that inspection; the detached worktree is scratch and is discarded, not part of any deliverable.
-- **PR #236 (theme assets)**: unchanged from the prior pass — merged into `origin/main` at `b87b669`.
+- **Starting HEAD of this correction**: `d30125adf9e65b7840f343f8a59e1c94a10f1fb6` (Correction 1).
+- **`origin/main` at issuance of this correction**: `823448994c2586d3818ad8333088e4976bcbc309` (PR #237, `agent/customer-experience-redesign-slice-2a-navigation-contract`). Confirmed via `git diff b87b669..origin/main --stat`: **exactly one file**, `docs/automation/CUSTOMER-EXPERIENCE-REDESIGN-SLICE-2A-NAVIGATION.md` (507 insertions, new file) — a contract-only sibling document, no production code. That document names Slice 1 as its own prerequisite and declares it will edit `CustomerMenuBuilder.php`/`CustomerContext*`/`locale.php` **after** Slice 1 lands — consistent with, not conflicting with, this contract.
+- **Merge performed**: `git merge origin/main --no-edit`, normal merge (not rebase), resulting merge commit `243e86c977c59f8e17f3782ec3814d6f29a987cb`. Clean, no conflicts, no production file touched.
+- **Chat A remote head observed at this correction**: `122f3301f235dad35c1e457afdfa8d5ca097bb95` — unchanged from Correction 1 (the correction's own text notes Chat A is "undergoing Security Correction 37," but no new commit is present on the fetched remote branch at this time; `122f330` remains the newest observable evidence and every citation below is pinned to it). Confirmed still not an ancestor of `origin/main`.
 
 ---
 
-## 1. Re-audit of the actual current Chat A head — what changed since `403c5f8`
+## 1. Human Decision 1 — provider credential labels: RESOLVED and applied
 
-`git diff 403c5f8..122f330 --stat` narrows to: `config/customer-permissions.php` (+19), `routes/customer.php` (+29/-1), `app/Http/Controllers/Customer/Business/MessagingChannelsController.php` (view paths + one authorization clause), plus the webhook P0 fix and its own docs (unrelated to this slice). Confirmed **byte-identical, no diff**, between `b87b669` and `122f330` for: `app/Library/Navigation/CustomerMenuBuilder.php`, `app/Library/Navigation/CustomerContext.php`, `app/Providers/MenuServiceProvider.php`, `resources/views/panels/horizontalMenu.blade.php`, `app/Helpers/Helper.php`. §3–§4 below therefore still hold verbatim; only §5 needed re-verification, and it changed materially:
+Authorized: Slice 1 may change exactly five `label` values in exactly two controller files, **only after Chat A's final Slice 3 merges into `origin/main`**. This is a narrow, named exception to the controller prohibition in §8 — not a general grant.
 
-1. **`config/customer-permissions.php`** now defines, at lines 68–72:
-   ```php
-   'manage_advanced_provider' => [
-       'display_name' => 'manage_advanced_provider',
-       'category'     => 'Messaging',
-       'default'      => false,
-   ],
-   ```
-   with a doc comment confirming the authorization model the parent contract requires: *"the relocated advanced-settings surface additionally requires authoritative Workspace OWNERSHIP (`WorkspaceCandidate::$isOwner`), not `canManage()`, not plan tier, and not admin membership."*
+**Exact current locations** (unchanged at `122f330` since Correction 1's read — re-verify at the actual merge SHA before implementing, per §11):
 
-2. **`routes/customer.php`** — the old path `{workspaceUid}/businesses/{businessUid}/channels` is **removed, not duplicated**. Chat A's own comment at the diff site states this exactly: *"a genuine rename... a request to `.../channels` now falls through to Laravel's ordinary 404."* The route is now `{workspaceUid}/businesses/{businessUid}/settings/advanced`, with route **names** deliberately unchanged (`businesses.channels.*`), because `CustomerMenuBuilder.php:132,222` and `ViewAsProhibitedActions.php:71` bind to them by name.
+| File | Line | Current value | New value |
+|---|---|---|---|
+| `app/Http/Controllers/Customer/Business/MessagingChannelsController.php` | 77 | `'account_sid' => ['label' => 'Account SID', ...]` | `'label' => 'Twilio account identifier'` |
+| `app/Http/Controllers/Customer/Business/MessagingChannelsController.php` | 78 | `'auth_token' => ['label' => 'Auth Token', ...]` | `'label' => 'Twilio secret'` |
+| `app/Http/Controllers/Customer/Business/MessagingChannelsController.php` | 84 | `'api_key' => ['label' => 'API Key', ...]` | `'label' => 'Telnyx access key'` |
+| `app/Http/Controllers/Customer/Business/MessagingChannelsController.php` | 85 | `'c1' => ['label' => 'Message Profile ID', ...]` | `'label' => 'Messaging profile ID'` |
+| `app/Http/Controllers/Customer/Business/MessagingChannelsController.php` | 86 | `'c2' => ['label' => 'Message Connection ID', ...]` | `'label' => 'Messaging connection ID'` |
+| `app/Http/Controllers/Customer/Workspace/AgencyProspectingChannelController.php` | 44 | `'account_sid' => ['label' => 'Account SID', ...]` | `'label' => 'Twilio account identifier'` |
+| `app/Http/Controllers/Customer/Workspace/AgencyProspectingChannelController.php` | 45 | `'auth_token' => ['label' => 'Auth Token', ...]` | `'label' => 'Twilio secret'` |
+| `app/Http/Controllers/Customer/Workspace/AgencyProspectingChannelController.php` | 51 | `'api_key' => ['label' => 'API Key', ...]` | `'label' => 'Telnyx access key'` |
+| `app/Http/Controllers/Customer/Workspace/AgencyProspectingChannelController.php` | 52 | `'c1' => ['label' => 'Message Profile ID', ...]` | `'label' => 'Messaging profile ID'` |
+| `app/Http/Controllers/Customer/Workspace/AgencyProspectingChannelController.php` | 53 | `'c2' => ['label' => 'Message Connection ID', ...]` | `'label' => 'Messaging connection ID'` |
 
-3. **`app/Http/Controllers/Customer/Business/MessagingChannelsController.php`** — every `view(...)` call was repointed from `customer.business.MessagingChannels.*` to `customer.settings.advanced.*`; the authorization method now requires **both** `$workspaceCandidate->isOwner` **and** `Gate::allows('manage_advanced_provider')` (previously `canManage()` alone) — Agency admin is now denied, matching the parent contract's §6 matrix exactly.
+**Exactly five distinct visible labels** (each appears twice, once per controller): `Twilio account identifier`, `Twilio secret`, `Telnyx access key`, `Messaging profile ID`, `Messaging connection ID`. Array **keys** (`account_sid`, `auth_token`, `api_key`, `c1`, `c2`), `required` flags, validation, persistence, authorization (`isOwner` + `Gate::allows('manage_advanced_provider')`), routes, and every other line in both files are untouched. Provider names `Twilio`/`Telnyx` remain unchanged and both providers remain fully configurable. This is the only place these five strings are declared (confirmed no locale key or other file duplicates them) — no additional path is touched to make this change.
 
-4. **`resources/views/customer/business/MessagingChannels/**` no longer exists at `122f330`** (`ls` confirms `No such file or directory`) — fully relocated, not duplicated, to `resources/views/customer/settings/advanced/{entry,index,show,connect}.blade.php`. Read via `git show 122f330:<path>` for all four files: **byte-identical in content** to what the prior pass read at `403c5f8` (same forbidden strings, same line numbers). Only the SHA and the physical path changed; every string-level finding in the prior pass's §5 was already correct and is retained below, now as an **unconditional** (not merge-conditional) allowlist entry, since the merged path is now directly observed rather than inferred.
+**Test requirement**: the implementation must assert the rendered `<label>` text is the new value while the `<input name="...">` attribute and the submitted request's field keys remain exactly `account_sid`/`auth_token`/`api_key`/`c1`/`c2`.
 
----
-
-## 2. Locale audit — two Chat-A keys are now real; full recount
-
-Both prior refutals are now **false** against `122f330` and are withdrawn:
-
-- **`config/customer-permissions.php:70`** sets `'category' => 'Messaging'` for the new `manage_advanced_provider` permission. This category renders via `__('locale.menu.'.$category['title'])` at **`resources/views/customer/SubAccounts/show.blade.php:107`** and **`create.blade.php:135`** — genuinely customer-reachable (the legacy Sub-Accounts feature is still live, per the retention audit). **`locale.menu.Messaging` does not exist in `resources/lang/en/locale.php`** (confirmed by grep — zero hits for `'Messaging'` as a bare key). **CONFIRMED, now real. Add.**
-- **`manage_advanced_provider`'s own `display_name`** renders via `__('locale.permission.'.$permission['display_name'])` at the same two Sub-Accounts screens (lines 124/151) plus three admin screens. **`locale.permission.manage_advanced_provider` does not exist** (confirmed by grep). **CONFIRMED, now real. Add.**
-
-Neither key was independently added by Chat A itself — both greps came back empty on `locale.php` at `122f330`. Recomputing the **complete** total (not assumed to be the old 12 + 2 = 14):
-
-**`locale.menu.*` — 11 keys total** (the original 9, confirmed still accurate since `Helper.php`/`config/permissions.php` are unchanged, plus 1 new):
-
-| Key | Emission site | Status |
-|---|---|---|
-| `Platform Settings` | `app/Helpers/Helper.php:770` | unchanged from prior pass |
-| `Theme Presets` | `app/Helpers/Helper.php:778` | unchanged |
-| `Usage Billing` | `app/Helpers/Helper.php:877` | unchanged |
-| `Safety Limits` | `app/Helpers/Helper.php:885` | unchanged |
-| `Provider Events` | `app/Helpers/Helper.php:893` | unchanged |
-| `Additional Slot Agreements` | `app/Helpers/Helper.php:901` | unchanged |
-| `Workspace` | `config/permissions.php:528` | unchanged |
-| `Workspace Plans` | `config/permissions.php:534,539` | unchanged |
-| `Opportunities` | `config/permissions.php:545,550` | unchanged |
-| **`Messaging`** | `config/customer-permissions.php:70` (customer-reachable via SubAccounts) | **NEW in this correction — Chat A added the emission site, this contract adds the key** |
-| **`Sender identities`** | new key introduced by this contract itself (§5) — not an existing leak, a deliberate replacement label | **NEW — see §5/§7** |
-
-**`locale.permission.*` — 4 keys total** (the original 3, plus 1 new):
-
-| Key | Emission site |
-|---|---|
-| `website` | `config/customer-permissions.php:32` |
-| `read_google_business_profile` | `config/customer-permissions.php:45` |
-| `manage_google_business_profile` | `config/customer-permissions.php:50` |
-| **`manage_advanced_provider`** | `config/customer-permissions.php:69` (customer-reachable via SubAccounts) — **NEW** |
-
-**Total: 15 keys** (11 menu + 4 permission) — not 14, not the prior pass's 12. The extra key beyond the expected 12 + 2 = 14 is `Sender identities` (§5/§7's own new label, not a pre-existing leak this audit found — it is added because this correction's §5 renames a rendered string to it, and the render site checks `Lang::has()`).
-
-`manage_advanced_provider` is still governed the same way as every other customer-permission category/display-name pair (via the generic `_permissions.blade.php`/`SubAccounts` iteration) — no bespoke admin Blade edit is needed, consistent with the prior pass's approach.
+This is no longer a stop condition and is not assigned to Chat A's Security Correction 37 — it is Slice 1's own work, gated on Chat A's merge (§11).
 
 ---
 
-## 3. The child contract may not weaken the parent tests — corrected posture
+## 2. Human Decision 2 — legacy Outreach/Campaign terminology: RESOLVED and mechanically enumerated
 
-The prior pass's §7/§9 introduced language treating known, reachable forbidden-term surfaces as accepted "residual gaps" owned by a later slice. **That is withdrawn.** T-TERM-1 and T-TERM-2 are absolute: a later slice may own a screen's redesign or deletion, but Slice 1 still owns copy-only terminology cleanup wherever a forbidden term is genuinely rendered to a customer today. Every surface below was re-classified against exactly two outcomes: **(A) copy-only fix, added to the allowlist**, or **(B) provably unreachable for all customer roles, proof recorded, no code change**. Where neither holds — the only fix available would require a prohibited-path edit — this contract **stops and reports**, per §11, rather than silently declaring the gap acceptable.
+Authorized: the parent's absolute T-TERM-2 acceptance wins over the retention audit's "do not design legacy UI" decision, because a terminology-only repoint is not a redesign. Full mechanical enumeration, not the prior "~20" estimate:
 
----
+**Shared keys and their consumers** (`git grep`, both customer and admin, at the merged HEAD):
 
-## 4. Agency Prospecting Channels — confirmed live T-TERM-1 defect, corrected
+| Shared key | Current value | Customer consumers | Admin consumers |
+|---|---|---|---|
+| `locale.labels.sending_server` | `Sending Server` | 22 files (§7b, Group 1B-i) | `admin/Reports/all_messages.blade.php`, `admin/Announcements/create.blade.php` |
+| `locale.labels.originator` | `Originator` | 6 files (§7b, Group 1B-i) | none |
+| `locale.labels.sender_id` | `Sender ID` | 24 files (§7b, Group 1B-i) | `admin/plans/edit.blade.php`, `admin/BlockSenderID/{create,index}.blade.php`, `admin/keywords/create.blade.php`, `admin/dashboard.blade.php`, `admin/Templates/create.blade.php`, `admin/Announcements/create.blade.php` |
 
-`resources/views/customer/workspaces/prospecting/channels/index.blade.php:9`:
-```
-Connect a dedicated Twilio or Telnyx number owned by this Workspace — never a client Business's own connection.
-```
-Confirmed **not inert**: `routes/customer.php:1054` binds `GET /` on this prefix to `Workspace\AgencyProspectingChannelController@channels`, a real, entitlement-gated (not merely menu-gated) Agency route. This view is genuinely rendered to an entitled Agency owner/admin.
+All three are **category A** (shared with admin) — the admin values are never mutated. Every customer call site is repointed to one of two new customer-only keys instead:
 
-Full re-grep of every view under `resources/views/customer/workspaces/prospecting/**` (11 files: `_nav`, `prospects`, `campaign-show`, `channels/{connect,index,show}`, `settings`, `overview`, `prospect-show`, `entry`, `campaigns`) for `Workspace|Sub Account|Sending Server|Sender ID|Originator` found exactly two files with hits: `channels/index.blade.php:9` (this one) and `entry.blade.php:14,15,19` (already in the prior pass's allowlist, §7 item #9 below). `channels/connect.blade.php` and `channels/show.blade.php` are clean.
+- `locale.labels.messaging_provider` = `'Messaging provider'` — replaces every customer `locale.labels.sending_server` reference.
+- `locale.labels.sender_identity` = `'Sender identity'` — replaces every customer `locale.labels.originator` **and** `locale.labels.sender_id` reference (both resolve to the identical approved noun; one key serves both, per the instruction not to create duplicate aliases for one concept).
 
-**Correction: added to the allowlist** (§7, new item). **Copy-only**: replace "this Workspace" with the Agency-account noun from §2 (e.g. "this Agency account"). No controller, credential, route, or tenancy change — `AgencyProspectingChannelController.php` itself is not touched.
+**Semantic check, per the instruction to stop on any field that means something materially different**: every occurrence read in full context (§7b lists each). `originator` is always the section label above a sender-identity picker; `sender_id` is always either a select/option value or a text field for one sender identity; `sending_server` is always the gateway/route picker. No occurrence found where any of the three means something else — **no stop triggered on this axis**.
 
----
+**One correction to Correction 1's own prior work**: Correction 1 repointed `customer/SenderID/request_new.blade.php:36` to the plural nav key `locale.menu.Sender identities`. Re-reading that file's context (a single text-input field for entering **one** new sender identity, `@section('title', __('locale.labels.request_for_new_one'))`), the singular form is grammatically correct there. **Corrected in this pass**: that line now repoints to the new singular `locale.labels.sender_identity` instead. `customer/SenderID/index.blade.php` (a listing page's title and table header — genuinely plural contexts) keeps Correction 1's `locale.menu.Sender identities` repoint, unchanged.
 
-## 5. `Sender IDs` customer nav item and its destination views — corrected
-
-**5a. The nav item.** `CustomerMenuBuilder.php:224` — `$this->item($user, 'sender-ids', 'Sender IDs', 'book', ['view_sender_id'], 'customer.senderid.index', [], $current, ['customer.senderid.'])` — renders inside the `Advanced` group gated on `isAgency() && canManageWorkspace()` (i.e. visible to Agency owner **and** admin, a superset of who can actually reach the destination page's write actions). This is a genuinely rendered customer-facing label. **Correction: the label text changes to `'Sender identities'`** (§2's exact approved wording) — one line, no route, permission, or destination change. `MenuItem`'s existing `Lang::has()`-then-fallback mechanism (`components/customer-nav-item.blade.php:16-17`) means this requires no locale key to function correctly, but this contract adds `locale.menu.Sender identities` = `'Sender identities'` anyway, for parity with every other nav label and to keep T-I18N-3 exhaustive.
-
-**5b. The destination.** `customer.senderid.index` is `Customer\SenderIDController`, gated only by `$this->authorize('view_sender_id')` — and `view_sender_id` defaults `true` for **every** customer tier (`config/customer-permissions.php:166-170`, no tier restriction). This route is reachable by direct URL by **any** customer, Agency or not, independent of the Agency-only nav gate — the same "menu visibility is not the authorization boundary" pattern the parent audit already documented for D-9. Re-read the destination views:
-
-| File | Forbidden string | Exact location |
-|---|---|---|
-| `customer/SenderID/index.blade.php` | `Sender ID` | line 3 (`@section('title', __('locale.menu.Sender ID'))`), line 57 (table header, same key) |
-| `customer/SenderID/request_new.blade.php` | `Sender ID` | line 36 (form label, same key) |
-| `customer/SenderID/checkout.blade.php` | none found | — |
-
-The key both call `locale.menu.Sender ID` resolves, today, to the literal string `'Sender ID'` (`locale.php:801`). **This key is shared with four admin views** (`admin/plans/_sender_id.blade.php:14`, `admin/SenderID/{create,index,show}.blade.php`) and `Admin\SenderIDController`'s own breadcrumbs — mutating its *value* would silently change admin-rendered copy, which is out of scope. **Correction: do not mutate the shared key.** Instead, repoint exactly these 2 customer files (3 call sites) to the new `locale.menu.Sender identities` key from §5a — a genuinely narrow, copy-only, admin-untouched fix. Added to the allowlist (§7).
-
-This closes the T-TERM-2 violation on both the nav label and its landing page, without any route, permission, controller, or destination-behavior change — satisfying the correction's instruction that a leak not be left open "merely because the screen will later be rebuilt," while not expanding into the SenderID module's broader architecture (create/edit/checkout flows, admin SenderID, payment callbacks — none of it touched).
+No form input name, request field, database column, provider lookup, `SendingServer` model, campaign orchestration, provider behavior, route, controller (beyond §1's two exact arrays), admin view, or schema is touched by this decision. Every file in §7b is a Blade-only, key-repoint-only change.
 
 ---
 
-## 6. Account SID / Auth Token / API Key — mechanically located, and why this contract cannot close it
+## 3. One new discovery from this correction's exhaustive sweep — not one of the three resolved decisions, reported now
 
-Re-read the authoritative parent (`CUSTOMER-EXPERIENCE-MANAGED-MESSAGING-AUTOMATIONS-CONTRACT.md`, fully read in a prior task) and the redesign doc's own T-TERM-2 row: **no clause overriding T-TERM-2 for the Agency Advanced screen was found.** The prior pass's "permitted exceptions" language is **withdrawn** — it cited no such clause because none exists.
+The full sweep required by §5 below found a fourth, previously-uncatalogued issue distinct in kind from the three resolved decisions: **the legacy Sub-Accounts feature's own name is the forbidden term.**
 
-Mechanically located: these are **not** blade-file literals. `resources/views/customer/settings/advanced/{show,connect}.blade.php` render `{{ $meta['label'] }}` dynamically. The actual literal strings live in **PHP controller arrays**:
+`resources/lang/en/locale.php:701` (`'sub_accounts' => 'Sub Accounts'`) and the `'sub_accounts' => [...]` block at lines 2178–2198 (13 distinct string values: page titles, `Update Sub Account`, `Sub account successfully added/updated/deleted`, four confirm-dialog strings, etc.) drive `resources/views/panels/navbar.blade.php:348-350` (a persistent navbar dropdown item, `route('customer.sub_accounts.index')`) and all of `resources/views/customer/SubAccounts/{index,create,show}.blade.php`. This is a live, always-reachable, first-class feature whose **entire identity** is the forbidden term — not an incidental label inside an unrelated form.
+
+This is materially different from every other item in this contract: §2's terminology matrix has no entry for it (Sub-Accounts is a delegated-staff-access system, `users.parent_id` — orthogonal to the Workspace/Business/Agency hierarchy §2 actually defines), and the obvious candidate replacement, "Client accounts," is **already assigned** by §2 to a different concept (Businesses under an Agency) — reusing it here would create a new collision, not fix one. The retention audit separately, and already, locks this feature's fate (§12.3: migrate into Workspace membership, **then** retire the legacy UI — "No Design System work on legacy Sub-Account pages in the meantime"), which is a live migration-sequencing concern, not merely a "don't bother redesigning" note: renaming its customer-visible identity before that migration could read as though it already changed models, which it has not.
+
+**This is not silently classified as "reachable but deferred."** It is named here, explicitly, as a genuinely new item this correction's mandate did not ask it to resolve (the three decisions given were about provider labels, legacy Outreach/Campaign copy, and multi-workspace vocabulary — none of them name Sub-Accounts). It is not added to either sub-slice's allowlist in §7, and it is not counted in this contract's "resolved" total. **Recommendation, not a decision made here**: a fourth human decision is needed — either an approved customer-facing name for delegated staff access (distinct from "Client accounts" and from `CustomerMenuBuilder`'s own, different "Team & account"/"Team & agency account" concept, to avoid a second collision), or an explicit, recorded acceptance that "Sub Account(s)" stays until the §12.3 migration actually happens.
+
+---
+
+## 4. Human Decision 3 — implementation sizing: RESOLVED — Sub-Slice 1A / 1B
+
+The mechanically-final allowlist (§7) totals **51 production paths** — well past the ~30 threshold. Per the instruction, this is contracted as two sequential implementation PRs under the same authoritative Slice 1 contract, not one giant PR and not artificial numbering:
+
+- **Slice 1A** (24 paths, §7a): Account/Agency vocabulary, horizontal shell correction, locale raw-key closure, Agency Advanced terminology, Agency Prospecting wording, Sender identities nav/destination, provider metadata display labels.
+- **Slice 1B** (27 paths, §7b): the legacy Outreach/Campaign/Template/ChatBox/Keyword/ContactGroup/SenderID-checkout/Developers terminology repointing from §2, needed solely to close T-TERM-2 on those surfaces.
+
+**Slice 1 is not complete until both merge and the absolute T-TERM tests pass against both.** Slice 2A's own product implementation (as opposed to its already-merged contract) may not begin merely because 1A merges — it must wait for both.
+
+---
+
+## 5. Human Decision 4 — multi-workspace-unselected vocabulary: RESOLVED and applied
+
+Authorized: for the reachable `frameWorkspace() === null` state (more than one accessible Workspace, none selected — confirmed reachable in Correction 1's §9, unchanged), use the neutral, already-approved customer noun: singular **Account**, plural **Accounts**, chooser title **"Choose an account"** where applicable. Never "Workspace"/"Workspaces", never "Agency account" for this specific unproven-frame state.
+
+**`CustomerContext` — final, complete implementation** (no branch left open):
 ```php
-// app/Http/Controllers/Customer/Business/MessagingChannelsController.php:77-86
-'account_sid' => ['label' => 'Account SID', 'required' => true],
-'auth_token'  => ['label' => 'Auth Token', 'required' => true],
-...
-'api_key'     => ['label' => 'API Key', 'required' => true],
-'c1'          => ['label' => 'Message Profile ID', 'required' => true],
-'c2'          => ['label' => 'Message Connection ID', 'required' => false],
+public function accountNoun(): string
+{
+    return $this->usesBusinessVocabulary() || $this->frameWorkspace() === null
+        ? 'account'
+        : 'Agency account';
+}
+
+public function accountsNoun(): string
+{
+    return $this->usesBusinessVocabulary() || $this->frameWorkspace() === null
+        ? 'accounts'
+        : 'Agency accounts';
+}
 ```
-and identically in `app/Http/Controllers/Customer/Workspace/AgencyProspectingChannelController.php:44-53`.
+Three cases, matching the decision exactly: proven Core/Growth frame → `account`/`accounts`; proven Agency frame (`frameWorkspace()` non-null and `usesBusinessVocabulary()` false, i.e. Agency-tier) → `Agency account`/`Agency accounts`; no frame selected yet → `account`/`accounts` (same as Core/Growth, per the decision's explicit "no third noun" instruction). `usesBusinessVocabulary()` itself is unchanged (Correction 1, §3, still valid — no diff since `b87b669`).
 
-Both files are under `app/Http/Controllers/**` — a path this contract's own Prohibited Scope (§8, unchanged, never rescinded by this correction) forbids editing, and both are Chat A's own Slice 3 provider-implementation surface, which the issuing instruction separately, independently forbids modifying ("Do NOT modify provider behavior, credentials, permissions or routes"; "Do not touch Chat A's security correction"). Changing only the `label` *values* (never the array keys `account_sid`/`auth_token`/`api_key`, never validation, never the credential mechanics) would be display-copy-only in substance, but the only place to make that edit is inside two prohibited controller files.
-
-**This contract does not perform that edit.** Per §11, this is reported as a stop condition rather than resolved by either (a) silently leaving it open, mislabeled as an "exception," or (b) unilaterally breaching this contract's own controller prohibition. **Recommendation, not performed here:** Chat A's own Slice 3 contract — which introduced these exact label strings — is better positioned to change three literal string values in files it already owns and is already authorized to edit; Slice 1 has no such authorization over `app/Http/Controllers/**`.
+**`workspaces/index.blade.php`/`show.blade.php`** (§7a #11-12): the hardcoded `Workspace`/`Workspaces` ternary fallback is fully replaced by `$resolvedCustomerContext->accountNoun()`/`accountsNoun()` with no remaining open branch. This closes the CustomerContext stop condition from Correction 1 completely.
 
 ---
 
-## 7. Full rendered-copy reachability sweep and corrected allowlist
+## 6. Locale strategy — final exact count
 
-Full grep of `resources/views/customer/**` at `122f330` for every forbidden term (`Workspace(s)`, `Sub Account(s)`, `Sending Server(s)`, `Sender ID(s)`, `Originator`, `Account SID`, `Auth Token`, `API Key`, `Messaging Channels`) found 20 files. Classified below — **reachable copy-only fixes are added to the allowlist; provably unreachable files are recorded as such, not fixed; the two remaining reachable-but-not-copy-only-fixable surfaces are stopped and reported, per §3/§6.**
+Correction 1's 15 keys (11 `menu` + 4 `permission`) are unchanged and still needed (re-verified: `Messaging`/`manage_advanced_provider` emission sites in `config/customer-permissions.php` are unchanged at `122f330`). Correction 2 adds exactly **2** more, both new `labels`-namespace keys, per §2's minimal-set instruction (no per-file duplicate aliases):
 
-### 7a. Production allowlist — mutation confirmed necessary, all now unconditional (no merge-pending physical-path ambiguity remains)
-
-| # | Path | Exact permitted mutation |
+| New key | Value | Replaces |
 |---|---|---|
-| 1 | `resources/lang/en/locale.php` | Add the 15 keys in §2. No deletions. |
-| 2 | `resources/views/customer/Automations/entry.blade.php` | Line 15: `Workspace` → account noun (§2/§3). |
-| 3 | `resources/views/customer/business/analytics/entry.blade.php` | Line 21: same. |
-| 4 | `resources/views/customer/business/analytics/overview.blade.php` | Line 25 ("Back to Workspace"): same. |
-| 5 | `resources/views/customer/business/website/entry.blade.php` | Line 15: same. |
-| 6 | `resources/views/customer/Outreach/entry.blade.php` | Line 15: same. |
-| 7 | `resources/views/customer/business/googleBusinessProfile/entry.blade.php` | Line 21: same. |
-| 8 | `resources/views/customer/workspace/additional-business-slots/show.blade.php` | Lines 11, 38: same. |
-| 9 | `resources/views/customer/workspaces/prospecting/entry.blade.php` | Lines 14, 15 (×2), 19: same. |
-| 10 | `resources/views/customer/workspaces/prospecting/channels/index.blade.php` | Line 9: same (§4, **new in this correction**). |
-| 11 | `resources/views/customer/workspaces/index.blade.php` | Lines 11–14: replace hardcoded ternary with `CustomerContext::accountNoun()`/`accountsNoun()` — **the Core/Growth-vs-Agency case only; the unselected-multi-workspace case is a stop condition, §9**. |
-| 12 | `resources/views/customer/workspaces/show.blade.php` | Lines 11–16: same, same caveat. |
-| 13 | `resources/views/panels/horizontalMenu.blade.php` | Customer branch consumes the `CustomerShellComposer`-composed canonical menu (§ unchanged from prior pass). |
-| 14 | `app/Helpers/Helper.php` | No deletion; annotate unreachability of the customer branch after #13. |
-| 15 | `app/Library/Navigation/CustomerContext.php` | Delete `showsWorkspaceVocabulary()` (zero-caller reconfirmed at `122f330` — no diff since `b87b669`); add `accountNoun()`/`accountsNoun()` (Core/Growth-vs-Agency case only, per stop condition §9); `usesBusinessVocabulary()` unchanged. |
-| 16 | `app/Providers/MenuServiceProvider.php` | Add `'panels.horizontalMenu'` to `View::composer([...])`. |
-| 17 | `resources/views/customer/settings/advanced/entry.blade.php` | **Unconditional now** (path confirmed to exist at Chat A's current head, old path confirmed deleted): heading/title `Messaging Channels` → `Messaging provider`; `Workspace` → account noun. |
-| 18 | `resources/views/customer/settings/advanced/index.blade.php` | Heading/title → `Messaging provider`; `Sender IDs` section heading → `Sender identities`. |
-| 19 | `resources/views/customer/settings/advanced/show.blade.php` | `Sender IDs` section heading → `Sender identities`. |
-| 20 | `app/Library/Navigation/CustomerMenuBuilder.php` | Line 224: label `'Sender IDs'` → `'Sender identities'` (§5a, **reverses the prior pass's decision to leave this line untouched — that decision is withdrawn**). |
-| 21 | `resources/views/customer/SenderID/index.blade.php` | Lines 3, 57: repoint from `locale.menu.Sender ID` to `locale.menu.Sender identities` (§5b, **new**). |
-| 22 | `resources/views/customer/SenderID/request_new.blade.php` | Line 36: same repoint (§5b, **new**). |
+| `locale.labels.messaging_provider` | `Messaging provider` | every customer `locale.labels.sending_server` reference (§7b) |
+| `locale.labels.sender_identity` | `Sender identity` | every customer `locale.labels.originator` and `locale.labels.sender_id` reference (§7b), plus the corrected `SenderID/request_new.blade.php:36` (§2) |
 
-**Total: 22 production paths with a confirmed, exact required mutation** — up from the prior pass's 18. This number is not preserved for consistency with the prior report; it is the direct result of this correction's re-sweep (4 new: prospecting channels, `CustomerMenuBuilder.php`, 2 SenderID views) plus the 3 items that moved from "conditional on merge" to "unconditional" without changing the total count of distinct logical surfaces.
+No admin-facing value is mutated; `locale.menu.Sender identities` (Correction 1, plural, for the nav item and the `SenderID/index.blade.php` listing page) is retained unchanged — it is a distinct grammatical form for a distinct UI role (a group/collection heading vs. a single-field label), not a duplicate.
 
-### 7b. Provably unreachable — recorded, not fixed, not deleted
-
-- `resources/views/customer/SendingServer/{create,index,list}.blade.php` — contain `Sub Account`, `Sub Account Password`, `Promo Sender ID`, and (via `locale.menu.Sending Servers`) `Sending Servers`. **Mechanical proof of unreachability**: `app/Http/Controllers/Customer/SendingServerController.php` **does not exist** in this repository (confirmed via `find`); the only `SendingServerController` present is `App\Http\Controllers\Admin\SendingServerController`, which renders exclusively `admin.SendingServer.*` views. No route in `routes/customer.php` binds to a customer `SendingServerController`, and no other controller returns these three customer views (confirmed via repo-wide grep for the view names). These files are dead — orphaned by an earlier cleanup (consistent with Slice 0's closure of all 8 provider-credential routes) — and remain physically present but unreachable for every customer role. **No allowlist entry; no deletion authorized by this contract; the reachability proof above is the record.**
-
-### 7c. Reachable but not copy-only fixable within this contract's authority — stopped, per §3/§6, not silently accepted
-
-- `resources/views/customer/Outreach/_originator.blade.php` (included by `_smsQuickSend`, `_smsCampaign`, `_mmsQuickSend`, `_mmsCampaign` — the primary, high-traffic compose flow, gated only by ordinary send permissions) renders `locale.labels.sending_server`, `locale.labels.originator`, `locale.labels.sender_id` — resolving today to `'Sending Server'`, `'Originator'`, `'Sender ID'`. These **same three shared keys** are also referenced directly (not merely via this partial) by roughly 19 further customer views (every `Campaigns/*` quick-send/builder/import screen across all six channels, `keywords/{create,show}.blade.php`, `contactGroups/_settings.blade.php`, `Templates/create.blade.php`, `ChatBox/new.blade.php`, `Developers/settings.blade.php`) **and** by 7 admin views (`admin/Reports/all_messages.blade.php`, `admin/Announcements/create.blade.php`, `admin/plans/edit.blade.php`, `admin/BlockSenderID/{create,index}.blade.php`, `admin/keywords/create.blade.php`, `admin/dashboard.blade.php`, `admin/Templates/create.blade.php`). Closing this leak without an admin-copy side effect requires either mutating a value 7 admin views also depend on (out of scope), or individually repointing ~20 customer files to new keys — a scope far beyond a narrow copy-only correction, and one that lands squarely inside the Campaigns/Outreach module the `PRODUCT-SURFACE-RETENTION-AUDIT.md` already locks as **"REBUILD FROM SCRATCH... DO NOT DESIGN LEGACY UI"** (§6.1, §12.1, a binding, already-resolved human decision) and inside this task's own standing Prohibited Scope ("legacy campaign/provider surfaces assigned to later retention slices"). **Stopped and reported, §11 — not resolved as an accepted residual gap, but as a conflict between two authoritative directives (T-TERM-2 absolute vs. the locked no-design-work decision) that only a human can settle**, with the exact fix scope (~20 files, or a shared-value change affecting 7 admin views) stated so the decision is not made blind.
-- `app/Http/Controllers/Customer/Business/MessagingChannelsController.php:77-86` and `app/Http/Controllers/Customer/Workspace/AgencyProspectingChannelController.php:44-53` — the Account SID/Auth Token/API Key labels in §6. **Stopped and reported, §11**, with the recommendation that Chat A's own contract perform this edit.
+**Final exact total: 17 keys** (11 menu + 4 permission + 2 labels) — not 15, not preserved from either prior pass.
 
 ---
 
-## 8. Prohibited paths — unchanged
+## 7. Exact implementation allowlist — rebuilt from scratch, split by sub-slice, no wildcards
 
-No mutation in this contract touches: `database/migrations/**`, `app/Http/Controllers/**`, `routes/**`, `config/**`, `resources/views/admin/**`, `resources/views/layouts/**`, `resources/scss/**`, `public/**`, `package*.json`, `composer*.json`, B4/B5/Website/GBP product internals, Usage billing internals, messaging runtime, `DLRController`, managed messaging provider implementation, `CustomerMenuBuilder`/`CustomerContext` behavior beyond exact terminology labels and the vocabulary helpers already scoped, or Chat A's security correction. This restated prohibition is exactly why §6 and part of §7c are stopped rather than fixed — this contract will not breach its own boundary even under T-TERM-2's absolute mandate; it reports the conflict instead.
+### 7a. Slice 1A — 24 paths
+
+| # | Path | Exact reason | Exact permitted mutation |
+|---|---|---|---|
+| 1 | `resources/lang/en/locale.php` | §6 | Add the 17 keys. No deletions. |
+| 2 | `resources/views/customer/Automations/entry.blade.php` | D-7 leak, line 15 | `Workspace` → `CustomerContext::accountNoun()`/parent §2 wording |
+| 3 | `resources/views/customer/business/analytics/entry.blade.php` | D-7 leak, line 21 | same |
+| 4 | `resources/views/customer/business/analytics/overview.blade.php` | D-7 leak, line 25 | same |
+| 5 | `resources/views/customer/business/website/entry.blade.php` | D-7 leak, line 15 | same |
+| 6 | `resources/views/customer/Outreach/entry.blade.php` | D-7 leak, line 15 | same |
+| 7 | `resources/views/customer/business/googleBusinessProfile/entry.blade.php` | D-7 leak, line 21 | same |
+| 8 | `resources/views/customer/workspace/additional-business-slots/show.blade.php` | D-7 leak, lines 11, 38 | same |
+| 9 | `resources/views/customer/workspaces/prospecting/entry.blade.php` | D-7 leak, lines 14, 15, 19 | same |
+| 10 | `resources/views/customer/workspaces/prospecting/channels/index.blade.php` | Agency Prospecting live leak, line 9 | same |
+| 11 | `resources/views/customer/workspaces/index.blade.php` | D-7, lines 11–14 | Replace hardcoded ternary with `accountNoun()`/`accountsNoun()` per §5, all three cases |
+| 12 | `resources/views/customer/workspaces/show.blade.php` | D-7, lines 11–16 | same, incl. `@section('title', ...)` line 16 |
+| 13 | `resources/views/panels/horizontalMenu.blade.php` | D-3/D-6 horizontal leak | Customer branch consumes `CustomerShellComposer`/`CustomerMenuBuilder` instead of `$menuData[1]->customer` |
+| 14 | `app/Helpers/Helper.php` | horizontal-menu fix dependency | No deletion; annotate unreachability of the customer branch after #13 |
+| 15 | `app/Library/Navigation/CustomerContext.php` | §5 | Delete `showsWorkspaceVocabulary()` (zero-caller reconfirmed, no diff since `b87b669`); add `accountNoun()`/`accountsNoun()` exactly per §5; `usesBusinessVocabulary()` unchanged |
+| 16 | `app/Providers/MenuServiceProvider.php` | horizontal-menu fix | Add `'panels.horizontalMenu'` to `View::composer([...])` |
+| 17 | `resources/views/customer/settings/advanced/entry.blade.php` | §5 Agency Advanced, post-Chat-A-merge path | Heading/title `Messaging Channels` → `Messaging provider`; `Workspace` → account noun |
+| 18 | `resources/views/customer/settings/advanced/index.blade.php` | same | Heading/title → `Messaging provider`; `Sender IDs` section heading → `Sender identities` |
+| 19 | `resources/views/customer/settings/advanced/show.blade.php` | same | `Sender IDs` section heading → `Sender identities` |
+| 20 | `app/Library/Navigation/CustomerMenuBuilder.php` | §5a nav item | Line 224: label `'Sender IDs'` → `'Sender identities'` only |
+| 21 | `resources/views/customer/SenderID/index.blade.php` | §5b destination, lines 3, 57 | Repoint from `locale.menu.Sender ID` to `locale.menu.Sender identities` |
+| 22 | `resources/views/customer/SenderID/request_new.blade.php` | §2 correction, line 36 | Repoint from `locale.menu.Sender ID` to `locale.labels.sender_identity` (singular, corrected in this pass) |
+| 23 | `app/Http/Controllers/Customer/Business/MessagingChannelsController.php` | §1, **only after Chat A merges** | Lines 77, 78, 84, 85, 86: five `label` values only, exactly as listed in §1 |
+| 24 | `app/Http/Controllers/Customer/Workspace/AgencyProspectingChannelController.php` | §1, **only after Chat A merges** | Lines 44, 45, 51, 52, 53: five `label` values only, exactly as listed in §1 |
+
+### 7b. Slice 1B — 27 paths (all Group A: shared `locale.labels.{sending_server,originator,sender_id}` keys, repointed per §2/§6)
+
+| # | Path | Exact lines | Repoint |
+|---|---|---|---|
+| 25 | `resources/views/customer/Outreach/_originator.blade.php` | 13, 31, 35, 60, 83 | `sending_server`→`messaging_provider` (13); `originator`→`sender_identity` (31); `sender_id`→`sender_identity` (35, 60, 83) |
+| 26 | `resources/views/customer/Campaigns/campaignBuilder.blade.php` | 70, 91, 96, 129, 166 | same pattern |
+| 27 | `resources/views/customer/Campaigns/import.blade.php` | 77, 98, 103, 136, 173 | same |
+| 28 | `resources/views/customer/Campaigns/mmsCampaignBuilder.blade.php` | 67, 87, 92, 125, 162 | same |
+| 29 | `resources/views/customer/Campaigns/mmsImport.blade.php` | 76, 97, 102, 135, 172 | same |
+| 30 | `resources/views/customer/Campaigns/mmsQuickSend.blade.php` | 60, 82, 88, 122, 160 | same |
+| 31 | `resources/views/customer/Campaigns/otpCampaignBuilder.blade.php` | 67, 87, 92, 125, 162 | same |
+| 32 | `resources/views/customer/Campaigns/otpImport.blade.php` | 77, 98, 103, 136, 173 | same |
+| 33 | `resources/views/customer/Campaigns/otpQuickSend.blade.php` | 59, 80, 86, 120, 158 | same |
+| 34 | `resources/views/customer/Campaigns/quickSend.blade.php` | 64, 84, 90, 124, 162 | same |
+| 35 | `resources/views/customer/Campaigns/updateCampaignBuilder.blade.php` | 63, 84, 90, 117, 142 | same |
+| 36 | `resources/views/customer/Campaigns/viberCampaignBuilder.blade.php` | 67, 87, 92, 125, 162 | same |
+| 37 | `resources/views/customer/Campaigns/viberImport.blade.php` | 76, 97, 102, 135, 172 | same |
+| 38 | `resources/views/customer/Campaigns/viberQuickSend.blade.php` | 59, 80, 86, 120, 158 | same |
+| 39 | `resources/views/customer/Campaigns/voiceCampaignBuilder.blade.php` | 67, 88, 93, 126, 163 | same |
+| 40 | `resources/views/customer/Campaigns/voiceImport.blade.php` | 72, 93, 98, 131, 168 | same |
+| 41 | `resources/views/customer/Campaigns/voiceQuickSend.blade.php` | 61, 81, 87, 121, 159 | same |
+| 42 | `resources/views/customer/Campaigns/whatsAppCampaignBuilder.blade.php` | 67, 87, 92, 125, 162 | same |
+| 43 | `resources/views/customer/Campaigns/whatsAppImport.blade.php` | 76, 97, 102, 135, 172 | same |
+| 44 | `resources/views/customer/Campaigns/whatsAppQuickSend.blade.php` | 60, 81, 87, 121, 159 | same |
+| 45 | `resources/views/customer/ChatBox/new.blade.php` | 44, 65 | `sending_server`→`messaging_provider` (44); `originator`→`sender_identity` (65) |
+| 46 | `resources/views/customer/Developers/settings.blade.php` | 26 | `sending_server`→`messaging_provider` |
+| 47 | `resources/views/customer/SenderID/checkout.blade.php` | 44, 87 | `sender_id`→`sender_identity` |
+| 48 | `resources/views/customer/Templates/create.blade.php` | 107 | `sender_id`→`sender_identity` |
+| 49 | `resources/views/customer/contactGroups/_settings.blade.php` | 24, 30, 79 | `originator`→`sender_identity` (24); `sender_id`→`sender_identity` (30, 79) |
+| 50 | `resources/views/customer/keywords/create.blade.php` | 65, 71, 117 | `originator`→`sender_identity` (65); `sender_id`→`sender_identity` (71, 117) |
+| 51 | `resources/views/customer/keywords/show.blade.php` | 62, 68, 114 | `originator`→`sender_identity` (62); `sender_id`→`sender_identity` (68, 114) |
+
+**Total: 51 production paths.** Not preserved from any prior pass's count.
+
+### 7c. Provably customer-unreachable — proof recorded, no allowlist entry, no edit
+
+- `resources/views/customer/SendingServer/{create,index,list}.blade.php` — contain `Sub Account`, `Sub Account Password`, `Sending Servers`, `Auth Token`, `API Key`, `Promo Sender ID`. **Proof, re-confirmed at the merged HEAD**: `app/Http/Controllers/Customer/SendingServerController.php` does not exist in this repository; the only `SendingServerController` is `Admin\SendingServerController`, which renders only `admin.SendingServer.*` views; no route in `routes/customer.php` reaches these three files; no other controller returns them. Dead, orphaned, unreachable by every customer role.
+
+### 7d. Newly discovered, not fixed, not deferred silently — reported per §3
+
+- The Sub-Accounts feature's own identity (`locale.php:701,2178-2198`; `panels/navbar.blade.php:348-350`; `customer/SubAccounts/{index,create,show}.blade.php`) — genuinely reachable, not closed by this contract, per §3's reasoning. Not counted in §7a/§7b's 51.
 
 ---
 
-## 9. `CustomerContext` edge case — resolved to a concrete stop condition, not left open
+## 8. Prohibited scope after these decisions
 
-The prior pass's "open item, not resolved" is not permitted to stand as-is. Mechanical re-audit: `frameWorkspace()` (`CustomerContext.php:97-102`) returns `null` in **two** distinct cases, per its own doc comment — zero workspaces, **or** more than one workspace with none yet selected ("With several unselected Workspaces the shell stays neutral (Business wording) until one is chosen"). `workspaces/index.blade.php` is precisely the chooser rendered for the second case — **this state is confirmed reachable**, not hypothetical.
+Still fully prohibited: `database/migrations/**`, `routes/**`, `resources/views/admin/**`, provider runtime behavior, `DLRController`, `SendingServer` persistence/model, Campaign repositories, Outreach orchestration, billing internals, tenancy, permissions, feature-entitlement behavior, Website/GBP/B5 implementation, mobile/responsive redesign, ChatBox tenancy, schema, API/provider calls, secret handling, `config/**`, `public/**`, `package*.json`, `composer*.json`, `resources/views/layouts/**`, `resources/scss/**`.
 
-The locked hierarchy in §2 defines exactly two frames (Core/Growth → Account; Agency → Agency account) and does not name a third "multiple workspaces, none selected yet" state, and nothing in the code proves this state is Agency-exclusive (a user could plausibly hold membership in more than one independent Core/Growth workspace, e.g. as staff). Asserting "Agency account" for this case, as the prior pass did, would misdescribe the chooser for a non-Agency actor in that state.
-
-**No authorized parent vocabulary exists for this reachable state. Per the correction's own instruction: this is one human wording decision, not invented here.** `accountNoun()`/`accountsNoun()` (§7 items #11-12/#15) are implemented for the Core/Growth-vs-Agency binary only; the unselected-multi-workspace fallback is a **stop condition** (§11) — implementation must obtain the wording decision before writing that branch, rather than defaulting silently to either "Account" or "Agency account."
+**The controller prohibition now has exactly two exceptions, not a wildcard**: `app/Http/Controllers/Customer/Business/MessagingChannelsController.php` and `app/Http/Controllers/Customer/Workspace/AgencyProspectingChannelController.php` — and only for the five `label` string values named in §1, only after Chat A's merge. `app/Http/Controllers/**` remains otherwise fully prohibited; no other controller, and no other line in these two controllers, is authorized.
 
 ---
 
-## 10. Horizontal menu / Helper — decision preserved, proof requirement strengthened
+## 9. Test map — absolute, with explicit new coverage
 
-The prior pass's decision is correct and is preserved unchanged: compose `panels.horizontalMenu` through `CustomerShellComposer`; the customer branch consumes the canonical `CustomerMenuBuilder`; the admin branch stays on legacy `menuData()`; `horizontalSubmenu.blade.php` stays untouched (no fresh evidence found requiring it, re-confirmed at `122f330` — no diff since `b87b669`); `Helper::menuData()` is not deleted.
-
-**Strengthened per this correction**: a code comment asserting unreachability is not sufficient proof. This contract requires a **mechanical render regression** as part of the test map (§ below): a feature test that renders `panels.horizontalMenu` for an authenticated customer with `config(['app.theme_layout_type' => 'horizontal'])` forced on, and asserts the response contains a `CustomerMenuBuilder`-sourced marker (e.g. a route/label pair only the canonical builder emits) and does **not** contain any string sourced from `Helper::menuData()['customer']` (e.g. the literal legacy array's `'Channels'`/`'Workspaces'` labels). This is a test **specification** for the implementer to write; this contract does not write or run it.
-
----
-
-## 11. Stop conditions — absolute, no silent exceptions
-
-1. **Account SID / Auth Token / API Key / Message Profile ID / Message Connection ID labels** (§6) — cannot be closed without editing `app/Http/Controllers/**` (prohibited) in files belonging to Chat A's Slice 3 (also prohibited to touch independently). **Recommendation for human/ChatGPT decision**: either (a) grant Chat A's own contract a narrow instruction to change these five `label` *values* only (never the array keys, never validation, never credential mechanics), or (b) explicitly accept this as a documented, human-approved residual gap distinct from a silently-invented exception.
-2. **The Campaigns/Outreach compose-flow `Sending Server`/`Sender ID`/`Originator` leak** (§7c) — closing it collides with the retention audit's own locked "DO NOT DESIGN LEGACY UI" decision for this exact module (§12.1) and this task's standing prohibition on legacy campaign/provider surfaces. **Recommendation for human/ChatGPT decision**: either (a) authorize a follow-on Slice 1B scoped narrowly to repointing ~20 customer files' three shared label keys (no admin value change, no redesign), or (b) accept this as the one deliberately deferred gap, owned explicitly by the future Outreach/Compose rebuild, recorded here rather than silently dropped.
-3. **`CustomerContext`'s unselected-multi-workspace noun** (§9) — no authorized parent vocabulary exists. Needs one human wording decision before `accountNoun()`/`accountsNoun()`'s fallback branch can be written.
-4. A forbidden term cannot be replaced without changing a route name (the parent's own stated Slice 1 stop condition — not triggered by any item in §7a).
-5. `showsWorkspaceVocabulary()` gains a caller, or `usesBusinessVocabulary()`'s Core/Growth-only semantic is contradicted, before implementation — re-verify both at the implementation SHA before touching `CustomerContext.php`.
-6. Chat A's merged content at the actual merge SHA diverges materially from what was read at `122f330` in a way that changes which strings need correction — re-derive from the merged tree before editing (§ stale-main handling, unchanged process from the prior pass, now pointed at `122f330` as the new reference instead of `403c5f8`).
-
-None of the above is resolved by silently declaring a residual gap acceptable. Each is a named, reported blocker.
-
----
-
-## 12. Test map — no exceptions
-
-| Test | Exact assertion (parent §17) | Coverage after this correction |
+| Test | Exact assertion (parent §17) | Coverage |
 |---|---|---|
-| **T-TERM-1** | Zero rendered customer `Workspace`/`Workspaces`, any tier including Agency | §7a items #2–13, #17 close every currently-reachable instance found by the full sweep, including Agency Prospecting Channels (new, §4) and the unselected-multi-workspace case once §11 item 3 is resolved. Horizontal layout: §10. Core, Growth, Agency owner, Agency admin, Agency selected staff, Business context, Account context, Agency Prospecting — all exercised. |
-| **T-TERM-2** | Zero rendered customer `Sending Server`, `Sender ID`, `Originator`, `Sub Account`, `Account SID`, `Auth Token`, `API Key` | §7a items #18–22 close the `Messaging Channels`→`Messaging provider` and `Sender ID(s)`→`Sender identities` leaks on both the nav item and its destination screens, with no reachable/legacy exception clause. §7b (`SendingServer` views) is closed by unreachability proof, not by leaving a rendered violation. §7c (`_originator.blade.php` family, provider credential labels) is **not** closed by this contract — it is an open, named stop condition (§11), never listed as an accepted residual gap. |
-| **T-I18N-3** | No rendered response, customer or admin, contains a string matching `locale.` | The 15 keys in §2 close every currently-reachable raw-key leak, including both of Chat A's new emission sites (`Messaging`, `manage_advanced_provider`) discovered by this correction. |
-| **T-NAV-4** | Every emitted customer nav URL resolves to a registered route | Unaffected — no route changed by §7a; re-run as a regression guard on the horizontal-menu change (§10) and the `Sender identities` relabeling (route names unchanged in both cases). |
+| **T-TERM-1** | Zero rendered customer `Workspace`/`Workspaces`, across Core, Growth, Agency owner, Agency admin, Agency selected staff, Business frame, Account frame, multi-account unselected chooser, Agency Prospecting, horizontal layout | Closed by §7a items #2–13, #17, with §5's three-case `CustomerContext` covering the previously-open unselected-chooser case |
+| **T-TERM-2** | Zero rendered customer `Sending Server`, `Sender ID`, `Originator`, `Sub Account`, `Account SID`, `Auth Token`, `API Key` | Closed by §7a items #18–24 and all of §7b — no reachable-but-deferred exception remains for any of these terms **except** the newly-discovered Sub-Accounts identity (§3/§7d, explicitly named, not silently accepted) |
+| **T-I18N-3** | No rendered response, customer or admin, contains a string matching `locale.` | The 17 keys in §6 close every currently-reachable raw-key leak found by this and the prior correction |
+| **T-NAV-4** | Every emitted customer nav URL resolves to a registered route | Unaffected — no route changed anywhere in §7a/§7b |
 
-**Regression coverage, unchanged requirement, restated**:
-- Role/plan matrix across Core owner, Growth owner, Agency owner, Agency admin, Agency selected staff, restricted Business user, exercised against every §7a view.
-- Route/URL unchanged: `/workspaces/{workspaceUid}`, all `customer.workspaces.*` and `customer.senderid.*` route names byte-identical before/after.
-- Tenancy unchanged: no `business_id`/`user_id`/authorization logic touched.
-- Vertical customer shell regression unaffected; horizontal shell gains the mechanical render regression in §10.
-- Agency Advanced regression: Twilio/Telnyx still configurable after §7a #17–19's copy-only changes; the underlying form still posts `account_sid`/`auth_token`/`api_key` unchanged (§6 explicitly not touched by this contract, so this assertion should currently pass trivially — it becomes meaningful only if stop condition §11.1 is later resolved and implemented).
-- No raw translation key rendering: T-I18N-3, extended to all 15 keys.
+**Explicit new coverage required**, per this correction:
+- Legacy Outreach compose screen (`_originator.blade.php`) and every reachable Campaign builder/quick-send/import screen across all six channels (§7b #26–44) — including MMS/Voice/WhatsApp/Viber/OTP, which are permission-gated `default => false` but genuinely grantable, hence reachable, not unreachable.
+- Templates (`Templates/create.blade.php`), ChatBox (`ChatBox/new.blade.php`), Keywords (`keywords/{create,show}.blade.php`), ContactGroup settings (`contactGroups/_settings.blade.php`) — all confirmed reachable, all in §7b.
+- Sender-identity landing/request screens (`SenderID/{index,request_new,checkout}.blade.php`).
+- Agency Advanced provider screen and Agency Prospecting provider screen — both provider-credential forms: assert visible labels match §1's five new strings **and** posted field names remain exactly `account_sid`/`auth_token`/`api_key`/`c1`/`c2`.
+- Horizontal legacy menu: the mechanical render regression specified in Correction 1 §10 (a feature test, not a comment) proving `Helper::menuData()['customer']` is unreachable through `panels.horizontalMenu` after §7a #13.
 
----
-
-## 13. Dependency status
-
-- **PR #236 theme assets**: satisfied, `origin/main = b87b669`.
-- **Chat A**: **not yet merged.** Current observed head `122f330` (superseding the `9dd47b3`/`403c5f8` heads named in earlier passes). Implementation still waits for Chat A's actual merge commit into `origin/main`.
-- This **contract document** may merge before Chat A, since it is docs-only — but it must, and now does, describe the current known predecessor (`122f330`) accurately rather than a stale one.
-- Stale-main handling at implementation time (unchanged process, updated reference point): re-run the ancestor and diff checks in §0/§1 against whatever SHA Chat A actually merges as, not against `122f330` verbatim — `122f330` is itself a moving target until merged.
+No route, schema, or provider-behavior test is added or changed.
 
 ---
 
-## 14. Consistency sweep — stale assertions removed
+## 10. Human decision gates — resolved and removed
 
-Confirmed removed or corrected in this document: `403c5f8` described as latest (now `122f330`, with the full commit-range diff in §1); "12 keys" (now 15, §2); `"Messaging" — REFUTED` (now confirmed real, §2); `"manage_advanced_provider" — NOT FOUND` (now confirmed real, §2); `"permitted exceptions"` for Account SID/Auth Token/API Key (withdrawn, §6 — no parent clause found); `"out of scope"` beside a reachable T-TERM violation (Agency Prospecting Channels and Sender IDs are now fixed, §4/§5, not excluded); `"known residual gap"` language beside T-TERM-1/T-TERM-2 (replaced with named stop conditions, §11, for the two cases that genuinely cannot be closed within this contract's authority); `"18 paths"` (now 22, §7a, not preserved for consistency); `"Open item, not resolved"` for the CustomerContext edge case (now a concrete stop condition with mechanical proof of reachability, §9); `"Sender IDs ... unchanged"` (now changed, §5a/§7a #20); `"provider credential labels ... remain"` (now explicitly not authorized to remain unexamined — mechanically located and reported as a stop condition instead, §6).
+All three decisions this correction was asked to resolve are resolved and applied, and are no longer stop conditions:
+1. Provider credential labels — §1, applied, gated only on Chat A's merge timing (a scheduling dependency, not an open decision).
+2. Legacy Outreach/Campaign terminology — §2, applied, fully enumerated in §7b.
+3. Multi-workspace-unselected vocabulary — §5, applied, `CustomerContext` has no open branch.
 
----
+**Remaining, legitimate, generic implementation stop rules** (not the three resolved items, and not new product decisions — ordinary re-verification discipline for a contract that waits on another lane's merge):
+- Re-verify §1's exact controller line numbers and §7a #17-19's exact blade paths against the actual Chat A merge SHA before editing (Chat A is mid-Security-Correction-37; content may shift before it merges).
+- Re-confirm `showsWorkspaceVocabulary()`'s zero-caller proof and `usesBusinessVocabulary()`'s Core/Growth-only semantic at the implementation SHA before touching `CustomerContext.php`.
+- A forbidden term cannot be replaced without changing a route name (the parent's own Slice 1 stop condition — not triggered by any item in §7a/§7b).
 
-## 15. Completion gate
-
-This slice is complete when, restricted to the 22 paths in §7a plus the 15 locale keys in §2:
-- Zero occurrences of every forbidden term in §2's matrix remain in rendered customer copy for Core, Growth, Agency owner, Agency admin, Agency selected staff, and ordinary Business context, including the horizontal layout where reachable and including Agency Prospecting — **except** the two stop conditions in §11 (items 1 and 2), each closed only by an explicit human/ChatGPT decision, never by silent exception.
-- The unselected-multi-workspace wording decision (§9/§11 item 3) is made and implemented, or the state is proven unreachable with fresh evidence — not left as an open item.
-- Every locale key in §2 resolves; no fake key added for anything still undefined.
-- `panels.horizontalMenu`'s customer branch is proven, by the mechanical render regression in §10, to render through `CustomerMenuBuilder` with the legacy `menuData` customer branch unreachable — not merely commented as unreachable.
-- `CustomerMenuBuilder.php:224` and the two `SenderID` views render `Sender identities`, never `Sender ID`/`Sender IDs`, on any customer-reachable response.
-- `showsWorkspaceVocabulary()` no longer exists, or its continued existence is justified against a newly-found caller.
-- No prohibited path (§8) was touched — including `app/Http/Controllers/**`, which stop conditions §11.1 explicitly could not touch.
-- T-TERM-1, T-TERM-2 (absolute, per §3), T-I18N-3, T-NAV-4 pass, plus the full regression coverage in §12.
-- Human/ChatGPT review accepts this correction, including its two open stop conditions, before implementation begins.
+**One new, additional, explicitly-not-resolved item** (§3/§7d): the Sub-Accounts feature's own name. This is reported, not silently deferred, and is not counted among the three gates this correction removed.
 
 ---
 
-*End of Correction 1. No implementation, migration, route change, or test was performed by this document. Ready for human/ChatGPT review, gated on Chat A's actual merge (§13) and on resolving the three stop conditions in §11.*
+## 11. Dependency
+
+- Theme prerequisite: satisfied.
+- Slice 2A contract: merged via PR #237 (docs only; its own implementation has not started and may not start before Slice 1A **and** 1B both merge and pass T-TERM-1/T-TERM-2, since 2A's contract itself names Slice 1 as prerequisite and edits the same files).
+- Chat A: still not merged; current observed head `122f330`.
+- **Slice 1A may implement and merge independently of Chat A** (none of its 22 non-controller paths depend on Chat A's content; only §7a #23-24 wait on the merge).
+- **Slice 1B may implement and merge independently of Chat A entirely** (none of its 27 paths touch Chat A's surface).
+- §7a #23-24 (the two controller label changes) must wait for Chat A's actual merge commit into `origin/main`; at that time, re-sweep both controllers and the three Agency Advanced Blade paths (§7a #17-19) fresh before applying any copy change, since Chat A is actively changing under Security Correction 37.
+- This contract document may merge before Chat A, being docs-only.
+
+---
+
+## 12. Consistency note
+
+This correction supersedes Correction 1's §3/§6/§7/§9/§11/§12 in full. Every count in this document (17 locale keys, 51 production paths, 24+27 split) is freshly derived in this pass and is not preserved from "15," "22," or any other prior number for the sake of consistency.
+
+---
+
+## 13. Completion gate
+
+Slice 1 (both 1A and 1B) is complete when:
+- Every path in §7a and §7b is mutated exactly as specified, and §7a #23-24 have been re-verified against Chat A's actual merged content before being applied.
+- Zero occurrences of `Workspace`, `Workspaces`, `Sub Account`, `Sub Accounts` (except the explicitly-named, unresolved §3/§7d item), `Sending Server`, `Sending Servers`, `Sender ID`, `Sender IDs`, `Originator`, `Originators`, `Account SID`, `Auth Token`, `API Key`, `Messaging Channels` remain in rendered customer copy across every role/tier/context in §9's T-TERM-1/T-TERM-2 rows.
+- All 17 locale keys in §6 resolve; no fake key added.
+- The horizontal-menu mechanical render regression (§9) passes.
+- `showsWorkspaceVocabulary()` no longer exists.
+- No prohibited path (§8) was touched beyond the two named, narrow controller exceptions.
+- T-TERM-1, T-TERM-2, T-I18N-3, T-NAV-4 all pass, plus the explicit new coverage in §9.
+- The §3/§7d Sub-Accounts discovery has been put to a human/ChatGPT decision (a fourth decision, distinct from the three this correction resolved) — Slice 1 does not silently ship with it unresolved and unreported.
+- Human/ChatGPT review accepts this final correction.
+
+---
+
+*End of Correction 2 — final contract correction. No implementation, migration, route change, or test was performed by this document.*
