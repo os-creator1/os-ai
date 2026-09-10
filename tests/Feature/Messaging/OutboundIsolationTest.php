@@ -240,18 +240,15 @@ class OutboundIsolationTest extends TestCase
         $this->assertSame(0, DB::table('business_usage_rate_activations')->count());
 
         // Contract discrepancy, recorded rather than hidden (see this
-        // branch's report): §4.8/T-MSG-36 states that
-        // platform_feature_usage_classifications must carry "no row at all"
-        // for MessagingTransport. That is mechanically unachievable while
-        // the case exists, because the already-merged migration
-        // 2026_08_16_120008_backfill_platform_feature_usage_classifications
-        // inserts one row per PlatformFeature case and THROWS if any case
-        // lacks one — and editing merged migration history is forbidden.
-        //
-        // What the requirement actually protects — that Slice 3 activates no
-        // metering and no retail rate — is asserted exactly here: the row is
-        // unmetered with no active rate, identical in shape to every other
-        // unpriced feature.
+        // §4.8/T-MSG-36, as corrected in Implementation Round 1: the
+        // classification row EXISTS and is inactive, unmetered and unpriced.
+        // The contract's original "no row at all" wording was unreachable —
+        // the merged 2026_08_16_120008 backfill migration inserts one row per
+        // PlatformFeature case and throws if any lacks one — and has been
+        // corrected in place rather than worked around here. The full
+        // invariant lives in
+        // tests/Feature/Usage/MessagingTransportMeasurementLayeringTest.php;
+        // this is the spot check that a send leaves it untouched.
         $classification = DB::table('platform_feature_usage_classifications')
             ->where('feature_key', 'messaging_transport')
             ->first();
