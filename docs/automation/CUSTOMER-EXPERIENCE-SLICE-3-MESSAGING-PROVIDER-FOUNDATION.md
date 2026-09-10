@@ -2043,7 +2043,28 @@ rate/reservation machinery was never touched, not merely unasserted-on.
 `app/Models/BusinessMessagingNumber.php` (new, corrected this round);
 `app/Models/BusinessUsageMeasurement.php` (new, corrected this round —
 RFC-005-owned model); `app/Models/MessagingWebhookRejection.php` (new,
-corrected this round); `app/Repositories/Contracts/BusinessUsageMeasurementRepository.php`
+corrected this round);
+
+**`business_messaging_operations` — Query-Builder access, no model
+(corrected, Security Correction 36).** This allowlist named models for the
+identity, number, measurement and rejection tables and none for the
+operations table, while §4.5/§4.6 name `ManagedMessageDispatcher` and
+`InboundWebhookAttributionResolver` as its only writers. That was an
+omission in the prose, not an instruction to add a fifth model.
+
+The authorized access path is stated here so the branch and the contract stop
+telling different stories: **`business_messaging_operations` is reached
+through the query builder, from inside those two contract-named classes and
+`DLRController`'s shared delivery-callback resolution seam, and no Eloquent
+model exists for it.** That is deliberate. The table is operational
+transport state with no domain behaviour, no relationships a caller needs to
+traverse, and exactly two writers; a model would add an attribute surface
+that §4.11's own credential-minimization rules would then have to police for
+no benefit. A model is NOT to be invented merely to satisfy the shape of a
+sentence. `ManagedMessageDispatcher::TABLE` is the single place the table
+name is written.
+
+`app/Repositories/Contracts/BusinessUsageMeasurementRepository.php`
 (new, corrected Round 2 — RFC-005-owned repository contract);
 `app/Repositories/Eloquent/EloquentBusinessUsageMeasurementRepository.php`
 (new, corrected Round 2 — the sole writer of `business_usage_measurements`);

@@ -242,10 +242,18 @@ guards are skipped for a managed Business. RFC-005 accounting is preserved by
 the existing code: `qualifyConversationsMeterReservation()` already declares
 `?SendingServer` and already treats null as non-qualifying.
 
-**(e) No model path for `business_messaging_operations`.** Still true, still
-reported: §4.11 allowlists models for four tables but not that one. It is
-reached through the query builder from inside its two contract-named writers,
-so no unlisted path was created. Resolving it needs one allowlist line.
+**(e) RESOLVED — no model path for `business_messaging_operations`.** The
+contract's §4.11 named models for four tables and none for this one, while
+naming its two writers elsewhere. That was an omission in the prose, not an
+instruction to add a fifth model, and it is corrected in §4.11 rather than by
+inventing one: the authorized path is Query-Builder access from inside
+`ManagedMessageDispatcher`, `InboundWebhookAttributionResolver` and
+`DLRController`'s shared delivery-callback resolution seam, with
+`ManagedMessageDispatcher::TABLE` as the single place the table name is
+written. The table is operational transport state with no domain behaviour
+and exactly two writers; a model would add an attribute surface the same
+section's credential-minimization rules would then have to police, for no
+benefit.
 
 **(f) Hardcoded canonical-database runners.** Resolved upstream by main's own
 conversion of eight files onto `TestDatabaseSafety`.
@@ -408,6 +416,79 @@ test names, exactly.
 this lane: the three `TemporaryEnvironmentFileTest` failures (resolved by
 merging upstream PR #235) and the `EntitlementEnumsTest` count collision
 (resolved under explicit authorization). Unchanged: the nine above.
+
+## 8a. Security Correction 36 — legacy webhook P0 hardening
+
+An independent read-only audit after the previous "ready for review" report
+found five mechanically proven P0 defects on the public, unauthenticated
+legacy webhook surface, plus two Twilio sibling bypasses. All seven are
+closed; the regression is
+`tests/Feature/Messaging/LegacyWebhookSecurityCorrectionTest.php`
+(24 tests).
+
+**P0-1 `updateDLR()` — cross-tenant lookup and repeatable refund.**
+`Reports::whereLike(['status'], $message_id)->first()` searched every
+tenant's reports platform-wide, with `%`/`_` from the attacker's own id live
+as LIKE metacharacters and `->first()` breaking ties by insertion order.
+Paired with an unconditional `sms_unit + cost` credit it was a repeatable
+billing-credit primitive.
+
+*Resolution strategy, exactly:* one shared seam,
+`resolveReportForProviderMessage()`, strongest first — (1) the managed
+`business_messaging_operations` provider-message → `report_id` correlation
+(globally unique index, durable foreign key, exact join, no string matching);
+(2) failing that, the legacy packed `status` column under four constraints
+together: the id is escaped so `%` and `_` are literal, the pattern anchors
+it to the END of the packed value (`%|<id>`), the candidate set is scoped to
+the resolved SendingServer when the caller knows one, and each candidate is
+re-checked by exact parsed equality with an exactly-one-survivor requirement.
+Zero or several survivors fail closed.
+
+*Refund idempotency strategy, exactly:* the credit fires only on the
+TRANSITION INTO a non-delivered terminal state. The row is re-read under
+`lockForUpdate()` inside a short transaction and the previous, already-durable
+`customer_status` decides — no new column is invented and nothing is inferred
+from a value that could be lost. A second identical callback finds the row
+already terminal and credits nothing. A late `Delivered` after a refund
+re-debits the cost, so a previously-refunded failure cannot silently become a
+free message. No provider or network work happens inside the lock.
+
+**P0-2 `inboundSolucoesdigitais` / P0-3 `inboundTextbelt`.** Both matched a
+foreign report by substring and then trusted its `from` as this Business's
+sender for a forged inbound write, with the STOP/keyword/blacklist side
+effects that follow. Both now use the same seam; foreign, partial, wildcard
+and ambiguous ids all resolve to nothing and write nothing.
+
+**P0-4 `inboundWhatsender` — arbitrary file write.** The provider-supplied
+`media.filename` was concatenated onto `public_path('mms/')`, so
+`../../evil.php` escaped the directory and `evil.php` wrote executable PHP
+into the web root. `basename()` alone would not have been a fix. The
+provider's filename now controls nothing: the stored name is generated, the
+extension comes from `finfo`'s reading of the actual bytes, the type must be
+in a small allowlist for the media this handler genuinely supports, a 16 MB
+bound applies, the resolved parent directory is re-checked, and failed
+validation writes nothing.
+
+**P0-5 legacy Telnyx outbound branch.** §4.6.5 gated the inbound branch and
+left `direction === 'outbound'` calling `updateDLR()` directly, so the same
+unverifiable request could mutate a Report and move `sms_unit` through the
+other door. Authenticity is a property of the connection, not of a payload's
+direction field. Both branches now fail closed, and an admin/legacy
+connection gets no unauthenticated exception either.
+
+**Twilio siblings.** `inboundTwilioCopilot()` is a Twilio webhook that never
+called the validator; it now reuses the canonical one, parameterized by
+provider rather than copied. `inbound/webhook/{user}` passed the literal
+string `'Twilio'` where every other caller passes a resolved SendingServer —
+a provider name typed into an argument is not evidence of provenance — and
+now resolves the connection and validates the signature or writes nothing.
+
+**Deferred by name, not silently closed.** The same audit reported possible
+vendor signing mechanisms for **Plivo, Vonage, Bandwidth, Infobip,
+GatewayAPI, WhatsApp/Meta, AWS SNS and others**. Each needs its own
+externally-verified provider-authenticity contract; implementing signature
+schemes from memory would be worse than recording the gap. They are **not**
+addressed by this correction and remain open.
 
 ## 9. Deferred, exactly as the contract defers them
 
