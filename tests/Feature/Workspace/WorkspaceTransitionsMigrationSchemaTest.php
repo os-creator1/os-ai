@@ -7,6 +7,7 @@ use Illuminate\Database\Migrations\DatabaseMigrationRepository;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Tests\Feature\Workspace\Support\TemporaryTestDatabase;
+use Tests\Support\TestDatabaseSafety;
 use Tests\TestCase;
 
 /**
@@ -94,6 +95,170 @@ class WorkspaceTransitionsMigrationSchemaTest extends TestCase
                 ->count();
             $this->assertSame(3, $foreignKeyCount, 'Expected exactly three foreign keys after the second up().');
         });
+    }
+
+    // Post-merge correction (P1 finding on PR #232): TemporaryTestDatabase's
+    // own generated-name validator previously checked only the captured
+    // base through TestDatabaseSafety, never the complete generated name.
+    // A base that is independently safe — including independently under
+    // MySQL's 64-character identifier limit — can still, once this class's
+    // own `_historical_<pid>_<hex>` / `_enforcement_<pid>_<hex>` suffix is
+    // appended, produce a complete name TestDatabaseSafety itself would
+    // refuse. Because concurrent_backfill_runner.php trusts
+    // isValidHistoricalName() as an authorization path over an
+    // externally-supplied EXPECTED_TEST_DATABASE value, that gap was a real
+    // bypass of the repository's single database-name authority, not a
+    // theoretical one. These tests exercise the public
+    // isValidHistoricalName()/isValidEnforcementName() entry points
+    // directly — the exact surface both TemporaryTestDatabase's own
+    // internal callers and the external runner both go through — with no
+    // live database connection required, since both methods are pure
+    // string functions.
+
+    /** A syntactically valid 8-hex-character suffix, chosen to contain no
+     * decimal digit twice in a way that would make a length count error
+     * easy to miss — deliberately unremarkable. */
+    private const VALID_HEX = 'deadbeef';
+
+    // 1. Ordinary canonical generated name — the base case, must remain
+    // valid after this correction.
+    public function test_ordinary_canonical_generated_name_is_valid(): void
+    {
+        $name = 'ultimatesms_testing_historical_1_' . self::VALID_HEX;
+
+        $this->assertTrue(TemporaryTestDatabase::isValidHistoricalName($name));
+    }
+
+    // 2. Ordinary validated-sibling generated name — a real disposable
+    // sibling used as the base, must remain valid after this correction.
+    public function test_ordinary_validated_sibling_generated_name_is_valid(): void
+    {
+        $name = 'ultimatesms_testing_lane_x_enforcement_42_' . self::VALID_HEX;
+
+        $this->assertTrue(TemporaryTestDatabase::isValidEnforcementName($name));
+    }
+
+    // 3. Maximum accepted complete length — exactly 64 characters, the
+    // boundary TestDatabaseSafety itself enforces, must be accepted.
+    public function test_maximum_accepted_complete_length_is_valid(): void
+    {
+        // "_historical_1_" + 8 hex chars = 22 chars. A 42-char base
+        // (19-char canonical + "_" + 22 filler chars) brings the complete
+        // name to exactly 64.
+        $base = 'ultimatesms_testing_' . str_repeat('a', 22);
+        $this->assertSame(42, strlen($base), 'Fixture invariant: base must be exactly 42 characters.');
+
+        $name = $base . '_historical_1_' . self::VALID_HEX;
+        $this->assertSame(64, strlen($name), 'Fixture invariant: complete name must be exactly 64 characters.');
+
+        $this->assertTrue(TemporaryTestDatabase::isValidHistoricalName($name));
+    }
+
+    // 4. One character over the limit — 65 characters, must be refused,
+    // even though the base alone (43 characters) independently passes
+    // TestDatabaseSafety on its own. This is the direct, minimal
+    // reproduction of the P1 finding: before this correction,
+    // isValidGeneratedName() checked only the base and would have
+    // returned true here.
+    public function test_one_character_over_the_limit_is_refused(): void
+    {
+        $base = 'ultimatesms_testing_' . str_repeat('a', 23);
+        $this->assertSame(43, strlen($base), 'Fixture invariant: base must be exactly 43 characters.');
+        $this->assertTrue(
+            TestDatabaseSafety::isSafeTestDatabaseName($base),
+            'Fixture invariant: the base alone must be independently safe, proving the eventual refusal comes from the complete name, not the base.'
+        );
+
+        $name = $base . '_historical_1_' . self::VALID_HEX;
+        $this->assertSame(65, strlen($name), 'Fixture invariant: complete name must be exactly 65 characters.');
+
+        $this->assertFalse(TemporaryTestDatabase::isValidHistoricalName($name));
+    }
+
+    // 5. Safe base whose added suffix makes the full name unsafe — restated
+    // explicitly against isValidEnforcementName() (not just the historical
+    // pattern already covered by test 4) with a longer pid, so the same
+    // "safe base, unsafe complete name" property is proven on the second
+    // purpose-specific pattern this class owns, not only the first.
+    public function test_safe_base_whose_added_suffix_makes_the_full_name_unsafe(): void
+    {
+        $base = 'ultimatesms_testing_' . str_repeat('b', 20);
+        $this->assertTrue(
+            TestDatabaseSafety::isSafeTestDatabaseName($base),
+            'Fixture invariant: the base alone must be independently safe.'
+        );
+
+        // "_enforcement_" (13) + a 6-digit pid (6) + "_" (1) + 8 hex (8) = 28.
+        // 40-char base + 28 = 68, comfortably over the limit.
+        $name = $base . '_enforcement_123456_' . self::VALID_HEX;
+        $this->assertGreaterThan(64, strlen($name), 'Fixture invariant: complete name must exceed the limit.');
+
+        $this->assertFalse(TemporaryTestDatabase::isValidEnforcementName($name));
+    }
+
+    // 6. Production-looking captured base — the base itself carries a
+    // forbidden suffix segment, so the complete name must be refused via
+    // the base-safety check.
+    public function test_production_looking_captured_base_is_refused(): void
+    {
+        $name = 'ultimatesms_testing_prod_historical_1_' . self::VALID_HEX;
+
+        $this->assertFalse(
+            TestDatabaseSafety::isSafeTestDatabaseName('ultimatesms_testing_prod'),
+            'Fixture invariant: the base alone must already be unsafe.'
+        );
+        $this->assertFalse(TemporaryTestDatabase::isValidHistoricalName($name));
+    }
+
+    // 7. Production-looking complete name — a distinct forbidden segment
+    // ("staging") from test 6 ("prod"), asserted against the public
+    // isValidEnforcementName() entry point exactly as an external caller
+    // such as concurrent_backfill_runner.php would supply a complete,
+    // already-assembled EXPECTED_TEST_DATABASE string (never constructed
+    // via this class's own generateName()). Proves the complete-name
+    // TestDatabaseSafety check this correction adds independently rejects
+    // a forbidden segment, not only the base-safety check tests 6 exercises.
+    public function test_production_looking_complete_name_is_refused(): void
+    {
+        $name = 'ultimatesms_testing_staging_enforcement_1_' . self::VALID_HEX;
+
+        $this->assertFalse(TemporaryTestDatabase::isValidEnforcementName($name));
+    }
+
+    // 8. Malformed historical/enforcement suffix — shape violations must
+    // still be refused exactly as before this correction: 7 hex characters
+    // instead of 8, and an enforcement-shaped name fed to the historical
+    // checker.
+    public function test_malformed_purpose_suffix_is_refused(): void
+    {
+        $shortHex = 'ultimatesms_testing_historical_1_deadbee';
+        $this->assertSame(7, strlen('deadbee'), 'Fixture invariant: exactly 7 hex characters.');
+        $this->assertFalse(TemporaryTestDatabase::isValidHistoricalName($shortHex));
+
+        $wrongPurpose = 'ultimatesms_testing_enforcement_1_' . self::VALID_HEX;
+        $this->assertFalse(TemporaryTestDatabase::isValidHistoricalName($wrongPurpose));
+    }
+
+    // 9. Correct handoff still succeeds — this correction changes only
+    // what is refused, never what is accepted for a genuine run.
+    // withHistoricalDatabase() end-to-end (create, use, drop) against the
+    // real active test database, proven by a real generated name matching
+    // isValidHistoricalName() from inside the callback itself.
+    public function test_correct_handoff_still_succeeds_end_to_end(): void
+    {
+        $observedName = null;
+
+        TemporaryTestDatabase::withHistoricalDatabase(function (string $databaseName) use (&$observedName) {
+            $observedName = $databaseName;
+
+            $this->assertTrue(TemporaryTestDatabase::isValidHistoricalName($databaseName));
+            $this->assertTrue(
+                DB::connection('mysql_historical_temp')
+                    ->select('select 1 as ok')[0]->ok === 1
+            );
+        });
+
+        $this->assertNotNull($observedName, 'The callback must have run.');
     }
 
     /**

@@ -34,10 +34,28 @@ Do not restate its policy anywhere, and do not add a second helper.
   suite that may drop, truncate or `migrate:fresh` owns its database alone
   for the duration.
 - **A task may explicitly require the canonical database** when exact
-  canonical-baseline reproduction is the point, or when a suite genuinely
-  pins it — `tests/Feature/Workspace/Support/TemporaryTestDatabase.php` still
-  does. When a task says so, use `ultimatesms_testing` and say so in the
-  report.
+  canonical-baseline reproduction is the point. When a task says so, use
+  `ultimatesms_testing` and say so in the report.
+  **Correction (`docs/automation/WORKSPACE-ENTITLEMENT-DATABASE-SAFETY-COMPLETION.md`).**
+  An earlier revision of this section named
+  `tests/Feature/Workspace/Support/TemporaryTestDatabase.php` as if it were
+  the *only* remaining file that genuinely pinned the literal canonical
+  name. That was never accurate — eight files did, not one:
+  `tests/Feature/Entitlement/Support/concurrent_business_slot_runner.php`,
+  `tests/Feature/Workspace/Support/concurrent_workspace_resolver_runner.php`,
+  `tests/Feature/Workspace/Support/concurrent_backfill_runner.php`,
+  `tests/Feature/Workspace/Support/run_historical_m1a_suite.php`,
+  `tests/Feature/Workspace/Support/run_workspace_enforcement_suite.php`,
+  `tests/Feature/Workspace/Support/TemporaryTestDatabase.php`,
+  `tests/Feature/Workspace/WorkspaceManagerConcurrencyTest.php` and
+  `tests/Feature/Workspace/WorkspaceManagerTest.php` (the same eight
+  `docs/automation/MAINLINE-BASELINE-RELIABILITY-REMEDIATION.md` §5 already
+  enumerated correctly). This branch converts all eight onto
+  `Tests\Support\TestDatabaseSafety`, which remains completely unchanged and
+  the single authority. A full repository sweep after that conversion finds
+  **no executable literal canonical-name pin remaining anywhere** — the two
+  legitimate uses of the literal string are `TestDatabaseSafety::CANONICAL`
+  itself and its own unit test's fixture data, neither of which is a pin.
 - **Every report must state the exact database used.** "Ran the suite" is not
   a result; "ran against `ultimatesms_testing_lane_e`, 250 migrations, 0
   pending" is.
