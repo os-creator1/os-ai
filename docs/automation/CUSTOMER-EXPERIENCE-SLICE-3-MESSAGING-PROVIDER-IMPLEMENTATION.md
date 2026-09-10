@@ -141,6 +141,32 @@ Migration mechanics on the isolated database: forward, `rollback --step=1`,
 and re-forward — Lane E's two columns and its mapping table appear, disappear
 and reappear exactly, with nothing else moving.
 
+### Full suite, and the baseline comparison
+
+The whole suite: **5334 passed, 13 failed (27420 assertions)**, measured at
+branch head `b8bab0a`-merged. Every failure classified head-to-head against a
+pristine checkout of **current** `origin/main`, same machine, same
+environment, sibling database `ultimatesms_testing_lane_a_base`:
+
+| Failure | Pristine main | Verdict |
+|---|---|---|
+| `BrandingAdminFooterRenderTest::admin_footer_renders_the_company_name_exactly_once` | fails | **pre-existing** |
+| `BusinessKnowledgeProfileControllerTest::missing_stale_and_present_fields_are_all_displayed` | fails | **pre-existing** |
+| `BusinessKnowledgeProfileHoursTest::no_change_row_for_a_true_hours_no_op` | fails | **pre-existing** |
+| `BusinessKnowledgeProfileSeamTest::only_the_manager_writes_the_tracked_tables` | fails | **pre-existing** |
+| `OpportunityManagerBeginRunTest::heartbeat_one_second…` | fails | **pre-existing** |
+| `WebsiteIndexingTest::robots_txt_is_untouched_by_this_feature_branch` | fails | **pre-existing** |
+| `WebsiteDraftPageServiceSeamTest::store_page_persists_every_draft_field…` | fails | **pre-existing** |
+| `WebsiteDraftPageServiceSeamTest::update_page_persists_every_draft_field…` | fails | **pre-existing** |
+| `WebsiteDraftPublishTest::rollback_repoints_the_website…` | fails | **pre-existing** |
+| `TemporaryEnvironmentFileTest` ×3 | passes | **fixed by merging main** — PR #235 |
+| `EntitlementEnumsTest::platform_feature_has_exactly_sixteen_cases…` | passes | **INTRODUCED — see §7(k)** |
+
+Pristine current main fails 9 of these on its own. Merging PR #235 cleared
+the three environment-file failures — re-verified after the merge, they pass.
+That leaves **one** introduced failure, §7(k), which is a contract-versus-
+merged-test collision needing an authorization decision, not a code defect.
+
 The three `Workspace` failures reported at the overnight pause are **gone**,
 and not because this lane changed anything: main's own conversion of
 `TemporaryTestDatabase` onto `Tests\Support\TestDatabaseSafety` removed the
@@ -285,6 +311,41 @@ model. Under the sync queue driver `Batch::add()` executes the job inside its
 own bookkeeping transaction, so the resulting throw rolled that transaction
 back and took the operation and measurement rows with it. The rows were never
 wrong; the return shape was.
+
+**(k) OPEN — BLOCKED ON AN AUTHORIZATION DECISION. A merged unit test pins
+`PlatformFeature` to exactly sixteen cases, and the contract mandates a
+seventeenth.**
+
+* **Exact path:** `tests/Unit/Entitlement/EntitlementEnumsTest.php`
+* **Exact test:** `test_platform_feature_has_exactly_sixteen_cases_matching_rfc_004_and_slice_a`
+  (lines 64-89)
+* **Exact failure:** `Failed asserting that actual size 17 matches expected
+  size 16.`
+
+The test asserts both `assertCount(16, PlatformFeature::cases())` and an
+exact ordered list of the sixteen values. §4.11 of this slice's contract
+explicitly authorizes `app/Enums/Entitlement/PlatformFeature.php` for "one
+additive enum case, `MessagingTransport`, only — no existing case renamed or
+removed", and §4.8's whole measurement design depends on that case existing.
+The two cannot both hold: any branch that adds the contracted case fails that
+test, and the test cannot be satisfied without removing the case the contract
+requires.
+
+**Why this lane did not simply fix it.** `tests/Unit/**` is not in §4.11's
+test allowlist, which names only `tests/Feature/Messaging/**`,
+`tests/Feature/Security/**`, `tests/Feature/Usage/**` and a narrow slice of
+`tests/Feature/Business/**` (plus the four paths the Lane E addendum added).
+Editing a merged unit test to accept a new value is exactly the kind of
+change that should be authorized deliberately rather than absorbed quietly by
+whichever lane happens to trip it — so it is reported here instead.
+
+**The fix, when authorized, is one line plus one array entry:** add
+`'messaging_transport'` to the expected list and change the count from 16 to
+17, renaming the method away from "sixteen". No other assertion in that file
+is affected.
+
+This is the single introduced failure in the full-suite run (§3), and the
+only known blocker to a zero-newly-introduced-failures result.
 
 **(j) OPEN, RECORDED — provider call inside an open transaction.** Under the
 sync queue driver the campaign chain runs inside `Batch::add()`'s transaction,
