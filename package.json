@@ -1,4 +1,5 @@
 {
+    "name": "os-ai",
     "private": true,
     "scripts": {
         "development": "mix",
@@ -22,6 +23,9 @@
         "rtlcss": "^3.0",
         "sass": "1.30.0",
         "sass-loader": "12.1.0"
+    },
+    "overrides": {
+        "webpack": "~5.105.0"
     },
     "dependencies": {
         "@fontsource-variable/geist": "^5.3.0",
