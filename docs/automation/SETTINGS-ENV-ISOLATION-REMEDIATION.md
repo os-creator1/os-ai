@@ -40,6 +40,35 @@ complementary and touch different files.
 generated asset or environment file is touched, and no schema or migration
 ordering changes.
 
+### 1.2 Post-merge corrections, and synchronization with current main
+
+The fourteen-path work above merged as PR #233
+(`1928306271c26bb8464f795e0a10eeb5f14df581`). Two review findings against it
+were valid and are corrected on
+`agent/settings-env-isolation-post-merge-correction`:
+
+| Finding | Correction |
+|---|---|
+| The focused suite hardcoded `.env.testing` as the selected file, and would fail on a clean checkout where that untracked file is absent | Selection is derived the way the framework derives it, and both checkout shapes are proven (§4.2, §6.2a) |
+| Forced termination killed the child on `ENVPATH=`, which prints *before* the writers run, so the kill often landed before either had written | The probe signals only after both writers have run and both values have been read back; the parent waits for that signal (§6.3) |
+
+A third defect was found while verifying and corrected in the same round: an
+over-strict assertion that the repository `.env.testing` must not *contain* the
+migration keys, which fails on any machine where `artisan migrate` has ever
+been run normally — correct behaviour, not a defect (§6.2b).
+
+A fourth was closed in the round after that: the cleanup race that occasionally
+left an empty directory (§6.9).
+
+**Synchronization.** `origin/main` advanced to
+`b8bab0a677406c9bb98ba5f22fb97f0ba312fac5` (Lane F, PR #234) and was brought in
+with an ordinary merge — no rebase, no force-push. Lane F touches
+`docs/automation/WORKSPACE-ENTITLEMENT-DATABASE-SAFETY-COMPLETION.md`,
+`tests/Feature/Workspace/Support/TemporaryTestDatabase.php` and
+`tests/Feature/Workspace/WorkspaceTransitionsMigrationSchemaTest.php`;
+**overlap with this branch is zero**, computed by intersecting the two changed-
+path sets, and the merge reported no conflicts.
+
 ### 1.1 Two withdrawn positions, recorded so neither returns
 
 **Withdrawn: snapshot-and-restore.** An early revision left
@@ -265,8 +294,25 @@ decides which file is active:
 `frameworkSelectedEnvironmentFile()` mirrors that exactly, including reading
 `APP_ENV` through `Illuminate\Support\Env` so a value supplied by
 `phpunit.xml`'s `<server>` element resolves through the same repository and
-adapter chain the bootstrapper uses. Under this repository's `phpunit.xml` that
-selects `.env.testing`, which a test asserts directly.
+adapter chain the bootstrapper uses.
+
+**Which file that selects depends on the checkout, and no test may assume.**
+`.gitignore` matches `.env.*`, so `.env.testing` is untracked and **absent on a
+clean checkout**. With `APP_ENV=testing` supplied by `phpunit.xml`, Laravel then
+correctly selects `.env`, because the suffixed file only wins when it exists.
+Both outcomes are correct:
+
+| Checkout | Selected |
+|---|---|
+| Workstation that has `.env.testing` | `.env.testing` |
+| Clean checkout or CI, no `.env.testing` | `.env` |
+
+Post-merge correction: the focused suite originally hardcoded `.env.testing` in
+three assertions and would have failed on a clean checkout — on correct
+behaviour. Those assertions now derive the expected filename the same way the
+framework does, and a data-provided test drives the real installer against two
+scratch directories, one with `.env.testing` and one without, to prove both
+selections. See §6.2.
 
 ### 4.3 Teardown, re-activation and uniqueness
 
@@ -466,6 +512,52 @@ them:
   `tests/Feature/Support/TemporaryEnvironmentFileTest.php`, which reads the
   repository files on purpose to assert they were not written.
 
+### 6.2a Both checkout shapes, proven
+
+The suite must not require the untracked `.env.testing`. Two independent
+proofs:
+
+**In-suite, both shapes at once.**
+`test_the_installer_selects_the_file_laravel_would_have_selected()` builds two
+scratch directories — one holding only `.env`, one holding both — points the
+application at each as an un-booted application sees the repository root, and
+drives the **real** installer. It asserts the selected filename, that the copy
+carries the right source file's bytes, that a production write lands in the
+copy, and that the scratch source is byte- and mtime-identical afterwards. No
+repository file is involved, and nothing untracked is created or deleted.
+
+**End to end, as a clean checkout.** The whole focused suite was also run with
+the workstation's `.env.testing` moved aside and a single `.env` in place —
+exactly the clean-checkout and CI shape:
+
+| Shape | Result | `.env` | `.env.testing` |
+|---|---|---|---|
+| Workstation (`.env` + `.env.testing`) | 43 tests, 400 assertions, 0 failures | unchanged | unchanged |
+| **Clean checkout (`.env` only)** | **43 tests, 400 assertions, 0 failures** | unchanged | never created |
+
+Identical counts in both shapes. A pre-flight check confirmed the clean-checkout
+run genuinely selected `.env` and resolved the isolated lane database before any
+test was allowed to run.
+
+### 6.2b One further over-strict assertion, corrected
+
+`test_refresh_database_migration_preparation_does_not_touch_the_repository_files()`
+asserted that the repository `.env.testing` does not *contain* `APP_TIME_FORMAT=`,
+`OPENAI_ACTIVE=` or `TERMS_OF_USE=`.
+
+That is not a property of a correct system. Running `php artisan migrate`
+outside a test is *supposed* to write the active environment file, which in an
+ordinary CLI invocation is the repository one — so any developer who has ever
+migrated normally legitimately has those keys, and the assertion failed on
+correct behaviour. It was found exactly that way here, by a routine
+`artisan migrate:fresh` used to prepare the lane database.
+
+It is replaced by the property that actually matters and does not depend on
+machine history: the repository files' full contents are captured before and
+compared after, the active path is asserted to be neither repository file and
+outside the repository, and the migration keys are asserted present in the
+disposable copy.
+
 ### 6.3 All probe outcomes, as real subprocesses
 
 `tests/Fixtures/EnvironmentIsolationProbeTest.php` drives **both**
@@ -477,7 +569,37 @@ outcome:
 | Normal completion | Temp directory removed; both repository files unchanged; no marker leaked |
 | Assertion failure | Same |
 | Uncaught exception | Same |
-| **Forced termination** (`SIGKILL`-equivalent, mid-test) | Both repository files unchanged by bytes **and** mtime. The child's temp directory necessarily survives — a killed process runs neither teardown nor a shutdown function — which is exactly why it lives outside the repository. The test removes the orphan |
+| **Forced termination** (`SIGKILL`-equivalent, **after both writers have run**) | Both repository files unchanged by bytes **and** mtime; neither writer's value observable in either; the child's directory removed by the parent |
+
+**Post-merge correction to the forced-termination case.** The parent used to
+kill the child as soon as it saw `ENVPATH=`, and a comment claimed that meant
+the child had "booted, activated isolation and run both writers". That was
+false: the probe prints its path *before* `writeMarker()` runs, so the kill
+routinely landed before either production writer had touched anything. The test
+proved that booting is safe, not that a kill *mid-write* is — which is the case
+that matters, because that is when a writer could plausibly hold a repository
+file open.
+
+`test_probe_blocks_until_killed()` now emits a distinct `PROBE-WROTE` line that
+is printed **only after** both writers have run **and** both values have been
+read back out of the disposable copy. A probe that cannot confirm its own
+writes prints `PROBE-WRITE-FAILED` and fails instead of signalling. Having
+signalled, it blocks — bounded, so a parent that dies cannot strand it — until
+killed.
+
+The parent, in order:
+
+1. waits for `PROBE-WROTE` rather than `ENVPATH=`;
+2. asserts the reported values are exactly `probe-blocking` and
+   `appconfig-blocking`, so the child provably reached `write_env()` **and**
+   `AppConfig::setEnv()`;
+3. asserts the child is still running, then kills it with signal 9;
+4. asserts both repository files are byte- and mtime-identical;
+5. asserts neither writer's key or value appears in either repository file;
+6. removes **only** the child's own directory, after asserting that path sits
+   under the system temp directory.
+
+Seventeen assertions, run eight consecutive times, clean every time.
 
 ### 6.4 Concurrency
 
@@ -555,6 +677,66 @@ the previous round: one failure in eight isolated pristine runs. The pristine
 full-run totals were also reproduced across two independent runs
 (5118 / 22006 / 976 / 28 both times), so the baseline itself is stable; it is
 these individual subprocess-timing tests that are not.
+
+### 6.9 The cleanup race, closed
+
+**The defect.** `UsesTemporaryEnvironmentFile::removeDirectory()` ended with a
+single suppressed `@rmdir()`. Under repeated forced-termination runs on Windows
+that lost a race with a just-released handle roughly **one run in eight**,
+leaving an **empty** `aibos-env-*` directory: the contained file was gone, only
+the directory remained.
+
+**The fix.** The final `rmdir` is now retried over a short, deterministic
+bound. Nothing else about the deletion changes.
+
+| Property | Value |
+|---|---|
+| Maximum attempts | `REMOVE_ATTEMPTS = 20` |
+| Delay between attempts | `REMOVE_RETRY_MICROSECONDS = 10_000` (10 ms) |
+| Worst-case duration | ~200 ms, and only when the directory genuinely refuses |
+| Stops early when | `rmdir` succeeds, or the directory has gone by any other means |
+| Stat cache | cleared before the first check and between attempts, so a retry never re-reads a stale `is_dir()` |
+| Return value | `true` only when the directory is actually gone; a survivor returns `false` |
+
+**The safety boundary is unchanged, and deliberately narrow.**
+
+* It operates only on the exact directory it is handed — one this trait created
+  under `sys_get_temp_dir()`, named with the creating process's own pid.
+* Contained files are removed by the same recursive walk as before.
+* It never widens to a parent, never globs a directory to delete, never shells
+  out, and never touches the system temp directory itself.
+* The process-level sweep remains pid-scoped, so a concurrent lane's directory
+  can never be a candidate.
+* A directory that survives every attempt is **left in place and reported as
+  not removed**. Success is never claimed for a directory that is still there.
+* Neither the sweep nor the teardown path throws, so a shutdown function can
+  never mask a test result. Tests still assert their own directory is gone.
+
+**Evidence.**
+
+| Run | Count | Result | Orphans from this lane |
+|---|---|---|---|
+| Forced termination, consecutive | **20** | all pass, 17 assertions each | **0**, and 0 at every intermediate check |
+| Focused suite, consecutive | 5 | 48 tests, 456 assertions each | **0** |
+| Concurrent probe coverage | 5 | 2 tests, 30 assertions each | **0** |
+| Focused suite, clean-checkout shape | 2 | 48 tests, 456 assertions each | **0** |
+| Settings / Branding / Automations | 1 each | 57 / 53 / 86 tests, baseline errors only | **0** |
+
+Before the fix, twenty forced-termination runs would have been expected to
+leave two or three empty directories; they left none.
+
+**A measurement correction worth recording.** An initial count reported one or
+two leftovers after the focused suite and briefly looked like a surviving leak.
+It was not. The counter globbed `aibos-env-*` across the whole system temp
+directory, so it was also counting the **live** directories of a concurrent
+lane running its own suite in `cx-slice-3-messaging-impl-worktree` — process id
+4500 was confirmed alive and mid-run, holding the directory in question. The
+pid-scoped sweep is correct to leave those alone.
+
+Every count in the table above is therefore **lane-scoped**: the directory set
+is captured before and after each run, and a new directory counts as an orphan
+only if the process that created it is no longer alive. That is the measurement
+the guarantee actually needs, and it is what the final sweep uses.
 
 ## 7. Changed paths
 
@@ -648,7 +830,12 @@ them all.
 
 ---
 
-## 9. Known unrelated conditions observed, and not changed here
+## 9. Known conditions observed, and not changed here
+
+**The empty-leftover-directory race is CLOSED.** It is documented in §6.9 and
+is no longer deferred.
+
+
 
 | Observation | Why it is left alone |
 |---|---|

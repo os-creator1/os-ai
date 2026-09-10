@@ -76,6 +76,15 @@ trait UsesTemporaryEnvironmentFile
     private static int $temporaryEnvironmentSequence = 0;
 
     /**
+     * Bounded retry for the final rmdir — see removeDirectory(). Twenty
+     * attempts, 10ms apart, is ~200ms worst case and only ever elapses
+     * when the directory genuinely refuses to go.
+     */
+    private const REMOVE_ATTEMPTS = 20;
+
+    private const REMOVE_RETRY_MICROSECONDS = 10_000;
+
+    /**
      * PRE-BOOT ENTRY POINT. Called by Tests\CreatesApplication after the
      * Application object exists and before the console kernel
      * bootstraps.
@@ -330,11 +339,30 @@ trait UsesTemporaryEnvironmentFile
      * reason the create side avoids the File facade. The directory this
      * removes holds exactly one file, but the walk is written generally
      * so a stray artifact can never keep it alive.
+     *
+     * THE FINAL rmdir IS RETRIED, AND THAT IS THE POINT.
+     *
+     * A single suppressed `@rmdir()` left an EMPTY directory behind
+     * roughly one repeated forced-termination run in eight on Windows:
+     * the contained file was gone, but the directory itself briefly
+     * refused to go because a just-released handle had not been reaped
+     * yet. Retrying over a short bounded window closes that race without
+     * changing what may be deleted.
+     *
+     * The boundary is unchanged and deliberately narrow: this only ever
+     * operates on the exact directory it is handed — one this trait
+     * created under sys_get_temp_dir(), named with this process's own
+     * pid. It never widens to a parent, never globs, never shells out,
+     * and a directory that survives every attempt is left in place
+     * rather than reported as removed. The callers' own assertions still
+     * decide whether that is acceptable.
      */
-    private static function removeDirectory(string $directory): void
+    private static function removeDirectory(string $directory): bool
     {
+        clearstatcache(true, $directory);
+
         if (! is_dir($directory)) {
-            return;
+            return true;
         }
 
         foreach (scandir($directory) ?: [] as $entry) {
@@ -347,7 +375,31 @@ trait UsesTemporaryEnvironmentFile
             is_dir($path) ? self::removeDirectory($path) : @unlink($path);
         }
 
-        @rmdir($directory);
+        // Deterministic bound: at most self::REMOVE_ATTEMPTS tries with
+        // self::REMOVE_RETRY_MICROSECONDS between them — about a fifth of
+        // a second in total, far longer than the handle race needs and
+        // short enough never to be felt in a suite.
+        for ($attempt = 1; $attempt <= self::REMOVE_ATTEMPTS; $attempt++) {
+            if (@rmdir($directory)) {
+                return true;
+            }
+
+            clearstatcache(true, $directory);
+
+            // Something else removed it, or it was never really there.
+            if (! is_dir($directory)) {
+                return true;
+            }
+
+            if ($attempt < self::REMOVE_ATTEMPTS) {
+                usleep(self::REMOVE_RETRY_MICROSECONDS);
+            }
+        }
+
+        clearstatcache(true, $directory);
+
+        // Never claim success for a directory that is still present.
+        return ! is_dir($directory);
     }
 
     private function discardTemporaryEnvironmentDirectory(): void
