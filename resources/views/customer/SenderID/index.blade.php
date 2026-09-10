@@ -1,6 +1,6 @@
 @extends('layouts/contentLayoutMaster')
 
-@section('title', __('locale.menu.Sender ID'))
+@section('title', __('locale.menu.Sender identities'))
 
 @section('vendor-style')
     {{-- vendor css files --}}
@@ -54,7 +54,7 @@
                             <th></th>
                             <th></th>
                             <th>{{ __('locale.labels.id') }}</th>
-                            <th>{{__('locale.menu.Sender ID')}} </th>
+                            <th>{{__('locale.menu.Sender identities')}} </th>
                             <th>{{__('locale.plans.price')}}</th>
                             <th>{{__('locale.labels.status')}}</th>
                             <th>{{__('locale.labels.actions')}}</th>

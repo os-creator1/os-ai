@@ -101,7 +101,7 @@
                 @endif
             </div>
             <div class="col-md-6">
-                <p class="text-section-heading mb-1">Sender IDs</p>
+                <p class="text-section-heading mb-1">Sender identities</p>
                 @if($senderIds->isEmpty())
                     <p class="text-caption">None assigned to this Business yet.</p>
                 @else

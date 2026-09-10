@@ -111,14 +111,6 @@ final class CustomerContext
     }
 
     /**
-     * Contract §5.3 — Workspace vocabulary is invisible for Core/Growth.
-     */
-    public function showsWorkspaceVocabulary(): bool
-    {
-        return $this->isAgency();
-    }
-
-    /**
      * True when the frame Workspace is on the Core or Growth tier: those
      * customers must read "account", never "Workspace", on the account
      * pages (contract §5.3, T-CTX-2). Agency and not-yet-assigned accounts
@@ -130,6 +122,32 @@ final class CustomerContext
 
         return $workspace !== null
             && in_array($workspace->tier, [WorkspacePlanTier::Core, WorkspacePlanTier::Growth], true);
+    }
+
+    /**
+     * Customer Experience Slice 1 (Correction 3, contract §5): the
+     * customer-visible noun for the Workspace-level frame, never the raw
+     * word "Workspace". "account" for Core/Growth and for the reachable
+     * state where several Workspaces are accessible and none is yet
+     * selected (frameWorkspace() === null); "Agency account" only once a
+     * proven Agency frame is selected.
+     */
+    public function accountNoun(): string
+    {
+        return $this->usesBusinessVocabulary() || $this->frameWorkspace() === null
+            ? 'account'
+            : 'Agency account';
+    }
+
+    /**
+     * Plural counterpart of accountNoun() — see its doc comment for the
+     * exact three-case rule.
+     */
+    public function accountsNoun(): string
+    {
+        return $this->usesBusinessVocabulary() || $this->frameWorkspace() === null
+            ? 'accounts'
+            : 'Agency accounts';
     }
 
     public function businessNoun(): string

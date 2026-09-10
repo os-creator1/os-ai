@@ -1,5 +1,10 @@
 @extends('layouts/contentLayoutMaster')
 
+@php
+    $resolvedCustomerContext = request()->attributes->get('customerContext');
+    $accountNoun = $resolvedCustomerContext instanceof \App\Library\Navigation\CustomerContext ? $resolvedCustomerContext->accountNoun() : 'account';
+@endphp
+
 @section('title', 'Additional Business Slots')
 
 @section('content')
@@ -8,7 +13,7 @@
             <div class="col-12">
                 <a href="{{ route('customer.workspaces.show', $workspace->uid) }}" class="d-inline-flex align-items-center gap-1 transition-fast text-label mb-2">
                     <x-ds-icon name="arrow-left" size="16" />
-                    Back to Workspace
+                    Back to {{ ucfirst($accountNoun) }}
                 </a>
             </div>
 
@@ -35,7 +40,7 @@
             <div class="col-12">
                 <x-card title="Additional Business Slots">
                     @if ($agreement === null)
-                        <p class="text-caption mb-3">No additional-slot agreement exists yet for this Workspace.</p>
+                        <p class="text-caption mb-3">No additional-slot agreement exists yet for this {{ $accountNoun }}.</p>
 
                         <form method="POST" action="{{ route('customer.workspaces.additional-business-slots.checkout', $workspace->uid) }}">
                             @csrf

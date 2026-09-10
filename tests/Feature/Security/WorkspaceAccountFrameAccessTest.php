@@ -116,12 +116,34 @@ class WorkspaceAccountFrameAccessTest extends TestCase
         }
     }
 
-    public function test_agency_pages_keep_the_established_wording(): void
+    /**
+     * Customer Experience Redesign Slice 1A (Correction 3, contract §5):
+     * an Agency owner used to fall back to the raw word "Workspace" here
+     * (D-7) — that fallback is now CustomerContext::accountNoun(), "Agency
+     * account", never the raw word.
+     */
+    public function test_agency_pages_use_agency_account_wording_not_workspace(): void
     {
         [$owner, , $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
         $this->authenticateAs($owner);
 
-        $this->get(route('customer.workspaces.show', $workspace->uid))->assertOk()->assertSee('Workspace overview')->assertSee('Rename Workspace');
-        $this->get(route('customer.workspaces.index'))->assertOk()->assertSee('Create Workspace');
+        $showResponse = $this->get(route('customer.workspaces.show', $workspace->uid))->assertOk()->assertSee('Agency account overview')->assertSee('Rename Agency account');
+        $this->assertStringNotContainsStringIgnoringCase('workspace', $this->renderedTextOnly($showResponse->getContent()));
+
+        $indexResponse = $this->get(route('customer.workspaces.index'))->assertOk()->assertSee('Create Agency account');
+        $this->assertStringNotContainsStringIgnoringCase('workspace', $this->renderedTextOnly($indexResponse->getContent()));
+    }
+
+    /**
+     * Rendered text only: script/style bodies and HTML attribute values are
+     * not what the reader sees, so a permitted URL such as
+     * /workspaces/{uid} embedded in an href or inline <script> must not
+     * trip a "no raw Workspace text" assertion.
+     */
+    private function renderedTextOnly(string $html): string
+    {
+        $withoutScriptsAndStyles = preg_replace('/<(script|style)\b[^>]*>.*?<\/\1>/is', '', $html) ?? '';
+
+        return html_entity_decode(strip_tags(preg_replace('/\s[a-zA-Z-]+="[^"]*"/', '', $withoutScriptsAndStyles) ?? ''));
     }
 }

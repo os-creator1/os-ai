@@ -916,6 +916,17 @@
                 // url('outreach/campaigns')) is now served by the bare
                 // customer.outreach.campaigns.entry route. Do not add rendering
                 // entries here — extend CustomerMenuBuilder instead.
+                //
+                // Customer Experience Slice 1A (contract §6a #14): as of this
+                // slice, panels/horizontalMenu.blade.php also renders through
+                // CustomerShellComposer + CustomerMenuBuilder for the customer
+                // branch (see app/Providers/MenuServiceProvider.php), so this
+                // 'customer' array has no known rendering consumer left. It is
+                // not deleted here — a customer-portal user with
+                // active_portal === 'customer' but is_customer === false would
+                // still reach it via panels/sidebar.blade.php's own legacy
+                // fallback, which is not a route/model invariant this slice
+                // enforces. Do not add or remove entries.
                 'customer' => [
                     [
                         'url'    => url('dashboard'),

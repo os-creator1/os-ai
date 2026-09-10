@@ -1,5 +1,10 @@
 @extends('layouts/contentLayoutMaster')
 
+@php
+    $resolvedCustomerContext = request()->attributes->get('customerContext');
+    $accountNoun = $resolvedCustomerContext instanceof \App\Library\Navigation\CustomerContext ? $resolvedCustomerContext->accountNoun() : 'account';
+@endphp
+
 @section('title', 'Analytics')
 
 @section('content')
@@ -18,7 +23,7 @@
     @if(count($accessible) === 0)
         <x-card :padded="true">
             <x-empty-state icon="bar-chart-2" title="No Business available yet"
-                            description="Analytics are organized by Business. You don't have access to a Business yet — ask a Workspace owner to add you, or create a Business to get started." />
+                            description="Analytics are organized by Business. You don't have access to a Business yet — ask an {{ $accountNoun }} owner to add you, or create a Business to get started." />
         </x-card>
     @else
         <x-card :padded="true">

@@ -200,4 +200,121 @@ class CustomerShellTranslationTest extends TestCase
         $translated = new MenuItem('gbp', 'Google Business Profile', '/gbp', 'map-pin', false);
         $this->assertStringContainsString('Google Business Profile', Blade::render('<x-customer-nav-item :item="$item" />', ['item' => $translated]));
     }
+
+    /**
+     * Customer Experience Redesign Slice 1A (Correction 3, contract §5/§6a
+     * #1): the exact 17 new keys this slice adds all resolve, exhaustively
+     * — not merely the ones CustomerMenuBuilder happens to emit.
+     */
+    public function test_all_seventeen_new_locale_keys_resolve(): void
+    {
+        $menuKeys = [
+            'Platform Settings', 'Theme Presets', 'Usage Billing', 'Safety Limits',
+            'Provider Events', 'Additional Slot Agreements', 'Workspace', 'Workspace Plans',
+            'Opportunities', 'Messaging', 'Sender identities',
+        ];
+
+        foreach ($menuKeys as $key) {
+            $this->assertTrue(Lang::has('locale.menu.' . $key, 'en'), "Missing new menu key: {$key}");
+            $this->assertNotSame('', trim((string) __('locale.menu.' . $key, [], 'en')));
+        }
+
+        $permissionKeys = ['website', 'read_google_business_profile', 'manage_google_business_profile', 'manage_advanced_provider'];
+
+        foreach ($permissionKeys as $key) {
+            $this->assertTrue(Lang::has('locale.permission.' . $key, 'en'), "Missing new permission key: {$key}");
+            $this->assertNotSame('', trim((string) __('locale.permission.' . $key, [], 'en')));
+        }
+
+        $this->assertSame('Messaging provider', __('locale.labels.messaging_provider', [], 'en'));
+        $this->assertSame('Sender identity', __('locale.labels.sender_identity', [], 'en'));
+    }
+
+    /**
+     * Customer Experience Redesign Slice 1A (Correction 3, contract §4b):
+     * the exact 16 existing delegated-access locale values this slice
+     * corrects now read "Team member(s)", never "Sub Account(s)"/
+     * "Sub-Account(s)" — checked directly against the locale file, in
+     * addition to the rendered-page coverage in
+     * Tests\Feature\SubAccounts\DelegatedAccessTerminologyTest.
+     */
+    public function test_all_sixteen_corrected_delegated_access_values_say_team_member(): void
+    {
+        $forbidden = '/sub[\s-]?account/i';
+
+        // Two of the sixteen — invitation.subject/invitation.body — are
+        // literal array keys that themselves contain a dot
+        // ('invitation.subject' => ..., not a nested ['invitation' =>
+        // ['subject' => ...]] array). Laravel's __()/trans() dot-notation
+        // cannot address a literal dotted key, so it is read directly off
+        // the loaded 'sub_accounts' array instead — this is a pre-existing
+        // property of the array shape, unrelated to and unchanged by this
+        // slice, which only rewrites the two values, never the key shape.
+        $subAccounts = Lang::get('locale.sub_accounts', [], 'en');
+        $this->assertIsArray($subAccounts);
+
+        $correctedKeys = [
+            'labels.sub_accounts' => 'Team members',
+            'sub_accounts.add_new' => 'Add team member',
+            'sub_accounts.update_sub_account' => 'Update team member',
+            'sub_accounts.sub_account_added' => 'Team member successfully added',
+            'sub_accounts.sub_account_updated' => 'Team member successfully updated',
+            'sub_accounts.sub_account_deleted' => 'Team member successfully deleted',
+            'sub_accounts.sub_account_status_updated' => 'Team member status successfully updated',
+            'sub_accounts.enable_selected_sub_accounts' => 'Are you sure you want to enable the selected team members?',
+            'sub_accounts.disable_selected_sub_accounts' => 'Are you sure you want to disable the selected team members?',
+            'sub_accounts.delete_selected_sub_accounts' => 'Are you sure you want to delete the selected team members?',
+            'sub_accounts.sub_accounts_enabled' => 'Selected team members enabled',
+            'sub_accounts.sub_accounts_disabled' => 'Selected team members disabled',
+            'sub_accounts.sub_accounts_deleted' => 'Selected team members deleted',
+            'sub_accounts.login_as_parent_message' => 'You are currently logged in as a team member. You can manage the main account below.',
+        ];
+
+        $this->assertCount(14, $correctedKeys);
+
+        foreach ($correctedKeys as $key => $expected) {
+            $actual = __('locale.' . $key, [], 'en');
+            $this->assertSame($expected, $actual, "locale.{$key} does not read the corrected value.");
+            $this->assertDoesNotMatchRegularExpression($forbidden, $actual, "locale.{$key} still contains a forbidden Sub-Account variant.");
+        }
+
+        $dottedKeys = [
+            'invitation.subject' => 'You are invited to join :app_name as a team member',
+            'invitation.body' => 'You have been invited to join as a team member. Please click the button below to accept the invitation and set up your password.',
+        ];
+
+        foreach ($dottedKeys as $key => $expected) {
+            $this->assertArrayHasKey($key, $subAccounts, "locale.sub_accounts.{$key} is missing.");
+            $this->assertSame($expected, $subAccounts[$key], "locale.sub_accounts.{$key} does not read the corrected value.");
+            $this->assertDoesNotMatchRegularExpression($forbidden, $subAccounts[$key], "locale.sub_accounts.{$key} still contains a forbidden Sub-Account variant.");
+        }
+
+        // 14 + 2 dotted = 16 existing values corrected, exactly.
+        $this->assertCount(16, array_merge($correctedKeys, $dottedKeys));
+
+        // The nine untouched values keep their exact wording — no
+        // unrelated locale cleanup (contract §6a #1).
+        $untouched = [
+            'sub_accounts.add_password' => 'Add Password',
+            'sub_accounts.send_invitation' => 'Send Invitation',
+            'sub_accounts.accept_invitation' => 'Accept Invitation',
+            'sub_accounts.active_account' => 'Active Account',
+            'sub_accounts.sub_account_activated' => 'Your account is now active.',
+            'sub_accounts.accept_invitation_description' => 'Please enter your password to accept the invitation',
+            'sub_accounts.manage_account' => 'Manage Account',
+            'sub_accounts.login_as_parent' => 'Login as Parent',
+        ];
+
+        $this->assertCount(8, $untouched);
+
+        foreach ($untouched as $key => $expected) {
+            $this->assertSame($expected, __('locale.' . $key, [], 'en'), "locale.{$key} must not be touched by this slice.");
+        }
+
+        $this->assertArrayHasKey('invitation.footer', $subAccounts);
+        $this->assertSame('If you didn’t expect this invitation, you can safely ignore this email.', $subAccounts['invitation.footer']);
+
+        // 8 + 1 dotted = 9 untouched values, exactly.
+        $this->assertCount(9, array_merge($untouched, ['invitation.footer' => $subAccounts['invitation.footer']]));
+    }
 }

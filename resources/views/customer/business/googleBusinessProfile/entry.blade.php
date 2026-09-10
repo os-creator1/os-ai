@@ -6,6 +6,11 @@
 --}}
 @extends('layouts/contentLayoutMaster')
 
+@php
+    $resolvedCustomerContext = request()->attributes->get('customerContext');
+    $accountNoun = $resolvedCustomerContext instanceof \App\Library\Navigation\CustomerContext ? $resolvedCustomerContext->accountNoun() : 'account';
+@endphp
+
 @section('title', 'Google Business Profile')
 
 @section('content')
@@ -18,7 +23,7 @@
     @if(count($accessible) === 0)
         <x-card :padded="true">
             <x-empty-state icon="map-pin" title="No Business available yet"
-                           description="Google Business Profile is organized by Business, and is included on the Growth and Agency plans. You don't have access to an eligible Business yet — ask a Workspace owner to add you, or upgrade the plan." />
+                           description="Google Business Profile is organized by Business, and is included on the Growth and Agency plans. You don't have access to an eligible Business yet — ask an {{ $accountNoun }} owner to add you, or upgrade the plan." />
         </x-card>
     @else
         <x-card :padded="true">

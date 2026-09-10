@@ -41,16 +41,16 @@ class AgencyProspectingChannelController extends CustomerBaseController
         SendingServer::TYPE_TWILIO => [
             'label' => 'Twilio',
             'credential_fields' => [
-                'account_sid' => ['label' => 'Account SID', 'required' => true],
-                'auth_token' => ['label' => 'Auth Token', 'required' => true],
+                'account_sid' => ['label' => 'Twilio account identifier', 'required' => true],
+                'auth_token' => ['label' => 'Twilio secret', 'required' => true],
             ],
         ],
         SendingServer::TYPE_TELNYX => [
             'label' => 'Telnyx',
             'credential_fields' => [
-                'api_key' => ['label' => 'API Key', 'required' => true],
-                'c1' => ['label' => 'Message Profile ID', 'required' => true],
-                'c2' => ['label' => 'Message Connection ID', 'required' => false],
+                'api_key' => ['label' => 'Telnyx access key', 'required' => true],
+                'c1' => ['label' => 'Messaging profile ID', 'required' => true],
+                'c2' => ['label' => 'Messaging connection ID', 'required' => false],
             ],
         ],
     ];
