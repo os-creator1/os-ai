@@ -205,8 +205,18 @@ class MessagingChannelsTest extends TestCase
         [$tenant, $business] = $this->tenantWithBusiness();
         $this->authenticateAsCustomer($tenant, ['view_numbers', 'manage_advanced_provider']);
 
-        $this->get(route('customer.workspaces.businesses.channels.connect', [$business->workspace->uid, $business->uid, SendingServer::TYPE_TWILIO]))
+        $response = $this->get(route('customer.workspaces.businesses.channels.connect', [$business->workspace->uid, $business->uid, SendingServer::TYPE_TWILIO]))
             ->assertOk();
+
+        // Customer Experience Slice 1A (contract §2/§6a #23): the visible
+        // labels are plain language, but the underlying field names — what
+        // actually gets posted — are untouched.
+        $response->assertSee('Twilio account identifier', false);
+        $response->assertSee('Twilio secret', false);
+        $response->assertDontSee('Account SID', false);
+        $response->assertDontSee('Auth Token', false);
+        $response->assertSee('name="account_sid"', false);
+        $response->assertSee('name="auth_token"', false);
     }
 
     public function test_telnyx_connect_form_is_reachable(): void
@@ -214,8 +224,20 @@ class MessagingChannelsTest extends TestCase
         [$tenant, $business] = $this->tenantWithBusiness();
         $this->authenticateAsCustomer($tenant, ['view_numbers', 'manage_advanced_provider']);
 
-        $this->get(route('customer.workspaces.businesses.channels.connect', [$business->workspace->uid, $business->uid, SendingServer::TYPE_TELNYX]))
+        $response = $this->get(route('customer.workspaces.businesses.channels.connect', [$business->workspace->uid, $business->uid, SendingServer::TYPE_TELNYX]))
             ->assertOk();
+
+        // Customer Experience Slice 1A (contract §2/§6a #23): same
+        // display-label-only guarantee for the Telnyx credential fields.
+        $response->assertSee('Telnyx access key', false);
+        $response->assertSee('Messaging profile ID', false);
+        $response->assertSee('Messaging connection ID', false);
+        $response->assertDontSee('API Key', false);
+        $response->assertDontSee('Message Profile ID', false);
+        $response->assertDontSee('Message Connection ID', false);
+        $response->assertSee('name="api_key"', false);
+        $response->assertSee('name="c1"', false);
+        $response->assertSee('name="c2"', false);
     }
 
     public function test_an_arbitrary_inherited_provider_type_is_rejected(): void

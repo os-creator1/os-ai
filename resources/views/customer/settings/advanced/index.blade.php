@@ -1,11 +1,11 @@
 @extends('layouts/contentLayoutMaster')
 
-@section('title', 'Messaging Channels')
+@section('title', 'Messaging provider')
 
 @section('content')
     <div class="row mb-2">
         <div class="col-12">
-            <h4 class="mb-0">Messaging Channels</h4>
+            <h4 class="mb-0">Messaging provider</h4>
             <p class="text-caption mb-0">Connect a provider so this Business can send SMS and MMS through Outreach.</p>
         </div>
     </div>
@@ -72,7 +72,7 @@
                 @endif
             </div>
             <div class="col-md-6">
-                <p class="text-section-heading mb-1">Sender IDs</p>
+                <p class="text-section-heading mb-1">Sender identities</p>
                 @if($senderIds->isEmpty())
                     <p class="text-caption">None assigned to this Business yet.</p>
                 @else

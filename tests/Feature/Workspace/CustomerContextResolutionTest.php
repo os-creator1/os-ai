@@ -428,4 +428,116 @@ class CustomerContextResolutionTest extends TestCase
             $this->assertUrlMatchesARegisteredRoute($url);
         }
     }
+
+    // -----------------------------------------------------------------
+    // Customer Experience Slice 1A (Correction 3) — T-TERM-1: the raw
+    // word "Workspace" is replaced by CustomerContext::accountNoun()/
+    // accountsNoun() everywhere it used to leak, across every reachable
+    // role/context including the unselected-multi-workspace chooser and
+    // Agency Prospecting.
+    // -----------------------------------------------------------------
+
+    public function test_the_entry_chooser_pages_use_account_vocabulary_not_workspace(): void
+    {
+        $this->ensureRequiredAppConfigRowsExist();
+        $this->platformAdminId();
+        $customer = $this->createCustomer();
+        $this->authenticateAs($customer);
+
+        foreach ([
+            route('customer.automations.index'),
+            route('customer.analytics.entry'),
+            route('customer.website.index'),
+            route('customer.outreach.index'),
+            route('customer.gbp.index'),
+        ] as $url) {
+            $page = $this->get($url)->assertOk();
+
+            // /workspaces/{workspaceUid} is a permitted technical URL path
+            // (contract §2) — only visible text, attributes stripped, is
+            // checked for the forbidden customer-copy noun.
+            $this->assertStringNotContainsStringIgnoringCase('workspace', $this->visibleBodyText($page->getContent()), "T-TERM-1: {$url} must never render Workspace.");
+            $page->assertSee('ask an account owner', false);
+        }
+    }
+
+    public function test_back_links_and_slot_pages_use_account_vocabulary_not_workspace(): void
+    {
+        [$growth, $growthBusiness, $growthWorkspace] = $this->tenant(WorkspacePlanTier::Growth);
+        $this->authenticateAs($growth);
+
+        $overview = $this->get(route('customer.workspaces.businesses.analytics.overview', [$growthWorkspace->uid, $growthBusiness->uid]))->assertOk();
+        $this->assertStringNotContainsStringIgnoringCase('workspace', $this->visibleBodyText($overview->getContent()));
+        $overview->assertSee('Back to Account', false);
+
+        [$agency, , $agencyWorkspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
+        $this->authenticateAs($agency);
+
+        $slots = $this->get(route('customer.workspaces.additional-business-slots.show', $agencyWorkspace->uid))->assertOk();
+        $this->assertStringNotContainsStringIgnoringCase('workspace', $this->visibleBodyText($slots->getContent()));
+        $slots->assertSee('Back to Agency account', false);
+    }
+
+    public function test_multi_workspace_chooser_body_uses_neutral_account_vocabulary(): void
+    {
+        [$customer, $firstBusiness, $firstWorkspace] = $this->tenant(WorkspacePlanTier::Growth, 'First Business', 'First Account');
+        $secondWorkspace = $this->createWorkspace($customer->user, ['name' => 'Second Account']);
+        $this->addBusiness($customer, $secondWorkspace, 'Second Business');
+        $this->assignTier($secondWorkspace, WorkspacePlanTier::Growth);
+        $this->authenticateAs($customer);
+
+        // Ambiguous — frameWorkspace() is null (Correction 3 §5's resolved
+        // "no third noun" rule: this state reads as neutral "account", never
+        // "Agency account" and never the raw word "Workspace").
+        $chooser = $this->get(route('customer.workspaces.index'))->assertOk();
+
+        $this->assertStringNotContainsStringIgnoringCase('workspace', $this->visibleBodyText($chooser->getContent()));
+        $chooser->assertSee('New account name', false);
+        $chooser->assertSee('Accounts', false);
+        $chooser->assertSee('First Account', false);
+        $chooser->assertSee('Second Account', false);
+
+        // Once a frame is selected, the per-account page also stays clean.
+        $show = $this->get(route('customer.workspaces.show', $firstWorkspace->uid))->assertOk();
+        $this->assertStringNotContainsStringIgnoringCase('workspace', $this->visibleBodyText($show->getContent()));
+        $show->assertSee('Account overview', false);
+    }
+
+    public function test_agency_prospecting_pages_use_account_vocabulary_not_workspace(): void
+    {
+        [$agency, , $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
+        $this->authenticateAs($agency);
+
+        // Ambiguous multi-workspace prospecting chooser (Correction 3 §5:
+        // no third noun invented — "account", not "Agency account", for
+        // this state).
+        $second = $this->createWorkspace($agency->user, ['name' => 'Second Agency']);
+        $this->assignTier($second, WorkspacePlanTier::Agency);
+
+        $entry = $this->get(route('customer.prospecting.index'))->assertOk();
+        $this->assertStringNotContainsStringIgnoringCase('workspace', $this->visibleBodyText($entry->getContent()));
+
+        // A specific, proven Agency frame reads "this Agency account".
+        $channels = $this->get(route('customer.workspaces.prospecting.channels.index', $workspace->uid))->assertOk();
+        $this->assertStringNotContainsStringIgnoringCase('workspace', $this->visibleBodyText($channels->getContent()));
+        $channels->assertSee('this Agency account', false);
+    }
+
+    /**
+     * Visible page text with every HTML attribute and the contents of
+     * <script>/<style> blocks stripped — the technical URL path
+     * /workspaces/{workspaceUid} is a permitted route segment (contract
+     * §2) and appears both in href/action attributes and inline JS
+     * variables (e.g. `var seriesUrl = ".../workspaces/..."`), never as
+     * customer copy, so it must not fail a T-TERM-1 assertion the way a
+     * raw substring check on the full response would.
+     */
+    private function visibleBodyText(string $html): string
+    {
+        $withoutScripts = preg_replace('#<script\b[^>]*>.*?</script>#si', '', $html) ?? '';
+        $withoutStyles = preg_replace('#<style\b[^>]*>.*?</style>#si', '', $withoutScripts) ?? '';
+        $stripped = preg_replace('/\s[a-zA-Z-]+="[^"]*"/', '', $withoutStyles) ?? '';
+
+        return html_entity_decode(strip_tags($stripped));
+    }
 }

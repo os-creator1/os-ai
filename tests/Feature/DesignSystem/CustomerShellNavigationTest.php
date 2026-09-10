@@ -3,6 +3,7 @@
 namespace Tests\Feature\DesignSystem;
 
 use App\Enums\Entitlement\WorkspacePlanTier;
+use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\Feature\Workspace\Concerns\CreatesCustomerContextFixtures;
 use Tests\TestCase;
@@ -183,5 +184,56 @@ class CustomerShellNavigationTest extends TestCase
         $sidebar = file_get_contents(base_path('resources/views/panels/sidebar.blade.php'));
         $this->assertStringContainsString('<x-customer-nav-item :item="$item" />', $sidebar);
         $this->assertStringContainsString('$customerShell', $sidebar);
+    }
+
+    /**
+     * Customer Experience Redesign Slice 1A (Correction 3, contract §6a
+     * #13, mechanical render regression required by §9 of the
+     * implementation prompt): forcing the dormant horizontal layout on
+     * proves the customer branch is genuinely sourced from
+     * CustomerMenuBuilder, not the legacy Helper::menuData()['customer']
+     * array — a code comment is not sufficient proof.
+     */
+    public function test_horizontal_layout_customer_branch_renders_from_customer_menu_builder(): void
+    {
+        config(['app.theme_layout_type' => 'horizontal']);
+
+        [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
+        $this->addBusiness($customer, $workspace, 'Client Two');
+        $this->authenticateAs($customer);
+
+        $response = $this->home()->assertOk();
+        $html = $response->getContent();
+
+        // A CustomerMenuBuilder-sourced marker: the exact menu-item keys
+        // that builder emits for an Agency owner (§8.3), rendered via
+        // data-nav-key exactly as panels/sidebar.blade.php's own items are.
+        foreach (['home', 'accounts', 'prospecting', 'settings'] as $expectedKey) {
+            $this->assertStringContainsString('data-nav-key="' . $expectedKey . '"', $html, "Horizontal menu must render the CustomerMenuBuilder '{$expectedKey}' entry.");
+        }
+
+        // The legacy customer array's own distinctive, never-migrated
+        // labels (Helper.php's 'Channels', 'Opportunities', 'Compose') must
+        // not appear — proving the old $menuData[1]->customer branch is not
+        // what rendered this response.
+        $this->assertStringNotContainsString('>Channels<', $html, 'The legacy customer menuData() branch must not render.');
+        $this->assertStringNotContainsString('locale.menu.Channels', $html);
+
+        // The admin branch is unchanged: still fed by $menuData[1]->admin,
+        // never by CustomerMenuBuilder.
+        $admin = User::create([
+            'first_name' => 'Platform',
+            'last_name' => 'Admin',
+            'email' => 'admin-' . uniqid('', true) . '@example.test',
+            'status' => true,
+            'is_admin' => true,
+            'is_customer' => false,
+            'active_portal' => 'admin',
+        ]);
+        $this->withSession(['permissions' => collect(['access backend'])]);
+        $this->actingAs($admin);
+
+        $adminResponse = $this->get(route('admin.home'))->assertOk();
+        $this->assertStringNotContainsString('data-nav-key="accounts"', $adminResponse->getContent(), 'The admin horizontal branch must not switch to CustomerMenuBuilder.');
     }
 }

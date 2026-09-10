@@ -1,6 +1,38 @@
 @php
     $configData = \App\Helpers\Helper::applClasses();
 @endphp
+@if(isset($customerMenuItems))
+    {{--
+        Customer Experience Slice 1A (contract §6a #13): recursive dropdown
+        rendering for a nested customer MenuItem group. This file includes
+        itself with `customerMenuItems` set whenever a customer menu entry
+        isGroup(), so arbitrary-depth CustomerMenuBuilder trees (e.g.
+        Settings -> Advanced -> Messaging provider) render correctly without
+        a second file — mirroring horizontalSubmenu.blade.php's role for the
+        admin branch below, but sourced from CustomerMenuBuilder, never from
+        the legacy Helper::menuData()['customer'] array.
+    --}}
+    <ul class="dropdown-menu" data-bs-popper="none">
+        @foreach($customerMenuItems as $item)
+            @php
+                $itemLabel = \Illuminate\Support\Facades\Lang::has('locale.menu.' . $item->label) ? __('locale.menu.' . $item->label) : $item->label;
+            @endphp
+            <li class="{{ $item->isGroup() ? 'dropdown dropdown-submenu' : '' }} {{ ($item->active || $item->hasActiveChild()) ? 'active' : '' }}"
+                data-nav-key="{{ $item->key }}"
+                @if($item->isGroup()) data-menu="dropdown-submenu" @endif>
+                <a href="{{ $item->url ?? 'javascript:void(0)' }}"
+                   class="dropdown-item {{ $item->isGroup() ? 'dropdown-toggle' : '' }} d-flex align-items-center transition-fast"
+                   @if($item->isGroup()) data-bs-toggle="dropdown" @endif>
+                    <x-ds-icon name="{{ $item->icon }}" aria-hidden="true" />
+                    <span>{{ $itemLabel }}</span>
+                </a>
+                @if($item->isGroup())
+                    @include('panels/horizontalMenu', ['customerMenuItems' => $item->children])
+                @endif
+            </li>
+        @endforeach
+    </ul>
+@else
 {{-- Horizontal Menu --}}
 <div class="horizontal-menu-wrapper">
     <div class="header-navbar navbar-expand-sm navbar navbar-horizontal transition-base
@@ -30,15 +62,40 @@
         <div class="navbar-container main-menu-content" data-menu="menu-container">
             <ul class="nav navbar-nav" id="main-menu-navigation" data-menu="menu-navigation">
                 {{-- Foreach menu item starts --}}
-                @if(isset($menuData[1]))
+                @php
+                    $customerShell = isset($customerContext) && $customerContext instanceof \App\Library\Navigation\CustomerContext;
+                @endphp
+                @if($customerShell)
+                    {{--
+                        Customer Experience Slice 1A (contract §6a #13): the
+                        customer branch now consumes the same
+                        CustomerShellComposer + CustomerMenuBuilder tree the
+                        vertical shell uses, never the legacy
+                        Helper::menuData()['customer'] array.
+                    --}}
+                    @foreach($customerMenu as $item)
+                        @php
+                            $itemLabel = \Illuminate\Support\Facades\Lang::has('locale.menu.' . $item->label) ? __('locale.menu.' . $item->label) : $item->label;
+                        @endphp
+                        <li class="nav-item {{ $item->isGroup() ? 'dropdown' : '' }} {{ ($item->active || $item->hasActiveChild()) ? 'active' : '' }}"
+                            data-nav-key="{{ $item->key }}"
+                            @if($item->isGroup()) data-menu="dropdown" @endif>
+                            <a href="{{ $item->url ?? 'javascript:void(0)' }}"
+                               class="nav-link d-flex align-items-center {{ $item->isGroup() ? 'dropdown-toggle' : '' }}"
+                               @if($item->isGroup()) data-bs-toggle="dropdown" @endif>
+                                <x-ds-icon name="{{ $item->icon }}" aria-hidden="true" />
+                                <span>{{ $itemLabel }}</span>
+                            </a>
+                            @if($item->isGroup())
+                                @include('panels/horizontalMenu', ['customerMenuItems' => $item->children])
+                            @endif
+                        </li>
+                    @endforeach
+                @elseif(isset($menuData[1]))
 
 
                     @php
-                        if (auth()->user()->active_portal == 'admin'){
-                            $sidebarMenu = $menuData[1]->admin;
-                         }else{
-                            $sidebarMenu = $menuData[1]->customer;
-                         }
+                        $sidebarMenu = $menuData[1]->admin;
                     @endphp
 
                     @foreach($sidebarMenu as $menu)
@@ -81,3 +138,4 @@
         </div>
     </div>
 </div>
+@endif

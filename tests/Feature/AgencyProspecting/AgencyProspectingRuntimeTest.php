@@ -120,6 +120,45 @@ class AgencyProspectingRuntimeTest extends TestCase
         ])->assertSessionHas('flash_success');
     }
 
+    /**
+     * Customer Experience Slice 1A (contract §2/§6a #24): the visible
+     * connect-form labels are plain language, but the underlying field
+     * names — what actually gets posted — are untouched, identical to
+     * MessagingChannelsController's own five-label change.
+     */
+    public function test_twilio_connect_form_shows_plain_language_labels_with_unchanged_field_names(): void
+    {
+        [$owner, $workspace] = $this->agencyWorkspace();
+        $this->authenticateAsCustomer($owner);
+
+        $response = $this->get(route('customer.workspaces.prospecting.channels.connect', [$workspace->uid, 'Twilio']))->assertOk();
+
+        $response->assertSee('Twilio account identifier', false);
+        $response->assertSee('Twilio secret', false);
+        $response->assertDontSee('Account SID', false);
+        $response->assertDontSee('Auth Token', false);
+        $response->assertSee('name="account_sid"', false);
+        $response->assertSee('name="auth_token"', false);
+    }
+
+    public function test_telnyx_connect_form_shows_plain_language_labels_with_unchanged_field_names(): void
+    {
+        [$owner, $workspace] = $this->agencyWorkspace();
+        $this->authenticateAsCustomer($owner);
+
+        $response = $this->get(route('customer.workspaces.prospecting.channels.connect', [$workspace->uid, 'Telnyx']))->assertOk();
+
+        $response->assertSee('Telnyx access key', false);
+        $response->assertSee('Messaging profile ID', false);
+        $response->assertSee('Messaging connection ID', false);
+        $response->assertDontSee('API Key', false);
+        $response->assertDontSee('Message Profile ID', false);
+        $response->assertDontSee('Message Connection ID', false);
+        $response->assertSee('name="api_key"', false);
+        $response->assertSee('name="c1"', false);
+        $response->assertSee('name="c2"', false);
+    }
+
     public function test_staff_is_denied_connecting_a_channel(): void
     {
         [, $workspace] = $this->agencyWorkspace();

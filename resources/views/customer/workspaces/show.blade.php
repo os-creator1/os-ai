@@ -1,19 +1,20 @@
 @extends('layouts/contentLayoutMaster')
 
 @php
-    // Customer Experience Slice 1B (Correction Round 1, contract §5.3): a
-    // Core/Growth owner reaches this page as "Team & account" and never
-    // reads the word Workspace; Agency and unassigned accounts keep the
-    // established Workspace wording. The resolved context is the one
+    // Customer Experience Slice 1 (Correction 3, contract §5): every
+    // customer reaches this page through CustomerContext::accountNoun()/
+    // accountsNoun() — "account"/"accounts" for Core/Growth and for the
+    // unselected-multi-workspace chooser, "Agency account"/"Agency
+    // accounts" only once a proven Agency frame is selected. The raw word
+    // "Workspace" is never rendered here. The resolved context is the one
     // App\Http\Middleware\ResolveCustomerContext stores on the request, so
     // the controller's view data keeps its exact key shape.
     $resolvedCustomerContext = request()->attributes->get('customerContext');
-    $accountVocabulary = $resolvedCustomerContext instanceof \App\Library\Navigation\CustomerContext && $resolvedCustomerContext->usesBusinessVocabulary();
-    $accountNoun = $accountVocabulary ? 'account' : 'Workspace';
-    $accountNounPlural = $accountVocabulary ? 'accounts' : 'Workspaces';
+    $accountNoun = $resolvedCustomerContext instanceof \App\Library\Navigation\CustomerContext ? $resolvedCustomerContext->accountNoun() : 'account';
+    $accountNounPlural = $resolvedCustomerContext instanceof \App\Library\Navigation\CustomerContext ? $resolvedCustomerContext->accountsNoun() : 'accounts';
 @endphp
 
-@section('title', $accountVocabulary ? 'Account overview' : 'Workspace overview')
+@section('title', ucfirst($accountNoun) . ' overview')
 
 @section('content')
     <section id="workspace-overview">

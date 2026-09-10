@@ -221,7 +221,7 @@ final class CustomerMenuBuilder
             $this->item($user, 'messaging-provider', 'Messaging provider', 'link', ['view_numbers'], $channelsRoute, $channelsParameters, $current, [
                 'customer.workspaces.businesses.channels.', 'customer.channels.',
             ]),
-            $this->item($user, 'sender-ids', 'Sender IDs', 'book', ['view_sender_id'], 'customer.senderid.index', [], $current, ['customer.senderid.']),
+            $this->item($user, 'sender-ids', 'Sender identities', 'book', ['view_sender_id'], 'customer.senderid.index', [], $current, ['customer.senderid.']),
             $this->item($user, 'numbers', 'Numbers', 'phone', ['view_numbers'], 'customer.numbers.index', [], $current, ['customer.numbers.']),
             $this->item($user, 'keywords', 'Keywords', 'hash', ['view_keywords'], 'customer.keywords.index', [], $current, ['customer.keywords.']),
             $this->item($user, 'developers', 'Developers', 'terminal', ['developers'], 'customer.developer.settings', [], $current, ['customer.developer.']),

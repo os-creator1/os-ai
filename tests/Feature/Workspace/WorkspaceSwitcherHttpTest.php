@@ -269,7 +269,12 @@ class WorkspaceSwitcherHttpTest extends TestCase
         $response = $this->get(route('customer.workspaces.index'))->assertOk();
 
         $this->assertRowsFor($response, []);
-        $response->assertSee("You don't have access to any Workspaces yet.", false);
+
+        // Customer Experience Redesign Slice 1A (Correction 3, contract §5):
+        // the raw word "Workspace" is replaced by
+        // CustomerContext::accountsNoun() — "accounts" here, since no frame
+        // is selected for a customer with zero accessible Workspaces.
+        $response->assertSee("You don't have access to any accounts yet.", false);
     }
 
     public function test_get_produces_no_database_writes(): void

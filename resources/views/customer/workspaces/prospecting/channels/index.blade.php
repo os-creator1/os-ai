@@ -1,12 +1,17 @@
 @extends('layouts/contentLayoutMaster')
 
+@php
+    $resolvedCustomerContext = request()->attributes->get('customerContext');
+    $accountNoun = $resolvedCustomerContext instanceof \App\Library\Navigation\CustomerContext ? $resolvedCustomerContext->accountNoun() : 'account';
+@endphp
+
 @section('title', 'Prospecting Channels')
 
 @section('content')
     <div class="row mb-2">
         <div class="col-12">
             <h4 class="mb-0">Prospecting</h4>
-            <p class="text-caption mb-0">Connect a dedicated Twilio or Telnyx number owned by this Workspace — never a client Business's own connection.</p>
+            <p class="text-caption mb-0">Connect a dedicated Twilio or Telnyx number owned by this {{ $accountNoun }} — never a client Business's own connection.</p>
         </div>
     </div>
 

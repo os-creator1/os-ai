@@ -41,11 +41,17 @@
             // the resolved account context and the authorization-driven
             // CustomerMenuBuilder. The static array above keeps serving the
             // admin branch unchanged.
+            //
+            // Customer Experience Slice 1A (contract §6a #16): panels.
+            // horizontalMenu joins the same composer so the horizontal
+            // layout's customer branch also renders from CustomerMenuBuilder
+            // instead of the legacy Helper::menuData()['customer'] array.
             View::composer(
                 [
                     'panels.sidebar',
                     'panels.navbar',
                     'panels.breadcrumb',
+                    'panels.horizontalMenu',
                     'components.customer-context-switcher',
                     'components.view-as-banner',
                 ],

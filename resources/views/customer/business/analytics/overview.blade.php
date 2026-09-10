@@ -14,6 +14,8 @@
     $seriesUrl = route('customer.workspaces.businesses.analytics.series', array_merge([$workspaceUid, $businessUid], $range->queryParameters()));
     $overviewUrl = route('customer.workspaces.businesses.analytics.overview', [$workspaceUid, $businessUid]);
     $campaignsUrl = route('customer.workspaces.businesses.analytics.campaigns', array_merge([$workspaceUid, $businessUid], $range->queryParameters()));
+    $resolvedCustomerContext = request()->attributes->get('customerContext');
+    $accountNoun = $resolvedCustomerContext instanceof \App\Library\Navigation\CustomerContext ? $resolvedCustomerContext->accountNoun() : 'account';
 @endphp
 
 @section('content')
@@ -22,7 +24,7 @@
             <div class="col-12">
                 <a href="{{ route('customer.workspaces.show', $workspaceUid) }}" class="d-inline-flex align-items-center gap-1 transition-fast text-label mb-2">
                     <x-ds-icon name="arrow-left" size="16" />
-                    Back to Workspace
+                    Back to {{ ucfirst($accountNoun) }}
                 </a>
             </div>
 

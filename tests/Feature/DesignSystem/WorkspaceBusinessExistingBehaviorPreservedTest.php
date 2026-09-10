@@ -102,7 +102,11 @@ class WorkspaceBusinessExistingBehaviorPreservedTest extends TestCase
         $response = $this->get(route('customer.workspaces.show', $workspace->uid))->assertOk();
 
         $response->assertSee('Inactive');
-        $response->assertSee('No Businesses are accessible in this Workspace.');
+        // Customer Experience Redesign Slice 1A (Correction 3, contract §5):
+        // the empty state now reads the resolved account noun, never the
+        // raw word "Workspace". This owner has no plan assignment, so the
+        // frame resolves to the Agency wording (CustomerContext::accountNoun()).
+        $response->assertSee('No Businesses are accessible in this Agency account.');
     }
 
     // -----------------------------------------------------------------
