@@ -13,6 +13,7 @@
 | Predecessor: Slice 2A navigation | Contract merged (`docs/automation/CUSTOMER-EXPERIENCE-REDESIGN-SLICE-2A-NAVIGATION.md`, PR #237). **Implementation not yet observed on `origin/main`** — §20 depends on it landing first. |
 | Predecessor: Slice 1 terminology | Contract exists on unmerged branch `agent/customer-experience-redesign-slice-1-terminology-contract`. **Implementation not yet observed on `origin/main`.** |
 | Governance | Route 3 (AGENTS.md, "Explicitly human-authorized manual lanes") — scope comes from this task's own instructions, not from `AI-AUTONOMY-STATE.json`, which remains `gate_label: "ai:paused"` and grants no standing authority. This document does not change any field in that state file. |
+| **Correction 1** (this pass) | `origin/main` normal-merged from `634ff2b0` to `826d2310face763256937235231b4f15139a7850` (PR #239, the Slice 4 Dashboard contract — doc-only, one file, no conflict). Chat A re-inspected at its newest head `8893e9f31ccbe8ab27a8ab90d0fa4cb6b9178a29`. Corrects §4's backfill counterpart rule and adds §5's explicit live-write orientation invariant; every other locked decision (§1-§3, §6-§20) is re-checked and confirmed unchanged. |
 
 ---
 
@@ -108,11 +109,23 @@ Matches the Business Data Tenancy Foundation Pass 1 pattern exactly (`database/m
 
 **Locked**: `App\Library\Business\Migration\ChatBoxBusinessBackfillV1` — a new, versioned, immutable class, matching `BusinessDataTenancyBackfillV1`'s own convention (chunked, idempotent on `business_id IS NULL`, never fails the migration, logs an aggregate summary only).
 
+### Producer orientation audit (Correction 1)
+
+This contract's first draft proposed branching the backfill's counterpart column on whether a historical row was "created inbound" or "created outbound." **That branch is withdrawn — `chat_boxes` carries no durable creation-direction marker, and no such branch is safe.** Every live write path to `chat_boxes` was re-audited mechanically, on current merged `origin/main` (`826d2310face763256937235231b4f15139a7850`, after normal-merging PR #239) and on Chat A's newest head (`8893e9f31ccbe8ab27a8ab90d0fa4cb6b9178a29`), tracing caller assignments rather than inferring from variable names:
+
+| # | Producer | `chat_boxes.from` | `chat_boxes.to` | Evidence |
+|---|---|---|---|---|
+| 1 | `EloquentCampaignRepository::quickSend()` (outbound compose/reply, `ChatBox::firstOrNew()`, line ~492) | `$sender_id = $input['sender_id']` (line 100) — the compose-time chosen sending identity: **owned** | `$phone = str_replace(..., $input['country_code'].$input['recipient'])` (line 246) — the typed recipient: **external** | Direct read, both current `origin/main` and unchanged on Chat A's head |
+| 2 | `DLRController::inboundDLR()` (the single shared write, `ChatBox::firstOrNew()`/`updateOrCreate()`, all ~70 legacy-provider callers funnel through it) | its own 5th parameter `$from` | its own 1st parameter `$to` | Traced `inboundTwilio()` as the concrete caller: `$to = $request->input('From')` (Twilio's sender — **external**), `$from = $request->input('To')` (the Business's own Twilio number — **owned**), passed positionally into `inboundDLR($to, $message, $sendingServer, $cost, $from, ...)`. **Structural proof this holds for every one of the ~70 callers, not just Twilio**: `inboundDLR()` only creates a `Reports`/`ChatBox` row at all when its `$from` argument resolves to an owned, `status = 'assigned'` row in `PhoneNumbers` (`PhoneNumbers::where('number', $from)->where('status','assigned')...`, re-confirmed hardened to an exact/ambiguous-fails-closed match on Chat A's newest head); a caller that passed its external number into that slot would simply fail the lookup and write nothing, never a wrong-oriented row. Chat A's newest head fixes the earlier partial-match lookup bug and the blank-`uid` bug in this same block; **it changes none of the `from`/`to` orientation**, confirmed by direct read of both. |
+| 3 | `EloquentCampaignRepository::campaignBuilder()`'s legacy AI-Prospecting hook (`DB::table('chat_boxes')->insertGetId()`, line ~1192 — dead on current schema per §2/§13, unchanged by this correction) | `$sender_id[0] ?? null` — the campaign's chosen sender identity: **owned** | `$phone` derived from `$contact->phone` — the Contact's own number: **external** | Direct read; consistent with #1 and #2 even though this producer is otherwise out of scope |
+
+**No producer with reversed orientation was found.** Every one of the three write sites — covering 100% of the code that ever inserts a row into `chat_boxes`, on both current `origin/main` and Chat A's actively-changing head — agrees: **`chat_boxes.from` is always the owned/Business-side number, `chat_boxes.to` is always the external counterparty's number.** §4's opposite-orientation escape hatch (originally §4 of the task) is therefore **not invoked** — there is no need to restrict Contact evidence to a mechanically-provable subset of rows, because the orientation is provable for every row by construction, not merely by convention.
+
 ### Resolution order
 
 **Step 1 — Contact evidence.**
 
-1. Normalize the conversation's counterpart number (`chat_boxes.to` for a box the customer's own send created; `chat_boxes.from` for one created by an inbound message — i.e., always the *non-owner* side of the conversation) using the canonical phone normalizer already in use elsewhere in this codebase for the same purpose (`libphonenumber\PhoneNumberUtil`, the same library `ChatBoxController::sent()`/`reply()` already call — no second normalizer is introduced).
+1. Normalize `chat_boxes.to` — **always this column, unconditionally, with no branch on how the row was created** — using the canonical phone normalizer already in use elsewhere in this codebase for the same purpose (`libphonenumber\PhoneNumberUtil`, the same library `ChatBoxController::sent()`/`reply()` already call — no second normalizer is introduced).
 2. Query:
    ```php
    Contacts::where('customer_id', $chatBox->user_id)
@@ -145,6 +158,15 @@ if ($businesses->count() === 1) {
 ## 5. Live-write policy
 
 **General rule**: every producer that already has explicit Business identity in scope **must** write it. **Never re-derive `business_id` from `Auth::id()`/`LegacyBusinessResolver` when a Business route, or an already-threaded `$input['business_id']`, already supplied it.**
+
+**Orientation invariant, locked (Correction 1).** Every write to `chat_boxes.from`/`chat_boxes.to`, in every producer this slice touches or adds, follows exactly one domain orientation, confirmed universal by the audit in §4:
+
+```
+chat_boxes.from = the selected Business's own sender identity / owned number
+chat_boxes.to   = the external conversation counterparty's number
+```
+
+This is a **domain** orientation, not a provider-wire-format one. A provider adapter or controller may internally receive, and may internally keep calling, fields named `From`/`To` in whatever sense that specific provider's API uses them (Twilio's webhook `From` is the *external* sender, for instance — the opposite of this domain's `from`) — that is the provider's own naming, not this application's. **The one seam that writes to `chat_boxes` must normalize whatever the provider/controller called things into this exact domain orientation before the write**, exactly as `inboundDLR()` already does today (its own local `$from`/`$to` parameters are already, correctly, in the *domain* sense confirmed by §4 — it is each caller's job to map its provider's wire fields onto `inboundDLR()`'s domain-oriented parameters correctly, which `inboundTwilio()` already does and which any new Slice 2B compose/reply path must do identically). No new code in this slice may write `chat_boxes.from`/`chat_boxes.to` from a provider-named variable without first confirming, by the same reasoning as §4's audit, which domain side that variable actually represents.
 
 **Business compose/reply** (`EloquentCampaignRepository::quickSend()`, lines 490-517, and its future Business-route callers per §6):
 
@@ -259,11 +281,11 @@ Foreign scope at **any** link — wrong Workspace, wrong Business, wrong `busine
 
 **A Conversation may exist without a Contact.** Slice 2B does **not**: auto-create Contacts from inbound conversations, add any uniqueness constraint to `contacts`, or otherwise touch Contacts schema.
 
-**Display-only lookup**, replacing `ChatBox::contact()`'s current unscoped `belongsTo(Contacts::class, 'to', 'phone')`:
+**Display-only lookup**, replacing `ChatBox::contact()`'s current unscoped `belongsTo(Contacts::class, 'to', 'phone')`. Per §4's producer audit, the external counterparty is **always** `chat_boxes.to`, regardless of whether the conversation was created by an outbound send or an inbound message — the lookup is never branched:
 
 ```php
 Contacts::where('business_id', $selectedBusiness->id)
-    ->where('phone', $normalizedCounterpart)
+    ->where('phone', $normalize($chatBox->to))
     ->get();
 ```
 - **Exactly one match**: the UI may show that Contact's name.
@@ -277,6 +299,8 @@ The existing `ChatBox::contact()` Eloquent relationship, as currently defined, *
 ## 11. Block action — locked
 
 Current `block()` (`ChatBoxController.php:651-687`): creates a `Blacklists` row with `user_id` only, then does `Contacts::where('phone', $box->to)->where('customer_id', Auth::id())->first()` — a third, independently-scoped key, unscoped by Business.
+
+**Confirmed correct counterpart, unchanged by Correction 1**: `$box->to` is already, and remains, the external counterparty under the orientation §4 confirms — the existing code's choice of column was never the defect; only its Business scoping was. This holds identically whether the conversation was created by the customer's own outbound send or by an inbound message, since `to` carries the same domain meaning either way — no branch is needed here, matching §4/§10.
 
 **Locked replacement:**
 
@@ -368,6 +392,8 @@ No index beyond these four/conditional-fifth is authorized — no speculative pi
 ---
 
 ## 15. Dashboard read seam — locked, now required
+
+**Consistency sweep note (Correction 1)**: the Slice 4 Dashboard contract, merged into `origin/main` since this document's first draft (PR #239, §9.1), names its expected method `conversationsStarted(Business, CarbonImmutable, CarbonImmutable): int` on an unnamed class, with the same predicate and half-open range shape locked below under the name `startedCount()` on `BusinessConversationReadModel`. The two are semantically identical; only the method name differs. Slice 4's own contract explicitly anticipates and accepts this: *"If the seam 2B lands differs in name or signature from §9.1, Slice 4 consumes what 2B actually shipped and records the difference — it does not build its own."* **No rename is made here** — renaming the seam is outside this correction's scope (orientation only), and Slice 4's own contract already resolves the mismatch without requiring one. This is recorded so the discrepancy is never mistaken for an oversight.
 
 `App\Library\Conversations\BusinessConversationReadModel`:
 
@@ -539,9 +565,10 @@ Any primary-Business inference, anywhere, for any purpose
 | Group | Tests |
 |---|---|
 | **Migration/backfill** | nullable `business_id` exists + indexed + FK `restrictOnDelete`; two duplicate same-Business Contact rows resolve deterministically (not ambiguous); Contacts spanning two distinct Businesses leave the row unresolved; exactly-one-Business-customer fallback resolves; multi-Business customer with no Contact evidence stays NULL (no primary); a pre-existing NULL legacy row is retained across a rerun; rerun is idempotent (no row re-touched, count unchanged) |
+| **Counterpart orientation (§4/§5, Correction 1)** | outbound `quickSend()` persists `from = owned sender identity`, `to = the typed recipient`; the canonical inbound webhook path persists `from = the Business's own receiving number`, `to = the external sender`; an inbound reply to a box the customer's own outbound send created, and an outbound reply to a box an inbound message created, both converge on the **same** `(user_id, business_id, from, to)` tuple — i.e. inbound and outbound traffic for one real-world pair never produce two boxes; backfill Contact evidence reads `chat_boxes.to`, never branched by how the row was created; an outbound-created historical row and an inbound-created historical row both resolve identically given the same Contact evidence; no test or production code guesses orientation from a "created inbound" vs "created outbound" marker, because none exists |
 | **Tenancy — every one of the six mutating actions + messages/notification** | owner (correct Business) succeeds; Workspace admin succeeds; selected staff (Business-scoped role) succeeds; view-as (viewed Business only) succeeds and cannot escape it; same actor, Business A vs Business B — B denied while acting inside A; foreign Workspace denied; foreign Business (same actor, different Workspace) denied; NULL-`business_id` legacy row denied via every Business route; foreign `uid` denied; numeric id cannot substitute for `uid` (extends the existing `test_numeric_primary_key_cannot_resolve_a_chatbox_for_any_of_the_six_actions` under the new scoping) |
 | **Compose resources (§6)** | foreign sending server rejected; foreign phone number rejected; foreign template rejected; foreign sender identity rejected; a staff actor's compose persists the **Business's** owning-customer id, never the staff actor's own id |
-| **Contact (§10)** | same phone in two Businesses never leaks the other Business's Contact name; duplicate Contacts within one Business use the neutral phone-fallback display, never `first()`; `block()` unsubscribes only same-Business Contact rows, never a foreign Business's matching-phone row; a Conversation with zero matching Contacts still renders (phone-only) |
+| **Contact (§10) and block (§11)** | same phone in two Businesses never leaks the other Business's Contact name; duplicate Contacts within one Business use the neutral phone-fallback display, never `first()`; `block()` unsubscribes only same-Business Contact rows, never a foreign Business's matching-phone row; a Conversation with zero matching Contacts still renders (phone-only); `block()` on a conversation whose box was created by an **inbound** message blacklists the **external sender's** number, not the Business's own receiving number (the exact regression the task requires); the Business's own `from` number is never, under any code path, looked up as if it were a Contact or blacklist target |
 | **Producers (§5)** | Business compose writes `business_id` onto the created/matched ChatBox; Business reply preserves it on the existing box; an inbound callback with an authoritative resolved Business writes it; an inbound callback with no resolvable Business writes NULL and never guesses; B1's existing (pre-Slice-2B) Outreach behavior is unchanged by this slice's own regression suite (no Campaign/Reports/wallet behavior differs); Agency Prospecting's own test suite is unaffected (run, not edited) |
 | **Data integrity (§12)** | a newly-created outgoing ChatBoxMessage has `send_by = 'from'` and `direction = 'outgoing'`; no existing row's `send_by` value is altered by this migration or this deploy |
 | **Routes (§7-8)** | every canonical Business route resolves and is authorized per §9; every retired flat POST route 404s (`Route::has()` false for each of the eight old names); the two bare GET routes redirect correctly for 0/1/>1 accessible Businesses, never a primary guess; every first-party Blade/JS reference is repointed (grep-verified zero remaining references to `customer.chatbox.*` route names outside this migration's own historical-compatibility redirect controller) |
