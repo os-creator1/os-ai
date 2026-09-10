@@ -265,8 +265,25 @@ decides which file is active:
 `frameworkSelectedEnvironmentFile()` mirrors that exactly, including reading
 `APP_ENV` through `Illuminate\Support\Env` so a value supplied by
 `phpunit.xml`'s `<server>` element resolves through the same repository and
-adapter chain the bootstrapper uses. Under this repository's `phpunit.xml` that
-selects `.env.testing`, which a test asserts directly.
+adapter chain the bootstrapper uses.
+
+**Which file that selects depends on the checkout, and no test may assume.**
+`.gitignore` matches `.env.*`, so `.env.testing` is untracked and **absent on a
+clean checkout**. With `APP_ENV=testing` supplied by `phpunit.xml`, Laravel then
+correctly selects `.env`, because the suffixed file only wins when it exists.
+Both outcomes are correct:
+
+| Checkout | Selected |
+|---|---|
+| Workstation that has `.env.testing` | `.env.testing` |
+| Clean checkout or CI, no `.env.testing` | `.env` |
+
+Post-merge correction: the focused suite originally hardcoded `.env.testing` in
+three assertions and would have failed on a clean checkout — on correct
+behaviour. Those assertions now derive the expected filename the same way the
+framework does, and a data-provided test drives the real installer against two
+scratch directories, one with `.env.testing` and one without, to prove both
+selections. See §6.2.
 
 ### 4.3 Teardown, re-activation and uniqueness
 
@@ -466,6 +483,52 @@ them:
   `tests/Feature/Support/TemporaryEnvironmentFileTest.php`, which reads the
   repository files on purpose to assert they were not written.
 
+### 6.2a Both checkout shapes, proven
+
+The suite must not require the untracked `.env.testing`. Two independent
+proofs:
+
+**In-suite, both shapes at once.**
+`test_the_installer_selects_the_file_laravel_would_have_selected()` builds two
+scratch directories — one holding only `.env`, one holding both — points the
+application at each as an un-booted application sees the repository root, and
+drives the **real** installer. It asserts the selected filename, that the copy
+carries the right source file's bytes, that a production write lands in the
+copy, and that the scratch source is byte- and mtime-identical afterwards. No
+repository file is involved, and nothing untracked is created or deleted.
+
+**End to end, as a clean checkout.** The whole focused suite was also run with
+the workstation's `.env.testing` moved aside and a single `.env` in place —
+exactly the clean-checkout and CI shape:
+
+| Shape | Result | `.env` | `.env.testing` |
+|---|---|---|---|
+| Workstation (`.env` + `.env.testing`) | 43 tests, 400 assertions, 0 failures | unchanged | unchanged |
+| **Clean checkout (`.env` only)** | **43 tests, 400 assertions, 0 failures** | unchanged | never created |
+
+Identical counts in both shapes. A pre-flight check confirmed the clean-checkout
+run genuinely selected `.env` and resolved the isolated lane database before any
+test was allowed to run.
+
+### 6.2b One further over-strict assertion, corrected
+
+`test_refresh_database_migration_preparation_does_not_touch_the_repository_files()`
+asserted that the repository `.env.testing` does not *contain* `APP_TIME_FORMAT=`,
+`OPENAI_ACTIVE=` or `TERMS_OF_USE=`.
+
+That is not a property of a correct system. Running `php artisan migrate`
+outside a test is *supposed* to write the active environment file, which in an
+ordinary CLI invocation is the repository one — so any developer who has ever
+migrated normally legitimately has those keys, and the assertion failed on
+correct behaviour. It was found exactly that way here, by a routine
+`artisan migrate:fresh` used to prepare the lane database.
+
+It is replaced by the property that actually matters and does not depend on
+machine history: the repository files' full contents are captured before and
+compared after, the active path is asserted to be neither repository file and
+outside the repository, and the migration keys are asserted present in the
+disposable copy.
+
 ### 6.3 All probe outcomes, as real subprocesses
 
 `tests/Fixtures/EnvironmentIsolationProbeTest.php` drives **both**
@@ -477,7 +540,37 @@ outcome:
 | Normal completion | Temp directory removed; both repository files unchanged; no marker leaked |
 | Assertion failure | Same |
 | Uncaught exception | Same |
-| **Forced termination** (`SIGKILL`-equivalent, mid-test) | Both repository files unchanged by bytes **and** mtime. The child's temp directory necessarily survives — a killed process runs neither teardown nor a shutdown function — which is exactly why it lives outside the repository. The test removes the orphan |
+| **Forced termination** (`SIGKILL`-equivalent, **after both writers have run**) | Both repository files unchanged by bytes **and** mtime; neither writer's value observable in either; the child's directory removed by the parent |
+
+**Post-merge correction to the forced-termination case.** The parent used to
+kill the child as soon as it saw `ENVPATH=`, and a comment claimed that meant
+the child had "booted, activated isolation and run both writers". That was
+false: the probe prints its path *before* `writeMarker()` runs, so the kill
+routinely landed before either production writer had touched anything. The test
+proved that booting is safe, not that a kill *mid-write* is — which is the case
+that matters, because that is when a writer could plausibly hold a repository
+file open.
+
+`test_probe_blocks_until_killed()` now emits a distinct `PROBE-WROTE` line that
+is printed **only after** both writers have run **and** both values have been
+read back out of the disposable copy. A probe that cannot confirm its own
+writes prints `PROBE-WRITE-FAILED` and fails instead of signalling. Having
+signalled, it blocks — bounded, so a parent that dies cannot strand it — until
+killed.
+
+The parent, in order:
+
+1. waits for `PROBE-WROTE` rather than `ENVPATH=`;
+2. asserts the reported values are exactly `probe-blocking` and
+   `appconfig-blocking`, so the child provably reached `write_env()` **and**
+   `AppConfig::setEnv()`;
+3. asserts the child is still running, then kills it with signal 9;
+4. asserts both repository files are byte- and mtime-identical;
+5. asserts neither writer's key or value appears in either repository file;
+6. removes **only** the child's own directory, after asserting that path sits
+   under the system temp directory.
+
+Seventeen assertions, run eight consecutive times, clean every time.
 
 ### 6.4 Concurrency
 
@@ -648,7 +741,25 @@ them all.
 
 ---
 
-## 9. Known unrelated conditions observed, and not changed here
+## 9. Known conditions observed, and not changed here
+
+**An occasional empty leftover directory, reported rather than fixed.** Under
+repeated forced-termination runs on Windows, roughly one run in eight left an
+**empty** `aibos-env-*` directory behind. Its file had been removed; only the
+directory remained. The cause is `UsesTemporaryEnvironmentFile::removeDirectory()`
+using a suppressed `@rmdir()`, which can lose a race with a just-released
+handle. It is harmless — the directory holds no environment data, sits outside
+the repository, and no repository file is affected — and single runs from a
+cleared state leave nothing at all.
+
+It is **not** the forced-termination test's child: that directory is deleted by
+the parent and the deletion is asserted, in every repetition. Fixing the
+`@rmdir` race would mean editing `tests/Support/UsesTemporaryEnvironmentFile.php`,
+which is outside this round's three-path allowlist, so it is recorded here for a
+round that includes it. A retry-with-backoff around `rmdir`, or tolerating an
+empty directory in the sweep, would close it.
+
+
 
 | Observation | Why it is left alone |
 |---|---|

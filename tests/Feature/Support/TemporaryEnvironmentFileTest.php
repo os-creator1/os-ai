@@ -56,11 +56,18 @@ class TemporaryEnvironmentFileTest extends TestCase
         // The application's own notion of which environment file is in
         // force must be unchanged, or a restore could hand back the
         // wrong filename.
-        $this->assertSame('.env.testing', $this->app->environmentFile());
-        $this->assertSame(
-            '.env.testing',
-            basename($this->app->environmentFilePath())
-        );
+        //
+        // WHICH filename that is depends on the checkout, and must not
+        // be hardcoded. `.env.testing` is matched by `.gitignore`'s
+        // `.env.*`, so it is absent on a clean checkout, and Laravel then
+        // correctly selects `.env` even with APP_ENV=testing supplied by
+        // phpunit.xml. An earlier revision asserted `.env.testing`
+        // literally and would have failed there — on correct behaviour.
+        $selected = self::expectedSelectedEnvironmentFile();
+
+        $this->assertSame($selected, $this->app->environmentFile());
+        $this->assertSame($selected, basename($this->app->environmentFilePath()));
+        $this->assertSame($selected, basename((string) $this->realEnvironmentFilePath()));
     }
 
     public function test_the_temporary_file_is_seeded_from_the_active_environment_file(): void
@@ -151,7 +158,7 @@ class TemporaryEnvironmentFileTest extends TestCase
 
         $this->assertNotSame($temporary, $this->app->environmentFilePath());
         $this->assertSame(base_path(), $this->app->environmentPath());
-        $this->assertSame('.env.testing', $this->app->environmentFile());
+        $this->assertSame(self::expectedSelectedEnvironmentFile(), $this->app->environmentFile());
         $this->assertFileDoesNotExist($temporary, 'Restoring must delete the temporary copy.');
         $this->assertDirectoryDoesNotExist(dirname($temporary));
 
@@ -558,90 +565,128 @@ PHP;
     }
 
     /**
-     * Forced termination. A killed process runs no tearDown at all, so
-     * its disposable directory necessarily survives — that is expected,
-     * and it is exactly why the directory must live outside the
-     * repository and why the real files must never have been written.
+     * Forced termination, killed AFTER the writers have run.
      *
-     * What is asserted here is the part that matters: a kill mid-test
-     * leaves the developer's real files untouched. The orphaned
-     * directory is then cleaned up by this test so the machine is left
-     * as it was found.
+     * An earlier revision killed the child as soon as it saw `ENVPATH=`,
+     * with a comment claiming that meant the child "has booted,
+     * activated isolation and run both writers". That was wrong: the
+     * probe prints its path BEFORE writing, so the kill routinely landed
+     * before either production writer had touched anything. The test
+     * proved that booting is safe, not that a kill mid-write is — which
+     * is the interesting case, because that is when a writer could have
+     * a repository file open.
+     *
+     * The probe now emits `PROBE-WROTE` only after both writers have run
+     * AND their values have been read back out of the disposable copy,
+     * then blocks. This test waits for that signal, verifies the child
+     * genuinely reached both writers, and only then kills it.
      */
     public function test_a_forcibly_terminated_process_leaves_the_real_files_untouched(): void
     {
         $realEnv = base_path('.env');
         $realTestingEnv = base_path('.env.testing');
 
-        clearstatcache();
-        $before = [
-            'envBytes' => is_file($realEnv) ? md5_file($realEnv) : null,
-            'envMtime' => is_file($realEnv) ? filemtime($realEnv) : null,
-            'testingBytes' => is_file($realTestingEnv) ? md5_file($realTestingEnv) : null,
-            'testingMtime' => is_file($realTestingEnv) ? filemtime($realTestingEnv) : null,
-        ];
+        $before = $this->realFileFingerprints();
 
-        $process = $this->startProbe('test_probe_passing');
+        $process = $this->startProbe('test_probe_blocks_until_killed');
 
-        // Wait until the child has reported its path, which means it has
-        // booted, activated isolation and run both writers.
-        $deadline = microtime(true) + 120;
-        $reported = '';
+        // 1. Wait for the POST-WRITE signal, not the path line.
+        $deadline = microtime(true) + 180;
+        $seen = '';
 
         while (microtime(true) < $deadline) {
-            $reported = $process->getIncrementalOutput() . $reported;
+            $seen .= $process->getIncrementalOutput();
 
-            if (str_contains($reported, 'ENVPATH=')) {
+            if (str_contains($seen, 'PROBE-WROTE') || str_contains($seen, 'PROBE-WRITE-FAILED')) {
+                break;
+            }
+
+            if (! $process->isRunning()) {
                 break;
             }
 
             usleep(50_000);
         }
 
-        preg_match('/PROBE \S+ PID=(\d+) ENVPATH=(.+)/', $reported, $matches);
+        $seen .= $process->getIncrementalOutput();
 
-        if ($matches === []) {
-            $process->stop(0);
-            $this->markTestSkipped('The probe did not report before the deadline; nothing to force-terminate.');
-        }
+        $this->assertStringNotContainsString(
+            'PROBE-WRITE-FAILED',
+            $seen,
+            "The probe could not confirm its own writes:\n" . $seen . $process->getErrorOutput()
+        );
 
-        $childEnvPath = trim($matches[2]);
+        // 2. Verify the child reached BOTH writers before it was killed.
+        preg_match(
+            '/PROBE-WROTE blocking PID=(\d+) MARKER=(\S+) APPCONFIG=(\S+) ENVPATH=(.+)/',
+            $seen,
+            $wrote
+        );
 
-        // SIGKILL-equivalent: no signal handler, no shutdown function, no
-        // tearDown.
+        $this->assertNotEmpty(
+            $wrote,
+            "The probe never signalled that it had written:\nSTDOUT:\n" . $seen
+            . "\nSTDERR:\n" . $process->getErrorOutput()
+        );
+
+        $this->assertSame(
+            'probe-blocking',
+            $wrote[2],
+            'The probe did not reach App\Helpers\write_env().'
+        );
+        $this->assertSame(
+            'appconfig-blocking',
+            $wrote[3],
+            'The probe did not reach App\Models\AppConfig::setEnv().'
+        );
+
+        $childEnvPath = trim($wrote[4]);
+        $this->assertStringContainsString('aibos-env-', $childEnvPath);
+        $this->assertTrue($process->isRunning(), 'The probe should still be blocked, waiting to be killed.');
+
+        // 3. SIGKILL-equivalent: no signal handler, no shutdown function,
+        //    no tearDown.
         $process->stop(0, 9);
 
-        clearstatcache();
-
+        // 4. Repository files byte- and mtime-identical.
         $this->assertSame(
-            $before['envBytes'],
-            is_file($realEnv) ? md5_file($realEnv) : null,
-            'A forcibly terminated test modified the real .env.'
-        );
-        $this->assertSame(
-            $before['envMtime'],
-            is_file($realEnv) ? filemtime($realEnv) : null,
-            'A forcibly terminated test opened the real .env for writing.'
-        );
-        $this->assertSame(
-            $before['testingBytes'],
-            is_file($realTestingEnv) ? md5_file($realTestingEnv) : null,
-            'A forcibly terminated test modified the real .env.testing.'
-        );
-        $this->assertSame(
-            $before['testingMtime'],
-            is_file($realTestingEnv) ? filemtime($realTestingEnv) : null,
-            'A forcibly terminated test opened the real .env.testing for writing.'
+            $before,
+            $this->realFileFingerprints(),
+            'A forcibly terminated test modified or re-opened a repository environment file.'
         );
 
-        // The orphan is outside the repository, so it can never
-        // contaminate the working tree. Remove it so this test leaves
-        // nothing behind either.
-        if ($childEnvPath !== '' && is_dir(dirname($childEnvPath))) {
-            File::deleteDirectory(dirname($childEnvPath));
+        // 5. No unsafe repository write: neither value the child wrote is
+        //    observable in either repository file.
+        foreach ([$realEnv, $realTestingEnv] as $path) {
+            $contents = is_file($path) ? (string) File::get($path) : '';
+
+            foreach (['AIBOS_PROBE_MARKER', 'AIBOS_PROBE_APPCONFIG', 'probe-blocking', 'appconfig-blocking'] as $needle) {
+                $this->assertStringNotContainsString(
+                    $needle,
+                    $contents,
+                    "A forcibly terminated test leaked [{$needle}] into " . basename($path) . '.'
+                );
+            }
         }
 
-        $this->assertDirectoryDoesNotExist(dirname($childEnvPath));
+        // 6. Clean ONLY the child's own disposable directory. It is
+        //    outside the repository, so it could never have contaminated
+        //    the working tree; removing it just leaves the machine as it
+        //    was found. A killed process runs no shutdown sweep of its
+        //    own, which is why this is the parent's job.
+        $childDirectory = dirname($childEnvPath);
+
+        $this->assertStringStartsWith(
+            sys_get_temp_dir(),
+            $childDirectory,
+            'Refusing to delete a directory outside the system temp directory.'
+        );
+
+        if (is_dir($childDirectory)) {
+            File::deleteDirectory($childDirectory);
+        }
+
+        $this->assertDirectoryDoesNotExist($childDirectory);
     }
 
     // --- Pre-bootstrap isolation ---
@@ -677,7 +722,11 @@ PHP;
         $real = $this->realEnvironmentFilePath();
 
         $this->assertNotNull($real);
-        $this->assertSame(base_path('.env.testing'), $real, 'The framework selection was not reproduced.');
+        $this->assertSame(
+            base_path(self::expectedSelectedEnvironmentFile()),
+            $real,
+            'The framework selection was not reproduced.'
+        );
         $this->assertFileExists($real);
 
         // The copy this test started from is seeded from that file. Its
@@ -690,6 +739,143 @@ PHP;
             file_get_contents($fresh),
             'The disposable copy does not carry the source bytes Laravel would have loaded.'
         );
+        $this->assertSame(basename($real), basename($fresh));
+    }
+
+    /**
+     * Which environment file this checkout actually presents to Laravel.
+     *
+     * `.gitignore` matches `.env.*`, so `.env.testing` is untracked and a
+     * clean checkout has none. `LoadEnvironmentVariables` only switches
+     * to `<base>.<APP_ENV>` when that file exists, so with APP_ENV=testing
+     * supplied by phpunit.xml the selection is `.env.testing` on a
+     * workstation that has one and `.env` on a checkout that does not.
+     * Both are correct, and no test may require the untracked file.
+     */
+    private static function expectedSelectedEnvironmentFile(): string
+    {
+        $environment = (string) \Illuminate\Support\Env::get('APP_ENV');
+
+        if ($environment !== '' && is_file(base_path('.env.' . $environment))) {
+            return '.env.' . $environment;
+        }
+
+        return '.env';
+    }
+
+    /**
+     * A checkout with no `.env.testing` — the clean-checkout and CI
+     * shape — must select `.env`, and one that has it must select it.
+     *
+     * Both cases are exercised against scratch directories rather than
+     * by deleting a repository file, so this test never needs, creates
+     * or removes an untracked workstation file. It drives the real
+     * installer, so it proves the selection behaviour rather than
+     * re-implementing it.
+     */
+    #[DataProvider('checkoutShapes')]
+    public function test_the_installer_selects_the_file_laravel_would_have_selected(
+        string $shape,
+        bool $withTestingFile,
+        string $expectedFile,
+    ): void {
+        $before = $this->realFileFingerprints();
+
+        $scratch = sys_get_temp_dir()
+            . DIRECTORY_SEPARATOR
+            . 'aibos-checkout-' . getmypid() . '-' . bin2hex(random_bytes(6));
+
+        mkdir($scratch, 0777, true);
+        file_put_contents(
+            $scratch . DIRECTORY_SEPARATOR . '.env',
+            "APP_NAME=\"Base Env\"\nCHECKOUT_SHAPE=\"{$shape}\"\n"
+        );
+
+        if ($withTestingFile) {
+            file_put_contents(
+                $scratch . DIRECTORY_SEPARATOR . '.env.testing',
+                "APP_NAME=\"Testing Env\"\nCHECKOUT_SHAPE=\"{$shape}\"\n"
+            );
+        }
+
+        try {
+            // Present the scratch directory to the installer exactly as
+            // an un-booted application presents the repository root.
+            $this->app->useEnvironmentPath($scratch);
+            $this->app->loadEnvironmentFrom('.env');
+
+            $copy = $this->installTemporaryEnvironmentFile($this->app);
+
+            $this->assertSame($expectedFile, basename($copy), "[{$shape}] selected the wrong file.");
+            $this->assertSame($expectedFile, $this->app->environmentFile());
+            $this->assertSame($shape, $this->readActiveEnvValue('CHECKOUT_SHAPE'));
+            $this->assertSame(
+                $withTestingFile ? 'Testing Env' : 'Base Env',
+                $this->readActiveEnvValue('APP_NAME'),
+                "[{$shape}] copied the wrong source file's bytes."
+            );
+
+            // The copy is disposable and outside the source directory.
+            $this->assertStringNotContainsString($scratch, $copy);
+
+            // A production writer lands in the copy, and the scratch
+            // source stays byte-identical — the same property the
+            // repository files get.
+            $sourcePath = $scratch . DIRECTORY_SEPARATOR . $expectedFile;
+            $sourceBytes = file_get_contents($sourcePath);
+            $sourceMtime = filemtime($sourcePath);
+
+            write_env('CHECKOUT_WRITE_PROBE', 'written');
+            AppConfig::setEnv('CHECKOUT_SHAPE', 'overwritten');
+
+            $this->assertSame('written', $this->readActiveEnvValue('CHECKOUT_WRITE_PROBE'));
+            $this->assertSame('overwritten', $this->readActiveEnvValue('CHECKOUT_SHAPE'));
+
+            clearstatcache();
+            $this->assertSame($sourceBytes, file_get_contents($sourcePath), "[{$shape}] modified its source file.");
+            $this->assertSame($sourceMtime, filemtime($sourcePath), "[{$shape}] re-opened its source file for writing.");
+        } finally {
+            // Hand the application back to the repository, then restore
+            // this test's own isolation for tearDown.
+            $this->restoreEnvironmentFile();
+            $this->app->useEnvironmentPath(base_path());
+            $this->app->loadEnvironmentFrom('.env');
+            $this->useTemporaryEnvironmentFile();
+
+            self::removeScratchDirectory($scratch);
+        }
+
+        // Neither repository file was involved at any point.
+        $this->assertSame(
+            $before,
+            $this->realFileFingerprints(),
+            "[{$shape}] modified or re-opened a repository environment file."
+        );
+    }
+
+    public static function checkoutShapes(): array
+    {
+        return [
+            'clean checkout, no .env.testing' => ['clean-checkout', false, '.env'],
+            'workstation with .env.testing' => ['workstation', true, '.env.testing'],
+        ];
+    }
+
+    private static function removeScratchDirectory(string $directory): void
+    {
+        if (! is_dir($directory)) {
+            return;
+        }
+
+        foreach (scandir($directory) ?: [] as $entry) {
+            if ($entry === '.' || $entry === '..') {
+                continue;
+            }
+
+            @unlink($directory . DIRECTORY_SEPARATOR . $entry);
+        }
+
+        @rmdir($directory);
     }
 
     /**
@@ -706,6 +892,10 @@ PHP;
 
         clearstatcache();
         $before = $this->realFileFingerprints();
+        $beforeContents = [
+            $realEnv => is_file($realEnv) ? File::get($realEnv) : null,
+            $realTestingEnv => is_file($realTestingEnv) ? File::get($realTestingEnv) : null,
+        ];
 
         $this->artisan('migrate:fresh', ['--force' => true])->run();
 
@@ -723,11 +913,27 @@ PHP;
             'The time-format migration did not write the active environment file.'
         );
 
-        foreach (['APP_TIME_FORMAT', 'OPENAI_ACTIVE', 'TERMS_OF_USE'] as $key) {
-            $this->assertStringNotContainsString(
-                $key . '=',
-                is_file($realTestingEnv) ? (string) File::get($realTestingEnv) : '',
-                "A migration wrote [{$key}] into the repository .env.testing."
+        // The destination really is a different file.
+        $active = $this->app->environmentFilePath();
+        $this->assertNotSame(realpath($realEnv) ?: $realEnv, $active);
+        $this->assertNotSame(realpath($realTestingEnv) ?: $realTestingEnv, $active);
+        $this->assertStringNotContainsString(base_path(), $active);
+
+        // Byte-for-byte, spelled out rather than only hashed.
+        //
+        // NOT asserted: that the repository files lack keys such as
+        // APP_TIME_FORMAT. They legitimately may contain them — running
+        // `php artisan migrate` outside a test is supposed to write the
+        // active environment file, which in a normal CLI invocation IS
+        // the repository one. An earlier revision asserted their absence
+        // and failed on a developer machine where migrate had ever been
+        // run normally, which is correct behaviour rather than a defect.
+        // What must hold is that THIS run changed nothing.
+        foreach ($beforeContents as $path => $contents) {
+            $this->assertSame(
+                $contents,
+                is_file($path) ? File::get($path) : null,
+                'migrate:fresh changed the contents of ' . basename($path) . '.'
             );
         }
 
