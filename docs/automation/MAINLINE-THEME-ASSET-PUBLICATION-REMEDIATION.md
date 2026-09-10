@@ -257,6 +257,10 @@ restored:
 
 ### 6.2 Focused suites
 
+Every suite below was run twice — once on the pre-merge base and again on
+current main's integrated harness after the §6.6 merge. The counts are
+identical in both runs except where noted.
+
 | Suite | Result |
 |---|---|
 | `tests/Feature/Assets/ThemeAssetPublicationTest` | 13 tests, 127 assertions, **green** |
@@ -265,7 +269,7 @@ restored:
 | `tests/Feature/Auth` | 33 tests, 437 assertions, **green** |
 | `tests/Feature/Dashboards` | 14 tests, 41 assertions, **green** |
 | `tests/Feature/Settings` | 57 tests, 172 assertions, **green** |
-| `tests/Feature/Branding` | 53 tests, 412 assertions, 2 failures — §6.4 |
+| `tests/Feature/Branding` | pre-merge 53 tests, 412 assertions, 2 failures; **post-merge 53 tests, 413 assertions, 1 failure** — `BrandingUploadValidationTest` turns green on current main (§6.6) |
 
 ### 6.3 Clean-checkout authenticated render
 
@@ -326,13 +330,81 @@ trailing newline. The file affected is this worktree's **own gitignored
 copy**; the developer's `.env` lives in the main checkout and the other
 worktrees and was never opened. It is restored path-specifically to its
 pre-test bytes before the audit, and §7.2's `bootstrap/cache` files are
-restored the same way. **`origin/main` has since fixed this defect
-outright** in PR #233, which makes `AppConfig::setEnv()` address the active
-environment file.
+restored the same way. **`origin/main` fixed this defect outright** in PR #233, which makes
+`AppConfig::setEnv()` address the active environment file, and that fix is
+now merged into this branch: after the post-merge full run in §6.6, `.env`
+is **byte-identical** to its pre-test snapshot — md5
+`3fe3b8f6e1e91967425b8ea07c19b212`, 1 760 bytes — with no restore needed.
+The restore described above applied to the pre-merge runs only.
 
 No credential, database, preview configuration, cache file or runtime
 upload was modified or committed, no other worktree was touched, and no
 blanket `git add -A` was run — every path was staged explicitly.
+
+---
+
+
+### 6.6 Post-merge baseline against current `origin/main`
+
+`origin/main` advanced from this branch's merge base `559a8200` to
+**`b8bab0a6`** — 10 commits, 28 files, PRs #232, #233 and #234 — while this
+work was in progress. Changed-path overlap with this branch's 11 paths was
+re-confirmed **zero**, and `origin/main` was then merged in with a normal
+`--no-ff` merge: **no conflicts**, merge commit
+`6344a5a834930e4b65972a75187e4113bffb0a1d`.
+
+Main changed no build input — nothing under `composer.json`,
+`composer.lock`, `package.json`, `package-lock.json`, `webpack.mix.js`,
+`resources/` or `public/` — so no rebuild was needed, and all six published
+output hashes in §4 were re-verified **unchanged** after the merge.
+
+The full suite was re-run on current main's integrated harness, same
+dedicated database, `migrate:fresh` 250 migrations / 0 pending:
+
+| | pre-merge base `559a8200` | **post-merge `b8bab0a6`** |
+|---|---|---|
+| Tests | 5 191 | **5 241** |
+| Assertions | 26 380 | **26 838** |
+| Errors | 2 | **1** |
+| Failures | 19 | **11** |
+
+**Twelve problems disappeared**, exactly the ones main's three merged PRs
+targeted: the eight `EntitlementManagerConcurrencyTest` scenarios,
+`WorkspaceManagerConcurrencyTest`, `WorkspaceManagerTest`, the
+`WorkspaceTransitionsMigrationSchemaTest` error, and
+`BrandingUploadValidationTest`.
+
+**Nothing was introduced.** Three failures appear in this run that were not
+in the previous one, and all three are main's **own** new test:
+
+| Test | Assertion |
+|---|---|
+| `TemporaryEnvironmentFileTest::test_the_temporary_file_keeps_the_original_environment_filename` | expected `.env.testing`, got `.env` |
+| `TemporaryEnvironmentFileTest::test_restoring_returns_the_application_to_its_original_environment_file` | expected `.env.testing`, got `.env` |
+| `TemporaryEnvironmentFileTest::test_the_disposable_copy_carries_the_bytes_laravel_would_have_loaded` | expected the `.env.testing` path, got the `.env` path |
+
+Laravel selects `.env.testing` only when that file exists; this machine's
+checkout has only `.env`, so it falls back. Proven twice:
+
+* **Structurally** — `TemporaryEnvironmentFileTest.php`,
+  `UsesTemporaryEnvironmentFile.php`, `TestCase.php`,
+  `CreatesApplication.php`, `EnvironmentIsolationProbeTest.php` and
+  `phpunit.xml` are all byte-identical to `origin/main` on this branch, and
+  the branch's entire diff against `origin/main` contains exactly one PHP
+  file — its own new test.
+* **Empirically** — the same file run in a **separate worktree checked out
+  at pristine `origin/main` `b8bab0a6`**, with the same `.env`, the same
+  absent `.env.testing` and the same database: **41 tests, 358 assertions,
+  the identical three failures by name**.
+
+So against current main: **12 fixed, 3 pre-existing and reproduced, 0
+introduced.** The remaining eight are the previously classified set —
+`BrandingAdminFooterRenderTest`, three Business Knowledge Profile tests,
+four Website tests — plus the `OpportunityManagerBeginRunTest` error.
+
+Creating a `.env.testing` would turn those three green, and was deliberately
+**not** done: that would hide a main-side environment prerequisite rather
+than report it.
 
 ---
 
