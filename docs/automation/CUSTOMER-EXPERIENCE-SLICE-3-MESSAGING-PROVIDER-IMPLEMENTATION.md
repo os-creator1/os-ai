@@ -372,7 +372,42 @@ T-MSG-30 drives the real old routes.
 
 ## 8. Full regression and pristine-main comparison
 
-Recorded in the lane's final report for this round.
+**5403 passed, 9 failed, 28156 assertions.**
+
+Run in two halves rather than one process. A single run exhausted PHP's
+512 MB limit at test 5330, inside the Workspace suite, after this slice added
+roughly ninety tests — cumulative memory growth in one long-lived process,
+not a test failure, and `-d memory_limit=-1` does not reach the child process
+`artisan test` spawns. Splitting the run is a runner-resource decision; no
+assertion was changed, skipped or conditioned to obtain it.
+
+| Half | Result |
+|---|---|
+| `tests/Unit` + Feature A–Messaging | 2096 passed, 4 failed (13655 assertions) |
+| Feature Opportunity–Workspace | 3307 passed, 5 failed (14501 assertions) |
+
+**All nine failures are pre-existing.** Verified head-to-head on a pristine
+checkout of the SAME `origin/main` (`7f729ca`), same machine, same
+environment, on the separate validated sibling database
+`ultimatesms_testing_lane_a_base`: **9 failed, 180 passed** — the same nine
+test names, exactly.
+
+| Test | This branch | Pristine `7f729ca` |
+|---|---|---|
+| `BrandingAdminFooterRenderTest::admin_footer_renders_the_company_name_exactly_once` | fail | fail |
+| `BusinessKnowledgeProfileControllerTest::missing_stale_and_present_fields_are_all_displayed` | fail | fail |
+| `BusinessKnowledgeProfileHoursTest::no_change_row_for_a_true_hours_no_op` | fail | fail |
+| `BusinessKnowledgeProfileSeamTest::only_the_manager_writes_the_tracked_tables` | fail | fail |
+| `OpportunityManagerBeginRunTest::heartbeat_one_second…` | fail | fail |
+| `WebsiteIndexingTest::robots_txt_is_untouched_by_this_feature_branch` | fail | fail |
+| `WebsiteDraftPageServiceSeamTest::store_page_persists_every_draft_field…` | fail | fail |
+| `WebsiteDraftPageServiceSeamTest::update_page_persists_every_draft_field…` | fail | fail |
+| `WebsiteDraftPublishTest::rollback_repoints_the_website…` | fail | fail |
+
+**Introduced: 0. Introduced errors: 0.** Fixed relative to earlier rounds of
+this lane: the three `TemporaryEnvironmentFileTest` failures (resolved by
+merging upstream PR #235) and the `EntitlementEnumsTest` count collision
+(resolved under explicit authorization). Unchanged: the nine above.
 
 ## 9. Deferred, exactly as the contract defers them
 
