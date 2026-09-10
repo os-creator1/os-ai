@@ -570,6 +570,225 @@ class OutreachCorrection1Test extends TestCase
     }
 
     // -----------------------------------------------------------------
+    // Audit finding — forged business_id / user_id tenant escape
+    // -----------------------------------------------------------------
+
+    /**
+     * The defect: every method in CampaignController forwarded
+     * `$request->except('_token', ...)` straight into the campaign
+     * repository, which reads `business_id` and `user_id` out of that array
+     * as TENANCY AUTHORITY — they choose the sending server, the sender id,
+     * the balance debited, the blacklist scope, the contact groups, the
+     * campaign's owner, and whether managed transport is used.
+     *
+     * A customer could therefore name another tenant's Business and user and
+     * send on their account, at their cost.
+     *
+     * These tests authenticate as Tenant A and submit Tenant B's ids through
+     * the real HTTP entry points, and then repeat the attack directly
+     * against the repository so that bypassing the controller cannot restore
+     * it.
+     *
+     * @return array{0: Customer, 1: Customer, 2: Business, 3: array}
+     */
+    private function twoTenants(): array
+    {
+        [$attacker, , $fixture] = $this->sendableTenant();
+        [$victim, $victimBusiness] = $this->sendableTenant();
+
+        // A real sender id and a real contact group belonging to the VICTIM,
+        // so the attack would genuinely succeed if the guard were absent.
+        Senderid::create([
+            'user_id' => $victim->user_id,
+            'business_id' => $victimBusiness->id,
+            'sender_id' => 'VICTIMSENDER',
+            'status' => 'active',
+        ]);
+
+        $victimGroup = ContactGroups::create([
+            'customer_id' => $victim->user_id,
+            'business_id' => $victimBusiness->id,
+            'name' => 'Victim Group',
+            'status' => true,
+        ]);
+
+        Contacts::create([
+            'customer_id' => $victim->user_id,
+            'business_id' => $victimBusiness->id,
+            'group_id' => $victimGroup->id,
+            'phone' => '14155558801',
+            'status' => 'subscribe',
+        ]);
+
+        return [$attacker, $victim, $victimBusiness, ['fixture' => $fixture, 'group' => $victimGroup]];
+    }
+
+    private function assertVictimUntouched(Customer $victim, Business $victimBusiness): void
+    {
+        $this->assertSame(0, Campaigns::where('business_id', $victimBusiness->id)->count(), 'No campaign on the victim.');
+        $this->assertSame(0, DB::table('reports')->where('user_id', $victim->user_id)->count(), 'No report on the victim.');
+        $this->assertSame(0, DB::table('chat_boxes')->where('user_id', $victim->user_id)->count(), 'No chat box on the victim.');
+        $this->assertSame(0, DB::table('business_messaging_operations')->count(), 'No managed operation at all.');
+        $this->assertSame(0, DB::table('business_usage_measurements')->count(), 'No measurement at all.');
+        $this->assertSame(0, DB::table('tracking_logs')->count(), 'No tracking log at all.');
+    }
+
+    public function test_the_campaign_builder_route_ignores_a_forged_business_id_and_user_id(): void
+    {
+        [$attacker, $victim, $victimBusiness, $extra] = $this->twoTenants();
+
+        $balanceBefore = $victim->user->fresh()->sms_unit;
+
+        $this->authenticateAsCustomer($attacker, ['sms_campaign_builder']);
+
+        $this->post('/sms/campaign-builder', [
+            'name' => 'Forged Campaign',
+            'message' => 'Hello',
+            'sms_type' => 'plain',
+            'contact_groups' => [$extra['group']->id],
+            'originator' => 'sender_id',
+            'sender_id' => ['VICTIMSENDER'],
+            'plan_id' => $extra['fixture']['plan']->id,
+            // The attack.
+            'business_id' => $victimBusiness->id,
+            'user_id' => $victim->user_id,
+        ]);
+
+        // The campaign is not created against the victim, and nothing of the
+        // victim's is used or charged.
+        $this->assertVictimUntouched($victim, $victimBusiness);
+        $this->assertSame($balanceBefore, $victim->user->fresh()->sms_unit, 'The victim was not billed.');
+    }
+
+    public function test_the_quick_send_route_ignores_a_forged_business_id_and_user_id(): void
+    {
+        [$attacker, $victim, $victimBusiness] = $this->twoTenants();
+
+        $balanceBefore = $victim->user->fresh()->sms_unit;
+
+        $this->authenticateAsCustomer($attacker, ['send_quick_sms']);
+
+        $this->post('/sms/quick-send', [
+            'recipient' => '14155558802',
+            'message' => 'Hello',
+            'sms_type' => 'plain',
+            'originator' => 'sender_id',
+            'sender_id' => 'VICTIMSENDER',
+            'business_id' => $victimBusiness->id,
+            'user_id' => $victim->user_id,
+        ]);
+
+        $this->assertVictimUntouched($victim, $victimBusiness);
+        $this->assertSame($balanceBefore, $victim->user->fresh()->sms_unit, 'The victim was not billed.');
+    }
+
+    /**
+     * The controller strips the keys; this proves the repository refuses
+     * them even when they arrive anyway, so a future refactor of the
+     * controller cannot silently restore the vulnerability.
+     */
+    public function test_the_repository_itself_refuses_a_business_outside_the_actors_authority(): void
+    {
+        [$attacker, $victim, $victimBusiness, $extra] = $this->twoTenants();
+
+        $this->actingAs($attacker->user);
+
+        $refused = false;
+        try {
+            app(CampaignRepository::class)->campaignBuilder(new Campaigns(), [
+                'name' => 'Direct Forgery',
+                'message' => 'Hello',
+                'sms_type' => 'plain',
+                'contact_groups' => [$extra['group']->id],
+                'originator' => 'sender_id',
+                'sender_id' => ['VICTIMSENDER'],
+                'plan_id' => $extra['fixture']['plan']->id,
+                'business_id' => $victimBusiness->id,
+                'user_id' => $victim->user_id,
+            ]);
+        } catch (\Symfony\Component\HttpKernel\Exception\NotFoundHttpException) {
+            $refused = true;
+        }
+
+        $this->assertTrue($refused, 'The repository must fail closed on a Business outside the actor\'s authority.');
+        $this->assertVictimUntouched($victim, $victimBusiness);
+    }
+
+    public function test_the_repository_refuses_a_user_id_that_is_not_the_supplied_businesss_owner(): void
+    {
+        [$attacker, , $attackerBusiness] = $this->twoTenants();
+        $stranger = $this->createCustomer();
+
+        $this->actingAs($attacker->user);
+
+        // The Business IS the actor's own — only the user_id is forged, to
+        // redirect balance and ownership onto a third party.
+        $ownBusiness = $this->createBusinessWithWorkspace($attacker, $this->businessAttributes(['name' => 'Mine']));
+
+        $refused = false;
+        try {
+            app(CampaignRepository::class)->campaignBuilder(new Campaigns(), [
+                'name' => 'Owner Forgery',
+                'message' => 'Hello',
+                'sms_type' => 'plain',
+                'contact_groups' => [],
+                'business_id' => $ownBusiness->id,
+                'user_id' => $stranger->user_id,
+            ]);
+        } catch (\Symfony\Component\HttpKernel\Exception\NotFoundHttpException) {
+            $refused = true;
+        }
+
+        $this->assertTrue($refused, 'A supplied user_id may only ever be the supplied Business\'s own owner.');
+    }
+
+    public function test_a_legitimate_outreach_request_still_works_after_the_guard(): void
+    {
+        // The positive control. The Outreach controller legitimately sets
+        // both keys AFTER resolving the Business through the RFC-003 §14.1
+        // boundary, passing the Business OWNER's user_id while the actor may
+        // be a staff member — so the guard must admit exactly that shape.
+        [$tenant, $business, $fixture] = $this->sendableTenant();
+
+        $group = ContactGroups::create([
+            'customer_id' => $tenant->user_id,
+            'business_id' => $business->id,
+            'name' => 'Legit Group',
+            'status' => true,
+        ]);
+        Contacts::create([
+            'customer_id' => $tenant->user_id,
+            'business_id' => $business->id,
+            'group_id' => $group->id,
+            'phone' => '14155558803',
+            'status' => 'subscribe',
+        ]);
+        Senderid::create([
+            'user_id' => $tenant->user_id,
+            'business_id' => $business->id,
+            'sender_id' => 'LEGITSENDER',
+            'status' => 'active',
+        ]);
+
+        $this->authenticateAsCustomer($tenant, ['sms_campaign_builder']);
+
+        $this->post(route('customer.workspaces.businesses.outreach.sms.campaign', [$business->workspace->uid, $business->uid]), [
+            'name' => 'Legitimate Outreach',
+            'message' => 'Hello',
+            'sms_type' => 'plain',
+            'contact_groups' => [$group->id],
+            'originator' => 'sender_id',
+            'sender_id' => ['LEGITSENDER'],
+            'plan_id' => $fixture['plan']->id,
+        ]);
+
+        $this->assertNotNull(
+            Campaigns::where('campaign_name', 'Legitimate Outreach')->first(),
+            'The guard must not break the legitimate Outreach path it was modelled on.',
+        );
+    }
+
+    // -----------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------
 

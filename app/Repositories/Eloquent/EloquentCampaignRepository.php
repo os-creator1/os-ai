@@ -93,8 +93,70 @@
          *
          * @throws Throwable
          */
+        /**
+         * Customer Experience Slice 3 — the repository half of the
+         * tenant-escape fix.
+         *
+         * `CampaignController` now strips `business_id`/`user_id` from every
+         * forwarded payload, but a controller-only fix is one refactor away
+         * from being undone. This is the layer that actually owns the
+         * consequence, so it verifies the claim rather than trusting it.
+         *
+         * The rule matches what the legitimate caller already does.
+         * `OutreachController` resolves its Business through the RFC-003
+         * §14.1 boundary and only then sets these keys, passing the BUSINESS
+         * OWNER's user_id while the actor may be a staff member — so the
+         * invariant cannot be "user_id equals the authenticated id". It is:
+         *
+         *   - the ACTING user (Auth::user(), never the supplied user_id)
+         *     must be authorized for the supplied Business, through
+         *     WorkspaceManager — the same single authority the Outreach
+         *     controller uses; and
+         *   - a supplied user_id may only ever be that Business's own owner.
+         *
+         * A console or queued caller has no authenticated actor and supplies
+         * no request input, so it is left alone; the guard exists for input
+         * that crossed an HTTP boundary.
+         *
+         * Failure is a 404, matching the rest of this codebase's tenancy
+         * boundary, so a probe learns nothing about whether the Business
+         * exists.
+         */
+        private function assertSuppliedTenancyIsAuthorized(array $input): void
+        {
+            $businessId = $input['business_id'] ?? null;
+
+            if ($businessId === null) {
+                return;
+            }
+
+            $actorId = Auth::id();
+
+            if ($actorId === null) {
+                return;
+            }
+
+            $business = \App\Models\Business::query()->find($businessId);
+
+            abort_if($business === null, 404);
+            abort_unless(
+                app(\App\Library\Workspace\WorkspaceManager::class)->userCanAccessBusiness((int) $actorId, $business),
+                404,
+            );
+
+            $suppliedUserId = $input['user_id'] ?? null;
+
+            if ($suppliedUserId !== null) {
+                abort_unless(
+                    (int) $suppliedUserId === (int) ($business->customer?->user_id),
+                    404,
+                );
+            }
+        }
+
         public function quickSend(Campaigns $campaign, array $input, bool $conversationContext = false): JsonResponse
         {
+            $this->assertSuppliedTenancyIsAuthorized($input);
 
             $user        = $input['user'];
             $sms_type    = $input['sms_type'];
@@ -954,6 +1016,11 @@
 
         public function campaignBuilder(Campaigns $campaign, array $input): JsonResponse
         {
+            // The same fail-closed check as quickSend(): a supplied Business
+            // must belong to the acting user's authority, and a supplied
+            // user_id may only be that Business's owner.
+            $this->assertSuppliedTenancyIsAuthorized($input);
+
             // Pass 2 — Business-aware Outreach passes 'user_id' explicitly
             // (the selected Business's owning customer id), matching
             // checkQuickSendValidation()'s existing override convention, so
