@@ -64,7 +64,7 @@
                                         <div class="col-12">
                                             <div class="mb-1">
                                                 <label for="sending_server"
-                                                       class="form-label required">{{ __('locale.labels.sending_server') }}</label>
+                                                       class="form-label required">{{ __('locale.labels.messaging_provider') }}</label>
                                                 <select class="select2 form-select" name="sending_server">
                                                     @foreach($sendingServers as $server)
                                                         @if(isset($server->sendingServer) && $server->sendingServer->status == 1 && $server->sendingServer->viber)
@@ -84,12 +84,12 @@
                                     @can('view_sender_id')
                                         @if(auth()->user()->customer->getOption('sender_id_verification') == 'yes')
                                             <div class="col-12">
-                                                <p class="text-uppercase">{{ __('locale.labels.originator') }}</p>
+                                                <p class="text-uppercase">{{ __('locale.labels.sender_identity') }}</p>
                                             </div>
                                             <div class="col-md-6 col-12 customized_select2">
                                                 <div class="mb-1">
                                                     <label for="sender_id_check"
-                                                           class="form-label">{{ __('locale.labels.sender_id') }}
+                                                           class="form-label">{{ __('locale.labels.sender_identity') }}
                                                         <a class="text-success text-decoration-underline mx-1 text-uppercase cursor-pointer text"
                                                            href="{{ route('customer.senderid.request') }}"
                                                            target="__blank">{{ __('locale.labels.request_new') }}</a>
@@ -122,7 +122,7 @@
 
                                                     <div class="mb-1">
                                                         <label for="sender_id"
-                                                               class="form-label">{{ __('locale.labels.sender_id') }}
+                                                               class="form-label">{{ __('locale.labels.sender_identity') }}
                                                             <span class="text-success font-small-1 text-uppercase text">
                                                                 ({{ __('locale.labels.select_one_or_insert_your_own') }})
                                                             </span>
@@ -159,7 +159,7 @@
                                                 <div class="col-12">
                                                     <div class="mb-1">
                                                         <label for="sender_id"
-                                                               class="form-label">{{__('locale.labels.sender_id')}}
+                                                               class="form-label">{{__('locale.labels.sender_identity')}}
 
                                                             <span class="text-success font-small-1 text-uppercase text">
                                                                 ({{ __('locale.labels.select_one_or_insert_your_own') }})

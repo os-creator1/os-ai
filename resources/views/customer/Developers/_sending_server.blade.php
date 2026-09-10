@@ -62,7 +62,7 @@
                             @canany($type['permissions'])
                                 <div class="col-12 mb-1">
                                     <label for="{{ $id }}" class="form-label">
-                                        {{ __('locale.plans.sending_server_for_sms', ['sms_type' => $type['label']]) }}
+                                        {{ __('locale.plans.sending_server_for_sms_customer', ['sms_type' => $type['label']]) }}
                                     </label>
                                     <select class="form-select select2"
                                             id="{{ $id }}"
@@ -85,7 +85,7 @@
                         @endforeach
                     @else
                         <p class="card-text fw-bolder text-danger">
-                            {{ __('locale.sending_servers.have_no_sending_server') }}
+                            {{ __('locale.sending_servers.have_no_sending_server_customer') }}
                         </p>
                     @endif
 

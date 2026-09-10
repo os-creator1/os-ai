@@ -41,7 +41,7 @@
                                         <div class="col-12">
                                             <div class="mb-1">
                                                 <label for="sending_server"
-                                                       class="form-label required">{{ __('locale.labels.sending_server') }}</label>
+                                                       class="form-label required">{{ __('locale.labels.messaging_provider') }}</label>
                                                 <select class="select2 form-select" name="sending_server">
                                                     @foreach($sendingServers as $server)
                                                         @if(isset($server->sendingServer) && $server->sendingServer->status == 1 && $server->sendingServer->two_way)
@@ -62,7 +62,7 @@
 
                                         <div class="mb-1">
                                             <label for="sender_id"
-                                                   class="form-label required">{{__('locale.labels.originator')}}</label>
+                                                   class="form-label required">{{__('locale.labels.sender_identity')}}</label>
                                             <select class="form-select select2" id="sender_id" name="sender_id">
                                                 @foreach($phone_numbers as $number)
                                                     <option value="{{$number->number}}" @selected(old('sender_id') == $number->number)> {{ $number->number }}</option>

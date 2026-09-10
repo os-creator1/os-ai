@@ -1,7 +1,7 @@
 @component('mail::message')
 {!! $content !!}
 @component('mail::button', ['url' => $url])
-{{ __('locale.labels.sender_id') }}
+{{ __('locale.labels.sender_identity') }}
 @endcomponent
 
 {{ __('locale.labels.thanks') }},<br>

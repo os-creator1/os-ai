@@ -523,7 +523,7 @@
             'read_all_notifications'                => 'Read all notifications',
             'you_have_new_user'                     => 'You have new user',
             'you_have_new_subscription'             => 'You have new subscription',
-            'new_sender_id_notification'            => 'New Sender ID notification',
+            'new_sender_id_notification'            => 'New sender identity notification',
             'manage_profile'                        => 'Manage Profile',
             'success'                               => 'Success',
             'warning'                               => 'Warning',
@@ -699,7 +699,7 @@
             'project'                               => 'Project',
             'role'                                  => 'Role',
             'generate_with_ai'                      => 'Generate with AI',
-            'single_sender_id'                      => 'You can insert only one sender id.',
+            'single_sender_id'                      => 'You can select only one sender identity.',
             'sub_accounts'                          => 'Team members',
             'parent'                                => 'Parent',
             'import_summary'                        => 'Import Summary',
@@ -1008,6 +1008,8 @@
             'delimiter_multiple_sms'              => 'Delimiter for multiple sms',
             'have_no_sending_server_to_add'       => 'You have no sending server to add',
             'have_no_sending_server'              => 'You have no sending server',
+            // Customer-only sibling; the line above stays as admin renders it.
+            'have_no_sending_server_customer' => 'You have no messaging provider',
             'add_sending_server'                  => 'Add Sending Server',
             'delete_sending_server_confirmation'  => 'You would not be able to revert this! Also customer subscription plan and sms history will remove if exist.',
 
@@ -1051,6 +1053,8 @@
             'add_previous_balance_next_subscription'       => 'Add previous sms unit on next subscription',
             'add_previous_units'                           => 'Add Previous unites',
             'need_sender_id_verification'                  => 'Need Sender ID Verification',
+            // Customer-only sibling; the line above stays as admin renders it.
+            'need_sender_id_verification_customer' => 'Need sender identity verification',
             'unlimited'                                    => 'Unlimited',
             '100_per_minute'                               => '100 sms per minute',
             '1000_per_hour'                                => '1,000 sms per hour',
@@ -1091,6 +1095,8 @@
 
             /*Version 3.9*/
             'sending_server_for_sms'                       => 'Sending server for :sms_type sms',
+            // Customer-only sibling; the line above stays as admin renders it.
+            'sending_server_for_sms_customer' => 'Messaging provider for :sms_type sms',
             'sending_credit_price'                         => 'Sending credit price',
             'number_of_units'                              => 'Number of Units',
             'recharge_volume'                              => 'Recharge Volume',
@@ -1191,6 +1197,8 @@
             'active_senderids'                                => 'Activate selected sender IDs?',
             'block_senderids'                                 => 'Block selected sender IDs?',
             'delete_senderids'                                => 'Delete selected sender IDs?',
+            // Customer-only sibling; the line above stays as admin renders it.
+            'delete_senderids_customer' => 'Delete selected sender identities?',
             'delete_senderid_plans'                           => 'Delete plans associated with these sender IDs?',
             'sender_id_successfully_added'                    => 'Sender ID was successfully added.',
             'sender_id_successfully_updated'                  => 'Sender ID was successfully updated.',
@@ -1204,7 +1212,7 @@
             'phone_numbers_required'                          => 'Phone numbers are required.',
             'sender_id_invalid'                               => 'Sender ID ":sender_id" is not authorized to send this message.',
             'sender_id_sms_capabilities'                      => 'Sender ID ":sender_id" is not authorized to send ":type" SMS.',
-            'payment_for_sender_id'                           => 'Payment for Sender ID',
+            'payment_for_sender_id'                           => 'Payment for sender identity',
             'price_details'                                   => 'Price Details',
             'payment_cancelled'                               => 'Payment was cancelled by user.',
             'dlt_description'                                 => 'Description and Entity ID fields are only available for TRAI DLT feature.',
@@ -1343,7 +1351,7 @@
             'every_single_login'                            => 'Every single login',
             'support_activities'                            => 'Support tickets activities like create ticket, reply ticket etc.',
             'profile_activities'                            => 'Profile activities like change password, update profile etc.',
-            'sender_id_verification'                        => 'Sender id verification',
+            'sender_id_verification'                        => 'Sender identity verification',
             'purchase_keyword'                              => 'Purchase keyword',
             'token_successfully_regenerate'                 => 'Token was successfully regenerate',
             'successful_subscription'                       => 'Successful subscription',
@@ -1680,6 +1688,13 @@
             'template_is_under_review'      => 'The template is under review',
             'template_was_blocked'          => 'The template was blocked by Admin',
             'dlt_description'               => 'DLT Template ID, Category, and Sender ID fields will be available for TRAI DLT feature only',
+            // Customer-only sibling of the line above. `dlt_description` is
+            // rendered by BOTH admin/Templates/create.blade.php and the
+            // customer screen, and admin deliberately keeps the legacy
+            // vocabulary — so the customer copy gets its own key rather than
+            // the shared value being rewritten underneath admin. Same
+            // sentence, only the customer-facing noun differs.
+            'dlt_description_customer'      => 'DLT Template ID, Category, and Sender identity fields will be available for TRAI DLT feature only',
         ],
 
         //campaign translation
@@ -1771,7 +1786,7 @@
             'webhook_url_required'                   => 'Webhook URL is required',
 
             /*Version 3.14*/
-            'select_sending_server_for_api_messages' => 'Select sending server for your API Messages',
+            'select_sending_server_for_api_messages' => 'Select messaging provider for your API Messages',
         ],
 
         'bsnlerr' => [

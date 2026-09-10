@@ -62,13 +62,13 @@
 
                                         @if(auth()->user()->customer->getOption('sender_id_verification') == 'yes')
                                             <div class="col-12">
-                                                <p class="text-uppercase">{{ __('locale.labels.originator') }}</p>
+                                                <p class="text-uppercase">{{ __('locale.labels.sender_identity') }}</p>
                                             </div>
 
                                             @can('view_sender_id')
                                                 <div class="col-md-6 col-12 customized_select2">
                                                     <div class="mb-1">
-                                                        <label for="sender_id" class="form-label">{{ __('locale.labels.sender_id') }}</label>
+                                                        <label for="sender_id" class="form-label">{{ __('locale.labels.sender_identity') }}</label>
                                                         <div class="input-group">
                                                             <div class="input-group-text">
                                                                 <div class="form-check">
@@ -114,7 +114,7 @@
                                         @else
                                             <div class="col-12">
                                                 <div class="mb-1">
-                                                    <label for="sender_id" class="form-label">{{__('locale.labels.sender_id')}}</label>
+                                                    <label for="sender_id" class="form-label">{{__('locale.labels.sender_identity')}}</label>
                                                     <input type="text" id="sender_id" class="form-control @error('sender_id') is-invalid @enderror" name="sender_id">
                                                     @error('sender_id')
                                                     <p><small class="text-danger">{{ $message }}</small></p>

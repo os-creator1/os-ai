@@ -41,7 +41,7 @@
                         </span>
                             <span class="bs-stepper-label">
                             <span class="bs-stepper-title">{{ __('locale.labels.cart') }}</span>
-                            <span class="bs-stepper-subtitle">{{ __('locale.labels.purchase') }} {{ __('locale.labels.sender_id') }} </span>
+                            <span class="bs-stepper-subtitle">{{ __('locale.labels.purchase') }} {{ __('locale.labels.sender_identity') }} </span>
                         </span>
                         </button>
                     </div>
@@ -84,7 +84,7 @@
 
                     <div id="cart" class="content" role="tabpanel" aria-labelledby="cart-trigger">
                         <div class="content-header">
-                            <h5 class="mb-0">{{ __('locale.labels.purchase') }} {{ __('locale.labels.sender_id') }}</h5>
+                            <h5 class="mb-0">{{ __('locale.labels.purchase') }} {{ __('locale.labels.sender_identity') }}</h5>
                             <small>{{ __('locale.sender_id.payment_for_sender_id') }} {{ $senderid->sender_id }}</small>
                         </div>
                         <div class="row mt-1 mb-1">

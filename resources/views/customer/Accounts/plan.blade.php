@@ -52,7 +52,7 @@
                                             <li class="list-group-item">{{ $plan->displayTotalQuota() }} {{ __('locale.labels.sms_credit') }}</li>
 
                                             @if($plan->getOption('sender_id_verification') == 'yes')
-                                                <li class="list-group-item">{{ __('locale.plans.need_sender_id_verification') }}</li>
+                                                <li class="list-group-item">{{ __('locale.plans.need_sender_id_verification_customer') }}</li>
                                             @endif
 
                                             @if($plan->getOption('api_access') == 'yes')
