@@ -361,7 +361,7 @@ Database: **`ultimatesms_testing_geist`**, a dedicated sibling accepted by
 
 ### 6.1 The guard actually guards
 
-`ThemeAssetPublicationTest` — **18 tests, 142 assertions**, green. More
+`ThemeAssetPublicationTest` — **18 tests, 143 assertions**, green. More
 usefully, it was proven to **fail** under every condition it exists to
 catch. Each was broken in turn, the suite re-run, and the condition
 restored:
@@ -378,7 +378,7 @@ restored:
 | The SCSS source reverted to the §1.4 self-reference | 1 failure |
 | The compiled fallback changed to a different colour | 2 failures |
 | `.footer` stops consuming `--color-surface-secondary` | 1 failure |
-| **all restored** | **18 tests, 142 assertions, green** |
+| **all restored** | **18 tests, 143 assertions, green** |
 
 The five checks added for §1.4 are: no custom property in `core.css` may
 be defined in terms of itself (a general rule, not just this token); the
@@ -399,7 +399,7 @@ identical in both runs except where noted.
 
 | Suite | Result |
 |---|---|
-| `tests/Feature/Assets/ThemeAssetPublicationTest` | 13 tests, 127 assertions, **green** |
+| `tests/Feature/Assets/ThemeAssetPublicationTest` | **18 tests, 143 assertions**, green — database-free (§6.7) |
 | `tests/Feature/Theme` | 85 tests, 477 assertions, **green** |
 | `tests/Feature/Security` | 172 tests, 1 302 assertions, **green** — **108 errors on `main`** |
 | `tests/Feature/Auth` | 33 tests, 437 assertions, **green** |
@@ -424,9 +424,13 @@ panels/styles.blade.php  →  mix('css/core.css')
 `AuthPageRenderTest` + `DashboardRenderTest`: 10 tests, 17 assertions,
 green.
 
-### 6.4 Full suite
+### 6.4 Full suite *(measured at commit `705e1e3`, before the §1.4 and §6.7 corrections)*
 
-Run on `ultimatesms_testing_geist` after `migrate:fresh`:
+Run on `ultimatesms_testing_geist` after `migrate:fresh`. These are
+**historical** totals for the state named in this heading: the asset guard
+held 13 tests then and holds 18 now, so a re-run would report a slightly
+larger suite. The failure *classification* below is what this section is
+for, and it is unchanged.
 
 | | before this correction | **after** |
 |---|---|---|
@@ -436,9 +440,9 @@ Run on `ultimatesms_testing_geist` after `migrate:fresh`:
 | Failures | 19 | **19** |
 
 The +6 tests and +92 assertions are `ThemeAssetPublicationTest` growing
-from 7 tests to 13. The 21 remaining problems are the **same 21 names** as
-before, so the Geist publication and the package-identity change introduce
-nothing.
+from 7 tests to 13 **at that commit**. The 21 remaining problems are the
+**same 21 names** as before, so the Geist publication and the
+package-identity change introduce nothing.
 
 **This is not a green suite, and this branch does not claim one.** For
 comparison, `main` at the merge base produces roughly **970 errors**, almost
@@ -496,7 +500,9 @@ artifacts were re-verified **unchanged** after the merge — both as the
 worktree bytes of §4.1 and as the committed blobs of §4.2.
 
 The full suite was re-run on current main's integrated harness, same
-dedicated database, `migrate:fresh` 250 migrations / 0 pending:
+dedicated database, `migrate:fresh` 250 migrations / 0 pending. Like §6.4,
+these totals are **historical** — measured at commit `c195049`, when the
+asset guard held 13 tests rather than today's 18:
 
 | | pre-merge base `559a8200` | **post-merge `b8bab0a6`** |
 |---|---|---|
@@ -542,6 +548,66 @@ four Website tests — plus the `OpportunityManagerBeginRunTest` error.
 Creating a `.env.testing` would turn those three green, and was deliberately
 **not** done: that would hide a main-side environment prerequisite rather
 than report it.
+
+---
+
+
+### 6.7 The asset guard is database-free
+
+An earlier revision of `ThemeAssetPublicationTest` pulled in
+`RefreshDatabase` for one reason: to establish that
+`PlatformThemeManager::currentStyleBlock()` returns `null` with no active
+preset. That was the wrong trade. `RefreshDatabase` can run destructive
+preparation before any test method — or any safety assertion — executes, and
+a filesystem/publication guard has no business owning that risk just to
+observe one return value.
+
+The dependency is now removed outright rather than worked around. The class
+declares no database trait, imports no model, and issues no query:
+
+| Checked for | Occurrences |
+|---|---|
+| `RefreshDatabase` | 1 — inside the docblock that forbids it |
+| `PlatformThemePreset`, `DB::`, `::query()`, `->create(`, `->save()`, `->insert(`, `factory(` | 0 |
+| `DatabaseMigrations`, `DatabaseTransactions`, `artisan('migrate` | 0 |
+
+The fallback condition is exercised through the same facade seam
+`PlatformThemePresetsMissingTableFailSafeTest` already uses. `Cache` is
+mocked so `rememberForever` runs its own callback rather than memoising, and
+`Schema::hasTable('platform_theme_presets')` is mocked to report the table
+missing — the earliest of the three states in which the manager returns
+`null`:
+
+```php
+Cache::shouldReceive('rememberForever')
+    ->once()
+    ->andReturnUsing(static fn (string $key, Closure $callback) => $callback());
+
+Schema::shouldReceive('hasTable')
+    ->once()
+    ->with('platform_theme_presets')
+    ->andReturnFalse();
+
+$this->assertNull(app(PlatformThemeManager::class)->currentStyleBlock());
+```
+
+The test then keeps its two original assertions: that
+`panels/styles.blade.php` still emits the runtime block only behind
+`@if ($platformThemeStyleBlock)`, and that compiled `core.css` carries the
+concrete `--color-surface-secondary` fallback that therefore applies.
+
+**Proof that nothing connects.** Beyond the static checks above, the whole
+class was run with `DB_DATABASE` pointed at
+`ultimatesms_testing_absentprobe`, a database that does not exist and was
+never created:
+
+| Run | Result |
+|---|---|
+| Against the lane's real database | **18 tests, 143 assertions, green** |
+| Against a **non-existent** database | **18 tests, 143 assertions, green** |
+| The fallback test alone | 1 test, 6 assertions, green |
+
+A suite that needed a connection could not pass the second row.
 
 ---
 

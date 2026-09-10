@@ -3,9 +3,9 @@
 namespace Tests\Feature\Assets;
 
 use App\Library\Theme\PlatformThemeManager;
-use App\Models\PlatformThemePreset;
-use Illuminate\Foundation\Testing\RefreshDatabase;
+use Closure;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Schema;
 use Tests\TestCase;
 
 /**
@@ -40,10 +40,17 @@ use Tests\TestCase;
  * the compiled font wiring inside core.css; and the package identity the
  * lockfile is generated from.
  */
+/**
+ * This class is deliberately **database-free**. Every assertion below reads
+ * tracked source, compiled output or the manifest, and the one test that
+ * exercises PlatformThemeManager does so through mocked Cache and Schema
+ * facades rather than a real connection. It must never gain
+ * RefreshDatabase: that trait can run destructive preparation before any
+ * test method or safety assertion executes, and a publication guard has no
+ * business owning that risk.
+ */
 class ThemeAssetPublicationTest extends TestCase
 {
-    use RefreshDatabase;
-
     /**
      * The token source, and the one authoritative value for the secondary
      * surface. `--color-surface-secondary` was compiled as `var()` on
@@ -524,17 +531,23 @@ class ThemeAssetPublicationTest extends TestCase
      */
     public function test_the_compiled_fallback_is_what_applies_when_no_runtime_style_block_exists(): void
     {
-        Cache::flush();
+        // No database is touched. currentStyleBlock() memoises through
+        // Cache::rememberForever, so the cache is mocked to run its own
+        // callback, and Schema is mocked to report the presets table
+        // missing — the earliest of the three states in which the manager
+        // returns null and the compiled stylesheet becomes the fallback.
+        Cache::shouldReceive('rememberForever')
+            ->once()
+            ->andReturnUsing(static fn (string $key, Closure $callback) => $callback());
 
-        $this->assertSame(
-            0,
-            PlatformThemePreset::query()->where('status', 'active')->count(),
-            'This test describes the no-active-preset state.'
-        );
+        Schema::shouldReceive('hasTable')
+            ->once()
+            ->with('platform_theme_presets')
+            ->andReturnFalse();
 
         $this->assertNull(
             app(PlatformThemeManager::class)->currentStyleBlock(),
-            'With no active preset there is no runtime override, so the compiled stylesheet is the fallback.'
+            'With no usable preset there is no runtime override, so the compiled stylesheet is the fallback.'
         );
 
         $this->assertStringContainsString(
