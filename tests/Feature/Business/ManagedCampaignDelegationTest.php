@@ -87,6 +87,57 @@ class ManagedCampaignDelegationTest extends TestCase
         $this->assertOperationBelongsTo($identity, $number);
     }
 
+    /**
+     * Customer Experience Slice 3 §4.5/§4.7 — the defect this closes.
+     *
+     * Before this correction the delegation sat downstream of quickSend()'s
+     * legacy sending-server resolution, so a Business the platform sends for
+     * was refused with "No sending server available for your subscribed
+     * plan" unless it ALSO kept a legacy gateway configured. Managed
+     * messaging is meant to be the normal experience, not a bonus on top of
+     * a legacy one.
+     */
+    public function test_a_managed_business_sends_with_no_legacy_sending_server_at_all(): void
+    {
+        [$tenant, $business, $identity, $number] = $this->managedSendableTenant(withLegacySendingServer: false);
+
+        $this->assertSame(
+            0,
+            SendingServer::query()->count(),
+            'The point of this test is that no legacy gateway exists anywhere.',
+        );
+
+        $response = $this->quickSend($tenant, $business, '14155552680', 'Managed, no legacy gateway');
+
+        $this->assertSame('success', $response->getData()->status, (string) ($response->getData()->message ?? ''));
+        $this->assertCount(1, $this->fakeAdapter->sentRequests);
+        Http::assertNothingSent();
+        $this->assertSame(1, $this->operationCount());
+        $this->assertOperationBelongsTo($identity, $number);
+
+        // RFC-005 accounting is preserved, not bypassed: the measurement is
+        // written, and no reservation or wallet movement is invented for a
+        // send that took no legacy gateway.
+        $this->assertSame(1, DB::table('business_usage_measurements')->count());
+        $this->assertSame(0, DB::table('business_usage_reservations')->count());
+    }
+
+    public function test_a_non_managed_business_with_no_sending_server_is_still_refused(): void
+    {
+        // The relaxation above must apply to managed Businesses only. An
+        // ordinary Business with no gateway still gets the legacy refusal —
+        // otherwise this correction would have opened a hole rather than
+        // closed one.
+        [$tenant, $business] = $this->sendableTenant(withLegacySendingServer: false);
+
+        $response = $this->quickSend($tenant, $business, '14155552681', 'No gateway, not managed');
+
+        $this->assertSame('error', $response->getData()->status);
+        $this->assertStringContainsString('sending server', strtolower((string) $response->getData()->message));
+        $this->assertCount(0, $this->fakeAdapter->sentRequests);
+        $this->assertSame(0, $this->operationCount());
+    }
+
     public function test_quick_send_for_a_business_without_a_managed_identity_is_untouched(): void
     {
         [$tenant, $business] = $this->sendableTenant();
@@ -353,9 +404,9 @@ class ManagedCampaignDelegationTest extends TestCase
      *
      * @return array{0: Customer, 1: \App\Models\Business, 2: \App\Models\BusinessMessagingIdentity, 3: \App\Models\BusinessMessagingNumber}
      */
-    private function managedSendableTenant(): array
+    private function managedSendableTenant(bool $withLegacySendingServer = true): array
     {
-        [$tenant, $business] = $this->sendableTenant();
+        [$tenant, $business] = $this->sendableTenant($withLegacySendingServer);
 
         $identity = $this->attachIdentity($business);
         $number = $this->attachNumber($identity, $this->uniqueNumber(), true);
@@ -366,7 +417,7 @@ class ManagedCampaignDelegationTest extends TestCase
     }
 
     /** @return array{0: Customer, 1: \App\Models\Business} */
-    private function sendableTenant(): array
+    private function sendableTenant(bool $withLegacySendingServer = true): array
     {
         $tenant = $this->createCustomer();
         $business = $this->createBusinessWithWorkspace($tenant, $this->businessAttributes());
@@ -395,17 +446,15 @@ class ManagedCampaignDelegationTest extends TestCase
 
         // A legacy sending server, and the plan coverage pointing at it.
         //
-        // Slice 3's delegation seam sits at quickSend()'s contracted
-        // PRE-DISPATCH point (§4.11), which is only reached AFTER the legacy
-        // coverage and sending-server resolution above it succeeds. So even
-        // a fully managed Business still needs this legacy configuration to
-        // reach the managed path at all. That is a real contradiction with
-        // §4.7's "managed messaging is the normal experience", and it is
-        // reported rather than papered over by silently moving the
-        // insertion earlier — moving it would also bypass RFC-005's
-        // Conversations reservation seam, which this slice is not
-        // authorized to redesign. The fixture supplies the prerequisite so
-        // that what this file asserts is the delegation seam itself.
+        // Most tests here keep one because they are exercising a Business
+        // that has both kinds of transport. The `withLegacySendingServer`
+        // flag drops it entirely, which is how the two tests at the top of
+        // this file prove a managed Business no longer needs a legacy
+        // gateway to reach managed dispatch, and that a NON-managed Business
+        // with no gateway is still refused.
+        $sendingServer = null;
+
+        if ($withLegacySendingServer) {
         $sendingServer = SendingServer::create([
             'name' => 'Legacy Fixture Server',
             'settings' => SendingServer::TYPE_TWILIO,
@@ -427,12 +476,16 @@ class ManagedCampaignDelegationTest extends TestCase
             'sending_server' => $sendingServer->id,
             'status' => true,
         ]);
+        }
 
+        // The plan's coverage still exists either way — coverage is a
+        // subscription concern, not a gateway one — but it only points at a
+        // gateway when there is one.
         PlansCoverageCountries::create([
             'plan_id' => $plan->id,
             'country_id' => $country->id,
             'status' => true,
-            'sending_server' => $sendingServer->id,
+            'sending_server' => $sendingServer?->id,
             'options' => json_encode(['plain' => true, 'plain_sms' => 0.05]),
         ]);
 

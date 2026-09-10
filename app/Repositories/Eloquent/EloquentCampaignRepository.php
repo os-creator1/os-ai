@@ -220,14 +220,43 @@
                 $sending_server = $coverage->{$serverKey};
             }
 
-            if ( ! $sending_server) {
+            // Customer Experience Slice 3 §4.5/§4.7 — a managed Business
+            // carries its own transport and has no legacy SendingServer.
+            //
+            // Every guard below this point asks a question about a legacy
+            // gateway: does one exist, does it support this SMS type, can it
+            // handle a file-less send. For a Business the PLATFORM sends for,
+            // all three are the wrong question, and the first of them was
+            // refusing managed sends outright with "No sending server
+            // available for your subscribed plan" — so managed messaging,
+            // which §4.7 calls the normal experience, could only work for a
+            // Business that also happened to keep a legacy gateway
+            // configured. That is the defect this resolves.
+            //
+            // Everything the managed path genuinely depends on has already
+            // run above: the caller's tenancy and entitlement resolution,
+            // the active subscription, the country, and the plan coverage.
+            // The blacklist check and spintax processing below still run for
+            // managed sends, and the delegation itself stays where it is —
+            // after those and after the RFC-005 block — so this widens
+            // nothing and skips no safety check.
+            //
+            // RFC-005 accounting is preserved by the existing code, not by
+            // an exception carved for this: qualifyConversationsMeterReservation()
+            // already declares $sendingServer nullable and already treats
+            // null as non-qualifying, and it only ever qualifies for the one
+            // configured pilot sending server — which a Business with no
+            // legacy server can never be.
+            $managedTransport = \App\Library\Messaging\ManagedDispatchDelegate::isManaged($input['business_id'] ?? null);
+
+            if ( ! $sending_server && ! $managedTransport) {
                 return response()->json([
                     'status'  => 'error',
                     'message' => __('locale.campaigns.sending_server_not_available'),
                 ]);
             }
 
-            if ( ! $sending_server->{$db_sms_type}) {
+            if ($sending_server && ! $sending_server->{$db_sms_type}) {
                 return response()->json([
                     'status'  => 'error',
                     'message' => __('locale.sending_servers.sending_server_sms_capabilities', ['type' => strtoupper($db_sms_type)]),
@@ -235,7 +264,7 @@
             }
 
 
-            if ($sending_server->settings != SendingServer::TYPE_VOICEANDTEXT && $sending_server->settings != SendingServer::TYPE_TERMII && $sending_server->settings != SendingServer::TYPE_ARKESEL && $message == null) {
+            if ($sending_server && $sending_server->settings != SendingServer::TYPE_VOICEANDTEXT && $sending_server->settings != SendingServer::TYPE_TERMII && $sending_server->settings != SendingServer::TYPE_ARKESEL && $message == null) {
                 return response()->json([
                     'status'  => 'error',
                     'message' => 'Your sending server is not capable to send upload file option. Please try with text to space option',
@@ -270,7 +299,10 @@
             // Decode the options
             $priceOption = json_decode($coverage['options'], true);
 
-            if (config('app.gateway_wise_billing')) {
+            // Gateway-wise billing prices per legacy gateway. A managed send
+            // has none, so it keeps the plan's own coverage price rather
+            // than dereferencing a null server.
+            if (config('app.gateway_wise_billing') && $sending_server) {
                 $getCoverage = SendingServerBasedPricingPlans::where('sending_server', $sending_server->id)->where('country_id', $country->id)->first();
                 if ( ! $getCoverage) {
                     return response()->json([
