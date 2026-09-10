@@ -176,7 +176,20 @@ class BusinessMessagingIdentityResolver
 
                 return $identity;
             });
-        } catch (UniqueConstraintViolationException|QueryException $e) {
+        } catch (UniqueConstraintViolationException $e) {
+            // NARROWED, deliberately.
+            //
+            // This used to catch `QueryException` too, which meant a
+            // deadlock, a lost connection, a missing column or any other
+            // query failure was reported to the caller as "a conflicting
+            // identity already exists" — a diagnosis that is not merely
+            // unhelpful but actively wrong, and one that would send an
+            // operator hunting for a duplicate that does not exist while the
+            // real fault went unreported.
+            //
+            // Only a genuine unique-constraint violation is a conflict.
+            // Everything else propagates unchanged, with its own type and
+            // its own message.
             throw new MessagingIdentityConflictException(
                 'A conflicting messaging identity already exists for this Business or Messaging Profile.',
                 0,

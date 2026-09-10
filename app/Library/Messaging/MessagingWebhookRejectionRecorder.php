@@ -7,6 +7,7 @@ use App\Enums\Messaging\WebhookRejectionReason;
 use App\Models\MessagingWebhookRejection;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Slice 3 §4.2/§4.6 — the sole writer of messaging_webhook_rejections.
@@ -89,14 +90,29 @@ class MessagingWebhookRejectionRecorder
         }
     }
 
+    /**
+     * ATOMIC, deliberately.
+     *
+     * This used to read `occurrence_count`, add one in PHP, and write the
+     * result back. Two concurrent copies of the same replayed webhook — the
+     * exact situation this counter exists to measure — both read the same
+     * value and both wrote the same increment, so N simultaneous deliveries
+     * counted as one. The counter under-reported precisely when it mattered.
+     *
+     * The increment now happens in the database, in one statement, so
+     * concurrent callers serialize on the row rather than racing in
+     * userland.
+     */
     private function touch(MessagingWebhookRejection $rejection, Carbon $seenAt): MessagingWebhookRejection
     {
-        $rejection->forceFill([
-            'occurrence_count' => (int) $rejection->occurrence_count + 1,
-            'last_seen_at' => $seenAt,
-        ])->save();
+        MessagingWebhookRejection::query()
+            ->whereKey($rejection->getKey())
+            ->update([
+                'occurrence_count' => DB::raw('occurrence_count + 1'),
+                'last_seen_at' => $seenAt,
+            ]);
 
-        return $rejection;
+        return $rejection->refresh();
     }
 
     private static function trimmedOrNull(?string $value): ?string

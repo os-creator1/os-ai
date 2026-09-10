@@ -9,6 +9,7 @@
     use App\Library\Business\LegacyBusinessResolver;
     use App\Library\Messaging\InboundWebhookAttributionResolver;
     use App\Library\Messaging\MessagingWebhookRejectionRecorder;
+    use Illuminate\Support\Str;
     use App\Models\CustomerBasedSendingServer;
     use App\Library\SMSCounter;
     use App\Library\SpinText;
@@ -552,17 +553,33 @@
                     'sending_server_id' => $sending_server->id,
                 ]);
 
-                $chatBox = ChatBox::updateOrCreate(
-                    [
-                        'user_id' => $user_id,
-                        'from'    => $from,
-                        'to'      => $to,
-                    ],
-                    [
-                        'reply_by_customer' => true,
-                        'sending_server_id' => $sending_server->id,
-                    ]
-                );
+                // The THIRD blank-uid writer. `chat_boxes.uid` is a NOT NULL
+                // char(36) with no database default and ChatBox mints none,
+                // so this inbound writer was also relying on a non-strict
+                // MySQL connection to coerce the missing value to ''. The
+                // other two live in EloquentCampaignRepository.
+                //
+                // The uid goes in the UPDATE-OR-CREATE VALUES, not in the
+                // match attributes, and `updateOrCreate` only applies those
+                // values to a row it CREATES... which is not true — it
+                // applies them on update too. So it is supplied through the
+                // firstOrNew/save pair instead, which lets an existing
+                // conversation keep the uid it already has: replaying an
+                // inbound message must not re-issue a new identifier for a
+                // conversation that already exists.
+                $chatBox = ChatBox::firstOrNew([
+                    'user_id' => $user_id,
+                    'from'    => $from,
+                    'to'      => $to,
+                ]);
+
+                if (! $chatBox->exists) {
+                    $chatBox->uid = (string) Str::uuid();
+                }
+
+                $chatBox->reply_by_customer = true;
+                $chatBox->sending_server_id = $sending_server->id;
+                $chatBox->save();
                 
                 
                 

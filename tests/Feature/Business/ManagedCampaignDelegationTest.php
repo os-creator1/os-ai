@@ -237,22 +237,17 @@ class ManagedCampaignDelegationTest extends TestCase
 
         $this->authenticateAsCustomer($tenant, ['sms_campaign_builder']);
 
-        // CampaignController@storeCampaign forwards the request body
-        // verbatim to campaignBuilder(). `business_id` is supplied here for
-        // one mechanical reason, stated plainly rather than hidden: without
-        // it, campaignBuilder() takes its legacy AI-prospecting branch,
-        // which inserts `chat_boxes.ai_stage` and into `ai_box_campaign_map`
-        // — neither of which any migration in this repository defines. That
-        // branch therefore throws on any migration-built database, on this
-        // branch and on pristine `origin/main` alike (the same pre-existing
-        // gap OutreachCorrection1Test already documents). It is unrelated
-        // to Slice 3 and outside its allowlist. Supplying the key skips
-        // that branch and lets the assertion below be about the delegation
-        // seam, which is what this test is for.
-        $response = $this->post('/sms/campaign-builder', array_merge($this->campaignPayload($group), [
-            'business_id' => $business->id,
-            'user_id' => $tenant->user_id,
-        ]));
+        // No `business_id` or `user_id` is supplied, and supplying them
+        // would achieve nothing: CampaignController strips both from every
+        // forwarded payload now (the tenant-escape fix), so this route
+        // resolves its authority from Auth::user() and the
+        // LegacyBusinessResolver, which is the whole point of exercising it.
+        //
+        // An earlier revision of this comment said the legacy AI-prospecting
+        // branch had to be skipped because `chat_boxes.ai_stage` and
+        // `ai_box_campaign_map` had no migration. Lane E supplied that
+        // schema and it is merged here, so the branch runs and completes.
+        $response = $this->post('/sms/campaign-builder', $this->campaignPayload($group));
 
         $this->assertNotNull(
             Campaigns::query()->where('campaign_name', 'Managed Blast')->first(),
