@@ -137,12 +137,12 @@ ship.
 
 | Path | Why |
 |---|---|
-| `public/js/core/theme-tokens.js` | Required by every authenticated render. 676 bytes |
-| `public/js/scripts/pages/theme-settings.js` | Required by the admin theme-settings page. 7 768 bytes |
+| `public/js/core/theme-tokens.js` | Required by every authenticated render. 676 bytes committed |
+| `public/js/scripts/pages/theme-settings.js` | Required by the admin theme-settings page. 7 767 bytes committed |
 | `public/css/core.css` | Rebuilt from current tracked source so it carries the two Geist `@font-face` rules and the Geist primary stack |
-| `public/fonts/geist/geist-latin-wght-normal.woff2` | The latin face `_typography.scss` points at. 29 400 bytes |
-| `public/fonts/geist/geist-latin-ext-wght-normal.woff2` | The latin-ext face. 16 512 bytes |
-| `public/fonts/geist/LICENSE` | SIL OFL 1.1, copied by the same rule and emitted into the manifest by the build |
+| `public/fonts/geist/geist-latin-wght-normal.woff2` | The latin face `_typography.scss` points at. 29 400 bytes committed |
+| `public/fonts/geist/geist-latin-ext-wght-normal.woff2` | The latin-ext face. 16 512 bytes committed |
+| `public/fonts/geist/LICENSE` | SIL OFL 1.1, copied by the same rule and emitted into the manifest by the build. 4 486 bytes committed |
 | `public/mix-manifest.json` | **Five added lines across two commits** — the two JS entries and the three Geist entries, verbatim from the build, at the positions mix itself places them |
 | `package.json`, `package-lock.json` | The webpack constraint (§1.2) and the stable package identity (§1.3) |
 | `tests/Feature/Assets/ThemeAssetPublicationTest.php` | The guard that was missing (§5) |
@@ -168,7 +168,24 @@ Three production builds, `npm ci` from the regenerated lock each time.
 | #2 | same worktree, `public/` restored again to the intended committed baseline |
 | #3 | a **separate worktree** checked out fresh at the branch head, carrying over only `package.json` and `package-lock.json` — the authorized dependency correction, never a generated file |
 
-| Output | Source | Rule | SHA-256 — builds #1, #2 **and** #3 | Bytes |
+Three representations of the same six artifacts have to be kept apart, and
+an earlier revision of this document did not:
+
+1. **Build output in this Windows worktree.** What the three builds wrote to
+   disk. This is what proves determinism.
+2. **The committed Git blob.** What `git commit` stored after
+   `core.autocrlf=true` normalised line endings. This is what the repository
+   actually contains.
+3. **A clean Linux/GitHub checkout.** Byte-for-byte the committed blob,
+   because no CRLF filter runs there.
+
+(2) and (3) are the same bytes. (1) differs from them for two of the six.
+
+### 4.1 Deterministic build output, as observed in this Windows worktree
+
+Identical across builds #1, #2 **and** #3, byte for byte:
+
+| Output | Source | Rule | SHA-256 (worktree bytes) | Bytes |
 |---|---|---|---|---|
 | `public/css/core.css` | `resources/scss/core.scss` | `webpack.mix.js:77` | `6cb0d7ce4a39cd323b130e3f18bf6b7317f2a4c1b359b1dcf6ad735821e1ba98` | 392 170 |
 | `public/fonts/geist/geist-latin-wght-normal.woff2` | `resources/fonts/geist/…` | `webpack.mix.js:65` | `19f9c92546aa300c312235e3125af1b81394d8db9a4bc4a425cd5b641d2d54e1` | 29 400 |
@@ -177,11 +194,51 @@ Three production builds, `npm ci` from the regenerated lock each time.
 | `public/js/core/theme-tokens.js` | `resources/js/core/theme-tokens.js` | `webpack.mix.js:71` | `2e9e037c1fec20445942d27675344bae73fcb2045098a03065d65eb227544549` | 676 |
 | `public/js/scripts/pages/theme-settings.js` | `resources/js/scripts/pages/theme-settings.js` | `webpack.mix.js:53` | `5a1fb6028eeba658f436d8eff47b5131419113747c772881b1d55f01404b37ee` | 7 768 |
 
-Identical across all three, byte for byte, and all three emitted the same
-manifest mappings — every key mapping to itself. The build produced the
-**exact filenames** `_typography.scss` references; nothing was renamed or
-hashed. No output contains an absolute local path, a machine name or a
-`sourceMappingURL`, and the build emitted no `.map` files.
+All three builds emitted the same manifest mappings — every key mapping to
+itself. The build produced the **exact filenames** `_typography.scss`
+references; nothing was renamed or hashed. No output contains an absolute
+local path, a machine name or a `sourceMappingURL`, and no `.map` file was
+emitted.
+
+### 4.2 The committed Git blob — the authoritative publication record
+
+Read with `git cat-file blob HEAD:<path>`, and independently recomputed a
+second time with `git show HEAD:<path>`; both passes agreed on all six.
+**These are the bytes the repository contains and the bytes a clean
+GitHub/Linux checkout receives.**
+
+| Published artifact | Git blob OID | Committed bytes | SHA-256 of the committed blob |
+|---|---|---|---|
+| `public/css/core.css` | `7ad1309f8eb459ca1419e833f7a231a0c68a5d94` | **392 170** | `6cb0d7ce4a39cd323b130e3f18bf6b7317f2a4c1b359b1dcf6ad735821e1ba98` |
+| `public/fonts/geist/geist-latin-wght-normal.woff2` | `991445d78ae619a7378ff219385588c7811c88ab` | **29 400** | `19f9c92546aa300c312235e3125af1b81394d8db9a4bc4a425cd5b641d2d54e1` |
+| `public/fonts/geist/geist-latin-ext-wght-normal.woff2` | `ba90e209496d19069f05deeedac672fe02e1314e` | **16 512** | `824f485b5d26e2f2da3c2b236132ece1bc8e4e43373452950bb0e40548b4313f` |
+| `public/fonts/geist/LICENSE` | `98835ac3f04ec0c9484468424c62e1ea2cdae498` | **4 486** | `71609cbb5c78b5870d712eab73a31d76622635c6ed034ab5cee3b9ecbda8685f` |
+| `public/js/core/theme-tokens.js` | `f7606379fad9676bd3988cf8462476c2f707b8de` | **676** | `2e9e037c1fec20445942d27675344bae73fcb2045098a03065d65eb227544549` |
+| `public/js/scripts/pages/theme-settings.js` | `e1a70d54f1c7663457a9fb256a31817a9a87b4ee` | **7 767** | `dd4be7296733c2f0c84b78de149f9af6ac8b9077c9fae6dbdcd6fb4915a75577` |
+
+### 4.3 Where the two representations diverge, and why
+
+Four of the six are identical in both. Two differ, and the difference is
+accounted for exactly, byte for byte:
+
+| Artifact | Blob CR / LF | Worktree CR / LF | Size delta | Explanation |
+|---|---|---|---|---|
+| `core.css` | 0 / 6 | 0 / 6 | 0 | Sass emits LF; the file was written by the build and never re-materialised through the checkout filter |
+| `theme-tokens.js` | 0 / 0 | 0 / 0 | 0 | One minified line with no terminator, so there is nothing to convert |
+| `LICENSE` | 0 / 93 | **93** / 93 | **+93** | `resources/fonts/geist/LICENSE` is itself checked out with CRLF, and `mix.copy` copies it verbatim, so the Windows build output carries CRLF; `git commit` normalised it back to LF |
+| `theme-settings.js` | 0 / 1 | **1** / 1 | **+1** | Committed in the first commit, then re-materialised by `git checkout -- public/` during a later build cycle, which applied the CRLF filter to its single line terminator |
+
+`core.autocrlf = true` and there is no `.gitattributes`; `git check-attr`
+reports `text: unspecified` for all six paths. The two WOFF2 files are
+binary and are byte-identical in both representations — blob size and blob
+SHA-256 equal the worktree's.
+
+**Correction of record.** An earlier revision of this document published the
+§4.1 worktree figures as if they were the committed ones. For four artifacts
+that made no difference; for `LICENSE` and `theme-settings.js` it did, and
+the values a reviewer sees on GitHub — 4 486 bytes / `71609cbb…` and 7 767
+bytes / `dd4be729…` — are the ones in §4.2. The artifacts themselves were
+**not** touched to make the old figures true; only this record was corrected.
 
 ---
 
@@ -356,7 +413,8 @@ re-confirmed **zero**, and `origin/main` was then merged in with a normal
 Main changed no build input — nothing under `composer.json`,
 `composer.lock`, `package.json`, `package-lock.json`, `webpack.mix.js`,
 `resources/` or `public/` — so no rebuild was needed, and all six published
-output hashes in §4 were re-verified **unchanged** after the merge.
+artifacts were re-verified **unchanged** after the merge — both as the
+worktree bytes of §4.1 and as the committed blobs of §4.2.
 
 The full suite was re-run on current main's integrated harness, same
 dedicated database, `migrate:fresh` 250 migrations / 0 pending:
