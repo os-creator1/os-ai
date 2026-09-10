@@ -10,10 +10,12 @@ use App\Library\Messaging\Exceptions\MessagingIdentityConflictException;
 use App\Models\Business;
 use Illuminate\Database\QueryException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Str;
 use Tests\Feature\Business\Concerns\CreatesBusinessTestData;
+use Tests\Support\TestDatabaseSafety;
 use Tests\TestCase;
 
 /**
@@ -599,5 +601,279 @@ class MessagingSchemaInvariantsTest extends TestCase
             ['pending', 'active', 'suspended', 'released'],
             array_map(fn (BusinessMessagingNumberStatus $c) => $c->value, BusinessMessagingNumberStatus::cases()),
         );
+    }
+
+    // ---------------------------------------------------------------
+    // T-MSG-47 — forward, rollback and replay, automated
+    // ---------------------------------------------------------------
+
+    /**
+     * The contract asks for this cycle to run against the repository's real
+     * configured MySQL, not a driver-agnostic substitute, because generated
+     * guard columns and MySQL's NULL-tolerant unique-index semantics are
+     * exactly what is under test. It also must not run against the canonical
+     * database or against this lane's own primary one, since it drops
+     * schema.
+     *
+     * So it builds a THIRD, disposable database whose name comes from
+     * `TestDatabaseSafety::derivedName()` — the repository's single
+     * database-name authority, whose own docblock says it exists for
+     * "suites that create their own derived disposable database". No second
+     * authority is introduced here: this test decides nothing about what a
+     * safe name is, it asks.
+     *
+     * `TemporaryTestDatabase` is deliberately NOT extended. That class
+     * exposes exactly two closed-purpose entry points and documents that it
+     * has "deliberately no generic raw-name creation method, so every
+     * caller's intent is explicit"; bolting a third purpose onto it would
+     * undo the property it was written to have, and it is outside this
+     * lane's allowlist besides.
+     *
+     * Every DDL statement runs on a SEPARATE connection. MySQL implicitly
+     * commits on DDL, so issuing CREATE/DROP DATABASE on the default
+     * connection would silently end RefreshDatabase's surrounding
+     * transaction and leak this test's fixtures into the lane database.
+     */
+    public function test_the_slice_three_schema_survives_forward_rollback_and_replay(): void
+    {
+        $database = TestDatabaseSafety::derivedName('s3replay');
+
+        // Belt and braces: the name we are about to CREATE and DROP is
+        // re-validated here, against the same single authority, immediately
+        // before it is used.
+        TestDatabaseSafety::assertSafeTestDatabaseName($database);
+        $this->assertNotSame(TestDatabaseSafety::activeTestDatabase(), $database, 'Never the lane\'s own database.');
+        $this->assertStringNotContainsString('prod', $database);
+
+        $admin = $this->adminConnection();
+
+        DB::connection($admin)->statement("DROP DATABASE IF EXISTS `{$database}`");
+        DB::connection($admin)->statement("CREATE DATABASE `{$database}`");
+
+        $target = $this->targetConnection($database);
+
+        try {
+            // --- 1. Forward ------------------------------------------
+            Artisan::call('migrate', ['--database' => $target, '--force' => true]);
+
+            $this->assertSliceThreeAndLaneESchemaPresent($target, 'after the forward migration');
+            $this->assertExactSchemaShapes($target, $database);
+            $this->assertDatabaseRejectsTheDocumentedDuplicates($target, 'after the forward migration');
+
+            // A control: something that is NOT Slice 3 schema, so the
+            // rollback assertion below means "only the relevant schema
+            // went" rather than "the database emptied".
+            $this->assertTrue(Schema::connection($target)->hasTable('businesses'));
+
+            // --- 2. Rollback, reverse dependency order ----------------
+            // Six migrations: Slice 3's five plus Lane E's one, which are
+            // the last six by execution order. The command unwinds them in
+            // reverse, which is the only order in which the mapping table's
+            // foreign keys can be dropped before the columns they reference.
+            Artisan::call('migrate:rollback', ['--database' => $target, '--step' => 6, '--force' => true]);
+
+            foreach ([
+                'business_messaging_identities',
+                'business_messaging_numbers',
+                'business_messaging_operations',
+                'business_usage_measurements',
+                'messaging_webhook_rejections',
+                'ai_box_campaign_map',
+            ] as $table) {
+                $this->assertFalse(
+                    Schema::connection($target)->hasTable($table),
+                    "[{$table}] should have been removed by the rollback.",
+                );
+            }
+
+            $this->assertFalse(Schema::connection($target)->hasColumn('chat_boxes', 'ai_stage'));
+            $this->assertFalse(Schema::connection($target)->hasColumn('chat_boxes', 'ai_replied'));
+
+            // Only the relevant schema went.
+            $this->assertTrue(Schema::connection($target)->hasTable('businesses'));
+            $this->assertTrue(Schema::connection($target)->hasTable('chat_boxes'));
+            $this->assertTrue(Schema::connection($target)->hasTable('campaigns'));
+
+            // --- 3. Replay -------------------------------------------
+            Artisan::call('migrate', ['--database' => $target, '--force' => true]);
+
+            $this->assertSliceThreeAndLaneESchemaPresent($target, 'after the replay');
+            $this->assertExactSchemaShapes($target, $database);
+
+            // --- 4. The same violations still occur after replay ------
+            $this->assertDatabaseRejectsTheDocumentedDuplicates($target, 'after the replay');
+        } finally {
+            // Dropped whether the assertions passed, failed or threw.
+            DB::connection($admin)->statement("DROP DATABASE IF EXISTS `{$database}`");
+            DB::purge($target);
+            DB::purge($admin);
+        }
+
+        $this->assertSame(
+            0,
+            (int) DB::connection($this->adminConnection())
+                ->selectOne('SELECT COUNT(*) AS n FROM information_schema.schemata WHERE schema_name = ?', [$database])->n,
+            'The disposable database must not survive the test.',
+        );
+    }
+
+    private function adminConnection(): string
+    {
+        $name = 'mysql_s3replay_admin';
+
+        config(['database.connections.' . $name => array_merge(
+            config('database.connections.mysql'),
+            ['database' => null],
+        )]);
+
+        return $name;
+    }
+
+    private function targetConnection(string $database): string
+    {
+        $name = 'mysql_s3replay';
+
+        config(['database.connections.' . $name => array_merge(
+            config('database.connections.mysql'),
+            ['database' => $database],
+        )]);
+
+        DB::purge($name);
+
+        return $name;
+    }
+
+    private function assertSliceThreeAndLaneESchemaPresent(string $connection, string $phase): void
+    {
+        foreach ([
+            'business_messaging_identities',
+            'business_messaging_numbers',
+            'business_messaging_operations',
+            'business_usage_measurements',
+            'messaging_webhook_rejections',
+            'ai_box_campaign_map',
+        ] as $table) {
+            $this->assertTrue(
+                Schema::connection($connection)->hasTable($table),
+                "[{$table}] missing {$phase}.",
+            );
+        }
+
+        $this->assertTrue(Schema::connection($connection)->hasColumn('chat_boxes', 'ai_stage'), "chat_boxes.ai_stage missing {$phase}.");
+        $this->assertTrue(Schema::connection($connection)->hasColumn('chat_boxes', 'ai_replied'), "chat_boxes.ai_replied missing {$phase}.");
+    }
+
+    /**
+     * Generated guard columns, unique indexes and foreign keys, by exact
+     * shape — so a replay that recreated the tables with subtly different
+     * definitions would fail here rather than pass on table existence alone.
+     */
+    private function assertExactSchemaShapes(string $connection, string $database): void
+    {
+        $generated = DB::connection($connection)
+            ->table('information_schema.COLUMNS')
+            ->select('TABLE_NAME', 'COLUMN_NAME')
+            ->where('TABLE_SCHEMA', $database)
+            ->where('EXTRA', 'STORED GENERATED')
+            ->whereIn('TABLE_NAME', ['business_messaging_identities', 'business_messaging_numbers'])
+            ->get()
+            ->map(fn ($r) => $r->TABLE_NAME . '.' . $r->COLUMN_NAME)
+            ->sort()
+            ->values()
+            ->all();
+
+        $this->assertSame([
+            'business_messaging_identities.active_or_pending_business_id',
+            'business_messaging_numbers.active_or_pending_phone_number',
+            'business_messaging_numbers.active_primary_identity_id',
+        ], $generated);
+
+        $uniques = DB::connection($connection)
+            ->table('information_schema.STATISTICS')
+            ->select('INDEX_NAME')
+            ->where('TABLE_SCHEMA', $database)
+            ->where('TABLE_NAME', 'business_messaging_identities')
+            ->where('NON_UNIQUE', 0)
+            ->distinct()
+            ->pluck('INDEX_NAME')
+            ->all();
+
+        $this->assertContains('bmi_provider_active_or_pending_business_unique', $uniques);
+
+        $foreignKeys = DB::connection($connection)
+            ->table('information_schema.REFERENTIAL_CONSTRAINTS')
+            ->select('CONSTRAINT_NAME', 'DELETE_RULE')
+            ->where('CONSTRAINT_SCHEMA', $database)
+            ->where('TABLE_NAME', 'ai_box_campaign_map')
+            ->pluck('DELETE_RULE', 'CONSTRAINT_NAME')
+            ->all();
+
+        $this->assertCount(2, $foreignKeys, 'The mapping table carries exactly two foreign keys.');
+        foreach ($foreignKeys as $name => $rule) {
+            $this->assertSame('CASCADE', $rule, "Foreign key [{$name}] must cascade on delete.");
+        }
+    }
+
+    /**
+     * The documented uniqueness violations, asserted against the real
+     * constraints on the disposable database rather than the lane's own.
+     */
+    private function assertDatabaseRejectsTheDocumentedDuplicates(string $connection, string $phase): void
+    {
+        // The disposable database is schema-only — it has no Business rows,
+        // and building the whole workspace/customer/user chain just to hang
+        // a probe row off it would test the fixture rather than the
+        // constraint. Foreign-key checks are suspended for this probe ALONE,
+        // on this connection alone, because the subject here is the UNIQUE
+        // index; the foreign keys themselves are asserted by shape in
+        // assertExactSchemaShapes() and exercised for real against the
+        // lane's own database elsewhere in this file.
+        DB::connection($connection)->statement('SET FOREIGN_KEY_CHECKS = 0');
+
+        $row = [
+            'uid' => (string) Str::uuid(),
+            'business_id' => 424242,
+            'provider' => MessagingProvider::Telnyx->value,
+            'status' => BusinessMessagingIdentityStatus::Active->value,
+            'messaging_profile_id' => 'mp_replay_' . Str::random(8),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ];
+
+        DB::connection($connection)->table('business_messaging_identities')->insert($row);
+
+        // (a) a second active-or-pending identity for the same Business
+        $second = array_merge($row, [
+            'uid' => (string) Str::uuid(),
+            'messaging_profile_id' => 'mp_replay_other_' . Str::random(8),
+        ]);
+
+        $conflicted = false;
+        try {
+            DB::connection($connection)->table('business_messaging_identities')->insert($second);
+        } catch (QueryException) {
+            $conflicted = true;
+        }
+        $this->assertTrue($conflicted, "A second active identity must be refused {$phase}.");
+
+        // (b) a duplicate messaging_profile_id under a different Business
+        $duplicateProfile = array_merge($row, [
+            'uid' => (string) Str::uuid(),
+            'business_id' => 525252,
+        ]);
+
+        $profileConflicted = false;
+        try {
+            DB::connection($connection)->table('business_messaging_identities')->insert($duplicateProfile);
+        } catch (QueryException) {
+            $profileConflicted = true;
+        }
+        $this->assertTrue($profileConflicted, "A duplicate messaging_profile_id must be refused {$phase}.");
+
+        // Leave the disposable database as we found it for the next phase,
+        // and put the foreign-key enforcement back before anything else
+        // touches this connection.
+        DB::connection($connection)->table('business_messaging_identities')->delete();
+        DB::connection($connection)->statement('SET FOREIGN_KEY_CHECKS = 1');
     }
 }

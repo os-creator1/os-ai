@@ -3,9 +3,14 @@
 namespace Tests\Feature\Usage;
 
 use App\Enums\Entitlement\PlatformFeature;
+use App\Library\Messaging\ManagedDispatchDelegate;
+use App\Library\Messaging\ManagedMessageDispatcher;
 use App\Library\Usage\UsageWalletManager;
 use App\Models\Business;
 use App\Models\BusinessUsageMeasurement;
+use App\Models\CustomerBasedSendingServer;
+use App\Models\Reports;
+use App\Models\SendingServer;
 use App\Repositories\Contracts\BusinessUsageMeasurementRepository;
 use App\Repositories\Eloquent\EloquentBusinessUsageMeasurementRepository;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -239,6 +244,217 @@ class MessagingTransportMeasurementLayeringTest extends TestCase
         );
     }
 
+    // ---------------------------------------------------------------
+    // T-MSG-35 / T-BYO-1 / T-BYO-2 — a BYO send is measured, never charged
+    // ---------------------------------------------------------------
+
+    /**
+     * §4.7: "BYO transport gets zero platform transport rate or wallet
+     * debit; §4.8's recordMeasurement() call with transport_marker: 'byo'
+     * is how a BYO send is still measured."
+     *
+     * These drive `ManagedDispatchDelegate::recordByoMeasurement()` — the
+     * seam both production convergence points call at their authoritative
+     * successful-dispatch boundary — with the same `Reports` row the legacy
+     * provider layer produces.
+     */
+    public function test_a_byo_send_writes_exactly_one_measurement_marked_byo(): void
+    {
+        [$business, $server] = $this->byoBusiness();
+        $report = $this->deliveredReport($business, $server, smsCount: 3);
+
+        $measured = ManagedDispatchDelegate::recordByoMeasurement($server->id, $report, '3');
+
+        $this->assertTrue($measured, 'A delivered BYO send must be measured.');
+        $this->assertSame(1, DB::table('business_usage_measurements')->count());
+
+        $row = DB::table('business_usage_measurements')->first();
+        $this->assertSame((int) $business->id, (int) $row->business_id);
+        $this->assertSame(PlatformFeature::MessagingTransport->value, $row->feature_key);
+        $this->assertSame('byo', $row->transport_marker);
+        $this->assertSame('segment', $row->unit);
+        $this->assertSame(3.0, (float) $row->quantity, 'The measurement records the real segment count.');
+        $this->assertStringContainsString($report->uid, $row->idempotency_key);
+    }
+
+    public function test_a_byo_send_takes_no_reservation_no_debit_and_no_cap(): void
+    {
+        [$business, $server] = $this->byoBusiness();
+
+        $walletBefore = DB::table('business_usage_wallets')->where('business_id', $business->id)->first();
+
+        ManagedDispatchDelegate::recordByoMeasurement($server->id, $this->deliveredReport($business, $server), '1');
+
+        // T-BYO-1, asserted three ways rather than one.
+        $this->assertSame(0, DB::table('business_usage_reservations')->count(), 'No reservation.');
+        $this->assertSame(0, DB::table('business_usage_ledger_entries')->count(), 'No ledger entry, so no debit.');
+        $this->assertSame(0, DB::table('business_usage_rates')->count(), 'No retail rate.');
+        $this->assertSame(0, DB::table('business_usage_rate_activations')->count(), 'No activation.');
+
+        // The wallet — and therefore any spending cap measured against it —
+        // is byte-identical to before the send.
+        $walletAfter = DB::table('business_usage_wallets')->where('business_id', $business->id)->first();
+        $this->assertEquals($walletBefore, $walletAfter, 'A BYO send must not move the wallet at all.');
+    }
+
+    public function test_repeating_the_same_byo_dispatch_creates_no_second_measurement(): void
+    {
+        [$business, $server] = $this->byoBusiness();
+        $report = $this->deliveredReport($business, $server);
+
+        // The same dispatch record, processed three times — a retry, or a
+        // duplicate callback replaying it. The key is a pure function of the
+        // Reports row's uid, so all three converge on one row.
+        foreach (range(1, 3) as $ignored) {
+            ManagedDispatchDelegate::recordByoMeasurement($server->id, $report, '1');
+        }
+
+        $this->assertSame(1, DB::table('business_usage_measurements')->count());
+
+        // A genuinely different dispatch IS a second transport event.
+        ManagedDispatchDelegate::recordByoMeasurement($server->id, $this->deliveredReport($business, $server), '1');
+        $this->assertSame(2, DB::table('business_usage_measurements')->count());
+    }
+
+    public function test_a_failed_byo_send_is_never_recorded_as_transport(): void
+    {
+        [$business, $server] = $this->byoBusiness();
+
+        foreach (['Failed', 'Rejected', 'Queued', ''] as $status) {
+            $report = $this->deliveredReport($business, $server);
+            $report->status = $status;
+            $report->save();
+
+            $this->assertFalse(
+                ManagedDispatchDelegate::recordByoMeasurement($server->id, $report, '1'),
+                "A [{$status}] send must not be measured as transport that happened.",
+            );
+        }
+
+        // The legacy layer also returns a plain error string on some paths.
+        $this->assertFalse(ManagedDispatchDelegate::recordByoMeasurement($server->id, 'something went wrong', '1'));
+        $this->assertFalse(ManagedDispatchDelegate::recordByoMeasurement($server->id, null, '1'));
+
+        $this->assertSame(0, DB::table('business_usage_measurements')->count());
+    }
+
+    public function test_a_managed_send_is_never_mislabelled_as_byo(): void
+    {
+        [$business, $server] = $this->byoBusiness();
+
+        // Give the same Business an active managed identity. Its traffic
+        // never reaches the legacy switch in production; if some future path
+        // sent it there anyway, it must not acquire a 'byo' marker.
+        $identity = $this->attachIdentity($business);
+        $this->attachNumber($identity, $this->uniqueNumber(), true);
+
+        $this->assertFalse(ManagedDispatchDelegate::recordByoMeasurement($server->id, $this->deliveredReport($business, $server), '1'));
+        $this->assertSame(0, DB::table('business_usage_measurements')->count());
+
+        // And a real managed dispatch is marked managed, not byo.
+        $this->dispatchOnce($business, 'op_managed_marker');
+
+        $this->assertSame('managed', DB::table('business_usage_measurements')->value('transport_marker'));
+    }
+
+    public function test_a_byo_send_creates_no_managed_operation_record(): void
+    {
+        [$business, $server] = $this->byoBusiness();
+
+        ManagedDispatchDelegate::recordByoMeasurement($server->id, $this->deliveredReport($business, $server), '1');
+
+        $this->assertSame(
+            0,
+            DB::table(ManagedMessageDispatcher::TABLE)->count(),
+            'A BYO send must never masquerade as a managed operation the platform carried.',
+        );
+    }
+
+    public function test_an_unassigned_gateway_is_not_treated_as_anyones_byo_connection(): void
+    {
+        // An admin/legacy shared SendingServer with no
+        // customer_based_sending_servers assignment belongs to no Business,
+        // so nothing is measured and nothing is guessed.
+        $server = SendingServer::create([
+            'name' => 'Shared Admin Gateway',
+            'settings' => SendingServer::TYPE_TWILIO,
+            'status' => true,
+            'plain' => true,
+        ]);
+
+        [$business] = $this->byoBusiness();
+
+        $this->assertFalse(ManagedDispatchDelegate::recordByoMeasurement($server->id, $this->deliveredReport($business, $server), '1'));
+        $this->assertSame(0, DB::table('business_usage_measurements')->count());
+    }
+
+    public function test_the_byo_measurement_carries_no_credential(): void
+    {
+        [$business, $server] = $this->byoBusiness();
+
+        ManagedDispatchDelegate::recordByoMeasurement($server->id, $this->deliveredReport($business, $server), '1');
+
+        $encoded = (string) json_encode(DB::table('business_usage_measurements')->get());
+
+        foreach (['AC_BYO_SID', 'byo_auth_token_fixture', 'api_key', 'auth_token', 'secret', 'password'] as $needle) {
+            $this->assertStringNotContainsString($needle, $encoded, "The measurement retained [{$needle}].");
+        }
+    }
+
+    /**
+     * A Business whose transport is its own gateway, connected exactly the
+     * way the relocated advanced-provider surface connects one: a dedicated
+     * SendingServer plus a CustomerBasedSendingServer assignment row. That
+     * assignment is what makes the send authoritatively BYO — not anything
+     * in a request.
+     *
+     * @return array{0: Business, 1: SendingServer}
+     */
+    private function byoBusiness(): array
+    {
+        $customer = $this->createCustomer();
+        $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
+
+        $server = SendingServer::create([
+            'name' => 'BYO Twilio',
+            'settings' => SendingServer::TYPE_TWILIO,
+            'status' => true,
+            'plain' => true,
+            'user_id' => $customer->user_id,
+            'account_sid' => 'AC_BYO_SID',
+            'auth_token' => 'byo_auth_token_fixture',
+        ]);
+
+        CustomerBasedSendingServer::create([
+            'user_id' => $customer->user_id,
+            'business_id' => $business->id,
+            'sending_server' => $server->id,
+            'status' => true,
+        ]);
+
+        return [$business->fresh(), $server];
+    }
+
+    /**
+     * The exact kind of value the legacy provider layer returns on success:
+     * a persisted Reports row whose status says Delivered.
+     */
+    private function deliveredReport(Business $business, SendingServer $server, int $smsCount = 1): Reports
+    {
+        return Reports::create([
+            'user_id' => $business->customer->user_id,
+            'business_id' => $business->id,
+            'to' => '14155559700',
+            'message' => 'byo fixture',
+            'sms_type' => 'plain',
+            'status' => 'Delivered',
+            'customer_status' => 'Delivered',
+            'direction' => Reports::DIRECTION_OUTGOING,
+            'cost' => 0,
+            'sms_count' => $smsCount,
+            'sending_server_id' => $server->id,
+        ]);
+    }
     private function dispatchOnce(Business $business, string $operationKey): void
     {
         app(\App\Library\Messaging\ManagedMessageDispatcher::class)

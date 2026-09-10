@@ -535,6 +535,19 @@
 
             if (is_object($data) && ! empty($data->status)) {
                 if (substr_count($data->status, 'Delivered') == 1) {
+                    // Slice 3 §4.7/§4.8 — T-MSG-35, T-BYO-1/2. A BYO send
+                    // is measured, at a zero rate, with no reservation and
+                    // no wallet debit. This is the authoritative successful
+                    // dispatch boundary: the provider layer has returned a
+                    // persisted Reports row that says Delivered. Ownership
+                    // is resolved inside the delegate from the sending
+                    // server's own assignment row, never from $input.
+                    \App\Library\Messaging\ManagedDispatchDelegate::recordByoMeasurement(
+                        $sending_server?->id,
+                        $data,
+                        (string) $sms_count,
+                    );
+
                     // RFC-005 Milestone 5 §H — charging exclusivity: a
                     // qualifying M5 send already charged the RFC-005
                     // wallet via settleConversationsMeterReservation()

@@ -1030,6 +1030,18 @@
                 $getData = $this->sendOTP($preparedData);
             }
 
+            // Slice 3 §4.7/§4.8 — T-MSG-35, T-BYO-1/2. The campaign-side
+            // half of the BYO measurement seam, at the same authoritative
+            // boundary the quick-send path uses: the legacy provider layer
+            // has returned, and the delegate decides from persisted state
+            // alone whether this was a customer's own BYO gateway and
+            // whether it actually delivered.
+            \App\Library\Messaging\ManagedDispatchDelegate::recordByoMeasurement(
+                is_object($preparedData['sending_server'] ?? null) ? $preparedData['sending_server']->id : null,
+                $getData,
+                (string) ($preparedData['sms_count'] ?? 1),
+            );
+
             return $getData;
         }
 

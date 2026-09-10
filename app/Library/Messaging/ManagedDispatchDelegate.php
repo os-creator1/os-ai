@@ -2,10 +2,14 @@
 
 namespace App\Library\Messaging;
 
+use App\Enums\Entitlement\PlatformFeature;
+use App\Enums\Messaging\MessagingTransportMode;
 use App\Library\Messaging\DTO\OutboundMessageResult;
 use App\Library\Messaging\Exceptions\MessagingIdentityConflictException;
+use App\Library\Usage\UsageWalletManager;
 use App\Models\Business;
 use App\Models\Campaigns;
+use App\Models\CustomerBasedSendingServer;
 use App\Models\Reports;
 use Illuminate\Support\Str;
 
@@ -31,6 +35,12 @@ use Illuminate\Support\Str;
  */
 class ManagedDispatchDelegate
 {
+    /**
+     * §4.8's unit for telecom transport, shared by the managed and BYO
+     * measurement paths so the two are directly comparable in one table.
+     */
+    public const MEASUREMENT_UNIT = 'segment';
+
     /**
      * @param list<string> $mediaUrls
      *
@@ -148,6 +158,116 @@ class ManagedDispatchDelegate
         }
 
         return app(BusinessMessagingIdentityResolver::class)->resolveForBusiness($business) !== null;
+    }
+
+    /**
+     * Slice 3 §4.7/§4.8 — T-MSG-35, T-BYO-1, T-BYO-2.
+     *
+     * "BYO transport gets zero platform transport rate or wallet debit;
+     * §4.8's recordMeasurement() call with transport_marker: 'byo' is how a
+     * BYO send is still measured."
+     *
+     * WHERE THIS IS CALLED, AND WHY THERE.
+     *
+     * The authoritative successful-dispatch boundary is the point where the
+     * legacy provider layer has returned a persisted `Reports` row whose
+     * status says Delivered. Before that point the send may still fail;
+     * after it, the transport genuinely happened. Both of Slice 3's two
+     * contracted convergence points reach it, so this is called from both
+     * and from nowhere else.
+     *
+     * WHAT MAKES A SEND "BYO", AUTHORITATIVELY.
+     *
+     * Not the request. Not `$input['business_id']`, not `$input['user_id']`,
+     * neither of which is trustworthy (see the implementation document's
+     * §7(g)). The Business is resolved from persisted state only: the
+     * `customer_based_sending_servers` row that assigns the SendingServer
+     * this send actually used to a Business. A gateway with no such
+     * assignment is an admin/legacy shared server, not a customer's own BYO
+     * connection, and is deliberately not measured here.
+     *
+     * WHY IT IS SAFE TO RUN ON EVERY LEGACY SEND.
+     *
+     * A managed Business never reaches the legacy switch at all — `attempt()`
+     * intercepts it upstream. The managed-identity check below is therefore
+     * belt-and-braces, and exists so that a future path which somehow sent a
+     * managed Business's traffic through a legacy gateway would be refused a
+     * `byo` marker rather than silently mislabelled.
+     *
+     * IDEMPOTENCY. The key is derived from the `Reports` row's own uid — the
+     * authoritative persisted identity of this one dispatch, minted once by
+     * `HasUid`. Re-processing the same dispatch record cannot produce a
+     * second measurement, because `recordOnce()` is idempotent on the key
+     * and the key is a pure function of the row. It is deliberately not
+     * random per call, which would defeat the whole mechanism.
+     *
+     * WHAT THIS DOES NOT DO. No reservation. No wallet debit. No spending-cap
+     * consumption. No rate, no activation, no ledger entry. No
+     * `business_messaging_operations` row — a BYO send is not a managed
+     * operation and must never masquerade as one. And nothing about the
+     * provider's credentials is carried into the measurement: the row holds
+     * a business id, a feature key, a quantity, a unit and a marker.
+     *
+     * @param object|string|null $dispatchResult whatever the legacy provider
+     *                                           layer returned — a `Reports`
+     *                                           model on success, or an error
+     *                                           string
+     */
+    public static function recordByoMeasurement(
+        ?int $sendingServerId,
+        mixed $dispatchResult,
+        string $quantity = '1',
+    ): bool {
+        if ($sendingServerId === null || ! is_object($dispatchResult)) {
+            return false;
+        }
+
+        // A failed send is never recorded as transport that happened.
+        $status = $dispatchResult->status ?? null;
+
+        if (! is_string($status) || substr_count($status, 'Delivered') !== 1) {
+            return false;
+        }
+
+        $sendIdentity = $dispatchResult->uid ?? null;
+
+        if (! is_string($sendIdentity) || $sendIdentity === '') {
+            return false;
+        }
+
+        // Authoritative ownership: the persisted assignment row, never the
+        // request. Read-only access to CustomerBasedSendingServer, which
+        // §4.11 permits and this slice adds no column or method to.
+        $assignment = CustomerBasedSendingServer::query()
+            ->where('sending_server', $sendingServerId)
+            ->where('status', 1)
+            ->first();
+
+        if ($assignment === null || $assignment->business_id === null) {
+            return false;
+        }
+
+        $business = Business::query()->find((int) $assignment->business_id);
+
+        if (! $business instanceof Business) {
+            return false;
+        }
+
+        // A managed Business's traffic is never labelled BYO.
+        if (app(BusinessMessagingIdentityResolver::class)->resolveForBusiness($business) !== null) {
+            return false;
+        }
+
+        app(UsageWalletManager::class)->recordMeasurement(
+            $business,
+            PlatformFeature::MessagingTransport,
+            $quantity,
+            self::MEASUREMENT_UNIT,
+            'byo:' . $sendIdentity,
+            MessagingTransportMode::Byo->value,
+        );
+
+        return true;
     }
 
     /**

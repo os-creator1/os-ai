@@ -430,4 +430,132 @@ class InboundAttributionTest extends TestCase
         $this->assertSame('inbound/telnyx-managed', $route->uri());
         $this->assertSame(MessagingProvider::Telnyx->value, 'telnyx');
     }
+
+    // ---------------------------------------------------------------
+    // T-MSG-40 — outbound, inbound and DLR idempotency are independent
+    // ---------------------------------------------------------------
+
+    /**
+     * One test, one database, one uninterrupted run. That is the whole
+     * point: proving the three mechanisms in three separate tests with a
+     * refreshed database between them would prove only that each works in
+     * isolation, which is not the claim. The claim is that forcing a
+     * duplicate on ONE of them changes nothing about the other two, and the
+     * only way to see that is to have all three live at once.
+     *
+     * The three mechanisms are genuinely different (§4.8's responsibility
+     * table): outbound dedupes on `operation_key`; inbound dedupes on a
+     * guarded insert keyed by `(provider, provider_message_id)`; and DLR
+     * does NOT dedupe on row existence at all — it uses the
+     * status-transition guard, because for a delivery callback the row
+     * existing is normal rather than evidence of replay.
+     */
+    public function test_outbound_inbound_and_dlr_idempotency_never_interfere(): void
+    {
+        [$business, $identity, $number] = $this->managedBusiness();
+        $dispatcher = app(\App\Library\Messaging\ManagedMessageDispatcher::class);
+
+        // --- Establish one of each, all in the same run -----------------
+
+        // 1. An outbound operation.
+        $outbound = $dispatcher->dispatch($business, '+14155558300', 'outbound one', 'op_independence');
+        $this->assertTrue($outbound->accepted);
+        $outboundProviderId = (string) $outbound->providerMessageId;
+
+        // 2. A separate outbound operation, whose DLR we will replay. Kept
+        //    distinct from #1 so a DLR duplicate cannot be confused with an
+        //    outbound duplicate.
+        $dlrTarget = $dispatcher->dispatch($business, '+14155558301', 'outbound two', 'op_independence_dlr');
+        $this->assertTrue($dlrTarget->accepted);
+        $dlrProviderId = (string) $dlrTarget->providerMessageId;
+
+        // 3. An inbound message with its own, different provider message id.
+        $inboundProviderId = 'pm_independence_inbound';
+        $this->postEvent(
+            $this->messageReceived($identity->messaging_profile_id, $number->phone_number, $inboundProviderId),
+        )->assertOk();
+
+        // 4. The first delivery callback for #2 — a real transition.
+        $this->postEvent($this->deliveryStatus($dlrProviderId, 'delivered'))->assertOk();
+
+        $baselineOperations = DB::table('business_messaging_operations')->count();
+        $baselineMeasurements = DB::table('business_usage_measurements')->count();
+
+        $this->assertSame(3, $baselineOperations, 'Two outbound operations and one inbound row.');
+        $this->assertSame('delivered', $this->statusOf('op_independence_dlr'));
+        $this->assertSame('accepted', $this->statusOf('op_independence'));
+
+        // --- Now force each duplicate, one at a time -------------------
+
+        // (a) OUTBOUND duplicate: same operation_key. Suppressed — and the
+        //     provider is not called a second time.
+        $sentBefore = $this->fakeAdapter->sentCount();
+        $repeat = $dispatcher->dispatch($business, '+14155558300', 'outbound one', 'op_independence');
+
+        $this->assertSame($outboundProviderId, (string) $repeat->providerMessageId, 'The recorded result is returned.');
+        $this->assertSame($sentBefore, $this->fakeAdapter->sentCount(), 'A confirmed acceptance is never re-sent.');
+        $this->assertSame($baselineOperations, DB::table('business_messaging_operations')->count());
+        $this->assertSame($baselineMeasurements, DB::table('business_usage_measurements')->count());
+
+        // …and neither of the other two was disturbed.
+        $this->assertSame('delivered', $this->statusOf('op_independence_dlr'));
+        $this->assertSame(1, $this->inboundRowCount($inboundProviderId));
+
+        // (b) INBOUND duplicate: same provider_message_id as the inbound
+        //     row. Suppressed by the guarded insert, not by anything the
+        //     outbound or DLR mechanisms did.
+        $this->postEvent(
+            $this->messageReceived($identity->messaging_profile_id, $number->phone_number, $inboundProviderId),
+        )->assertOk();
+
+        $this->assertSame(1, $this->inboundRowCount($inboundProviderId), 'Exactly one inbound effect.');
+        $this->assertSame($baselineOperations, DB::table('business_messaging_operations')->count());
+
+        // …the outbound record is still there and still accepted, and the
+        // DLR result is still delivered.
+        $this->assertSame('accepted', $this->statusOf('op_independence'));
+        $this->assertSame('delivered', $this->statusOf('op_independence_dlr'));
+
+        // (c) DLR duplicate: the identical delivered callback again. A no-op
+        //     by the status-transition guard, recorded as a duplicate.
+        $duplicatesBefore = $this->rejectionCount('duplicate');
+        $this->postEvent($this->deliveryStatus($dlrProviderId, 'delivered'))->assertOk();
+
+        $this->assertSame('delivered', $this->statusOf('op_independence_dlr'), 'Status unchanged.');
+        $this->assertGreaterThan($duplicatesBefore, $this->rejectionCount('duplicate'));
+
+        // …and neither of the other two was suppressed or altered.
+        $this->assertSame('accepted', $this->statusOf('op_independence'));
+        $this->assertSame(1, $this->inboundRowCount($inboundProviderId));
+
+        // --- Final row counts and ownership, asserted directly ---------
+
+        $this->assertSame($baselineOperations, DB::table('business_messaging_operations')->count());
+        $this->assertSame($baselineMeasurements, DB::table('business_usage_measurements')->count());
+
+        foreach (DB::table('business_messaging_operations')->get() as $row) {
+            $this->assertSame((int) $business->id, (int) $row->business_id, 'Every row belongs to this Business.');
+            $this->assertSame((int) $identity->id, (int) $row->business_messaging_identity_id);
+        }
+
+        // A duplicate on one mechanism must not have leaked a rejection row
+        // attributing it to another mechanism's reason.
+        $this->assertSame(0, $this->rejectionCount('regressive_transition'));
+        $this->assertSame(0, $this->rejectionCount('conflicting_mapping'));
+    }
+
+    private function statusOf(string $operationKey): string
+    {
+        return (string) DB::table('business_messaging_operations')
+            ->where('operation_key', $operationKey)
+            ->value('status');
+    }
+
+    private function inboundRowCount(string $providerMessageId): int
+    {
+        return DB::table('business_messaging_operations')
+            ->where('direction', 'inbound')
+            ->where('provider_message_id', $providerMessageId)
+            ->count();
+    }
 }
