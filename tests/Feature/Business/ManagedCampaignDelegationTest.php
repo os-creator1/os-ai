@@ -4,6 +4,7 @@ namespace Tests\Feature\Business;
 
 use App\Enums\Entitlement\PlatformFeature;
 use App\Library\Messaging\Exceptions\MessagingIdentityConflictException;
+use App\Library\Messaging\ManagedDispatchDelegate;
 use App\Library\Messaging\ManagedMessageDispatcher;
 use App\Models\AppConfig;
 use App\Models\Campaigns;
@@ -160,15 +161,22 @@ class ManagedCampaignDelegationTest extends TestCase
     {
         [, $business, $identity, $number] = $this->managedSendableTenant();
 
-        $campaign = new Campaigns();
-        $campaign->business_id = $business->id;
-        // The Reports row the delegation returns is attributed to the
-        // campaign's own owner, exactly as the legacy path attributes it.
-        $campaign->user_id = $business->customer->user_id;
-        $campaign->sms_type = 'plain';
+        // A SAVED campaign, because a managed send now requires a durable
+        // operation key and a campaign's identity is half of it. The
+        // transient `new Campaigns()` this test used to build has no id and
+        // is therefore refused — asserted separately below.
+        $campaign = Campaigns::create([
+            'user_id' => $business->customer->user_id,
+            'business_id' => $business->id,
+            'campaign_name' => 'Bulk Path ' . uniqid(),
+            'message' => 'Hello from the bulk path',
+            'sms_type' => 'plain',
+            'status' => Campaigns::STATUS_NEW,
+        ]);
 
         $result = $campaign->sendSMS([
             'user_id' => $business->customer_id,
+            'campaign_id' => $campaign->id,
             'phone' => '14155552673',
             'sender_id' => 'TESTSENDER',
             'message' => 'Hello from the bulk path',
@@ -538,5 +546,168 @@ class ManagedCampaignDelegationTest extends TestCase
             $default = collect((new AppConfig())->defaultSettings())->firstWhere('setting', 'customer_permissions');
             AppConfig::create($default);
         }
+    }
+
+    // ---------------------------------------------------------------
+    // Audit finding — a retried job must not send, bill or record twice
+    // ---------------------------------------------------------------
+
+    /**
+     * The defect: the delegate invented `managed:<businessId>:<random uuid>`
+     * whenever a caller supplied no key, and the campaign path supplied
+     * none. `SendMessage` is a QUEUED job with retries, so every retry of
+     * the same logical send minted a fresh key and produced another provider
+     * call, another operation, another measurement and another Reports row.
+     *
+     * This drives the real send twice — the way a retried job does — and
+     * asserts one of everything.
+     */
+    public function test_a_retried_campaign_send_produces_exactly_one_of_everything(): void
+    {
+        [$tenant, $business, $identity, $number] = $this->managedSendableTenant();
+
+        $campaign = Campaigns::create([
+            'user_id' => $tenant->user_id,
+            'business_id' => $business->id,
+            'campaign_name' => 'Retry Safety ' . uniqid(),
+            'message' => 'retry safety',
+            'sms_type' => 'plain',
+            'status' => Campaigns::STATUS_NEW,
+        ]);
+
+        $payload = [
+            'user_id' => $business->customer_id,
+            'campaign_id' => $campaign->id,
+            'phone' => '14155552690',
+            'sender_id' => 'TESTSENDER',
+            'message' => 'retry safety',
+            'sms_type' => 'plain',
+            'cost' => 0,
+            'sms_count' => 1,
+        ];
+
+        // Three attempts at the SAME logical send, as a retrying job makes.
+        $first = $campaign->sendSMS($payload);
+        $campaign->sendSMS($payload);
+        $campaign->sendSMS($payload);
+
+        $this->assertCount(1, $this->fakeAdapter->sentRequests, 'One provider call.');
+        $this->assertSame(1, $this->operationCount(), 'One operation row.');
+        $this->assertSame(1, DB::table('business_usage_measurements')->count(), 'One measurement.');
+        $this->assertOperationBelongsTo($identity, $number);
+
+        // The recorded result is returned to every retry, so the caller's
+        // own accounting sees one delivery rather than three.
+        $this->assertSame('Delivered', $first->status);
+
+        // And the durable key really is derived from campaign + recipient,
+        // not from chance.
+        $this->assertSame(
+            'managed:campaign:' . $campaign->id . ':14155552690',
+            DB::table(ManagedMessageDispatcher::TABLE)->value('operation_key'),
+        );
+    }
+
+    public function test_a_managed_send_without_a_durable_identity_is_refused_not_guessed(): void
+    {
+        [, $business] = $this->managedSendableTenant();
+
+        // A transient campaign has no id, so no durable key can be derived.
+        // The delegate must refuse rather than invent one.
+        $campaign = new Campaigns();
+        $campaign->business_id = $business->id;
+        $campaign->user_id = $business->customer->user_id;
+        $campaign->sms_type = 'plain';
+
+        try {
+            $campaign->sendSMS([
+                'phone' => '14155552691',
+                'message' => 'no durable identity',
+                'sms_type' => 'plain',
+                'sms_count' => 1,
+            ]);
+            $this->fail('A managed send with no durable identity must be refused.');
+        } catch (MessagingIdentityConflictException $e) {
+            $this->assertStringContainsString('durable operation key', $e->getMessage());
+        }
+
+        $this->assertCount(0, $this->fakeAdapter->sentRequests);
+        $this->assertSame(0, $this->operationCount());
+        $this->assertSame(0, DB::table('business_usage_measurements')->count());
+    }
+
+    // ---------------------------------------------------------------
+    // Audit finding — voice must never be sent as managed SMS
+    // ---------------------------------------------------------------
+
+    public function test_a_managed_businesss_voice_campaign_never_reaches_the_messaging_adapter(): void
+    {
+        [$tenant, $business] = $this->managedSendableTenant();
+
+        $campaign = Campaigns::create([
+            'user_id' => $tenant->user_id,
+            'business_id' => $business->id,
+            'campaign_name' => 'Voice ' . uniqid(),
+            'message' => 'this is a voice campaign',
+            'sms_type' => 'voice',
+            'status' => Campaigns::STATUS_NEW,
+        ]);
+
+        // The legacy voice path runs and fails for its own ordinary reasons
+        // in this sandbox (no configured voice gateway); what matters is
+        // that managed messaging did not intercept it.
+        try {
+            $campaign->sendSMS([
+                'user_id' => $business->customer_id,
+                'campaign_id' => $campaign->id,
+                'phone' => '14155552692',
+                'sender_id' => 'TESTSENDER',
+                'message' => 'this is a voice campaign',
+                'sms_type' => 'voice',
+                'cost' => 0,
+                'sms_count' => 1,
+                'language' => 'en',
+                'gender' => 'female',
+            ]);
+        } catch (\Throwable) {
+            // The legacy voice branch's own failure is not this test's
+            // subject and is deliberately not asserted on.
+        }
+
+        $this->assertCount(0, $this->fakeAdapter->sentRequests, 'Voice must never reach the SMS adapter.');
+        $this->assertSame(0, $this->operationCount(), 'Voice must write no managed operation row.');
+        $this->assertSame(0, DB::table('business_usage_measurements')->count(), 'Voice must not be measured as messaging transport.');
+    }
+
+    public function test_the_delegate_refuses_voice_and_unknown_types_structurally(): void
+    {
+        // The gate lives in the delegate itself, not only at the call sites,
+        // because it was the call-site ordering that went wrong.
+        $this->assertTrue(ManagedDispatchDelegate::supportsMessageType('plain'));
+        $this->assertTrue(ManagedDispatchDelegate::supportsMessageType('unicode'));
+        $this->assertTrue(ManagedDispatchDelegate::supportsMessageType('mms'));
+
+        foreach (['voice', 'whatsapp', 'viber', 'otp', 'fax', 'anything-new', '', null] as $unsupported) {
+            $this->assertFalse(
+                ManagedDispatchDelegate::supportsMessageType($unsupported),
+                'Managed messaging must not carry [' . var_export($unsupported, true) . '].',
+            );
+        }
+
+        // And attempt() returns null for them, so the caller falls through
+        // to its legacy path unchanged.
+        [, $business] = $this->managedSendableTenant();
+
+        $this->assertNull(ManagedDispatchDelegate::attempt(
+            $business->id,
+            '14155552693',
+            'body',
+            'managed:probe:voice',
+            [],
+            '1',
+            'voice',
+        ));
+
+        $this->assertCount(0, $this->fakeAdapter->sentRequests);
     }
 }

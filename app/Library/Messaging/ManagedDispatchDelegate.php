@@ -42,6 +42,35 @@ class ManagedDispatchDelegate
     public const MEASUREMENT_UNIT = 'segment';
 
     /**
+     * The ONLY message types managed messaging may carry.
+     *
+     * This gate lives here, in the delegate itself, rather than only at the
+     * call sites — because it was only at the call sites that it went wrong.
+     * `Campaigns::sendSMS()` runs the delegation BEFORE its own `sms_type`
+     * switch, so a managed Business's VOICE campaign was being handed to the
+     * SMS adapter, sent as a text message, and recorded and measured as
+     * messaging transport. The customer ordered a phone call and got an SMS.
+     *
+     * Defence in depth is the point: the call sites are ordered correctly
+     * now, and this list also refuses anything that reaches the delegate
+     * with an unsupported or unknown type. Voice belongs to the legacy voice
+     * path and stays there; an unrecognised type falls through to legacy
+     * unchanged rather than being guessed at.
+     *
+     * @var list<string>
+     */
+    public const SUPPORTED_MESSAGE_TYPES = ['plain', 'unicode', 'mms'];
+
+    /**
+     * Whether managed messaging is allowed to carry this message type at
+     * all. Anything not explicitly listed — voice above all — is refused.
+     */
+    public static function supportsMessageType(?string $smsType): bool
+    {
+        return $smsType !== null && in_array($smsType, self::SUPPORTED_MESSAGE_TYPES, true);
+    }
+
+    /**
      * @param list<string> $mediaUrls
      *
      * @return OutboundMessageResult|null null when this Business has no
@@ -55,8 +84,15 @@ class ManagedDispatchDelegate
         ?string $operationKey = null,
         array $mediaUrls = [],
         string $quantity = '1',
+        ?string $smsType = null,
     ): ?OutboundMessageResult {
         if ($businessId === null || $toNumber === null || $toNumber === '') {
+            return null;
+        }
+
+        // Voice, and anything else managed messaging does not carry, falls
+        // straight through to the legacy path. See SUPPORTED_MESSAGE_TYPES.
+        if (! self::supportsMessageType($smsType)) {
             return null;
         }
 
@@ -73,11 +109,32 @@ class ManagedDispatchDelegate
             return null;
         }
 
+        // FAIL CLOSED on a missing durable key, rather than inventing one.
+        //
+        // This used to read `$operationKey ?? ('managed:' . $businessId .
+        // ':' . Str::uuid())`. A random per-call key is not idempotency, it
+        // is the appearance of idempotency: on the queued campaign path,
+        // where SendMessage really is retried, every retry minted a new key
+        // and so produced another provider call, another operation row,
+        // another measurement and another Reports row. The suppression test
+        // never caught it because it called the dispatcher directly with a
+        // fixed key.
+        //
+        // A caller that cannot name the durable identity of its own send
+        // does not get to send through managed transport. Refusing is
+        // recoverable; silently double-charging a customer is not.
+        if ($operationKey === null || $operationKey === '') {
+            throw new MessagingIdentityConflictException(sprintf(
+                'Managed dispatch for Business [%d] requires a durable operation key; refusing to invent one.',
+                $businessId,
+            ));
+        }
+
         return app(ManagedMessageDispatcher::class)->dispatch(
             $business,
             $toNumber,
             (string) $body,
-            $operationKey ?? ('managed:' . $businessId . ':' . Str::uuid()),
+            $operationKey,
             $mediaUrls,
             $quantity,
         );

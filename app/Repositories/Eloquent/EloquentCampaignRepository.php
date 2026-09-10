@@ -437,13 +437,37 @@
             //
             // A managed Business whose identity cannot be used fails closed
             // rather than falling back to a legacy provider.
+            // The durable key for a quick send.
+            //
+            // A Conversations-context call already carries a client
+            // idempotency token, and that is the right identity when it
+            // exists. When it does not, the key is derived deterministically
+            // from the send's own content — Business, recipient and message
+            // — rather than from a random UUID, so a repeated delivery of
+            // the same request converges instead of double-charging.
+            //
+            // The bound is stated honestly: quick send is a synchronous,
+            // user-initiated action that no queue retries, so this is
+            // duplicate-suppression rather than retry-recovery, and two
+            // genuinely separate sends of identical text to the same
+            // recipient collapse to one operation. The alternative — a fresh
+            // random key per call — is what produced the double-billing this
+            // replaces.
+            $quickSendKey = $input['idempotency_token'] ?? null;
+
+            if (! is_string($quickSendKey) || $quickSendKey === '') {
+                $quickSendKey = 'managed:quicksend:' . ($input['business_id'] ?? '0')
+                    . ':' . hash('sha256', $phone . '|' . (string) $message . '|' . (string) $sender_id);
+            }
+
             $managedResult = \App\Library\Messaging\ManagedDispatchDelegate::attempt(
                 $input['business_id'] ?? null,
                 $phone,
                 $message,
-                $input['idempotency_token'] ?? null,
+                $quickSendKey,
                 isset($input['media_url']) ? [(string) $input['media_url']] : [],
                 (string) $sms_count,
+                $sms_type,
             );
 
             if ($managedResult !== null) {

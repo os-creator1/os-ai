@@ -969,6 +969,40 @@
         }
 
         /**
+         * Slice 3 §4.9 — the DURABLE operation key for a campaign send.
+         *
+         * The defect this replaces: the delegate used to invent
+         * `managed:<businessId>:<random uuid>` when a caller supplied no
+         * key, and this caller supplied none. `SendMessage` is a queued job
+         * with retries, so every retry of the SAME logical send minted a
+         * fresh key and therefore produced another provider call, another
+         * operation row, another measurement and another Reports row. The
+         * idempotency that §4.9 promises was, on the one path that actually
+         * retries, not there at all.
+         *
+         * A campaign send's durable identity is the campaign it belongs to
+         * plus the recipient it is going to — which is exactly the pair
+         * `subscribersToSend()` already uses to decide who still needs
+         * sending, so a retry and the original agree by construction.
+         *
+         * Returns null rather than throwing when neither is available; the
+         * delegate decides what to do about that, and only once it knows the
+         * send is actually managed. Throwing here would break every legacy
+         * send that has no business with this method at all.
+         */
+        private function managedOperationKeyFor(array $preparedData): ?string
+        {
+            $campaignId = $preparedData['campaign_id'] ?? $this->id ?? null;
+            $recipient = $preparedData['phone'] ?? null;
+
+            if ($campaignId === null || ! is_string($recipient) || $recipient === '') {
+                return null;
+            }
+
+            return 'managed:campaign:' . $campaignId . ':' . preg_replace('/\D+/', '', $recipient);
+        }
+
+        /**
          * @throws Exception
          */
         public function sendSMS($preparedData)
@@ -984,13 +1018,20 @@
             // insertion covers every campaign entry route. A Business
             // without a managed identity returns null and the legacy
             // provider methods below run exactly as before.
+            // The sms_type is passed so the delegate can refuse a type
+            // managed messaging does not carry. This insertion sits ABOVE
+            // the type switch below, which is exactly how a managed
+            // Business's VOICE campaign was previously handed to the SMS
+            // adapter and billed as messaging transport — the delegate now
+            // refuses it and the voice branch below runs unchanged.
             $managedResult = \App\Library\Messaging\ManagedDispatchDelegate::attempt(
                 $this->business_id ?? null,
                 $preparedData['phone'] ?? null,
                 $preparedData['message'] ?? null,
-                null,
+                $this->managedOperationKeyFor($preparedData),
                 isset($preparedData['media_url']) ? [(string) $preparedData['media_url']] : [],
                 (string) ($preparedData['sms_count'] ?? 1),
+                $preparedData['sms_type'] ?? $this->sms_type,
             );
 
             if ($managedResult !== null) {

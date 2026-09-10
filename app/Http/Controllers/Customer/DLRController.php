@@ -502,15 +502,34 @@
             $message_data = $sms_counter->count($message, $sms_type == 'whatsapp' ? 'WHATSAPP' : null);
             $sms_count    = $message_data->messages;
 
-            $phone_number = PhoneNumbers::where('number', $from)
+            // Customer Experience Slice 3 §4.6.5 — the substring fallback is
+            // GONE, and this is a security fix rather than a tidy-up.
+            //
+            // What used to be here, after an exact match failed:
+            //
+            //     PhoneNumbers::where('number', 'like', "%$from%")->first()
+            //
+            // On an UNAUTHENTICATED webhook, that attributed an inbound
+            // message to whichever assigned number merely CONTAINED the
+            // submitted string. A caller who sent `555` reached any tenant
+            // whose number contains 555; two tenants on similar numbers
+            // could receive each other's messages; and `->first()` picked a
+            // winner by insertion order.
+            //
+            // Attribution is now exactly what its name says: one exact match
+            // on an assigned number, or nothing. Zero matches fail closed.
+            // Several matches fail closed too — an ambiguous mapping is not
+            // resolved by picking one, which was the whole defect.
+            //
+            // `$from` was already normalized above by the same
+            // str_replace() the rest of this method uses, so no second
+            // normalization scheme is introduced here.
+            $assignedMatches = PhoneNumbers::where('number', $from)
                 ->where('status', 'assigned')
-                ->first();
+                ->limit(2)
+                ->get();
 
-            if ( ! $phone_number) {
-                $phone_number = PhoneNumbers::where('number', 'like', "%$from%")
-                    ->where('status', 'assigned')
-                    ->first();
-            }
+            $phone_number = $assignedMatches->count() === 1 ? $assignedMatches->first() : null;
 
             if ($phone_number) {
                 $user_id = $phone_number->user_id;
@@ -1115,12 +1134,20 @@ $chatBox->touch();
                 // "which provider is sending us traffic we cannot verify?",
                 // so naming a different company in it would defeat its
                 // entire purpose.
+                // NOTE ON `$from`, because it reads backwards and an audit
+                // has already misread it once: this method assigns
+                // `$to = $request->input('From')` and
+                // `$from = $request->input('To')` (see the top of this
+                // method). The local `$from` therefore holds the RECEIVING
+                // number — our own — which is exactly what
+                // `destinationNumber` wants. `$to` is the external sender
+                // and must NOT be recorded here.
                 app(MessagingWebhookRejectionRecorder::class)->record(
                     WebhookRejectionReason::InvalidSignature,
                     SendingServer::TYPE_TWILIO,
                     $request->getContent(),
                     null,
-                    $from,
+                    destinationNumber: $from,
                 );
 
                 return $response->message('Invalid signature');
@@ -1565,12 +1592,18 @@ $chatBox->touch();
                         // This one really is Telnyx, but taking it from the
                         // row keeps every rejection site honest by the same
                         // mechanism instead of by the reader's trust.
+                        // As in inboundTwilio(): this method assigns
+                        // `$to = payload.from.phone_number` and
+                        // `$from = payload.to[0].phone_number`, so the local
+                        // `$from` is the RECEIVING number and is the correct
+                        // value for `destinationNumber`. Named explicitly so
+                        // the inverted legacy naming cannot mislead again.
                         app(MessagingWebhookRejectionRecorder::class)->record(
                             WebhookRejectionReason::UnknownMapping,
                             $sendingServer->settings,
                             $request->getContent(),
                             null,
-                            $from,
+                            destinationNumber: $from,
                         );
 
                         // Nothing actionable to tell Telnyx: this is not a
@@ -3622,9 +3655,27 @@ $chatBox->touch();
          */
         public function inboundWhatsapp(Request $request, $gateway = null)
         {
+            // Customer Experience Slice 3 — secret-logging fix.
+            //
+            // This used to log `$request->all()`, which on the Meta
+            // verification handshake below contains `hub_verify_token` — the
+            // shared secret this endpoint exists to check. Logging the whole
+            // request wrote that secret, in clear, to a log file that
+            // outlives the request and is read by people who have no
+            // business seeing it.
+            //
+            // Only minimized, non-secret metadata is recorded now: enough to
+            // tell an operator that a request arrived and roughly what shape
+            // it had, and nothing that could be replayed. The payload's
+            // top-level KEYS are safe to name; its values are not, so they
+            // are never touched.
             logger()->info('Inbound WhatsApp Payload', [
                 'gateway' => $gateway,
-                'data'    => $request->all(),
+                'mode' => $request->get('hub_mode'),
+                'payload_keys' => array_values(array_diff(
+                    array_keys($request->all()),
+                    ['hub_verify_token', 'hub.verify_token'],
+                )),
             ]);
 
             // Load the server config

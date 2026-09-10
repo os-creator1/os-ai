@@ -15,6 +15,7 @@ use App\Models\Reports;
 use App\Models\SendingServer;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 use Tests\Feature\Messaging\Concerns\CreatesMessagingFixtures;
 use Tests\TestCase;
@@ -449,5 +450,228 @@ class LegacyInboundFailClosedTest extends TestCase
         return $this->call('POST', $url, $params, [], [], [
             'HTTP_X-Twilio-Signature' => $signature,
         ]);
+    }
+
+    // ---------------------------------------------------------------
+    // Audit finding — no partial phone-number tenant guessing
+    // ---------------------------------------------------------------
+
+    /**
+     * The defect, on an UNAUTHENTICATED webhook:
+     *
+     *     PhoneNumbers::where('number', 'like', "%$from%")->first()
+     *
+     * ran whenever an exact match failed. A caller who submitted a short
+     * substring reached any tenant whose assigned number merely CONTAINED
+     * it, and `->first()` chose the victim by insertion order. These tests
+     * drive the real, unauthenticated legacy route — not a helper — because
+     * the route is what an attacker has.
+     */
+    public function test_a_submitted_substring_never_attributes_to_a_tenant_whose_number_contains_it(): void
+    {
+        $this->telnyxServer();
+
+        $owner = $this->createCustomer();
+        PhoneNumbers::create([
+            'number' => '14155551234',
+            'status' => 'assigned',
+            'user_id' => $owner->user_id,
+        ]);
+
+        // `5555` is a substring of the assigned number above. Under the old
+        // LIKE fallback this reached that tenant.
+        $this->postJson(
+            route('inbound.telnyx'),
+            $this->telnyxInboundPayload('+5555'),
+        )->assertOk();
+
+        $this->assertNothingWasAttributed('substring probe');
+        $this->assertSame(
+            0,
+            Reports::query()->where('user_id', $owner->user_id)->count(),
+            'A substring must never reach the tenant whose number contains it.',
+        );
+    }
+
+    public function test_two_businesses_on_similar_numbers_never_receive_each_others_messages(): void
+    {
+        $this->telnyxServer();
+
+        $tenantA = $this->createCustomer();
+        $tenantB = $this->createCustomer();
+
+        // Deliberately overlapping: B's number CONTAINS A's as a suffix.
+        PhoneNumbers::create(['number' => '5551234', 'status' => 'assigned', 'user_id' => $tenantA->user_id]);
+        PhoneNumbers::create(['number' => '14155551234', 'status' => 'assigned', 'user_id' => $tenantB->user_id]);
+
+        // An exact match for A must attribute to A and to nobody else.
+        $this->postJson(route('inbound.telnyx'), $this->telnyxInboundPayload('+5551234'))->assertOk();
+
+        $reports = Reports::query()->where('direction', Reports::DIRECTION_INCOMING)->get();
+        $this->assertCount(1, $reports, 'Exactly one attribution.');
+        $this->assertSame((int) $tenantA->user_id, (int) $reports->first()->user_id);
+        $this->assertSame(0, Reports::query()->where('user_id', $tenantB->user_id)->count());
+    }
+
+    public function test_an_ambiguous_assigned_number_fails_closed_rather_than_picking_one(): void
+    {
+        $this->telnyxServer();
+
+        $tenantA = $this->createCustomer();
+        $tenantB = $this->createCustomer();
+
+        // The same number assigned to two tenants — a data state the legacy
+        // schema permits. `->first()` used to hand it to whoever was
+        // inserted earlier; ambiguity must fail closed instead.
+        PhoneNumbers::create(['number' => '14155559123', 'status' => 'assigned', 'user_id' => $tenantA->user_id]);
+        PhoneNumbers::create(['number' => '14155559123', 'status' => 'assigned', 'user_id' => $tenantB->user_id]);
+
+        $this->postJson(route('inbound.telnyx'), $this->telnyxInboundPayload('+14155559123'))->assertOk();
+
+        $this->assertNothingWasAttributed('ambiguous mapping');
+        $this->assertTrue(
+            MessagingWebhookRejection::query()
+                ->where('reason', WebhookRejectionReason::UnknownMapping->value)
+                ->exists(),
+            'The ambiguous mapping must be recorded as a refusal.',
+        );
+    }
+
+    public function test_an_exact_unique_assigned_number_still_attributes_correctly(): void
+    {
+        // The positive control. Removing a fallback is only correct if the
+        // legitimate case still works.
+        $this->telnyxServer();
+
+        $owner = $this->createCustomer();
+        PhoneNumbers::create([
+            'number' => self::UNATTRIBUTABLE,
+            'status' => 'assigned',
+            'user_id' => $owner->user_id,
+        ]);
+
+        $this->postJson(
+            route('inbound.telnyx'),
+            $this->telnyxInboundPayload('+' . self::UNATTRIBUTABLE),
+        )->assertOk();
+
+        $report = Reports::query()->where('direction', Reports::DIRECTION_INCOMING)->first();
+        $this->assertNotNull($report, 'An exact, unique, assigned match must still be attributed.');
+        $this->assertSame((int) $owner->user_id, (int) $report->user_id);
+    }
+
+    public function test_an_unassigned_exact_match_is_not_attribution(): void
+    {
+        $this->telnyxServer();
+
+        $owner = $this->createCustomer();
+        PhoneNumbers::create([
+            'number' => self::UNATTRIBUTABLE,
+            'status' => 'available',
+            'user_id' => $owner->user_id,
+        ]);
+
+        $this->postJson(
+            route('inbound.telnyx'),
+            $this->telnyxInboundPayload('+' . self::UNATTRIBUTABLE),
+        )->assertOk();
+
+        $this->assertNothingWasAttributed('unassigned number');
+    }
+
+    // ---------------------------------------------------------------
+    // Audit finding — rejection rows record the RECEIVING number
+    // ---------------------------------------------------------------
+
+    /**
+     * `inboundTwilio()` and `inboundTelnyx()` both assign
+     * `$to = <the external sender>` and `$from = <our receiving number>` —
+     * inverted against every intuition, which is how an audit came to read
+     * the rejection calls as recording the sender.
+     *
+     * They do not, and these two tests pin that so the question is settled
+     * by execution rather than by reading variable names.
+     */
+    public function test_a_twilio_signature_rejection_records_the_receiving_number(): void
+    {
+        $this->twilioServer();
+
+        $this->post(route('inbound.twilio'), [
+            'From' => '+14155550088',                 // the external sender
+            'To' => '+' . self::UNATTRIBUTABLE,       // our receiving number
+            'Body' => 'unsigned',
+            'NumMedia' => '0',
+        ])->assertOk();
+
+        $rejection = MessagingWebhookRejection::query()
+            ->where('reason', WebhookRejectionReason::InvalidSignature->value)
+            ->firstOrFail();
+
+        $this->assertStringContainsString(self::UNATTRIBUTABLE, (string) $rejection->destination_number);
+        $this->assertStringNotContainsString('4155550088', (string) $rejection->destination_number);
+    }
+
+    public function test_a_byo_telnyx_disablement_records_the_receiving_number(): void
+    {
+        $server = $this->telnyxServer();
+        $customer = $this->createCustomer();
+        $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
+
+        CustomerBasedSendingServer::create([
+            'user_id' => $customer->user_id,
+            'business_id' => $business->id,
+            'sending_server' => $server->id,
+            'status' => true,
+        ]);
+
+        $this->postJson(route('inbound.telnyx'), $this->telnyxInboundPayload(
+            '+' . self::UNATTRIBUTABLE,
+            '+14155550099',
+        ))->assertOk();
+
+        $rejection = MessagingWebhookRejection::query()->firstOrFail();
+
+        $this->assertStringContainsString(self::UNATTRIBUTABLE, (string) $rejection->destination_number);
+        $this->assertStringNotContainsString('4155550099', (string) $rejection->destination_number);
+    }
+
+    // ---------------------------------------------------------------
+    // Audit finding — the WhatsApp verification secret is never logged
+    // ---------------------------------------------------------------
+
+    public function test_the_whatsapp_verification_token_is_never_written_to_the_log(): void
+    {
+        $secret = 'FAKE-HUB-VERIFY-TOKEN-9c1f7a';
+
+        SendingServer::create([
+            'name' => 'Legacy WhatsApp',
+            'settings' => SendingServer::TYPE_WHATSAPP,
+            'status' => true,
+            'plain' => true,
+            'c1' => $secret,
+        ]);
+
+        $captured = [];
+        Log::listen(function ($message) use (&$captured) {
+            $captured[] = $message->message . ' ' . (string) json_encode($message->context);
+        });
+
+        $this->get(route('inbound.whatsapp') . '?' . http_build_query([
+            'hub_mode' => 'subscribe',
+            'hub_verify_token' => $secret,
+            'hub_challenge' => 'challenge-value',
+        ]));
+
+        $this->assertNotEmpty($captured, 'The handler still logs, so this test is exercising the real path.');
+
+        foreach ($captured as $line) {
+            $this->assertStringNotContainsString($secret, $line, 'The verification secret reached the log.');
+            $this->assertStringNotContainsString('hub_verify_token', $line, 'Even the key name is not logged.');
+        }
+
+        // And nothing persisted it either.
+        foreach (MessagingWebhookRejection::query()->get() as $rejection) {
+            $this->assertStringNotContainsString($secret, (string) json_encode($rejection->toArray()));
+        }
     }
 }
