@@ -24,14 +24,20 @@ class AnalyticsViewTest extends TestCase
 
         $response = $this->overview($workspace, $business)->assertOk();
 
-        foreach (['ds-card', 'ds-table', 'rounded-pill', 'data-role="stat-cards"', 'data-role="outcome-breakdown"', 'data-role="chart-contact-growth"', 'data-role="chart-message-volume"', 'data-role="automations-panel"', 'window.PlatformTheme', 'apexcharts.min.js'] as $marker) {
+        // The automations panel is proven in AnalyticsAdvisorAutomationTest,
+        // where executions exist; Results shows it only when automations ran.
+        foreach (['ds-card', 'ds-table', 'rounded-pill', 'data-role="stat-cards"', 'data-role="outcome-breakdown"', 'data-role="chart-contact-growth"', 'data-role="chart-message-volume"', 'data-role="campaigns-panel"', 'window.PlatformTheme', 'apexcharts.min.js'] as $marker) {
             $response->assertSee($marker, false);
         }
 
-        $response->assertSee('Provider-accepted rate');
-        $response->assertSee('Unresolved / in flight');
-        $response->assertSee('not handset delivery');
+        // Plain outcome language, with the provider-acceptance meaning stated
+        // beside "Sent" and never widened into delivery.
+        $response->assertSeeInOrder(['Sent', 'Failed', 'Processing'], false);
+        $response->assertSee('Accepted by the messaging provider.');
+        $response->assertSee("It doesn't confirm the message reached the phone.", false);
         $response->assertSee('Skipped means the send was skipped');
+        $response->assertDontSee('Provider-accepted rate');
+        $response->assertDontSee('handset');
         $response->assertDontSee('7367F0', false);
     }
 
@@ -40,7 +46,13 @@ class AnalyticsViewTest extends TestCase
         [$customer, $business, $workspace] = $this->tenant();
         $this->authenticateAsCustomer($customer);
 
-        $this->overview($workspace, $business)->assertOk()->assertSee('ds-empty-state', false)->assertSee('No campaigns yet');
+        // One calm empty state for a period with no activity — never a wall
+        // of empty technical cards, and no campaigns card at all.
+        $this->overview($workspace, $business)->assertOk()
+            ->assertSee('ds-empty-state', false)
+            ->assertSee('Nothing to show for this period yet')
+            ->assertDontSee('data-role="campaigns-panel"', false)
+            ->assertDontSee('data-role="results-messages"', false);
         $this->campaignsPage($workspace, $business)->assertOk()->assertSee('No campaigns in this range');
     }
 

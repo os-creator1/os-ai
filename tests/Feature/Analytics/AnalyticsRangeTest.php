@@ -44,7 +44,12 @@ class AnalyticsRangeTest extends TestCase
         [$customer, $business, $workspace] = $this->tenant();
         $this->authenticateAsCustomer($customer);
 
-        $this->overview($workspace, $business, ['range' => 'custom', 'start' => '2026-01-01', 'end' => '2026-04-02'])->assertOk()->assertSee('92 local days');
+        // The accepted 92-day window renders as a human span, not a count of
+        // "local days" in a named timezone.
+        $this->overview($workspace, $business, ['range' => 'custom', 'start' => '2026-01-01', 'end' => '2026-04-02'])
+            ->assertOk()
+            ->assertSee('Jan 1, 2026 to Apr 2, 2026')
+            ->assertDontSee('local days');
 
         $this->overview($workspace, $business, ['range' => 'custom', 'start' => '2026-01-01', 'end' => '2026-04-03'])
             ->assertRedirect(route('customer.workspaces.businesses.analytics.overview', [$workspace->uid, $business->uid]))
