@@ -4,10 +4,12 @@
 |---|---|
 | **Status** | **Contract only.** Authorizes no product code. Each slice in §17 needs its own implementation authorization that cites this document. |
 | **Base** | `origin/main` at `4e1445f14a5e4ba9ddd79854cfc5de926f56e315` (PR #254), 2026-09-12 |
+| **Owner decisions** | All six were answered by the owner on 2026-09-12 in PR #255 and are recorded in **§0.3**. **No owner decision remains open.** §21 holds the launch gates those answers created, which are execution steps, not further decisions |
 | **Workflow** | Route 3 manual lane (`AGENTS.md`) |
 | **Owns** | The Business Home layout; the Agency Account Home distinction; folding Results into Home; the deterministic COO pipeline; the architecture for AI escalation, caching, the AI budget ledger and model routing |
 | **Amends** | Parent redesign `AI-BUSINESS-OS-CUSTOMER-EXPERIENCE-AND-NAVIGATION-REDESIGN.md` §13.1 question 5 and the §13.2 "Spend" band; the Spend band in `CUSTOMER-EXPERIENCE-REDESIGN-SLICE-4-DASHBOARD.md`. Nothing else. |
-| **Does not amend** | RFC-002 (Opportunity Engine), RFC-004 (plans and entitlements), RFC-005 (usage billing and wallets), B5 Analytics, Slice 2B Conversations, and the managed-messaging contract's §20 cost invariants |
+| **Does not amend** | RFC-002 (Opportunity Engine), RFC-005 (usage billing and wallets), B5 Analytics, Slice 2B Conversations, and the managed-messaging contract's §20 cost invariants |
+| **Requires one amendment elsewhere** | RFC-004 gains the canonical trial state the owner approved in D-1 (`trialing` plus `trial_ends_at`, §11.1a). This contract specifies only what the AI budget depends on; the amendment itself is written and reviewed with slice T-1 |
 
 Throughout this document, **canonical** means "read from a persisted source that
 this repository writes today, with a stated meaning". A figure without a
@@ -49,10 +51,24 @@ here rather than silently absorbed.
 | K-1 | Spend band | Parent §13.1 question 5 ("What is costing money?"), parent §13.2 "Spend", and Slice 4 all ship a Spend band for the payer only (`app/Library/Dashboard/BusinessHomePresenter.php:170–186`, `resources/views/customer/dashboard/bands/spend.blade.php`). | **An owner supersession, not a conflict.** No code or contract depends on the band. All billing detail remains in Settings → Billing. §5 records the change. |
 | K-2 | AI charging vs. wallets | Managed-messaging contract §11.5: a **separately authorized** AI generation charge is reserved and debited regardless of transport. §20 C-5: "AI allowances use their own meters and are never funded from the telecom balance". C-6: Agency Businesses do not multiply free AI allowance. C-9: provider cost is shown only to admins. | **Compatible.** Included AI is not a separately authorized charge, so it never touches the wallet. It uses its own meter (§10). A future paid AI overage would be a new, separately authorized RFC-005 meter and is out of scope here. |
 | K-3 | RFC-002 and AI | RFC-002 treats worker and AI output as untrusted input and validates it the same way. AI may supply only facts and template parameters. Priority is never produced by AI. Titles and summaries come from the registry. | **Identical to L-9.** §7 and §8 keep it. |
-| K-4 | Trial state | RFC-004 has no trial. `WorkspacePlanAssignmentStatus` is `active \| inactive \| suspended`. No migration has a trial column. "Trial" appears only in comments in the legacy `app/Models/Subscription.php`. | **A missing primitive, not a conflict.** §11 defines the trial policy, but it can only apply through a canonical trial state (OD-1). No Workspace is on trial today, so no customer's allowance changes silently. |
-| K-5 | Opportunity producer trigger | No production code dispatches `App\Jobs\Opportunity\RunBusinessAdvisorOpportunityProducer`. The deployment guide dispatches it from `tinker`. `config('opportunity.enabled')` defaults to `false`. | **A gap, not a conflict.** Slice C-1 adds the trigger. Turning the engine on in production is OD-3. |
+| K-4 | Trial state | RFC-004 has no trial. `WorkspacePlanAssignmentStatus` is `active \| inactive \| suspended`. No migration has a trial column. "Trial" appears only in comments in the legacy `app/Models/Subscription.php`. | **A missing primitive, not a conflict — and the owner has approved adding it (D-1).** §11.1a specifies the canonical state, `status = trialing` with `trial_ends_at`, which slice T-1 adds. Trial is never inferred from account age or any other field, and until T-1 lands no Workspace is on trial, so no customer's allowance changes silently. |
+| K-5 | Opportunity producer trigger | No production code dispatches `App\Jobs\Opportunity\RunBusinessAdvisorOpportunityProducer`. The deployment guide dispatches it from `tinker`. `config('opportunity.enabled')` defaults to `false`. | **A gap, not a conflict.** Slice C-1 adds the trigger and must prove it is safe before the engine is enabled through the existing config boundary (D-3). No production behaviour may depend on a manual or `tinker` dispatch. |
 | K-6 | `ai_coo_basic` | `PlatformFeature::AiCooBasic` is `Planned` (`app/Library/Entitlement/PlatformFeatureRegistry.php:65`), yet the seed migration `2026_08_13_120007` packages it into core, growth and agency. | **Compatible.** Slice AI-3 changes it to `Available`. The deterministic COO does not need it. |
 | K-7 | The "Leads & conversations" title vs L-4 | There is no Lead model. | **Resolved within the locked set.** The band is titled **"Conversations"** until a Lead model exists (§2.6). |
+
+### 0.3 Owner decisions, answered 2026-09-12 (PR #255)
+
+These are now locked direction, with the same force as §0.1. They are no longer
+open questions, and no slice may reopen one without a further owner decision.
+
+| # | Decision, as given | Where it binds |
+|---|---|---|
+| **D-1 Trial** | **Approved.** Add a canonical trial state to the plan assignment: status `trialing` plus `trial_ends_at`. **Trial is never inferred from account age or any other field.** The 28-day trial AI allowance is a **$1.50 provider-cost hard cap**. | §11.1a (the state), §11.1 (the policy), slice T-1, K-4 |
+| **D-2 One shared AI cap** | **Yes.** *All* first-party AI counts against the same included Workspace AI budget: COO, website generation, SEO reasoning, prospecting and reply assistance, future newsletter/email AI, and interactive COO conversation. Every call is also attributed by category. Agency keeps **$25** Workspace-wide per month **and $6 per Business**, whichever is reached first. A protected system/product share must remain, so chat spam cannot consume all useful product AI. | §10.2 (categories), §10.3, §10.4 (the protected share), §11.1 |
+| **D-3 Opportunity Engine** | **Yes, but not enabled merely because this contract merges.** C-1 must first implement and prove **safe automatic** producer triggering; only then is the engine enabled through the existing rollout/config boundary. **No production behaviour may depend on a manual or `tinker` dispatch.** | §7.3, slice C-1 and its exit criteria, §19.6, T-C1-1…4 |
+| **D-4 Models** | **Do not lock concrete provider model names into this contract.** Three configurable routing classes are locked instead: `routine`, `reasoning`, `compaction`. AI-1 chooses the concrete models from a current cost and quality evaluation, and changing one later must need no domain or schema change. `routine` and `compaction` take the cheapest model that passes the quality threshold; `reasoning` takes the stronger model **only when deterministic rules escalate the case**. | §13 |
+| **D-5 "Ask your COO" chat** | **Deferred.** Do not build interactive COO chat yet. Ship the deterministic chain first: facts → deterministic metrics → Opportunity and rules → next best move → "Why this?". Add a conversational COO later only if it clearly adds value. | §12 (kept as binding design for any future surface), slice AI-4 (deferred, unscheduled) |
+| **D-6 Enforcement** | New COO AI is **hard-budgeted from its very first production call**. AI-1 must route the existing AI call sites through the same gateway and ledger **before broader product launch**, with **no uncapped side doors around the gateway**. Hard enforcement must exist **before** 28-day trials launch. The Results redirect and removal happen **only after** Home reaches Results feature and data parity and H-6 proves the migration and redirect behaviour. | §19.3, §10.1, §4.1, slices AI-1, T-1, H-6, §21 |
 
 ---
 
@@ -108,9 +124,9 @@ query budget is ≤ 18: dashboard ≤ 10, Analytics ≤ 6, Conversations ≤ 2
 | A "last visit" marker | `users.last_access_at` is written only at login (`EloquentAccountRepository.php:296`) and on a portal switch (`AccountController::switchView()`, `:222`/`:259`), per user, not per Business. `CustomerContextPreference` is session-only. `SESSION_DRIVER` defaults to `file` | A new marker is needed (§2.3) |
 | An "awaiting reply" count | `BusinessConversationReadModel` has no such method. `chat_boxes.notification` counts **unread** messages, not **unanswered** ones | A new 2B method is needed (§2.6) |
 | An AI usage or cost ledger | No table. No call site captures usage | A new ledger is needed (§10) |
-| A trial state | K-4 | OD-1 |
+| A trial state | K-4 | Approved (D-1). Slice T-1 adds `trialing` and `trial_ends_at` (§11.1a) |
 | An automatic producer trigger | K-5 | Slice C-1 |
-| A customer AI chat | Nothing in the repository | The interactive lane is designed here (§10.4, §12) but there is nothing to wire it to yet (OD-5) |
+| A customer AI chat | Nothing in the repository | **Deferred by the owner (D-5).** The interactive lane and its protected share still exist (§10.4, D-2); §12 binds any future surface, and none is scheduled |
 
 ### 1.4 Do not reuse
 
@@ -291,6 +307,11 @@ remediation rules unchanged.
 Routes are never removed while bookmarks may still point at them. No route is
 deleted before R3, and the overview route is never deleted.
 
+**D-6 gate.** The redirect is switched on **only after** Home reaches Results
+feature and data parity (every P-1…P-10 item asserted) **and** H-6 has proved
+the migration and redirect behaviour, including the range mapping and the
+surviving endpoints. Parity is demonstrated by tests, not by judgement.
+
 ### 4.2 Parity checklist
 
 | # | Results capability | Where it lives after the fold |
@@ -445,6 +466,18 @@ Conversations. It is raised when 2B `awaitingReplyCount() > 0`.
 - **Sweep.** A new command, `opportunity:dispatch-business-advisor`, runs daily for active Businesses whose last successful `business_advisor` run is older than 24 h.
 - **Gates.** Both no-op unless `config('opportunity.enabled')`. The existing job class is **not** turned into a generic dispatcher (worker guide §"intentionally current scope"). Each future worker gets its own job.
 
+**D-3 — enabling is earned, not automatic.** Merging this contract enables
+nothing. `config('opportunity.enabled')` stays at its current default until
+C-1 has shipped and **proved** safe automatic triggering, and it is then turned
+on through the existing rollout and config boundary, never by a code default.
+C-1 must demonstrate all of:
+
+1. **No run storm.** A burst of profile edits for one Business produces at most one run per debounce window (`config('opportunity.trigger_debounce_minutes', 15)`), proven with a burst test.
+2. **Bounded sweep.** The daily sweep processes Businesses in bounded batches, dispatches at most one job per Business per day, and is idempotent when it runs twice.
+3. **Concurrency.** A trigger arriving while a healthy run is active is skipped by `beginRun()`'s existing protocol, not queued behind it.
+4. **Fail-safe.** With the engine disabled, both paths no-op and write nothing. A failed run never blocks the next one.
+5. **No manual dependency.** No production behaviour relies on a `tinker` or otherwise manual dispatch. The deployment guide's manual command remains a diagnostic only, and a test asserts the automatic paths alone keep the queue populated.
+
 ### 7.4 AI and Opportunity in v1
 
 AI **does not** create, rank, reorder or hide opportunities in v1. A later
@@ -579,7 +612,7 @@ Callers must handle `AiResult::refused(reason)`. §11.4 lists what each caller d
 | Column | Meaning |
 |---|---|
 | `uid`, `workspace_id`, `business_id` (nullable) | Attribution |
-| `category` | `AiUsageCategory`: `coo_diagnosis`, `coo_interactive`, `conversation_compaction`, `website_generation`, `campaign_message_draft`, `agency_prospect_reply` |
+| `category` | `AiUsageCategory`. Live at AI-1: `coo_diagnosis`, `coo_interactive`, `conversation_compaction`, `website_generation`, `campaign_message_draft`, `agency_prospect_reply`. Reserved for the features that will follow, added case by case as each ships: `seo_reasoning`, `email_newsletter`. **Every first-party AI call carries a category, and every category draws on the same Workspace budget (D-2).** A call with no category is a bug, not a free call |
 | `lane` | `product \| interactive` |
 | `model_route`, `provider`, `provider_model`, `price_version` | Provenance |
 | `status` | `AiUsageEntryStatus`: `reserved \| committed \| released \| failed \| refused` |
@@ -602,6 +635,20 @@ Workspace-wide cap means Agency Businesses do not multiply the allowance. C-7:
 each category declares a meter (`ai_usage_ledger.category`) and a payer (the
 platform's included allowance). C-8: dormancy is a gate. C-9: provider cost and
 tokens are admin-only. C-10: every refusal degrades gracefully (§11.4).
+
+### 10.3a One budget for all first-party AI (D-2)
+
+There is **one** included AI budget per Workspace, and every first-party AI
+call draws on it: COO diagnosis and explanation, website generation, SEO
+reasoning, prospecting and reply assistance, future newsletter and email AI,
+and interactive COO conversation. There is no second allowance and no
+per-feature free pool. Attribution by category exists for reporting and
+diagnosis, never as a separate cap.
+
+For an Agency both limits apply and the first one reached wins: **$25 per
+month across the Workspace** and **$6 per month for any one Business**. A
+Workspace-level call with no Business (agency prospecting) is checked against
+the Workspace cap only, and still consumes the shared budget.
 
 ### 10.4 Lanes (L-13)
 
@@ -631,10 +678,30 @@ through a UI is out of scope for v1. Changing an amount bumps
 
 **Resolution:**
 
-- A canonical trial state, once OD-1 creates one, uses `trial`.
+- A Workspace in the canonical trial state (§11.1a) uses `trial`, and only that state selects it.
 - Otherwise the active assignment's `WorkspacePlanTier` decides. A complimentary Workspace uses its tier's policy.
 - An unassigned, inactive or suspended plan gets **zero**: every call is refused and deterministic behaviour continues.
 - "Whichever first" (L-11): each Business-scoped call must pass both the Business row and the Workspace row. Workspace-level calls with no Business (agency prospecting) pass only the Workspace row.
+
+### 11.1a The canonical trial state (D-1, slice T-1)
+
+Approved by the owner. It belongs to RFC-004's plan assignment and needs an
+RFC-004 amendment, which slice T-1 carries. This contract specifies only what
+the AI budget depends on.
+
+| Piece | Specification |
+|---|---|
+| Status | A new case `WorkspacePlanAssignmentStatus::Trialing = 'trialing'`, beside the existing `active`, `inactive` and `suspended`. The column `workspace_plan_assignments.status` already stores a string, so no column changes |
+| End date | A new nullable `workspace_plan_assignments.trial_ends_at` timestamp. It is **required** whenever the status is `trialing`, and a check in the writing service enforces that pairing |
+| Length | 28 days, set when the trial starts. The cap is for the **whole** trial, not per month |
+| Entitlements | A trialing assignment grants the same features as its tier. Only the AI budget policy differs. Slice 5's rule that a trial grants no messaging balance is unchanged |
+| Budget period | `period_key = trial:{assignment id}`, one period for the whole trial, capped at 1 500 000 micro-USD ($1.50). When the trial ends or converts, the next call opens the tier's ordinary monthly period. Unspent trial allowance never carries over |
+| Detection | **Only** `status === trialing`. Never account age, `created_at`, the absence of a payment method, `is_complimentary`, or any other proxy. An architecture test asserts no such inference exists |
+| Expiry | A trial that has passed `trial_ends_at` but has not been transitioned is treated as **exhausted**, not unlimited: AI calls are refused while deterministic behaviour continues |
+
+**Launch gate (D-6):** hard enforcement must be working before any 28-day
+trial is offered. T-1 therefore depends on enforcement being on, not merely
+on the ledger recording.
 
 ### 11.2 Per-request guards (config, per route)
 
@@ -670,10 +737,20 @@ percentage meter. The threshold (`0.8`) is config. Home never shows AI usage.
 
 ## 12. Conversation compaction (interactive lane)
 
-There is no customer AI chat today (§1.3). This section binds any future
-"Ask" surface. OD-5 decides whether one is built.
+**Deferred by the owner (D-5).** Interactive COO chat is **not** built now, and
+slice AI-4 is unscheduled. What ships first is the deterministic chain: facts →
+deterministic metrics → Opportunity and rules → next best move → "Why this?".
+A conversational COO is revisited only if it clearly adds value on top of that.
 
-- **Tables** (created only when OD-5 authorizes a surface): `coo_threads` (`business_id`, `user_id`, `summary`, `summary_through_message_id`, `summary_version`) and `coo_thread_messages` (`thread_id`, `role`, `content`, `token_estimate`). Both are scoped to a Business, never keyed by phone (contrast §1.4).
+This section stays in force as the binding design for any future "Ask" surface,
+so that one is never improvised later. Two things survive the deferral: the
+protected product share in §10.4, which D-2 requires regardless, and E-4
+"Explain this change" in §8.2 — a **single-shot, rate-limited** explanation of
+one period's movement, charged to the interactive lane. E-4 is not a
+conversation: it keeps no thread, carries no history, and needs none of the
+tables below.
+
+- **Tables** (created only when a future owner decision authorizes a chat surface): `coo_threads` (`business_id`, `user_id`, `summary`, `summary_through_message_id`, `summary_version`) and `coo_thread_messages` (`thread_id`, `role`, `content`, `token_estimate`). Both are scoped to a Business, never keyed by phone (contrast §1.4).
 - **Context assembly**, in this order, cut to the route's `max_input_tokens`: system prompt → **retrieved Business facts** (the `BusinessSignals` DTO plus knowledge-profile fields, built deterministically) → the durable **summary** → the last `K = config('ai.interactive.recent_turns', 6)` turns. Older turns are never replayed verbatim.
 - **Compaction:** when unsummarized turns exceed `config('ai.interactive.compact_after_turns', 10)`, a `conversation_compaction` call on the `compaction` route folds them into `summary`, charged to the interactive lane. When the lane is exhausted, the oldest turns are simply dropped. Nothing is compacted for free.
 - **Per-thread cap:** `config('ai.interactive.max_thread_cost_microusd')`. At the cap the thread asks the user to start a new one, which is seeded with the summary.
@@ -684,7 +761,7 @@ There is no customer AI chat today (§1.3). This section binds any future
 ## 13. Model routing
 
 - **`AiModelRoute` enum (logical):** `routine`, `reasoning`, `compaction`. Domain code asks for a **route** and never names a model.
-- **Config**, `config/ai.php` → `routes.{route}`: `provider`, `model`, `input_price_microusd_per_mtok`, `cached_input_price_microusd_per_mtok`, `output_price_microusd_per_mtok`, `max_input_tokens`, `max_output_tokens`, `max_request_cost_microusd`, plus `price_version`. Until OD-4 decides, all three routes default to `config('services.openai.model')`, the model in use today. Adopting the gateway therefore changes no model.
+- **Config**, `config/ai.php` → `routes.{route}`: `provider`, `model`, `input_price_microusd_per_mtok`, `cached_input_price_microusd_per_mtok`, `output_price_microusd_per_mtok`, `max_input_tokens`, `max_output_tokens`, `max_request_cost_microusd`, plus `price_version`. **This contract locks the three routing classes and never a provider model name (D-4).** Slice AI-1 picks each route's concrete model from a current cost and quality evaluation and records it in config only. `routine` and `compaction` take the cheapest model that passes the quality threshold; `reasoning` takes the stronger model and is reached **only when a deterministic rule escalates the case** (§8.2 E-3, §11.2). Changing any model later is a config edit: no domain code, no schema, no migration, and no change to a stored insight's meaning. `provider_model` is still stored per call, as provenance for what actually ran.
 - **Provider seam:** `App\Library\Ai\Contracts\AiCompletionClient::complete(AiCompletionRequest): AiCompletionResult` (text, finish reason, provider model, token usage). `OpenAiCompletionClient` uses the already-installed `openai-php` client and credentials from `services.openai.*`. `FakeAiCompletionClient` serves tests. Adding another provider means one adapter plus config. No domain change.
 - **Selection policy:**
 
@@ -784,15 +861,15 @@ None of these slices is authorized by this document.
 | **H-6** | Results fold | Parity tests P-1…P-10; `results.redirect_to_home`; navigation change; later, R3 view removal | H-3, H-4, owner flag |
 | **A-1** | Agency Account Home | Cross-client performance; outreach metrics; capacity and billing shown only when actionable. `AccountHomePresenter`, `agency-home.blade.php`, `tests/Feature/Dashboards/**` (agency files) | — |
 | **A-2** | Store prospect reply intent | Additive nullable `agency_prospect_messages.intent`, written from the existing `AgencyProspectAiDecision`; then "Positive replies" | A-1 |
-| **C-1** | Producer trigger | Listeners and the daily command for `RunBusinessAdvisorOpportunityProducer`; `app/Console/Kernel.php` (one line) | — |
+| **C-1** | Producer trigger | Listeners and the daily command for `RunBusinessAdvisorOpportunityProducer`; `app/Console/Kernel.php` (one line); the five §7.3 safety proofs (T-C1-1…4). **Exit criterion: safe automatic triggering is proven, after which the owner enables the engine through the existing config boundary — the slice never flips a code default** | — |
 | **C-2** | Next best move | `NextBestMoveSelector`; `AttentionType::ConversationsAwaitingReply`; "Why this?"; replace the list of 5 with one move and a link | H-1, H-4, C-1 |
 | **C-3** | Signals and materiality | `BusinessSignalReader`, `SignalComparator`, `config/coo.php`. Pure, no UI | — |
-| **AI-1** | Gateway, routing, ledger | `app/Library/Ai/**`, `config/ai.php`, migrations `ai_usage_periods` / `ai_usage_ledger`, reservation-expiry job; move the 3 existing call sites onto the gateway (capturing usage and setting max tokens) with unchanged behaviour when the budget allows | — |
+| **AI-1** | Gateway, routing, ledger | `app/Library/Ai/**`, `config/ai.php`, migrations `ai_usage_periods` / `ai_usage_ledger`, reservation-expiry job; **route all 3 existing call sites through the gateway** (capturing usage and setting max tokens) with unchanged behaviour while the budget allows; choose each route's concrete model from a cost and quality evaluation (D-4); prove no bypass path survives (T-AI-GATE-1) | — |
 | **AI-2** | AI usage in Settings | Settings → Billing → AI usage (§11.3); admin ledger summary | AI-1 |
 | **AI-3** | COO insight | `coo_insights`; eligibility (§8.2); `GenerateCooInsight`; invalidation listeners; output validator; Home "What we notice"; `ai_coo_basic` → `Available` | AI-1, C-3, H-3 |
-| **AI-4** | Interactive lane and compaction | §12 tables and flow, explain-this-change | AI-1, AI-3, **OD-5** |
+| **AI-4** | Interactive lane and compaction | §12 tables and flow. **Deferred and unscheduled (D-5).** E-4 "Explain this change" is single-shot and ships inside AI-3, so nothing here blocks the deterministic chain | Not scheduled. Building it later would take a fresh decision; nothing is open now |
 | **C-4** | AI-assisted candidates | A `coo` worker under RFC-002 conformance | AI-3, its own contract |
-| **T-1** | Trial activation | Reachable only after OD-1's RFC-004 amendment. Resolver branch plus trial copy | OD-1, AI-2 |
+| **T-1** | Trial state and activation | The RFC-004 amendment in §11.1a (`trialing` status, `trial_ends_at`), the resolver branch, trial copy, and the expiry rule. **No trial may be offered until hard enforcement is on (D-6)** | AI-2, enforcement on |
 
 ---
 
@@ -815,10 +892,14 @@ None of these slices is authorized by this document.
 
 1. **All schema is additive:** `business_home_visits`, `coo_insights`, `ai_usage_periods`, `ai_usage_ledger`, the optional `chat_box_messages(box_id, id)` index, the nullable `agency_prospect_messages.intent`, and later `coo_threads` / `coo_thread_messages`. Each `down()` drops only what its `up()` created. No existing column changes meaning.
 2. **No backfill is required.** The visit marker starts empty (the band is absent on the first visit). The ledger starts at zero, so the current period's cap is fully available.
-3. **Existing AI features keep working** after AI-1 with identical prompts. The only behavioural change is a refusal when a budget is exhausted, which today's code never meets because no budget exists. Therefore AI-1 **ships with `config('ai.enforce_budgets_for_existing_categories')` default false** for the three pre-existing categories (`website_generation`, `campaign_message_draft`, `agency_prospect_reply`): they are recorded and count toward the caps, but are never refused. The owner switches enforcement on after observing a period of real ledger data (OD-6). **Every new category (`coo_*`, `conversation_compaction`) is always enforced from its first call.** New AI spend is never uncapped.
+3. **Enforcement (D-6).** Three rules, in force together:
+   - **The gateway is the only path.** AI-1 routes all three existing call sites through it. **No uncapped side door may survive**: after AI-1, no code outside `app/Library/Ai/Providers/**` may construct a provider client or call a provider endpoint, and T-AI-GATE-1 asserts it. Every call is recorded and counts toward the caps from that moment.
+   - **New COO AI is hard-budgeted from its very first production call.** `coo_diagnosis`, `coo_interactive` and `conversation_compaction` are refused at the cap unconditionally. There is no observation mode for them.
+   - **The pre-existing categories** (`website_generation`, `campaign_message_draft`, `agency_prospect_reply`) may run for one observation window with `config('ai.enforce_budgets_for_existing_categories')` false: recorded, counted, not refused — so adopting the gateway changes no existing behaviour on day one. That flag **must be true before broader product launch**, and §21 tracks it as a launch gate, not an open decision.
+   Existing AI features otherwise keep working after AI-1 with identical prompts.
 4. **The Results URL** is kept (§4.1). The redirect is behind a flag, and the route is never deleted.
 5. **Spend band removal** affects only the UI. Billing data, routes and Settings pages are untouched.
-6. **Opportunity:** no schema change. `opportunity.enabled` keeps its default until OD-3.
+6. **Opportunity:** no schema change. `opportunity.enabled` keeps its default until C-1 proves safe automatic triggering; the owner then enables it through the existing config boundary (D-3).
 7. **Slice 4 tests** that assert the Spend band or the list of 5 recommendations are **rewritten in the same slice** that changes the behaviour (H-1, C-2). They are never deleted without a replacement assertion.
 
 ---
@@ -884,6 +965,24 @@ test must report a positive count.
 | T-COO-4 | A dormant Business: no eligible trigger fires, and the ledger stays empty |
 | T-COO-5 | E-1…E-4 each fire only under their conditions. E-3 with an unchanged fingerprint makes no call |
 
+### Producer triggering (D-3)
+
+| ID | Assertion |
+|---|---|
+| T-C1-1 | A burst of profile edits for one Business yields at most one run per debounce window |
+| T-C1-2 | The daily sweep is batched, dispatches at most one job per Business per day, and is idempotent across two runs |
+| T-C1-3 | A trigger during a healthy active run is skipped, not queued. A failed run never blocks the next |
+| T-C1-4 | With the engine disabled both paths no-op and write nothing. With it enabled, the automatic paths alone populate the queue: no test and no production path needs a manual dispatch |
+
+### Trial (D-1)
+
+| ID | Assertion |
+|---|---|
+| T-TRIAL-1 | `trialing` selects the trial policy; `active`, `inactive`, `suspended` and complimentary never do |
+| T-TRIAL-2 | Trial is never inferred: account age, `created_at`, a missing payment method and `is_complimentary` each leave the tier policy in force (architecture test plus behaviour test) |
+| T-TRIAL-3 | `trialing` requires `trial_ends_at`. A trial past its end date is treated as exhausted, not unlimited |
+| T-TRIAL-4 | The $1.50 cap spans the whole trial, not a month, and unspent allowance does not carry into the first paid period |
+
 ### Insights
 
 | ID | Assertion |
@@ -907,6 +1006,8 @@ test must report a positive count.
 | T-BUD-7 | The policy comes only from `config/ai.php` through the resolver. There are no amount literals elsewhere (architecture test) |
 | T-BUD-8 | `enforce_budgets_for_existing_categories=false` records the three pre-existing categories and counts them toward the caps but never refuses them. `coo_*` and `conversation_compaction` are refused at the cap regardless of the flag |
 | T-BUD-9 | Each caller's exhaustion behaviour matches the §11.4 table |
+| T-AI-GATE-1 | **No bypass.** No code outside `app/Library/Ai/Providers/**` constructs a provider client or calls a provider endpoint (architecture test over `app/`), and every AI-reaching path in the app records a ledger entry |
+| T-AI-GATE-2 | Every first-party AI category draws on the same Workspace budget: spending in one category reduces what another may use, and no category has a private pool |
 
 ### Routing
 
@@ -962,19 +1063,24 @@ test must report a positive count.
 
 ---
 
-## 21. Owner decisions that remain
+## 21. Launch gates
 
-Repository evidence cannot settle these. Each has a recommendation, and none
-blocks H-1, A-1, C-1, C-3 or AI-1.
+**No owner decision remains open.** All six were answered on 2026-09-12 and are
+recorded in §0.3 as locked direction. What follows is not a decision list: each
+row is an execution step whose condition the repository itself proves, and
+whoever runs the slice checks it off.
 
-| # | Decision | Recommendation | Blocks |
-|---|---|---|---|
-| **OD-1** | How to represent a trial. RFC-004 has none (K-4) | An RFC-004 amendment adding `WorkspacePlanAssignmentStatus::Trialing` with `trial_ends_at`, and entitlement semantics equal to the tier. Until then the $1.50 trial policy is defined but unreachable | T-1 |
-| **OD-2** | Whether website generation and agency prospect replies draw from the same included AI cap. Managed-messaging C-5 says "Website generation and AI allowances use their own meters" | **Yes.** One ledger and one Workspace cap for every AI call, with separate category attribution. Revisit if a separate website-generation allowance is ever priced. Enforcement starts off (§19.3), so there is no immediate customer impact | AI-1 enforcement switch-on |
-| **OD-3** | Turn the Opportunity Engine on in production (`OPPORTUNITY_ENGINE_ENABLED=true`) together with the C-1 trigger | Yes, once C-1 is merged and the deployment guide's checks are run | Improvement moves on Home (Attention moves work without it) |
-| **OD-4** | Which provider models serve the `routine`, `reasoning` and `compaction` routes, and their price rows | Keep `services.openai.model` for all three until a cost review. Choose a cheaper `routine` model before AI-3 goes live | AI-3 go-live |
-| **OD-5** | Whether to build an interactive "Ask your COO" surface | Defer. Ship E-4 explain-this-change first, as the only interactive use | AI-4 |
-| **OD-6** | When to switch on budget enforcement for the three pre-existing AI categories (`ai.enforce_budgets_for_existing_categories`) and the Results redirect (`results.redirect_to_home`) | Enforcement after one full month of ledger data. Redirect after H-6's parity tests pass. New COO categories are enforced from their first call regardless (§19.3) | Those switches only |
+| Gate | Condition that must hold first | Proved by |
+|---|---|---|
+| Enable the Opportunity Engine through the existing config boundary | C-1 shipped and all five §7.3 safety properties demonstrated. No production path depends on a manual dispatch | T-C1-1…4 |
+| Route every existing AI call site through the gateway | AI-1 shipped, with no bypass path left in `app/` | T-AI-GATE-1 |
+| Hard enforcement for the three pre-existing AI categories (`ai.enforce_budgets_for_existing_categories` → true) | One observation window of real ledger data. **Required before broader product launch** | T-BUD-8 |
+| Offer 28-day trials | §11.1a's state shipped (T-1) **and** hard enforcement already on | T-TRIAL-1…4 |
+| Switch on the Results redirect (`results.redirect_to_home`) | Home at full Results feature and data parity, and H-6 proving the migration and redirect behaviour | T-RES-1…3, P-1…P-10 |
+| Remove the Results view (R3) | One release with the redirect on and no parity defect. The route itself is never deleted | T-RES-2 |
+
+New COO AI needs no gate of its own: it is hard-budgeted from its first
+production call (§19.3).
 
 ---
 
