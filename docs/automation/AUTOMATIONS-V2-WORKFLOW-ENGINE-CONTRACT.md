@@ -37,6 +37,14 @@ D10 email needs its own transport contract. The full record is §22.
 | **C3** | The circular reference `automation_workflows.published_version_id → versions` and `versions.workflow_id → workflows` was stated as two ordinary FKs in six create-table migrations, which cannot be created in that form, and its delete behaviour was a `nullOnDelete`/`cascadeOnDelete` cycle this repository has never proven | Exact migration ordering: the back-reference FK is added in migration 2, after the versions table exists, and dropped first in its rollback. **Both sides of the cycle are `RESTRICT`**, hard deletes are application-ordered, and the back-reference is a **composite** FK so a workflow can only point at its own version. Five migration tests prove it | §4.1, §4.2, §4.7, T-WF-28..32 |
 | **C4** | Resume relied implicitly on the recovery sweep to restart held enrollments | Resume explicitly re-dispatches every held `active` enrollment in bounded, idempotent batches, after the HTTP transaction commits; it never touches `waiting` rows. Recovery is only a safety net for lost jobs | §6.3, §7.1, §7.4, §8.2, T-WF-35..38 |
 
+## CORRECTION ROUND 2 — LAST OWNER DECISION LOCKED
+
+`STALE_ACTIVE_RECOVERY_MINUTES` is locked at **15 minutes** by the product owner.
+It is the lost/interrupted-job safety-net threshold only; Resume continues to
+re-dispatch held enrollments immediately after commit and never waits for it.
+Wording changed in §8.4 and §22 only. **No architecture change. No owner
+decision remains open.**
+
 ---
 
 ## 0. AUTHORITY, SUPERSESSION AND RECONCILIATION
@@ -961,7 +969,7 @@ line.
 | Constant | Value | Status |
 |---|---|---|
 | `MESSAGE_RECEIVED_COOLDOWN_HOURS` | **24** | **Approved (D6).** Per Contact per workflow. A named constant so a later product setting can replace it without touching the engine |
-| `STALE_ACTIVE_RECOVERY_MINUTES` | **15** (proposed) | **Not in D5's approved list — flagged for review.** It was implicit ("after a threshold") in the first revision; making Resume explicit (C4) required naming it, because recovery must now tell a held enrollment from a lost one. It governs only the lost-job safety net, never Resume. Fifteen minutes is comfortably longer than one advance job can run (`--timeout=120`) plus one scheduler cycle |
+| `STALE_ACTIVE_RECOVERY_MINUTES` | **15** | **Approved (D5, Correction Round 2).** The threshold after which the recovery sweep treats an `active` enrollment of a published workflow as a lost job or an interrupted step (§7.4). **It is only a safety net for lost or interrupted jobs — never normal Resume behaviour.** Resume re-dispatches held enrollments **immediately**, after its transaction commits, without waiting for this threshold (§6.3; proven by T-WF-35). Fifteen minutes is comfortably longer than one advance job can run (`--timeout=120`) plus one scheduler cycle, so a job that is merely slow is never mistaken for a lost one |
 
 ---
 
@@ -1588,15 +1596,15 @@ longer open.
 | **D2** | Default failure policy | **Approved: `halt`**, versioned with the definition | §7.6 |
 | **D3** | Default enrollment policy | **Changed from the proposal.** No single global default; defaults follow the trigger — `contact_created` and `manual_enrollment` → `once_ever`; `contact_date_reached` → `once_per_occurrence`; `message_received` → `once_per_occurrence` with the cooldown. A draft's trigger change updates an untouched default or requires confirmation of a user-chosen policy, and the server refuses to publish a stale default. **A yearly birthday workflow is never silently turned into once-ever** | §4.2, §7.5, §9.1, §15.2 |
 | **D4** | Pause semantics | **Approved, with deterministic resume.** Pause blocks new enrollments and holds in-flight ones at their cursor; Resume allows new enrollments and **explicitly re-dispatches** held `active` enrollments in bounded, idempotent batches after commit, never touching `waiting` rows | §6.3, §7.1, §7.4 |
-| **D5** | Structural limits | **Approved as proposed**, every value centralised in `WorkflowLimits`. `STALE_ACTIVE_RECOVERY_MINUTES` (15) is added by this round and **flagged for review** because it was not in the approved list | §8.4 |
+| **D5** | Structural limits | **Approved as proposed**, every value centralised in `WorkflowLimits` — including `STALE_ACTIVE_RECOVERY_MINUTES = 15`, approved in Correction Round 2 as the lost/interrupted-job safety-net threshold only; Resume stays immediate | §8.4 |
 | **D6** | Message-received rules | **Approved:** exactly one subscribed Contact match in the Business; ambiguity skips safely; 24-hour cooldown per Contact per workflow as the named constant `MESSAGE_RECEIVED_COOLDOWN_HOURS`; automation-originated messages never self-trigger | §9.1 |
 | **D7** | Tags | **Approved as a separate, parallel product/domain contract.** Not implemented inside Automations v2. That contract must create a real Business-scoped tag entity and contact–tag relation rather than repurpose the legacy JSON helper | §9, §10, §16, §19 |
 | **D8** | Permissions | **Approved:** one `automations` permission; view/edit/publish not split | §14.5 |
 | **D9** | B4 retirement | **Approved:** B4 runtime code is kept for one full month of measured parity after conversion. This **does not** delay v2 for customers — converted rows stop running through B4 immediately via `migrated` status; the month is only the safety window before deleting the old code | §15.3 |
 | **D10** | Email to contacts | **Approved:** requires its own transport contract. Automations v2 invents no email provider plumbing | §10, §19 |
 
-**Still open, and small:** approval of `STALE_ACTIVE_RECOVERY_MINUTES = 15`
-(§8.4). Nothing else in this contract awaits a decision.
+**No owner decision remains open.** The last one — the stale-active recovery
+threshold — was resolved in Correction Round 2 at 15 minutes.
 
 ---
 
@@ -1620,4 +1628,4 @@ versions, never on workflows; the migration ordering in §4.7 matches the FK
 definitions in §4.1 and §4.2; and Resume in §6.3 matches §7.1, §7.4, §8.2, the
 V2-A allowlist and T-WF-35 to T-WF-38.
 
-`AUTOMATIONS V2 WORKFLOW ENGINE — CORRECTION ROUND 1 READY FOR REVIEW`
+`AUTOMATIONS V2 WORKFLOW ENGINE — CORRECTION ROUND 2 READY FOR REVIEW`
