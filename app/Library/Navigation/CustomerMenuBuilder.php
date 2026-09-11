@@ -187,9 +187,11 @@ final class CustomerMenuBuilder
             ]);
         }
 
-        if ($context->canManageWorkspace() && (bool) $user->is_customer) {
-            $settings[] = $this->item($user, 'plan', 'Plan & subscription', 'tag', ['access_backend'], 'customer.subscriptions.index', [], $current, [
-                'customer.subscriptions.', 'customer.invoices.',
+        if ($context->canManageWorkspace() && (bool) $user->is_customer && $workspaceUid !== null) {
+            // This account's own AI Business OS plan (Workspace plan domain) —
+            // never the inherited SMS plans/subscriptions page.
+            $settings[] = $this->item($user, 'plan', 'Plan & subscription', 'tag', ['access_backend'], 'customer.workspaces.plan.show', [$workspaceUid], $current, [
+                'customer.workspaces.plan.',
             ]);
         }
 
@@ -247,10 +249,14 @@ final class CustomerMenuBuilder
         }
 
         $settings = [];
+        $planWorkspace = $context->frameWorkspace();
 
-        if ($context->canManageWorkspace() && (bool) $user->is_customer) {
-            $settings[] = $this->item($user, 'plan', 'Plan & subscription', 'tag', ['access_backend'], 'customer.subscriptions.index', [], $current, [
-                'customer.subscriptions.', 'customer.invoices.',
+        if ($planWorkspace !== null && $context->canManageWorkspace() && (bool) $user->is_customer) {
+            // The Agency (or only) account's own plan — explicit, never a
+            // client Business's and never the inherited SMS subscriptions page.
+            // With several accounts and none chosen there is no plan to name.
+            $settings[] = $this->item($user, 'plan', 'Plan & subscription', 'tag', ['access_backend'], 'customer.workspaces.plan.show', [$planWorkspace->uid], $current, [
+                'customer.workspaces.plan.',
             ]);
         }
 

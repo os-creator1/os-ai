@@ -16,7 +16,18 @@ final class PlatformFeatureCopy
         'automations' => ['Automations', 'Automatically follow up and perform repetitive tasks.'],
         'website_generation' => ['Website', 'Create and manage your business website.'],
         'google_business_profile_module' => ['Google Business Profile', 'Manage how your business appears on Google.'],
+        'prospect_outreach' => ['Prospecting', 'Find potential clients for your agency and reach out to them.'],
     ];
+
+    /**
+     * Feature keys that have customer copy, in display order.
+     *
+     * @return list<string>
+     */
+    public static function keys(): array
+    {
+        return array_keys(self::COPY);
+    }
 
     public static function has(string $featureKey): bool
     {

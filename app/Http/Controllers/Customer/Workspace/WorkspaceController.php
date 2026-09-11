@@ -36,6 +36,7 @@ use App\Enums\Entitlement\WorkspacePlanTier;
 use App\Library\Entitlement\BusinessFeatureSettings;
 use App\Library\Entitlement\EntitlementManager;
 use App\Library\Entitlement\PlatformFeatureRegistry;
+use App\Library\Entitlement\WorkspacePlanPresenter;
 use App\Library\Usage\BillingProfileManager;
 use App\Library\Workspace\WorkspaceManager;
 use App\Models\Business;
@@ -182,6 +183,34 @@ class WorkspaceController extends CustomerBaseController
         request()->attributes->set('showsAccountChooser', $this->accountChoices($userId)->count() > 1);
 
         return view('customer.workspaces.show', $viewData);
+    }
+
+    /**
+     * Settings → Plan & subscription: this account's AI Business OS plan
+     * (Workspace plan domain, via WorkspacePlanPresenter) — for Agency the
+     * Agency account's plan, never a client Business's. Plan and billing are
+     * managed by the account owner and its active Agency-wide Admins; anyone
+     * else — a stranger, a former member, a selected-scope member, Staff —
+     * gets the same 404 as an unknown account (never 403).
+     */
+    public function plan(string $workspaceUid, WorkspacePlanPresenter $presenter): View
+    {
+        $workspace = $this->workspaceRepository->findByUid($workspaceUid);
+
+        if ($workspace === null) {
+            abort(404);
+        }
+
+        $roleKey = $this->effectiveRoleKey($workspace, (int) Auth::id(), accountFrameOnly: true);
+
+        if (! in_array($roleKey, ['owner', 'admin'], true)) {
+            abort(404);
+        }
+
+        return view('customer.workspaces.plan', array_merge(
+            ['accountName' => (string) $workspace->name],
+            $presenter->present($workspace),
+        ));
     }
 
     /**
