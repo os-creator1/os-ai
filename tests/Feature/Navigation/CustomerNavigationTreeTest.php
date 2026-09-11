@@ -470,12 +470,36 @@ class CustomerNavigationTreeTest extends TestCase
         }
     }
 
+    /**
+     * Superseded by Customer Experience Redesign Slice 2B, stated rather than
+     * hidden. Slice 2A locked the Inbox target to `customer.chatbox.index`
+     * (`/chat-box`) because moving it was 2B's job. 2B has now moved it: the
+     * Inbox entry targets the selected Business's own inbox, and the flat
+     * route survives only as a GET compatibility redirector at the same URI.
+     */
     public function test_the_chatbox_route_and_uri_are_unchanged(): void
     {
-        $route = app('router')->getRoutes()->getByName('customer.chatbox.index');
+        [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Core, 'Inbox Co', 'Inbox Account');
+        $this->authenticateAs($customer);
 
-        $this->assertNotNull($route);
-        $this->assertSame('chat-box', $route->uri());
+        $canonical = app('router')->getRoutes()->getByName('customer.workspaces.businesses.conversations.index');
+
+        $this->assertNotNull($canonical);
+        $this->assertSame('workspaces/{workspaceUid}/businesses/{businessUid}/conversations', $canonical->uri());
+
+        $this->assertContains(
+            route('customer.workspaces.businesses.conversations.index', [$workspace->uid, $business->uid]),
+            $this->menuLinks($this->home()->assertOk()->getContent()),
+            'The Inbox entry targets the selected Business\'s inbox.',
+        );
+
+        // The old URI is kept, as a redirector into that same inbox.
+        $legacy = app('router')->getRoutes()->getByName('customer.chatbox.index');
+
+        $this->assertNotNull($legacy);
+        $this->assertSame('chat-box', $legacy->uri());
+        $this->assertSame(['GET'], array_values(array_diff($legacy->methods(), ['HEAD'])));
+        $this->get('/chat-box')->assertRedirect(route('customer.workspaces.businesses.conversations.index', [$workspace->uid, $business->uid]));
     }
 
     /**

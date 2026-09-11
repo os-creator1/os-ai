@@ -28,11 +28,11 @@
 
                 <x-card :title="__('locale.labels.new_conversion')">
                     <x-slot:actions>
-                        <a href="{{ route('customer.chatbox.index') }}"
+                        <a href="{{ route('customer.workspaces.businesses.conversations.index', [$workspaceUid, $businessUid]) }}"
                            class="text-primary d-block d-md-none">{{ __('locale.menu.Chat Box') }}</a>
                     </x-slot:actions>
 
-                            <form class="form form-vertical" action="{{ route('customer.chatbox.sent') }}"
+                            <form class="form form-vertical" action="{{ route('customer.workspaces.businesses.conversations.sent', [$workspaceUid, $businessUid]) }}"
                                   method="post">
                                 @csrf
                                 <div class="row">
@@ -197,7 +197,7 @@
                 $get_msg = $("#message");
 
             $.ajax({
-                url: "{{ url('templates/show-data')}}" + '/' + template_id,
+                url: "{{ route('customer.workspaces.businesses.outreach.templates.show_data', [$workspaceUid, $businessUid, '__ID__']) }}".replace('__ID__', encodeURIComponent(template_id)),
                 type: "POST",
                 data: {
                     _token: "{{csrf_token()}}"

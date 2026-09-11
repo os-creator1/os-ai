@@ -159,6 +159,12 @@ class LegacyOutreachTerminologyTest extends TestCase
     // =================================================================
 
     /**
+     * Customer Experience Redesign Slice 2B moved the ChatBox compose screen
+     * into the Business-scoped route family. The screen and its copy are the
+     * same `ChatBox/new.blade.php` this slice repointed; only the route that
+     * reaches it changed (the old flat `customer.chatbox.new` is now a GET
+     * compatibility redirector). So the entry is updated, not removed.
+     *
      * @return array<string, array{0: string}>
      */
     public static function slice1bRouteProvider(): array
@@ -169,9 +175,19 @@ class LegacyOutreachTerminologyTest extends TestCase
             'import' => ['customer.sms.import'],
             'keyword create' => ['customer.keywords.create'],
             'template create' => ['customer.templates.create'],
-            'chat box new' => ['customer.chatbox.new'],
+            'chat box new' => ['customer.workspaces.businesses.conversations.new'],
             'developer settings' => ['customer.developer.settings'],
         ];
+    }
+
+    /** The subscribed customer's own Workspace/Business pair, for 2B's routes. */
+    private array $terminologyPair = ['no-workspace', 'no-business'];
+
+    private function terminologyUrl(string $routeName): string
+    {
+        return str_starts_with($routeName, 'customer.workspaces.businesses.')
+            ? route($routeName, $this->terminologyPair)
+            : route($routeName);
     }
 
     /**
@@ -181,7 +197,8 @@ class LegacyOutreachTerminologyTest extends TestCase
      */
     private function subscribedCustomer(): Customer
     {
-        [$customer] = $this->tenant(WorkspacePlanTier::Growth);
+        [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
+        $this->terminologyPair = [$workspace->uid, $business->uid];
 
         $country = Country::firstOrCreate(
             ['country_code' => '1', 'iso_code' => 'US'],
@@ -230,8 +247,11 @@ class LegacyOutreachTerminologyTest extends TestCase
             'plain' => true,
         ]);
 
+        // business_id: Slice 2B's compose screen offers only the providers
+        // assigned to the selected Business (§6).
         CustomerBasedSendingServer::create([
             'user_id' => $customer->user_id,
+            'business_id' => $business->id,
             'sending_server' => $server->id,
             'status' => 1,
         ]);
@@ -258,7 +278,7 @@ class LegacyOutreachTerminologyTest extends TestCase
     {
         $this->subscribedCustomer();
 
-        $response = $this->get(route($routeName))->assertOk();
+        $response = $this->get($this->terminologyUrl($routeName))->assertOk();
         $html = $response->getContent();
 
         foreach (self::FORBIDDEN_DISPLAY as $term) {
@@ -297,7 +317,7 @@ class LegacyOutreachTerminologyTest extends TestCase
 
         $this->assertStringContainsString(
             'Messaging provider',
-            $this->get(route('customer.chatbox.new'))->assertOk()->getContent(),
+            $this->get($this->terminologyUrl('customer.workspaces.businesses.conversations.new'))->assertOk()->getContent(),
         );
 
         $this->assertStringContainsString(
@@ -396,7 +416,10 @@ class LegacyOutreachTerminologyTest extends TestCase
             'customer.keywords.create' => 'KeywordController@create',
             'customer.keywords.show' => 'KeywordController@show',
             'customer.templates.create' => 'TemplateController@create',
-            'customer.chatbox.new' => 'ChatBoxController@new',
+            // Slice 2B: the compose screen's route moved into the Business
+            // family; the old flat name survives as a GET redirector.
+            'customer.workspaces.businesses.conversations.new' => 'ChatBoxController@new',
+            'customer.chatbox.new' => 'ChatBoxController@legacyNew',
             'customer.developer.settings' => 'DeveloperController@settings',
         ];
 
@@ -416,7 +439,7 @@ class LegacyOutreachTerminologyTest extends TestCase
     public function test_the_slice_1b_screens_remain_closed_to_an_unauthenticated_visitor(): void
     {
         foreach (array_column(self::slice1bRouteProvider(), 0) as $routeName) {
-            $status = $this->get(route($routeName))->getStatusCode();
+            $status = $this->get($this->terminologyUrl($routeName))->getStatusCode();
 
             $this->assertContains(
                 $status,
@@ -715,7 +738,7 @@ class LegacyOutreachTerminologyTest extends TestCase
         );
 
         foreach ($routes as $routeName) {
-            $html = $this->get(route($routeName))->assertOk()->getContent();
+            $html = $this->get($this->terminologyUrl($routeName))->assertOk()->getContent();
 
             $this->assertSame(
                 [],

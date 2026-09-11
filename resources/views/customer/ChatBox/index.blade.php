@@ -100,7 +100,7 @@
                 {{ __('locale.labels.new_conversion') }}
             </h4>
             <h4 class="sidebar-toggle start-chat-text d-none d-md-block">
-                <a href="{{ route('customer.chatbox.new') }}"
+                <a href="{{ route('customer.workspaces.businesses.conversations.new', [$workspaceUid, $businessUid]) }}"
                    class="text-dark">{{ __('locale.labels.new_conversion') }}</a>
             </h4>
         </div>
@@ -194,6 +194,21 @@
     @endif
 
     <script>
+      // Customer Experience Redesign Slice 2B — every endpoint is rendered by
+      // the server from the Business-scoped route family, so the browser never
+      // assembles a /chat-box/* path of its own. `__UID__` is replaced with
+      // the conversation's public uid; no numeric id is ever used.
+      const conversationRoutes = {
+        messages: "{{ route('customer.workspaces.businesses.conversations.messages', [$workspaceUid, $businessUid, '__UID__']) }}",
+        notification: "{{ route('customer.workspaces.businesses.conversations.notification', [$workspaceUid, $businessUid, '__UID__']) }}",
+        reply: "{{ route('customer.workspaces.businesses.conversations.reply', [$workspaceUid, $businessUid, '__UID__']) }}",
+        delete: "{{ route('customer.workspaces.businesses.conversations.delete', [$workspaceUid, $businessUid, '__UID__']) }}",
+        block: "{{ route('customer.workspaces.businesses.conversations.block', [$workspaceUid, $businessUid, '__UID__']) }}",
+        pin: "{{ route('customer.workspaces.businesses.conversations.pin', [$workspaceUid, $businessUid, '__UID__']) }}",
+        load: "{{ route('customer.workspaces.businesses.conversations.load', [$workspaceUid, $businessUid]) }}",
+      };
+      const conversationUrl = (name, uid) => conversationRoutes[name].replace('__UID__', encodeURIComponent(uid));
+
       // autoscroll to bottom of Chat area
       let chatContainer = $(".user-chats"),
         details,
@@ -224,7 +239,9 @@
         }
 
         $.ajax({
-          url: "{{ url('templates/show-data')}}" + "/" + template_id,
+          // B1's Business-scoped template fetch: a template belonging to
+          // another Business is simply not found there.
+          url: "{{ route('customer.workspaces.businesses.outreach.templates.show_data', [$workspaceUid, $businessUid, '__ID__']) }}".replace('__ID__', encodeURIComponent(template_id)),
           type: "POST",
           data: {
             _token: "{{csrf_token()}}"
@@ -302,7 +319,7 @@ $("#media_image").val("");
 
           // Fetch messages via POST request
           $.post(
-            `{{ url('/chat-box')}}/${chat_id}/messages`,
+            conversationUrl('messages', chat_id),
             { _token: "{{ csrf_token() }}" }
           )
             .done(function(response) {
@@ -467,7 +484,7 @@ $("#media_image").val("");
         }
 
         $.ajax({
-          url: "{{ url('/chat-box') }}" + "/" + chatBoxId + "/reply",
+          url: conversationUrl('reply', chatBoxId),
           type: "POST",
           data: formData,
           processData: false, // prevent jQuery from converting to query string
@@ -589,7 +606,7 @@ $("#media_image").val("");
         }).then(function(result) {
           if (result.value) {
             $.ajax({
-              url: "{{ url('/chat-box')}}" + "/" + sms_id + "/delete",
+              url: conversationUrl('delete', sms_id),
               type: "POST",
               data: {
                 _token: "{{csrf_token()}}"
@@ -665,7 +682,7 @@ $("#media_image").val("");
         }).then(function(result) {
           if (result.value) {
             $.ajax({
-              url: "{{ url('/chat-box')}}" + "/" + sms_id + "/block",
+              url: conversationUrl('block', sms_id),
               type: "POST",
               data: {
                 _token: "{{csrf_token()}}"
@@ -740,7 +757,7 @@ $("#media_image").val("");
         }).then(function(result) {
           if (result.value) {
             $.ajax({
-              url: "{{ url('/chat-box')}}" + "/" + sms_id + "/pin",
+              url: conversationUrl('pin', sms_id),
               type: "POST",
               data: {
                 _token: "{{csrf_token()}}"
@@ -819,7 +836,7 @@ $("#media_image").val("");
         let box_id = e.data.id;
 
         $.ajax({
-          url: `{{ url('/chat-box')}}/${chat_id}/notification`,
+          url: conversationUrl('notification', chat_id),
           type: "POST",
           data: {
             _token: "{{csrf_token()}}"
@@ -889,8 +906,16 @@ $("#media_image").val("");
         // Function to load chat users
         function loadChatUsers(page, filter, search, append = false) {
           $.ajax({
-            url: "{{ url('/chat-box/load') }}" + `?page=${page}&filter=${filter}&search=${search}`,
-            type: "GET",
+            // POST, matching the route's locked verb: the list is only ever
+            // read by this page's own AJAX, so it has no GET alias.
+            url: conversationRoutes.load,
+            type: "POST",
+            data: {
+              _token: "{{ csrf_token() }}",
+              page: page,
+              filter: filter,
+              search: search
+            },
             beforeSend: function() {
               $("#loader").show();  // Show the loader before the request
             },

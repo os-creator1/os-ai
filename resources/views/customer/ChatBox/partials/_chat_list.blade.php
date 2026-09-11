@@ -5,18 +5,19 @@
         </span>
         <div class="chat-info flex-grow-1">
             <h6 class="mb-0">{{ $chat->to }}</h6>
-            @if(!empty($chat->contact) && !empty($chat->contact->getFullName()))
+            @php($displayName = ($displayContacts[$chat->id] ?? null)?->getFullName())
+            @if(!empty($displayName))
                 <p class="card-text mb-0 text-truncate">
-                    {{ str_limit($chat->contact->getFullName(), 15) }}
+                    {{ str_limit($displayName, 15) }}
                 </p>
             @endif
             <p class="card-text mb-0 text-truncate">
                 {{ $chat->from }}
             </p>
 
-            @if(! empty($chat->chatBoxMessages) && ! empty($chat->chatBoxMessages->last()->message))
+            @if($chat->latestMessage !== null && ! empty($chat->latestMessage->message))
                 <p class="card-text mb-0 text-truncate">
-                    {{ str_limit($chat->chatBoxMessages->last()->message, 18) }}
+                    {{ str_limit($chat->latestMessage->message, 18) }}
                 </p>
             @endif
         </div>

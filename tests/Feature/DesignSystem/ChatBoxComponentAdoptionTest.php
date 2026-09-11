@@ -2,11 +2,15 @@
 
 namespace Tests\Feature\DesignSystem;
 
-use App\Models\AppConfig;
+use App\Enums\Entitlement\WorkspacePlanTier;
+use App\Models\Business;
 use App\Models\ChatBox;
 use App\Models\Customer;
 use App\Models\User;
+use App\Models\Workspace;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Str;
+use Tests\Feature\Workspace\Concerns\CreatesCustomerContextFixtures;
 use Tests\TestCase;
 
 /**
@@ -22,6 +26,7 @@ use Tests\TestCase;
 class ChatBoxComponentAdoptionTest extends TestCase
 {
     use RefreshDatabase;
+    use CreatesCustomerContextFixtures;
 
     private const SLICE6_VIEWS = [
         'resources/views/customer/ChatBox/index.blade.php',
@@ -221,11 +226,15 @@ class ChatBoxComponentAdoptionTest extends TestCase
     // component's own real, documented output classes at runtime.
     // -----------------------------------------------------------------
 
+    // Slice 2B: both surfaces are now reached through the Business-scoped
+    // route family, and the list endpoint is POST-only. The rendered
+    // component output asserted is unchanged.
+
     public function test_chatbox_index_renders_the_adopted_button_and_tooltip_output_classes(): void
     {
-        [$customer] = $this->authenticatedCustomerWithChatBox();
+        [, , $business, $workspace] = $this->authenticatedCustomerWithChatBox();
 
-        $response = $this->get(route('customer.chatbox.index'));
+        $response = $this->get(route('customer.workspaces.businesses.conversations.index', [$workspace->uid, $business->uid]));
 
         $response->assertOk();
         $response->assertSee('transition-fast', false);
@@ -234,9 +243,9 @@ class ChatBoxComponentAdoptionTest extends TestCase
 
     public function test_chatbox_ajax_load_partial_renders_the_adopted_button_output_class(): void
     {
-        [$customer] = $this->authenticatedCustomerWithChatBox();
+        [, , $business, $workspace] = $this->authenticatedCustomerWithChatBox();
 
-        $response = $this->get(route('customer.chatbox.load'));
+        $response = $this->post(route('customer.workspaces.businesses.conversations.load', [$workspace->uid, $business->uid]));
 
         $response->assertOk();
         // The partial itself has zero buttons — this proves the request
@@ -260,58 +269,34 @@ class ChatBoxComponentAdoptionTest extends TestCase
     }
 
     /**
-     * @return array{0: Customer, 1: ChatBox}
+     * Slice 2B: a conversation belongs to a Business, so the fixture is a
+     * customer owning one Workspace + Business with a Business-scoped box.
+     *
+     * @return array{0: Customer, 1: ChatBox, 2: Business, 3: Workspace}
      */
     private function authenticatedCustomerWithChatBox(): array
     {
-        $this->ensureRequiredAppConfigRowsExist();
+        [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Core, 'Adoption Co ' . uniqid(), 'Adoption WS ' . uniqid());
 
-        $user = User::create([
-            'first_name' => 'Test',
-            'last_name' => 'Customer',
-            'email' => 'customer' . uniqid('', true) . '@example.test',
-            'status' => true,
-            'is_admin' => false,
-            'is_customer' => true,
-            'active_portal' => 'customer',
-            'email_verified_at' => now(),
-        ]);
+        $user = $customer->user;
+        $user->email_verified_at = now();
+        $user->save();
 
-        $customer = Customer::create(['user_id' => $user->id]);
         $customer->permissions = Customer::customerPermissions();
         $customer->save();
 
-        $box = ChatBox::create([
-            'user_id' => $user->id,
+        $box = new ChatBox([
+            'user_id' => $business->customer_id,
+            'business_id' => $business->id,
             'from' => 'AgentA',
             'to' => '15550009002',
             'reply_by_customer' => true,
         ]);
+        $box->uid = (string) Str::uuid();
+        $box->save();
 
         $this->actingAs($user);
 
-        return [$customer, $box];
-    }
-
-    private function ensureRequiredAppConfigRowsExist(): void
-    {
-        $existing = AppConfig::whereIn('setting', ['license', 'customer_permissions', 'custom_script'])
-            ->pluck('setting')
-            ->all();
-
-        if (! in_array('license', $existing, true)) {
-            AppConfig::create(['setting' => 'license', 'value' => 'test-license-key']);
-        }
-
-        if (! in_array('custom_script', $existing, true)) {
-            AppConfig::create(['setting' => 'custom_script', 'value' => '']);
-        }
-
-        if (! in_array('customer_permissions', $existing, true)) {
-            $default = collect((new AppConfig())->defaultSettings())
-                ->firstWhere('setting', 'customer_permissions');
-
-            AppConfig::create($default);
-        }
+        return [$customer, $box, $business, $workspace];
     }
 }

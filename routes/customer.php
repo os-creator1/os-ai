@@ -482,17 +482,19 @@
     |
     |
     */
+    // Customer Experience Redesign Slice 2B §8 — the flat, user-scoped
+    // Inbox is retired. Its eight mutating/data routes (sent, messages,
+    // notification, reply, delete, block, pin, load) no longer exist; the
+    // Business-scoped family under workspaces/{workspaceUid}/businesses/
+    // {businessUid}/conversations replaces them.
+    //
+    // Only the two navigation GET entry points survive, and only as
+    // redirectors that never serve data: zero accessible Businesses go to
+    // onboarding, exactly one goes to that Business's inbox, several go to
+    // the Account frame's chooser. No primary-Business guess.
     Route::prefix('chat-box')->name('chatbox.')->group(function () {
-        Route::get('/', 'ChatBoxController@index')->name('index');
-        Route::get('/new', 'ChatBoxController@new')->name('new');
-        Route::post('/sent', 'ChatBoxController@sent')->name('sent');
-        Route::post('/{box}/messages', 'ChatBoxController@messages')->name('messages');
-        Route::post('/{box}/notification', 'ChatBoxController@messagesWithNotification')->name('notification');
-        Route::post('/{box}/reply', 'ChatBoxController@reply')->name('reply');
-        Route::post('/{box}/delete', 'ChatBoxController@delete')->name('delete');
-        Route::post('/{box}/block', 'ChatBoxController@block')->name('block');
-        Route::post('/{box}/pin', 'ChatBoxController@pin')->name('pin');
-        Route::any('/load', 'ChatBoxController@loadChatUsers')->name('load');
+        Route::get('/', 'ChatBoxController@legacyIndex')->name('index');
+        Route::get('/new', 'ChatBoxController@legacyNew')->name('new');
     });
 
     /*
@@ -833,6 +835,39 @@
 
             Route::post('/templates/{id}/show-data', 'OutreachController@templateData')->name('templates.show_data');
             Route::post('/contacts/count', 'OutreachController@countContacts')->name('contacts.count_contact');
+        });
+
+        /*
+        |----------------------------------------------------------------
+        | Customer Experience Redesign Slice 2B — Business-scoped
+        | Conversations (customer.workspaces.businesses.conversations.*)
+        |----------------------------------------------------------------
+        |
+        | The existing Ultimate SMS inbox, addressed by Workspace and Business
+        | instead of by login. Every action resolves Workspace → Business →
+        | access → chat_box → `conversations` entitlement → the ChatBox by uid
+        | AND business_id; any tenancy failure is the same 404.
+        |
+        | `{uid}` is the conversation's public identifier. No route accepts a
+        | numeric primary key. `load` is POST, not ANY: it is only ever called
+        | by the inbox's own AJAX, and leaving a GET alias would add a
+        | cacheable read path for no benefit.
+        |
+        | Carrying {businessUid} also makes every route here BusinessScoped
+        | for view-as, so the middleware refuses any pair other than the one
+        | being viewed.
+        */
+        Route::prefix('{workspaceUid}/businesses/{businessUid}/conversations')->name('businesses.conversations.')->group(function () {
+            Route::get('/', 'ChatBoxController@index')->name('index');
+            Route::get('/new', 'ChatBoxController@new')->name('new');
+            Route::post('/sent', 'ChatBoxController@sent')->name('sent');
+            Route::post('/load', 'ChatBoxController@loadChatUsers')->name('load');
+            Route::post('/{uid}/messages', 'ChatBoxController@messages')->name('messages');
+            Route::post('/{uid}/notification', 'ChatBoxController@messagesWithNotification')->name('notification');
+            Route::post('/{uid}/reply', 'ChatBoxController@reply')->name('reply');
+            Route::post('/{uid}/delete', 'ChatBoxController@delete')->name('delete');
+            Route::post('/{uid}/block', 'ChatBoxController@block')->name('block');
+            Route::post('/{uid}/pin', 'ChatBoxController@pin')->name('pin');
         });
 
         /*

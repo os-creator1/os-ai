@@ -909,10 +909,41 @@
                 // conversation keep the uid it already has: replaying an
                 // inbound message must not re-issue a new identifier for a
                 // conversation that already exists.
+                //
+                // Customer Experience Redesign Slice 2B §5 — which Business
+                // this conversation belongs to, taken from the one
+                // authoritative fact this callback has: the number that
+                // RECEIVED the message. Slice 3 already narrowed that lookup
+                // to exactly one assigned number, and the number itself
+                // carries its Business.
+                //
+                // Deliberately NOT LegacyBusinessResolver, which the Reports
+                // row above still uses: it knows only the customer, so for a
+                // customer with several Businesses it falls back to the
+                // PRIMARY one — which is exactly the guess that would drop a
+                // Business B conversation into Business A's inbox. Where the
+                // receiving number carries no Business, or one that is not
+                // this customer's, the conversation stays NULL: kept, and
+                // visible from no Business route, rather than misfiled.
+                $conversationBusinessId = null;
+
+                if ($phone_number->business_id !== null
+                    && \App\Models\Business::query()
+                        ->whereKey((int) $phone_number->business_id)
+                        ->where('customer_id', (int) $user_id)
+                        ->exists()) {
+                    $conversationBusinessId = (int) $phone_number->business_id;
+                }
+
+                // Domain orientation, unchanged: `from` is the Business's own
+                // receiving number and `to` the external sender, exactly as
+                // an outbound send writes them — so the contact's reply and
+                // the Business's send converge on one thread.
                 $chatBox = ChatBox::firstOrNew([
-                    'user_id' => $user_id,
-                    'from'    => $from,
-                    'to'      => $to,
+                    'user_id'     => $user_id,
+                    'business_id' => $conversationBusinessId,
+                    'from'        => $from,
+                    'to'          => $to,
                 ]);
 
                 if (! $chatBox->exists) {
@@ -922,6 +953,26 @@
                 $chatBox->reply_by_customer = true;
                 $chatBox->sending_server_id = $sending_server->id;
                 $chatBox->save();
+
+                // Slice 2B §5 — keyword auto-replies below are part of THIS
+                // conversation, so they must land on the same thread the
+                // inbound message just opened, not in a separate box.
+                //
+                // They carry the Business through `conversation_business_id`,
+                // which quickSend() reads ONLY for the conversation's
+                // identity — never `business_id`, which there also switches
+                // transport to managed messaging, re-scopes the blacklist and
+                // gates the sending server. An auto-reply's delivery must not
+                // change because Conversations became Business-scoped.
+                //
+                // Attributed only when the reply goes out from the very number
+                // that was messaged; a reply from any other number is a
+                // different conversation and is not guessed into this one.
+                $autoReplyBusinessId = static function ($senderId) use ($from, $conversationBusinessId): ?int {
+                    $normalized = str_replace(['(', ')', '+', '-', ' '], '', trim((string) $senderId));
+
+                    return $normalized !== '' && $normalized === $from ? $conversationBusinessId : null;
+                };
                 
                 
                 
@@ -1148,6 +1199,7 @@ $chatBox->touch();
                                             $sendMessage->quickSend($campaign, [
                                                 'phone_number'   => $keyword->sender_id,
                                                 'sender_id'      => $keyword->sender_id,
+                                                'conversation_business_id' => $autoReplyBusinessId($keyword->sender_id),
                                                 'originator'     => 'phone_number',
                                                 'sms_type'       => $sms_type,
                                                 'message'        => $keyword_message,
@@ -1165,6 +1217,7 @@ $chatBox->touch();
                                             $sendMessage->quickSend($campaign, [
                                                 'phone_number'   => $contact->sender_id,
                                                 'sender_id'      => $contact->sender_id,
+                                                'conversation_business_id' => $autoReplyBusinessId($contact->sender_id),
                                                 'originator'     => 'phone_number',
                                                 'sms_type'       => $sms_type,
                                                 'message'        => $contact->welcome_sms,
@@ -1187,6 +1240,7 @@ $chatBox->touch();
                                 $sendMessage->quickSend($campaign, [
                                     'phone_number'   => $keyword->sender_id,
                                     'sender_id'      => $keyword->sender_id,
+                                    'conversation_business_id' => $autoReplyBusinessId($keyword->sender_id),
                                     'sms_type'       => $sms_type,
                                     'message'        => __('locale.contacts.you_have_already_subscribed', ['contact_group' => $contact->name]),
                                     'country_code'   => $country_code,
@@ -1229,6 +1283,7 @@ $chatBox->touch();
                                             $sendMessage->quickSend($campaign, [
                                                 'phone_number'   => $keyword->sender_id,
                                                 'sender_id'      => $keyword->sender_id,
+                                                'conversation_business_id' => $autoReplyBusinessId($keyword->sender_id),
                                                 'originator'     => 'phone_number',
                                                 'sms_type'       => $sms_type,
                                                 'message'        => $keyword_message,
@@ -1245,6 +1300,7 @@ $chatBox->touch();
                                             $sendMessage->quickSend($campaign, [
                                                 'phone_number'   => $contact->sender_id,
                                                 'sender_id'      => $contact->sender_id,
+                                                'conversation_business_id' => $autoReplyBusinessId($contact->sender_id),
                                                 'originator'     => 'phone_number',
                                                 'sms_type'       => $sms_type,
                                                 'message'        => $contact->unsubscribe_sms,
@@ -1282,6 +1338,7 @@ $chatBox->touch();
                             $sendMessage->quickSend($campaign, [
                                 'phone_number'   => $keyword->sender_id,
                                 'sender_id'      => $keyword->sender_id,
+                                'conversation_business_id' => $autoReplyBusinessId($keyword->sender_id),
                                 'originator'     => 'phone_number',
                                 'sms_type'       => $sms_type,
                                 'message'        => $keyword_message,
