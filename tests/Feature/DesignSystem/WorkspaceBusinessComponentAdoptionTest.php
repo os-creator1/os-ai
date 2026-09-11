@@ -38,8 +38,11 @@ class WorkspaceBusinessComponentAdoptionTest extends TestCase
             '<x-alert' => 10,
             '<x-badge' => 12,
             '<x-button' => 15,
-            '<x-input' => 34,
-            '<x-select' => 8,
+            // One x-input (new owner) and one x-select (previous-owner
+            // disposition) left the customer account page with the
+            // ownership-transfer form (account settings cleanup).
+            '<x-input' => 33,
+            '<x-select' => 7,
             '<x-table' => 8,
             '<x-empty-state' => 6,
             '<x-pagination' => 2,
@@ -59,7 +62,7 @@ class WorkspaceBusinessComponentAdoptionTest extends TestCase
             ],
             'resources/views/customer/workspaces/show.blade.php' => [
                 '<x-card' => 2, '<x-alert' => 3, '<x-badge' => 4, '<x-button' => 6,
-                '<x-input' => 9, '<x-select' => 2, '<x-table' => 3, '<x-empty-state' => 2, '<x-pagination' => 0,
+                '<x-input' => 8, '<x-select' => 1, '<x-table' => 3, '<x-empty-state' => 2, '<x-pagination' => 0,
             ],
             'resources/views/customer/business/edit.blade.php' => [
                 '<x-card' => 1, '<x-alert' => 2, '<x-badge' => 0, '<x-button' => 1,
@@ -133,8 +136,9 @@ class WorkspaceBusinessComponentAdoptionTest extends TestCase
         $this->assertStringContainsString('<select name="role" class="form-control form-control-sm', $contents);
         $this->assertSame(0, preg_match('/<x-select\s+name="role"/', $contents));
 
-        // "business_access_scope": ownership-transfer field + add-member field + per-member-row field.
-        $this->assertStringContainsString('id="ownership-transfer-scope" name="business_access_scope"', $contents);
+        // "business_access_scope": add-member field + per-member-row field (the
+        // ownership-transfer field left the customer page with its form).
+        $this->assertStringNotContainsString('id="ownership-transfer-scope"', $contents);
         $this->assertStringContainsString('id="member-scope" name="business_access_scope"', $contents);
         $this->assertStringContainsString('<select name="business_access_scope" class="form-control form-control-sm', $contents);
         $this->assertSame(0, preg_match('/<x-select\s+name="business_access_scope"/', $contents));
@@ -233,14 +237,17 @@ class WorkspaceBusinessComponentAdoptionTest extends TestCase
 
         foreach ([
             // Slice 1B Correction Round 1 (contract §5.3): templated noun.
-            '<button type="submit" class="btn btn-outline-danger">Deactivate {{ $accountNoun }}</button>',
             '<button type="submit" class="btn btn-outline-success">Reactivate {{ $accountNoun }}</button>',
-            '<button type="submit" class="btn btn-outline-warning">Transfer ownership</button>',
             '<button type="submit" class="btn btn-sm btn-outline-danger">Deactivate</button>',
             '<button type="submit" class="btn btn-sm btn-outline-success">Reactivate</button>',
         ] as $needle) {
             $this->assertStringContainsString($needle, $contents);
         }
+
+        // Account settings cleanup: no account-deactivation or ownership-transfer
+        // button on the customer page.
+        $this->assertStringNotContainsString('Deactivate {{ $accountNoun }}', $contents);
+        $this->assertStringNotContainsString('Transfer ownership', $contents);
     }
 
     public function test_no_shared_component_source_file_was_modified(): void
