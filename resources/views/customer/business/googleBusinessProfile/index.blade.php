@@ -24,11 +24,7 @@
         </div>
     </div>
 
-    @if(session('message'))
-        <x-alert :variant="session('status') === 'error' ? 'danger' : 'success'" class="mb-2">
-            {{ session('message') }}
-        </x-alert>
-    @endif
+    <x-flash-alert class="mb-2" />
 
     {{-- Contract §25.11 — the safe error state. A normalized
          classification only; never a raw provider message. --}}

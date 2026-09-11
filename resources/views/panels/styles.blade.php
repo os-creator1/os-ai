@@ -13,8 +13,11 @@
 <link rel="stylesheet" href="{{ asset(mix('css/base/themes/dark-layout.css')) }}"/>
 <link rel="stylesheet" href="{{ asset(mix('css/base/themes/bordered-layout.css')) }}"/>
 <link rel="stylesheet" href="{{ asset(mix('css/base/themes/semi-dark-layout.css')) }}"/>
-<link rel="stylesheet" href="{{ asset(mix('vendors/css/extensions/toastr.min.css')) }}">
-<link rel="stylesheet" href="{{ asset(mix('css/base/plugins/extensions/ext-component-toastr.css')) }}">
+{{-- Toastr is the admin portal's; customer-facing pages use the Business OS toast (panels/scripts). --}}
+@unless(\App\Library\Feedback\PageToasts::appliesTo(Auth::user()))
+    <link rel="stylesheet" href="{{ asset(mix('vendors/css/extensions/toastr.min.css')) }}">
+    <link rel="stylesheet" href="{{ asset(mix('css/base/plugins/extensions/ext-component-toastr.css')) }}">
+@endunless
 
 @php $configData = \App\Helpers\Helper::applClasses(); @endphp
 
