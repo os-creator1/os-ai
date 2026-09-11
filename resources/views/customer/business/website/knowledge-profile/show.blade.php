@@ -14,9 +14,7 @@
         </div>
     </div>
 
-    @if (session('status'))
-        <x-alert :variant="session('status') === 'success' ? 'success' : 'danger'" class="mb-3">{{ session('message') }}</x-alert>
-    @endif
+    <x-flash-alert class="mb-3" />
 
     @if ($completeness->questionPack !== null)
         <x-card title="Suggested questions for your business" class="mb-3">

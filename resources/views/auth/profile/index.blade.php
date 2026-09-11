@@ -698,14 +698,7 @@
                                         }
                                     })
                                 } else if (result.dismiss === Swal.DismissReason.cancel) {
-                                    Swal.fire({
-                                        title: 'Cancelled',
-                                        text: 'Deactivation Cancelled!!',
-                                        icon: 'error',
-                                        customClass: {
-                                            confirmButton: 'btn btn-success'
-                                        }
-                                    });
+                                    toastr['info']("Your account wasn't deactivated.");
                                 }
                             });
                         }

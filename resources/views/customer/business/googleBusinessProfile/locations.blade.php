@@ -25,14 +25,10 @@
         </div>
     </div>
 
-    @if(session('message'))
-        <x-alert :variant="session('status') === 'error' ? 'danger' : 'success'" class="mb-2">
-            {{ session('message') }}
-        </x-alert>
-    @endif
+    <x-flash-alert class="mb-2" />
 
     @if($errors->any())
-        <x-alert variant="danger" class="mb-2">
+        <x-alert variant="danger" class="mb-2" data-role="validation-summary">
             @foreach($errors->all() as $error)
                 <div>{{ $error }}</div>
             @endforeach

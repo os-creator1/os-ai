@@ -459,12 +459,20 @@ class WorkspaceOverviewHttpTest extends TestCase
 
         $account->assertSee('href="' . route('customer.workspaces.plan.show', $workspace->uid) . '"', false);
         $this->assertMatchesRegularExpression('/data-role="account-plan">\s*Core\s/', $account->getContent());
-        foreach (['Plan &amp; Capacity', 'Included slots', 'Effective capacity', 'id="workspace-plan-capacity"'] as $gone) {
+        foreach (['Plan &amp; Capacity', 'Included slots', 'Effective capacity', 'id="workspace-plan-capacity"', 'data-role="plan-features"'] as $gone) {
             $account->assertDontSee($gone, false);
         }
 
         $plan = $this->get(route('customer.workspaces.plan.show', $workspace->uid))->assertOk();
         $plan->assertSee('0 of 4 in use');
+        // Customer names, never machine keys (crm, website_generation), and
+        // nothing the Core packaging lists that is not built yet (calendar, forms…).
+        foreach (['Client Management', 'Inbox &amp; Conversations', 'Automations', 'Website'] as $name) {
+            $plan->assertSee($name, false);
+        }
+        foreach (['website_generation', 'Calendar', 'Forms'] as $absent) {
+            $plan->assertDontSee($absent);
+        }
     }
 
     /**

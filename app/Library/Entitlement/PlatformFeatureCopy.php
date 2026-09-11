@@ -16,7 +16,7 @@ final class PlatformFeatureCopy
         'automations' => ['Automations', 'Automatically follow up and perform repetitive tasks.'],
         'website_generation' => ['Website', 'Create and manage your business website.'],
         'google_business_profile_module' => ['Google Business Profile', 'Manage how your business appears on Google.'],
-        'prospect_outreach' => ['Prospecting', 'Find potential clients for your agency and reach out to them.'],
+        'prospect_outreach' => ['Prospecting', 'Keep a list of prospective clients and reach them with outreach campaigns.'],
     ];
 
     /**
@@ -42,5 +42,27 @@ final class PlatformFeatureCopy
     public static function description(string $featureKey): ?string
     {
         return self::COPY[$featureKey][1] ?? null;
+    }
+
+    /**
+     * Customer names for a list of feature keys, in this class's order. Keys
+     * without copy — features not built yet, or internal ones — are left out,
+     * so a plan never lists something a customer cannot use.
+     *
+     * @param  iterable<string>  $featureKeys
+     * @return list<string>
+     */
+    public static function names(iterable $featureKeys): array
+    {
+        $wanted = [];
+
+        foreach ($featureKeys as $featureKey) {
+            $wanted[(string) $featureKey] = true;
+        }
+
+        return array_values(array_map(
+            fn (array $copy): string => $copy[0],
+            array_intersect_key(self::COPY, $wanted),
+        ));
     }
 }
