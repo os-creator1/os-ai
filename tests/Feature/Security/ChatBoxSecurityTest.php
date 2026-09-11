@@ -1587,9 +1587,733 @@ class ChatBoxSecurityTest extends TestCase
         $this->assertSame(2, ChatBox::query()->count(), 'Precondition: both producers actually ran.');
     }
 
+    // ===================================================================
+    // T. Final closure — links into Conversations from other surfaces
+    // ===================================================================
+
+    /**
+     * A Business-scoped page already knows its Business: its Conversations
+     * link goes straight to that inbox, never through the generic chooser a
+     * multi-Business actor would otherwise land on.
+     */
+    public function test_the_business_analytics_page_links_to_that_businesss_inbox(): void
+    {
+        [$owner, $businessA, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client A ' . uniqid(), 'Agency ' . uniqid());
+        $businessB = $this->addBusiness($owner, $workspace, 'Client B ' . uniqid());
+        $this->authenticateAs($owner);
+
+        $html = $this->get(route('customer.workspaces.businesses.analytics.overview', [$workspace->uid, $businessA->uid]))
+            ->assertOk()
+            ->getContent();
+
+        $this->assertStringContainsString('href="' . $this->conversationUrl('index', $workspace, $businessA) . '"', $html);
+        $this->assertStringNotContainsString('href="' . $this->conversationUrl('index', $workspace, $businessB) . '"', $html);
+        $this->assertStringNotContainsString('href="' . url('/chat-box') . '"', $html, 'No link to the generic chooser from a page that knows its Business.');
+    }
+
+    /**
+     * searchContact() ends in exit(), so it cannot be driven over HTTP in a
+     * test; its link decision is proven directly, under a real bound route.
+     */
+    public function test_a_business_contact_list_links_to_that_businesss_inbox_and_a_legacy_list_to_the_compatibility_entry(): void
+    {
+        [$owner, $businessA, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client A ' . uniqid(), 'Agency ' . uniqid());
+        $this->addBusiness($owner, $workspace, 'Client B ' . uniqid());
+        $group = \App\Models\ContactGroups::create(['customer_id' => $businessA->customer_id, 'business_id' => $businessA->id, 'name' => 'List ' . uniqid()]);
+        $this->authenticateAs($owner);
+
+        $controller = app(\App\Http\Controllers\Customer\ContactsController::class);
+        $conversationsUrl = new \ReflectionMethod($controller, 'conversationsUrl');
+
+        $this->bindRouteRequest(route('customer.workspaces.businesses.contact.search', [$workspace->uid, $businessA->uid, $group->uid]));
+        $this->assertSame($this->conversationUrl('index', $workspace, $businessA), $conversationsUrl->invoke($controller));
+
+        // The legacy, non-Business-addressable list has no Business at all:
+        // the compatibility entry, never a Business inferred from ownership.
+        $this->bindRouteRequest(route('customer.contact.search', [$group->uid]));
+        $this->assertSame(url('/chat-box'), $conversationsUrl->invoke($controller));
+
+        // A pair the actor cannot reach is refused, as every CRM route is.
+        [, $foreign, $foreignWorkspace] = $this->tenant(WorkspacePlanTier::Core, 'Foreign ' . uniqid(), 'Foreign WS ' . uniqid());
+        $this->bindRouteRequest(route('customer.workspaces.businesses.contact.search', [$foreignWorkspace->uid, $foreign->uid, $group->uid]));
+        $this->expectException(\Symfony\Component\HttpKernel\Exception\HttpException::class);
+        $conversationsUrl->invoke($controller);
+    }
+
+    public function test_the_dead_inbound_notification_uses_the_context_free_compatibility_entry(): void
+    {
+        // Nothing sends it: its one caller is commented out.
+        $dlr = (string) file_get_contents(base_path('app/Http/Controllers/Customer/DLRController.php'));
+        $live = preg_match_all('/^(?!\s*\/\/).*new \\\\App\\\\Notifications\\\\MessageReceived\(/m', $dlr);
+        $this->assertSame(0, $live, 'The notification has no live caller.');
+
+        $mail = (new \App\Notifications\MessageReceived('hi', '14155550199'))->toMail(new User());
+        $this->assertSame(url('/chat-box'), $mail->actionUrl);
+    }
+
+    /**
+     * Helper::menuData() is built once at boot, before any request, actor or
+     * Business exists — it cannot know a Business, and it is no longer
+     * rendered to customers (CustomerMenuBuilder replaced it). Its entry is
+     * the compatibility URL by design.
+     */
+    public function test_the_legacy_static_menu_entry_is_context_free_and_never_rendered_to_customers(): void
+    {
+        $entry = collect(\App\Helpers\Helper::menuData()['customer'])->firstWhere('slug', 'chat-box');
+        $this->assertSame(url('chat-box'), $entry['url']);
+
+        [$owner] = $this->tenant(WorkspacePlanTier::Agency, 'Client A ' . uniqid(), 'Agency ' . uniqid());
+        $this->authenticateAs($owner);
+
+        $this->assertNotContains(url('chat-box'), $this->menuLinks($this->home()->assertOk()->getContent()));
+    }
+
+    /**
+     * §21's route audit, closed: outside the route definition and the
+     * view-as classifier, no first-party code names a customer.chatbox.*
+     * route, and the bare /chat-box URL appears only where no Business
+     * exists — the dead notification, the legacy contact list's fallback
+     * and the boot-time static menu.
+     */
+    public function test_the_compatibility_entry_is_referenced_only_where_no_business_exists(): void
+    {
+        $names = [];
+        $urls = [];
+
+        foreach (['app', 'resources/views'] as $root) {
+            foreach (new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator(base_path($root))) as $file) {
+                if (! $file->isFile() || ! str_ends_with($file->getFilename(), '.php')) {
+                    continue;
+                }
+
+                $relative = str_replace('\\', '/', substr($file->getPathname(), strlen(base_path()) + 1));
+                $source = (string) file_get_contents($file->getPathname());
+
+                if (preg_match("/customer\\.chatbox\\.[a-z]/", $source)) {
+                    $names[] = $relative;
+                }
+
+                if (preg_match("/url\\(\\s*'\\/?chat-box'\\s*\\)/", $source)) {
+                    $urls[] = $relative;
+                }
+            }
+        }
+
+        sort($urls);
+
+        $this->assertSame([], $names, 'Still naming a customer.chatbox.* route: ' . implode(', ', $names));
+        $this->assertSame([
+            'app/Helpers/Helper.php',
+            'app/Http/Controllers/Customer/ContactsController.php',
+            'app/Notifications/MessageReceived.php',
+        ], $urls);
+    }
+
+    // ===================================================================
+    // U. Final closure — the live channel is the Business's own
+    // ===================================================================
+
+    public function test_each_businesss_inbound_event_broadcasts_only_on_that_businesss_channel(): void
+    {
+        $fx = $this->sendableBusinessPair();
+        $boxA = $this->box($fx['business'], $fx['number']->number, '14155558101');
+        $boxB = $this->box($fx['businessB'], $fx['numberB']->number, '14155558101');
+
+        $channels = fn (ChatBox $box) => array_map(fn ($c) => $c->name, (new \App\Events\MessageReceived($fx['owner'], 'hi', $box))->broadcastOn());
+
+        $this->assertSame(['private-chat.business.' . $fx['business']->uid], $channels($boxA));
+        $this->assertSame(['private-chat.business.' . $fx['businessB']->uid], $channels($boxB));
+    }
+
+    public function test_a_null_business_conversation_broadcasts_nowhere(): void
+    {
+        [[, $businessA]] = $this->twoTenantBusinesses();
+        $legacy = $this->box($businessA, '15550901001', '15550909001', ['business_id' => null]);
+
+        $event = new \App\Events\MessageReceived(null, 'hi', $legacy);
+
+        $this->assertSame([], $event->broadcastOn());
+        $this->assertFalse($event->broadcastWhen());
+    }
+
+    /**
+     * The payload carries what the page needs to refresh the thread and
+     * nothing else — not the Business owner's User record (api_token and
+     * two_factor_code are not hidden attributes), not the message text.
+     */
+    public function test_the_broadcast_payload_carries_only_the_conversation_reference(): void
+    {
+        $fx = $this->sendableBusiness();
+        $box = $this->box($fx['business'], $fx['number']->number, '14155558102');
+
+        $payload = (new \App\Events\MessageReceived($fx['owner'], 'secret body', $box))->broadcastWith();
+
+        $this->assertSame(['data' => ['id' => $box->id, 'uid' => $box->uid]], $payload);
+    }
+
+    // Every channel decision below is proven through BOTH authentication
+    // endpoints — Laravel's /broadcasting/auth and the /pusher/auth
+    // compatibility endpoint — which must run the same routes/channels.php
+    // callback and so reach the same answer.
+
+    public function test_an_authorised_actor_can_join_their_businesss_channel_and_inbound_traffic_reaches_it(): void
+    {
+        $fx = $this->sendableBusiness();
+        $this->authenticateAs($fx['customer'], ['chat_box']);
+        $this->usePusherBroadcasting();
+
+        foreach (self::AUTH_ENDPOINTS as $endpoint) {
+            $this->channelAuth($fx['business'], $endpoint)->assertOk()->assertJsonStructure(['auth']);
+        }
+
+        \Illuminate\Support\Facades\Event::fake([\App\Events\MessageReceived::class]);
+        DLRController::inboundDLR('14155558103', 'live hello', $fx['server'], 0, $fx['number']->number);
+
+        $box = ChatBox::query()->where('business_id', $fx['business']->id)->firstOrFail();
+
+        \Illuminate\Support\Facades\Event::assertDispatched(\App\Events\MessageReceived::class, function ($event) use ($fx, $box) {
+            return array_map(fn ($c) => $c->name, $event->broadcastOn()) === ['private-chat.business.' . $fx['business']->uid]
+                && $event->broadcastWith() === ['data' => ['id' => $box->id, 'uid' => $box->uid]];
+        });
+    }
+
+    public function test_staff_can_join_only_the_business_they_are_assigned_to(): void
+    {
+        $fx = $this->sendableBusinessPair();
+
+        $staff = $this->createCustomer();
+        $membership = $this->member($fx['workspace'], $staff->user, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected);
+        $this->assign($membership, $fx['business']);
+        $this->authenticateAs($staff, ['chat_box']);
+        $this->usePusherBroadcasting();
+
+        foreach (self::AUTH_ENDPOINTS as $endpoint) {
+            $this->channelAuth($fx['business'], $endpoint)->assertOk()->assertJsonStructure(['auth']);
+
+            // Authorised for A; naming B's channel does not make it B's.
+            $this->assertChannelRefused($this->channelAuth($fx['businessB'], $endpoint), $endpoint);
+        }
+    }
+
+    public function test_staff_with_no_access_to_the_business_cannot_join_its_channel(): void
+    {
+        $fx = $this->sendableBusinessPair();
+
+        // Staff of the same Workspace, scoped to Business B only.
+        $staff = $this->createCustomer();
+        $membership = $this->member($fx['workspace'], $staff->user, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected);
+        $this->assign($membership, $fx['businessB']);
+        $this->authenticateAs($staff, ['chat_box']);
+        $this->usePusherBroadcasting();
+
+        foreach (self::AUTH_ENDPOINTS as $endpoint) {
+            $this->assertChannelRefused($this->channelAuth($fx['business'], $endpoint), $endpoint);
+        }
+    }
+
+    public function test_a_different_customer_cannot_join_another_customers_channel(): void
+    {
+        $fx = $this->sendableBusiness();
+        [$stranger] = $this->tenant(WorkspacePlanTier::Core, 'Stranger ' . uniqid(), 'Stranger WS ' . uniqid());
+        $this->authenticateAs($stranger, ['chat_box']);
+        $this->usePusherBroadcasting();
+
+        foreach (self::AUTH_ENDPOINTS as $endpoint) {
+            $this->assertChannelRefused($this->channelAuth($fx['business'], $endpoint), $endpoint);
+        }
+    }
+
+    /**
+     * A channel naming no real Business, and the retired global `chat`
+     * channel, have no admitting callback — neither endpoint signs them.
+     */
+    public function test_a_nonexistent_business_channel_and_the_old_global_channel_are_refused(): void
+    {
+        $fx = $this->sendableBusiness();
+        $this->authenticateAs($fx['customer'], ['chat_box']);
+        $this->usePusherBroadcasting();
+
+        foreach (self::AUTH_ENDPOINTS as $endpoint) {
+            $this->assertChannelRefused($this->channelAuth('private-chat.business.' . Str::uuid(), $endpoint), $endpoint . ' nonexistent');
+            $this->assertChannelRefused($this->channelAuth('private-chat', $endpoint), $endpoint . ' global');
+        }
+    }
+
+    /**
+     * The two endpoints are one decision: for every actor and channel, the
+     * compatibility endpoint answers exactly as Laravel's does.
+     */
+    public function test_both_auth_endpoints_reach_the_same_decision_for_every_actor_and_channel(): void
+    {
+        $fx = $this->sendableBusinessPair();
+
+        $staffA = $this->createCustomer();
+        $this->assign($this->member($fx['workspace'], $staffA->user, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected), $fx['business']);
+        [$stranger] = $this->tenant(WorkspacePlanTier::Core, 'Stranger ' . uniqid(), 'Stranger WS ' . uniqid());
+
+        $this->usePusherBroadcasting();
+
+        $channels = [
+            'A' => 'private-' . \App\Events\MessageReceived::channelFor($fx['business']->uid),
+            'B' => 'private-' . \App\Events\MessageReceived::channelFor($fx['businessB']->uid),
+            'nonexistent' => 'private-chat.business.' . Str::uuid(),
+            'global' => 'private-chat',
+        ];
+
+        $expected = [
+            'owner' => ['A' => true, 'B' => true, 'nonexistent' => false, 'global' => false],
+            'staffA' => ['A' => true, 'B' => false, 'nonexistent' => false, 'global' => false],
+            'stranger' => ['A' => false, 'B' => false, 'nonexistent' => false, 'global' => false],
+        ];
+
+        foreach (['owner' => $fx['customer'], 'staffA' => $staffA, 'stranger' => $stranger] as $actor => $customer) {
+            $this->authenticateAs($customer, ['chat_box']);
+
+            foreach ($channels as $label => $channel) {
+                $decisions = array_map(fn (string $endpoint) => $this->channelAllowed($this->channelAuth($channel, $endpoint)), self::AUTH_ENDPOINTS);
+
+                $this->assertSame([$expected[$actor][$label], $expected[$actor][$label]], $decisions, "{$actor} → {$label}: /broadcasting/auth and /pusher/auth must agree.");
+            }
+        }
+    }
+
+    /**
+     * The channel is refused wherever the inbox itself is: no chat_box
+     * permission, or Conversations not entitled for the Business.
+     */
+    public function test_the_channel_follows_the_inboxs_permission_and_entitlement(): void
+    {
+        $fx = $this->sendableBusiness();
+        $this->usePusherBroadcasting();
+
+        foreach (self::AUTH_ENDPOINTS as $endpoint) {
+            $this->authenticateAs($fx['customer'], ['view_contact']);
+            $this->assertChannelRefused($this->channelAuth($fx['business'], $endpoint), $endpoint . ' without chat_box');
+
+            $this->authenticateAs($fx['customer'], ['chat_box']);
+            $this->channelAuth($fx['business'], $endpoint)->assertOk();
+        }
+
+        app(EntitlementManager::class)->disableBusinessFeature($fx['business'], PlatformFeature::Conversations, (int) $fx['owner']->id, 'Slice 2B channel test.');
+
+        foreach (self::AUTH_ENDPOINTS as $endpoint) {
+            $this->assertChannelRefused($this->channelAuth($fx['business'], $endpoint), $endpoint . ' not entitled');
+        }
+    }
+
+    /**
+     * While viewing Business A, no other Business's channel can be joined —
+     * through either endpoint — although the owner can reach B normally.
+     *
+     * /pusher/auth is classified Safe, so the request reaches the channel
+     * callback, which reads the SAME session view-as state and narrows: the
+     * viewed A is admitted, B is refused. That is the proof the callback runs
+     * with the view-as context. /broadcasting/auth is refused earlier, by the
+     * view-as route classifier (an unclassified route while viewing), so it
+     * refuses even A — stricter, never wider.
+     */
+    public function test_view_as_never_reaches_another_businesss_channel(): void
+    {
+        $fx = $this->sendableBusinessPair();
+        $this->authenticateAs($fx['customer']);
+        $this->usePusherBroadcasting();
+
+        // Precondition: outside view-as the owner may join BOTH Businesses.
+        foreach (self::AUTH_ENDPOINTS as $endpoint) {
+            $this->channelAuth($fx['businessB'], $endpoint)->assertOk();
+        }
+
+        $this->startViewAs($fx['workspace'], $fx['business'], 'Slice 2B channel check.')->assertRedirect();
+
+        foreach (self::AUTH_ENDPOINTS as $endpoint) {
+            $this->assertChannelRefused($this->channelAuth($fx['businessB'], $endpoint), $endpoint . ' while viewing A');
+        }
+
+        $this->channelAuth($fx['business'], '/pusher/auth')->assertOk()->assertJsonStructure(['auth']);
+        $this->assertChannelRefused($this->channelAuth($fx['business'], '/broadcasting/auth'), '/broadcasting/auth is refused by the view-as route classifier');
+    }
+
+    public function test_the_channel_callback_itself_narrows_to_the_viewed_business(): void
+    {
+        $fx = $this->sendableBusinessPair();
+        $this->authenticateAs($fx['customer']);
+        $this->startViewAs($fx['workspace'], $fx['business'], 'Slice 2B callback check.')->assertRedirect();
+
+        $callback = \Illuminate\Support\Facades\Broadcast::driver()->getChannels()->get('chat.business.{businessUid}');
+        $this->assertNotNull($callback);
+
+        $this->assertFalse($callback($fx['owner'], $fx['businessB']->uid), 'Viewing A never admits B.');
+        $this->assertTrue($callback($fx['owner'], $fx['business']->uid), 'The viewed Business itself is admitted by the callback.');
+    }
+
+    public function test_the_inbox_subscribes_only_to_its_own_businesss_channel(): void
+    {
+        $fx = $this->sendableBusinessPair();
+        config(['broadcasting.connections.pusher.app_id' => 'test-app', 'broadcasting.connections.pusher.key' => 'test-key']);
+        $this->authenticateAs($fx['customer'], ['chat_box']);
+
+        $html = $this->get($this->conversationUrl('index', $fx['workspace'], $fx['business']))->assertOk()->getContent();
+
+        $this->assertStringContainsString('Echo.private("chat.business.' . $fx['business']->uid . '")', $html);
+        $this->assertStringNotContainsString('chat.business.' . $fx['businessB']->uid, $html);
+        $this->assertStringNotContainsString('Echo.private("chat")', $html);
+    }
+
+    // ===================================================================
+    // V. Final closure — STOP / opt-out stay inside one Business
+    // ===================================================================
+
+    /**
+     * One customer, two Businesses, one external person who has spoken to
+     * both. STOP to Business A must leave Business B exactly as it was.
+     */
+    public function test_stop_on_business_a_removes_and_blocks_only_inside_business_a(): void
+    {
+        $fx = $this->sendableBusinessPair();
+        $external = '14155558201';
+
+        $boxA = $this->box($fx['business'], $fx['number']->number, $external);
+        $boxB = $this->box($fx['businessB'], $fx['numberB']->number, $external);
+        $otherA = $this->box($fx['business'], $fx['number']->number, '14155558299');
+        $this->messages($boxA, $boxB, $otherA);
+        $contactA = $this->contact($fx['business'], $external);
+        $contactB = $this->contact($fx['businessB'], $external);
+
+        DLRController::inboundDLR($external, 'STOP', $fx['server'], 0, $fx['number']->number);
+
+        $this->assertNull(ChatBox::query()->find($boxA->id), "A's conversation is removed.");
+        $this->assertNotNull(ChatBox::query()->find($boxB->id), "B's conversation remains.");
+        $this->assertSame(2, ChatBoxMessage::where('box_id', $boxB->id)->count(), "B's messages remain.");
+        $this->assertNotNull(ChatBox::query()->find($otherA->id), "A's conversation with someone else remains.");
+        $this->assertNoOrphanMessages();
+
+        $this->assertSame(1, DB::table('blacklists')->where('business_id', $fx['business']->id)->where('number', $external)->where('user_id', $fx['owner']->id)->count());
+        $this->assertSame(0, DB::table('blacklists')->where('business_id', $fx['businessB']->id)->count());
+        $this->assertSame(0, DB::table('blacklists')->whereIn('number', [$fx['number']->number, $fx['numberB']->number])->count(), 'A Business number is never an opt-out target.');
+
+        // Plain STOP never edited Contacts; that stays true, and B is untouched.
+        $this->assertSame('subscribe', DB::table('contacts')->where('id', $contactA->id)->value('status'));
+        $this->assertSame('subscribe', DB::table('contacts')->where('id', $contactB->id)->value('status'));
+    }
+
+    public function test_another_businesss_blacklist_row_never_suppresses_this_businesss_stop(): void
+    {
+        $fx = $this->sendableBusinessPair();
+        $external = '14155558202';
+        $boxA = $this->box($fx['business'], $fx['number']->number, $external);
+        $this->messages($boxA);
+
+        \App\Models\Blacklists::create(['user_id' => $fx['owner']->id, 'business_id' => $fx['businessB']->id, 'number' => $external, 'reason' => 'B prior']);
+
+        DLRController::inboundDLR($external, 'STOP', $fx['server'], 0, $fx['number']->number);
+
+        $this->assertNull(ChatBox::query()->find($boxA->id));
+        $this->assertSame(1, DB::table('blacklists')->where('business_id', $fx['business']->id)->where('number', $external)->count());
+        $this->assertSame(1, DB::table('blacklists')->where('business_id', $fx['businessB']->id)->where('number', $external)->count(), "B's own row is untouched.");
+        $this->assertNoOrphanMessages();
+    }
+
+    /**
+     * The configured opt-out keyword path — the one that unsubscribes
+     * Contacts — acts only on the receiving Business's lists.
+     */
+    public function test_an_opt_out_keyword_on_business_a_unsubscribes_only_business_as_contact(): void
+    {
+        $fx = $this->sendableBusinessPair();
+        $external = '14155558203';
+
+        $boxA = $this->box($fx['business'], $fx['number']->number, $external);
+        $boxB = $this->box($fx['businessB'], $fx['numberB']->number, $external);
+        $this->messages($boxA, $boxB);
+
+        $this->stopKeyword($fx['owner'], $fx['number']->number);
+        $contactA = $this->optOutListContact($fx['business'], $external);
+        $contactB = $this->optOutListContact($fx['businessB'], $external);
+
+        DLRController::inboundDLR($external, 'stop', $fx['server'], 0, $fx['number']->number);
+
+        $this->assertSame('unsubscribe', DB::table('contacts')->where('id', $contactA->id)->value('status'), "A's Contact is unsubscribed.");
+        $this->assertSame('subscribe', DB::table('contacts')->where('id', $contactB->id)->value('status'), "B's Contact stays subscribed.");
+        $this->assertNull(ChatBox::query()->find($boxA->id));
+        $this->assertNotNull(ChatBox::query()->find($boxB->id));
+        $this->assertSame(2, ChatBoxMessage::where('box_id', $boxB->id)->count());
+        $this->assertSame(0, DB::table('blacklists')->where('business_id', $fx['businessB']->id)->count());
+        $this->assertSame(1, DB::table('blacklists')->where('business_id', $fx['business']->id)->where('number', $external)->count());
+        $this->assertNoOrphanMessages();
+    }
+
+    /**
+     * No authoritative Business — the receiving number carries none. Only
+     * the customer's NULL-business rows are touched; every Business-owned
+     * conversation, Contact and blacklist row stays exactly as it was.
+     */
+    public function test_an_unattributed_stop_never_touches_a_business_owned_row(): void
+    {
+        $fx = $this->sendableBusinessPair();
+        $external = '14155558204';
+        $legacyNumber = $this->ownerNumberWithoutBusiness($fx, '14155550102');
+
+        $boxA = $this->box($fx['business'], $fx['number']->number, $external);
+        $boxB = $this->box($fx['businessB'], $fx['numberB']->number, $external);
+        $legacy = $this->box($fx['business'], $legacyNumber, $external, ['business_id' => null]);
+        $this->messages($boxA, $boxB, $legacy);
+        $contactA = $this->contact($fx['business'], $external);
+
+        DLRController::inboundDLR($external, 'STOP', $fx['server'], 0, $legacyNumber);
+
+        $this->assertNotNull(ChatBox::query()->find($boxA->id));
+        $this->assertNotNull(ChatBox::query()->find($boxB->id));
+        $this->assertSame(2, ChatBoxMessage::where('box_id', $boxA->id)->count());
+        $this->assertSame(2, ChatBoxMessage::where('box_id', $boxB->id)->count());
+        $this->assertNull(ChatBox::query()->find($legacy->id), 'The legacy NULL-business conversation keeps its old STOP behaviour.');
+        $this->assertSame('subscribe', DB::table('contacts')->where('id', $contactA->id)->value('status'));
+        $this->assertSame(0, DB::table('blacklists')->whereNotNull('business_id')->count(), 'No Business is guessed for the opt-out.');
+        $this->assertSame(1, DB::table('blacklists')->whereNull('business_id')->where('number', $external)->where('user_id', $fx['owner']->id)->count());
+        $this->assertNoOrphanMessages();
+    }
+
+    public function test_an_unattributed_opt_out_keyword_touches_only_legacy_lists(): void
+    {
+        $fx = $this->sendableBusinessPair();
+        $external = '14155558205';
+        $legacyNumber = $this->ownerNumberWithoutBusiness($fx, '14155550103');
+
+        $boxA = $this->box($fx['business'], $fx['number']->number, $external);
+        $this->messages($boxA);
+
+        $this->stopKeyword($fx['owner'], $legacyNumber);
+        $contactA = $this->optOutListContact($fx['business'], $external);
+        $legacyContact = $this->optOutListContact(null, $external, $fx['owner']);
+
+        DLRController::inboundDLR($external, 'stop', $fx['server'], 0, $legacyNumber);
+
+        $this->assertSame('subscribe', DB::table('contacts')->where('id', $contactA->id)->value('status'), 'A Business-owned Contact is never touched without an authoritative Business.');
+        $this->assertSame('unsubscribe', DB::table('contacts')->where('id', $legacyContact->id)->value('status'));
+        $this->assertNotNull(ChatBox::query()->find($boxA->id));
+        $this->assertSame(0, DB::table('blacklists')->whereNotNull('business_id')->count());
+        $this->assertNoOrphanMessages();
+    }
+
+    /**
+     * The chat_box_messages → chat_boxes FK cascades on MySQL, so a
+     * cascade alone would hide a wrong deletion order. With foreign-key
+     * checks off (which also switches cascades off), the opt-out deletion
+     * must still leave no message behind: children really are deleted
+     * first, by the code, not by the database.
+     */
+    public function test_opt_out_deletion_leaves_no_orphan_even_without_the_foreign_key_cascade(): void
+    {
+        $fx = $this->sendableBusinessPair();
+        $external = '14155558206';
+        $boxA = $this->box($fx['business'], $fx['number']->number, $external);
+        $boxB = $this->box($fx['businessB'], $fx['numberB']->number, $external);
+        $this->messages($boxA, $boxB);
+
+        $delete = new \ReflectionMethod(DLRController::class, 'deleteOptedOutConversations');
+
+        DB::statement('SET FOREIGN_KEY_CHECKS=0');
+
+        try {
+            $delete->invoke(null, (int) $fx['owner']->id, (int) $fx['business']->id, $external);
+        } finally {
+            DB::statement('SET FOREIGN_KEY_CHECKS=1');
+        }
+
+        $this->assertNull(ChatBox::query()->find($boxA->id));
+        $this->assertSame(0, ChatBoxMessage::where('box_id', $boxA->id)->count(), 'Messages deleted by the code, not by a cascade.');
+        $this->assertSame(2, ChatBoxMessage::where('box_id', $boxB->id)->count());
+        $this->assertNoOrphanMessages();
+    }
+
     // -----------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------
+
+    /**
+     * One customer who owns TWO sendable Businesses in one Agency Workspace,
+     * each with its own receiving number — the shape every cross-Business
+     * leak needs.
+     *
+     * @return array<string, mixed>
+     */
+    private function sendableBusinessPair(): array
+    {
+        $fx = $this->sendableBusiness('14155550100', WorkspacePlanTier::Agency);
+
+        $businessB = $this->addBusiness($fx['customer'], $fx['workspace'], 'Sibling ' . uniqid());
+
+        CustomerBasedSendingServer::create([
+            'user_id' => $fx['owner']->id,
+            'business_id' => $businessB->id,
+            'sending_server' => $fx['server']->id,
+            'status' => true,
+        ]);
+
+        $numberB = PhoneNumbers::create([
+            'user_id' => $fx['owner']->id,
+            'business_id' => $businessB->id,
+            'number' => '14155550101',
+            'status' => 'assigned',
+            'capabilities' => json_encode(['sms', 'mms']),
+            'price' => 0,
+            'billing_cycle' => 'monthly',
+            'frequency_amount' => 1,
+            'frequency_unit' => 'month',
+            'validity_date' => now()->addMonth(),
+        ]);
+
+        return $fx + ['businessB' => $businessB, 'numberB' => $numberB->fresh()];
+    }
+
+    /**
+     * An assigned receiving number of the owner that carries NO Business —
+     * the case where no Business is authoritative.
+     */
+    private function ownerNumberWithoutBusiness(array $fx, string $number): string
+    {
+        PhoneNumbers::create([
+            'user_id' => $fx['owner']->id,
+            'business_id' => null,
+            'number' => $number,
+            'status' => 'assigned',
+            'capabilities' => json_encode(['sms']),
+            'price' => 0,
+            'billing_cycle' => 'monthly',
+            'frequency_amount' => 1,
+            'frequency_unit' => 'month',
+            'validity_date' => now()->addMonth(),
+        ]);
+
+        return $number;
+    }
+
+    private function messages(ChatBox ...$boxes): void
+    {
+        foreach ($boxes as $box) {
+            foreach (['first', 'second'] as $text) {
+                ChatBoxMessage::create(['box_id' => $box->id, 'message' => $text, 'direction' => 'incoming', 'sms_type' => 'plain']);
+            }
+        }
+    }
+
+    private function assertNoOrphanMessages(): void
+    {
+        $this->assertSame(
+            0,
+            DB::table('chat_box_messages')->whereNotIn('box_id', DB::table('chat_boxes')->select('id'))->count(),
+            'No chat_box_messages row may outlive its conversation.',
+        );
+    }
+
+    /**
+     * The owner's "stop" keyword, with no reply text — so the opt-out path
+     * sends nothing (inboundDLR() builds its own Campaigns, which would
+     * otherwise reach a live provider).
+     */
+    private function stopKeyword(User $owner, string $senderNumber): void
+    {
+        \App\Models\Keywords::create([
+            'user_id' => $owner->id,
+            'title' => 'Stop',
+            'keyword_name' => 'stop',
+            'sender_id' => $senderNumber,
+            'reply_text' => null,
+            'status' => 'assigned',
+            'price' => 0,
+            'billing_cycle' => 'monthly',
+            'frequency_amount' => 1,
+            'frequency_unit' => 'month',
+            'validity_date' => now()->addMonth(),
+        ]);
+    }
+
+    /**
+     * A contact list with the "stop" opt-out keyword, holding one subscribed
+     * Contact on $phone. A null Business makes a legacy (NULL-business) list.
+     */
+    private function optOutListContact(?Business $business, string $phone, ?User $owner = null): Contacts
+    {
+        $customerId = $business?->customer_id ?? $owner->id;
+
+        $group = \App\Models\ContactGroups::create([
+            'customer_id' => $customerId,
+            'business_id' => $business?->id,
+            'name' => 'Opt-out list ' . uniqid(),
+            'send_keyword_message' => false,
+            'unsubscribe_notification' => false,
+        ]);
+
+        \App\Models\ContactGroupsOptoutKeywords::create(['contact_group' => $group->id, 'keyword' => 'stop']);
+
+        return Contacts::create([
+            'customer_id' => $customerId,
+            'business_id' => $business?->id,
+            'group_id' => $group->id,
+            'phone' => $phone,
+            'status' => 'subscribe',
+        ]);
+    }
+
+    /**
+     * Real Pusher channel authorization, locally: the pusher driver with
+     * throwaway credentials (signing is a local HMAC — no network), and the
+     * application's own routes/channels.php registered on it.
+     */
+    private function usePusherBroadcasting(): void
+    {
+        config([
+            'broadcasting.default' => 'pusher',
+            'broadcasting.connections.pusher.key' => 'test-key',
+            'broadcasting.connections.pusher.secret' => 'test-secret',
+            'broadcasting.connections.pusher.app_id' => 'test-app',
+        ]);
+
+        app(\Illuminate\Broadcasting\BroadcastManager::class)->forgetDrivers();
+
+        require base_path('routes/channels.php');
+    }
+
+    /** Laravel's own endpoint, and the /pusher/auth compatibility endpoint. */
+    private const AUTH_ENDPOINTS = ['/broadcasting/auth', '/pusher/auth'];
+
+    /**
+     * @param  Business|string  $target  a Business (its channel) or a raw channel name
+     */
+    private function channelAuth(Business|string $target, string $endpoint = '/broadcasting/auth'): \Illuminate\Testing\TestResponse
+    {
+        return $this->post($endpoint, [
+            'socket_id' => '1234.5678',
+            'channel_name' => $target instanceof Business
+                ? 'private-' . \App\Events\MessageReceived::channelFor($target->uid)
+                : $target,
+        ]);
+    }
+
+    private function channelAllowed(\Illuminate\Testing\TestResponse $response): bool
+    {
+        return $response->getStatusCode() === 200
+            && array_key_exists('auth', (array) json_decode((string) $response->getContent(), true));
+    }
+
+    private function assertChannelRefused(\Illuminate\Testing\TestResponse $response, string $context = ''): void
+    {
+        $this->assertFalse($this->channelAllowed($response), trim("The channel must be refused. {$context}") . ' — HTTP ' . $response->getStatusCode() . ': ' . substr((string) $response->getContent(), 0, 160));
+    }
+
+    /**
+     * Makes $url the current request, with its real route bound, so code
+     * that reads request()->route(...) sees exactly what it would in a live
+     * dispatch.
+     */
+    private function bindRouteRequest(string $url, string $method = 'POST'): void
+    {
+        $request = \Illuminate\Http\Request::create($url, $method);
+        $route = app('router')->getRoutes()->match($request);
+        $route->bind($request);
+        $request->setRouteResolver(fn () => $route);
+
+        $this->app->instance('request', $request);
+    }
 
     /**
      * Two unrelated tenants, each with its own Workspace and Business on a

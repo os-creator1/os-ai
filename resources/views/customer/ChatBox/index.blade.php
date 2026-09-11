@@ -828,7 +828,10 @@ $("#media_image").val("");
 
       Pusher.logToConsole = false;
 
-      Echo.private("chat").listen("MessageReceived", (e) => {
+      // Slice 2B: only this Business's own channel — never the old global
+      // "chat" channel every customer shared. routes/channels.php admits a
+      // listener only when it could open this Business's inbox.
+      Echo.private(@json(\App\Events\MessageReceived::channelFor($businessUid))).listen("MessageReceived", (e) => {
         // chatHistory.empty();
         chatContainer.animate({ scrollTop: chatContainer[0].scrollHeight }, 0);
 

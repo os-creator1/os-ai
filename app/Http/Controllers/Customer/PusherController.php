@@ -4,39 +4,32 @@ namespace App\Http\Controllers\Customer;
 
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
-use Pusher\Pusher;
-use Pusher\PusherException;
+use Illuminate\Support\Facades\Broadcast;
 
 class PusherController extends Controller
 {
     /**
-     * Authenticates logged-in user in the Pusher JS app
-     * For private channels
+     * POST /pusher/auth (`pusher.auth`) — the compatibility endpoint for
+     * Pusher JS clients authorizing a private channel.
      *
-     * @throws PusherException
+     * Customer Experience Redesign Slice 2B: this used to sign WHATEVER
+     * channel name a logged-in user sent, with the Pusher credentials read
+     * straight from the environment, and never consulted routes/channels.php
+     * — so any customer could join any other Business's
+     * `chat.business.{businessUid}` channel through it.
+     *
+     * It now does exactly what Laravel's own /broadcasting/auth does
+     * (Illuminate\Broadcasting\BroadcastController::authenticate): hand the
+     * request to Broadcast::auth(), which runs the channel callbacks in
+     * routes/channels.php. Those callbacks are the only authorization; this
+     * controller has none of its own, so the two endpoints cannot disagree.
      */
     public function pusherAuth(Request $request)
     {
-
-        $user         = auth()->user();
-        $socket_id    = $request['socket_id'];
-        $channel_name = $request['channel_name'];
-        $key          = getenv('PUSHER_APP_KEY');
-        $secret       = getenv('PUSHER_APP_SECRET');
-        $app_id       = getenv('PUSHER_APP_ID');
-
-        if ($user) {
-
-            $pusher = new Pusher($key, $secret, $app_id);
-            $auth   = $pusher->socket_Auth($channel_name, $socket_id);
-
-            return response($auth, 200);
-
-        } else {
-            header('', true, 403);
-            echo "Forbidden";
+        if ($request->hasSession()) {
+            $request->session()->reflash();
         }
 
-        return false;
+        return Broadcast::auth($request);
     }
 }

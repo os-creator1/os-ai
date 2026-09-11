@@ -456,47 +456,85 @@ class MessagingTransportMeasurementLayeringTest extends TestCase
         ]);
     }
     // ---------------------------------------------------------------
-    // T-MSG-38 — the two named regression suites are UNMODIFIED
+    // T-MSG-38 — the two named regression suites change only deliberately
     // ---------------------------------------------------------------
+    //
+    // "`ConversationsPlainSmsMeteringTest.php` and
+    // `AgencyProspectingRuntimeTest.php` pass unmodified after every change
+    // in this correction."
+    //
+    // Passing is proven by running them. UNMODIFIED is the half a test run
+    // cannot prove — a suite edited to accommodate a regression still
+    // passes — so it is asserted here, mechanically, by content hash.
+    //
+    // The invariant is that neither suite can drift UNNOTICED. It is held two
+    // ways, because the two suites are now in different positions:
+    //
+    //   * AgencyProspectingRuntimeTest has never needed an edit, so it is
+    //     still compared with the same file on origin/main.
+    //   * ConversationsPlainSmsMeteringTest legitimately changed once:
+    //     Customer Experience Redesign Slice 2B retired the flat chat-box
+    //     route family its five HTTP token-lifecycle tests called. It is
+    //     therefore pinned to an explicit, reviewed baseline hash — never to
+    //     a moving origin/main, which would silently accept whatever merged.
+    //
+    // Any other edit to either file fails here, and the requirement gets
+    // re-read rather than quietly dropped. Approving a future change means
+    // updating the pinned hash below, deliberately, with its reason.
 
     /**
-     * "`ConversationsPlainSmsMeteringTest.php` and
-     * `AgencyProspectingRuntimeTest.php` pass unmodified after every change
-     * in this correction."
+     * The reviewed post-Slice-2B baseline of ConversationsPlainSmsMeteringTest,
+     * as the SHA-256 of its LF-normalised content.
      *
-     * Passing is proven by running them, and their counts are recorded in
-     * the implementation document. UNMODIFIED is the half a test run cannot
-     * prove — a suite edited to accommodate a regression still passes — so
-     * it is asserted here, mechanically, by comparing each file's content
-     * hash against the same file on `origin/main`.
-     *
-     * If a future change to this slice needs either file edited, this test
-     * fails and the requirement gets re-read rather than quietly dropped.
+     * What was approved, from a mechanical diff against main at dcb2770: the
+     * same 32 test methods and the same 135 assertion statements, one of them
+     * re-targeted — the M5 retain redirect now names
+     * `customer.workspaces.businesses.conversations.new` instead of
+     * `customer.chatbox.new`. Every metering/accounting reference
+     * (reservations, ledger entries, m5_token_action, wallet balances,
+     * sms_unit, retain/clear) appears exactly as often as before. The rest
+     * of the change is Business-route context and Business-owned fixtures.
      */
-    public function test_the_two_named_regression_suites_are_byte_identical_to_main(): void
+    private const CONVERSATIONS_METERING_SUITE_APPROVED_SHA256 = 'a054eff6071e1037820851a1c22ba816b8aaa1d42f6473d69fb53287ff29c233';
+
+    public function test_the_conversations_metering_suite_matches_its_approved_post_slice_2b_baseline(): void
     {
-        foreach ([
-            'tests/Feature/Usage/ConversationsPlainSmsMeteringTest.php',
-            'tests/Feature/AgencyProspecting/AgencyProspectingRuntimeTest.php',
-        ] as $path) {
-            $absolute = base_path($path);
-            $this->assertFileExists($absolute);
+        $this->assertSame(
+            self::CONVERSATIONS_METERING_SUITE_APPROVED_SHA256,
+            $this->normalisedHash('tests/Feature/Usage/ConversationsPlainSmsMeteringTest.php'),
+            '[tests/Feature/Usage/ConversationsPlainSmsMeteringTest.php] differs from its approved baseline. '
+            . 'If the change is deliberate, review it and update the pinned hash with its reason.',
+        );
+    }
 
-            $onMain = shell_exec('git -C ' . escapeshellarg(base_path()) . ' show origin/main:' . escapeshellarg($path) . ' 2>&1');
+    public function test_the_agency_prospecting_runtime_suite_is_byte_identical_to_main(): void
+    {
+        $path = 'tests/Feature/AgencyProspecting/AgencyProspectingRuntimeTest.php';
 
-            if (! is_string($onMain) || $onMain === '' || str_contains($onMain, 'fatal:')) {
-                $this->markTestSkipped('origin/main is not reachable from this checkout, so the comparison cannot run.');
-            }
+        $onMain = shell_exec('git -C ' . escapeshellarg(base_path()) . ' show origin/main:' . escapeshellarg($path) . ' 2>&1');
 
-            // Normalized for line endings only: git stores LF, the working
-            // copy may carry CRLF, and that difference is not a modification
-            // to the test's behaviour.
-            $this->assertSame(
-                hash('sha256', str_replace("\r\n", "\n", $onMain)),
-                hash('sha256', str_replace("\r\n", "\n", (string) file_get_contents($absolute))),
-                "[{$path}] must pass UNMODIFIED; it differs from origin/main.",
-            );
+        if (! is_string($onMain) || $onMain === '' || str_contains($onMain, 'fatal:')) {
+            $this->markTestSkipped('origin/main is not reachable from this checkout, so the comparison cannot run.');
         }
+
+        $this->assertSame(
+            hash('sha256', str_replace("\r\n", "\n", $onMain)),
+            $this->normalisedHash($path),
+            "[{$path}] must pass UNMODIFIED; it differs from origin/main.",
+        );
+    }
+
+    /**
+     * Normalized for line endings only: git stores LF, the working copy may
+     * carry CRLF, and that difference is not a modification to the test's
+     * behaviour.
+     */
+    private function normalisedHash(string $path): string
+    {
+        $absolute = base_path($path);
+        $this->assertFileExists($absolute);
+
+        return hash('sha256', str_replace("\r\n", "\n", (string) file_get_contents($absolute)));
     }
 
     // ---------------------------------------------------------------

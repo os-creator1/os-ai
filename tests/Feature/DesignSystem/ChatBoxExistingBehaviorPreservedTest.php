@@ -190,7 +190,12 @@ class ChatBoxExistingBehaviorPreservedTest extends TestCase
             $contents
         );
         $this->assertStringContainsString('window.Echo = new Echo({', $contents);
-        $this->assertStringContainsString('Echo.private("chat").listen("MessageReceived"', $contents);
+
+        // Superseded by Slice 2B's realtime correction: the listener joins
+        // only the selected Business's private channel, never the global
+        // "chat" channel every customer used to share.
+        $this->assertStringContainsString('Echo.private(@json(\App\Events\MessageReceived::channelFor($businessUid))).listen("MessageReceived"', $contents);
+        $this->assertStringNotContainsString('Echo.private("chat")', $contents);
     }
 
     // -----------------------------------------------------------------

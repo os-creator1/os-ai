@@ -132,6 +132,26 @@
         }
 
         /**
+         * Customer Experience Redesign Slice 2B — where "view conversation"
+         * goes from a contact list.
+         *
+         * A request dispatched through the Business-scoped CRM routes carries
+         * an authoritative, access-checked Business (currentBusinessContext()
+         * aborts 404 otherwise), so it links straight to THAT Business's
+         * inbox. A legacy flat request has no Business at all and gets the
+         * compatibility /chat-box entry, which resolves 0/1/many on its own.
+         * A Business is never inferred from the customer who owns the list.
+         */
+        private function conversationsUrl(): string
+        {
+            $business = $this->currentBusinessContext();
+
+            return $business !== null
+                ? route('customer.workspaces.businesses.conversations.index', [request()->route('workspaceUid'), $business->uid])
+                : url('/chat-box');
+        }
+
+        /**
          * Scope a batch of requested ContactGroups uids down to the ones
          * owned by the current tenancy boundary (Business, or legacy
          * customer_id), silently dropping any uid outside that boundary.
@@ -725,6 +745,8 @@
                 $can_delete = true;
             }
 
+            $conversationsUrl = $this->conversationsUrl();
+
             $data = [];
             if ( ! empty($contacts)) {
                 foreach ($contacts as $singleContact) {
@@ -752,8 +774,8 @@
                     $nestedData['show_label']       = __('locale.buttons.edit');
                     // B5 Business Analytics removed the legacy customer
                     // Reports message log this "view conversation" action
-                    // linked to; the conversation surface is ChatBox.
-                    $nestedData['conversion']       = route('customer.chatbox.index');
+                    // linked to; the conversation surface is Conversations.
+                    $nestedData['conversion']       = $conversationsUrl;
                     $nestedData['conversion_label'] = __('locale.contacts.view_conversion');
                     $nestedData['send_sms']         = route('customer.sms.quick_send', ['recipient' => $singleContact->phone]);
                     $nestedData['send_sms_label']   = __('locale.contacts.send_message');
