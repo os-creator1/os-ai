@@ -66,6 +66,9 @@ use LogicException;
  */
 class GoogleBusinessProfileController extends CustomerBaseController
 {
+    /** The heading shown above customerMessage() when the platform cannot connect to Google at all. */
+    private const CONNECTION_UNAVAILABLE_TITLE = 'Google connection unavailable';
+
     public function __construct(
         private readonly WorkspaceRepository $workspaceRepository,
         private readonly WorkspaceManager $workspaceManager,
@@ -204,7 +207,7 @@ class GoogleBusinessProfileController extends CustomerBaseController
                 'business_uid' => $businessUid,
             ]);
 
-            return $this->redirectWithError($workspaceUid, $businessUid, $exception->customerMessage());
+            return $this->redirectWithError($workspaceUid, $businessUid, $exception->customerMessage(), self::CONNECTION_UNAVAILABLE_TITLE);
         } catch (GoogleBusinessProfileConcurrencyException $exception) {
             return $this->redirectWithError($workspaceUid, $businessUid, $exception->userMessage());
         } catch (LogicException) {
@@ -336,7 +339,7 @@ class GoogleBusinessProfileController extends CustomerBaseController
                 'business_uid' => $businessUid,
             ]);
 
-            return $this->redirectWithError($workspaceUid, $businessUid, $exception->customerMessage());
+            return $this->redirectWithError($workspaceUid, $businessUid, $exception->customerMessage(), self::CONNECTION_UNAVAILABLE_TITLE);
         } catch (GoogleBusinessProfileConcurrencyException $exception) {
             return $this->redirectWithError($workspaceUid, $businessUid, $exception->userMessage());
         } catch (GoogleBusinessProfileProviderException $exception) {
@@ -820,11 +823,15 @@ class GoogleBusinessProfileController extends CustomerBaseController
         return $accessible;
     }
 
-    private function redirectWithError(string $workspaceUid, string $businessUid, string $message): RedirectResponse
+    /**
+     * $title is the calm heading the overview shows above the message
+     * (<x-flash-alert>); the status and message are unchanged by it.
+     */
+    private function redirectWithError(string $workspaceUid, string $businessUid, string $message, ?string $title = null): RedirectResponse
     {
         return redirect()
             ->route('customer.workspaces.businesses.gbp.index', [$workspaceUid, $businessUid])
-            ->with(['status' => 'error', 'message' => $message]);
+            ->with(array_filter(['status' => 'error', 'message' => $message, 'message_title' => $title], fn ($value) => $value !== null));
     }
 
     private function demoGuard(string $workspaceUid, string $businessUid): ?RedirectResponse

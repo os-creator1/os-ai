@@ -48,26 +48,23 @@
 <!-- END: Theme JS-->
 
 
-<script src="{{ asset(mix('vendors/js/extensions/toastr.min.js')) }}"></script>
+{{--
+    Customer notification cleanup: customer-facing pages (the customer shell
+    and the signed-out pages) use the Business OS toast, which also answers
+    the toastr[...] calls in their page scripts; the admin portal keeps
+    Toastr. The toast list is built after the page's sections have rendered,
+    so it can leave out anything the page already shows inline.
+--}}
+@php $businessOsToasts = \App\Library\Feedback\PageToasts::appliesTo(Auth::user()); @endphp
+@if($businessOsToasts)
+    <x-toast-region :toasts="\App\Library\Feedback\PageToasts::forPage(session()->driver(), $errors ?? null, $__env->getSections(), Auth::user())" />
+@else
+    <script src="{{ asset(mix('vendors/js/extensions/toastr.min.js')) }}"></script>
+@endif
 
 <script>
     let isRtl = $('html').attr('data-textdirection') === 'rtl';
 </script>
-
-
-@if(session('check_subscription') && Auth::check() && Auth::user()->active_portal === 'customer' && Auth::user()->is_customer == 1)
-    @if(Auth::user()->customer->activeSubscription() === null)
-        <script>
-          toastr['warning']("{!! __('locale.customer.no_active_subscription') !!}", 'Warning!', {
-            closeButton: true,
-            positionClass: 'toast-top-right',
-            progressBar: true,
-            newestOnTop: true,
-            rtl: isRtl
-          });
-        </script>
-    @endif
-@endif
 
 
 
@@ -79,7 +76,7 @@
     });
 </script>
 
-@if(Session::has('message'))
+@if(! $businessOsToasts && Session::has('message'))
     <script>
         let type = "{{ Session::get('status', 'success') }}";
         switch (type) {
@@ -127,7 +124,7 @@
     </script>
 @endif
 
-@if (isset($errors) && $errors->any())
+@if (! $businessOsToasts && isset($errors) && $errors->any())
     <script>
         $(document).ready(function () {
             toastr["error"]("{{ $errors->first() }}", "{{ __('locale.labels.opps') }}", {

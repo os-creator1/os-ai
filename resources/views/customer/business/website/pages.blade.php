@@ -10,9 +10,7 @@
         </div>
     </div>
 
-    @if (session('status'))
-        <x-alert :variant="session('status') === 'success' ? 'success' : 'danger'" class="mb-3">{{ session('message') }}</x-alert>
-    @endif
+    <x-flash-alert class="mb-3" />
 
     <x-card :padded="false">
         <div class="list-group list-group-flush">
