@@ -19,6 +19,26 @@ activates, resumes or bypasses it, and no field in
 
 ---
 
+## CORRECTION ROUND 1 — OWNER DECISIONS LOCKED, THREE DEFECTS CORRECTED
+
+The overall architecture was approved on PR #250, subject to the corrections
+below. Every change is recorded here rather than silently folded in.
+
+**Owner decisions locked:** D1 tree-only, D2 `halt`, D3 **changed** to
+trigger-aware enrollment defaults, D4 pause/hold with **deterministic** resume,
+D5 limits, D6 message-received rules, D7 Tags as a **separate** contract, D8
+one permission key, D9 one-month parity window **before code deletion only**,
+D10 email needs its own transport contract. The full record is §22.
+
+| # | What was wrong | What it now says | Where |
+|---|---|---|---|
+| **C1** | One global `once_ever` default. Applied to a date trigger it would silently turn a yearly birthday workflow into a one-time one | Defaults follow the trigger: `contact_created` and `manual_enrollment` → `once_ever`; `contact_date_reached` and `message_received` → `once_per_occurrence` (the latter with the 24-hour cooldown). A draft whose trigger changes either updates an untouched default or requires explicit confirmation of a user-chosen policy, and the server refuses to publish a stale default | §7.5, §9.1, §15.2, T-WF-33, T-WF-34 |
+| **C2** | `enrollment_policy` and `failure_policy` sat on the **workflow** row while the trigger sat on the **version**. Editing either in Settings would have changed the behaviour of the live published version before any publish — contradicting "drafts never touch the live workflow." D3 exposed this; leaving `failure_policy` behind would have been inconsistent, so both move | Both policies are part of the versioned definition — held in the trigger node's config, denormalised onto `automation_workflow_versions` at publish, and pinned with the version. Only `name` and lifecycle `status` remain workflow-level | §4.1, §4.2, §7.5, §7.6 |
+| **C3** | The circular reference `automation_workflows.published_version_id → versions` and `versions.workflow_id → workflows` was stated as two ordinary FKs in six create-table migrations, which cannot be created in that form, and its delete behaviour was a `nullOnDelete`/`cascadeOnDelete` cycle this repository has never proven | Exact migration ordering: the back-reference FK is added in migration 2, after the versions table exists, and dropped first in its rollback. **Both sides of the cycle are `RESTRICT`**, hard deletes are application-ordered, and the back-reference is a **composite** FK so a workflow can only point at its own version. Five migration tests prove it | §4.1, §4.2, §4.7, T-WF-28..32 |
+| **C4** | Resume relied implicitly on the recovery sweep to restart held enrollments | Resume explicitly re-dispatches every held `active` enrollment in bounded, idempotent batches, after the HTTP transaction commits; it never touches `waiting` rows. Recovery is only a safety net for lost jobs | §6.3, §7.1, §7.4, §8.2, T-WF-35..38 |
+
+---
+
 ## 0. AUTHORITY, SUPERSESSION AND RECONCILIATION
 
 ### 0.1 What this contract supersedes
@@ -286,21 +306,44 @@ a join through a possibly-deleted parent.
 | `business_id` | FK `businesses`, `restrictOnDelete` | no | A workflow belongs to exactly one Business |
 | `name` | `string(120)` | no | |
 | `status` | `string(16)` | no | `draft` \| `published` \| `paused` \| `archived` |
-| `published_version_id` | FK `automation_workflow_versions`, `nullOnDelete` | yes | The version new enrollments use |
-| `enrollment_policy` | `string(32)` | no | §7.5; default `once_ever` |
-| `failure_policy` | `string(16)` | no | `halt` (default) — §7.6 |
+| `published_version_id` | `unsignedBigInteger` | yes | The version new enrollments use. **Created in migration 1 without a constraint;** its FK is added in migration 2 (§4.7) |
 | `legacy_automation_id` | FK `automations`, `nullOnDelete`, **unique** | yes | Set only by the B4 converter (§15); prevents double conversion |
 | `created_by_user_id` | FK `users`, `nullOnDelete` | yes | Audit only — never authorization |
 | `timestamps`, `archived_at` | | | |
 
 Indexes: `business_id`; `(business_id, status)`.
 
+**Corrected (C2): no behavioural setting lives on this row.** `enrollment_policy`
+and `failure_policy` were listed here in the first revision. Because the trigger
+lives on the version, a Settings edit to either would have changed how the
+**live** published version enrolls or fails before anything was published. Both
+now belong to the versioned definition (§4.2, §7.5, §7.6). The only mutable
+workflow-level fields are `name` (display only) and lifecycle `status`.
+
+**The back-reference FK (C3), added by migration 2:**
+
+```php
+$table->index(['published_version_id', 'id'], 'aw_published_version_index');
+$table->foreign(['published_version_id', 'id'], 'aw_published_version_foreign')
+    ->references(['id', 'workflow_id'])->on('automation_workflow_versions')
+    ->restrictOnDelete();
+```
+
+It is **composite** on purpose. A plain FK on `published_version_id` proves only
+that the referenced version exists — it would happily accept another workflow's
+version, or another Business's. Referencing `(id, workflow_id)` means
+`published_version_id` can only ever point at a version **of this same
+workflow**, enforced by MySQL rather than by the publisher's good behaviour.
+With `published_version_id` NULL the constraint is not evaluated (InnoDB does
+not check a foreign key while any referencing column is NULL), which is exactly
+the never-published state.
+
 ### 4.2 `automation_workflow_versions` — drafts and immutable published versions
 
 | Column | Type | Null | Notes |
 |---|---|---|---|
 | `id`, `uid` | | no | |
-| `workflow_id` | FK, `cascadeOnDelete` | no | |
+| `workflow_id` | FK `automation_workflows`, **`restrictOnDelete`** | no | Corrected (C3) from `cascadeOnDelete` — see §4.7 |
 | `business_id` | FK, `restrictOnDelete` | no | Denormalised |
 | `version_number` | `unsignedInteger` | no | 1, 2, 3… per workflow |
 | `state` | `string(16)` | no | `draft` \| `published` \| `superseded` |
@@ -309,9 +352,16 @@ Indexes: `business_id`; `(business_id, status)`.
 | `definition_hash` | `char(64)` | yes | SHA-256 of the canonical document, set at publish |
 | `trigger_type` | `string(32)` | yes | Denormalised from the root node at publish, for the trigger index |
 | `node_count` | `unsignedSmallInteger` | yes | Set at publish |
+| `enrollment_policy` | `string(32)` | yes | Set at publish from the trigger node's config (§7.5). NULL on a draft, whose policy lives only in its document |
+| `enrollment_policy_source` | `string(8)` | yes | `default` \| `user` — whether the policy is the trigger's default or was chosen explicitly (§7.5) |
+| `failure_policy` | `string(16)` | yes | Set at publish; `halt` unless explicitly chosen (§7.6) |
 | `published_at` | `timestamp` | yes | |
 | `published_by_user_id` | FK `users`, `nullOnDelete` | yes | |
 | `timestamps` | | | |
+
+The three policy columns are **pinned with the version**: an enrollment reads
+its policies from the version it is enrolled on, so republishing with a
+different policy affects only new enrollments.
 
 Uniqueness, using the repository's proven **STORED generated guard column +
 ordinary UNIQUE** pattern (`2026_08_16_140001_create_payment_provider_customers_table.php`,
@@ -319,6 +369,9 @@ ordinary UNIQUE** pattern (`2026_08_16_140001_create_payment_provider_customers_
 has no partial unique index:
 
 * `UNIQUE(workflow_id, version_number)`.
+* `UNIQUE(id, workflow_id)`, named `awv_id_workflow_unique` — trivially unique
+  because `id` is the primary key, and required because MySQL needs the columns
+  referenced by the composite back-reference FK (§4.1) indexed in that order.
 * `draft_guard` = `CASE WHEN state = 'draft' THEN workflow_id ELSE NULL END`,
   `UNIQUE(draft_guard)` — **at most one draft per workflow, DB-enforced.**
 * `published_guard` = `CASE WHEN state = 'published' THEN workflow_id ELSE NULL END`,
@@ -413,15 +466,69 @@ idempotency key and the **DB-enforced at-most-once guarantee**, inheriting B4
 
 Index: `(enrollment_id, created_at)` — execution log.
 
-### 4.7 Migration rules
+### 4.7 Migration rules — exact ordering (corrected, C3)
 
-* Timestamps are chosen **at implementation start** from the actual latest
-  merged migration (`2026_09_14_100002` at this contract's base). This value is
-  historical evidence of the base, not implementation guidance.
-* `down()` drops in reverse dependency order: step runs → enrollments → edges →
-  nodes → versions → workflows. Destructive of v2 run history by definition;
-  each migration docblock says so (B4 §3.6 precedent).
-* No B4 table, column or row is dropped, renamed or repurposed.
+`automation_workflows.published_version_id` references
+`automation_workflow_versions`, and `automation_workflow_versions.workflow_id`
+references `automation_workflows`. Neither table can be created with its FK to
+the other while the other does not exist, so the ordering is fixed here rather
+than left to the implementer. **Six migration files, in exactly this order:**
+
+| # | File | `up()` | `down()` |
+|---|---|---|---|
+| **1** | `<ts1>_create_automation_workflows_table.php` | Create `automation_workflows`, including `published_version_id` as a nullable `unsignedBigInteger` — **with no index and no FK yet** | `Schema::dropIfExists('automation_workflows')` — safe, because migration 2's rollback has already removed the only FK into this column |
+| **2** | `<ts2>_create_automation_workflow_versions_table.php` | (a) Create `automation_workflow_versions` with `workflow_id` → `automation_workflows` **`restrictOnDelete`**, `UNIQUE(id, workflow_id)`, the two generated guard columns and their UNIQUE indexes. (b) **Then, in the same migration,** `Schema::table('automation_workflows', …)` adds `aw_published_version_index` and the composite `aw_published_version_foreign` (§4.1), **`restrictOnDelete`** | **(1)** `Schema::table('automation_workflows', …)` drops `aw_published_version_foreign`, then `aw_published_version_index`. **(2) Only then** `Schema::dropIfExists('automation_workflow_versions')` |
+| **3** | `<ts3>_create_automation_workflow_nodes_table.php` | Create nodes, FK `version_id` → versions `cascadeOnDelete` | `dropIfExists` |
+| **4** | `<ts4>_create_automation_workflow_edges_table.php` | Create edges, FKs → versions and nodes `cascadeOnDelete` | `dropIfExists` |
+| **5** | `<ts5>_create_automation_enrollments_table.php` | Create enrollments, FKs → workflows, versions, nodes, contacts, businesses per §4.5 | `dropIfExists` |
+| **6** | `<ts6>_create_automation_step_runs_table.php` | Create step runs, FKs → enrollments, nodes per §4.6 | `dropIfExists` |
+
+Laravel rolls back in reverse: 6, 5, 4, 3, then **2 — which removes the
+back-reference FK before it drops the versions table** — then 1, by which point
+nothing references `automation_workflows` any more. Every FK and index is
+**explicitly named**, because MySQL's 64-character identifier limit already
+forced an explicit name in `2026_09_12_100001_create_business_messaging_identities_table.php`.
+
+**Delete semantics — the minimum safe choice, and why.** Both edges of the
+cycle are `RESTRICT`:
+
+| FK | On delete |
+|---|---|
+| `automation_workflow_versions.workflow_id` → workflows | `RESTRICT` |
+| `automation_workflows.(published_version_id, id)` → versions `(id, workflow_id)` | `RESTRICT` |
+
+The first revision paired `cascadeOnDelete` on one side with `nullOnDelete` on
+the other. Deleting a workflow would then cascade into its versions, and each
+version's deletion would try to `SET NULL` a column on the very workflow row
+being deleted in the same statement. MySQL documents that a cascade recursing
+back into a table it has already modified in the same operation behaves as
+`RESTRICT` for `ON UPDATE CASCADE`/`SET NULL`; how InnoDB resolves this
+particular two-table `ON DELETE` cycle is something **no migration or test in
+this repository has ever proven**, and this contract will not rely on unproven
+cascade behaviour for a table holding live customer workflows. `RESTRICT` on
+both sides never recurses at all, and turns a wrong deletion order into an
+immediate, loud constraint error instead of a silent partial cascade.
+
+Consequences, stated so nothing depends on a cascade:
+
+* **A workflow that has ever been published is never hard-deleted.** It is
+  archived (§6.3). `automation_enrollments` already restricts deletion of any
+  workflow or version with enrollments.
+* **A never-published workflow** may be hard-deleted by application code, in one
+  transaction, in this order: delete its version rows (a draft has no compiled
+  nodes or edges), then delete the workflow. `published_version_id` is already
+  NULL, so the back-reference does not block it.
+* Nodes and edges still cascade from their version — that relationship is not
+  part of the cycle.
+
+**Timestamps** are chosen **at implementation start** from the actual latest
+merged migration (`2026_09_14_100002` at this contract's base — historical
+evidence, not implementation guidance), with `<ts1>` < `<ts2>` < … < `<ts6>`
+strictly, so the order above is the order Laravel runs them.
+
+Each migration docblock states that rollback is destructive of v2 run history
+by definition (B4 §3.6 precedent). No B4 table, column or row is dropped,
+renamed or repurposed. Migration tests: T-WF-28 to T-WF-32.
 
 ---
 
@@ -545,14 +652,62 @@ all edges.
 * A superseded version is retained while any enrollment references it
   (`restrictOnDelete`) and for history thereafter.
 
-### 6.3 Pause, resume, archive
+### 6.3 Pause, resume, archive (D4 locked; resume made deterministic, C4)
 
 | Action | New enrollments | In-flight enrollments |
 |---|---|---|
-| **Pause** | Stopped | **Held** — no step executes while paused; each resumes where it stopped |
-| **Resume** | Restart | Continue from their cursor |
+| **Pause** | Blocked | **Held at their current cursor.** No step executes while paused |
+| **Resume** | Allowed again | **Explicitly re-dispatched** — see below. Never left to the recovery sweep |
 | **Archive** | Stopped permanently | Cancelled with `exit_reason = workflow_archived` |
 | **Stop all active** (explicit, confirmed) | Unaffected | Cancelled with `exit_reason = stopped_by_user` |
+
+**What "held" means precisely.** A held enrollment is simply an `active`
+enrollment whose advance job ran during the pause, saw `paused` in its lock-free
+pre-check (§7.3 step 1), and exited **without claiming** — no step run was
+written for its cursor node. Nothing else changes: its cursor and status are
+exactly as they were.
+
+**Resume, exactly:**
+
+1. **The HTTP request** (V2-E) calls `WorkflowLifecycleService::resume()`, which
+   in one short transaction locks the workflow row `FOR UPDATE`, verifies it is
+   `paused`, and sets it `published`. It then dispatches one
+   `RedispatchHeldEnrollments` job **after commit**. **No step executes and no
+   provider is called inside the resume request or its transaction.**
+2. **`RedispatchHeldEnrollments(workflowId)`** (V2-A) selects that workflow's
+   enrollments with `status = 'active'` using `chunkById(50)` and dispatches one
+   `AdvanceWorkflowEnrollment` per enrollment. It processes at most
+   `WorkflowLimits::SWEEP_ENROLLMENTS_PER_RUN` rows per run; if more remain it
+   re-dispatches itself carrying the last processed id, so the batch is bounded
+   and resumable rather than one unbounded query.
+3. **Each advance job** runs §7.3 unchanged. It re-checks the workflow status,
+   so if the workflow is paused again before a job runs, that job simply exits
+   again and the enrollment stays held.
+
+**Why this is idempotent.** Re-dispatch changes no row. It only enqueues work,
+and every piece of work is protected by the enrollment row lock plus
+`UNIQUE(enrollment_id, node_id)` (§7.3). Resuming twice, or a redispatch racing
+an advance job already in flight, produces duplicate *jobs*, never a duplicate
+*step*.
+
+**Why `waiting` enrollments are never touched by Resume.** Resume selects only
+`active`. That is sufficient because of the invariant in §7.1 — `active` means
+the cursor is executable now:
+
+* A `waiting` enrollment whose `resume_at` is still in the future stays
+  `waiting`; Resume does not see it.
+* A `waiting` enrollment that fell due during the pause is woken by the normal
+  due-sweep (§8.2) with its expected-status `UPDATE`. The due-sweep does **not**
+  filter on workflow status: waking changes state but never executes a step. If
+  it woke the enrollment during the pause, that enrollment's advance job exited
+  on the pause check and it is now an ordinary held `active` enrollment, which
+  Resume re-dispatches. If it had not yet been woken, the next sweep wakes it.
+  **Either way exactly one path executes its next step,** and the claim makes a
+  second attempt a no-op.
+
+**The recovery sweep is not the resume mechanism.** It remains only a safety
+net for advance jobs that were lost (§7.4), and it skips paused workflows so it
+cannot churn through held enrollments.
 
 Pause takes the workflow row lock `FOR UPDATE`; every step claim takes it in
 **shared** mode (§7.3). Shared locks do not block each other, so enrollments
@@ -587,6 +742,12 @@ no throughput cost in the unpaused case.**
 Terminal: `completed`, `failed`, `exited`, `cancelled`. On any terminal
 transition `current_node_id` and `resume_at` become NULL.
 
+**Invariant (load-bearing for Resume, §6.3):** `active` means the cursor node is
+executable **now**; `waiting` means it is not executable until `resume_at`. No
+other non-terminal state exists. An enrollment is therefore never `active` while
+parked on a future wait, which is why Resume may re-dispatch every `active`
+enrollment without examining its node.
+
 ### 7.2 Step-run states
 
 `started` → `succeeded` | `failed` | `skipped`, plus `waiting` for a wait node
@@ -602,7 +763,7 @@ For an enrollment whose cursor is node `N`:
    Workspace active, `EntitlementManager::decide(…, Automations, $business->customer_id)`
    allowed, contact exists and `contact.business_id` matches. If the workflow is
    paused or entitlement is denied, **stop without claiming** — the enrollment
-   stays `active` at `N` and is picked up after resume. If the contact is gone,
+   stays `active` at `N`, held, and Resume re-dispatches it explicitly (§6.3). If the contact is gone,
    unsubscribed (for a send), or the Business is gone, transition to `exited`.
 2. **Claim transaction** (short, no I/O): lock the workflow row in **shared**
    mode; lock the enrollment `FOR UPDATE`; re-verify `workflow.status =
@@ -638,9 +799,19 @@ guarantee, not atomicity with external revocation, and is stated in the code.
 
 ### 7.4 Interrupted steps — recovery by side-effect class
 
-A process can die after step 2 commits and before step 4. The step run stays
-`started`, the cursor stays at `N`, and `last_advanced_at` goes stale. The
-recovery sweep (§8.2) finds these after a threshold and applies:
+The recovery sweep (§8.2) looks at `active` enrollments of **published**
+workflows whose `last_advanced_at` is older than
+`WorkflowLimits::STALE_ACTIVE_RECOVERY_MINUTES`. It skips paused workflows
+entirely — held enrollments are Resume's job (§6.3), not recovery's. It then
+distinguishes two cases by whether a step run exists for the cursor node:
+
+* **No step run at the cursor — a lost job.** The advance job never claimed
+  (the queue lost it, or a deploy dropped it). Recovery simply re-dispatches
+  `AdvanceWorkflowEnrollment`; the claim protects against a duplicate.
+* **A `started` step run at the cursor — an interrupted step.** A process died
+  after step 2 committed and before step 4. Recovery applies the rule below.
+
+For an interrupted step:
 
 | Side-effect class | Recovery |
 |---|---|
@@ -648,26 +819,78 @@ recovery sweep (§8.2) finds these after a threshold and applies:
 | **idempotent DB** (`update_contact_field`) | Safe to re-apply: the write sets a value to its configured value |
 | **external** (`send_sms`, `internal_notification`) | **Never re-executed.** Step run → `failed` with `safe_error_summary = interrupted_outcome_unknown`; enrollment follows its failure policy. This is B4 §5.1 rule 4's accepted tradeoff, applied only where it is actually needed |
 
-### 7.5 Enrollment policy and keys
+### 7.5 Enrollment policy and keys (corrected, C1 and C2 — D3 locked)
+
+**Two policies:**
 
 | Policy | `enrollment_key` | Meaning |
 |---|---|---|
-| `once_ever` (**default**) | `wf:{workflow_id}:c:{contact_id}` | A contact goes through this workflow once, ever |
-| `once_per_occurrence` | `wf:{workflow_id}:c:{contact_id}:o:{trigger_occurrence_key}` | Once per trigger occurrence (a yearly date, a distinct message) |
+| `once_ever` | `wf:{workflow_id}:c:{contact_id}` | A contact goes through this workflow once, ever |
+| `once_per_occurrence` | `wf:{workflow_id}:c:{contact_id}:o:{trigger_occurrence_key}` | Once per trigger occurrence |
 
-Under **every** policy the `active_contact_guard` also applies, so overlapping
-enrollments are impossible. Keys are composed only from server-derived values —
-never from request input.
+**Defaults follow the trigger — there is no single global default.** The first
+revision defaulted every workflow to `once_ever`, which applied to a date
+trigger would have quietly made a yearly birthday workflow fire only once in a
+contact's life.
 
-`contact_date_reached` uses the B4 occurrence-year rule unchanged (the
-four-digit year of the offset-adjusted local occurrence date).
+| Trigger | Default policy | `trigger_occurrence_key` | Why |
+|---|---|---|---|
+| `contact_created` | `once_ever` | the contact id | A contact is created once |
+| `manual_enrollment` | `once_ever` | the manual-request uid | Re-enrolling by hand should be a deliberate choice, not an accident of clicking twice |
+| `contact_date_reached` | **`once_per_occurrence`** | the four-digit year of the offset-adjusted local occurrence date (B4 rule, unchanged) | A birthday recurs every year |
+| `message_received` | **`once_per_occurrence`**, plus the 24-hour cooldown (§9.1) | the inbound message id | Each message is its own occurrence; the cooldown stops auto-responder ping-pong |
 
-### 7.6 Failure policy
+Under **every** policy the `active_contact_guard` (§4.5) also applies, so
+overlapping enrollments are impossible. Keys are composed only from
+server-derived values — never from request input.
+
+**Where the policy lives (C2).** In the draft it is part of the trigger node's
+config:
+
+```json
+{ "trigger_type": "contact_date_reached",
+  "enrollment_policy": "once_per_occurrence",
+  "enrollment_policy_source": "default" }
+```
+
+At publish it is denormalised onto the version (`enrollment_policy`,
+`enrollment_policy_source`, §4.2) and pinned with it. `WorkflowEnrollmentService`
+composes every key from the **pinned version's** policy, never from the
+workflow row, so changing the policy in a draft cannot affect live enrollments.
+
+**Where defaults are applied.** Creating a workflow from scratch, creating one
+from a recipe template, and running the B4 converter (§15.2) all set the
+trigger's default with `enrollment_policy_source = "default"`. A recipe may
+never ship a policy that differs from its trigger's default unless it marks it
+`"user"` and says why in the recipe copy.
+
+**When the trigger changes in a draft** (V2-D):
+
+* **Source `default`** — the builder updates the policy to the new trigger's
+  default, keeps the source `default`, and shows a short notice such as
+  *"Contacts can now enter once each year."*
+* **Source `user`** — the builder **does not change the policy silently**. It
+  asks for explicit confirmation: keep the chosen policy, or switch to the new
+  trigger's default. The trigger change is not applied to the draft until the
+  user answers.
+
+**The server enforces this even if the client does not.**
+`WorkflowDefinitionValidator` rejects a trigger node whose policy **differs from
+its trigger's default while `enrollment_policy_source` is `default`** — that
+combination can only mean a stale default carried over from a previous
+trigger. The draft still saves (§14.4), with the error attached to the trigger
+node, but **it cannot publish**. A deliberate `once_ever` on a date trigger (a
+one-time "one year with us" message, say) is allowed, but only with source
+`user`.
+
+### 7.6 Failure policy (D2 locked)
 
 Default `halt`: a failed action ends the enrollment as `failed`, so no
 follow-up is sent after a failed first message. This is the conservative
 reading of B4's "a duplicate automated message is worse than a missed one."
-A `continue` policy is an owner decision (§22) and is not built by default.
+Like the enrollment policy, `failure_policy` is part of the **versioned**
+definition and pinned with the version (C2); it defaults to `halt` everywhere.
+No `continue` policy is built in initial v2.
 
 ---
 
@@ -686,7 +909,8 @@ route truncated exactly that table. Durable state lives on the enrollment row.
 |---|---|---|---|
 | `App\Jobs\Automation\Workflow\EnrollWorkflowContact` | job | `automation` | Resolves published workflows for a trigger occurrence; inserts enrollments |
 | `App\Jobs\Automation\Workflow\AdvanceWorkflowEnrollment` | job | `automation` | Runs §7.3 for one enrollment |
-| `automation:workflows-resume-due` | command | **every minute** | Wakes `waiting` enrollments with `resume_at ≤ now`; recovers stale `active` ones (§7.4); expires lifetime-exceeded ones |
+| `App\Jobs\Automation\Workflow\RedispatchHeldEnrollments` | job | `automation`, dispatched **after commit** by Resume | Re-dispatches a resumed workflow's held `active` enrollments in bounded, self-continuing batches (§6.3) |
+| `automation:workflows-resume-due` | command | **every minute** | Wakes due `waiting` enrollments (never filtered by workflow status — waking executes nothing); re-dispatches lost jobs and recovers interrupted steps for **published** workflows only (§7.4); expires lifetime-exceeded ones |
 | `automation:workflows-date-sweep` | command | every five minutes | v2 port of `automation:run` for date triggers |
 
 All jobs: `$tries = 1`, no `backoff()` (Lane F §6.1). Every sweep uses
@@ -705,7 +929,11 @@ a "wait 5 minutes" resumes between five and six minutes later. This is stated
 in the UI and is appropriate for small-business follow-up. Sub-minute
 precision is a non-goal.
 
-### 8.4 Structural limits
+### 8.4 Structural limits (D5 locked)
+
+**Every value below is approved as the initial v2 limit** and lives as a named
+constant in `WorkflowLimits`. Two constants are added by this correction and are
+listed after the table.
 
 | Limit | Default | Enforced at | Rationale |
 |---|---|---|---|
@@ -728,6 +956,13 @@ Every limit is a named constant in one class,
 `App\Library\Automation\Workflow\WorkflowLimits`, so a change is one reviewed
 line.
 
+**Constants added by Correction Round 1:**
+
+| Constant | Value | Status |
+|---|---|---|
+| `MESSAGE_RECEIVED_COOLDOWN_HOURS` | **24** | **Approved (D6).** Per Contact per workflow. A named constant so a later product setting can replace it without touching the engine |
+| `STALE_ACTIVE_RECOVERY_MINUTES` | **15** (proposed) | **Not in D5's approved list — flagged for review.** It was implicit ("after a threshold") in the first revision; making Resume explicit (C4) required naming it, because recovery must now tell a held enrollment from a lost one. It governs only the lost-job safety net, never Resume. Fifteen minutes is comfortably longer than one advance job can run (`--timeout=120`) plus one scheduler cycle |
+
 ---
 
 ## 9. TRIGGER MATRIX
@@ -743,7 +978,7 @@ Classifications reuse Lane F's vocabulary and are re-verified on `f6cfd88`.
 | **Message received** | **Changed since Lane F:** `chat_boxes.business_id` now exists. Still broadcast-only and emitted from the legacy path alone | **Yes** — new after-commit `App\Events\Conversation\InboundMessageReceived`, emitted from `DLRController` inbound (legacy) and `InboundWebhookAttributionResolver::persistInbound()` (managed), **only on authoritative attribution** | Business from the attributed identity/ChatBox; contact resolved by phone **within the Business** | Medium: phone is unique per group, not per Business | **Yes — its own slice, V2-F** |
 | Contact field changed | Data exists, no producer: `updateContact()` `:381` | Yes, after-commit, at every update seam | `contacts.business_id` | Medium-high: must not re-trigger from v2's own `update_contact_field` (loop) | **No** — later slice, with a causation guard |
 | Contact added to group | Data exists, no producer: `batchContactCopy()` `:501`, `batchContactMove()` `:528` | Yes, after-commit | Group `business_id` | Medium: batch operations are fan-out | **No** — later slice |
-| Contact tag added | **No tag entity** | Needs a Tags domain first | — | High | **No** — CX §28.8 defers tags |
+| Contact tag added | **No tag entity** | Needs the Tags domain first | — | High | **No** — Tags is authorized as a **separate** contract (D7); this trigger follows it |
 | Form submitted | **No forms domain**, and its absence is test-enforced | Needs a Forms contract first | — | High | **No** — hard-blocked |
 | Appointment booked / cancelled | **No calendar domain** | Needs a Calendar contract first | — | High | **No** — hard-blocked |
 | Payment received | **No Business→client payments.** Existing payment tables are platform billing and the Business funding its own wallet | Needs a Business invoicing contract first | — | High | **No** — hard-blocked |
@@ -752,12 +987,31 @@ Classifications reuse Lane F's vocabulary and are re-verified on `f6cfd88`.
 date reached; manual enrollment), with message received following in V2-F.
 Nothing is claimed that has no source.
 
-**Message-received contact resolution (V2-F).** Because phone uniqueness is per
-group, one inbound number can match several Contacts in one Business. The rule
-is conservative: **enroll only if exactly one subscribed Contact in the Business
-matches; otherwise record `skipped: ambiguous_contact`.** A per-contact,
-per-workflow cooldown of 24 hours prevents ping-pong with a contact-side
-auto-responder.
+### 9.1 Default enrollment policy by trigger, and message-received rules (D3, D6 locked)
+
+| Trigger | Default enrollment policy (§7.5) |
+|---|---|
+| Contact created (any source) | `once_ever` |
+| Manual enrollment | `once_ever` |
+| Date/time reached | `once_per_occurrence` — once per contact per occurrence year |
+| Message received | `once_per_occurrence` — once per inbound message, subject to the cooldown below |
+
+**Message-received rules (V2-F), locked:**
+
+* **Exactly one subscribed Contact match inside the Business is required.**
+  Phone uniqueness is per group, not per Business, so one inbound number can
+  match several Contacts. Anything other than exactly one subscribed match is
+  recorded as `skipped: ambiguous_contact` and enrolls nobody.
+* **Cooldown:** a Contact enrolled into a workflow by a received message cannot
+  be enrolled into that same workflow again by another received message for
+  `WorkflowLimits::MESSAGE_RECEIVED_COOLDOWN_HOURS` (**24**). It prevents
+  ping-pong with a contact-side auto-responder, and it is a named constant so a
+  later product setting can replace it.
+* **Automation-originated messages never self-trigger.** Every automation send
+  is tagged with its step run (§10.1); the producer refuses to treat a message
+  carrying that tag as a trigger source.
+* **Only authoritative attribution enrolls.** The event is emitted only after
+  Slice 3's fail-closed, dual-signal attribution has resolved the Business.
 
 ---
 
@@ -771,8 +1025,8 @@ auto-responder.
 | **Wait** | Engine primitive | §12 | **Yes — V2-A** |
 | **If / Else** | Engine primitive | §11 | **Yes — V2-A** |
 | **End** | Engine primitive | | **Yes — V2-A** |
-| Send email to a contact | **No** Business→contact email transport | Needs an email-transport decision; must not invent provider plumbing | **No** |
-| Add / remove tag | **No** tag entity | Needs a Tags domain | **No** |
+| Send email to a contact | **No** Business→contact email transport | **Requires its own transport contract (D10).** Automations v2 invents no email provider plumbing | **No** |
+| Add / remove tag | **No** tag entity | **Tags is authorized as a separate, parallel product/domain contract (D7).** It must create a real Business-scoped tag entity and contact–tag relation, **not** repurpose the legacy `Contacts::getTags()` JSON helper. Tag actions and the tag trigger follow that contract | **No** |
 | Move to group | Exists (`batchContactMove`) but **unsafe**: fields belong to a group, so moving orphans the contact's custom-field values; phone uniqueness is per group | — | **No** |
 | Create / update opportunity | **Not a CRM** — `Opportunity` is the AI-COO engine, explicitly outside this contract | — | **No** |
 | Assign contact to user | **No** assignee column | Needs a contact-ownership domain | **No** |
@@ -954,10 +1208,10 @@ re-derives the Business from the enrollment row.
   (`{first_name}`, `{last_name}`, `{company}`, `{business_name}`) substituted
   server-side, with no template-language evaluation.
 
-### 14.5 Permissions
+### 14.5 Permissions (D8 locked)
 
-v2 reuses the existing `automations` permission key. Splitting it into view,
-edit and publish is an owner decision (§22) and is not built by default.
+v2 reuses the existing single `automations` permission key. **View, edit and
+publish are not split** in initial v2.
 
 ---
 
@@ -977,14 +1231,21 @@ idempotent:
    action set, and no workflow yet carrying its `legacy_automation_id`:
    create a workflow and a **published** version with two nodes — the trigger
    (same type and config) and one action (same type and config). Same name;
-   `published` if the B4 row was active, else `paused`.
+   `published` if the B4 row was active, else `paused`. **The version's
+   enrollment policy is the trigger-aware default (§7.5, §9.1), with
+   `enrollment_policy_source = default`:** `contact_created` → `once_ever`;
+   `contact_date_reached` → `once_per_occurrence`. This preserves B4's own
+   semantics exactly — B4 keyed date runs by occurrence year and creation runs
+   once per contact — so **a converted birthday automation keeps firing every
+   year.** `failure_policy` is `halt`.
 2. **Carry idempotency across the boundary.** For every existing
    `automation_executions` row of that automation, insert a terminal
-   `completed` enrollment (`exit_reason = migrated_from_b4`) whose
-   `enrollment_key` matches the key v2 would compute — `contact_created` →
-   `once_ever`; `contact_date_reached` → `once_per_occurrence` with the year
-   parsed from the B4 key. **No contact the B4 automation already acted on can
-   be acted on again by the converted workflow.**
+   `completed` enrollment (`exit_reason = migrated_from_b4`) on the converted
+   version whose `enrollment_key` is exactly the key v2 would compute under that
+   policy — for `contact_date_reached`, the occurrence year parsed from the B4
+   key `contact_date_reached:{automation}:{contact}:{year}`. **No contact the B4
+   automation already acted on can be acted on again for the same occurrence,**
+   while the next year's occurrence still enrolls normally.
 3. Set the B4 row's `status` to `migrated`. B4's sweep selects only `active`,
    so it stops.
 4. Log a per-row resolved/skipped summary, following `BusinessDataTenancyBackfillV1`.
@@ -992,13 +1253,25 @@ idempotent:
 NULL-business B4 rows are never converted, never reassigned, and remain inert
 (B4 §3.5).
 
-### 15.3 Retirement
+### 15.3 Retirement (D9 locked)
 
-Only after every eligible row is converted **and** a parity period passes, a
-final V2-G step removes the B4 runtime: `automation:run`'s scheduler line,
-`AutomationJob`, `SendAutomationMessage`, the B4 dispatches at
-`EloquentContactsRepository.php:263` and `:715`, and `form.blade.php`. The B4
-**tables stay** for history.
+**The parity month does not delay v2 for customers.** Two things happen on
+different clocks:
+
+* **Immediately on conversion,** each converted B4 row stops running through B4:
+  its `status` becomes `migrated` (§15.2 step 3) and B4's sweep selects only
+  `active`. The converted workflow runs on v2 from that moment. v2 is available
+  to customers as soon as its slices merge.
+* **One full month of measured parity after conversion** is only the safety
+  window before the old runtime **code** is deleted. During it the B4 runtime
+  stays in the codebase — unused by converted rows — so that a v2 regression can
+  be diagnosed against it, and parity is measured by comparing converted
+  workflows' step runs against their B4 predecessors' historical execution rates.
+
+After that month, a final, separately authorized V2-G step removes the B4
+runtime code: `automation:run`'s scheduler line, `AutomationJob`,
+`SendAutomationMessage`, the B4 dispatches at `EloquentContactsRepository.php:263`
+and `:715`, and `form.blade.php`. The B4 **tables stay** for history.
 
 ### 15.4 Analytics continuity — V2-H
 
@@ -1027,8 +1300,8 @@ D and E run in parallel.
 
 | Slice | Delivers | Depends on | Parallel with |
 |---|---|---|---|
-| **V2-0 Foundation** | Six migrations; six models; enums; `NodeTypeRegistry`; `WorkflowDefinitionValidator`; `WorkflowCompiler`; `WorkflowPublisher`; `WorkflowDraftService`; `WorkflowLimits`; and **interfaces**: `NodeExecutor`, `TriggerSource`, `EnrollmentService`, `ConditionSubject`. No runtime, UI or routes | This contract | — |
-| **V2-A Runtime engine** | `WorkflowEnrollmentService`; `WorkflowAdvancer`; `WorkflowStepClaimService`; `WorkflowCheckpoint`; `ConditionEvaluator` + subject registry; `WaitScheduler`; executors for `wait`, `if_else`, `end`, `trigger`; `AdvanceWorkflowEnrollment`; `automation:workflows-resume-due` + its scheduler line; `WorkflowSimulator` (Test workflow) | V2-0 | B, C, D, E |
+| **V2-0 Foundation** | Six migrations; six models; enums; `NodeTypeRegistry`; `WorkflowDefinitionValidator`; `WorkflowCompiler`; `WorkflowPublisher`; `WorkflowDraftService`; `WorkflowLimits`; and **interfaces**: `NodeExecutor`, `TriggerSource`, `EnrollmentService`, `ConditionSubject`, `WorkflowLifecycle`. Trigger-aware policy defaults and the stale-default validation rule (§7.5). The six migrations in the exact §4.7 order, with their migration tests. No runtime, UI or routes | This contract | — |
+| **V2-A Runtime engine** | `WorkflowEnrollmentService`; `WorkflowAdvancer`; `WorkflowStepClaimService`; `WorkflowCheckpoint`; `ConditionEvaluator` + subject registry; `WaitScheduler`; executors for `wait`, `if_else`, `end`, `trigger`; `AdvanceWorkflowEnrollment`; **`WorkflowLifecycleService`** (pause, resume, archive, stop-all) and **`RedispatchHeldEnrollments`** (§6.3); `automation:workflows-resume-due` + its scheduler line; `WorkflowSimulator` (Test workflow) | V2-0 | B, C, D, E |
 | **V2-B Action executors** | `SendSmsNodeExecutor` (§10.1), `UpdateContactFieldNodeExecutor`, `InternalNotificationNodeExecutor` + `WorkflowInternalNotification` | V2-0 | A, C, D, E |
 | **V2-C Trigger sources** | `ContactCreatedTriggerSource` (+ `source` argument at the four callers); `DateReachedTriggerSource` + `automation:workflows-date-sweep`; `ManualEnrollmentTriggerSource`; `EnrollWorkflowContact` job; v2 dispatch added beside B4's at `:263`/`:715` | V2-0 | A, B, D, E |
 | **V2-D Builder UI** | List, chooser, builder shell, canvas module, drawer partials per node type, autosave, undo/redo, validation display, zoom/pan, recipe templates | V2-0 document schema; integrates with E | A, B, C, E |
@@ -1039,6 +1312,13 @@ D and E run in parallel.
 
 **Integration seam between D and E:** the endpoint contract in §20.2 is fixed
 by V2-0, so D can build against fixtures while E builds the real controllers.
+**Between A and E:** E's pause/resume/archive/stop-all endpoints call the
+`WorkflowLifecycle` interface fixed by V2-0; A supplies the implementation. E
+never dispatches enrollment work itself.
+
+**Outside this contract, running in parallel:** the **Tags** domain contract
+(D7) and a **Business-to-contact email transport** contract (D10). Neither is
+built here; v2's tag and email capabilities follow them.
 
 ---
 
@@ -1079,8 +1359,24 @@ the repository's deterministic second-session lock pattern
 | T-WF-23 | Autosave with a stale revision → 409 and the stored draft unchanged | E |
 | T-WF-24 | Builder renders a 50-node, depth-5 tree within the query budget (§18) | D, E |
 | T-WF-25 | Message received: ambiguous contact → skipped; cooldown enforced; an automation-originated send never triggers its own workflow | F |
-| T-WF-26 | Converter: a contact already actioned by B4 is not actioned again; the command is idempotent; NULL-business rows untouched | G |
+| T-WF-26 | Converter: a contact already actioned by B4 is not actioned again for the same occurrence; a converted **date-reached** automation still enrolls that contact in the **next** occurrence year; converted versions carry the trigger-aware default with source `default`; the command is idempotent; NULL-business rows untouched | G |
 | T-WF-27 | Analytics totals continuous across conversion | H |
+
+**Added by Correction Round 1:**
+
+| # | Invariant | Slice |
+|---|---|---|
+| T-WF-28 | **Fresh migrate succeeds:** the six v2 migrations apply in the §4.7 order on a clean schema | 0 |
+| T-WF-29 | **Full rollback succeeds:** rolling back exactly the six v2 migrations — by `--path`, never a broader rollback — completes, and migration 2's `down()` drops `aw_published_version_foreign` before `automation_workflow_versions` | 0 |
+| T-WF-30 | **Migrate → rollback → migrate succeeds** against the real configured MySQL connection, with every constraint behaving identically after replay | 0 |
+| T-WF-31 | **The back-reference FK really exists after `up()`:** `information_schema` shows `aw_published_version_foreign` on `automation_workflows (published_version_id, id)` referencing `automation_workflow_versions (id, workflow_id)` with `DELETE RULE = RESTRICT`, and `workflow_id`'s FK is `RESTRICT` | 0 |
+| T-WF-32 | **No orphan or foreign `published_version_id` can be written:** a raw `UPDATE` to a nonexistent version id raises `QueryException`; a raw `UPDATE` to **another workflow's** existing version raises `QueryException`; NULL is accepted; deleting a workflow or a version that is referenced raises `QueryException` rather than cascading | 0 |
+| T-WF-33 | **Date-reached enrolls the same Contact in different occurrence years:** the same Contact enrolls in 2026 and again in 2027 (two enrollments, two distinct keys), while a second 2026 occurrence enrolls nothing | C |
+| T-WF-34 | **Trigger-aware defaults:** a new workflow and a recipe get the trigger's default with source `default`; changing a draft's trigger with source `default` updates the policy; with source `user` the builder requires confirmation and does not change it silently; the validator rejects a policy that differs from the trigger default while its source is `default`, and publish returns 422 on that node; a deliberate user-chosen `once_ever` on a date trigger publishes | 0, D |
+| T-WF-35 | **Pause → held → resume continues promptly:** pause the workflow; run an already-queued `AdvanceWorkflowEnrollment` and assert it exits with no step run written; resume; assert `RedispatchHeldEnrollments` is dispatched after commit, then an advance job, and the step executes — **with the clock frozen at the resume instant**, proving no dependence on `STALE_ACTIVE_RECOVERY_MINUTES` and no call to the recovery sweep | A, E |
+| T-WF-36 | **Resume never touches `waiting` rows:** an enrollment waiting on a future `resume_at` stays `waiting` after resume; one that fell due during the pause is woken exactly once and its next step executes exactly once, whether the due-sweep or the resume redispatch reaches it first | A |
+| T-WF-37 | **Resume is bounded and idempotent:** with more held enrollments than one run's cap, redispatch continues itself until all are processed; resuming twice yields exactly one step run per node and one provider call per send | A |
+| T-WF-38 | **No provider call in the resume request:** `Http::assertNothingSent()` and no step-run row written during the resume HTTP request; all execution happens in queued jobs after commit | E |
 
 ---
 
@@ -1110,8 +1406,10 @@ wait until business hours; recurring schedules beyond date-reached;
 cross-workflow triggers ("added to another workflow"); bulk-import fan-out;
 Workspace- or Agency-level workflows; real-time collaborative editing; a mobile
 editor; real sends from **Test workflow** (it is a simulation only);
-drag-to-reorder; forms, appointments, customer payments, tags, email, sales
-pipelines, contact assignment and webhooks (§9, §10); and **any AI node**.
+drag-to-reorder; forms, appointments, customer payments, sales pipelines,
+contact assignment and webhooks (§9, §10); **tags**, which are authorized as a
+separate domain contract (D7); **email to contacts**, which needs its own
+transport contract (D10); and **any AI node**.
 
 **The AI seam, recorded and not built.** An AI node — decision, draft or
 classification — would be one `WorkflowNodeType` case, one registry entry and
@@ -1165,6 +1463,7 @@ app/Library/Automation/Workflow/Conditions/**
 app/Library/Automation/Workflow/Executors/{Trigger,Wait,IfElse,End}NodeExecutor.php
 app/Library/Automation/Workflow/WorkflowSimulator.php
 app/Jobs/Automation/Workflow/AdvanceWorkflowEnrollment.php
+app/Jobs/Automation/Workflow/RedispatchHeldEnrollments.php
 app/Console/Commands/Automation/ResumeDueWorkflowEnrollments.php
 app/Console/Kernel.php                                   (one schedule line)
 tests/Feature/Automations/Workflow/Runtime/**
@@ -1256,7 +1555,7 @@ All under `/workspaces/{workspaceUid}/businesses/{businessUid}/automations/workf
 | POST | `/{workflowUid}/publish` | Publish → 200, or 422 with errors keyed by `node_key` |
 | POST | `/{workflowUid}/discard-draft` | Discard draft |
 | POST | `/{workflowUid}/simulate` | Test workflow `{contact_uid}` → simulated path (JSON), no side effects |
-| POST | `/{workflowUid}/pause`, `/resume`, `/archive`, `/stop-all` | State changes |
+| POST | `/{workflowUid}/pause`, `/resume`, `/archive`, `/stop-all` | State changes via `WorkflowLifecycle`. `/resume` flips status in one short transaction and dispatches `RedispatchHeldEnrollments` after commit; it executes no step itself (§6.3) |
 | GET | `/{workflowUid}/settings`, `/enrollments`, `/enrollments/{enrollmentUid}/logs` | Tabs |
 | POST | `/{workflowUid}/enrollments` | Manual enrollment `{contact_uids[]}` (≤ 500, confirmed) |
 
@@ -1278,20 +1577,26 @@ All under `/workspaces/{workspaceUid}/businesses/{businessUid}/automations/workf
 
 ---
 
-## 22. OWNER DECISIONS REQUIRED
+## 22. OWNER DECISIONS — LOCKED (Correction Round 1)
 
-| # | Decision | Recommended default |
-|---|---|---|
-| **D1** | Approve the tree rule (no merges, no loops, no "go to") for initial v2 | Approve |
-| **D2** | Default failure policy | `halt` |
-| **D3** | Default enrollment policy for new workflows | `once_ever` |
-| **D4** | Pause semantics | Pause holds in-flight enrollments; resume continues them |
-| **D5** | The §8.4 numbers — especially 50 nodes, depth 5, 1,000 enrollments/hour, 200 workflows/Business | Approve as proposed |
-| **D6** | Message-received ambiguous contact rule | Enroll only on exactly one match; 24 h cooldown |
-| **D7** | Authorize a **Tags** domain as its own parallel contract | Recommended — GoHighLevel-style workflows lean heavily on tags, and it is the largest capability gap |
-| **D8** | Split the `automations` permission into view / edit / publish | Keep one key initially |
-| **D9** | B4 retirement timing after conversion | After one full month of parity |
-| **D10** | Email to contacts: choose a transport so a Send email node can be contracted | Separate contract |
+All ten decisions were taken by the product owner on PR #250. They are no
+longer open.
+
+| # | Decision | Locked outcome | Where applied |
+|---|---|---|---|
+| **D1** | Graph shape | **Approved.** Initial v2 is a tree: no loops, no merges, no "go to" step | §5.1, §4.4 |
+| **D2** | Default failure policy | **Approved: `halt`**, versioned with the definition | §7.6 |
+| **D3** | Default enrollment policy | **Changed from the proposal.** No single global default; defaults follow the trigger — `contact_created` and `manual_enrollment` → `once_ever`; `contact_date_reached` → `once_per_occurrence`; `message_received` → `once_per_occurrence` with the cooldown. A draft's trigger change updates an untouched default or requires confirmation of a user-chosen policy, and the server refuses to publish a stale default. **A yearly birthday workflow is never silently turned into once-ever** | §4.2, §7.5, §9.1, §15.2 |
+| **D4** | Pause semantics | **Approved, with deterministic resume.** Pause blocks new enrollments and holds in-flight ones at their cursor; Resume allows new enrollments and **explicitly re-dispatches** held `active` enrollments in bounded, idempotent batches after commit, never touching `waiting` rows | §6.3, §7.1, §7.4 |
+| **D5** | Structural limits | **Approved as proposed**, every value centralised in `WorkflowLimits`. `STALE_ACTIVE_RECOVERY_MINUTES` (15) is added by this round and **flagged for review** because it was not in the approved list | §8.4 |
+| **D6** | Message-received rules | **Approved:** exactly one subscribed Contact match in the Business; ambiguity skips safely; 24-hour cooldown per Contact per workflow as the named constant `MESSAGE_RECEIVED_COOLDOWN_HOURS`; automation-originated messages never self-trigger | §9.1 |
+| **D7** | Tags | **Approved as a separate, parallel product/domain contract.** Not implemented inside Automations v2. That contract must create a real Business-scoped tag entity and contact–tag relation rather than repurpose the legacy JSON helper | §9, §10, §16, §19 |
+| **D8** | Permissions | **Approved:** one `automations` permission; view/edit/publish not split | §14.5 |
+| **D9** | B4 retirement | **Approved:** B4 runtime code is kept for one full month of measured parity after conversion. This **does not** delay v2 for customers — converted rows stop running through B4 immediately via `migrated` status; the month is only the safety window before deleting the old code | §15.3 |
+| **D10** | Email to contacts | **Approved:** requires its own transport contract. Automations v2 invents no email provider plumbing | §10, §19 |
+
+**Still open, and small:** approval of `STALE_ACTIVE_RECOVERY_MINUTES = 15`
+(§8.4). Nothing else in this contract awaits a decision.
 
 ---
 
@@ -1308,4 +1613,11 @@ All under `/workspaces/{workspaceUid}/businesses/{businessUid}/automations/workf
   migration, route, view, asset or configuration changed. The only change on
   this branch is this document.
 
-`AUTOMATIONS V2 WORKFLOW ENGINE — CONTRACT READY FOR REVIEW`
+**Correction Round 1 validation:** every section named in the Correction Round 1
+table was re-read after editing for mutual consistency — the per-trigger
+defaults in §7.5, §9.1, §15.2 and D3 agree; the policy columns appear only on
+versions, never on workflows; the migration ordering in §4.7 matches the FK
+definitions in §4.1 and §4.2; and Resume in §6.3 matches §7.1, §7.4, §8.2, the
+V2-A allowlist and T-WF-35 to T-WF-38.
+
+`AUTOMATIONS V2 WORKFLOW ENGINE — CORRECTION ROUND 1 READY FOR REVIEW`
