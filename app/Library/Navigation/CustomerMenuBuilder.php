@@ -42,15 +42,18 @@ final class CustomerMenuBuilder
      * is NOT gated here: whether any tier's catalog genuinely excludes CRM
      * cannot be established from code, and hiding Contacts from a tier that
      * pays for it is a worse failure than showing it to one that does not.
-     * `conversations` is not gated either — Inbox still sits on an
-     * account-scoped route, so in some frames there is no Business to
-     * evaluate it against; Slice 2B delivers that scope and inherits the
-     * decision.
+     * `conversations` IS gated since Slice 2B (§16): Inbox now lives on the
+     * Business-scoped conversations route, so there is always a Business to
+     * evaluate it against. It has to be listed here, not only checked below —
+     * the snapshot answers only what it was asked, and MenuEntitlements fails
+     * closed on anything else, so an unlisted key would hide Inbox for
+     * everyone. The query cost does not change: every read is bulk.
      */
     public const ENTITLEMENT_GATED_FEATURES = [
         'automations',
         'website_generation',
         'google_business_profile_module',
+        'conversations',
     ];
 
     /**
@@ -109,11 +112,14 @@ final class CustomerMenuBuilder
         }
 
         // Messages — the one group that gathers what was three unrelated
-        // top-level entries. Inbox deliberately keeps its account-scoped
-        // route: Business-scoping Conversations is Slice 2B's atomic move
-        // (§9), and pre-empting it here would leave the URI half-migrated.
+        // top-level entries. Every entry in it is scoped to the selected
+        // Business; Inbox joined them in Slice 2B.
         $messages = array_values(array_filter([
-            $this->item($user, 'inbox', 'Inbox', 'inbox', ['chat_box'], 'customer.chatbox.index', [], $current, ['customer.chatbox.']),
+            // Slice 2B §16 — the selected Business's own inbox, shown only when
+            // that Business is entitled to Conversations.
+            $this->entitled('conversations', $this->item($user, 'inbox', 'Inbox', 'inbox', ['chat_box'], 'customer.workspaces.businesses.conversations.index', $scoped, $current, [
+                'customer.workspaces.businesses.conversations.',
+            ])),
             $this->item($user, 'send', 'Send', 'send', self::OUTREACH_PERMISSIONS, 'customer.workspaces.businesses.outreach.index', $scoped, $current, [
                 'customer.workspaces.businesses.outreach.index', 'customer.outreach.index',
             ]),

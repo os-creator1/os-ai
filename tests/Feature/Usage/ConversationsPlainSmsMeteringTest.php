@@ -1245,18 +1245,62 @@ class ConversationsPlainSmsMeteringTest extends TestCase
         $this->actingAs($user);
     }
 
+    // Customer Experience Redesign Slice 2B moved the inbox to `Account →
+    // selected Business → Conversations`. The token-lifecycle properties
+    // below are unchanged; what changed, and is updated here rather than
+    // hidden, is only what reaching them now requires:
+    //   * the Business-scoped route family instead of the flat routes;
+    //   * a conversation that belongs to the Business (business_id);
+    //   * §6 compose/reply resource safety — the sender number and the
+    //     sending server must be THIS Business's own (a PhoneNumbers row
+    //     with business_id, a CustomerBasedSendingServer assignment).
+
+    /**
+     * The fixture's own Business, made reachable as the Business-scoped
+     * inbox requires: Active, and its pilot server assigned to it.
+     */
+    private function businessInboxFor(array $fixture): array
+    {
+        $business = $fixture['business'];
+
+        DB::table('businesses')->where('id', $business->id)->update(['status' => \App\Enums\Business\BusinessStatus::Active->value]);
+
+        \App\Models\CustomerBasedSendingServer::create([
+            'user_id' => $fixture['user']->id,
+            'business_id' => $business->id,
+            'sending_server' => $fixture['sendingServer']->id,
+            'status' => true,
+        ]);
+
+        return [$business->workspace->uid, $business->uid];
+    }
+
+    private function businessChatBox(array $fixture, array $attributes): \App\Models\ChatBox
+    {
+        $box = new \App\Models\ChatBox(array_merge([
+            'user_id' => $fixture['user']->id,
+            'business_id' => $fixture['business']->id,
+            'reply_by_customer' => true,
+        ], $attributes));
+        $box->uid = (string) \Illuminate\Support\Str::uuid();
+        $box->save();
+
+        return $box;
+    }
+
     public function test_new_compose_mints_a_fresh_uuid_and_a_retry_reuses_the_supplied_one(): void
     {
         $fixture = $this->buildQualifyingQuickSendFixture();
         $this->actingAsHttpCustomer($fixture['user']);
+        $pair = $this->businessInboxFor($fixture);
 
-        $firstResponse = $this->get(route('customer.chatbox.new'));
+        $firstResponse = $this->get(route('customer.workspaces.businesses.conversations.new', $pair));
         $firstResponse->assertOk();
         $firstToken = $firstResponse->viewData('idempotencyToken');
         $this->assertIsString($firstToken);
         $this->assertTrue(\Illuminate\Support\Str::isUuid($firstToken));
 
-        $secondResponse = $this->get(route('customer.chatbox.new'));
+        $secondResponse = $this->get(route('customer.workspaces.businesses.conversations.new', $pair));
         $secondResponse->assertOk();
         $secondToken = $secondResponse->viewData('idempotencyToken');
 
@@ -1265,22 +1309,20 @@ class ConversationsPlainSmsMeteringTest extends TestCase
         // A retry carrying ?m5_retry_token=<uuid> reuses that exact token
         // instead of minting a new one.
         $retryToken = (string) \Illuminate\Support\Str::uuid();
-        $retryResponse = $this->get(route('customer.chatbox.new', ['m5_retry_token' => $retryToken]));
+        $retryResponse = $this->get(route('customer.workspaces.businesses.conversations.new', [...$pair, 'm5_retry_token' => $retryToken]));
         $retryResponse->assertOk();
         $this->assertSame($retryToken, $retryResponse->viewData('idempotencyToken'), 'A valid retry token in the query string must be reused verbatim.');
     }
 
     public function test_reply_missing_token_returns_422_and_never_reaches_quicksend(): void
     {
-        $customer = $this->createCustomer();
-        $this->actingAsHttpCustomer(User::find($customer->user_id));
+        $fixture = $this->buildQualifyingQuickSendFixture();
+        $this->actingAsHttpCustomer($fixture['user']);
+        $pair = $this->businessInboxFor($fixture);
 
-        $box = \App\Models\ChatBox::create([
-            'user_id' => $customer->user_id, 'from' => 'TestSender', 'to' => '14155552671',
-            'reply_by_customer' => true,
-        ]);
+        $box = $this->businessChatBox($fixture, ['from' => 'TestSender', 'to' => '14155552671']);
 
-        $response = $this->postJson(route('customer.chatbox.reply', $box->uid), [
+        $response = $this->postJson(route('customer.workspaces.businesses.conversations.reply', [...$pair, $box->uid]), [
             'message' => 'Hello, no token supplied.',
         ]);
 
@@ -1291,15 +1333,13 @@ class ConversationsPlainSmsMeteringTest extends TestCase
 
     public function test_reply_invalid_token_returns_422_and_never_reaches_quicksend(): void
     {
-        $customer = $this->createCustomer();
-        $this->actingAsHttpCustomer(User::find($customer->user_id));
+        $fixture = $this->buildQualifyingQuickSendFixture();
+        $this->actingAsHttpCustomer($fixture['user']);
+        $pair = $this->businessInboxFor($fixture);
 
-        $box = \App\Models\ChatBox::create([
-            'user_id' => $customer->user_id, 'from' => 'TestSender', 'to' => '14155552671',
-            'reply_by_customer' => true,
-        ]);
+        $box = $this->businessChatBox($fixture, ['from' => 'TestSender', 'to' => '14155552671']);
 
-        $response = $this->postJson(route('customer.chatbox.reply', $box->uid), [
+        $response = $this->postJson(route('customer.workspaces.businesses.conversations.reply', [...$pair, $box->uid]), [
             'message' => 'Hello, invalid token supplied.',
             'idempotency_token' => 'not-a-real-uuid',
         ]);
@@ -1320,18 +1360,18 @@ class ConversationsPlainSmsMeteringTest extends TestCase
         // here, which never happens for conversationContext=false.
         $fixture = $this->buildQualifyingQuickSendFixture(twilioAccountSid: '', twilioAuthToken: '');
         $this->actingAsHttpCustomer($fixture['user']);
+        $pair = $this->businessInboxFor($fixture);
 
         \App\Models\PhoneNumbers::create([
-            'user_id' => $fixture['user']->id, 'number' => 'TestSender', 'status' => 'assigned',
-            'capabilities' => 'sms',
+            'user_id' => $fixture['user']->id, 'business_id' => $fixture['business']->id,
+            'number' => 'TestSender', 'status' => 'assigned', 'capabilities' => 'sms',
         ]);
 
-        $box = \App\Models\ChatBox::create([
-            'user_id' => $fixture['user']->id, 'from' => 'TestSender', 'to' => '14155552671',
-            'sending_server_id' => $fixture['sendingServer']->id, 'reply_by_customer' => true,
+        $box = $this->businessChatBox($fixture, [
+            'from' => 'TestSender', 'to' => '14155552671', 'sending_server_id' => $fixture['sendingServer']->id,
         ]);
 
-        $response = $this->postJson(route('customer.chatbox.reply', $box->uid), [
+        $response = $this->postJson(route('customer.workspaces.businesses.conversations.reply', [...$pair, $box->uid]), [
             'message' => 'A valid, real reply.',
             'idempotency_token' => (string) \Illuminate\Support\Str::uuid(),
         ]);
@@ -1351,10 +1391,11 @@ class ConversationsPlainSmsMeteringTest extends TestCase
     {
         $fixture = $this->buildQualifyingQuickSendFixture(twilioAccountSid: '', twilioAuthToken: '');
         $this->actingAsHttpCustomer($fixture['user']);
+        $pair = $this->businessInboxFor($fixture);
 
         \App\Models\PhoneNumbers::create([
-            'user_id' => $fixture['user']->id, 'number' => '14155552671', 'status' => 'assigned',
-            'capabilities' => 'sms',
+            'user_id' => $fixture['user']->id, 'business_id' => $fixture['business']->id,
+            'number' => '14155552671', 'status' => 'assigned', 'capabilities' => 'sms',
         ]);
 
         $token = (string) \Illuminate\Support\Str::uuid();
@@ -1369,9 +1410,9 @@ class ConversationsPlainSmsMeteringTest extends TestCase
             'idempotency_token' => $token,
         ];
 
-        $response = $this->post(route('customer.chatbox.sent'), $payload);
+        $response = $this->post(route('customer.workspaces.businesses.conversations.sent', $pair), $payload);
 
-        $response->assertRedirect(route('customer.chatbox.new', ['m5_retry_token' => $token]));
+        $response->assertRedirect(route('customer.workspaces.businesses.conversations.new', [...$pair, 'm5_retry_token' => $token]));
         $response->assertSessionHasInput('sending_server', (string) $fixture['sendingServer']->id);
         $response->assertSessionHasInput('country_code', (string) $fixture['country']->id);
         $response->assertSessionHasInput('sender_id', '14155552671');
@@ -1380,7 +1421,7 @@ class ConversationsPlainSmsMeteringTest extends TestCase
 
         // Following the redirect, new()'s own m5_retry_token handling must
         // reuse the identical token verbatim.
-        $followUp = $this->get(route('customer.chatbox.new', ['m5_retry_token' => $token]));
+        $followUp = $this->get(route('customer.workspaces.businesses.conversations.new', [...$pair, 'm5_retry_token' => $token]));
         $followUp->assertOk();
         $this->assertSame($token, $followUp->viewData('idempotencyToken'));
     }

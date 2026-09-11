@@ -45,13 +45,19 @@ class MessageReceived extends Notification implements ShouldBroadcast
 
     /**
      * Get the mail representation of the notification.
+     *
+     * Slice 2B: this notification carries only a message and a number — no
+     * Business — and nothing sends it (its one caller in
+     * DLRController::inboundDLR() is commented out). So its link is the
+     * context-free compatibility entry, which resolves 0/1/many Businesses
+     * itself, rather than a route name Slice 2B turned into a redirector.
      */
     public function toMail(object $notifiable): MailMessage
     {
         return (new MailMessage)
                 ->subject('New Inbound SMS From '.$this->number)
                 ->line('Here is your Message: '.$this->message)
-                ->action('View Chatbox', route('customer.chatbox.index'))
+                ->action('View Chatbox', url('/chat-box'))
                 ->line('Thank you for using our application!');
     }
 }

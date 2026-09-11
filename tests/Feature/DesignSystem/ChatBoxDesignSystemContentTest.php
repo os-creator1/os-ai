@@ -2,11 +2,15 @@
 
 namespace Tests\Feature\DesignSystem;
 
-use App\Models\AppConfig;
+use App\Enums\Entitlement\WorkspacePlanTier;
+use App\Models\Business;
 use App\Models\ChatBox;
 use App\Models\Customer;
 use App\Models\User;
+use App\Models\Workspace;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Str;
+use Tests\Feature\Workspace\Concerns\CreatesCustomerContextFixtures;
 use Tests\TestCase;
 
 /**
@@ -24,6 +28,7 @@ use Tests\TestCase;
 class ChatBoxDesignSystemContentTest extends TestCase
 {
     use RefreshDatabase;
+    use CreatesCustomerContextFixtures;
 
     private const SLICE6_VIEWS = [
         'resources/views/customer/ChatBox/index.blade.php',
@@ -234,11 +239,15 @@ class ChatBoxDesignSystemContentTest extends TestCase
     // Live render smoke checks — icons actually resolve at runtime
     // -----------------------------------------------------------------
 
+    // Slice 2B: every surface is now reached through the Business-scoped
+    // route family, and the list endpoint is POST-only. The rendered icon
+    // output asserted is unchanged.
+
     public function test_chatbox_index_renders_migrated_icons_and_preserves_feather_runtime(): void
     {
-        [$customer] = $this->authenticatedCustomerWithChatBox();
+        [, , $business, $workspace] = $this->authenticatedCustomerWithChatBox();
 
-        $response = $this->get(route('customer.chatbox.index'));
+        $response = $this->get(route('customer.workspaces.businesses.conversations.index', [$workspace->uid, $business->uid]));
 
         $response->assertOk();
         $response->assertSee('ds-icon', false);
@@ -248,10 +257,10 @@ class ChatBoxDesignSystemContentTest extends TestCase
 
     public function test_chatbox_new_renders_migrated_icons(): void
     {
-        [$customer] = $this->authenticatedCustomerWithChatBox();
+        [$customer, , $business, $workspace] = $this->authenticatedCustomerWithChatBox();
         $customer->user->update(['sms_unit' => 100]);
 
-        $response = $this->get(route('customer.chatbox.new'));
+        $response = $this->get(route('customer.workspaces.businesses.conversations.new', [$workspace->uid, $business->uid]));
 
         // new() redirects when the customer has no active subscription —
         // this fixture does not build one (out of this slice's own scope);
@@ -267,9 +276,9 @@ class ChatBoxDesignSystemContentTest extends TestCase
 
     public function test_chatbox_ajax_load_partial_renders_without_data_feather(): void
     {
-        [$customer, $box] = $this->authenticatedCustomerWithChatBox();
+        [, $box, $business, $workspace] = $this->authenticatedCustomerWithChatBox();
 
-        $response = $this->get(route('customer.chatbox.load'));
+        $response = $this->post(route('customer.workspaces.businesses.conversations.load', [$workspace->uid, $business->uid]));
 
         $response->assertOk();
         $response->assertDontSee('data-feather=', false);
@@ -281,58 +290,34 @@ class ChatBoxDesignSystemContentTest extends TestCase
     // -----------------------------------------------------------------
 
     /**
-     * @return array{0: Customer, 1: ChatBox}
+     * Slice 2B: a conversation belongs to a Business, so the fixture is a
+     * customer owning one Workspace + Business with a Business-scoped box.
+     *
+     * @return array{0: Customer, 1: ChatBox, 2: Business, 3: Workspace}
      */
     private function authenticatedCustomerWithChatBox(): array
     {
-        $this->ensureRequiredAppConfigRowsExist();
+        [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Core, 'Content Co ' . uniqid(), 'Content WS ' . uniqid());
 
-        $user = User::create([
-            'first_name' => 'Test',
-            'last_name' => 'Customer',
-            'email' => 'customer' . uniqid('', true) . '@example.test',
-            'status' => true,
-            'is_admin' => false,
-            'is_customer' => true,
-            'active_portal' => 'customer',
-            'email_verified_at' => now(),
-        ]);
+        $user = $customer->user;
+        $user->email_verified_at = now();
+        $user->save();
 
-        $customer = Customer::create(['user_id' => $user->id]);
         $customer->permissions = Customer::customerPermissions();
         $customer->save();
 
-        $box = ChatBox::create([
-            'user_id' => $user->id,
+        $box = new ChatBox([
+            'user_id' => $business->customer_id,
+            'business_id' => $business->id,
             'from' => 'AgentA',
             'to' => '15550009001',
             'reply_by_customer' => true,
         ]);
+        $box->uid = (string) Str::uuid();
+        $box->save();
 
         $this->actingAs($user);
 
-        return [$customer, $box];
-    }
-
-    private function ensureRequiredAppConfigRowsExist(): void
-    {
-        $existing = AppConfig::whereIn('setting', ['license', 'customer_permissions', 'custom_script'])
-            ->pluck('setting')
-            ->all();
-
-        if (! in_array('license', $existing, true)) {
-            AppConfig::create(['setting' => 'license', 'value' => 'test-license-key']);
-        }
-
-        if (! in_array('custom_script', $existing, true)) {
-            AppConfig::create(['setting' => 'custom_script', 'value' => '']);
-        }
-
-        if (! in_array('customer_permissions', $existing, true)) {
-            $default = collect((new AppConfig())->defaultSettings())
-                ->firstWhere('setting', 'customer_permissions');
-
-            AppConfig::create($default);
-        }
+        return [$customer, $box, $business, $workspace];
     }
 }

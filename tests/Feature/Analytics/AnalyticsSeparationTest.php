@@ -86,7 +86,9 @@ class AnalyticsSeparationTest extends TestCase
 
         $this->assertStringNotContainsString(route('customer.prospecting.index'), $body, 'Agency Prospecting is a different scope and is never linked.');
         $this->assertStringContainsString(route('customer.workspaces.businesses.usage-billing.show', [$workspace->uid, $business->uid]), $body);
-        $this->assertStringContainsString(route('customer.chatbox.index'), $body);
+        // Slice 2B: Conversations are linked for THIS Business directly, not
+        // through the generic /chat-box chooser (still a link, never data).
+        $this->assertStringContainsString(route('customer.workspaces.businesses.conversations.index', [$workspace->uid, $business->uid]), $body);
         $this->assertStringContainsString('AI Business Advisor recommendations', $body);
     }
 }

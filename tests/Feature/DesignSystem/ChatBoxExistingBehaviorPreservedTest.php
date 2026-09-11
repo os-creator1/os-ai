@@ -2,11 +2,15 @@
 
 namespace Tests\Feature\DesignSystem;
 
-use App\Models\AppConfig;
+use App\Enums\Entitlement\WorkspacePlanTier;
+use App\Models\Business;
 use App\Models\ChatBox;
 use App\Models\Customer;
 use App\Models\User;
+use App\Models\Workspace;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Str;
+use Tests\Feature\Workspace\Concerns\CreatesCustomerContextFixtures;
 use Tests\TestCase;
 
 /**
@@ -24,10 +28,17 @@ use Tests\TestCase;
  * satisfy, and never asserts a stale 403 — this application's own
  * pre-existing Handler.php maps AuthorizationException to 401 outside
  * local mode, unchanged by this presentation pass.
+ *
+ * Customer Experience Redesign Slice 2B moved the inbox to `Account →
+ * selected Business → Conversations`. The tests pinning the old flat routes,
+ * endpoint strings and per-login resolver are updated in place — never
+ * deleted — to the Business-scoped equivalents; each says so in its own
+ * docblock. The presentation hooks this file protects are unchanged.
  */
 class ChatBoxExistingBehaviorPreservedTest extends TestCase
 {
     use RefreshDatabase;
+    use CreatesCustomerContextFixtures;
 
     protected function setUp(): void
     {
@@ -45,24 +56,33 @@ class ChatBoxExistingBehaviorPreservedTest extends TestCase
     }
 
     // -----------------------------------------------------------------
-    // Routes — exact 10 route names remain available
+    // Routes — the same 10 actions remain available
     // -----------------------------------------------------------------
 
+    /**
+     * Superseded by Customer Experience Redesign Slice 2B §7/§8, stated
+     * rather than hidden: the ten actions this test pinned now live in the
+     * Business-scoped family `customer.workspaces.businesses.conversations.*`.
+     * The eight flat POST names are retired; `customer.chatbox.index` and
+     * `customer.chatbox.new` survive only as GET compatibility redirectors.
+     * The property is unchanged — every one of the ten actions resolves.
+     */
     public function test_all_10_chatbox_route_names_still_resolve(): void
     {
-        $box = $this->ownedChatBox();
+        [, $box, $business, $workspace] = $this->authenticatedCustomerWithChatBox();
+        $pair = [$workspace->uid, $business->uid];
 
         $named = [
-            'customer.chatbox.index' => [],
-            'customer.chatbox.new' => [],
-            'customer.chatbox.sent' => [],
-            'customer.chatbox.messages' => [$box->uid],
-            'customer.chatbox.notification' => [$box->uid],
-            'customer.chatbox.reply' => [$box->uid],
-            'customer.chatbox.delete' => [$box->uid],
-            'customer.chatbox.block' => [$box->uid],
-            'customer.chatbox.pin' => [$box->uid],
-            'customer.chatbox.load' => [],
+            'customer.workspaces.businesses.conversations.index' => $pair,
+            'customer.workspaces.businesses.conversations.new' => $pair,
+            'customer.workspaces.businesses.conversations.sent' => $pair,
+            'customer.workspaces.businesses.conversations.messages' => [...$pair, $box->uid],
+            'customer.workspaces.businesses.conversations.notification' => [...$pair, $box->uid],
+            'customer.workspaces.businesses.conversations.reply' => [...$pair, $box->uid],
+            'customer.workspaces.businesses.conversations.delete' => [...$pair, $box->uid],
+            'customer.workspaces.businesses.conversations.block' => [...$pair, $box->uid],
+            'customer.workspaces.businesses.conversations.pin' => [...$pair, $box->uid],
+            'customer.workspaces.businesses.conversations.load' => $pair,
         ];
 
         foreach ($named as $name => $params) {
@@ -72,28 +92,50 @@ class ChatBoxExistingBehaviorPreservedTest extends TestCase
         }
 
         $this->assertCount(10, $named);
+
+        // The two compatibility redirectors, and nothing else, keep the
+        // old names.
+        $this->assertSame(url('/chat-box'), route('customer.chatbox.index'));
+        $this->assertSame(url('/chat-box/new'), route('customer.chatbox.new'));
     }
 
     // -----------------------------------------------------------------
     // AJAX endpoint URL construction — source-level
     // -----------------------------------------------------------------
 
+    /**
+     * Superseded by Slice 2B §7: every endpoint is now rendered by the
+     * server from the Business-scoped route family (one `conversationRoutes`
+     * map, uid substituted client-side) instead of being concatenated onto
+     * `url('/chat-box')`. The template picker uses B1's Business-scoped
+     * template endpoint.
+     */
     public function test_ajax_endpoint_url_constructions_are_unchanged(): void
     {
         $index = file_get_contents(base_path('resources/views/customer/ChatBox/index.blade.php'));
 
-        $this->assertStringContainsString('`{{ url(\'/chat-box\')}}/${chat_id}/messages`', $index);
-        $this->assertStringContainsString('"{{ url(\'/chat-box\') }}" + "/" + chatBoxId + "/reply"', $index);
-        $this->assertStringContainsString('"{{ url(\'/chat-box\')}}" + "/" + sms_id + "/delete"', $index);
-        $this->assertStringContainsString('"{{ url(\'/chat-box\')}}" + "/" + sms_id + "/block"', $index);
-        $this->assertStringContainsString('"{{ url(\'/chat-box\')}}" + "/" + sms_id + "/pin"', $index);
-        $this->assertStringContainsString('`{{ url(\'/chat-box\')}}/${chat_id}/notification`', $index);
-        $this->assertStringContainsString('"{{ url(\'/chat-box/load\') }}"', $index);
-        $this->assertStringContainsString('"{{ url(\'templates/show-data\')}}"', $index);
+        foreach (['messages', 'notification', 'reply', 'delete', 'block', 'pin'] as $action) {
+            $this->assertStringContainsString(
+                "{$action}: \"{{ route('customer.workspaces.businesses.conversations.{$action}', [\$workspaceUid, \$businessUid, '__UID__']) }}\"",
+                $index,
+            );
+        }
+
+        $this->assertStringContainsString("load: \"{{ route('customer.workspaces.businesses.conversations.load', [\$workspaceUid, \$businessUid]) }}\"", $index);
+        $this->assertStringContainsString("const conversationUrl = (name, uid) => conversationRoutes[name].replace('__UID__', encodeURIComponent(uid));", $index);
+
+        foreach (["conversationUrl('messages', chat_id)", "conversationUrl('reply', chatBoxId)", "conversationUrl('delete', sms_id)", "conversationUrl('block', sms_id)", "conversationUrl('pin', sms_id)", "conversationUrl('notification', chat_id)", 'url: conversationRoutes.load'] as $call) {
+            $this->assertStringContainsString($call, $index);
+        }
+
+        $this->assertStringNotContainsString("url('/chat-box", $index);
+        $this->assertStringNotContainsString("url('templates/show-data')", $index);
+        $this->assertStringContainsString("route('customer.workspaces.businesses.outreach.templates.show_data', [\$workspaceUid, \$businessUid, '__ID__'])", $index);
 
         $new = file_get_contents(base_path('resources/views/customer/ChatBox/new.blade.php'));
-        $this->assertStringContainsString('"{{ url(\'templates/show-data\')}}"', $new);
-        $this->assertStringContainsString("route('customer.chatbox.sent')", $new);
+        $this->assertStringNotContainsString("url('templates/show-data')", $new);
+        $this->assertStringContainsString("route('customer.workspaces.businesses.outreach.templates.show_data', [\$workspaceUid, \$businessUid, '__ID__'])", $new);
+        $this->assertStringContainsString("route('customer.workspaces.businesses.conversations.sent', [\$workspaceUid, \$businessUid])", $new);
     }
 
     // -----------------------------------------------------------------
@@ -148,7 +190,12 @@ class ChatBoxExistingBehaviorPreservedTest extends TestCase
             $contents
         );
         $this->assertStringContainsString('window.Echo = new Echo({', $contents);
-        $this->assertStringContainsString('Echo.private("chat").listen("MessageReceived"', $contents);
+
+        // Superseded by Slice 2B's realtime correction: the listener joins
+        // only the selected Business's private channel, never the global
+        // "chat" channel every customer used to share.
+        $this->assertStringContainsString('Echo.private(@json(\App\Events\MessageReceived::channelFor($businessUid))).listen("MessageReceived"', $contents);
+        $this->assertStringNotContainsString('Echo.private("chat")', $contents);
     }
 
     // -----------------------------------------------------------------
@@ -174,20 +221,19 @@ class ChatBoxExistingBehaviorPreservedTest extends TestCase
 
     public function test_pinned_and_ajax_lists_both_use_uid_for_data_id_and_retain_numeric_data_box_id(): void
     {
-        [$customer, $box] = $this->authenticatedCustomerWithChatBox();
+        [$customer, $box, $business, $workspace] = $this->authenticatedCustomerWithChatBox();
         $box->update(['pinned' => true]);
-        $unpinnedBox = ChatBox::create([
-            'user_id' => $customer->user_id, 'from' => 'AgentB', 'to' => '15550009003',
-            'reply_by_customer' => true,
-        ]);
+        $unpinnedBox = $this->businessChatBox($business, 'AgentB', '15550009003');
+        $pair = [$workspace->uid, $business->uid];
 
-        $indexResponse = $this->get(route('customer.chatbox.index'));
+        $indexResponse = $this->get(route('customer.workspaces.businesses.conversations.index', $pair));
         $indexResponse->assertOk();
         $indexResponse->assertSee('data-id="' . $box->uid . '"', false);
         $indexResponse->assertSee('data-box-id="' . $box->id . '"', false);
         $indexResponse->assertDontSee('data-id="' . $box->id . '"', false);
 
-        $ajaxResponse = $this->get(route('customer.chatbox.load'));
+        // Slice 2B: the list endpoint is POST-only (§7).
+        $ajaxResponse = $this->post(route('customer.workspaces.businesses.conversations.load', $pair));
         $ajaxResponse->assertOk();
         $ajaxResponse->assertSee('data-id="' . $unpinnedBox->uid . '"', false);
         $ajaxResponse->assertSee('data-box-id="' . $unpinnedBox->id . '"', false);
@@ -200,38 +246,48 @@ class ChatBoxExistingBehaviorPreservedTest extends TestCase
     // tests/Feature/Security/ChatBoxSecurityTest.php, run before this file)
     // -----------------------------------------------------------------
 
+    /**
+     * Superseded by Slice 2B §9: the controller is no longer untouched —
+     * the per-login resolveOwnedChatBox() became the Business-first chain
+     * (Workspace → Business → access → chat_box → entitlement → uid AND
+     * business_id). The same guarantees are asserted against the new
+     * shape: one resolver, the permission gate still present, block()'s
+     * Contacts update scoped (now by Business), and no raw chat_boxes query.
+     */
     public function test_resolve_owned_chatbox_and_authorize_gate_still_present_in_the_untouched_controller(): void
     {
         $contents = file_get_contents(base_path('app/Http/Controllers/Customer/ChatBoxController.php'));
 
-        $this->assertSame(1, substr_count($contents, 'function resolveOwnedChatBox'));
-        $this->assertSame(10, substr_count($contents, "authorize('chat_box')"));
-        $this->assertStringContainsString("Contacts::where('phone', \$box->to)->where('customer_id', Auth::id())", $contents);
+        $this->assertSame(0, substr_count($contents, 'function resolveOwnedChatBox'));
+        $this->assertSame(1, substr_count($contents, 'private function resolveBusinessChatBox('));
+        $this->assertSame(1, substr_count($contents, "authorize('chat_box')"), 'One gate, inside the single resolver every Business action runs through.');
+        $this->assertMatchesRegularExpression("/->where\('uid', \\\$uid\)\s*->where\('business_id', \\\$business->id\)/", $contents);
+        $this->assertMatchesRegularExpression("/Contacts::query\(\)\s*->where\('business_id', \\\$business->id\)/", $contents);
         $this->assertSame(0, substr_count($contents, "DB::table('chat_boxes')"));
     }
 
     public function test_foreign_chatbox_pin_is_still_denied_after_the_presentation_restyle(): void
     {
-        [$tenantA] = $this->authenticatedCustomerWithChatBox();
+        [, , $business, $workspace] = $this->authenticatedCustomerWithChatBox();
         $foreignBox = ChatBox::create([
             'user_id' => $this->anotherCustomerId(), 'from' => 'AgentC', 'to' => '15550009004',
             'reply_by_customer' => true,
         ]);
 
-        $response = $this->postJson(route('customer.chatbox.pin', $foreignBox->uid));
+        $response = $this->postJson(route('customer.workspaces.businesses.conversations.pin', [$workspace->uid, $business->uid, $foreignBox->uid]));
 
         $response->assertStatus(404);
     }
 
     public function test_missing_chat_box_permission_still_denies_messages_with_401(): void
     {
-        [$tenant, $box] = $this->authenticatedCustomerWithChatBox();
+        [, $box, $business, $workspace] = $this->authenticatedCustomerWithChatBox();
         $this->withSession(['permissions' => collect(['access_backend'])]);
 
         // Plain (non-JSON) request — this app's exception handler returns
         // 200 with a JSON error body for wantsJson() requests, so a
         // non-JSON request is required to observe the real 401 status.
-        $response = $this->post(route('customer.chatbox.messages', $box->uid));
+        $response = $this->post(route('customer.workspaces.businesses.conversations.messages', [$workspace->uid, $business->uid, $box->uid]));
 
         $response->assertStatus(401);
     }
@@ -308,45 +364,43 @@ class ChatBoxExistingBehaviorPreservedTest extends TestCase
     // Helpers
     // -----------------------------------------------------------------
 
-    private function ownedChatBox(): ChatBox
-    {
-        [, $box] = $this->authenticatedCustomerWithChatBox();
-
-        return $box;
-    }
-
     /**
-     * @return array{0: Customer, 1: ChatBox}
+     * Slice 2B: a conversation now belongs to a Business, so the fixture is
+     * a customer owning one Workspace + Business with a Business-scoped box.
+     *
+     * @return array{0: Customer, 1: ChatBox, 2: Business, 3: Workspace}
      */
     private function authenticatedCustomerWithChatBox(): array
     {
-        $this->ensureRequiredAppConfigRowsExist();
+        [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Core, 'Preserved Co ' . uniqid(), 'Preserved WS ' . uniqid());
 
-        $user = User::create([
-            'first_name' => 'Test',
-            'last_name' => 'Customer',
-            'email' => 'customer' . uniqid('', true) . '@example.test',
-            'status' => true,
-            'is_admin' => false,
-            'is_customer' => true,
-            'active_portal' => 'customer',
-            'email_verified_at' => now(),
-        ]);
+        $user = $customer->user;
+        $user->email_verified_at = now();
+        $user->save();
 
-        $customer = Customer::create(['user_id' => $user->id]);
         $customer->permissions = Customer::customerPermissions();
         $customer->save();
 
-        $box = ChatBox::create([
-            'user_id' => $user->id,
-            'from' => 'AgentA',
-            'to' => '15550009005',
-            'reply_by_customer' => true,
-        ]);
+        $box = $this->businessChatBox($business, 'AgentA', '15550009005');
 
         $this->actingAs($user);
 
-        return [$customer, $box];
+        return [$customer, $box, $business, $workspace];
+    }
+
+    private function businessChatBox(Business $business, string $from, string $to): ChatBox
+    {
+        $box = new ChatBox([
+            'user_id' => $business->customer_id,
+            'business_id' => $business->id,
+            'from' => $from,
+            'to' => $to,
+            'reply_by_customer' => true,
+        ]);
+        $box->uid = (string) Str::uuid();
+        $box->save();
+
+        return $box;
     }
 
     private function anotherCustomerId(): int
@@ -364,27 +418,5 @@ class ChatBoxExistingBehaviorPreservedTest extends TestCase
         Customer::create(['user_id' => $user->id]);
 
         return $user->id;
-    }
-
-    private function ensureRequiredAppConfigRowsExist(): void
-    {
-        $existing = AppConfig::whereIn('setting', ['license', 'customer_permissions', 'custom_script'])
-            ->pluck('setting')
-            ->all();
-
-        if (! in_array('license', $existing, true)) {
-            AppConfig::create(['setting' => 'license', 'value' => 'test-license-key']);
-        }
-
-        if (! in_array('custom_script', $existing, true)) {
-            AppConfig::create(['setting' => 'custom_script', 'value' => '']);
-        }
-
-        if (! in_array('customer_permissions', $existing, true)) {
-            $default = collect((new AppConfig())->defaultSettings())
-                ->firstWhere('setting', 'customer_permissions');
-
-            AppConfig::create($default);
-        }
     }
 }

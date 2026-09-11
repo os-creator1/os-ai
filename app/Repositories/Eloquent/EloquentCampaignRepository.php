@@ -673,8 +673,33 @@
 
                     if ($sending_server->two_way && isset($input['originator']) && $input['originator'] == 'phone_number' && ($sms_type == 'plain' || $sms_type == 'unicode' || $sms_type == 'mms')) {
 
+                        // Customer Experience Redesign Slice 2B §5 — the
+                        // Business is part of the conversation's IDENTITY, not
+                        // only a column written on it. Keying without it would
+                        // let the same user/from/to/server in Business A
+                        // collapse into Business B's thread.
+                        //
+                        // Read from the value B1 and the Business-scoped
+                        // ChatBox routes already thread in, never re-derived
+                        // from the actor or guessed. A caller that supplies
+                        // none keys on business_id IS NULL — an ordinary
+                        // equality match that can never collide with a
+                        // Business-scoped row.
+                        //
+                        // `conversation_business_id` is the inbound keyword
+                        // auto-reply's way in (DLRController::inboundDLR()).
+                        // It is read HERE ONLY: `business_id` elsewhere in this
+                        // method also selects managed transport, re-scopes the
+                        // blacklist and gates the sending server, and an
+                        // auto-reply's delivery must not change merely because
+                        // it now joins the right conversation.
+                        //
+                        // Orientation is the domain one: `from` is the
+                        // Business's own sender identity, `to` the typed
+                        // recipient.
                         $chatbox = ChatBox::firstOrNew([
                             'user_id'           => $user->id,
+                            'business_id'       => $input['business_id'] ?? $input['conversation_business_id'] ?? null,
                             'from'              => $sender_id,
                             'to'                => $phone,
                             'sending_server_id' => $sending_server->id,
@@ -701,7 +726,14 @@
                             'sms_type'          => 'plain',
                             'sending_server_id' => $sending_server->id,
                             'media_url'         => $input['media_url'] ?? null,
-                            'send_by'           => $user->id,
+                            // Slice 2B §12 — `send_by` is enum('from','to'):
+                            // WHICH SIDE of the box sent the message, mirroring
+                            // `direction`. This wrote a user id into it, which
+                            // is not a member of the enum at all. An outgoing
+                            // message is sent by the box's own `from` side.
+                            // Historical rows are deliberately left as they
+                            // are; this only stops new corruption.
+                            'send_by'           => 'from',
                         ]);
 
                         $chatbox->update([

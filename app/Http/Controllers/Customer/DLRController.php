@@ -909,10 +909,41 @@
                 // conversation keep the uid it already has: replaying an
                 // inbound message must not re-issue a new identifier for a
                 // conversation that already exists.
+                //
+                // Customer Experience Redesign Slice 2B §5 — which Business
+                // this conversation belongs to, taken from the one
+                // authoritative fact this callback has: the number that
+                // RECEIVED the message. Slice 3 already narrowed that lookup
+                // to exactly one assigned number, and the number itself
+                // carries its Business.
+                //
+                // Deliberately NOT LegacyBusinessResolver, which the Reports
+                // row above still uses: it knows only the customer, so for a
+                // customer with several Businesses it falls back to the
+                // PRIMARY one — which is exactly the guess that would drop a
+                // Business B conversation into Business A's inbox. Where the
+                // receiving number carries no Business, or one that is not
+                // this customer's, the conversation stays NULL: kept, and
+                // visible from no Business route, rather than misfiled.
+                $conversationBusinessId = null;
+
+                if ($phone_number->business_id !== null
+                    && \App\Models\Business::query()
+                        ->whereKey((int) $phone_number->business_id)
+                        ->where('customer_id', (int) $user_id)
+                        ->exists()) {
+                    $conversationBusinessId = (int) $phone_number->business_id;
+                }
+
+                // Domain orientation, unchanged: `from` is the Business's own
+                // receiving number and `to` the external sender, exactly as
+                // an outbound send writes them — so the contact's reply and
+                // the Business's send converge on one thread.
                 $chatBox = ChatBox::firstOrNew([
-                    'user_id' => $user_id,
-                    'from'    => $from,
-                    'to'      => $to,
+                    'user_id'     => $user_id,
+                    'business_id' => $conversationBusinessId,
+                    'from'        => $from,
+                    'to'          => $to,
                 ]);
 
                 if (! $chatBox->exists) {
@@ -922,6 +953,26 @@
                 $chatBox->reply_by_customer = true;
                 $chatBox->sending_server_id = $sending_server->id;
                 $chatBox->save();
+
+                // Slice 2B §5 — keyword auto-replies below are part of THIS
+                // conversation, so they must land on the same thread the
+                // inbound message just opened, not in a separate box.
+                //
+                // They carry the Business through `conversation_business_id`,
+                // which quickSend() reads ONLY for the conversation's
+                // identity — never `business_id`, which there also switches
+                // transport to managed messaging, re-scopes the blacklist and
+                // gates the sending server. An auto-reply's delivery must not
+                // change because Conversations became Business-scoped.
+                //
+                // Attributed only when the reply goes out from the very number
+                // that was messaged; a reply from any other number is a
+                // different conversation and is not guessed into this one.
+                $autoReplyBusinessId = static function ($senderId) use ($from, $conversationBusinessId): ?int {
+                    $normalized = str_replace(['(', ')', '+', '-', ' '], '', trim((string) $senderId));
+
+                    return $normalized !== '' && $normalized === $from ? $conversationBusinessId : null;
+                };
                 
                 
                 
@@ -1110,14 +1161,23 @@ $chatBox->touch();
                         ->where('customer_id', $user_id)
                         ->get();
 
-                    $optOutContacts = ContactGroups::with('optoutKeywords')
-                        ->whereHas('optoutKeywords', function ($query) use ($message) {
-                            $query->where('keyword', $message);
-                        })
-                        ->where('customer_id', $user_id)
-                        ->get();
+                    // Slice 2B — an opt-out acts inside the Business that
+                    // received it, never across the customer's other
+                    // Businesses; see optOutScope().
+                    $optOutContacts = self::optOutScope(
+                        ContactGroups::with('optoutKeywords')
+                            ->whereHas('optoutKeywords', function ($query) use ($message) {
+                                $query->where('keyword', $message);
+                            }),
+                        'customer_id', (int) $user_id, $conversationBusinessId,
+                    )->get();
 
-                    $blacklist = Blacklists::where('user_id', $user_id)->where('number', $to)->first();
+                    // Scoped the same way: another Business's blacklist row
+                    // for this number must neither suppress this Business's
+                    // opt-out nor be removed by this Business's opt-in.
+                    $blacklist = self::optOutScope(Blacklists::query(), 'user_id', (int) $user_id, $conversationBusinessId)
+                        ->where('number', $to)
+                        ->first();
 
                     if ($optInContacts->count()) {
                         foreach ($optInContacts as $contact) {
@@ -1148,6 +1208,7 @@ $chatBox->touch();
                                             $sendMessage->quickSend($campaign, [
                                                 'phone_number'   => $keyword->sender_id,
                                                 'sender_id'      => $keyword->sender_id,
+                                                'conversation_business_id' => $autoReplyBusinessId($keyword->sender_id),
                                                 'originator'     => 'phone_number',
                                                 'sms_type'       => $sms_type,
                                                 'message'        => $keyword_message,
@@ -1165,6 +1226,7 @@ $chatBox->touch();
                                             $sendMessage->quickSend($campaign, [
                                                 'phone_number'   => $contact->sender_id,
                                                 'sender_id'      => $contact->sender_id,
+                                                'conversation_business_id' => $autoReplyBusinessId($contact->sender_id),
                                                 'originator'     => 'phone_number',
                                                 'sms_type'       => $sms_type,
                                                 'message'        => $contact->welcome_sms,
@@ -1187,6 +1249,7 @@ $chatBox->touch();
                                 $sendMessage->quickSend($campaign, [
                                     'phone_number'   => $keyword->sender_id,
                                     'sender_id'      => $keyword->sender_id,
+                                    'conversation_business_id' => $autoReplyBusinessId($keyword->sender_id),
                                     'sms_type'       => $sms_type,
                                     'message'        => __('locale.contacts.you_have_already_subscribed', ['contact_group' => $contact->name]),
                                     'country_code'   => $country_code,
@@ -1208,16 +1271,14 @@ $chatBox->touch();
                         foreach ($optOutContacts as $contact) {
 
                             if ( ! $blacklist) {
-                                $exist = Contacts::where('group_id', $contact->id)->where('phone', $to)->first();
+                                $exist = self::optOutScope(
+                                    Contacts::where('group_id', $contact->id)->where('phone', $to),
+                                    'customer_id', (int) $user_id, $conversationBusinessId,
+                                )->first();
+
                                 if ($exist) {
 
-                                    $chatbox_messages = ChatBox::where('user_id', $user_id)->where('to', $to)->get();
-                                    foreach ($chatbox_messages as $messages) {
-                                        $check_delete = ChatBoxMessage::where('box_id', $messages->id)->delete();
-                                        if ($check_delete) {
-                                            $messages->delete();
-                                        }
-                                    }
+                                    self::deleteOptedOutConversations((int) $user_id, $conversationBusinessId, $to);
 
                                     $sendMessage = new EloquentCampaignRepository($campaign = new Campaigns());
 
@@ -1229,6 +1290,7 @@ $chatBox->touch();
                                             $sendMessage->quickSend($campaign, [
                                                 'phone_number'   => $keyword->sender_id,
                                                 'sender_id'      => $keyword->sender_id,
+                                                'conversation_business_id' => $autoReplyBusinessId($keyword->sender_id),
                                                 'originator'     => 'phone_number',
                                                 'sms_type'       => $sms_type,
                                                 'message'        => $keyword_message,
@@ -1245,6 +1307,7 @@ $chatBox->touch();
                                             $sendMessage->quickSend($campaign, [
                                                 'phone_number'   => $contact->sender_id,
                                                 'sender_id'      => $contact->sender_id,
+                                                'conversation_business_id' => $autoReplyBusinessId($contact->sender_id),
                                                 'originator'     => 'phone_number',
                                                 'sms_type'       => $sms_type,
                                                 'message'        => $contact->unsubscribe_sms,
@@ -1261,9 +1324,13 @@ $chatBox->touch();
                                         'status' => 'unsubscribe',
                                     ]);
                                     if ($data) {
+                                        // Slice 2B — the Business that received
+                                        // the opt-out, or NULL when none is
+                                        // authoritative; never the customer's
+                                        // primary Business, which is a guess.
                                         Blacklists::create([
                                             'user_id'     => $user_id,
-                                            'business_id' => app(LegacyBusinessResolver::class)->resolveForCustomer((int) $user_id)?->id,
+                                            'business_id' => $conversationBusinessId,
                                             'number'      => $to,
                                             'reason'      => 'Optout by User',
                                         ]);
@@ -1282,6 +1349,7 @@ $chatBox->touch();
                             $sendMessage->quickSend($campaign, [
                                 'phone_number'   => $keyword->sender_id,
                                 'sender_id'      => $keyword->sender_id,
+                                'conversation_business_id' => $autoReplyBusinessId($keyword->sender_id),
                                 'originator'     => 'phone_number',
                                 'sms_type'       => $sms_type,
                                 'message'        => $keyword_message,
@@ -1334,27 +1402,37 @@ $chatBox->touch();
             }
 
 
+            // Customer Experience Redesign Slice 2B — STOP acts inside the
+            // Business whose number received it. It used to key on the
+            // customer alone: a STOP to Business A deleted Business B's
+            // conversation with the same person, an existing blacklist row in
+            // B suppressed A's opt-out entirely, the row it did create was
+            // filed under the customer's PRIMARY Business (a guess), and the
+            // messages were deleted only after their parent boxes were gone,
+            // by a whereHas() that could no longer match them.
+            //
+            // Reached only for an attributed number (the unattributed branch
+            // above returns), so $conversationBusinessId is set here: the
+            // receiving number's own Business, or NULL when none is
+            // authoritative — in which case only NULL-business rows are ever
+            // touched (optOutScope()). `$to` is the external sender; the
+            // Business's own number (`$from`) is never an opt-out target.
             if (strtolower($message) == 'stop') {
-                $blacklist = Blacklists::where('user_id', $user_id)
+                $blacklist = self::optOutScope(Blacklists::query(), 'user_id', (int) $user_id, $conversationBusinessId)
                     ->where('number', $to)
                     ->first();
 
                 if ( ! $blacklist) {
-                    Blacklists::create([
-                        'user_id'     => $user_id,
-                        'business_id' => app(LegacyBusinessResolver::class)->resolveForCustomer((int) $user_id)?->id,
-                        'number'      => $to,
-                        'reason'      => 'Optout by User',
-                    ]);
+                    DB::transaction(function () use ($user_id, $conversationBusinessId, $to) {
+                        Blacklists::create([
+                            'user_id'     => $user_id,
+                            'business_id' => $conversationBusinessId,
+                            'number'      => $to,
+                            'reason'      => 'Optout by User',
+                        ]);
 
-                    ChatBox::where('user_id', $user_id)
-                        ->where('to', $to)
-                        ->delete();
-
-                    ChatBoxMessage::whereHas('chatBox', function ($query) use ($user_id, $to) {
-                        $query->where('user_id', $user_id)
-                            ->where('to', $to);
-                    })->delete();
+                        self::deleteOptedOutConversations((int) $user_id, $conversationBusinessId, $to);
+                    });
                 }
             }
 
@@ -1363,6 +1441,58 @@ $chatBox->touch();
             }
 
             return $failed;
+        }
+
+        /**
+         * Customer Experience Redesign Slice 2B — the only rows an inbound
+         * opt-out (STOP, or an opt-out keyword) may read or change.
+         *
+         * With an authoritative Business — the receiving number's own,
+         * proven to belong to the attributed customer — that Business's rows,
+         * whoever else shares the external number. Without one, only the
+         * customer's NULL-business rows: legacy data keeps its old opt-out
+         * behaviour, and a Business-owned row is never touched on a guess.
+         *
+         * @template TQuery of \Illuminate\Database\Eloquent\Builder
+         *
+         * @param  TQuery  $query
+         * @param  string  $ownerColumn  the customer column of that table (user_id / customer_id)
+         * @return TQuery
+         */
+        private static function optOutScope($query, string $ownerColumn, int $userId, ?int $businessId)
+        {
+            return $businessId !== null
+                ? $query->where('business_id', $businessId)
+                : $query->where($ownerColumn, $userId)->whereNull('business_id');
+        }
+
+        /**
+         * Slice 2B — remove the opted-out person's conversations, in scope
+         * only (optOutScope()), keyed on `to`: the external party, never the
+         * Business's own number.
+         *
+         * The exact box ids are resolved first; then messages go before their
+         * boxes, in one transaction. The chat_box_messages → chat_boxes FK
+         * also cascades on MySQL, but correctness does not rest on it: the
+         * old STOP path deleted the boxes first and then looked their
+         * messages up THROUGH the deleted boxes, so without the cascade every
+         * message would have been orphaned.
+         */
+        private static function deleteOptedOutConversations(int $userId, ?int $businessId, string $to): void
+        {
+            $boxIds = self::optOutScope(ChatBox::query(), 'user_id', $userId, $businessId)
+                ->where('to', $to)
+                ->pluck('id')
+                ->all();
+
+            if ($boxIds === []) {
+                return;
+            }
+
+            DB::transaction(function () use ($boxIds): void {
+                ChatBoxMessage::query()->whereIn('box_id', $boxIds)->delete();
+                ChatBox::query()->whereIn('id', $boxIds)->delete();
+            });
         }
 
         /**

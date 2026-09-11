@@ -271,7 +271,7 @@
                 <x-card title="Related">
                     <div class="d-flex flex-wrap gap-2">
                         <x-button variant="outline" size="sm" icon="credit-card" :href="route('customer.workspaces.businesses.usage-billing.show', [$workspaceUid, $businessUid])">Usage &amp; Billing</x-button>
-                        <x-button variant="outline" size="sm" icon="message-square" :href="route('customer.chatbox.index')">Conversations</x-button>
+                        <x-button variant="outline" size="sm" icon="message-square" :href="route('customer.workspaces.businesses.conversations.index', [$workspaceUid, $businessUid])">Conversations</x-button>
                     </div>
                 </x-card>
             </div>

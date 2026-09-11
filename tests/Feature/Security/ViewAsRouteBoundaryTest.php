@@ -236,7 +236,10 @@ class ViewAsRouteBoundaryTest extends TestCase
         // Reachable before viewing…
         $this->get(route('customer.workspaces.show', $workspace->uid))->assertOk();
         $this->get(route('customer.contacts.index'))->assertOk();
-        $this->get(route('customer.chatbox.index'))->assertOk();
+        // Slice 2B: the flat inbox is now a compatibility redirector. With
+        // two Businesses it never guesses one — it sends the actor to the
+        // chooser. Reachable, just no longer a page of its own.
+        $this->get(route('customer.chatbox.index'))->assertRedirect(route('customer.workspaces.index'));
 
         $this->startViewAs($workspace, $viewed)->assertRedirect(route('user.home'));
 
