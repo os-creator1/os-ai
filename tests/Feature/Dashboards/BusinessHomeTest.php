@@ -570,27 +570,28 @@ class BusinessHomeTest extends TestCase
         $actions = $this->quickActionKeys($html);
 
         $this->assertLessThanOrEqual(4, count($actions));
-        $this->assertSame(['send', 'inbox', 'add_contact', 'add_funds'], $actions, 'The payer\'s Add funds takes the fourth place before a setup action.');
+        $this->assertSame(['inbox', 'add_contact', 'add_funds', 'publish_website'], $actions, 'No "Send a message" (Messages is Inbox only); the payer\'s Add funds comes before the setup action.');
+        $this->assertStringNotContainsString('outreach', $this->bandHtml($html, 'actions'), 'Home never links the legacy Send or Campaigns pages.');
         $this->assertStringContainsString(
             'href="' . route('customer.workspaces.businesses.conversations.index', [$workspace->uid, $business->uid]) . '"',
             $this->bandHtml($html, 'actions'),
         );
     }
 
-    public function test_a_setup_action_takes_the_fourth_place_only_when_its_status_column_proves_it(): void
+    public function test_a_setup_action_is_offered_only_when_its_status_column_proves_it(): void
     {
         [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth, 'Setup Venue', 'Setup Account');
         $this->authenticateAs($customer);
 
-        $this->assertSame(['send', 'inbox', 'add_contact'], $this->quickActionKeys($this->home()->assertOk()->getContent()), 'No wallet, nothing to set up: three actions.');
+        $this->assertSame(['inbox', 'add_contact'], $this->quickActionKeys($this->home()->assertOk()->getContent()), 'No wallet, nothing to set up: two actions.');
 
         $this->website($business, 'draft');
         $html = $this->home()->assertOk()->getContent();
-        $this->assertSame(['send', 'inbox', 'add_contact', 'publish_website'], $this->quickActionKeys($html));
+        $this->assertSame(['inbox', 'add_contact', 'publish_website'], $this->quickActionKeys($html));
 
         $this->website($business, 'published');
         $this->googleConnection($business, GoogleConnectionState::Revoked);
-        $this->assertSame(['send', 'inbox', 'add_contact', 'reconnect_google'], $this->quickActionKeys($this->home()->assertOk()->getContent()));
+        $this->assertSame(['inbox', 'add_contact', 'reconnect_google'], $this->quickActionKeys($this->home()->assertOk()->getContent()));
     }
 
     // =================================================================

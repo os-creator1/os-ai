@@ -999,8 +999,6 @@ or account identifier returns **404, never 403**.
   Home                                   user.home
   Messages                               group
     Inbox                                customer.chatbox.index          (Business-scoped after Slice 2)
-    Send                                 …businesses.outreach.index
-    Campaigns                            …businesses.outreach.campaigns
     Templates                            customer.templates.index
   Contacts                               …businesses.contacts.index
   Automations                            …businesses.automations.index
@@ -1029,6 +1027,15 @@ No *Workspaces* entry. No *Sending*, *Sender ID*, *Numbers*, *Keywords*,
 *Developers*, *Channels* or *Advanced* group at all — those are Agency-only
 (§8.4). *Get found* is emitted only when
 `google_business_profile_module` is entitled, which excludes Core.
+
+**Messages is Inbox only** (product decision after preview testing, 2026-09-12).
+*Send* (`…businesses.outreach.index`) and *Campaigns*
+(`…businesses.outreach.campaigns`) are legacy outbound surfaces, not a
+local-business workflow: they are no longer offered in the menu or as a Home
+quick action. Their routes and controllers stay registered until retention
+removes them. Agency outbound prospecting is *Prospecting* in the Agency
+account frame (§8.4), never part of a client Business's Messages; a selected
+Agency client Business gets the same Messages → Inbox as any other Business.
 
 ### 8.3 Core and Growth customer — mobile, below 768px
 
@@ -1135,8 +1142,8 @@ are supplied so it stops printing raw keys.
 | Workspaces | **Account** / **Client accounts** | §3.2 |
 | Workspace overview | **Account overview** / **Agency account** | §3.2 |
 | Conversations, Chat Box | **Inbox**, under Messages | plain language |
-| Campaigns | **Campaigns**, under Messages | grouping |
-| Outreach, Compose | **Send**, under Messages | plain language |
+| Campaigns | *(no longer a customer destination — §8.2)* | legacy outbound |
+| Outreach, Compose | *(no longer a customer destination — §8.2)* | legacy outbound |
 | Channels, Messaging Channels | **Messaging provider**, Agency Advanced only | §3.2, D-9 |
 | Sender ID | **Sender identities**, Agency Advanced only | §3.2 |
 | Sending Server | removed from customer copy entirely | §3.2, D-10 |
