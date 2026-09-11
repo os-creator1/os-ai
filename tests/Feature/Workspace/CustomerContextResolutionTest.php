@@ -29,7 +29,7 @@ class CustomerContextResolutionTest extends TestCase
     use RefreshDatabase;
     use CreatesCustomerContextFixtures;
 
-    private const BUSINESS_FRAME_KEYS = ['home', 'messages', 'inbox', 'send', 'campaigns', 'contacts', 'automations', 'website', 'gbp', 'analytics', 'settings'];
+    private const BUSINESS_FRAME_KEYS = ['home', 'messages', 'inbox', 'contacts', 'automations', 'website', 'gbp', 'analytics', 'settings'];
 
     private const ACCOUNT_FRAME_ONLY_KEYS = ['accounts', 'prospecting'];
 
@@ -61,8 +61,9 @@ class CustomerContextResolutionTest extends TestCase
         $response->assertDontSee('customer-context-switcher-toggle', false);
         $this->assertStringContainsString($business->name, $this->shellText($html));
 
-        // E-11: the campaigns entry targets the ONE canonical campaign list.
-        $this->assertContains(route('customer.workspaces.businesses.outreach.campaigns', [$workspace->uid, $business->uid]), $this->menuLinks($html));
+        // E-11 is moot now that Messages is Inbox only: neither the canonical
+        // campaign list nor the bare legacy entry is a menu destination.
+        $this->assertNotContains(route('customer.workspaces.businesses.outreach.campaigns', [$workspace->uid, $business->uid]), $this->menuLinks($html));
         $this->assertNotContains(url('outreach/campaigns'), $this->menuLinks($html));
     }
 
@@ -163,7 +164,7 @@ class CustomerContextResolutionTest extends TestCase
         $keys = $this->menuKeys($html);
 
         $this->assertContains('analytics', $keys);
-        $this->assertContains('campaigns', $keys);
+        $this->assertContains('inbox', $keys);
         $response->assertSee('data-role="context-identity"', false);
         $response->assertDontSee('customer-context-switcher-toggle', false);
         $this->assertStringContainsString('Assigned Client', $this->shellText($html));
@@ -363,8 +364,11 @@ class CustomerContextResolutionTest extends TestCase
         $this->assertNotContains('accounts', $this->menuKeys($analytics->getContent()));
         $this->assertSame(1, substr_count($this->sidebarHtml($analytics->getContent()), 'aria-current="page"'));
 
+        // The legacy campaigns page is no longer a menu destination, so it
+        // marks nothing active — least of all an Account-frame item.
         $campaigns = $this->get(route('customer.workspaces.businesses.outreach.campaigns', [$workspace->uid, $clientTwo->uid]))->assertOk();
-        $this->assertSame(['campaigns'], $this->activeMenuKeys($campaigns->getContent()));
+        $this->assertSame([], $this->activeMenuKeys($campaigns->getContent()));
+        $this->assertNotContains('accounts', $this->menuKeys($campaigns->getContent()));
 
         $team = $this->get(route('customer.workspaces.show', $workspace->uid))->assertOk();
         $this->assertSame(['team'], $this->activeMenuKeys($team->getContent()), 'The Workspace page is reached as Settings → Team inside the Business frame, never as an Account-frame item.');
