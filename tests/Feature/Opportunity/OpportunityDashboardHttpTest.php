@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Opportunity;
 
+use App\Enums\Business\BusinessStatus;
 use App\Enums\Opportunity\OpportunityActionExecutionStatus;
 use App\Enums\Opportunity\OpportunityCompletionPolicy;
 use App\Library\Opportunity\OpportunityActionHash;
@@ -11,19 +12,41 @@ use App\Models\Customer;
 use App\Repositories\Contracts\BusinessRepository;
 use App\Repositories\Contracts\OpportunityRepository;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Testing\TestResponse;
 use Mockery;
 use Tests\Feature\Opportunity\Concerns\CreatesOpportunityTestData;
 use Tests\TestCase;
 
 /**
- * RFC-002 Milestone 4 customer HTTP Slice 1B — the dashboard top-5
- * Opportunity panel only. No mutation, navigation, or polling behavior is
+ * RFC-002 Milestone 4 customer HTTP Slice 1B — the Advisor's presence on the
+ * customer dashboard. No mutation, navigation, or polling behavior is
  * exercised here.
+ *
+ * Re-pointed by Customer Experience Slice 4 (docs/automation/CUSTOMER-
+ * EXPERIENCE-REDESIGN-SLICE-4-DASHBOARD.md §3, §6, §18 #16–#18). The
+ * sole-Business top-5 panel is gone; the Business Home's "Recommended next
+ * steps" band replaced it:
+ *
+ *  - it renders for the Business the CustomerContext resolved, so the
+ *    fixture Business is made Active through BusinessRepository::updateStatus()
+ *    — the resolver never selects a draft Business, and that is not weakened;
+ *  - it reads OpportunityRepository::paginateForCustomer(selected Business,
+ *    status = open, freshness = current) and shows the first five;
+ *  - awaiting approval, in progress, snoozed, completed, dismissed and stale
+ *    recommendations never appear;
+ *  - it is ABSENT, not an empty card, when nothing is eligible, and never read
+ *    at all while opportunity.enabled is false.
+ *
+ * Every exclusion test also renders an eligible control recommendation, so an
+ * absent band can never make an exclusion pass vacuously. The escaping and
+ * no-leakage assertions are unchanged.
  */
 class OpportunityDashboardHttpTest extends TestCase
 {
     use RefreshDatabase;
     use CreatesOpportunityTestData;
+
+    private const CONTROL_TITLE = 'Eligible Control Recommendation';
 
     protected function setUp(): void
     {
@@ -32,7 +55,7 @@ class OpportunityDashboardHttpTest extends TestCase
         config()->set('opportunity.enabled', true);
     }
 
-    public function test_enabled_customer_with_business_sees_the_panel(): void
+    public function test_enabled_customer_with_business_sees_recommended_next_steps(): void
     {
         $business = $this->actingAsCustomerWithBusiness();
         $this->createOpportunity($business, ['title' => 'Add your business phone number']);
@@ -40,11 +63,18 @@ class OpportunityDashboardHttpTest extends TestCase
         $response = $this->get(route('user.home'));
 
         $response->assertOk();
-        $response->assertSee('Opportunities');
-        $response->assertSee('Add your business phone number');
+        $response->assertSee('data-band="recommendations"', false);
+        $response->assertSee('Recommended next steps');
+        $this->assertStringContainsString('Add your business phone number', $this->bandHtml($response));
     }
 
-    public function test_panel_contains_at_most_exactly_5_rows_when_more_eligible_rows_exist(): void
+    /**
+     * The band reads the CURRENT repository path — paginateForCustomer() for
+     * the selected Business, open and current only — and renders no more
+     * than five of its rows. The call is observed on the real repository,
+     * never replaced.
+     */
+    public function test_at_most_five_recommendations_render_from_the_current_repository_read(): void
     {
         $business = $this->actingAsCustomerWithBusiness();
 
@@ -56,11 +86,22 @@ class OpportunityDashboardHttpTest extends TestCase
             ]);
         }
 
+        $real = app(OpportunityRepository::class);
+        $observed = Mockery::mock(OpportunityRepository::class);
+        $observed->shouldReceive('paginateForCustomer')
+            ->once()
+            ->with(Mockery::on(fn ($candidate) => $candidate instanceof Business && (int) $candidate->id === (int) $business->id), ['status' => 'open', 'freshness' => 'current'])
+            ->andReturnUsing(fn (Business $selected, array $filters) => $real->paginateForCustomer($selected, $filters));
+        $this->app->instance(OpportunityRepository::class, $observed);
+
         $response = $this->get(route('user.home'));
         $response->assertOk();
+        $band = $this->bandHtml($response);
+
+        $this->assertSame(5, substr_count($band, 'data-role="recommendation"'), 'No more than five recommendations render.');
 
         foreach (range(0, 4) as $i) {
-            $response->assertSee('Panel Row ' . $i);
+            $this->assertStringContainsString('Panel Row ' . $i, $band);
         }
 
         foreach (range(5, 7) as $i) {
@@ -68,66 +109,69 @@ class OpportunityDashboardHttpTest extends TestCase
         }
     }
 
-    public function test_ordering_matches_top_for_customer_result_order(): void
+    /**
+     * The rendered order is exactly the order paginateForCustomer() returns
+     * for the selected Business (priority, then impact, urgency, first
+     * detection) — never the deleted topForCustomer() panel order.
+     */
+    public function test_ordering_matches_the_current_paginate_for_customer_order(): void
     {
         $business = $this->actingAsCustomerWithBusiness();
         $this->createOpportunity($business, ['title' => 'Low Priority Panel Item', 'priority_score' => 10]);
         $this->createOpportunity($business, ['title' => 'High Priority Panel Item', 'priority_score' => 90]);
+        $this->createOpportunity($business, ['title' => 'Middle Priority High Impact Item', 'priority_score' => 50, 'impact' => 5]);
+        $this->createOpportunity($business, ['title' => 'Middle Priority Low Impact Item', 'priority_score' => 50, 'impact' => 1]);
+
+        $expected = collect(app(OpportunityRepository::class)->paginateForCustomer($business, ['status' => 'open', 'freshness' => 'current'])->items())
+            ->take(5)
+            ->pluck('title')
+            ->all();
+
+        $this->assertSame(['High Priority Panel Item', 'Middle Priority High Impact Item', 'Middle Priority Low Impact Item', 'Low Priority Panel Item'], $expected);
 
         $response = $this->get(route('user.home'));
-        $body = $response->getContent();
-
         $response->assertOk();
-        $highPosition = strpos($body, 'High Priority Panel Item');
-        $lowPosition = strpos($body, 'Low Priority Panel Item');
+        $band = $this->bandHtml($response);
 
-        $this->assertNotFalse($highPosition);
-        $this->assertNotFalse($lowPosition);
-        $this->assertLessThan($lowPosition, $highPosition);
+        $positions = array_map(fn (string $title) => strpos($band, $title), $expected);
+
+        foreach ($positions as $position) {
+            $this->assertNotFalse($position);
+        }
+
+        $sorted = $positions;
+        sort($sorted);
+        $this->assertSame($sorted, $positions, 'Rendered in paginateForCustomer() order.');
     }
 
     public function test_stale_opportunities_do_not_appear(): void
     {
-        $business = $this->actingAsCustomerWithBusiness();
-        $this->createOpportunity($business, ['title' => 'Stale Panel Item', 'freshness' => 'stale']);
-
-        $response = $this->get(route('user.home'));
-
-        $response->assertOk();
-        $response->assertDontSee('Stale Panel Item');
+        $this->assertOnlyTheControlAppears(['title' => 'Stale Panel Item', 'freshness' => 'stale'], 'Stale Panel Item');
     }
 
     public function test_snoozed_opportunities_do_not_appear(): void
     {
-        $business = $this->actingAsCustomerWithBusiness();
-        $this->createOpportunity($business, ['title' => 'Snoozed Panel Item', 'status' => 'snoozed']);
-
-        $response = $this->get(route('user.home'));
-
-        $response->assertOk();
-        $response->assertDontSee('Snoozed Panel Item');
+        $this->assertOnlyTheControlAppears(['title' => 'Snoozed Panel Item', 'status' => 'snoozed'], 'Snoozed Panel Item');
     }
 
     public function test_completed_opportunities_do_not_appear(): void
     {
-        $business = $this->actingAsCustomerWithBusiness();
-        $this->createOpportunity($business, ['title' => 'Completed Panel Item', 'status' => 'completed']);
-
-        $response = $this->get(route('user.home'));
-
-        $response->assertOk();
-        $response->assertDontSee('Completed Panel Item');
+        $this->assertOnlyTheControlAppears(['title' => 'Completed Panel Item', 'status' => 'completed'], 'Completed Panel Item');
     }
 
     public function test_dismissed_opportunities_do_not_appear(): void
     {
-        $business = $this->actingAsCustomerWithBusiness();
-        $this->createOpportunity($business, ['title' => 'Dismissed Panel Item', 'status' => 'dismissed']);
+        $this->assertOnlyTheControlAppears(['title' => 'Dismissed Panel Item', 'status' => 'dismissed'], 'Dismissed Panel Item');
+    }
 
-        $response = $this->get(route('user.home'));
+    public function test_awaiting_approval_opportunities_do_not_appear(): void
+    {
+        $this->assertOnlyTheControlAppears(['title' => 'Awaiting Approval Panel Item', 'status' => 'awaiting_approval'], 'Awaiting Approval Panel Item');
+    }
 
-        $response->assertOk();
-        $response->assertDontSee('Dismissed Panel Item');
+    public function test_in_progress_opportunities_do_not_appear(): void
+    {
+        $this->assertOnlyTheControlAppears(['title' => 'In Progress Panel Item', 'status' => 'in_progress'], 'In Progress Panel Item');
     }
 
     public function test_open_opportunities_appear(): void
@@ -138,40 +182,20 @@ class OpportunityDashboardHttpTest extends TestCase
         $response = $this->get(route('user.home'));
 
         $response->assertOk();
-        $response->assertSee('Open Panel Item');
-    }
-
-    public function test_awaiting_approval_opportunities_appear(): void
-    {
-        $business = $this->actingAsCustomerWithBusiness();
-        $this->createOpportunity($business, ['title' => 'Awaiting Approval Panel Item', 'status' => 'awaiting_approval']);
-
-        $response = $this->get(route('user.home'));
-
-        $response->assertOk();
-        $response->assertSee('Awaiting Approval Panel Item');
-    }
-
-    public function test_in_progress_opportunities_appear(): void
-    {
-        $business = $this->actingAsCustomerWithBusiness();
-        $this->createOpportunity($business, ['title' => 'In Progress Panel Item', 'status' => 'in_progress']);
-
-        $response = $this->get(route('user.home'));
-
-        $response->assertOk();
-        $response->assertSee('In Progress Panel Item');
+        $this->assertStringContainsString('Open Panel Item', $this->bandHtml($response));
     }
 
     public function test_another_tenants_opportunities_never_appear(): void
     {
-        $this->actingAsCustomerWithBusiness();
+        $business = $this->actingAsCustomerWithBusiness();
+        $this->createOpportunity($business, ['title' => self::CONTROL_TITLE]);
         $strangerBusiness = $this->createBusinessForOpportunities();
         $this->createOpportunity($strangerBusiness, ['title' => 'Stranger Panel Item']);
 
         $response = $this->get(route('user.home'));
 
         $response->assertOk();
+        $this->assertStringContainsString(self::CONTROL_TITLE, $this->bandHtml($response));
         $response->assertDontSee('Stranger Panel Item');
     }
 
@@ -183,10 +207,10 @@ class OpportunityDashboardHttpTest extends TestCase
         $response = $this->get(route('user.home'));
 
         $response->assertOk();
-        $response->assertSee(route('customer.opportunities.show', $opportunity->id), false);
+        $this->assertStringContainsString('href="' . route('customer.opportunities.show', $opportunity->id) . '"', $this->bandHtml($response));
     }
 
-    public function test_view_all_opportunities_links_to_the_queue(): void
+    public function test_the_band_links_to_the_opportunities_queue(): void
     {
         $business = $this->actingAsCustomerWithBusiness();
         $this->createOpportunity($business);
@@ -194,54 +218,63 @@ class OpportunityDashboardHttpTest extends TestCase
         $response = $this->get(route('user.home'));
 
         $response->assertOk();
-        $response->assertSee(route('customer.opportunities.index'), false);
+        $this->assertStringContainsString('href="' . route('customer.opportunities.index') . '"', $this->bandHtml($response));
     }
 
-    public function test_no_eligible_opportunities_renders_the_neutral_empty_state(): void
+    /** §6 / §18 #18 — nothing eligible: the band is absent, not the removed neutral card. */
+    public function test_no_eligible_opportunities_leaves_the_band_absent(): void
     {
-        $this->actingAsCustomerWithBusiness();
+        $business = $this->actingAsCustomerWithBusiness();
+        $this->createOpportunity($business, ['title' => 'Only A Stale One', 'freshness' => 'stale']);
 
         $response = $this->get(route('user.home'));
 
         $response->assertOk();
-        $response->assertSee('No opportunities are available right now.');
+        $response->assertSee('data-kind="business"', false);
+        $response->assertDontSee('data-band="recommendations"', false);
+        $response->assertDontSee('Recommended next steps');
+        $response->assertDontSee('No opportunities are available right now.');
+        $response->assertDontSee('Only A Stale One');
     }
 
-    public function test_disabled_flag_hides_the_panel_while_dashboard_remains_200(): void
+    public function test_disabled_flag_hides_the_band_while_dashboard_remains_200(): void
     {
         $business = $this->actingAsCustomerWithBusiness();
-        $this->createOpportunity($business, ['title' => 'Should Be Hidden Panel Item']);
+        $opportunity = $this->createOpportunity($business, ['title' => 'Should Be Hidden Panel Item']);
         config()->set('opportunity.enabled', false);
 
         $response = $this->get(route('user.home'));
 
         $response->assertOk();
+        $response->assertSee('data-kind="business"', false);
+        $response->assertDontSee('data-band="recommendations"', false);
         $response->assertDontSee('Should Be Hidden Panel Item');
         $response->assertDontSee(route('customer.opportunities.index'), false);
+        $response->assertDontSee(route('customer.opportunities.show', $opportunity->id), false);
     }
 
     /**
-     * Container-bound Mockery contract mocks — the only technique that
-     * proves the controller branch was never reached, rather than inferring
-     * it from absent titles (which a query that ran but matched nothing
-     * would also satisfy).
+     * Container-bound Mockery contract mock — the only technique that proves
+     * the Advisor read was never reached, rather than inferring it from absent
+     * titles (which a query that ran but matched nothing would also satisfy).
+     * It targets the Dashboard's current read, paginateForCustomer(); the
+     * strict mock also fails on any other repository call. The Business Home
+     * is asserted to have rendered, so the flag — not a missing Business — is
+     * what kept the Advisor unread.
      */
-    public function test_disabled_flag_calls_neither_repository(): void
+    public function test_disabled_flag_never_reads_the_advisor_repository(): void
     {
         $this->actingAsCustomerWithBusiness();
         config()->set('opportunity.enabled', false);
 
-        $businessRepository = Mockery::mock(BusinessRepository::class);
-        $businessRepository->shouldNotReceive('findPrimaryByCustomer');
-        $this->app->instance(BusinessRepository::class, $businessRepository);
-
         $opportunityRepository = Mockery::mock(OpportunityRepository::class);
-        $opportunityRepository->shouldNotReceive('topForCustomer');
+        $opportunityRepository->shouldNotReceive('paginateForCustomer');
         $this->app->instance(OpportunityRepository::class, $opportunityRepository);
 
         $response = $this->get(route('user.home'));
 
         $response->assertOk();
+        $response->assertSee('data-kind="business"', false);
     }
 
     public function test_customer_without_a_business_receives_dashboard_200_with_panel_absent(): void
@@ -251,6 +284,7 @@ class OpportunityDashboardHttpTest extends TestCase
         $response = $this->get(route('user.home'));
 
         $response->assertOk();
+        $response->assertDontSee('data-band="recommendations"', false);
         $response->assertDontSee(route('customer.opportunities.index'), false);
     }
 
@@ -264,6 +298,7 @@ class OpportunityDashboardHttpTest extends TestCase
         $response->assertOk();
         $response->assertDontSee('<script>alert(1)</script>', false);
         $response->assertSee('&lt;script&gt;', false);
+        $this->assertStringContainsString('&lt;script&gt;alert(1)&lt;/script&gt;', $this->bandHtml($response));
     }
 
     public function test_action_keys_hashes_and_execution_ids_do_not_appear(): void
@@ -290,32 +325,85 @@ class OpportunityDashboardHttpTest extends TestCase
         $response = $this->get(route('user.home'));
 
         $response->assertOk();
+        $this->assertStringContainsString((string) $opportunity->title, $this->bandHtml($response), 'Precondition: the recommendation rendered.');
         $response->assertDontSee($opportunity->recommended_action_hash);
         $response->assertDontSee('add_phone');
         $response->assertDontSee(hash('sha256', 'dashboard-panel-execution'));
     }
 
-    public function test_existing_dashboard_content_remains_present_and_unaffected(): void
+    /**
+     * The recommendations band sits inside the rebuilt Business Home: the
+     * Business frame, its one <main> and one <h1> naming the Business, and
+     * none of the removed user-scoped tiles (the B5-retired `#sms-reports`
+     * pie, the invoice figure, the legacy quick-send link).
+     */
+    public function test_the_band_renders_inside_the_rebuilt_business_home(): void
     {
         $business = $this->actingAsCustomerWithBusiness();
         $this->createOpportunity($business);
 
         $response = $this->get(route('user.home'));
+        $html = $response->getContent();
 
         $response->assertOk();
-        // The pre-existing "current plan" card is untouched by the
-        // Opportunity panel. (The legacy `#sms-reports` pie this test once
-        // used as its marker was removed by B5 Business Analytics — contract
-        // §18.4/§18.5 — so it is asserted absent here instead.)
-        $response->assertSee(route('customer.subscriptions.index'), false);
+        $response->assertSee('data-kind="business"', false);
+        $response->assertSee('data-band="recommendations"', false);
+        $this->assertSame(1, substr_count($html, '<main'));
+        $this->assertSame(1, preg_match_all('/<h1[\s>]/', $html));
+        $this->assertMatchesRegularExpression('#<h1[^>]*>.*' . preg_quote((string) $business->name, '#') . '.*</h1>#s', $html);
         $response->assertDontSee('id="sms-reports"', false);
+        $response->assertDontSee(route('customer.sms.quick_send'), false);
+        $this->assertStringNotContainsString('<sup>', $this->mainHtml($html), 'No legacy "unpaid / total" invoice figure.');
+    }
+
+    /**
+     * One eligible control recommendation and one excluded recommendation:
+     * the control proves the band rendered, so the exclusion cannot pass
+     * because the band was missing.
+     *
+     * @param  array<string, mixed>  $excluded
+     */
+    private function assertOnlyTheControlAppears(array $excluded, string $excludedTitle): void
+    {
+        $business = $this->actingAsCustomerWithBusiness();
+        $this->createOpportunity($business, ['title' => self::CONTROL_TITLE]);
+        $this->createOpportunity($business, $excluded);
+
+        $response = $this->get(route('user.home'));
+
+        $response->assertOk();
+        $this->assertStringContainsString(self::CONTROL_TITLE, $this->bandHtml($response));
+        $response->assertDontSee($excludedTitle);
+    }
+
+    /** The Recommended next steps band's own markup, or a failure when it is absent. */
+    private function bandHtml(TestResponse $response): string
+    {
+        $html = $response->getContent();
+        $start = strpos($html, 'data-band="recommendations"');
+        $this->assertNotFalse($start, 'The Recommended next steps band must render.');
+        $end = strpos($html, '</section>', $start);
+
+        return substr($html, $start, ($end === false ? strlen($html) : $end) - $start);
+    }
+
+    private function mainHtml(string $html): string
+    {
+        $start = strpos($html, '<main');
+        $end = strpos($html, '</main>');
+        $this->assertNotFalse($start);
+        $this->assertNotFalse($end);
+
+        return substr($html, $start, $end - $start);
     }
 
     private function actingAsCustomerWithBusiness(): Business
     {
         $this->ensureRequiredAppConfigRowsExist();
 
-        $business = $this->createBusinessForOpportunities();
+        // The CustomerContext resolver selects only an active Business; the
+        // repository's own lifecycle method makes the fixture one.
+        $business = app(BusinessRepository::class)->updateStatus($this->createBusinessForOpportunities(), BusinessStatus::Active);
         $customer = $business->customer;
         $customer->permissions = Customer::customerPermissions();
         $customer->save();
