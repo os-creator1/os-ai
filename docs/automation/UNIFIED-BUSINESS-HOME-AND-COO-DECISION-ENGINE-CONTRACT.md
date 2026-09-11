@@ -212,7 +212,7 @@ items appear, at most 5, in KPI-priority order:
 | N new contacts | B5, new `BusinessAnalyticsQueries::countsBetween(Business, startUtc, endUtc)` (one statement, with incoming messages below) |
 | N new conversations | 2B `startedCount()` (exists; takes instants) |
 | N messages received | The same B5 `countsBetween()` statement |
-| N automations completed / N failed | `automation_executions` counts, through a new V2-H-owned instant method beside `automationKpis()` |
+| N automations completed / N failed | A new V2-H-owned instant-window method beside `automationKpis()`. It covers `automation_executions` today and also `automation_step_runs` once V2-H lands (Automations V2 §15.4). Home never reads either table directly |
 | N recommendations done | `opportunity_transitions` to `completed` in the window (Opportunity repository) |
 
 Visitors, rankings and bookings do not appear (L-3). No AI is involved at any
@@ -711,7 +711,7 @@ top 10.
 |---|---|---|
 | `website_revisions` joined to `websites` (`business_id` is unique) | "Website version {n} published" | `websites.business_id` unique, `website_revisions(website_id, version_number)` |
 | `opportunity_transitions` joined to `opportunities` (`to_status = completed`) | "Completed: {registry title}" | `opportunities(business_id, …)`, `opportunity_transitions(opportunity_id, created_at)` |
-| `automation_executions` (`status = failed`, grouped per automation per day) | "{Automation name} failed {n} times" | `(business_id, created_at)` |
+| Automation failures (`status = failed`, grouped per automation per day), read **only through the V2-H-owned automation reader**. Today that reader covers `automation_executions`. After Automations V2 slice V2-H it also unions `automation_step_runs` (`AUTOMATIONS-V2-WORKFLOW-ENGINE-CONTRACT.md` §1.3, §15.4, merged in #250). Recent work never queries either table directly | "{Automation name} failed {n} times" | `(business_id, created_at)` on each ledger |
 | `business_google_operations` (`connect_completed`, `disconnected`, `location_bound`, `location_unbound`) | "Google connected", "Google listing linked", and so on | `bgo_business_created_index` |
 | `business_knowledge_profile_changes` (grouped per actor per day) | "Business details updated" | `(business_id, created_at)` |
 
@@ -806,6 +806,7 @@ None of these slices is authorized by this document.
   - `BusinessConversationReadModel`: H-4 is the only writer.
   - `BusinessAnalyticsQueries`: H-2 is the only writer.
   - `AttentionType`: C-2 is the only writer.
+  - Automation readers: the Automations V2 contract (#250) gives V2-H ownership of every `automation_executions` / `automation_step_runs` reader. H-2's instant automation counts and H-5's failure feed are added **as V2-H-owned methods**, coordinated with that lane. They are never parallel readers.
 - **Databases:** every lane that writes uses its own `TestDatabaseSafety`-approved sibling.
 
 ---
