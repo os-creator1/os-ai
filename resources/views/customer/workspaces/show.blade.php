@@ -16,6 +16,14 @@
 
 @section('title', ucfirst($accountNoun) . ' overview')
 
+@section('vendor-style')
+    <link rel="stylesheet" href="{{ asset(mix('vendors/css/forms/select/select2.min.css')) }}">
+@endsection
+
+@section('vendor-script')
+    <script src="{{ asset(mix('vendors/js/forms/select/select2.full.min.js')) }}"></script>
+@endsection
+
 @section('content')
     <section id="workspace-overview">
         <div class="row">
@@ -107,14 +115,11 @@
                                     <dt class="col-sm-4">Status</dt>
                                     <dd class="col-sm-8">{{ ucfirst($entitlement['summary']->status->value) }}</dd>
 
+                                    {{-- Customer names only (PlatformFeatureCopy); machine keys and
+                                         features not built yet are never listed. --}}
+                                    @php $planFeatureNames = \App\Library\Entitlement\PlatformFeatureCopy::names($entitlement['summary']->planFeatureKeys); @endphp
                                     <dt class="col-sm-4">Plan features</dt>
-                                    <dd class="col-sm-8">
-                                        @if (empty($entitlement['summary']->planFeatureKeys))
-                                            None
-                                        @else
-                                            {{ implode(', ', $entitlement['summary']->planFeatureKeys) }}
-                                        @endif
-                                    </dd>
+                                    <dd class="col-sm-8" data-role="plan-features">{{ $planFeatureNames === [] ? 'None' : implode(', ', $planFeatureNames) }}</dd>
                                 @endif
 
                                 <dt class="col-sm-4">Current Businesses</dt>
@@ -178,17 +183,7 @@
 
                                 <x-input name="website_url" label="Website" type="text" value="{{ old('website_url') }}" />
 
-                                <div class="row">
-                                    <div class="col-md-4">
-                                        <x-input name="country_code" label="Country code" type="text" maxlength="2" value="{{ old('country_code') }}" required />
-                                    </div>
-                                    <div class="col-md-4">
-                                        <x-input name="timezone" label="Timezone" type="text" value="{{ old('timezone') }}" required />
-                                    </div>
-                                    <div class="col-md-4">
-                                        <x-input name="currency_code" label="Currency code" type="text" maxlength="3" value="{{ old('currency_code') }}" required />
-                                    </div>
-                                </div>
+                                @include('customer.business.partials.locale-fields', ['suggestDefaults' => true])
 
                                 <x-button type="submit" variant="outline">Create Business</x-button>
                             </form>
@@ -276,56 +271,40 @@
                                         </div>
                                     @endif
 
-                                    <h5>Platform feature preferences</h5>
-                                    @foreach ($manageableBusinesses as $business)
-                                        @php $businessFeatures = $entitlement['features'][$business['uid']] ?? []; @endphp
-                                        @if (! empty($businessFeatures))
-                                            <h6>{{ $business['name'] }}</h6>
-                                            <div class="table-responsive mb-2">
-                                                <table class="table table-sm">
-                                                    <thead>
-                                                        <tr>
-                                                            <th>Feature</th>
-                                                            <th>Effective entitlement</th>
-                                                            <th>Platform feature preference</th>
-                                                            <th></th>
-                                                        </tr>
-                                                    </thead>
-                                                    <tbody>
-                                                        @foreach ($businessFeatures as $featureKey => $row)
-                                                            <tr>
-                                                                <td>{{ $featureKey }}</td>
-                                                                <td>
-                                                                    @if ($row['decision']->allowed)
-                                                                        <span class="badge badge-light-success">Allowed</span>
-                                                                    @else
-                                                                        <span class="badge badge-light-secondary">Denied ({{ $row['decision']->reason }})</span>
-                                                                    @endif
-                                                                </td>
-                                                                <td>
-                                                                    {{ $row['disablePreferenceRecorded'] ? 'Disable preference recorded' : 'No disable preference recorded' }}
-                                                                    <div class="text-muted small">Runtime enforcement pending. This preference is stored at the Business level but the legacy module does not yet consult it.</div>
-                                                                </td>
-                                                                <td>
-                                                                    @if ($row['disablePreferenceRecorded'])
-                                                                        <form method="POST" data-business-action="features/{{ $featureKey }}/enable" data-business-uid="{{ $business['uid'] }}">
-                                                                            @csrf
-                                                                            <button type="submit" class="btn btn-sm btn-outline-secondary">Remove disable preference</button>
-                                                                        </form>
-                                                                    @elseif ($row['decision']->allowed)
-                                                                        <form method="POST" data-business-action="features/{{ $featureKey }}/disable" data-business-uid="{{ $business['uid'] }}">
-                                                                            @csrf
-                                                                            <button type="submit" class="btn btn-sm btn-outline-secondary">Record disable preference</button>
-                                                                        </form>
-                                                                    @endif
-                                                                </td>
-                                                            </tr>
+                                    {{-- Business features: only what the server says this customer
+                                         can switch (BusinessFeatureSettings) is ever sent here —
+                                         nothing the plan leaves out, no locked rows. Each switch saves
+                                         straight away through the existing enable/disable routes. --}}
+                                    @php $featureSettings = $entitlement['featureSettings'] ?? []; @endphp
+                                    @if (collect($featureSettings)->flatten(1)->isNotEmpty())
+                                        <div id="business-feature-settings" class="mt-2">
+                                            <h5>Features</h5>
+                                            <p class="text-caption mb-1">Turn features on or off for each Business. Changes are saved straight away.</p>
+                                            @foreach ($manageableBusinesses as $business)
+                                                @if (! empty($featureSettings[$business['uid']] ?? []))
+                                                    <h6 class="mt-1">{{ $business['name'] }}</h6>
+                                                    <ul class="list-group mb-2" data-role="business-features">
+                                                        @foreach ($featureSettings[$business['uid']] as $setting)
+                                                            @php $switchId = 'business-feature-' . $business['uid'] . '-' . $loop->index; @endphp
+                                                            <li class="list-group-item d-flex justify-content-between align-items-start" data-role="business-feature">
+                                                                <div class="me-2">
+                                                                    <div class="fw-bolder" id="{{ $switchId }}-name">{{ $setting['name'] }}</div>
+                                                                    <div class="text-caption" id="{{ $switchId }}-description">{{ $setting['description'] }}</div>
+                                                                    <div class="text-danger small mt-25" data-role="business-feature-error" role="alert" hidden></div>
+                                                                </div>
+                                                                <div class="form-check form-switch flex-shrink-0 mb-0">
+                                                                    <input class="form-check-input" type="checkbox" role="switch" id="{{ $switchId }}" data-business-feature-switch data-business-uid="{{ $business['uid'] }}" data-feature="{{ $setting['key'] }}" aria-describedby="{{ $switchId }}-description" @checked($setting['enabled'])>
+                                                                    {{-- The switch is named after the feature; its on/off state is
+                                                                         the switch's own, so the visible word is not read twice. --}}
+                                                                    <label class="form-check-label" for="{{ $switchId }}"><span class="visually-hidden">{{ $setting['name'] }}</span><span aria-hidden="true" data-role="business-feature-state">{{ $setting['enabled'] ? 'Enabled' : 'Disabled' }}</span></label>
+                                                                </div>
+                                                            </li>
                                                         @endforeach
-                                                    </tbody>
-                                                </table>
-                                            </div>
-                                        @endif
-                                    @endforeach
+                                                    </ul>
+                                                @endif
+                                            @endforeach
+                                        </div>
+                                    @endif
                                 </div>
                             @endif
                         @endisset
@@ -519,6 +498,81 @@
                         select.addEventListener('change', syncBusinessCheckboxes);
                         syncBusinessCheckboxes();
                     });
+
+                    // Business feature switches: each change is saved at once through the
+                    // existing enable/disable route (same CSRF, auth and entitlement checks),
+                    // without leaving the page. The switch shows only what the server
+                    // confirms; on any failure it returns to its previous state.
+                    (function () {
+                        var basePath = window.location.pathname.replace(/\/+$/, '');
+                        var csrfMeta = document.querySelector('meta[name="csrf-token"]');
+                        var genericError = 'We couldn\'t save that change. Please try again.';
+
+                        document.querySelectorAll('input[data-business-feature-switch]').forEach(function (input) {
+                            var row = input.closest('[data-role="business-feature"]');
+                            var state = row.querySelector('[data-role="business-feature-state"]');
+                            var error = row.querySelector('[data-role="business-feature-error"]');
+                            var saving = false;
+
+                            var show = function (enabled) {
+                                input.checked = enabled;
+                                state.textContent = enabled ? 'Enabled' : 'Disabled';
+                            };
+
+                            // A second click while a change is being saved does nothing.
+                            input.addEventListener('click', function (event) {
+                                if (saving) {
+                                    event.preventDefault();
+                                }
+                            });
+
+                            input.addEventListener('change', function () {
+                                var wanted = input.checked;
+                                var previous = ! wanted;
+                                var url = [basePath, 'businesses', encodeURIComponent(input.getAttribute('data-business-uid')), 'features', encodeURIComponent(input.getAttribute('data-feature')), wanted ? 'enable' : 'disable'].join('/');
+
+                                saving = true;
+                                input.setAttribute('aria-disabled', 'true');
+                                row.setAttribute('aria-busy', 'true');
+                                error.hidden = true;
+                                error.textContent = '';
+
+                                fetch(url, {
+                                    method: 'POST',
+                                    credentials: 'same-origin',
+                                    headers: {
+                                        'Accept': 'application/json',
+                                        'X-Requested-With': 'XMLHttpRequest',
+                                        'X-CSRF-TOKEN': csrfMeta ? csrfMeta.getAttribute('content') : ''
+                                    }
+                                }).then(function (response) {
+                                    return response.json().catch(function () {
+                                        return null;
+                                    }).then(function (body) {
+                                        return { ok: response.ok, body: body };
+                                    });
+                                }).then(function (result) {
+                                    if (result.ok && result.body && result.body.status === 'success' && typeof result.body.enabled === 'boolean') {
+                                        show(result.body.enabled);
+
+                                        return;
+                                    }
+
+                                    show(previous);
+                                    error.textContent = (result.body && typeof result.body.customer_message === 'string') ? result.body.customer_message : genericError;
+                                    error.hidden = false;
+                                }).catch(function () {
+                                    show(previous);
+                                    error.textContent = genericError;
+                                    error.hidden = false;
+                                }).then(function () {
+                                    saving = false;
+                                    input.removeAttribute('aria-disabled');
+                                    row.removeAttribute('aria-busy');
+                                });
+                            });
+                        });
+                    })();
                 </script>
             @endif
         </div>

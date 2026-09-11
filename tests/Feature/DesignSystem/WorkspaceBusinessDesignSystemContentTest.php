@@ -88,9 +88,9 @@ class WorkspaceBusinessDesignSystemContentTest extends TestCase
         $contents = file_get_contents(base_path('resources/views/customer/workspaces/show.blade.php'));
         $region = $this->extractBetween($contents, 'Usage &amp; Billing</h5>', '@endisset');
 
-        $this->assertNotNull($region, 'Expected to locate the Usage & Billing / Platform feature preferences excluded region.');
-        $this->assertSame(0, substr_count($region, '<x-'), 'Usage & Billing / feature preference region must carry zero Design System component markers.');
-        $this->assertStringContainsString('Platform feature preferences', $region);
+        $this->assertNotNull($region, 'Expected to locate the Usage & Billing / Business features excluded region.');
+        $this->assertSame(0, substr_count($region, '<x-'), 'Usage & Billing / Business features region must carry zero Design System component markers.');
+        $this->assertStringContainsString('id="business-feature-settings"', $region);
         $this->assertStringContainsString('data-business-action="usage-billing"', $region);
     }
 
