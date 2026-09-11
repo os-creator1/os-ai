@@ -36,6 +36,30 @@ final class CustomerMenuBuilder
     private const BLACKLIST_PERMISSIONS = ['view_blacklist', 'create_blacklist', 'update_blacklist', 'delete_blacklist'];
 
     /**
+     * Slice 2A §6.2 — the Business-scoped features that gate a menu entry.
+     *
+     * Deliberately short. `crm` is Available and Business-scoped but Contacts
+     * is NOT gated here: whether any tier's catalog genuinely excludes CRM
+     * cannot be established from code, and hiding Contacts from a tier that
+     * pays for it is a worse failure than showing it to one that does not.
+     * `conversations` is not gated either — Inbox still sits on an
+     * account-scoped route, so in some frames there is no Business to
+     * evaluate it against; Slice 2B delivers that scope and inherits the
+     * decision.
+     */
+    public const ENTITLEMENT_GATED_FEATURES = [
+        'automations',
+        'website_generation',
+        'google_business_profile_module',
+    ];
+
+    /**
+     * The decisions EntitlementManager already made for this request. Never
+     * a policy of its own — see MenuEntitlements.
+     */
+    private MenuEntitlements $entitlements;
+
+    /**
      * While a View-as-client session is active only entries whose route is
      * reachable inside the viewed Business are rendered (Correction Round 1):
      * the same closed classification the middleware enforces.
@@ -49,10 +73,15 @@ final class CustomerMenuBuilder
     /**
      * @return array<int, MenuItem>
      */
-    public function build(CustomerContext $context, User $user): array
+    public function build(CustomerContext $context, User $user, ?MenuEntitlements $entitlements = null): array
     {
         $current = (string) Route::currentRouteName();
         $this->viewingAsClient = $context->isViewingAsClient();
+
+        // Fail closed. A caller that forgets the snapshot loses the
+        // entitlement-gated entries rather than showing them to everyone —
+        // the opposite default would make §6.1 unenforceable by accident.
+        $this->entitlements = $entitlements ?? MenuEntitlements::none();
 
         return $context->isBusinessFrame()
             ? $this->businessFrame($context, $user, $current)
@@ -79,46 +108,75 @@ final class CustomerMenuBuilder
             $items[] = $this->item($user, 'advisor', 'Advisor', 'compass', ['access_backend'], 'customer.opportunities.index', [], $current, ['customer.opportunities.']);
         }
 
+        // Messages — the one group that gathers what was three unrelated
+        // top-level entries. Inbox deliberately keeps its account-scoped
+        // route: Business-scoping Conversations is Slice 2B's atomic move
+        // (§9), and pre-empting it here would leave the URI half-migrated.
+        $messages = array_values(array_filter([
+            $this->item($user, 'inbox', 'Inbox', 'inbox', ['chat_box'], 'customer.chatbox.index', [], $current, ['customer.chatbox.']),
+            $this->item($user, 'send', 'Send', 'send', self::OUTREACH_PERMISSIONS, 'customer.workspaces.businesses.outreach.index', $scoped, $current, [
+                'customer.workspaces.businesses.outreach.index', 'customer.outreach.index',
+            ]),
+            $this->item($user, 'campaigns', 'Campaigns', 'layers', self::OUTREACH_PERMISSIONS, 'customer.workspaces.businesses.outreach.campaigns', $scoped, $current, [
+                'customer.workspaces.businesses.outreach.campaigns', 'customer.workspaces.businesses.outreach.campaigns.',
+                'customer.outreach.campaigns.entry', 'customer.sms.', 'customer.mms.',
+            ]),
+        ]));
+
+        if ($messages !== []) {
+            $items[] = new MenuItem('messages', 'Messages', null, 'message-square', false, $messages);
+        }
+
         $items[] = $this->item($user, 'contacts', 'Contacts', 'users', self::CONTACT_PERMISSIONS, 'customer.workspaces.businesses.contacts.index', $scoped, $current, [
             'customer.workspaces.businesses.contacts.', 'customer.workspaces.businesses.contact.', 'customer.contacts.', 'customer.contact.',
         ]);
-        $items[] = $this->item($user, 'conversations', 'Conversations', 'message-square', ['chat_box'], 'customer.chatbox.index', [], $current, ['customer.chatbox.']);
-        $items[] = $this->item($user, 'campaigns', 'Campaigns', 'send', self::OUTREACH_PERMISSIONS, 'customer.workspaces.businesses.outreach.campaigns', $scoped, $current, [
-            'customer.workspaces.businesses.outreach.', 'customer.outreach.', 'customer.sms.', 'customer.mms.',
-        ]);
-        $items[] = $this->item($user, 'automations', 'Automations', 'cpu', ['automations'], 'customer.workspaces.businesses.automations.index', $scoped, $current, [
+        $items[] = $this->entitled('automations', $this->item($user, 'automations', 'Automations', 'cpu', ['automations'], 'customer.workspaces.businesses.automations.index', $scoped, $current, [
             'customer.workspaces.businesses.automations.', 'customer.automations.',
-        ]);
-        $items[] = $this->item($user, 'website', 'Website', 'globe', ['website'], 'customer.workspaces.businesses.website.show', $scoped, $current, [
+        ]));
+        $items[] = $this->entitled('website_generation', $this->item($user, 'website', 'Website', 'globe', ['website'], 'customer.workspaces.businesses.website.show', $scoped, $current, [
             'customer.workspaces.businesses.website.', 'customer.website.',
-        ]);
-        $items[] = $this->item($user, 'gbp', 'Google Business Profile', 'map-pin', ['view_google_business_profile'], 'customer.workspaces.businesses.gbp.index', $scoped, $current, [
+        ]));
+        $items[] = $this->entitled('google_business_profile_module', $this->item($user, 'gbp', 'Get found', 'map-pin', ['view_google_business_profile'], 'customer.workspaces.businesses.gbp.index', $scoped, $current, [
             'customer.workspaces.businesses.gbp.', 'customer.gbp.',
-        ]);
-        $items[] = $this->item($user, 'analytics', 'Analytics', 'bar-chart-2', ['view_reports'], 'customer.workspaces.businesses.analytics.overview', $scoped, $current, [
+        ]));
+        $items[] = $this->item($user, 'analytics', 'Results', 'bar-chart-2', ['view_reports'], 'customer.workspaces.businesses.analytics.overview', $scoped, $current, [
             'customer.workspaces.businesses.analytics.', 'customer.analytics.',
         ]);
 
         $settings = [];
+
+        // Settings → Business — the Business's own record and the numbers it
+        // refuses. Blocked numbers is presented here but its route stays
+        // account-scoped; that mismatch is recorded debt (§9), not fixed by
+        // moving a route this slice may not touch.
+        $businessSettings = [];
 
         if ($context->selectedBusiness !== null
             && $context->selectedBusiness->customerId === $context->userId
             && $context->selectedBusiness->isPrimary) {
             // BusinessController@edit resolves the customer's PRIMARY
             // Business; it is only offered when that is the selected one.
-            $settings[] = $this->item($user, 'business-details', 'Business details', 'briefcase', ['access_backend'], 'customer.business.edit', [], $current, ['customer.business.']);
+            $businessSettings[] = $this->item($user, 'business-details', 'Business details', 'briefcase', ['access_backend'], 'customer.business.edit', [], $current, ['customer.business.']);
         }
 
-        $settings[] = $this->item($user, 'blocked-numbers', 'Blocked numbers', 'shield', self::BLACKLIST_PERMISSIONS, 'customer.blacklists.index', [], $current, ['customer.blacklists.']);
+        $businessSettings[] = $this->item($user, 'blocked-numbers', 'Blocked numbers', 'shield', self::BLACKLIST_PERMISSIONS, 'customer.blacklists.index', [], $current, ['customer.blacklists.']);
+
+        $businessSettings = array_values(array_filter($businessSettings));
+
+        if ($businessSettings !== []) {
+            $settings[] = new MenuItem('business', 'Business', null, 'briefcase', false, $businessSettings);
+        }
 
         if ($context->canManageBilling()) {
-            $settings[] = $this->item($user, 'usage-billing', 'Usage & billing', 'credit-card', ['access_backend'], 'customer.workspaces.businesses.usage-billing.show', $scoped, $current, [
+            $settings[] = $this->item($user, 'usage-billing', 'Billing', 'credit-card', ['access_backend'], 'customer.workspaces.businesses.usage-billing.show', $scoped, $current, [
                 'customer.workspaces.businesses.usage-billing.',
             ]);
         }
 
         if ($context->canManageWorkspace() && $workspaceUid !== null) {
-            $settings[] = $this->item($user, 'team', $context->isAgency() ? 'Team & agency account' : 'Team & account', 'user-check', ['access_backend'], 'customer.workspaces.show', [$workspaceUid], $current, [
+            // Team and member management are sections of this page; §3 forbids
+            // a standalone Team leaf naming a destination that does not exist.
+            $settings[] = $this->item($user, 'team', 'Account', 'user-check', ['access_backend'], 'customer.workspaces.show', [$workspaceUid], $current, [
                 'customer.workspaces.show', 'customer.workspaces.index', 'customer.workspaces.additional-business-slots.',
             ]);
         }
@@ -213,10 +271,14 @@ final class CustomerMenuBuilder
      */
     private function advancedItems(CustomerContext $context, User $user, string $current, string $channelsRoute, array $channelsParameters): ?MenuItem
     {
-        if (! $context->isAgency() || ! $context->canManageWorkspace()) {
+        if (! $this->hasAdvancedProviderAccess($context, $user)) {
             return null;
         }
 
+        // Developers is NOT here any more (§8). Its six routes stay
+        // registered and directly reachable — this slice deletes no route,
+        // controller, API key or webhook configuration; physical removal
+        // belongs to retention slice 15. Only the menu entry goes.
         $children = array_values(array_filter([
             $this->item($user, 'messaging-provider', 'Messaging provider', 'link', ['view_numbers'], $channelsRoute, $channelsParameters, $current, [
                 'customer.workspaces.businesses.channels.', 'customer.channels.',
@@ -224,7 +286,6 @@ final class CustomerMenuBuilder
             $this->item($user, 'sender-ids', 'Sender identities', 'book', ['view_sender_id'], 'customer.senderid.index', [], $current, ['customer.senderid.']),
             $this->item($user, 'numbers', 'Numbers', 'phone', ['view_numbers'], 'customer.numbers.index', [], $current, ['customer.numbers.']),
             $this->item($user, 'keywords', 'Keywords', 'hash', ['view_keywords'], 'customer.keywords.index', [], $current, ['customer.keywords.']),
-            $this->item($user, 'developers', 'Developers', 'terminal', ['developers'], 'customer.developer.settings', [], $current, ['customer.developer.']),
         ]));
 
         if ($children === []) {
@@ -232,6 +293,60 @@ final class CustomerMenuBuilder
         }
 
         return new MenuItem('advanced', 'Advanced', null, 'sliders', false, $children);
+    }
+
+    /**
+     * Slice 2A §7.1 — the Advanced group's authority, taken from Slice 3's
+     * FINAL merged rule rather than restated.
+     *
+     * Slice 3 narrowed this surface to authoritative Workspace OWNERSHIP.
+     * `config/customer-permissions.php` states it outright — the permission
+     * "is necessary but never sufficient: the relocated advanced-settings
+     * surface additionally requires authoritative Workspace OWNERSHIP
+     * (WorkspaceCandidate::$isOwner), not canManage(), not plan tier, and
+     * not admin membership" — and MessagingChannelsController's
+     * hasAdvancedProviderAccess() enforces exactly that.
+     *
+     * So an agency-wide active Admin who is not the owner sees NO Advanced
+     * group. Substituting canManageWorkspace() here would put a menu entry
+     * in front of an actor the controller answers 404 to, which is the
+     * discoverability failure §6.1 exists to prevent — in the direction that
+     * wastes the customer's time rather than leaking data, but a defect
+     * either way.
+     *
+     * The controller additionally checks Business status and entitlement per
+     * request; the menu mirrors the actor-level half, and the controller
+     * stays independently fail-closed regardless (§6.1).
+     */
+    private function hasAdvancedProviderAccess(CustomerContext $context, User $user): bool
+    {
+        $workspace = $context->frameWorkspace();
+
+        if ($workspace === null || ! $workspace->isAgency() || ! $workspace->isActive) {
+            return false;
+        }
+
+        if (! $workspace->isOwner) {
+            return false;
+        }
+
+        return Gate::forUser($user)->allows('manage_advanced_provider');
+    }
+
+    /**
+     * Drops an entry whose plan feature is not entitled.
+     *
+     * Absent, never disabled: a greyed row still advertises an action, and
+     * the sidebar is the wrong place to sell an upgrade (§6.1). Plan and
+     * upgrade explanation belong on the Plan and Account surfaces.
+     */
+    private function entitled(string $featureKey, ?MenuItem $item): ?MenuItem
+    {
+        if ($item === null) {
+            return null;
+        }
+
+        return $this->entitlements->allows($featureKey) ? $item : null;
     }
 
     /**

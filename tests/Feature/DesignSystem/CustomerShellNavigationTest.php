@@ -48,7 +48,7 @@ class CustomerShellNavigationTest extends TestCase
         $this->assertStringNotContainsString('locale.menu.', $agencyHome);
 
         // The six labels that used to render as raw keys (E-10) now render as words.
-        foreach (['Website', 'Google Business Profile'] as $label) {
+        foreach (['Website', 'Get found'] as $label) {
             $this->assertStringContainsString($label, $this->shellText($growthHome));
         }
         $this->assertStringContainsString('Prospecting', $this->shellText($agencyHome));

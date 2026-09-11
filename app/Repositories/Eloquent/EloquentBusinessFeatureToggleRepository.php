@@ -4,6 +4,7 @@ namespace App\Repositories\Eloquent;
 
 use App\Enums\Entitlement\PlatformFeature;
 use App\Models\BusinessFeatureToggle;
+use Illuminate\Support\Collection;
 use App\Repositories\Contracts\BusinessFeatureToggleRepository;
 use InvalidArgumentException;
 
@@ -20,6 +21,19 @@ class EloquentBusinessFeatureToggleRepository extends EloquentBaseRepository imp
             ->where('business_id', $businessId)
             ->where('feature_key', $featureKey)
             ->first();
+    }
+
+    public function allForBusiness(int $businessId): Collection
+    {
+        return $this->query()
+            ->where('business_id', $businessId)
+            ->get()
+            // feature_key is enum-cast on the model, so the raw attribute is
+            // a PlatformFeature here, not a string. Keying by ->value keeps
+            // the caller's lookup a plain string comparison either way.
+            ->keyBy(static fn (BusinessFeatureToggle $toggle): string => $toggle->feature_key instanceof PlatformFeature
+                ? $toggle->feature_key->value
+                : (string) $toggle->feature_key);
     }
 
     public function create(array $attributes): BusinessFeatureToggle

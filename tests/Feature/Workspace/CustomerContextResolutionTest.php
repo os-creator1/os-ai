@@ -29,11 +29,11 @@ class CustomerContextResolutionTest extends TestCase
     use RefreshDatabase;
     use CreatesCustomerContextFixtures;
 
-    private const BUSINESS_FRAME_KEYS = ['home', 'contacts', 'conversations', 'campaigns', 'automations', 'website', 'gbp', 'analytics', 'settings'];
+    private const BUSINESS_FRAME_KEYS = ['home', 'messages', 'inbox', 'send', 'campaigns', 'contacts', 'automations', 'website', 'gbp', 'analytics', 'settings'];
 
     private const ACCOUNT_FRAME_ONLY_KEYS = ['accounts', 'prospecting'];
 
-    private const ADVANCED_KEYS = ['advanced', 'messaging-provider', 'sender-ids', 'numbers', 'keywords', 'developers'];
+    private const ADVANCED_KEYS = ['advanced', 'messaging-provider', 'sender-ids', 'numbers', 'keywords'];
 
     // -----------------------------------------------------------------
     // T-CTX-1 / T-CTX-2 — Core and Growth
@@ -115,11 +115,11 @@ class CustomerContextResolutionTest extends TestCase
         $html = $response->getContent();
         $keys = $this->menuKeys($html);
 
-        foreach (['home', 'accounts', 'prospecting', 'settings', 'plan', 'advanced', 'sender-ids', 'numbers', 'keywords', 'developers', 'messaging-provider'] as $expected) {
+        foreach (['home', 'accounts', 'prospecting', 'settings', 'plan', 'advanced', 'sender-ids', 'numbers', 'keywords', 'messaging-provider'] as $expected) {
             $this->assertContains($expected, $keys, "Agency account frame must offer {$expected} (§8.3, §8.6).");
         }
 
-        foreach (['contacts', 'campaigns', 'website', 'gbp', 'analytics', 'automations'] as $businessOnly) {
+        foreach (['messages', 'inbox', 'send', 'contacts', 'campaigns', 'website', 'gbp', 'analytics', 'automations'] as $businessOnly) {
             $this->assertNotContains($businessOnly, $keys, 'No Business entry before a client account is selected (§8.1).');
         }
 

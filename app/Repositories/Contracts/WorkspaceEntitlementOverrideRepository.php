@@ -4,6 +4,7 @@ namespace App\Repositories\Contracts;
 
 use App\Enums\Entitlement\WorkspaceEntitlementOverrideState;
 use App\Models\WorkspaceEntitlementOverride;
+use Illuminate\Support\Collection;
 
 /**
  * Plain data-access contract. Reverting to inherit is a delete of the
@@ -15,6 +16,22 @@ use App\Models\WorkspaceEntitlementOverride;
 interface WorkspaceEntitlementOverrideRepository extends BaseRepository
 {
     public function findByWorkspaceAndFeature(int $workspaceId, string $featureKey): ?WorkspaceEntitlementOverride;
+
+    /**
+     * Every override this Workspace holds, in one read.
+     *
+     * Additive, for Slice 2A's menu snapshot (§6.3/§6.5): resolving a menu
+     * one feature at a time would issue one findByWorkspaceAndFeature() per
+     * entry, and the query budget is fixed regardless of how many entries the
+     * menu grows. Overrides are at most one row per PlatformFeature, so this
+     * is bounded by the enum, not by tenant data.
+     *
+     * Data access only — no policy. EntitlementManager remains the single
+     * authority on what an override means.
+     *
+     * @return \Illuminate\Support\Collection<string, WorkspaceEntitlementOverride> keyed by feature_key
+     */
+    public function allForWorkspace(int $workspaceId): Collection;
 
     /**
      * $attributes['feature_key'] must be a valid PlatformFeature::cases()
