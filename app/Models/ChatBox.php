@@ -8,6 +8,7 @@
     use Illuminate\Database\Eloquent\Relations\BelongsTo;
     use Illuminate\Database\Eloquent\Relations\HasMany;
     use Illuminate\Database\Eloquent\Relations\HasOne;
+    use Illuminate\Support\Facades\DB;
 
     /**
      * One conversation between a Business-side number and one external party.
@@ -152,5 +153,60 @@
             }
 
             return $result;
+        }
+
+        /**
+         * The NAME each list row shows, for a whole list in two queries total:
+         * displayContactsFor()'s one, plus one custom-field read for every
+         * resolved Contact at once.
+         *
+         * Calling Contacts::getFullName() per row instead costs two queries
+         * for every named conversation (one per tag) — an N+1 the list must
+         * not have. This reads the same two tags getFullName() reads,
+         * FIRST_NAME then LAST_NAME, takes the first value per tag as its
+         * getValueByTag() does, and joins them the same way; null means "show
+         * the number".
+         *
+         * @param  iterable<ChatBox>  $boxes
+         * @return array<int, string|null> box id => display name
+         */
+        public static function displayNamesFor(Business $business, iterable $boxes): array
+        {
+            $contacts = self::displayContactsFor($business, $boxes);
+
+            $contactIds = [];
+
+            foreach ($contacts as $contact) {
+                if ($contact !== null) {
+                    $contactIds[(int) $contact->id] = true;
+                }
+            }
+
+            $tags = [];
+
+            if ($contactIds !== []) {
+                $values = DB::table('contacts_custom_field as value')
+                    ->join('contact_group_fields as field', 'field.id', '=', 'value.field_id')
+                    ->whereIn('value.contact_id', array_keys($contactIds))
+                    ->whereIn('field.tag', ['FIRST_NAME', 'LAST_NAME'])
+                    ->orderBy('value.id')
+                    ->get(['value.contact_id', 'field.tag', 'value.value']);
+
+                foreach ($values as $row) {
+                    $tags[(int) $row->contact_id][$row->tag] ??= (string) $row->value;
+                }
+            }
+
+            $names = [];
+
+            foreach ($contacts as $boxId => $contact) {
+                $full = $contact === null
+                    ? ''
+                    : trim(($tags[(int) $contact->id]['FIRST_NAME'] ?? '') . ' ' . ($tags[(int) $contact->id]['LAST_NAME'] ?? ''));
+
+                $names[$boxId] = $full === '' ? null : $full;
+            }
+
+            return $names;
         }
     }

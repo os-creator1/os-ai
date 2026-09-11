@@ -158,7 +158,7 @@
                 'pageConfigs'     => $pageConfigs,
                 'templates'       => $templates,
                 'pinnedChats'     => $pinnedChats,
-                'displayContacts' => ChatBox::displayContactsFor($business, $pinnedChats),
+                'displayNames'    => ChatBox::displayNamesFor($business, $pinnedChats),
                 'workspaceUid'    => $workspaceUid,
                 'businessUid'     => $businessUid,
             ]);
@@ -761,7 +761,7 @@
 
             return view('customer.ChatBox.partials._chat_list', [
                 'chat_box'        => $chat_box,
-                'displayContacts' => ChatBox::displayContactsFor($business, $chat_box->getCollection()),
+                'displayNames'    => ChatBox::displayNamesFor($business, $chat_box->getCollection()),
             ])->render();
         }
 

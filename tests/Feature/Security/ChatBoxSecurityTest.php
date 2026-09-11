@@ -1400,6 +1400,97 @@ class ChatBoxSecurityTest extends TestCase
         $this->assertSame($few, $many, "The list cost {$many} queries for 12 conversations against {$few} for 2.");
     }
 
+    /**
+     * The same guarantee when every row has a named Contact — the case that
+     * per-row Contacts::getFullName() turns into two queries per row.
+     */
+    public function test_named_conversations_cost_no_query_per_row(): void
+    {
+        [[$customerA, $businessA, $workspaceA]] = $this->twoTenantBusinesses();
+        $this->authenticateAs($customerA, ['chat_box']);
+
+        $queries = null;
+        DB::listen(function () use (&$queries) {
+            if ($queries !== null) {
+                $queries++;
+            }
+        });
+
+        $count = function (int $conversations, bool $pinned) use ($businessA, $workspaceA, &$queries): int {
+            DB::table('contacts_custom_field')->delete();
+            DB::table('contacts')->delete();
+            DB::table('chat_boxes')->delete();
+
+            for ($i = 0; $i < $conversations; $i++) {
+                $phone = '1555061' . str_pad((string) $i, 4, '0', STR_PAD_LEFT);
+                $this->box($businessA, '1555068' . str_pad((string) $i, 4, '0', STR_PAD_LEFT), $phone, ['pinned' => $pinned]);
+                $this->namedContact($businessA, $phone, 'Nm' . $i);
+            }
+
+            $queries = 0;
+            $pinned
+                ? $this->get($this->conversationUrl('index', $workspaceA, $businessA))->assertOk()->assertSee('Nm0')
+                : $this->post($this->conversationUrl('load', $workspaceA, $businessA))->assertOk()->assertSee('Nm0');
+            $measured = $queries;
+            $queries = null;
+
+            return $measured;
+        };
+
+        foreach ([false, true] as $pinned) {
+            $count(1, $pinned);
+
+            $few = $count(2, $pinned);
+            $many = $count(12, $pinned);
+
+            $this->assertSame($few, $many, ($pinned ? 'Pinned rail' : 'List') . " cost {$many} queries for 12 named conversations against {$few} for 2.");
+        }
+    }
+
+    /**
+     * The batched names are exactly what Contacts::getFullName() would say.
+     */
+    public function test_batched_display_names_match_get_full_name(): void
+    {
+        [[, $businessA]] = $this->twoTenantBusinesses();
+
+        $group = \App\Models\ContactGroups::create(['customer_id' => $businessA->customer_id, 'business_id' => $businessA->id, 'name' => 'Parity ' . uniqid()]);
+        $first = \App\Models\ContactGroupFields::create(['contact_group_id' => $group->id, 'label' => 'First name', 'type' => 'text', 'tag' => 'FIRST_NAME']);
+        $last = \App\Models\ContactGroupFields::create(['contact_group_id' => $group->id, 'label' => 'Last name', 'type' => 'text', 'tag' => 'LAST_NAME']);
+
+        $cases = [
+            '15550801001' => ['Ada', 'Lovelace'],
+            '15550801002' => ['Grace', null],
+            '15550801003' => [null, 'Hopper'],
+            '15550801004' => [null, null],
+        ];
+
+        $boxes = [];
+
+        foreach ($cases as $phone => [$firstName, $lastName]) {
+            $contact = Contacts::create(['customer_id' => $businessA->customer_id, 'business_id' => $businessA->id, 'group_id' => $group->id, 'phone' => $phone, 'status' => 'subscribe']);
+
+            if ($firstName !== null) {
+                \App\Models\ContactsCustomField::create(['contact_id' => $contact->id, 'field_id' => $first->id, 'value' => $firstName]);
+            }
+
+            if ($lastName !== null) {
+                \App\Models\ContactsCustomField::create(['contact_id' => $contact->id, 'field_id' => $last->id, 'value' => $lastName]);
+            }
+
+            $boxes[$phone] = [$this->box($businessA, '15550801900', $phone), $contact];
+        }
+
+        $names = ChatBox::displayNamesFor($businessA, array_column($boxes, 0));
+
+        foreach ($boxes as $phone => [$box, $contact]) {
+            $this->assertSame($contact->fresh()->getFullName(), $names[$box->id], "Name for {$phone}.");
+        }
+
+        $this->assertSame('Ada Lovelace', $names[$boxes['15550801001'][0]->id]);
+        $this->assertNull($names[$boxes['15550801004'][0]->id], 'No name → show the number.');
+    }
+
     public function test_the_list_preview_is_the_latest_message_not_the_whole_history(): void
     {
         [[$customerA, $businessA, $workspaceA]] = $this->twoTenantBusinesses();

@@ -5,7 +5,7 @@
         </span>
         <div class="chat-info flex-grow-1">
             <h6 class="mb-0">{{ $chat->to }}</h6>
-            @php($displayName = ($displayContacts[$chat->id] ?? null)?->getFullName())
+            @php($displayName = $displayNames[$chat->id] ?? null)
             @if(!empty($displayName))
                 <p class="card-text mb-0 text-truncate">
                     {{ str_limit($displayName, 15) }}
