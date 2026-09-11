@@ -32,14 +32,15 @@ use Tests\TestCase;
  * no longer renders the `#sms-reports` pie; it links to the Business-
  * scoped Analytics surface instead.
  *
- * Security Remediation Slice 0 §16.A.2 (D-19) extends, rather than
- * replaces, test_customer_home_returns_200_and_links_to_business_analytics()
- * below with one light assertion: the invoice figure UserController::index()
- * now pre-computes (`$unpaidAndPendingInvoiceCount` / `$totalInvoiceCount`)
- * still renders for an ordinary actor with zero invoices. The multi-tenant
- * cross-leak proof for this same fix lives in
- * tests/Feature/Security/DashboardInvoiceScopeTest.php, which this test does
- * not duplicate.
+ * Security Remediation Slice 0 §16.A.2 (D-19) once extended
+ * test_customer_home_returns_200_and_links_to_business_analytics() below
+ * with a light invoice-figure assertion. Customer Experience Slice 4 §8
+ * removes the invoice tile from the dashboard, so that assertion now lives,
+ * inverted, in tests/Feature/Security/DashboardInvoiceScopeTest.php ("the
+ * Business Home renders no invoice figure"), beside the re-pointed
+ * multi-tenant isolation proof. Slice 4 also retargets the Results link from
+ * the account-level Analytics chooser to the selected Business's own
+ * Analytics overview.
  */
 class DashboardRenderTest extends TestCase
 {
@@ -69,6 +70,9 @@ class DashboardRenderTest extends TestCase
     {
         $this->ensureRequiredAppConfigRowsExist();
         $customer = $this->createCustomer();
+        $business = $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
+        \Illuminate\Support\Facades\DB::table('businesses')->where('id', $business->id)->update(['status' => \App\Enums\Business\BusinessStatus::Active->value]);
+        $workspaceUid = (string) \App\Models\Workspace::query()->whereKey($business->workspace_id)->value('uid');
         $customer->user->email_verified_at = now();
         $customer->user->save();
 
@@ -78,14 +82,10 @@ class DashboardRenderTest extends TestCase
         $response = $this->get(route('user.home'));
 
         $response->assertOk();
-        $response->assertSee(route('customer.analytics.entry'), false);
+        $response->assertSee(route('customer.workspaces.businesses.analytics.overview', [$workspaceUid, $business->uid]), false);
+        $response->assertDontSee(route('customer.analytics.entry'), false);
         $response->assertDontSee('id="sms-reports"', false);
         $response->assertDontSee('apexcharts', false);
-
-        // D-19: the pre-computed, actor-scoped invoice figures render fine
-        // for a customer with no invoices at all.
-        $response->assertSee('<sup>0</sup>', false);
-        $response->assertSee('/ 0</h2>', false);
     }
 
     public function test_admin_home_returns_200(): void
