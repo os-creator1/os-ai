@@ -115,14 +115,11 @@
                                     <dt class="col-sm-4">Status</dt>
                                     <dd class="col-sm-8">{{ ucfirst($entitlement['summary']->status->value) }}</dd>
 
+                                    {{-- Customer names only (PlatformFeatureCopy); machine keys and
+                                         features not built yet are never listed. --}}
+                                    @php $planFeatureNames = \App\Library\Entitlement\PlatformFeatureCopy::names($entitlement['summary']->planFeatureKeys); @endphp
                                     <dt class="col-sm-4">Plan features</dt>
-                                    <dd class="col-sm-8">
-                                        @if (empty($entitlement['summary']->planFeatureKeys))
-                                            None
-                                        @else
-                                            {{ implode(', ', $entitlement['summary']->planFeatureKeys) }}
-                                        @endif
-                                    </dd>
+                                    <dd class="col-sm-8" data-role="plan-features">{{ $planFeatureNames === [] ? 'None' : implode(', ', $planFeatureNames) }}</dd>
                                 @endif
 
                                 <dt class="col-sm-4">Current Businesses</dt>

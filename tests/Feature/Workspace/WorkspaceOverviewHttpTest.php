@@ -447,7 +447,9 @@ class WorkspaceOverviewHttpTest extends TestCase
 
         $response = $this->get(route('customer.workspaces.show', ['workspaceUid' => $workspace->uid]))->assertOk();
 
-        $response->assertSee('crm');
+        // Customer names, never machine keys (crm, website_generation), and
+        // nothing the Core packaging lists that is not built yet (calendar, forms…).
+        $response->assertSee('<dd class="col-sm-8" data-role="plan-features">Client Management, Inbox &amp; Conversations, Automations, Website</dd>', false);
         $response->assertSee('Included slots');
         $response->assertSee('3'); // business_slot_included seeded for Core
         $response->assertSee('Additional slots');
