@@ -123,13 +123,7 @@
                     rtl: isRtl
                 });
             } catch (err) {
-                toastr['info']('Oops, unable to copy ' + err, '{{ __('locale.labels.warning') }}!', {
-                    closeButton: true,
-                    positionClass: 'toast-top-right',
-                    progressBar: true,
-                    newestOnTop: true,
-                    rtl: isRtl
-                });
+                toastr['info']("We couldn't copy that. Select the text and copy it yourself.");
             }
             document.body.removeChild(textArea);
         }

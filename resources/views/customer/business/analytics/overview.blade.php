@@ -36,7 +36,7 @@
                     </x-alert>
                 @endif
                 @if ($errors->any())
-                    <x-alert variant="danger" icon="alert-circle" class="mb-2">
+                    <x-alert variant="danger" icon="alert-circle" class="mb-2" data-role="validation-summary">
                         <ul class="mb-0 ps-3">
                             @foreach ($errors->all() as $error)
                                 <li>{{ $error }}</li>

@@ -497,34 +497,16 @@
 
                             e.preventDefault();
 
-                            toastr['error']("{{ __('locale.auth.password_min_length') }}", 'Oops..!!', {
-                                closeButton: true,
-                                positionClass: 'toast-top-right',
-                                progressBar: true,
-                                newestOnTop: true,
-                                rtl: isRtl
-                            });
+                            toastr['error']("{{ __('locale.auth.password_min_length') }}");
                         }  else if (password !== confirm_password) {
 
                             e.preventDefault();
 
-                            toastr['error']("{{ __('locale.customer.both_password_not_matched') }}", 'Oops..!!', {
-                                closeButton: true,
-                                positionClass: 'toast-top-right',
-                                progressBar: true,
-                                newestOnTop: true,
-                                rtl: isRtl
-                            });
+                            toastr['error']("{{ __('locale.customer.both_password_not_matched') }}");
                         } else {
                             e.preventDefault();
 
-                            toastr['error']("{{ __('locale.auth.insert_required_fields') }}", 'Oops..!!', {
-                                closeButton: true,
-                                positionClass: 'toast-top-right',
-                                progressBar: true,
-                                newestOnTop: true,
-                                rtl: isRtl
-                            });
+                            toastr['error']("{{ __('locale.auth.insert_required_fields') }}");
                         }
                     });
                 });
@@ -542,50 +524,20 @@
                             numberedStepper.next();
                         } else if (firstName === 0) {
                             e.preventDefault();
-                            toastr['error']("{{ __('locale.auth.enter_first_name') }}", 'Oops..!!', {
-                                closeButton: true,
-                                positionClass: 'toast-top-right',
-                                progressBar: true,
-                                newestOnTop: true,
-                                rtl: isRtl
-                            });
+                            toastr['error']("{{ __('locale.auth.enter_first_name') }}");
                         } else if (phone === 0 || phone > 17 || phone < 9) {
                             e.preventDefault();
-                            toastr['error']("{{ __('locale.auth.enter_phone') }}", 'Oops..!!', {
-                                closeButton: true,
-                                positionClass: 'toast-top-right',
-                                progressBar: true,
-                                newestOnTop: true,
-                                rtl: isRtl
-                            });
+                            toastr['error']("{{ __('locale.auth.enter_phone') }}");
                         } else if (address === 0) {
                             e.preventDefault();
-                            toastr['error']("{{ __('locale.auth.enter_address') }}", 'Oops..!!', {
-                                closeButton: true,
-                                positionClass: 'toast-top-right',
-                                progressBar: true,
-                                newestOnTop: true,
-                                rtl: isRtl
-                            });
+                            toastr['error']("{{ __('locale.auth.enter_address') }}");
                         } else if (city === 0) {
                             e.preventDefault();
-                            toastr['error']("{{ __('locale.auth.enter_city') }}", 'Oops..!!', {
-                                closeButton: true,
-                                positionClass: 'toast-top-right',
-                                progressBar: true,
-                                newestOnTop: true,
-                                rtl: isRtl
-                            });
+                            toastr['error']("{{ __('locale.auth.enter_city') }}");
                         } else {
                             e.preventDefault();
 
-                            toastr['error']("{{ __('locale.auth.insert_required_fields') }}", 'Oops..!!', {
-                                closeButton: true,
-                                positionClass: 'toast-top-right',
-                                progressBar: true,
-                                newestOnTop: true,
-                                rtl: isRtl
-                            });
+                            toastr['error']("{{ __('locale.auth.insert_required_fields') }}");
                         }
                     });
                 });

@@ -14,7 +14,8 @@
     };
 @endphp
 
-<div {{ $attributes->merge(['class' => "alert {$variantClass} ds-alert d-flex align-items-start gap-2" . ($dismissible ? ' alert-dismissible fade show' : '')]) }} role="alert">
+{{-- role="alert" unless the caller passes its own (role="status" for a success or info message). --}}
+<div {{ $attributes->except('role')->merge(['class' => "alert {$variantClass} ds-alert d-flex align-items-start gap-2" . ($dismissible ? ' alert-dismissible fade show' : '')]) }} role="{{ $attributes->get('role', 'alert') }}">
     @if ($icon)
         <x-ds-icon :name="$icon" size="18" class="flex-shrink-0 mt-1" />
     @endif
