@@ -7,7 +7,8 @@ use Tests\TestCase;
 /**
  * Design System M2 A1 (Business Onboarding) — component-adoption assertions.
  * Asserts ONLY the exact locked adoption set from the final contract's §11
- * matrix: 3 <x-card>, 1 <x-alert>, 12 <x-button>, 20 <x-input>, 2 <x-select>,
+ * matrix: 3 <x-card>, 1 <x-alert>, 12 <x-button>, 20 <x-input> (17 since the
+ * Business step's locale fields moved to a shared partial), 2 <x-select>,
  * 1 <x-empty-state> — with an exact per-file breakdown — and explicitly
  * proves the §12 non-adoption carve-outs (native textarea, native
  * checkbox/radio, native btn-success "Finish setup") introduced zero
@@ -42,9 +43,15 @@ class BusinessOnboardingComponentAdoptionTest extends TestCase
         $this->assertMarkerTotal('<x-button', 12);
     }
 
-    public function test_exactly_20_input_markers_are_present(): void
+    /**
+     * 20 in the A1 contract; the Business step's country, timezone and
+     * currency x-inputs moved into the shared
+     * customer/business/partials/locale-fields partial (three x-selects of
+     * canonical values), leaving 17 here.
+     */
+    public function test_exactly_17_input_markers_are_present(): void
     {
-        $this->assertMarkerTotal('<x-input', 20);
+        $this->assertMarkerTotal('<x-input', 17);
     }
 
     public function test_exactly_2_select_markers_are_present(): void
@@ -62,7 +69,7 @@ class BusinessOnboardingComponentAdoptionTest extends TestCase
         $expected = [
             'resources/views/customer/onboarding/show.blade.php' => ['<x-card' => 1, '<x-alert' => 1, '<x-button' => 0, '<x-input' => 0, '<x-select' => 0, '<x-empty-state' => 0],
             'resources/views/customer/onboarding/steps/goals.blade.php' => ['<x-card' => 0, '<x-alert' => 0, '<x-button' => 1, '<x-input' => 0, '<x-select' => 0, '<x-empty-state' => 0],
-            'resources/views/customer/onboarding/steps/business.blade.php' => ['<x-card' => 0, '<x-alert' => 0, '<x-button' => 1, '<x-input' => 7, '<x-select' => 1, '<x-empty-state' => 0],
+            'resources/views/customer/onboarding/steps/business.blade.php' => ['<x-card' => 0, '<x-alert' => 0, '<x-button' => 1, '<x-input' => 4, '<x-select' => 1, '<x-empty-state' => 0],
             'resources/views/customer/onboarding/steps/location.blade.php' => ['<x-card' => 0, '<x-alert' => 0, '<x-button' => 1, '<x-input' => 5, '<x-select' => 1, '<x-empty-state' => 0],
             'resources/views/customer/onboarding/steps/services.blade.php' => ['<x-card' => 2, '<x-alert' => 0, '<x-button' => 1, '<x-input' => 4, '<x-select' => 0, '<x-empty-state' => 0],
             'resources/views/customer/onboarding/steps/assets.blade.php' => ['<x-card' => 0, '<x-alert' => 0, '<x-button' => 2, '<x-input' => 3, '<x-select' => 0, '<x-empty-state' => 0],

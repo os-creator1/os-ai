@@ -33,6 +33,7 @@ use App\Http\Requests\Customer\Workspace\TransferWorkspaceOwnershipRequest;
 use App\Http\Requests\Customer\Workspace\UpdateWorkspaceMemberAccessRequest;
 use App\Http\Requests\Customer\Workspace\UpdateWorkspaceMemberRoleRequest;
 use App\Enums\Entitlement\WorkspacePlanTier;
+use App\Library\Entitlement\BusinessFeatureSettings;
 use App\Library\Entitlement\EntitlementManager;
 use App\Library\Entitlement\PlatformFeatureRegistry;
 use App\Library\Usage\BillingProfileManager;
@@ -45,6 +46,7 @@ use App\Repositories\Contracts\WorkspaceMembershipBusinessRepository;
 use App\Repositories\Contracts\WorkspaceMembershipRepository;
 use App\Repositories\Contracts\WorkspaceRepository;
 use Illuminate\Contracts\View\View;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Auth;
@@ -65,6 +67,17 @@ class WorkspaceController extends CustomerBaseController
      * account manager which of those it was.
      */
     private const MEMBER_CANNOT_BE_ADDED = 'We couldn\'t add that person. Check the email address: they need an existing Business OS account, and can\'t already be on this account or be its owner.';
+
+    private const FEATURE_SWITCH_NOT_ALLOWED = 'You don\'t have permission to change this Business\'s features.';
+
+    private const FEATURE_SWITCH_ACCOUNT_INACTIVE = 'This account is inactive, so its features can\'t be changed.';
+
+    /**
+     * The manager refuses to turn off a feature the Business cannot use right
+     * now — one the plan leaves out, or one already turned off in another tab
+     * — so the message covers both honestly.
+     */
+    private const FEATURE_SWITCH_NOT_AVAILABLE = 'This feature can\'t be changed right now. Refresh the page to see its current setting.';
 
     public function __construct(
         private readonly WorkspaceRepository $workspaceRepository,
@@ -894,31 +907,39 @@ class WorkspaceController extends CustomerBaseController
      * per-Business feature view data, assembled entirely from
      * EntitlementManager's own presentation API (§8) -- never a repository
      * read here. One decideAvailableFeaturesForBusiness() call per Business
-     * already shown by effectiveBusinesses() for this role.
+     * already shown by effectiveBusinesses() for this role. `featureSettings`
+     * is the customer's switch list built from those same decisions: only
+     * the features BusinessFeatureSettings says a customer can see are ever
+     * sent to the page.
      *
-     * @return array{summary: \App\Library\Entitlement\WorkspaceEntitlementSummary, features: array<string, array<string, array{decision: \App\Library\Entitlement\EntitlementDecision, disablePreferenceRecorded: bool}>>}
+     * @return array{summary: \App\Library\Entitlement\WorkspaceEntitlementSummary, features: array<string, array<string, array{decision: \App\Library\Entitlement\EntitlementDecision, disablePreferenceRecorded: bool}>>, featureSettings: array<string, list<array{key: string, name: string, description: string, enabled: bool}>>}
      */
     private function entitlementViewData(Workspace $workspace, int $userId): array
     {
         $features = [];
+        $featureSettings = [];
 
         foreach ($this->accessibleBusinesses($workspace, $userId) as $business) {
             $features[$business->uid] = $this->entitlementManager->decideAvailableFeaturesForBusiness($workspace, $business, $userId);
+            $featureSettings[$business->uid] = BusinessFeatureSettings::fromDecisions($features[$business->uid]);
         }
 
         return [
             'summary' => $this->entitlementManager->getWorkspaceEntitlementSummary($workspace),
             'features' => $features,
+            'featureSettings' => $featureSettings,
         ];
     }
 
     /**
-     * RFC-004 Milestone 3 §12/§13: records a Business-level disable
-     * preference for a currently-entitled feature. This is a stored
-     * preference, never claimed runtime enforcement (§13) -- the legacy
-     * CRM/Conversations/Automations modules do not yet consult it.
+     * RFC-004 Milestone 3 §12/§13: turns a currently-entitled feature off for
+     * one Business (records its disable preference). EntitlementManager stays
+     * the only authority: it checks the actor, the Workspace and the
+     * entitlement. The account page's switches call this with
+     * `Accept: application/json` and get the saved state back; any other
+     * request keeps the redirect.
      */
-    public function disableBusinessFeature(string $workspaceUid, string $businessUid, string $featureKey): RedirectResponse
+    public function disableBusinessFeature(string $workspaceUid, string $businessUid, string $featureKey): RedirectResponse|JsonResponse
     {
         $actorUserId = (int) Auth::id();
         $workspace = $this->resolveAccessibleWorkspace($workspaceUid, $actorUserId);
@@ -940,24 +961,23 @@ class WorkspaceController extends CustomerBaseController
         } catch (WorkspaceBusinessNotFoundException|BusinessWorkspaceMismatchException) {
             abort(404);
         } catch (UnauthorizedWorkspaceManagementException) {
-            return redirect()->back()->with('flash_error', 'You are not authorized to change this Business\'s feature preferences.');
+            return $this->featureSwitchRefused(self::FEATURE_SWITCH_NOT_ALLOWED, 403);
         } catch (InactiveWorkspaceMutationException) {
-            return redirect()->back()->with('flash_error', 'An inactive Workspace cannot have its feature preferences changed.');
+            return $this->featureSwitchRefused(self::FEATURE_SWITCH_ACCOUNT_INACTIVE, 409);
         } catch (RuntimeException) {
-            return redirect()->back()->with('flash_error', 'This Business is not currently entitled to this feature.');
+            return $this->featureSwitchRefused(self::FEATURE_SWITCH_NOT_AVAILABLE, 409);
         }
 
-        return redirect()
-            ->route('customer.workspaces.show', $workspaceUid)
-            ->with('flash_success', 'Disable preference recorded.');
+        return $this->featureSwitchSaved($workspaceUid, false);
     }
 
     /**
-     * RFC-004 Milestone 3 §12/§13: removes a previously-recorded disable
-     * preference, regardless of the feature's current effective decision
-     * (§13's exact case 1 rule).
+     * RFC-004 Milestone 3 §12/§13: turns a feature back on for one Business
+     * (removes its disable preference), regardless of the feature's current
+     * effective decision (§13's exact case 1 rule). Same negotiation as
+     * disableBusinessFeature().
      */
-    public function enableBusinessFeature(string $workspaceUid, string $businessUid, string $featureKey): RedirectResponse
+    public function enableBusinessFeature(string $workspaceUid, string $businessUid, string $featureKey): RedirectResponse|JsonResponse
     {
         $actorUserId = (int) Auth::id();
         $workspace = $this->resolveAccessibleWorkspace($workspaceUid, $actorUserId);
@@ -975,14 +995,43 @@ class WorkspaceController extends CustomerBaseController
         } catch (WorkspaceBusinessNotFoundException|BusinessWorkspaceMismatchException) {
             abort(404);
         } catch (UnauthorizedWorkspaceManagementException) {
-            return redirect()->back()->with('flash_error', 'You are not authorized to change this Business\'s feature preferences.');
+            return $this->featureSwitchRefused(self::FEATURE_SWITCH_NOT_ALLOWED, 403);
         } catch (InactiveWorkspaceMutationException) {
-            return redirect()->back()->with('flash_error', 'An inactive Workspace cannot have its feature preferences changed.');
+            return $this->featureSwitchRefused(self::FEATURE_SWITCH_ACCOUNT_INACTIVE, 409);
+        }
+
+        return $this->featureSwitchSaved($workspaceUid, true);
+    }
+
+    /**
+     * The saved state, as the account page's switch expects it; `enabled` is
+     * what the manager just stored, so the switch never shows a state the
+     * server did not accept.
+     */
+    private function featureSwitchSaved(string $workspaceUid, bool $enabled): RedirectResponse|JsonResponse
+    {
+        if (request()->wantsJson()) {
+            return response()->json(['status' => 'success', 'enabled' => $enabled]);
         }
 
         return redirect()
             ->route('customer.workspaces.show', $workspaceUid)
-            ->with('flash_success', 'Disable preference removed.');
+            ->with('flash_success', 'Saved.');
+    }
+
+    /**
+     * A refusal after the Workspace, Business and feature were all resolved.
+     * `customer_message` is the only text the switch shows; anything else a
+     * JSON error carries (the global handler's exception message) is not
+     * customer copy and is never displayed.
+     */
+    private function featureSwitchRefused(string $message, int $status): RedirectResponse|JsonResponse
+    {
+        if (request()->wantsJson()) {
+            return response()->json(['status' => 'error', 'customer_message' => $message], $status);
+        }
+
+        return redirect()->back()->with('flash_error', $message);
     }
 
     /**

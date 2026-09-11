@@ -40,8 +40,12 @@ class WorkspaceBusinessComponentAdoptionTest extends TestCase
             '<x-button' => 15,
             // One x-input (new owner) and one x-select (previous-owner
             // disposition) left the customer account page with the
-            // ownership-transfer form (account settings cleanup).
-            '<x-input' => 33,
+            // ownership-transfer form (account settings cleanup). Country,
+            // timezone and currency left the Create Business and Business
+            // profile forms as x-inputs: both pages now include the shared
+            // customer/business/partials/locale-fields partial, which renders
+            // them as three x-selects of canonical values.
+            '<x-input' => 27,
             '<x-select' => 7,
             '<x-table' => 8,
             '<x-empty-state' => 6,
@@ -62,11 +66,11 @@ class WorkspaceBusinessComponentAdoptionTest extends TestCase
             ],
             'resources/views/customer/workspaces/show.blade.php' => [
                 '<x-card' => 2, '<x-alert' => 3, '<x-badge' => 4, '<x-button' => 6,
-                '<x-input' => 8, '<x-select' => 1, '<x-table' => 3, '<x-empty-state' => 2, '<x-pagination' => 0,
+                '<x-input' => 5, '<x-select' => 1, '<x-table' => 3, '<x-empty-state' => 2, '<x-pagination' => 0,
             ],
             'resources/views/customer/business/edit.blade.php' => [
                 '<x-card' => 1, '<x-alert' => 2, '<x-badge' => 0, '<x-button' => 1,
-                '<x-input' => 11, '<x-select' => 1, '<x-table' => 0, '<x-empty-state' => 0, '<x-pagination' => 0,
+                '<x-input' => 8, '<x-select' => 1, '<x-table' => 0, '<x-empty-state' => 0, '<x-pagination' => 0,
             ],
             'resources/views/admin/workspaces/index.blade.php' => [
                 '<x-card' => 1, '<x-alert' => 0, '<x-badge' => 2, '<x-button' => 1,
