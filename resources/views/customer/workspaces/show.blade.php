@@ -72,53 +72,18 @@
                         </form>
                     @endif
 
-                    @if ($workspace['role'] === 'Owner')
-                        @if ($workspace['is_active'])
-                            <form method="POST" data-workspace-action="deactivate" class="mt-1">
-                                @csrf
-
-                                <button type="submit" class="btn btn-outline-danger">Deactivate {{ $accountNoun }}</button>
-                            </form>
-                        @else
-                            <form method="POST" data-workspace-action="reactivate" class="mt-1">
-                                @csrf
-
-                                <button type="submit" class="btn btn-outline-success">Reactivate {{ $accountNoun }}</button>
-                            </form>
-                        @endif
-
-                        <form method="POST" data-workspace-action="ownership/transfer" class="mt-1">
+                    {{-- Account settings are the account name and the team. Deactivating
+                         the account and transferring ownership are not customer
+                         controls here: cancellation belongs to Plan & subscription,
+                         and a real ownership handover needs its own designed flow
+                         (identity by email, explicit confirmation, audit). The
+                         backend actions stay in place for support. An account that
+                         is already inactive can still be reactivated. --}}
+                    @if ($workspace['role'] === 'Owner' && ! $workspace['is_active'])
+                        <form method="POST" data-workspace-action="reactivate" class="mt-1">
                             @csrf
 
-                            <x-input name="new_owner_user_uid" label="New owner User UID" type="text" value="{{ old('new_owner_user_uid') }}" required />
-
-                            <x-select
-                                name="previous_owner_disposition"
-                                label="Previous owner disposition"
-                                :options="['deactivate' => 'Deactivate previous owner', 'convert_to_admin' => 'Convert previous owner to Admin']"
-                                :selected="old('previous_owner_disposition', 'deactivate')"
-                            />
-
-                            <div class="mb-1" data-ownership-transfer-admin-fields>
-                                <label class="form-label" for="ownership-transfer-scope">Business access</label>
-                                <select class="form-control" id="ownership-transfer-scope" name="business_access_scope">
-                                    <option value="all">All Businesses</option>
-                                    <option value="selected">Selected Businesses</option>
-                                </select>
-
-                                @if (! empty($manageableBusinesses))
-                                    <div class="mt-1">
-                                        @foreach ($manageableBusinesses as $business)
-                                            <div class="form-check form-check-inline">
-                                                <input class="form-check-input" type="checkbox" name="business_uids[]" value="{{ $business['uid'] }}" id="ownership-transfer-business-{{ $business['uid'] }}">
-                                                <label class="form-check-label" for="ownership-transfer-business-{{ $business['uid'] }}">{{ $business['name'] }}</label>
-                                            </div>
-                                        @endforeach
-                                    </div>
-                                @endif
-                            </div>
-
-                            <button type="submit" class="btn btn-outline-warning">Transfer ownership</button>
+                            <button type="submit" class="btn btn-outline-success">Reactivate {{ $accountNoun }}</button>
                         </form>
                     @endif
                 </x-card>
@@ -374,7 +339,7 @@
                         <form method="POST" data-workspace-action="members" class="mb-2">
                             @csrf
 
-                            <x-input name="user_uid" label="User UID" type="text" value="{{ old('user_uid') }}" required />
+                            <x-input name="member_email" label="Email address" type="email" value="{{ old('member_email') }}" autocomplete="off" help="They need an existing Business OS account before you can add them." :error="$errors->first('member_email')" required />
 
                             <div class="mb-1">
                                 <label class="form-label" for="member-role">Role</label>
@@ -386,23 +351,36 @@
                                 </select>
                             </div>
 
-                            <div class="mb-1">
-                                <label class="form-label" for="member-scope">Business access</label>
-                                <select class="form-control" id="member-scope" name="business_access_scope">
-                                    <option value="all">All Businesses</option>
-                                    <option value="selected">Selected Businesses</option>
-                                </select>
-                            </div>
+                            @php
+                                // Exactly one Business this person can grant: nothing to choose, so
+                                // the new member gets access to that one Business only (selected
+                                // scope — least privilege, never a hidden "all Businesses" grant).
+                                $singleManageableBusiness = count($manageableBusinesses ?? []) === 1 ? $manageableBusinesses[0] : null;
+                            @endphp
 
-                            @if (! empty($manageableBusinesses))
+                            @if ($singleManageableBusiness !== null)
+                                <input type="hidden" name="business_access_scope" value="selected">
+                                <input type="hidden" name="business_uids[]" value="{{ $singleManageableBusiness['uid'] }}">
+                                <p class="text-caption mb-1" data-role="member-single-business">They'll get access to {{ $singleManageableBusiness['name'] }}.</p>
+                            @else
                                 <div class="mb-1">
-                                    @foreach ($manageableBusinesses as $business)
-                                        <div class="form-check form-check-inline">
-                                            <input class="form-check-input" type="checkbox" name="business_uids[]" value="{{ $business['uid'] }}" id="add-member-business-{{ $business['uid'] }}">
-                                            <label class="form-check-label" for="add-member-business-{{ $business['uid'] }}">{{ $business['name'] }}</label>
-                                        </div>
-                                    @endforeach
+                                    <label class="form-label" for="member-scope">Business access</label>
+                                    <select class="form-control" id="member-scope" name="business_access_scope">
+                                        <option value="all">All Businesses</option>
+                                        <option value="selected">Selected Businesses</option>
+                                    </select>
                                 </div>
+
+                                @if (! empty($manageableBusinesses))
+                                    <div class="mb-1">
+                                        @foreach ($manageableBusinesses as $business)
+                                            <div class="form-check form-check-inline">
+                                                <input class="form-check-input" type="checkbox" name="business_uids[]" value="{{ $business['uid'] }}" id="add-member-business-{{ $business['uid'] }}">
+                                                <label class="form-check-label" for="add-member-business-{{ $business['uid'] }}">{{ $business['name'] }}</label>
+                                            </div>
+                                        @endforeach
+                                    </div>
+                                @endif
                             @endif
 
                             <x-button type="submit" variant="outline">Add member</x-button>
@@ -540,38 +518,6 @@
 
                         select.addEventListener('change', syncBusinessCheckboxes);
                         syncBusinessCheckboxes();
-                    });
-
-                    document.querySelectorAll('select[name="previous_owner_disposition"]').forEach(function (select) {
-                        var form = select.closest('form');
-                        var adminFields = form ? form.querySelector('[data-ownership-transfer-admin-fields]') : null;
-
-                        if (! adminFields) {
-                            return;
-                        }
-
-                        var scopeSelect = adminFields.querySelector('select[name="business_access_scope"]');
-
-                        var syncAdminFields = function () {
-                            var isConvertToAdmin = select.value === 'convert_to_admin';
-                            adminFields.style.display = isConvertToAdmin ? '' : 'none';
-
-                            if (scopeSelect) {
-                                scopeSelect.disabled = ! isConvertToAdmin;
-                            }
-
-                            adminFields.querySelectorAll('input[name="business_uids[]"]').forEach(function (checkbox) {
-                                checkbox.disabled = ! isConvertToAdmin || (scopeSelect && scopeSelect.value === 'all');
-                            });
-                        };
-
-                        select.addEventListener('change', syncAdminFields);
-
-                        if (scopeSelect) {
-                            scopeSelect.addEventListener('change', syncAdminFields);
-                        }
-
-                        syncAdminFields();
                     });
                 </script>
             @endif

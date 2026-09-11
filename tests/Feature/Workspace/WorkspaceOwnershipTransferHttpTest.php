@@ -58,14 +58,25 @@ class WorkspaceOwnershipTransferHttpTest extends TestCase
 
     // --- UI visibility -----------------------------------------------------
 
-    public function test_owner_sees_ownership_transfer_control(): void
+    /**
+     * The technical transfer form (User UID, previous-owner disposition,
+     * Business access) is no longer a customer control on the account page.
+     * The route and WorkspaceManager::transferOwnership() stay in place — the
+     * HTTP tests below still exercise them — for support and for a future,
+     * properly designed handover flow.
+     */
+    public function test_owner_no_longer_sees_the_ownership_transfer_control(): void
     {
         $customer = $this->actingAsHttpCustomer();
         $workspace = $this->createWorkspace($customer->user);
 
         $response = $this->get(route('customer.workspaces.show', $workspace->uid))->assertOk();
 
-        $response->assertSee('data-workspace-action="ownership/transfer"', false);
+        $response->assertDontSee('data-workspace-action="ownership/transfer"', false);
+        $response->assertDontSee('New owner User UID');
+        $response->assertDontSee('Previous owner disposition');
+        $response->assertDontSee('Transfer ownership');
+        $this->assertTrue(\Illuminate\Support\Facades\Route::has('customer.workspaces.ownership.transfer'), 'The backend action is kept.');
     }
 
     public function test_admin_does_not_see_ownership_transfer_control(): void

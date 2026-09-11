@@ -58,6 +58,14 @@ class WorkspaceController extends CustomerBaseController
         'staff' => 'Staff',
     ];
 
+    /**
+     * One message for every "this person can't be added" outcome — no account
+     * for that address, an account that isn't an active customer account, the
+     * account's owner, or someone already on it — so the answer never tells an
+     * account manager which of those it was.
+     */
+    private const MEMBER_CANNOT_BE_ADDED = 'We couldn\'t add that person. Check the email address: they need an existing Business OS account, and can\'t already be on this account or be its owner.';
+
     public function __construct(
         private readonly WorkspaceRepository $workspaceRepository,
         private readonly WorkspaceMembershipRepository $membershipRepository,
@@ -440,30 +448,36 @@ class WorkspaceController extends CustomerBaseController
 
     /**
      * RFC-003 Milestone 4 Slice 4B: adds an existing User as an active
-     * member via a nullable User uid lookup + WorkspaceManager::addMember() —
-     * unknown user uid fails closed with 404, matching resolveAccessibleMembership()'s
-     * unknown/inaccessible-target boundary. Business selection is resolved
-     * and access-checked entirely by resolveManageableBusinessIds() before
-     * any WorkspaceManager call, so an invalid selection never reaches the
-     * manager and never partially writes; an invalid selection resolves to
-     * the same 404 as an unauthorized actor or unknown target, not a
-     * flash-message redirect, so this pre-check can't be used as an oracle
-     * either. An UnauthorizedWorkspaceManagementException from the manager
-     * itself also resolves to 404 for the same reason.
+     * member through WorkspaceManager::addMember(). The person is identified
+     * by EMAIL ADDRESS (resolved here, server-side; only the numeric id goes
+     * to the manager), never by an internal User uid.
+     *
+     * Order matters, so nothing about an address is revealed to an actor who
+     * may not add members:
+     *  1. the Workspace and the actor's standing in it (unknown or
+     *     inaccessible → 404, unchanged);
+     *  2. the actor's authority over the requested role — the manager's own
+     *     rule, mirrored read-only — BEFORE the address is looked at (no
+     *     authority → 404, the same answer as before);
+     *  3. the Business selection (invalid → 404, unchanged, so it can't be
+     *     used as an oracle either);
+     *  4. only then the address: an unknown or ineligible address, the
+     *     owner, or an existing member → back to this page with one generic
+     *     message on the email field. The manager stays authoritative and
+     *     fail-closed; UnauthorizedWorkspaceManagementException is still 404.
      */
     public function storeMember(StoreWorkspaceMemberRequest $request, string $workspaceUid): RedirectResponse
     {
         $actorUserId = (int) Auth::id();
         $workspace = $this->resolveAccessibleWorkspace($workspaceUid, $actorUserId);
 
-        $targetUser = User::query()->where('uid', $request->validated('user_uid'))->first();
+        $role = WorkspaceMembershipRole::from($request->validated('role'));
+        $scope = WorkspaceBusinessAccessScope::from($request->validated('business_access_scope'));
 
-        if ($targetUser === null) {
+        if (! $this->hasAuthorityOverRole($workspace, $actorUserId, $role)) {
             abort(404);
         }
 
-        $role = WorkspaceMembershipRole::from($request->validated('role'));
-        $scope = WorkspaceBusinessAccessScope::from($request->validated('business_access_scope'));
         $businessIds = [];
 
         if ($scope === WorkspaceBusinessAccessScope::Selected) {
@@ -476,22 +490,20 @@ class WorkspaceController extends CustomerBaseController
             abort(404);
         }
 
+        $targetUser = $this->findAddableUserByEmail((string) $request->validated('member_email'));
+
+        if ($targetUser === null) {
+            return $this->memberCannotBeAdded($workspaceUid);
+        }
+
         try {
             $this->workspaceManager->addMember($actorUserId, $workspace, (int) $targetUser->id, $role, $scope, $businessIds);
         } catch (UnauthorizedWorkspaceManagementException) {
             abort(404);
         } catch (InactiveWorkspaceMutationException) {
-            $hasAuthorityOverRole = $role === WorkspaceMembershipRole::Admin
-                ? $this->effectiveRoleKey($workspace, $actorUserId) === 'owner'
-                : in_array($this->effectiveRoleKey($workspace, $actorUserId), ['owner', 'admin'], true);
-
-            if (! $hasAuthorityOverRole) {
-                abort(404);
-            }
-
             return redirect()->back()->with('flash_error', 'An inactive Workspace cannot receive new members.');
         } catch (OwnerCannotBeMemberException|WorkspaceMembershipAlreadyExistsException) {
-            return redirect()->back()->with('flash_error', 'This user cannot be added as a member.');
+            return $this->memberCannotBeAdded($workspaceUid);
         } catch (InvalidBusinessAccessScopeAssignmentException) {
             return redirect()->back()->with('flash_error', 'Business selections are not valid for the "All Businesses" scope.');
         }
@@ -499,6 +511,44 @@ class WorkspaceController extends CustomerBaseController
         return redirect()
             ->route('customer.workspaces.show', $workspaceUid)
             ->with('flash_success', 'Member added.');
+    }
+
+    /**
+     * WorkspaceManager::addMember()'s own authority rule, mirrored read-only
+     * so it can be checked before anything else: adding an Admin needs the
+     * owner; adding Staff needs the owner or an active Admin. The manager
+     * still enforces it on write.
+     */
+    private function hasAuthorityOverRole(Workspace $workspace, int $actorUserId, WorkspaceMembershipRole $role): bool
+    {
+        $effectiveRole = $this->effectiveRoleKey($workspace, $actorUserId);
+
+        return $role === WorkspaceMembershipRole::Admin
+            ? $effectiveRole === 'owner'
+            : in_array($effectiveRole, ['owner', 'admin'], true);
+    }
+
+    /**
+     * The active customer account with this email address, matched exactly
+     * as sign-in matches it (the same `users.email` equality, so the same
+     * case-insensitive collation). Anything else — no account, a disabled
+     * account, a platform-only account — is null.
+     */
+    private function findAddableUserByEmail(string $email): ?User
+    {
+        return User::query()
+            ->where('email', trim($email))
+            ->where('is_customer', true)
+            ->where('status', true)
+            ->first();
+    }
+
+    private function memberCannotBeAdded(string $workspaceUid): RedirectResponse
+    {
+        return redirect()
+            ->route('customer.workspaces.show', $workspaceUid)
+            ->withErrors(['member_email' => self::MEMBER_CANNOT_BE_ADDED])
+            ->withInput(['member_email' => (string) request()->input('member_email')]);
     }
 
     /**

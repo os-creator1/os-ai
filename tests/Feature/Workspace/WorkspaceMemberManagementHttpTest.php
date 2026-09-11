@@ -28,12 +28,20 @@ use Tests\TestCase;
  * denial cases, opaque-uid Business resolution (unknown/duplicate/
  * cross-Workspace/inaccessible), deactivate/reactivate access retention,
  * the inactive-Workspace boundary, and opaque-uid-only exposure.
+ *
+ * Add member identifies the person by EMAIL ADDRESS (member_email), never by
+ * an internal User uid. Authorization and addressability failures stay 404
+ * and indistinguishable; an address that can't be added — unknown, the owner,
+ * or already a member — returns to the account page with one generic message.
+ * See also WorkspaceMemberEmailIdentityTest.
  */
 class WorkspaceMemberManagementHttpTest extends TestCase
 {
     use RefreshDatabase;
     use CreatesBusinessTestData;
     use CreatesWorkspaceTestData;
+
+    private const MEMBER_CANNOT_BE_ADDED = 'We couldn\'t add that person. Check the email address: they need an existing Business OS account, and can\'t already be on this account or be its owner.';
 
     // --- Route shape -----------------------------------------------------
 
@@ -101,7 +109,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
 
     public function test_guest_is_rejected_by_store_member(): void
     {
-        $this->post(route('customer.workspaces.members.store', 'anything'), ['user_uid' => 'x'])
+        $this->post(route('customer.workspaces.members.store', 'anything'), ['member_email' => 'x@example.test'])
             ->assertUnauthorized();
     }
 
@@ -144,7 +152,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
         $target = $this->createTargetUser('Csrf', 'Missing');
 
         $response = $this->post(route('customer.workspaces.members.store', $workspace->uid), [
-            'user_uid' => $target->uid,
+            'member_email' => $target->email,
             'role' => 'staff',
             'business_access_scope' => 'all',
         ]);
@@ -165,7 +173,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
             route('customer.workspaces.members.store', $workspace->uid),
             [
                 '_token' => $token,
-                'user_uid' => $target->uid,
+                'member_email' => $target->email,
                 'role' => 'staff',
                 'business_access_scope' => 'all',
             ]
@@ -177,7 +185,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
 
     // --- Validation ----------------------------------------------------
 
-    public function test_store_member_requires_a_user_uid(): void
+    public function test_store_member_requires_a_member_email(): void
     {
         $customer = $this->actingAsHttpCustomer();
         $workspace = $this->createWorkspace($customer->user);
@@ -187,7 +195,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
             'business_access_scope' => 'all',
         ]);
 
-        $response->assertSessionHasErrors('user_uid');
+        $response->assertSessionHasErrors('member_email');
     }
 
     public function test_store_member_requires_a_valid_role(): void
@@ -197,7 +205,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
         $target = $this->createTargetUser('Val', 'Idate');
 
         $response = $this->post(route('customer.workspaces.members.store', $workspace->uid), [
-            'user_uid' => $target->uid,
+            'member_email' => $target->email,
             'role' => 'owner',
             'business_access_scope' => 'all',
         ]);
@@ -212,7 +220,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
         $target = $this->createTargetUser('Val', 'Idate');
 
         $response = $this->post(route('customer.workspaces.members.store', $workspace->uid), [
-            'user_uid' => $target->uid,
+            'member_email' => $target->email,
             'role' => 'staff',
             'business_access_scope' => 'partial',
         ]);
@@ -228,7 +236,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
         $business = $this->createBusinessForCustomer($customer->user->id, $workspace->id);
 
         $response = $this->post(route('customer.workspaces.members.store', $workspace->uid), [
-            'user_uid' => $target->uid,
+            'member_email' => $target->email,
             'role' => 'staff',
             'business_access_scope' => 'all',
             'business_uids' => [$business->uid],
@@ -246,7 +254,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
         $business = $this->createBusinessForCustomer($customer->user->id, $workspace->id);
 
         $response = $this->post(route('customer.workspaces.members.store', $workspace->uid), [
-            'user_uid' => $target->uid,
+            'member_email' => $target->email,
             'role' => 'staff',
             'business_access_scope' => 'selected',
             'business_uids' => [$business->uid, $business->uid],
@@ -293,7 +301,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
         $target = $this->createTargetUser('Ada', 'Staff');
 
         $response = $this->post(route('customer.workspaces.members.store', $workspace->uid), [
-            'user_uid' => $target->uid,
+            'member_email' => $target->email,
             'role' => 'staff',
             'business_access_scope' => 'all',
         ]);
@@ -315,7 +323,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
         $target = $this->createTargetUser('Ada', 'Admin');
 
         $this->post(route('customer.workspaces.members.store', $workspace->uid), [
-            'user_uid' => $target->uid,
+            'member_email' => $target->email,
             'role' => 'admin',
             'business_access_scope' => 'all',
         ])->assertRedirect();
@@ -333,7 +341,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
         $businessB = $this->createBusinessForCustomer($customer->user->id, $workspace->id);
 
         $this->post(route('customer.workspaces.members.store', $workspace->uid), [
-            'user_uid' => $target->uid,
+            'member_email' => $target->email,
             'role' => 'staff',
             'business_access_scope' => 'selected',
             'business_uids' => [$businessA->uid, $businessB->uid],
@@ -354,7 +362,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
         $target = $this->createTargetUser('Emp', 'TySet');
 
         $this->post(route('customer.workspaces.members.store', $workspace->uid), [
-            'user_uid' => $target->uid,
+            'member_email' => $target->email,
             'role' => 'staff',
             'business_access_scope' => 'selected',
         ])->assertRedirect();
@@ -377,7 +385,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
         $target = $this->createTargetUser('New', 'Staff');
 
         $this->post(route('customer.workspaces.members.store', $workspace->uid), [
-            'user_uid' => $target->uid,
+            'member_email' => $target->email,
             'role' => 'staff',
             'business_access_scope' => 'all',
         ])->assertRedirect(route('customer.workspaces.show', $workspace->uid));
@@ -398,7 +406,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
         $target = $this->createTargetUser('New', 'Staff');
 
         $response = $this->post(route('customer.workspaces.members.store', $workspace->uid), [
-            'user_uid' => $target->uid,
+            'member_email' => $target->email,
             'role' => 'staff',
             'business_access_scope' => 'all',
         ]);
@@ -421,7 +429,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
         $target = $this->createTargetUser('New', 'Admin');
 
         $response = $this->post(route('customer.workspaces.members.store', $workspace->uid), [
-            'user_uid' => $target->uid,
+            'member_email' => $target->email,
             'role' => 'admin',
             'business_access_scope' => 'all',
         ]);
@@ -442,7 +450,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
         $target = $this->createTargetUser('New', 'Person');
 
         $response = $this->post(route('customer.workspaces.members.store', $workspace->uid), [
-            'user_uid' => $target->uid,
+            'member_email' => $target->email,
             'role' => 'staff',
             'business_access_scope' => 'all',
         ]);
@@ -451,7 +459,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
         $this->assertNull(WorkspaceMembership::where('user_id', $target->id)->first());
     }
 
-    public function test_staff_denial_is_not_distinguishable_from_an_unknown_user_uid(): void
+    public function test_staff_denial_is_not_distinguishable_from_an_unknown_email(): void
     {
         $customer = $this->actingAsHttpCustomer();
         $owner = $this->createCustomer()->user;
@@ -463,13 +471,13 @@ class WorkspaceMemberManagementHttpTest extends TestCase
         $target = $this->createTargetUser('Known', 'Target');
 
         $knownTargetResponse = $this->post(route('customer.workspaces.members.store', $workspace->uid), [
-            'user_uid' => $target->uid,
+            'member_email' => $target->email,
             'role' => 'staff',
             'business_access_scope' => 'all',
         ]);
 
         $unknownTargetResponse = $this->post(route('customer.workspaces.members.store', $workspace->uid), [
-            'user_uid' => 'does-not-exist',
+            'member_email' => 'nobody@example.test',
             'role' => 'staff',
             'business_access_scope' => 'all',
         ]);
@@ -491,7 +499,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
         $target = $this->createTargetUser('New', 'Person');
 
         $this->post(route('customer.workspaces.members.store', $workspace->uid), [
-            'user_uid' => $target->uid,
+            'member_email' => $target->email,
             'role' => 'staff',
             'business_access_scope' => 'all',
         ])->assertNotFound();
@@ -507,7 +515,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
         $target = $this->createTargetUser('New', 'Person');
 
         $this->post(route('customer.workspaces.members.store', $workspace->uid), [
-            'user_uid' => $target->uid,
+            'member_email' => $target->email,
             'role' => 'staff',
             'business_access_scope' => 'all',
         ])->assertNotFound();
@@ -523,7 +531,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
         $target = $this->createTargetUser('New', 'Person');
 
         $this->post(route('customer.workspaces.members.store', $workspace->uid), [
-            'user_uid' => $target->uid,
+            'member_email' => $target->email,
             'role' => 'staff',
             'business_access_scope' => 'all',
         ])->assertNotFound();
@@ -539,7 +547,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
         $target = $this->createTargetUser('New', 'Person');
 
         $this->post(route('customer.workspaces.members.store', $workspace->uid), [
-            'user_uid' => $target->uid,
+            'member_email' => $target->email,
             'role' => 'staff',
             'business_access_scope' => 'all',
         ])->assertNotFound();
@@ -551,13 +559,13 @@ class WorkspaceMemberManagementHttpTest extends TestCase
         $workspace = $this->createWorkspace($customer->user);
 
         $response = $this->post(route('customer.workspaces.members.store', $workspace->uid), [
-            'user_uid' => $customer->user->uid,
+            'member_email' => $customer->user->email,
             'role' => 'staff',
             'business_access_scope' => 'all',
         ]);
 
-        $response->assertRedirect();
-        $response->assertSessionHas('flash_error');
+        $response->assertRedirect(route('customer.workspaces.show', $workspace->uid));
+        $response->assertSessionHasErrors(['member_email' => self::MEMBER_CANNOT_BE_ADDED]);
         $this->assertNull(WorkspaceMembership::where('user_id', $customer->user->id)->first());
     }
 
@@ -577,18 +585,29 @@ class WorkspaceMemberManagementHttpTest extends TestCase
         ]);
 
         $ownerTargetResponse = $this->post(route('customer.workspaces.members.store', $workspace->uid), [
-            'user_uid' => $owner->uid,
+            'member_email' => $owner->email,
             'role' => 'staff',
             'business_access_scope' => 'all',
         ]);
-        $ownerTargetResponse->assertSessionHas('flash_error', 'This user cannot be added as a member.');
+        $ownerTargetResponse->assertSessionHasErrors(['member_email' => self::MEMBER_CANNOT_BE_ADDED]);
 
         $existingMemberResponse = $this->post(route('customer.workspaces.members.store', $workspace->uid), [
-            'user_uid' => $existingMember->uid,
+            'member_email' => $existingMember->email,
             'role' => 'staff',
             'business_access_scope' => 'all',
         ]);
-        $existingMemberResponse->assertSessionHas('flash_error', 'This user cannot be added as a member.');
+        $existingMemberResponse->assertSessionHasErrors(['member_email' => self::MEMBER_CANNOT_BE_ADDED]);
+
+        // An address with no account at all reads exactly the same.
+        $unknownResponse = $this->post(route('customer.workspaces.members.store', $workspace->uid), [
+            'member_email' => 'nobody@example.test',
+            'role' => 'staff',
+            'business_access_scope' => 'all',
+        ]);
+        $unknownResponse->assertSessionHasErrors(['member_email' => self::MEMBER_CANNOT_BE_ADDED]);
+
+        $this->assertSame($ownerTargetResponse->headers->get('Location'), $existingMemberResponse->headers->get('Location'));
+        $this->assertSame($ownerTargetResponse->headers->get('Location'), $unknownResponse->headers->get('Location'));
     }
 
     public function test_add_member_on_an_inactive_workspace_fails(): void
@@ -598,7 +617,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
         $target = $this->createTargetUser('New', 'Person');
 
         $response = $this->post(route('customer.workspaces.members.store', $workspace->uid), [
-            'user_uid' => $target->uid,
+            'member_email' => $target->email,
             'role' => 'staff',
             'business_access_scope' => 'all',
         ]);
@@ -607,7 +626,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
         $this->assertNull(WorkspaceMembership::where('user_id', $target->id)->first());
     }
 
-    public function test_staff_denial_on_an_inactive_workspace_is_not_distinguishable_from_an_unknown_user_uid(): void
+    public function test_staff_denial_on_an_inactive_workspace_is_not_distinguishable_from_an_unknown_email(): void
     {
         $customer = $this->actingAsHttpCustomer();
         $owner = $this->createCustomer()->user;
@@ -621,13 +640,13 @@ class WorkspaceMemberManagementHttpTest extends TestCase
         $workspace->save();
 
         $knownTargetResponse = $this->post(route('customer.workspaces.members.store', $workspace->uid), [
-            'user_uid' => $target->uid,
+            'member_email' => $target->email,
             'role' => 'staff',
             'business_access_scope' => 'all',
         ]);
 
         $unknownTargetResponse = $this->post(route('customer.workspaces.members.store', $workspace->uid), [
-            'user_uid' => 'does-not-exist',
+            'member_email' => 'nobody@example.test',
             'role' => 'staff',
             'business_access_scope' => 'all',
         ]);
@@ -638,16 +657,25 @@ class WorkspaceMemberManagementHttpTest extends TestCase
         $this->assertNull(WorkspaceMembership::where('user_id', $target->id)->first());
     }
 
-    public function test_add_member_with_an_unknown_user_uid_is_not_found(): void
+    /**
+     * An address with no Business OS account is an ordinary form mistake by an
+     * actor who IS allowed to add members: back to the account page with the
+     * generic message on the email field — never the Page Not Found screen.
+     */
+    public function test_add_member_with_an_unknown_email_returns_to_the_page_with_a_generic_error(): void
     {
         $customer = $this->actingAsHttpCustomer();
         $workspace = $this->createWorkspace($customer->user);
 
-        $this->post(route('customer.workspaces.members.store', $workspace->uid), [
-            'user_uid' => 'does-not-exist',
+        $response = $this->post(route('customer.workspaces.members.store', $workspace->uid), [
+            'member_email' => 'nobody@example.test',
             'role' => 'staff',
             'business_access_scope' => 'all',
-        ])->assertNotFound();
+        ]);
+
+        $response->assertRedirect(route('customer.workspaces.show', $workspace->uid));
+        $response->assertSessionHasErrors(['member_email' => self::MEMBER_CANNOT_BE_ADDED]);
+        $this->assertSame(0, WorkspaceMembership::where('workspace_id', $workspace->id)->count());
     }
 
     // --- Add member: duplicate behavior ------------------------------------
@@ -658,7 +686,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
         $workspace = $this->createWorkspace($customer->user);
         $target = $this->createTargetUser('Dup', 'Licate');
 
-        $payload = ['user_uid' => $target->uid, 'role' => 'staff', 'business_access_scope' => 'all'];
+        $payload = ['member_email' => $target->email, 'role' => 'staff', 'business_access_scope' => 'all'];
 
         $this->post(route('customer.workspaces.members.store', $workspace->uid), $payload)->assertRedirect();
         $response = $this->post(route('customer.workspaces.members.store', $workspace->uid), $payload);
@@ -674,18 +702,18 @@ class WorkspaceMemberManagementHttpTest extends TestCase
         $target = $this->createTargetUser('Con', 'Flict');
 
         $this->post(route('customer.workspaces.members.store', $workspace->uid), [
-            'user_uid' => $target->uid,
+            'member_email' => $target->email,
             'role' => 'staff',
             'business_access_scope' => 'all',
         ])->assertRedirect();
 
         $response = $this->post(route('customer.workspaces.members.store', $workspace->uid), [
-            'user_uid' => $target->uid,
+            'member_email' => $target->email,
             'role' => 'admin',
             'business_access_scope' => 'all',
         ]);
 
-        $response->assertSessionHas('flash_error');
+        $response->assertSessionHasErrors(['member_email' => self::MEMBER_CANNOT_BE_ADDED]);
         $membership = WorkspaceMembership::where('workspace_id', $workspace->id)->where('user_id', $target->id)->first();
         $this->assertSame(WorkspaceMembershipRole::Staff, $membership->role);
     }
@@ -699,7 +727,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
         $target = $this->createTargetUser('Bad', 'Uid');
 
         $response = $this->post(route('customer.workspaces.members.store', $workspace->uid), [
-            'user_uid' => $target->uid,
+            'member_email' => $target->email,
             'role' => 'staff',
             'business_access_scope' => 'selected',
             'business_uids' => ['does-not-exist'],
@@ -718,7 +746,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
         $target = $this->createTargetUser('Cross', 'Ws');
 
         $response = $this->post(route('customer.workspaces.members.store', $workspace->uid), [
-            'user_uid' => $target->uid,
+            'member_email' => $target->email,
             'role' => 'staff',
             'business_access_scope' => 'selected',
             'business_uids' => [$foreignBusiness->uid],
@@ -744,7 +772,7 @@ class WorkspaceMemberManagementHttpTest extends TestCase
         $target = $this->createTargetUser('Scoped', 'Admin');
 
         $response = $this->post(route('customer.workspaces.members.store', $workspace->uid), [
-            'user_uid' => $target->uid,
+            'member_email' => $target->email,
             'role' => 'staff',
             'business_access_scope' => 'selected',
             'business_uids' => [$forbiddenBusiness->uid],
