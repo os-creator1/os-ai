@@ -12,7 +12,12 @@
     $resolvedCustomerContext = request()->attributes->get('customerContext');
     $accountNoun = $resolvedCustomerContext instanceof \App\Library\Navigation\CustomerContext ? $resolvedCustomerContext->accountNoun() : 'account';
     $accountNounPlural = $resolvedCustomerContext instanceof \App\Library\Navigation\CustomerContext ? $resolvedCustomerContext->accountsNoun() : 'accounts';
-    $accountTitle = ucfirst($accountNounPlural);
+    // A chooser, never a "create another account" screen: the list appears
+    // only when there are several accounts to choose between (one account
+    // redirects straight to it), and the create form only for someone who
+    // owns no account yet — their first one (WorkspaceController::index()).
+    $canCreateFirstAccount = (bool) ($canCreateFirstAccount ?? false);
+    $accountTitle = $workspaces->isNotEmpty() ? 'Choose an ' . $accountNoun : ($canCreateFirstAccount ? 'Create your ' . $accountNoun : ucfirst($accountNounPlural));
 @endphp
 
 @section('title', $accountTitle)
@@ -40,13 +45,15 @@
                         </x-alert>
                     @endif
 
-                    <form method="POST" action="{{ route('customer.workspaces.store') }}" class="mb-2">
-                        @csrf
+                    @if ($canCreateFirstAccount)
+                        <form method="POST" action="{{ route('customer.workspaces.store') }}" class="mb-2">
+                            @csrf
 
-                        <x-input name="name" label="New {{ $accountNoun }} name" type="text" value="{{ old('name') }}" required />
+                            <x-input name="name" label="{{ ucfirst($accountNoun) }} name" type="text" value="{{ old('name') }}" required />
 
-                        <x-button type="submit" variant="primary">Create {{ $accountNoun }}</x-button>
-                    </form>
+                            <x-button type="submit" variant="primary">Create {{ $accountNoun }}</x-button>
+                        </form>
+                    @endif
 
                     @if ($workspaces->isEmpty())
                         <p class="mb-0">You don't have access to any {{ $accountNounPlural }} yet.</p>

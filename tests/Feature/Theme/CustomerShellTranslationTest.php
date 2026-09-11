@@ -84,7 +84,8 @@ class CustomerShellTranslationTest extends TestCase
             $this->authenticateAs($owner);
 
             $pages = $this->businessFramePages($workspace->uid, $business->uid);
-            $pages['account-list'] = $this->get(route('customer.workspaces.index'))->assertOk()->getContent();
+            // One account: the account list redirects straight to it.
+            $this->get(route('customer.workspaces.index'))->assertRedirect(route('customer.workspaces.show', $workspace->uid));
             $pages['account'] = $this->get(route('customer.workspaces.show', $workspace->uid))->assertOk()->getContent();
 
             $this->assertNoRawKey($pages, $tier->value . ' owner');
@@ -99,7 +100,8 @@ class CustomerShellTranslationTest extends TestCase
         $this->authenticateAs($owner);
         $pages = $this->businessFramePages($workspace->uid, $business->uid);
         $pages['account-frame'] = $this->get(route('customer.workspaces.show', $workspace->uid))->assertOk()->getContent();
-        $pages['account-list'] = $this->get(route('customer.workspaces.index'))->assertOk()->getContent();
+        // One Agency account: the account list redirects straight to it.
+        $this->get(route('customer.workspaces.index'))->assertRedirect(route('customer.workspaces.show', $workspace->uid));
         $this->assertNoRawKey($pages, 'agency owner');
 
         $admin = $this->createCustomer();

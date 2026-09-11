@@ -37,7 +37,9 @@ class WorkspaceBusinessComponentAdoptionTest extends TestCase
             '<x-card' => 10,
             '<x-alert' => 10,
             '<x-badge' => 12,
-            '<x-button' => 15,
+            // One x-button and one x-table left the customer account page with
+            // the Business-reassignment control (Workspace mechanics).
+            '<x-button' => 14,
             // One x-input (new owner) and one x-select (previous-owner
             // disposition) left the customer account page with the
             // ownership-transfer form (account settings cleanup). Country,
@@ -47,7 +49,7 @@ class WorkspaceBusinessComponentAdoptionTest extends TestCase
             // them as three x-selects of canonical values.
             '<x-input' => 27,
             '<x-select' => 7,
-            '<x-table' => 8,
+            '<x-table' => 7,
             '<x-empty-state' => 6,
             '<x-pagination' => 2,
         ];
@@ -65,8 +67,8 @@ class WorkspaceBusinessComponentAdoptionTest extends TestCase
                 '<x-input' => 1, '<x-select' => 0, '<x-table' => 1, '<x-empty-state' => 0, '<x-pagination' => 0,
             ],
             'resources/views/customer/workspaces/show.blade.php' => [
-                '<x-card' => 2, '<x-alert' => 3, '<x-badge' => 4, '<x-button' => 6,
-                '<x-input' => 5, '<x-select' => 1, '<x-table' => 3, '<x-empty-state' => 2, '<x-pagination' => 0,
+                '<x-card' => 2, '<x-alert' => 3, '<x-badge' => 4, '<x-button' => 5,
+                '<x-input' => 5, '<x-select' => 1, '<x-table' => 2, '<x-empty-state' => 2, '<x-pagination' => 0,
             ],
             'resources/views/customer/business/edit.blade.php' => [
                 '<x-card' => 1, '<x-alert' => 2, '<x-badge' => 0, '<x-button' => 1,
@@ -131,9 +133,9 @@ class WorkspaceBusinessComponentAdoptionTest extends TestCase
         $this->assertStringContainsString('<input type="text" class="form-control" id="business-name" name="name"', $contents);
         $this->assertSame(0, preg_match('/<x-input\s+name="name"/', $contents), 'The repeated "name" field must never adopt x-input.');
 
-        // "target_workspace_uid": one native <select> per manageable Business row.
-        $this->assertStringContainsString('<select name="target_workspace_uid"', $contents);
-        $this->assertSame(0, substr_count($contents, '<x-select name="target_workspace_uid"'));
+        // "target_workspace_uid": the Business-reassignment control (moving a
+        // Business into another Workspace) is no longer a customer control.
+        $this->assertStringNotContainsString('name="target_workspace_uid"', $contents);
 
         // "role": add-member field + per-member-row field.
         $this->assertStringContainsString('id="member-role" name="role"', $contents);

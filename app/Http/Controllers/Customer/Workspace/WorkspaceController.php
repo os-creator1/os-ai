@@ -50,6 +50,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use RuntimeException;
 
 class WorkspaceController extends CustomerBaseController
@@ -95,17 +96,28 @@ class WorkspaceController extends CustomerBaseController
      * membership, is_active-agnostic) — no Business query, no mutation, no
      * additional repository call beyond the one per-row membership reread
      * needed to resolve the effective role.
+     *
+     * A chooser only where there is a choice: someone with one account goes
+     * straight to it, several (their own plus invited memberships) get the
+     * list, and only someone who owns no account at all is offered to create
+     * their first one — never a second one (see store()).
      */
-    public function index(): View
+    public function index(): View|RedirectResponse
     {
         $userId = (int) Auth::id();
+        $workspaces = $this->accountChoices($userId);
 
-        $workspaces = $this->workspaceRepository->allForUser($userId)
-            ->map(fn (Workspace $workspace) => $this->presentationRow($workspace, $userId))
-            ->filter()
-            ->values();
+        if ($workspaces->count() === 1) {
+            return redirect()->route('customer.workspaces.show', $workspaces->first()['uid']);
+        }
 
-        return view('customer.workspaces.index', ['workspaces' => $workspaces]);
+        // The first-account form is for someone with nothing yet: no account
+        // of their own and no membership anywhere (an invited client is not
+        // offered to start a separate account here).
+        return view('customer.workspaces.index', [
+            'workspaces' => $workspaces,
+            'canCreateFirstAccount' => $workspaces->isEmpty() && $this->workspaceRepository->allForUser($userId)->isEmpty(),
+        ]);
     }
 
     /**
@@ -153,14 +165,6 @@ class WorkspaceController extends CustomerBaseController
             $viewData['directory'] = $this->membershipDirectory($workspace);
             $viewData['manageableBusinesses'] = $this->manageableBusinesses($workspace, $userId);
 
-            // RFC-003 Milestone 4 Slice 4E: UI-only transport for the
-            // reassignment control's target-Workspace candidates -- a
-            // request attribute, not a view-data key, so this Milestone 3
-            // show() response's top-level shape (workspace, businesses,
-            // directory, manageableBusinesses) stays exactly as it already
-            // was for every existing caller/test.
-            request()->attributes->set('reassignTargetWorkspaces', $this->manageableTargetWorkspaces($userId));
-
             // Customer Experience Slice 5, Correction Round 1 §8 — the Agency
             // payer control lives here (Client accounts → [Business] →
             // Billing responsibility), for the Agency owner or an active
@@ -172,6 +176,10 @@ class WorkspaceController extends CustomerBaseController
                 $viewData['billingResponsibility'] = $billingResponsibility;
             }
         }
+
+        // UI-only, so the view-data shape stays as it is: the way back to
+        // the account chooser is offered only when index() would show one.
+        request()->attributes->set('showsAccountChooser', $this->accountChoices($userId)->count() > 1);
 
         return view('customer.workspaces.show', $viewData);
     }
@@ -219,17 +227,43 @@ class WorkspaceController extends CustomerBaseController
      * RFC-003 Milestone 4 Slice 4A: creates a Workspace owned by the
      * authenticated user via WorkspaceManager::createWorkspace(). No
      * Business is created here -- that remains outside this slice.
+     *
+     * Customer boundary: this creates a customer's own FIRST account only
+     * (the zero-account bootstrap/recovery path). A customer has one account
+     * — Core/Growth hold one Business, Agency client accounts are Businesses
+     * inside it — so anyone who already owns a Workspace, active or not, is
+     * sent back to it and nothing is created; a hand-made POST cannot do what
+     * the page no longer offers. Invited memberships are not ownership. The
+     * owner's users row is locked first (the same lock createWorkspace()
+     * takes), so two simultaneous requests cannot both pass the check.
+     * createWorkspace() stays the unrestricted domain capability for
+     * platform/internal provisioning.
      */
     public function store(StoreWorkspaceRequest $request): RedirectResponse
     {
-        $workspace = $this->workspaceManager->createWorkspace(
-            (int) Auth::id(),
-            $request->validated('name'),
-        );
+        $userId = (int) Auth::id();
+
+        $workspace = DB::transaction(function () use ($userId, $request) {
+            DB::table('users')->where('id', $userId)->lockForUpdate()->first();
+
+            if ($this->workspaceRepository->findOwnedBy($userId)->isNotEmpty()) {
+                return null;
+            }
+
+            return $this->workspaceManager->createWorkspace($userId, $request->validated('name'));
+        });
+
+        if ($workspace === null) {
+            $ownedWorkspace = $this->workspaceRepository->findOwnedBy($userId)->sortBy('id')->first();
+
+            return redirect()
+                ->route('customer.workspaces.show', $ownedWorkspace->uid)
+                ->with('flash_error', 'You already have an account.');
+        }
 
         return redirect()
             ->route('customer.workspaces.show', $workspace->uid)
-            ->with('flash_success', 'Workspace created.');
+            ->with('flash_success', 'Account created.');
     }
 
     /**
@@ -246,14 +280,15 @@ class WorkspaceController extends CustomerBaseController
         try {
             $this->workspaceManager->renameWorkspace($userId, $workspace, $request->validated('name'));
         } catch (UnauthorizedWorkspaceManagementException) {
-            return redirect()->back()->with('flash_error', 'You are not authorized to rename this Workspace.');
+            return redirect()->back()->with('flash_error', 'You don\'t have permission to rename this account.');
         } catch (InactiveWorkspaceMutationException) {
-            return redirect()->back()->with('flash_error', 'An inactive Workspace cannot be renamed.');
+            return redirect()->back()->with('flash_error', 'This account is inactive, so it can\'t be renamed.');
         }
 
+        // Shown as the page's compact "Saved" toast, not a full-width alert.
         return redirect()
             ->route('customer.workspaces.show', $workspaceUid)
-            ->with('flash_success', 'Workspace renamed.');
+            ->with('flash_success', 'Saved');
     }
 
     /**
@@ -1035,25 +1070,19 @@ class WorkspaceController extends CustomerBaseController
     }
 
     /**
-     * RFC-003 Milestone 4 Slice 4E: candidate target Workspaces for the
-     * Business-reassignment control -- every Workspace this actor can see
-     * (WorkspaceRepository::allForUser(), already used by index()),
-     * filtered to rows where the existing effectiveRoleKey() resolves to
-     * owner or admin. Reuses existing primitives only; not a new
-     * algorithm. UI convenience only -- a stale or hand-crafted
-     * target_workspace_uid outside this list is still independently and
-     * correctly enforced by resolveAccessibleWorkspace() and
-     * WorkspaceManager at submission time.
+     * The accounts this actor can open: every Workspace
+     * WorkspaceRepository::allForUser() returns that presentationRow() can
+     * render (owner, or an active membership that sees the account frame).
+     * index() and the chooser back link read the same list.
      *
-     * @return array<int, array{uid: string, name: string}>
+     * @return Collection<int, array{uid: string, name: string, is_active: bool, role: string}>
      */
-    private function manageableTargetWorkspaces(int $actorUserId): array
+    private function accountChoices(int $userId): Collection
     {
-        return $this->workspaceRepository->allForUser($actorUserId)
-            ->filter(fn (Workspace $workspace) => in_array($this->effectiveRoleKey($workspace, $actorUserId), ['owner', 'admin'], true))
-            ->map(fn (Workspace $workspace) => ['uid' => $workspace->uid, 'name' => $workspace->name])
-            ->values()
-            ->all();
+        return $this->workspaceRepository->allForUser($userId)
+            ->map(fn (Workspace $workspace) => $this->presentationRow($workspace, $userId))
+            ->filter()
+            ->values();
     }
 
     /**

@@ -492,8 +492,10 @@ class CustomerContextResolutionTest extends TestCase
         $chooser = $this->get(route('customer.workspaces.index'))->assertOk();
 
         $this->assertStringNotContainsStringIgnoringCase('workspace', $this->visibleBodyText($chooser->getContent()));
-        $chooser->assertSee('New account name', false);
-        $chooser->assertSee('Accounts', false);
+        // A chooser, never a "create another account" screen.
+        $chooser->assertDontSee('New account name', false);
+        $chooser->assertDontSee('Create account', false);
+        $chooser->assertSee('Choose an account', false);
         $chooser->assertSee('First Account', false);
         $chooser->assertSee('Second Account', false);
 
