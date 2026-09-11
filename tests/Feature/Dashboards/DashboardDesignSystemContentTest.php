@@ -51,16 +51,28 @@ class DashboardDesignSystemContentTest extends TestCase
         ]);
     }
 
+    /**
+     * Customer Experience Slice 4 rebuilt the customer dashboard as a page
+     * plus band partials (resources/views/customer/dashboard/**). Its icons
+     * reach the centralized ds-icon seam through the M2 primitives' own
+     * `icon` props (x-button, x-alert), so the count is taken across the
+     * whole rebuilt view set: three icon adoptions (quick actions, the
+     * degraded-band notice, the team member's Login as Parent), and not one
+     * data-feather.
+     */
     public function test_customer_dashboard_has_zero_data_feather_and_genuine_ds_icon_adoption(): void
     {
-        $source = file_get_contents(resource_path('views/customer/dashboard.blade.php'));
+        $sources = [file_get_contents(resource_path('views/customer/dashboard.blade.php'))];
+        $iterator = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator(resource_path('views/customer/dashboard'), \FilesystemIterator::SKIP_DOTS));
+        foreach ($iterator as $file) {
+            $sources[] = file_get_contents($file->getPathname());
+        }
+        $source = implode("\n", $sources);
 
         $this->assertStringNotContainsString('data-feather', $source);
-        $this->assertStringContainsString('<x-ds-icon', $source);
-        // 13 since B5 Business Analytics removed the two legacy
-        // "delivered / failed" stat cards (and their icons) from the
-        // customer dashboard (B5 contract §18.5).
-        $this->assertSame(13, substr_count($source, '<x-ds-icon'));
+        // `->` inside a bound attribute is not the end of the tag.
+        $adoptions = substr_count($source, '<x-ds-icon') + preg_match_all('/<x-(button|alert)\b(?:->|[^>])*?\s:?icon=/', $source);
+        $this->assertSame(3, $adoptions);
     }
 
     public function test_admin_dashboard_has_zero_data_feather_and_genuine_ds_icon_adoption(): void

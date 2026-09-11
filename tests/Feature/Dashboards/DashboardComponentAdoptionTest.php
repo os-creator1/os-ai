@@ -67,19 +67,19 @@ class DashboardComponentAdoptionTest extends TestCase
         $response->assertSee('btn-primary', false);
     }
 
+    /**
+     * Customer Experience Slice 4 §12 — the dashboard's empty state is the
+     * richer layouts.partials.empty-state (the `ds-empty-state` marker),
+     * rendered for the zero-Business account. The former Opportunity panel,
+     * whose own empty card this test once pinned, is gone: an Advisor band
+     * with nothing to recommend is now absent, not empty (§6).
+     */
     public function test_customer_dashboard_empty_state_adoption_is_real(): void
     {
-        // UserController::opportunityPanel() returns null (skipping the
-        // whole @if($opportunities !== null) block, empty-state included)
-        // unless the Opportunity Engine is enabled — a config-only,
-        // test-scoped override, not a change to any tracked file. Since B5
-        // the panel renders for an actor with exactly one accessible
-        // Business (never a guessed "primary" one).
         config(['opportunity.enabled' => true]);
 
         $this->ensureRequiredAppConfigRowsExist();
         $customer = $this->createCustomer();
-        $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
         $customer->user->email_verified_at = now();
         $customer->user->save();
 
@@ -90,16 +90,24 @@ class DashboardComponentAdoptionTest extends TestCase
 
         $response->assertOk();
         $response->assertSee('ds-empty-state', false);
+        $response->assertSee('data-role="empty-state" data-state="empty"', false);
     }
 
-    public function test_customer_dashboard_opportunity_panel_is_absent_with_several_accessible_businesses(): void
+    /**
+     * Several Businesses and none chosen: the Account-frame chooser, never a
+     * guessed Business's recommendations (the sole-Business panel and its
+     * primary-Business guess were deleted by Slice 4 §3).
+     */
+    public function test_customer_dashboard_shows_no_recommendations_with_several_accessible_businesses_and_none_chosen(): void
     {
         config(['opportunity.enabled' => true]);
 
         $this->ensureRequiredAppConfigRowsExist();
         $customer = $this->createCustomer();
-        $this->createBusinessWithWorkspace($customer, $this->businessAttributes());
-        $this->createBusinessWithWorkspace($customer, $this->businessAttributes(['name' => 'Second Venue']));
+        foreach ([$this->businessAttributes(), $this->businessAttributes(['name' => 'Second Venue'])] as $attributes) {
+            $business = $this->createBusinessWithWorkspace($customer, $attributes);
+            \Illuminate\Support\Facades\DB::table('businesses')->where('id', $business->id)->update(['status' => \App\Enums\Business\BusinessStatus::Active->value]);
+        }
         $customer->user->email_verified_at = now();
         $customer->user->save();
 
@@ -109,6 +117,8 @@ class DashboardComponentAdoptionTest extends TestCase
         $response = $this->get(route('user.home'));
 
         $response->assertOk();
+        $response->assertSee('data-kind="chooser"', false);
+        $response->assertDontSee('data-band="recommendations"', false);
         $response->assertDontSee('View all opportunities');
     }
 

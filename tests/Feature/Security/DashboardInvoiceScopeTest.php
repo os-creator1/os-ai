@@ -2,38 +2,48 @@
 
 namespace Tests\Feature\Security;
 
-use App\Models\AppConfig;
+use App\Enums\Entitlement\WorkspacePlanTier;
 use App\Models\Currency;
+use App\Models\Customer;
 use App\Models\Invoices;
 use App\Models\PaymentMethods;
-use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Support\Facades\View;
-use Tests\Feature\Business\Concerns\CreatesBusinessTestData;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
+use Tests\Feature\Workspace\Concerns\CreatesCustomerContextFixtures;
 use Tests\TestCase;
 
 /**
- * Security Remediation Slice 0 §16.A.2 (D-19) — resources/views/customer/dashboard.blade.php
- * used to emit `WHERE user_id = ? AND status = 'unpaid' OR status = 'pending'`,
- * whose ungrouped `orWhere` carried no ownership predicate on its second
- * disjunct (AND binds tighter than OR). UserController::index() now
- * computes both counts once, with whereIn(['unpaid','pending']) applying
- * the SAME $userId predicate to both statuses by construction.
+ * Security Remediation Slice 0 §16.A.2 (D-19), re-pointed by Customer
+ * Experience Slice 4 §8.1 — never removed.
  *
- * In this sandbox (and identically on unmodified origin/main, confirmed
- * via `git stash`-based reproduction with a cleared compiled-view cache)
- * the shared customer layout cannot fully render at all, for reasons
- * unrelated to this change: a pre-existing, missing Laravel Mix asset
- * manifest entry a nested partial requires. dashboard() below therefore
- * proves the exact figure UserController::index() computed and handed to
- * the view via a View::composer capture on 'customer.dashboard' — which
- * fires before that nested partial is ever reached — rather than via
- * $response->assertSee() on the rendered HTML.
+ * D-19 was an ungrouped `WHERE user_id = ? AND status = 'unpaid' OR status =
+ * 'pending'` in the customer dashboard: its second disjunct carried no
+ * ownership predicate, so every tenant saw every other tenant's pending
+ * invoices. Slice 4 removes the invoice tile from the dashboard altogether
+ * (`invoices` is keyed to a paying user, which is neither a Business nor an
+ * Account), so the guard moves to the surface that still computes invoice
+ * figures: Customer\InvoiceController::search(), whose four reads — total,
+ * page, filtered page, filtered total — feed the invoice list on
+ * customer.subscriptions.index.
+ *
+ * search() ends in `exit()`, which would terminate the test process, so the
+ * surface cannot be driven over HTTP here. The guard is therefore the
+ * contract's repository-level query-shape guard: the surface's four reads
+ * are pinned to the viewer-scoped predicate, every customer-facing invoice
+ * read anywhere is checked for that predicate, and the isolation properties
+ * the original four tests proved are re-proved against that exact predicate
+ * with three unrelated tenants holding paid, unpaid and pending invoices.
+ * One assertion is added: the rebuilt Business Home renders no invoice
+ * figure and reads no invoice at all.
  */
 class DashboardInvoiceScopeTest extends TestCase
 {
     use RefreshDatabase;
-    use CreatesBusinessTestData;
+    use CreatesCustomerContextFixtures;
+
+    /** The one predicate every customer-facing invoice read must open with. */
+    private const VIEWER_SCOPE = "Invoices::where('user_id', Auth::user()->id)";
 
     private Currency $currency;
 
@@ -43,86 +53,47 @@ class DashboardInvoiceScopeTest extends TestCase
     {
         parent::setUp();
 
-        User::create([
-            'first_name' => 'Placeholder',
-            'last_name' => 'SuperAdmin',
-            'email' => 'placeholder-superadmin' . uniqid('', true) . '@example.test',
-            'status' => true,
-            'is_admin' => true,
-            'is_customer' => false,
-            'active_portal' => 'admin',
-        ]);
-
         $this->ensureRequiredAppConfigRowsExist();
+        $this->platformAdminId();
 
         $this->currency = Currency::create(['name' => 'US Dollar', 'code' => 'USD', 'format' => '$', 'status' => true]);
         $this->paymentMethod = PaymentMethods::create(['name' => 'Test Gateway', 'type' => 'test_gateway', 'status' => true, 'options' => json_encode([])]);
     }
 
     /**
-     * Tenant A's dashboard shows a count equal to A's own unpaid+pending
-     * only — asserted against an explicitly computed expected integer,
-     * never a hard-coded literal — while B and C, unrelated tenants, each
-     * hold invoices in every status so both sides of the former OR are
-     * populated for every tenant.
+     * Three unrelated tenants, each holding paid, unpaid AND pending
+     * invoices, so both sides of the former OR are populated for everyone:
+     * each viewer's figures — total and unpaid+pending — are their own only.
      */
-    public function test_a_tenants_dashboard_count_is_scoped_to_their_own_invoices_with_every_status_populated_for_every_tenant(): void
+    public function test_a_viewers_invoice_figures_are_their_own_with_every_status_populated_for_every_tenant(): void
     {
-        $tenantA = $this->authenticatedCustomer();
-        $tenantB = $this->createCustomer();
-        $tenantC = $this->createCustomer();
+        [$tenantA, $tenantB, $tenantC] = [$this->customer(), $this->customer(), $this->customer()];
 
-        // Every tenant holds paid, unpaid AND pending invoices, so both
-        // sides of the former ungrouped OR are populated for every tenant.
-        $expectedForA = 0;
-        foreach ([Invoices::STATUS_PAID, Invoices::STATUS_UNPAID, Invoices::STATUS_PENDING] as $status) {
-            $this->makeInvoice($tenantA->user_id, $status);
-            if ($status !== Invoices::STATUS_PAID) {
-                $expectedForA++;
+        foreach ([$tenantA, $tenantB, $tenantC] as $tenant) {
+            foreach ([Invoices::STATUS_PAID, Invoices::STATUS_UNPAID, Invoices::STATUS_PENDING] as $status) {
+                $this->makeInvoice($tenant->user_id, $status);
             }
         }
-        foreach ([Invoices::STATUS_PAID, Invoices::STATUS_UNPAID, Invoices::STATUS_PENDING] as $status) {
-            $this->makeInvoice($tenantB->user_id, $status);
-            $this->makeInvoice($tenantC->user_id, $status);
+
+        foreach ([$tenantA, $tenantB, $tenantC] as $viewer) {
+            $figures = $this->surfaceFiguresFor($viewer);
+
+            $this->assertSame(3, $figures['total'], 'The list total is the viewer\'s own three invoices.');
+            $this->assertSame(2, $figures['unpaidAndPending'], 'Unpaid + pending is the viewer\'s own two.');
+            $this->assertSame([$viewer->user_id], $figures['owners'], 'Every row belongs to the viewer.');
         }
-
-        $rendered = $this->dashboardInvoiceCount();
-
-        $actual = Invoices::where('user_id', $tenantA->user_id)
-            ->whereIn('status', [Invoices::STATUS_UNPAID, Invoices::STATUS_PENDING])
-            ->count();
-
-        $this->assertSame($expectedForA, $actual);
-        $this->assertSame($actual, $rendered);
-
-        // Neither B's nor C's totals appear as A's computed figure — each
-        // has 2 unpaid+pending invoices, a distinct figure from A's own 2
-        // status rows summed the SAME way; assert the query result
-        // directly rather than the ambiguous rendered digits.
-        $bCount = Invoices::where('user_id', $tenantB->user_id)->whereIn('status', [Invoices::STATUS_UNPAID, Invoices::STATUS_PENDING])->count();
-        $cCount = Invoices::where('user_id', $tenantC->user_id)->whereIn('status', [Invoices::STATUS_UNPAID, Invoices::STATUS_PENDING])->count();
-        $this->assertSame(2, $bCount);
-        $this->assertSame(2, $cCount);
     }
 
     /**
-     * Regression guard for the precedence bug specifically: with A holding
-     * ZERO pending invoices and B/C holding several, A's count must not
-     * include them. A naive fixture (every tenant with the same status
-     * mix) would miss this — the old ungrouped OR only leaked when the
-     * VIEWER had no matching row of their own for the un-scoped disjunct.
+     * The precedence trap itself: a viewer with ZERO pending invoices never
+     * inherits other tenants' pending ones (the old query returned 2 + 4 + 3).
      */
-    public function test_a_tenant_with_zero_pending_invoices_never_inherits_other_tenants_pending_invoices(): void
+    public function test_a_viewer_with_zero_pending_invoices_never_inherits_other_tenants_pending_invoices(): void
     {
-        $tenantA = $this->authenticatedCustomer();
-        $tenantB = $this->createCustomer();
-        $tenantC = $this->createCustomer();
+        [$tenantA, $tenantB, $tenantC] = [$this->customer(), $this->customer(), $this->customer()];
 
-        // A has ONLY unpaid invoices — zero pending.
         $this->makeInvoice($tenantA->user_id, Invoices::STATUS_UNPAID);
         $this->makeInvoice($tenantA->user_id, Invoices::STATUS_UNPAID);
-
-        // B and C each hold several pending invoices.
         for ($i = 0; $i < 4; $i++) {
             $this->makeInvoice($tenantB->user_id, Invoices::STATUS_PENDING);
         }
@@ -130,35 +101,19 @@ class DashboardInvoiceScopeTest extends TestCase
             $this->makeInvoice($tenantC->user_id, Invoices::STATUS_PENDING);
         }
 
-        $rendered = $this->dashboardInvoiceCount();
+        $figures = $this->surfaceFiguresFor($tenantA);
 
-        $expected = Invoices::where('user_id', $tenantA->user_id)
-            ->whereIn('status', [Invoices::STATUS_UNPAID, Invoices::STATUS_PENDING])
-            ->count();
-
-        $this->assertSame(2, $expected, 'A has exactly 2 unpaid and 0 pending invoices of their own.');
-        $this->assertSame($expected, $rendered);
-
-        // The exact defect: the old query's second disjunct
-        // (`orWhere('status', PENDING)`) carried no ownership predicate at
-        // all, so it would have returned every OTHER tenant's pending rows
-        // too. That would have produced 2 + 4 + 3 = 9, not 2.
-        $this->assertNotSame(9, $rendered);
+        $this->assertSame(2, $figures['unpaidAndPending']);
+        $this->assertNotSame(9, $figures['unpaidAndPending']);
+        $this->assertSame([$tenantA->user_id], $figures['owners']);
     }
 
-    /**
-     * The reverse combination: A holds pending but zero unpaid, while B/C
-     * hold several unpaid invoices — the other half of the precedence
-     * trap.
-     */
-    public function test_a_tenant_with_zero_unpaid_invoices_never_inherits_other_tenants_unpaid_invoices(): void
+    /** The reverse half: zero unpaid never inherits other tenants' unpaid ones. */
+    public function test_a_viewer_with_zero_unpaid_invoices_never_inherits_other_tenants_unpaid_invoices(): void
     {
-        $tenantA = $this->authenticatedCustomer();
-        $tenantB = $this->createCustomer();
-        $tenantC = $this->createCustomer();
+        [$tenantA, $tenantB, $tenantC] = [$this->customer(), $this->customer(), $this->customer()];
 
         $this->makeInvoice($tenantA->user_id, Invoices::STATUS_PENDING);
-
         for ($i = 0; $i < 5; $i++) {
             $this->makeInvoice($tenantB->user_id, Invoices::STATUS_UNPAID);
         }
@@ -166,76 +121,153 @@ class DashboardInvoiceScopeTest extends TestCase
             $this->makeInvoice($tenantC->user_id, Invoices::STATUS_UNPAID);
         }
 
-        $rendered = $this->dashboardInvoiceCount();
+        $figures = $this->surfaceFiguresFor($tenantA);
 
-        $expected = Invoices::where('user_id', $tenantA->user_id)
-            ->whereIn('status', [Invoices::STATUS_UNPAID, Invoices::STATUS_PENDING])
-            ->count();
-
-        $this->assertSame(1, $expected);
-        $this->assertSame($expected, $rendered);
+        $this->assertSame(1, $figures['unpaidAndPending']);
+        $this->assertSame(1, $figures['total']);
     }
 
     /**
-     * The figure computed for A's page never carries B's invoice total —
-     * a direct assertion against the actual query results for each, proven
-     * not to equal the count A's own page is handed.
+     * No rendered response carries another tenant's invoice totals: the
+     * viewer's own figure is 1, B's distinguishable 17 appears nowhere — not
+     * in the surface's figures and not on the viewer's home page.
      */
-    public function test_the_rendered_response_never_contains_another_tenants_invoice_totals(): void
+    public function test_no_rendered_response_contains_another_tenants_invoice_totals(): void
     {
-        $tenantA = $this->authenticatedCustomer();
-        $tenantB = $this->createCustomer();
+        [$tenantA, , ] = $this->tenant(WorkspacePlanTier::Growth, 'Invoice Venue', 'Invoice Account');
+        $tenantB = $this->customer();
 
         $this->makeInvoice($tenantA->user_id, Invoices::STATUS_UNPAID);
-
         for ($i = 0; $i < 17; $i++) {
             $this->makeInvoice($tenantB->user_id, Invoices::STATUS_PENDING);
         }
 
-        $rendered = $this->dashboardInvoiceCount();
+        $this->assertSame(17, Invoices::where('user_id', $tenantB->user_id)->count());
+        $this->assertSame(1, $this->surfaceFiguresFor($tenantA)['total']);
 
-        $bTotal = Invoices::where('user_id', $tenantB->user_id)->count();
-        $this->assertSame(17, $bTotal);
+        $this->authenticateAs($tenantA);
+        $main = $this->mainText($this->home()->assertOk()->getContent());
 
-        // A's own count is 1; B's distinguishable total (17) must not leak
-        // into the figure computed for A's page.
-        $this->assertSame(1, $rendered);
-        $this->assertNotSame(17, $rendered);
+        $this->assertDoesNotMatchRegularExpression('/\b17\b/', $main);
     }
 
     /**
-     * Requests user.home and returns the exact
-     * unpaidAndPendingInvoiceCount UserController::index() computed and
-     * handed to the view — captured via a view composer that fires before
-     * Blade evaluation, so it does not depend on the view finishing
-     * rendering (see class docblock).
+     * §8.1 point 3 — added, not substituted: the rebuilt Business Home shows
+     * no invoice figure and does not read the invoices table at all.
      */
-    private function dashboardInvoiceCount(): int
+    public function test_the_business_home_renders_no_invoice_figure_and_reads_no_invoice(): void
     {
-        $captured = null;
+        [$tenantA, $business] = $this->tenant(WorkspacePlanTier::Growth, 'Harbor Venue', 'Harbor Account');
+        foreach ([Invoices::STATUS_PAID, Invoices::STATUS_UNPAID, Invoices::STATUS_PENDING] as $status) {
+            $this->makeInvoice($tenantA->user_id, $status);
+        }
+        $this->authenticateAs($tenantA);
 
-        View::composer('customer.dashboard', function ($view) use (&$captured) {
-            $captured = $view->getData();
+        $sql = [];
+        DB::listen(function ($query) use (&$sql): void {
+            $sql[] = $query->sql;
         });
 
-        $this->get(route('user.home'));
+        $html = $this->home()->assertOk()->getContent();
 
-        $this->assertIsArray($captured, 'customer.dashboard must have been composed for this request.');
-        $this->assertArrayHasKey('unpaidAndPendingInvoiceCount', $captured);
-
-        return $captured['unpaidAndPendingInvoiceCount'];
+        $this->assertStringContainsString('data-kind="business"', $html);
+        $this->assertSame([], array_values(array_filter($sql, fn (string $s) => preg_match('/\binvoices\b/', $s) === 1)), 'The dashboard reads no invoice.');
+        $this->assertDoesNotMatchRegularExpression('/invoice/i', $this->mainText($html), 'No invoice tile, label or figure.');
+        $this->assertStringNotContainsString('<sup>', $this->mainHtml($html), 'The former "unpaid / total" figure is gone.');
     }
 
-    private function authenticatedCustomer(): \App\Models\Customer
+    /**
+     * The surface's own four reads open with the viewer-scoped predicate, the
+     * file carries no `orWhere`, and no other customer-facing code reads
+     * invoices without that predicate — so reintroducing an unscoped invoice
+     * query anywhere a customer can see fails here.
+     */
+    public function test_every_customer_facing_invoice_read_is_scoped_to_the_viewer(): void
     {
-        $customer = $this->createCustomer();
-        $customer->user->email_verified_at = now();
-        $customer->user->save();
+        $controller = file_get_contents(app_path('Http/Controllers/Customer/InvoiceController.php'));
+        preg_match_all('/Invoices::\w+\([^;]*/', $controller, $reads);
 
-        $this->withSession(['permissions' => collect(['access_backend'])]);
-        $this->actingAs($customer->user);
+        $this->assertCount(4, $reads[0], 'search() makes exactly four invoice reads: ' . implode(' | ', $reads[0]));
+        foreach ($reads[0] as $read) {
+            $this->assertStringStartsWith(self::VIEWER_SCOPE, $read);
+        }
+        $this->assertStringNotContainsString('orWhere', $controller);
 
-        return $customer;
+        $offending = [];
+
+        foreach ($this->customerFacingFiles() as $file) {
+            $source = file_get_contents($file);
+
+            preg_match_all('/(Invoices::(?!create\b|STATUS_|TYPE_|class\b)\w+\([^;]*|->invoices\(\)[^;]*)/', $source, $matches);
+
+            foreach ($matches[0] as $statement) {
+                if (str_contains($statement, "where('user_id', Auth::user()->id)") && ! str_contains($statement, 'orWhere')) {
+                    continue;
+                }
+
+                // Pre-existing payment-callback de-duplication
+                // (PaymentController, AccountController): one invoice looked
+                // up by the payment provider's own transaction id, never a
+                // list or a figure shown to a viewer.
+                if (str_starts_with($statement, "Invoices::where('transaction_id', ") && ! str_contains($statement, 'orWhere')) {
+                    continue;
+                }
+
+                $offending[] = str_replace(base_path() . DIRECTORY_SEPARATOR, '', $file) . ': ' . $statement;
+            }
+        }
+
+        $this->assertSame([], $offending, 'Unscoped customer-facing invoice read(s).');
+    }
+
+    // -----------------------------------------------------------------
+
+    /**
+     * The invoice list's figures for one viewer, computed with the very
+     * predicate the surface's reads are pinned to above: the list total
+     * (search()'s first read) and the unpaid + pending subset the dashboard
+     * once showed, plus the owners of every row the list would return.
+     *
+     * @return array{total: int, unpaidAndPending: int, owners: array<int, int>}
+     */
+    private function surfaceFiguresFor(Customer $viewer): array
+    {
+        Auth::login($viewer->user);
+
+        $scoped = fn () => Invoices::where('user_id', Auth::user()->id);
+
+        $figures = [
+            'total' => $scoped()->count(),
+            'unpaidAndPending' => $scoped()->whereIn('status', [Invoices::STATUS_UNPAID, Invoices::STATUS_PENDING])->count(),
+            'owners' => $scoped()->pluck('user_id')->map(fn ($id) => (int) $id)->unique()->values()->all(),
+        ];
+
+        Auth::logout();
+
+        return $figures;
+    }
+
+    private function customer(): Customer
+    {
+        return $this->createCustomer();
+    }
+
+    /** @return array<int, string> */
+    private function customerFacingFiles(): array
+    {
+        $files = [];
+
+        foreach ([app_path('Http/Controllers/Customer'), app_path('Http/Controllers/User'), app_path('Library/Dashboard'), resource_path('views/customer')] as $root) {
+            $iterator = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($root, \FilesystemIterator::SKIP_DOTS));
+
+            foreach ($iterator as $file) {
+                if (str_ends_with($file->getFilename(), '.php')) {
+                    $files[] = $file->getPathname();
+                }
+            }
+        }
+
+        return $files;
     }
 
     private function makeInvoice(int $userId, string $status): Invoices
@@ -250,21 +282,20 @@ class DashboardInvoiceScopeTest extends TestCase
         ]);
     }
 
-    private function ensureRequiredAppConfigRowsExist(): void
+    private function mainHtml(string $html): string
     {
-        $existing = AppConfig::whereIn('setting', ['license', 'customer_permissions', 'custom_script'])->pluck('setting')->all();
+        $start = strpos($html, '<main');
+        $end = strpos($html, '</main>');
+        $this->assertNotFalse($start);
+        $this->assertNotFalse($end);
 
-        if (! in_array('license', $existing, true)) {
-            AppConfig::create(['setting' => 'license', 'value' => 'test-license-key']);
-        }
+        return substr($html, $start, $end - $start);
+    }
 
-        if (! in_array('custom_script', $existing, true)) {
-            AppConfig::create(['setting' => 'custom_script', 'value' => '']);
-        }
+    private function mainText(string $html): string
+    {
+        $region = preg_replace('#<(script|style)\b[^>]*>.*?</\1>#si', ' ', $this->mainHtml($html)) ?? '';
 
-        if (! in_array('customer_permissions', $existing, true)) {
-            $default = collect((new AppConfig())->defaultSettings())->firstWhere('setting', 'customer_permissions');
-            AppConfig::create($default);
-        }
+        return trim(preg_replace('/\s+/', ' ', html_entity_decode(strip_tags($region))) ?? '');
     }
 }
