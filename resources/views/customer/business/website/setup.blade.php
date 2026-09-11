@@ -9,9 +9,7 @@
         </div>
     </div>
 
-    @if (session('status'))
-        <x-alert :variant="session('status') === 'success' ? 'success' : 'danger'" class="mb-3">{{ session('message') }}</x-alert>
-    @endif
+    <x-flash-alert class="mb-3" />
 
     <x-card :padded="true">
         <p class="text-caption mb-3">Create one Website for {{ $business->name }}. You can generate an initial draft with AI once it's created, or build pages manually.</p>

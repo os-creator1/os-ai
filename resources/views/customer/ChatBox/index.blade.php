@@ -513,13 +513,7 @@ $("#media_image").val("");
                 rtl: isRtl
               });
             } else if (response.status === "success") {
-              toastr["success"](response.message, "Success!!", {
-                closeButton: true,
-                positionClass: "toast-top-right",
-                progressBar: true,
-                newestOnTop: true,
-                rtl: isRtl
-              });
+              toastr["success"](response.message);
 
               let chatHistory = $(".chat_history");
               const $chat = $(`<div class="chat">
