@@ -37,7 +37,7 @@ class EntitlementManagerPresentationTest extends TestCase
     /**
      * @return array{workspace: Workspace, business: Business}
      */
-    private function createWorkspaceWithBusiness(bool $assign = true): array
+    private function createWorkspaceWithBusiness(bool $assign = true, bool $withBusiness = true): array
     {
         $owner = User::create([
             'first_name' => 'Owner', 'last_name' => 'User',
@@ -46,7 +46,7 @@ class EntitlementManagerPresentationTest extends TestCase
         ]);
         $customer = Customer::create(['user_id' => $owner->id]);
         $workspace = Workspace::create(['name' => 'Test Workspace', 'owner_user_id' => $owner->id, 'is_active' => true]);
-        $business = app(BusinessRepository::class)->createForCustomerInWorkspace($customer, $workspace, [
+        $business = ! $withBusiness ? null : app(BusinessRepository::class)->createForCustomerInWorkspace($customer, $workspace, [
             'name' => 'Test Business', 'industry' => 'photo_booth_service',
             'country_code' => 'US', 'timezone' => 'America/New_York', 'currency_code' => 'USD',
         ]);
@@ -55,7 +55,7 @@ class EntitlementManagerPresentationTest extends TestCase
             app(EntitlementManager::class)->assignFirstPlan($workspace, WorkspacePlanTier::Core, $this->createAdmin(), 'Fixture assignment.', true, 0);
         }
 
-        return ['workspace' => $workspace->fresh(), 'business' => $business->fresh()];
+        return ['workspace' => $workspace->fresh(), 'business' => $business?->fresh()];
     }
 
     // --- listPlanCatalogSummaries() -----------------------------------------
@@ -75,8 +75,9 @@ class EntitlementManagerPresentationTest extends TestCase
         $core = $summaries[0];
 
         $this->assertSame('Core', $core->displayName);
-        $this->assertSame(3, $core->businessSlotIncluded);
-        $this->assertSame(5, $core->businessSlotMax);
+        // Customer Experience Slice 1A (RFC-004 §33.5): Core holds one Business.
+        $this->assertSame(1, $core->businessSlotIncluded);
+        $this->assertSame(1, $core->businessSlotMax);
         $this->assertFalse($core->unlimitedBusinessSlots);
         $this->assertContains('crm', $core->planFeatureKeys);
         $this->assertContains('calendar', $core->planFeatureKeys);
@@ -321,7 +322,9 @@ class EntitlementManagerPresentationTest extends TestCase
     public function test_stale_or_reassigned_business_returns_an_empty_map(): void
     {
         ['workspace' => $oldWorkspace, 'business' => $business] = $this->createWorkspaceWithBusiness();
-        ['workspace' => $newWorkspace] = $this->createWorkspaceWithBusiness();
+        // Customer Experience Slice 1A (RFC-004 §33): Core holds exactly one
+        // Business, so the destination is an empty Core Workspace with room.
+        ['workspace' => $newWorkspace] = $this->createWorkspaceWithBusiness(withBusiness: false);
         $newWorkspace->update(['owner_user_id' => $oldWorkspace->owner_user_id]);
 
         app(\App\Library\Workspace\WorkspaceManager::class)->reassignBusiness((int) $oldWorkspace->owner_user_id, $business, $newWorkspace);

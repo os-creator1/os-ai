@@ -1155,3 +1155,59 @@ state, never re-derived by inference. Full mechanics, including the per-Business
 counters and the archive/reactivate matrix, are in
 `docs/automation/CUSTOMER-EXPERIENCE-MANAGED-MESSAGING-AUTOMATIONS-CONTRACT.md`
 §7.3a, §7.5.1–§7.5.3 and §23.2.
+
+### 33.10 Implementation record — Customer Experience Slice 1A
+
+Delivered on `agent/customer-experience-slice-1a-location-capacity-v2` from
+`origin/main` `c7ab88beb4f67955c5a8b63854b5b11fa4f3e1cf`. The full record,
+including the human decisions taken after reconnaissance, is Appendix C of
+the Customer Experience contract. What this RFC's own readers need:
+
+* **Migration** `2026_09_15_100001_add_physical_location_capacity_and_lifecycle.php`
+  — additive only; the M1 seed migration is untouched. It adds the four
+  location catalog columns, `businesses.additional_location_slots` (paid,
+  reusable) and `businesses.grandfathered_location_slots` (complimentary,
+  consumed on archive), `business_locations.lifecycle_state` (default
+  `active`) with `archived_at` — deliberately not SoftDeletes — and **one**
+  nullable JSON `payload` column on `workspace_entitlement_transitions`, so
+  the audit row stays Workspace-scoped and names the affected Businesses and
+  counts in its payload. Historical rows keep `payload` NULL.
+* **Catalog.** Core and Growth become `business_slot_included = 1`,
+  `business_slot_max = 1`, `unlimited_business_slots = false` and
+  `additional_business_slot_price_ratio = NULL`. The NULL ratio is how §10.1
+  already represents "no additional-slot concept" (Agency), and it makes the
+  existing fail-closed code refuse every new paid additional-Business-slot
+  quote and paid allocation — Core and Growth offer no purchasable second
+  Business. Locations: Core/Growth 3 included, 5 maximum, ratio `0.5000`;
+  Agency unlimited. No price is invented.
+* **Preflight.** `up()` aborts before any change while a live (nonterminal)
+  row exists in `additional_business_slot_agreements` — such capacity would
+  become inert while its billing continued, and Slice 1A may not cancel,
+  refund or stop billing. That remediation is a separate Billing decision.
+  `up()` also aborts unless Core/Growth still hold the M1 Business values, so
+  the rollback's restore is always exact.
+* **Business capacity** is still enforced only by the unchanged
+  `decideBusinessSlotCapacity()` at every §17 count-increasing seam.
+  Existing over-capacity Workspaces are grandfathered exactly as §25.4
+  defines; nothing is deleted, deactivated or hidden.
+* **Location capacity** is decided by
+  `EntitlementManager::decideLocationSlotCapacity()` from the TIER only —
+  operational plan status does not gate it (a location is part of the
+  Business's record and costs nothing; paid capacity still needs an
+  allocation), and a Business's first location is never refused.
+  `setAdditionalLocationSlots()` is platform-administrator only and audited;
+  a non-complimentary increase needs price, currency and the location ratio
+  (§12.5), so while Core/Growth prices are unset no paid location capacity
+  can be activated for a paying account. There is no customer purchase path.
+* **Downgrades.** `changePlan()` re-evaluates every Business's grandfathered
+  location allowance in its own transaction when the new tier has bounded
+  location capacity (never restoring a pre-upgrade value) and writes one
+  `capacity_grandfathered` transition; an upgrade keeps the allowance unused.
+* **Rollback.** A pristine rollback (migrate, no runtime use, rollback)
+  succeeds and removes only the migration-owned audit rows (type
+  `capacity_grandfathered`, null actor, payload source
+  `slice_1a_capacity_correction_v1`). It fails closed, changing nothing, on
+  post-migration runtime state: archived locations, allocations,
+  grandfathering changed at runtime, Core/Growth locations above what the old
+  schema can bound, runtime audit rows of the two new types, or an operator
+  edit of any value the migration wrote (compare-and-swap).

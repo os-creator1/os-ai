@@ -274,11 +274,13 @@ class EntitlementManagerCatalogPricingTest extends TestCase
     {
         Event::fake([WorkspacePlanCatalogPricingChanged::class]);
 
-        // Core is seeded (RFC-004 §12.1/§25) with
-        // additional_business_slot_price_ratio = 0.5000 already — price and
-        // currency_id remain unfrozen (null) until an operator sets them.
+        // M1 seeded Core with additional_business_slot_price_ratio = 0.5000;
+        // Customer Experience Slice 1A (RFC-004 §33.5) cleared it, because
+        // Core no longer offers an additional Business slot at any price.
+        // price and currency_id remain unfrozen (null) until an operator
+        // sets them.
         $catalog = WorkspacePlanCatalog::where('tier', 'core')->first();
-        $this->assertSame('0.5000', (string) $catalog->getRawOriginal('additional_business_slot_price_ratio'));
+        $this->assertNull($catalog->getRawOriginal('additional_business_slot_price_ratio'));
         $currencyId = $this->currency();
         $admin = $this->createAdmin();
 
@@ -293,7 +295,7 @@ class EntitlementManagerCatalogPricingTest extends TestCase
         $this->assertSame('49.00', (string) $row->getRawOriginal('to_price'));
         $this->assertNull($row->from_currency_id);
         $this->assertSame($currencyId, $row->to_currency_id);
-        $this->assertSame('0.5000', (string) $row->getRawOriginal('from_additional_business_slot_price_ratio'));
+        $this->assertNull($row->getRawOriginal('from_additional_business_slot_price_ratio'));
         $this->assertSame('0.3000', (string) $row->getRawOriginal('to_additional_business_slot_price_ratio'));
         $this->assertSame('0.3000', (string) $updated->fresh()->getRawOriginal('additional_business_slot_price_ratio'));
 

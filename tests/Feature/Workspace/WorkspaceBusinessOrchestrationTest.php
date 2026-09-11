@@ -86,6 +86,28 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
     }
 
     /**
+     * Customer Experience Slice 1A (RFC-004 §33): Core and Growth now hold
+     * exactly one Business, so orchestration tests that need several
+     * Businesses in one Workspace use an Agency (unlimited) Workspace. They
+     * prove authority, grant cleanup and lock order — not a capacity
+     * boundary, which the M2 capacity tests at the end of this file cover
+     * against the corrected one-Business Core rule.
+     */
+    private function roomyWorkspace($owner): Workspace
+    {
+        $workspace = $this->createWorkspace($owner);
+
+        $admin = \App\Models\User::create([
+            'first_name' => 'Slice1A', 'last_name' => 'Admin', 'email' => 'slice1a-fixture' . uniqid() . '@example.test',
+            'status' => true, 'is_admin' => true, 'is_customer' => false, 'active_portal' => 'admin',
+        ]);
+
+        app(\App\Library\Entitlement\EntitlementManager::class)->assignFirstPlan($workspace, \App\Enums\Entitlement\WorkspacePlanTier::Agency, $admin->id, 'Slice 1A roomy fixture assignment.', true, 0);
+
+        return $workspace->fresh();
+    }
+
+    /**
      * @return array<int, array{sql: string, bindings: array<int, mixed>}>
      */
     private function captureQueries(\Closure $callback): array
@@ -363,7 +385,7 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
     public function test_staff_inactive_admin_and_unrelated_user_cannot_reassign(): void
     {
         $owner = $this->createCustomer();
-        $workspaceA = $this->entitledWorkspace($owner->user);
+        $workspaceA = $this->roomyWorkspace($owner->user);
         $workspaceB = $this->entitledWorkspace($owner->user);
 
         $staff = $this->createCustomer();
@@ -548,7 +570,7 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
     public function test_only_the_reassigned_businesss_source_workspace_grants_are_removed(): void
     {
         $owner = $this->createCustomer();
-        $workspaceA = $this->entitledWorkspace($owner->user);
+        $workspaceA = $this->roomyWorkspace($owner->user);
         $workspaceB = $this->entitledWorkspace($owner->user);
         $workspaceC = $this->entitledWorkspace($owner->user);
 
@@ -747,8 +769,8 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
     public function test_opposite_direction_reassignments_lock_workspaces_in_the_same_ascending_order(): void
     {
         $owner = $this->createCustomer();
-        $workspaceLow = $this->entitledWorkspace($owner->user);
-        $workspaceHigh = $this->entitledWorkspace($owner->user);
+        $workspaceLow = $this->roomyWorkspace($owner->user);
+        $workspaceHigh = $this->roomyWorkspace($owner->user);
         $this->assertLessThan($workspaceHigh->id, $workspaceLow->id);
 
         $businessInLow = $this->manager()->createBusinessInWorkspace($owner->user_id, $owner, $workspaceLow, $this->businessAttributes(['name' => 'In Low']));
@@ -924,22 +946,25 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
     {
         $owner = $this->createCustomer();
         $workspace = $this->entitledWorkspace($owner->user);
-        $this->fillToCapacity($workspace, $owner, 4);
 
+        // Customer Experience Slice 1A (RFC-004 §33): Core holds exactly one
+        // Business, so its first Business IS its final slot.
         $business = $this->manager()->createBusinessInWorkspace($owner->user_id, $owner, $workspace, $this->businessAttributes(['name' => 'Final']));
 
         $this->assertSame($workspace->id, $business->workspace_id);
-        $this->assertSame(5, Business::where('workspace_id', $workspace->id)->count());
+        $this->assertSame(1, Business::where('workspace_id', $workspace->id)->count());
     }
 
     public function test_full_target_denies_with_business_slot_limit_exceeded(): void
     {
         $owner = $this->createCustomer();
         $workspace = $this->entitledWorkspace($owner->user);
-        $this->fillToCapacity($workspace, $owner, 5);
+        // Customer Experience Slice 1A: one Business fills Core; its legacy
+        // complimentary additional slots cannot raise that.
+        $this->fillToCapacity($workspace, $owner, 1);
 
         $this->expectException(\App\Exceptions\Entitlement\BusinessSlotLimitExceededException::class);
-        $this->manager()->createBusinessInWorkspace($owner->user_id, $owner, $workspace, $this->businessAttributes(['name' => 'Sixth']));
+        $this->manager()->createBusinessInWorkspace($owner->user_id, $owner, $workspace, $this->businessAttributes(['name' => 'Second']));
     }
 
     public function test_unassigned_target_denies_with_workspace_plan_unassigned(): void
@@ -993,7 +1018,7 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
     {
         $owner = $this->createCustomer();
         $fullWorkspace = $this->entitledWorkspace($owner->user);
-        $this->fillToCapacity($fullWorkspace, $owner, 5);
+        $this->fillToCapacity($fullWorkspace, $owner, 1);
 
         $unrelatedOwner = $this->createCustomer();
         $unrelatedWorkspace = $this->entitledWorkspace($unrelatedOwner->user);
@@ -1012,9 +1037,8 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
     {
         $owner = $this->createCustomer();
         $workspace = $this->entitledWorkspace($owner->user);
-        $this->fillToCapacity($workspace, $owner, 4);
         $business = $this->manager()->createBusinessInWorkspace($owner->user_id, $owner, $workspace, $this->businessAttributes(['name' => 'Final']));
-        // Workspace is now at exact capacity (5/5).
+        // Workspace is now at exact capacity (1/1 — Customer Experience Slice 1A).
 
         $result = $this->manager()->reassignBusiness($owner->user_id, $business, $workspace);
 

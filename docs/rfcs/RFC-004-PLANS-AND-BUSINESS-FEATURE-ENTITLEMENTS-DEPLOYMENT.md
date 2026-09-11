@@ -94,6 +94,15 @@ capacity, not physical-location capacity** (see the amendment note below):
 > already in use becomes inaccessible. Until that additive migration ships, the
 > values above remain the deployed reality and this guide's smoke checks below
 > describe the deployed behaviour, not the corrected target.
+>
+> **That additive migration now exists** (Customer Experience Slice 1A):
+> `2026_09_15_100001_add_physical_location_capacity_and_lifecycle.php`. After
+> it runs, Core and Growth read `business_slot_included = 1`,
+> `business_slot_max = 1`, `additional_business_slot_price_ratio = NULL`
+> (no purchasable additional Business slot), and carry
+> `location_slot_included = 3`, `location_slot_max = 5`,
+> `additional_location_slot_price_ratio = 0.5000`; Agency carries
+> `unlimited_location_slots = true`. See §21 below before deploying it.
 
 **All three rows are seeded with `price` and `currency_id` left `null`** — RFC-004 does not invent commercial prices at implementation time (§9 below documents the operational consequence of this).
 
@@ -203,7 +212,7 @@ Behind the existing `EnsureUserIsAdministrator` boundary, with the two new permi
 Exercise directly against a test Workspace (never production data) before considering this deploy fully verified:
 
 1. Assign a first plan (Core, complimentary) to an unassigned Workspace — succeeds, writes one `plan_assigned` transition row.
-2. Attempt to create a 4th Business without an additional-slot allocation — denied with `business_slot_allocation_required`. Allocate one additional slot; the 4th Business now succeeds. **(Describes the deployed M1/M2 behaviour. Under RFC-004 §33 the corrected Core/Growth Business capacity is 1, so once the §33.5 additive migration ships this check becomes "attempt to create a 2nd Business — denied with `business_slot_limit_exceeded`, because Core/Growth no longer offer additional Business slots", and the 3/4/5 allocation drill moves to physical locations. Do not run this check against a deployment that already carries the §33.5 migration.)**
+2. Attempt to create a 4th Business without an additional-slot allocation — denied with `business_slot_allocation_required`. Allocate one additional slot; the 4th Business now succeeds. **(Describes the deployed M1/M2 behaviour. Under RFC-004 §33 the corrected Core/Growth Business capacity is 1, so once the §33.5 additive migration ships this check becomes "attempt to create a 2nd Business — denied with `business_slot_limit_exceeded`, because Core/Growth no longer offer additional Business slots", and the 3/4/5 allocation drill moves to physical locations. Do not run this check against a deployment that already carries the §33.5 migration — use §21's checks instead.)**
 3. Change the Workspace's status to `suspended` — every feature-gated `decide()` call for that Workspace now denies with `plan_suspended`, and a `plan_status_changed` transition row is written with the correct `from_status`/`to_status`. Restore to `active`.
 4. Create a Workspace `deny` override for `crm` (an already-included, base-packaged `Available` feature on every seeded tier) — `decide()` now returns `denied_by_workspace_override` for `crm` on that Workspace instead of the plan-derived allow. Revert the override — the decision returns to the plan-mapping-derived allowed state. Confirm the corresponding `entitlement_override_denied`/`entitlement_override_reverted` rows were written to `workspace_entitlement_transitions`. **(An `allow`-override-outside-base-plan smoke check is not operationally possible against a normally-seeded deployment:** with the seeded catalog (§6), `crm`/`conversations`/`automations` — the only three currently-`Available` features — are already packaged into every tier, including Core, so there is no `Available` feature outside base-plan packaging for a real deployed Workspace to demonstrate an `allow` override against. That specific behavior is proven in the automated test suite's own isolated fixture instead, by `EntitlementManagerPresentationTest::test_override_outside_base_plan_packaging_is_still_returned`, which removes Core's `crm` packaging row inside that one test's own transaction only — never in a real deployment's production catalog data.)
 5. Change the Workspace's tier from Core to Growth — `additional_business_slots` is preserved unchanged; change from Growth to Agency — it resets to `0` atomically in the same operation, with both a `plan_changed` and an `additional_business_slots_changed` transition row written.
@@ -287,3 +296,63 @@ This deploy introduces no billing, wallet, usage-metering, or Stripe behavior of
 - Setting real, non-null catalog pricing — a deliberate post-deploy operational decision, not part of this deploy (§9).
 - Wiring `EntitlementManager::decide()` into any legacy module beyond what Milestone 3 already shipped — no additional runtime gating is introduced by this guide.
 - Milestone 4's own conformance/tag process beyond §18 above — see `docs/automation/RFC-004-M4-CONTRACT.md` and `docs/automation/RFC-004-M4-CONFORMANCE.md` for that governance record.
+
+---
+
+## 21. Amendment 3 deployment — Business vs physical-location capacity (Customer Experience Slice 1A)
+
+Grounded in RFC-004 §33 and §33.10. One additive migration,
+`2026_09_15_100001_add_physical_location_capacity_and_lifecycle.php`, runs as
+part of the normal `php artisan migrate`. It makes no provider, Stripe or
+wallet call.
+
+**Before deploying — the one precondition.** The migration **aborts before
+changing anything** if any `additional_business_slot_agreements` row is in a
+live (nonterminal) state — anything other than `canceled`, `refunded` or
+`payment_failed`. After this migration Core and Growth hold exactly one
+Business, so such a paid additional-Business-slot agreement would keep
+renewing for capacity that no longer exists. The migration deliberately does
+not cancel, refund or stop it: **resolve those agreements through a separate
+Billing remediation first**, then re-run `php artisan migrate`. On an install
+where Core/Growth prices were never set (the default — §9), no such agreement
+can exist and the precondition passes. The migration also aborts, unchanged,
+if the Core/Growth Business-slot values are not the M1 values it corrects
+(3 / 5 / 0.5000) — an unsupported prior edit needs a human decision.
+
+**What it does.** Adds physical-location capacity to the catalog, per-Business
+paid and grandfathered location counters, a location lifecycle
+(`active`/`archived`, default `active`), and one nullable JSON `payload` column
+on `workspace_entitlement_transitions`. It corrects Core/Growth Business
+capacity to 1 with no priced additional Business slot, and grandfathers
+existing data first: a Workspace already holding several Businesses keeps
+them all (only a new one is refused), and a Business holding more than three
+active locations keeps them all, recorded as complimentary. One
+`capacity_grandfathered` audit row per affected Workspace names each affected
+Business and its counts.
+
+**Smoke checks after deploy** (against a test Workspace, never production data):
+
+1. A Core Workspace with one Business: creating a second Business is refused
+   with `business_slot_limit_exceeded`.
+2. On that Business's **Settings → Business → Locations** page, the first
+   three locations are added freely; the 4th is refused with a plain
+   "add-on can't be bought online yet" explanation and no purchase control;
+   with two complimentary allocations granted by a platform administrator
+   (`EntitlementManager::setAdditionalLocationSlots()`), the 4th and 5th
+   succeed and the 6th is refused, pointing to the Agency plan.
+3. Archiving a location frees one slot and keeps the row; the primary is
+   archived only together with choosing a new primary; the last active
+   location cannot be archived.
+
+**Rollback.** A rollback immediately after deploy, before any location or
+allocation was changed, is safe and restores the M1 values exactly. Once the
+feature has been used, `down()` refuses — changing nothing and listing every
+reason — rather than drop real state (archived locations, allocations,
+runtime grandfathering, runtime audit rows, or an operator catalog edit).
+Prefer forward repair, exactly as §17 recommends for RFC-004 generally.
+
+**Known follow-ups (not in this deploy).** A billing slice must provide the
+checkout that collects the 50% add-on location charge before Core/Growth
+prices are set; `updateCatalogPricing()` can still write an additional
+Business-slot ratio for Core/Growth and should refuse one for a tier whose
+`business_slot_max` equals `business_slot_included` (Billing remediation).

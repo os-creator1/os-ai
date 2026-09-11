@@ -45,6 +45,8 @@ class CustomerNavigationTreeTest extends TestCase
     private const BUSINESS_ONLY_KEYS = [
         'messages', 'inbox', 'send', 'campaigns', 'contacts',
         'automations', 'website', 'gbp', 'analytics', 'business', 'blocked-numbers',
+        // Customer Experience Slice 1A — a Business's physical locations.
+        'locations',
     ];
 
     // =================================================================
@@ -58,12 +60,36 @@ class CustomerNavigationTreeTest extends TestCase
 
         $keys = $this->menuKeys($this->home()->assertOk()->getContent());
 
-        foreach (['home', 'messages', 'inbox', 'send', 'campaigns', 'contacts', 'automations', 'website', 'analytics', 'settings'] as $expected) {
+        foreach (['home', 'messages', 'inbox', 'send', 'campaigns', 'contacts', 'automations', 'website', 'analytics', 'settings', 'business', 'locations'] as $expected) {
             $this->assertContains($expected, $keys, "A Core Business must offer [{$expected}].");
         }
 
         // The D-20 exemplar: Core's catalog excludes the GBP module.
         $this->assertNotContains('gbp', $keys, 'Core has no Get found.');
+    }
+
+    /**
+     * Customer Experience Slice 1A — Settings → Business → Locations: the
+     * selected Business's physical locations, nested under Business and
+     * pointing at that Business's own scoped route. No entitlement key and
+     * no entitlement query are involved.
+     */
+    public function test_locations_sits_under_settings_business_for_the_selected_business(): void
+    {
+        [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
+        $this->authenticateAs($customer);
+
+        $html = $this->home()->assertOk()->getContent();
+        $keys = $this->menuKeys($html);
+
+        $settings = array_search('settings', $keys, true);
+        $businessGroup = array_search('business', $keys, true);
+        $locations = array_search('locations', $keys, true);
+
+        $this->assertNotFalse($locations);
+        $this->assertGreaterThan($settings, $businessGroup, 'Business sits inside Settings.');
+        $this->assertGreaterThan($businessGroup, $locations, 'Locations sits inside Settings → Business.');
+        $this->assertContains(route('customer.workspaces.businesses.locations.index', [$workspace->uid, $business->uid]), $this->menuLinks($html));
     }
 
     public function test_a_growth_business_gets_get_found_because_its_plan_includes_it(): void

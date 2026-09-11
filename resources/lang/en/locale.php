@@ -922,6 +922,7 @@
             'Google Business Profile' => 'Google Business Profile',
             'Business details'        => 'Business details',
             'Blocked numbers'         => 'Blocked numbers',
+            'Locations'               => 'Locations',
             'Usage & billing'         => 'Usage & billing',
             'Team & account'          => 'Team & account',
             'Team & agency account'   => 'Team & agency account',

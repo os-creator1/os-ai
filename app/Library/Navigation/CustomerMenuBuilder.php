@@ -165,6 +165,13 @@ final class CustomerMenuBuilder
             $businessSettings[] = $this->item($user, 'business-details', 'Business details', 'briefcase', ['access_backend'], 'customer.business.edit', [], $current, ['customer.business.']);
         }
 
+        // Customer Experience Slice 1A — the selected Business's physical
+        // locations. A location is part of the Business, never an account or
+        // a switcher level; the destination enforces its own tenancy.
+        $businessSettings[] = $this->item($user, 'locations', 'Locations', 'map', ['access_backend'], 'customer.workspaces.businesses.locations.index', $scoped, $current, [
+            'customer.workspaces.businesses.locations.',
+        ]);
+
         $businessSettings[] = $this->item($user, 'blocked-numbers', 'Blocked numbers', 'shield', self::BLACKLIST_PERMISSIONS, 'customer.blacklists.index', [], $current, ['customer.blacklists.']);
 
         $businessSettings = array_values(array_filter($businessSettings));

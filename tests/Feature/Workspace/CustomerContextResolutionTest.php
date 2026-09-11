@@ -213,7 +213,10 @@ class CustomerContextResolutionTest extends TestCase
 
         $keys = $this->menuKeys($this->home()->assertOk()->getContent());
 
-        $this->assertSame(['home', 'contacts'], $keys, 'Only Home and the permitted Contacts entry remain (§9.3 #6).');
+        // Customer Experience Slice 1A adds Settings → Business → Locations,
+        // which every actor who can reach the Business may read (restricted
+        // staff read locations; they cannot change them).
+        $this->assertSame(['home', 'contacts', 'settings', 'business', 'locations'], $keys, 'Only Home, the permitted Contacts entry and the read-only Locations entry remain (§9.3 #6).');
     }
 
     public function test_the_platform_owner_shell_carries_no_customer_navigation(): void
