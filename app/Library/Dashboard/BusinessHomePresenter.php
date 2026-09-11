@@ -564,7 +564,7 @@ final class BusinessHomePresenter
             $actions[] = new DashboardAction('inbox', 'Open inbox', $url, 'inbox');
         }
 
-        if ($url = $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.contacts.index', $scoped, DashboardLinkGate::CONTACT_PERMISSIONS)) {
+        if ($url = $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.people.add', $scoped, DashboardLinkGate::CONTACT_PERMISSIONS)) {
             $actions[] = new DashboardAction('add_contact', 'Add contact', $url, 'user-plus');
         }
 
