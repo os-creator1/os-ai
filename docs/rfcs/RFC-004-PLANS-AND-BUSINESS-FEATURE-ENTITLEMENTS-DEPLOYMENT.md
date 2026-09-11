@@ -343,6 +343,10 @@ Business and its counts.
 3. Archiving a location frees one slot and keeps the row; the primary is
    archived only together with choosing a new primary; the last active
    location cannot be archived.
+4. `EntitlementManager::updateCatalogPricing()` with a non-null
+   `additional_business_slot_price_ratio` for Core or Growth is refused
+   (the row offers no additional Business capacity), writing no pricing-change
+   row; `setAdditionalBusinessSlots()` refuses any increase on Core/Growth.
 
 **Rollback.** A rollback immediately after deploy, before any location or
 allocation was changed, is safe and restores the M1 values exactly. Once the
@@ -351,8 +355,6 @@ reason — rather than drop real state (archived locations, allocations,
 runtime grandfathering, runtime audit rows, or an operator catalog edit).
 Prefer forward repair, exactly as §17 recommends for RFC-004 generally.
 
-**Known follow-ups (not in this deploy).** A billing slice must provide the
+**Known follow-up (not in this deploy).** A billing slice must provide the
 checkout that collects the 50% add-on location charge before Core/Growth
-prices are set; `updateCatalogPricing()` can still write an additional
-Business-slot ratio for Core/Growth and should refuse one for a tier whose
-`business_slot_max` equals `business_slot_included` (Billing remediation).
+prices are set.

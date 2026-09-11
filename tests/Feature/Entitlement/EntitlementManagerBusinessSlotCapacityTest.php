@@ -162,7 +162,10 @@ class EntitlementManagerBusinessSlotCapacityTest extends TestCase
 
     public function test_corrected_core_catalog_ignores_a_legacy_additional_business_slot_allocation(): void
     {
-        [$workspace, $customer] = $this->assignedWorkspace(slots: 2);
+        [$workspace, $customer] = $this->assignedWorkspace(slots: 0);
+        // A counter left from the superseded 3/5 catalog: no runtime path can
+        // raise it on the corrected row any more, so it is seeded directly.
+        DB::table('workspace_plan_assignments')->where('workspace_id', $workspace->id)->update(['additional_business_slots' => 2]);
         $this->createNBusinesses($workspace, $customer, 1);
 
         $this->expectException(BusinessSlotLimitExceededException::class);

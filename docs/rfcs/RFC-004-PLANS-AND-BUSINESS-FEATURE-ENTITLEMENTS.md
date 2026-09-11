@@ -1203,6 +1203,19 @@ the Customer Experience contract. What this RFC's own readers need:
   location allowance in its own transaction when the new tier has bounded
   location capacity (never restoring a pre-upgrade value) and writes one
   `capacity_grandfathered` transition; an upgrade keeps the allowance unused.
+* **Cross-Workspace reassignment.** `WorkspaceManager::reassignBusiness()`
+  calls `EntitlementManager::reconcileLocationCapacityForReassignment()` in
+  the same transaction (lock order unchanged: Workspaces ascending → Business
+  → its locations). A paid location allocation is not portable — the move is
+  refused before any change. Against a bounded target the allowance is
+  recalculated fresh from the current active locations; the target Workspace
+  records it (payload source `business_reassignment`).
+* **No extra Business can be priced or allocated on Core/Growth.**
+  `updateCatalogPricing()` refuses a Business-slot ratio for any row with
+  `business_slot_max <= business_slot_included`, and every path that raises
+  `additional_business_slots` (§13, Amendment 1 §5, the M1 backfill) derives
+  its limit from `business_slot_max − business_slot_included` instead of the
+  former fixed `0..2`; reductions stay valid.
 * **Rollback.** A pristine rollback (migrate, no runtime use, rollback)
   succeeds and removes only the migration-owned audit rows (type
   `capacity_grandfathered`, null actor, payload source

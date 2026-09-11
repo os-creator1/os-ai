@@ -79,7 +79,7 @@ class WorkspaceBusinessOrchestrationTest extends TestCase
             $admin->id,
             'M2 fixture-compatibility assignment.',
             true,
-            2,
+            0, // Customer Experience Slice 1A (RFC-004 §33.2): Core offers no additional Business slot.
         );
 
         return $workspace->fresh();

@@ -12,11 +12,21 @@ use App\Models\WorkspacePlanCatalog;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use InvalidArgumentException;
+use Tests\Feature\Entitlement\Concerns\PinsBoundedBusinessSlotCatalog;
 use Tests\TestCase;
 
 class EntitlementManagerComplimentaryStatusTest extends TestCase
 {
+    use PinsBoundedBusinessSlotCatalog;
     use RefreshDatabase;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        // Generic additional-Business-slot engine tests: see PinsBoundedBusinessSlotCatalog.
+        $this->pinBoundedBusinessSlotCatalog();
+    }
 
     private function createAdmin(): int
     {
