@@ -27,13 +27,39 @@
 @section('content')
     <section id="workspace-overview">
         <div class="row">
-            <div class="col-12">
-                <a href="{{ route('customer.workspaces.index') }}">Back to {{ $accountNounPlural }}</a>
-            </div>
+            @if (request()->attributes->get('showsAccountChooser', false))
+                <div class="col-12">
+                    <a href="{{ route('customer.workspaces.index') }}">Back to {{ $accountNounPlural }}</a>
+                </div>
+            @endif
 
             <div class="col-12">
+                {{-- A successful change is confirmed by the product's compact toast
+                     (toastr, loaded on every page: auto-dismissing, announced
+                     politely to assistive technology). The alert below is only
+                     the fallback when toastr is unavailable; errors stay as
+                     full, persistent alerts. --}}
                 @if (session('flash_success'))
-                    <x-alert variant="success">{{ session('flash_success') }}</x-alert>
+                    <div data-role="flash-success-fallback" hidden>
+                        <x-alert variant="success">{{ session('flash_success') }}</x-alert>
+                    </div>
+                    <script>
+                        document.addEventListener('DOMContentLoaded', function () {
+                            if (window.toastr) {
+                                window.toastr.success(@json(session('flash_success')), '', {
+                                    closeButton: true,
+                                    positionClass: 'toast-top-right',
+                                    progressBar: true,
+                                    newestOnTop: true,
+                                    rtl: typeof isRtl !== 'undefined' && isRtl
+                                });
+
+                                return;
+                            }
+
+                            document.querySelector('[data-role="flash-success-fallback"]').hidden = false;
+                        });
+                    </script>
                 @endif
 
                 @if (session('flash_error'))
@@ -188,30 +214,9 @@
                                 <x-button type="submit" variant="outline">Create Business</x-button>
                             </form>
 
-                            @php
-                                $reassignTargetWorkspaces = request()->attributes->get('reassignTargetWorkspaces', []);
-                            @endphp
-
-                            @if (! empty($manageableBusinesses) && ! empty($reassignTargetWorkspaces))
-                                <x-table :headers="['Business', 'Reassign to']" class="mb-2">
-                                    @foreach ($manageableBusinesses as $business)
-                                        <tr>
-                                            <td>{{ $business['name'] }}</td>
-                                            <td>
-                                                <form method="POST" data-business-action="reassign" data-business-uid="{{ $business['uid'] }}" class="d-flex">
-                                                    @csrf
-                                                    <select name="target_workspace_uid" class="form-control form-control-sm d-inline-block w-auto me-1">
-                                                        @foreach ($reassignTargetWorkspaces as $targetWorkspace)
-                                                            <option value="{{ $targetWorkspace['uid'] }}">{{ $targetWorkspace['name'] }}</option>
-                                                        @endforeach
-                                                    </select>
-                                                    <x-button type="submit" variant="outline" size="sm">Reassign</x-button>
-                                                </form>
-                                            </td>
-                                        </tr>
-                                    @endforeach
-                                </x-table>
-                            @endif
+                            {{-- Moving a Business into another Workspace is Workspace
+                                 mechanics, not an account setting: no customer control
+                                 here (the reassignment route stays for support). --}}
                         @endif
 
                         @if (empty($businesses))
