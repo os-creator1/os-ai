@@ -8,11 +8,11 @@
             <div class="col-12">
                 <x-card title="Business Profile">
                     @if (session('status') === 'success')
-                        <x-alert variant="success">{{ session('message') }}</x-alert>
+                        <x-alert variant="success" role="status" data-role="flash-message">{{ session('message') }}</x-alert>
                     @endif
 
                     @if ($errors->any())
-                        <x-alert variant="danger">
+                        <x-alert variant="danger" data-role="validation-summary">
                             <ul class="mb-0">
                                 @foreach ($errors->all() as $error)
                                     <li>{{ $error }}</li>
