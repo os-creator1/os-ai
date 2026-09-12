@@ -95,7 +95,10 @@ class AgencyProspectingRespondJob extends Base
         }
 
         $settings = AgencyProspectingSetting::where('workspace_id', $snapshot['workspace_id'])->first();
-        $raw = $aiClient->complete($this->buildPromptMessages($settings, $snapshot['campaign'], $snapshot['prospect'], $snapshot['member']));
+        $raw = $aiClient->complete(
+            $this->buildPromptMessages($settings, $snapshot['campaign'], $snapshot['prospect'], $snapshot['member']),
+            $member->workspace,
+        );
         $decision = AgencyProspectAiDecision::fromRawJson($raw);
 
         if ($decision === null) {

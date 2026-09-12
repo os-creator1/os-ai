@@ -47,7 +47,6 @@
     use libphonenumber\PhoneNumberUtil;
     use Maatwebsite\Excel\Facades\Excel;
     use Maatwebsite\Excel\Excel as ExcelFormat;
-    use OpenAI;
     use stdClass;
 
     class CampaignController extends CustomerBaseController
@@ -2941,7 +2940,19 @@
         }
 
 
-        public function generateAIMessage(GenerateAIMessageRequest $request)
+        /**
+         * Unified Business Home and COO Decision Engine Contract §10.1,
+         * §10.3a (slice AI-1). This inline OpenAI call is now routed
+         * through AiGateway, attributed to the acting customer's frame
+         * Workspace (this legacy compose screen carries no Business
+         * context — request()->attributes->get('customerContext') is the
+         * same per-request resolution every customer route already gets
+         * from ResolveCustomerContext, §10.3a's "Workspace-level call
+         * with no Business"). It never constructs a provider client
+         * itself any more — that lives solely in
+         * App\Library\Ai\Providers\**.
+         */
+        public function generateAIMessage(GenerateAIMessageRequest $request, \App\Library\Ai\AiGateway $gateway, \App\Library\Ai\AiModelRouter $router)
         {
 
             if (config('app.stage') == 'demo') {
@@ -2951,24 +2962,48 @@
                 ], 503);
             }
 
+            $customerContext = request()->attributes->get('customerContext');
+            $frameWorkspace = $customerContext instanceof \App\Library\Navigation\CustomerContext ? $customerContext->frameWorkspace() : null;
+            $workspace = $frameWorkspace !== null ? \App\Models\Workspace::find($frameWorkspace->id) : null;
+
+            if ($workspace === null) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'AI drafting is unavailable right now. You can write the message yourself.',
+                ]);
+            }
+
             $prompt = "Generate a concise SMS message with a {$request->tone} tone for the following audience: {$request->audience}. Goal: {$request->goal}. Limit to 160 characters.";
 
-            $openAi = OpenAI::client(config('services.openai.api_key'));
+            $category = \App\Library\Ai\Enums\AiUsageCategory::CampaignMessageDraft;
+            $route = $router->defaultRouteFor($category);
+            $routeConfig = $router->config($route);
 
             try {
-
-                $result = $openAi->chat()->create([
-                    'model'    => config('services.openai.model'),
-                    'messages' => [
+                $result = $gateway->complete(new \App\Library\Ai\AiRequest(
+                    workspace: $workspace,
+                    business: null,
+                    category: $category,
+                    lane: \App\Library\Ai\Enums\AiLane::Product,
+                    route: $route,
+                    messages: [
                         ['role' => config('services.openai.role'), 'content' => $prompt],
                     ],
-                ]);
+                    maxOutputTokens: (int) $routeConfig['max_output_tokens'],
+                    idempotencyKey: (string) \Illuminate\Support\Str::uuid(),
+                    actorUserId: auth()->id(),
+                ));
 
-                $message = trim($result->choices[0]->message->content ?? '');
+                if (! $result->ok) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'AI drafting is paused until next month. You can write the message yourself.',
+                    ]);
+                }
 
                 return response()->json([
                     'success' => true,
-                    'message' => $message,
+                    'message' => $result->content,
                 ]);
 
             } catch (Exception $e) {

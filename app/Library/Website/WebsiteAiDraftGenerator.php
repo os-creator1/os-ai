@@ -3,6 +3,7 @@
 namespace App\Library\Website;
 
 use App\Models\Website;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Validation\ValidationException;
 
 /**
@@ -51,12 +52,14 @@ final class WebsiteAiDraftGenerator
 
         $context = $this->buildContext($website);
         $messages = $this->buildMessages($context);
+        $business = $website->business;
+        $actorUserId = Auth::id();
 
-        $pages = $this->requestAndValidate($messages);
+        $pages = $this->requestAndValidate($messages, $business, $actorUserId);
 
         if ($pages === null) {
             $messages[] = ['role' => 'user', 'content' => 'The previous response was not valid JSON matching the required schema. Please respond again with ONLY a valid JSON object matching the schema.'];
-            $pages = $this->requestAndValidate($messages);
+            $pages = $this->requestAndValidate($messages, $business, $actorUserId);
         }
 
         if ($pages === null) {
@@ -70,9 +73,9 @@ final class WebsiteAiDraftGenerator
         return true;
     }
 
-    private function requestAndValidate(array $messages): ?array
+    private function requestAndValidate(array $messages, \App\Models\Business $business, ?int $actorUserId): ?array
     {
-        $raw = $this->client->complete($messages);
+        $raw = $this->client->complete($messages, $business, $actorUserId);
 
         if ($raw === null) {
             return null;
