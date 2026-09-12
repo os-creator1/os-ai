@@ -46,12 +46,14 @@
     <div class="shadow-bottom"></div>
 
     @if($customerShell)
-        {{-- Current context (contract §9.2): the Business, or the agency account frame. Never a bare product name. --}}
-        <div class="customer-context-current px-2 pt-1 pb-50" data-role="sidebar-context">
-            <span class="d-block text-muted small text-uppercase" style="letter-spacing: .04em;">
-                {{ $customerContext->isBusinessFrame() ? $customerContext->businessNoun() : ($customerContext->isAgency() ? 'Agency account' : 'Account') }}
-            </span>
-            <strong class="d-block">{{ $customerContext->headerLabel() }}</strong>
+        {{--
+            Current context, and the one control that changes it (Lane E). The
+            whole block is clickable: it names the frame and the current
+            Business or account, and opens the switcher. Everything it may
+            offer is decided by ContextSwitcherPresenter, never here.
+        --}}
+        <div class="customer-context-current" data-role="sidebar-context">
+            <x-customer-context-switcher variant="sidebar" />
         </div>
     @endif
 

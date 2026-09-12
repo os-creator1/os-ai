@@ -1,87 +1,212 @@
 {{--
-    Customer Experience Slice 1B — the header context control (contract
-    §9.2, Slice 1B brief §5). $customerContext is supplied by
-    App\Library\Navigation\CustomerShellComposer.
+    The ONE customer context switcher (Lane E).
 
-    - One reachable Business: a compact identity, no pointless switcher.
-    - Several: a keyboard-operable Bootstrap dropdown listing ONLY the
-      Businesses the actor may enter; each choice is a CSRF-protected POST
-      that is re-authorized server-side; the current one is marked with
-      aria-current; Businesses are distinguished by their account name when
-      the actor spans several accounts, never by an internal id.
-    - Agency owner/admin additionally gets "View as client" per Business.
-    - While viewing as a client the switcher is replaced by the identity of
-      the viewed client (the banner carries the Exit control).
+    The whole current-context block is the control: the frame label, the
+    current name and a subtle chevron. Clicking it opens a menu of the
+    destinations the actor can legitimately reach — the Businesses inside the
+    accounts they can see, and those accounts' own frames.
+
+    $contextSwitcher is an App\Library\Navigation\ContextSwitcherView supplied
+    by CustomerShellComposer, which also owns every rule about what may appear:
+    this file decides nothing. Physical Locations are not a shell context and
+    never appear here; there is no "create account" control.
+
+    Every choice is a CSRF-protected POST that the server re-resolves and
+    re-authorizes (SwitchBusinessAction / SwitchAccountAction). While viewing as
+    a client the block is the viewed client's identity instead, because the
+    banner carries the Exit control and switching context is prohibited.
+
+    variant: "sidebar" (default) renders the block at the top of the vertical
+    menu; "navbar" renders the compact control the horizontal layout uses, where
+    there is no sidebar to host a block.
 --}}
-@if(isset($customerContext) && $customerContext instanceof \App\Library\Navigation\CustomerContext)
-    @php
-        $ctx = $customerContext;
-        $noun = strtolower($ctx->businessNoun());
-        $nounPlural = strtolower($ctx->businessesNoun());
-        $accountsUrl = $ctx->selectedWorkspace !== null
-            ? route('customer.workspaces.show', $ctx->selectedWorkspace->uid)
-            : route('customer.workspaces.index');
-    @endphp
-    <div class="customer-context-switcher d-flex align-items-center ms-50" data-role="context-switcher">
-        @if($ctx->isViewingAsClient())
-            <span class="customer-context-identity fw-bolder" data-role="context-identity" aria-label="Current client account">
-                {{ $ctx->headerLabel() }}
+@props(['variant' => 'sidebar'])
+@php
+    $switcher = $contextSwitcher ?? null;
+    $isSidebar = $variant !== 'navbar';
+@endphp
+@if($switcher instanceof \App\Library\Navigation\ContextSwitcherView)
+    <div class="customer-context-switcher {{ $isSidebar ? 'px-1 pt-1 pb-50' : 'd-flex align-items-center ms-50' }}"
+         data-role="context-switcher"
+         data-variant="{{ $isSidebar ? 'sidebar' : 'navbar' }}">
+        @if(! $switcher->interactive)
+            <span class="customer-context-identity {{ $isSidebar ? 'd-block px-1' : '' }}" data-role="context-identity" aria-label="{{ $switcher->identityAriaLabel }}">
+                @if($isSidebar)
+                    <span class="d-block text-muted text-caption text-uppercase customer-context-frame">{{ $switcher->frameLabel }}</span>
+                @endif
+                <span class="d-block fw-bolder customer-context-current-name">{{ $switcher->currentName }}</span>
             </span>
-        @elseif($ctx->showsSwitcher())
-            <div class="dropdown ds-menu">
+        @else
+            <div class="dropdown ds-menu {{ $isSidebar ? 'w-100' : '' }}">
                 <button
-                    class="btn btn-outline-secondary btn-sm d-inline-flex align-items-center gap-50 transition-fast"
+                    class="btn btn-flat-secondary d-flex align-items-center gap-50 transition-fast {{ $isSidebar ? 'w-100 text-start justify-content-between' : 'btn-sm' }}"
                     type="button"
                     id="customer-context-switcher-toggle"
                     data-bs-toggle="dropdown"
+                    data-bs-auto-close="true"
                     aria-haspopup="menu"
                     aria-expanded="false"
-                    aria-label="{{ $ctx->selectedBusiness !== null ? 'Current ' . $noun . ': ' . $ctx->selectedBusiness->name . '. Switch ' . $noun : 'Choose a ' . $noun }}"
+                    aria-label="{{ $switcher->toggleAriaLabel }}"
                 >
-                    <x-ds-icon name="briefcase" size="16" aria-hidden="true" />
-                    <span class="customer-context-current-name">{{ $ctx->headerLabel() }}</span>
-                    <x-ds-icon name="chevron-down" size="14" aria-hidden="true" />
+                    <span class="d-block text-truncate">
+                        @if($isSidebar)
+                            <span class="d-block text-muted text-caption text-uppercase customer-context-frame">{{ $switcher->frameLabel }}</span>
+                        @endif
+                        <span class="d-block fw-bolder text-truncate customer-context-current-name">{{ $switcher->currentName }}</span>
+                    </span>
+                    <x-ds-icon name="chevron-down" size="16" aria-hidden="true" />
                 </button>
-                <ul class="dropdown-menu ds-menu-list transition-slow" role="menu" aria-labelledby="customer-context-switcher-toggle">
-                    @foreach($ctx->selectableBusinesses() as $business)
-                        @php $isCurrent = $ctx->selectedBusiness !== null && $ctx->selectedBusiness->uid === $business->uid; @endphp
-                        <li role="none" class="customer-context-option">
-                            <form method="POST" action="{{ route('customer.context.business.switch') }}">
-                                @csrf
-                                <input type="hidden" name="workspace" value="{{ $business->workspaceUid }}">
-                                <input type="hidden" name="business" value="{{ $business->uid }}">
-                                <button type="submit" role="menuitem" class="dropdown-item d-flex align-items-center justify-content-between gap-1" @if($isCurrent) aria-current="true" @endif>
-                                    <span>
-                                        {{ $business->name }}
-                                        @if($ctx->hasMultipleWorkspaces())
-                                            <small class="d-block text-muted">{{ $business->workspaceName }}</small>
-                                        @endif
-                                    </span>
-                                    @if($isCurrent)
-                                        <x-badge variant="accent">Current</x-badge>
-                                    @endif
-                                </button>
-                            </form>
-                            @if($ctx->canViewAsClient())
-                                <form method="POST" action="{{ route('customer.view-as.start') }}">
+                {{--
+                    The menu scrolls rather than growing past the shell: the
+                    vertical menu clips its own overflow, so an agency with many
+                    client accounts would otherwise lose the rows at the bottom.
+                --}}
+                <ul class="dropdown-menu ds-menu-list transition-slow {{ $isSidebar ? 'w-100' : '' }}"
+                    role="menu"
+                    aria-labelledby="customer-context-switcher-toggle"
+                    data-role="context-switcher-menu"
+                    style="max-height: 60vh; overflow-y: auto;">
+
+                    @if($switcher->showsFilter)
+                        <li role="none" class="px-50 pb-50">
+                            <label class="visually-hidden" for="customer-context-switcher-filter">{{ $switcher->filterLabel }}</label>
+                            <input type="search"
+                                   id="customer-context-switcher-filter"
+                                   class="form-control form-control-sm"
+                                   data-role="context-switcher-filter"
+                                   placeholder="{{ $switcher->filterLabel }}"
+                                   autocomplete="off">
+                        </li>
+                    @endif
+
+                    @if($switcher->businesses !== [])
+                        <li role="none"><h6 class="dropdown-header text-caption text-muted mb-0">{{ $switcher->businessesHeading }}</h6></li>
+
+                        @foreach($switcher->businesses as $business)
+                            <li role="none" class="customer-context-option" data-role="context-option-business" data-option-name="{{ \Illuminate\Support\Str::lower($business->name) }}">
+                                <form method="POST" action="{{ $business->switchUrl }}">
                                     @csrf
                                     <input type="hidden" name="workspace" value="{{ $business->workspaceUid }}">
-                                    <input type="hidden" name="business" value="{{ $business->uid }}">
-                                    <button type="submit" role="menuitem" class="dropdown-item small ps-3">View {{ $business->name }} as a client</button>
+                                    <input type="hidden" name="business" value="{{ $business->businessUid }}">
+                                    <button type="submit" role="menuitem" class="dropdown-item d-flex align-items-center justify-content-between gap-1" @if($business->isCurrent) aria-current="true" @endif>
+                                        <span>
+                                            {{ $business->name }}
+                                            @if($business->subtitle !== null)
+                                                <small class="d-block text-muted">{{ $business->subtitle }}</small>
+                                            @endif
+                                        </span>
+                                        @if($business->isCurrent)
+                                            <x-badge variant="accent">Current</x-badge>
+                                        @endif
+                                    </button>
                                 </form>
-                            @endif
-                        </li>
-                    @endforeach
-                    <li role="none"><hr class="dropdown-divider"></li>
-                    <li role="none">
-                        <a role="menuitem" class="dropdown-item" href="{{ $accountsUrl }}">All {{ $nounPlural }}</a>
-                    </li>
+                                @if($business->viewAsUrl !== null)
+                                    <form method="POST" action="{{ $business->viewAsUrl }}">
+                                        @csrf
+                                        <input type="hidden" name="workspace" value="{{ $business->workspaceUid }}">
+                                        <input type="hidden" name="business" value="{{ $business->businessUid }}">
+                                        <button type="submit" role="menuitem" class="dropdown-item small ps-3">View {{ $business->name }} as a client</button>
+                                    </form>
+                                @endif
+                            </li>
+                        @endforeach
+                    @endif
+
+                    @if($switcher->accounts !== [])
+                        @if($switcher->businesses !== [])
+                            <li role="none"><hr class="dropdown-divider"></li>
+                        @endif
+                        <li role="none"><h6 class="dropdown-header text-caption text-muted mb-0">{{ $switcher->accountsHeading }}</h6></li>
+
+                        @foreach($switcher->accounts as $account)
+                            <li role="none" class="customer-context-option" data-role="context-option-account">
+                                <form method="POST" action="{{ $account->switchUrl }}">
+                                    @csrf
+                                    <input type="hidden" name="workspace" value="{{ $account->workspaceUid }}">
+                                    <button type="submit" role="menuitem" class="dropdown-item d-flex align-items-center justify-content-between gap-1" @if($account->isCurrent) aria-current="true" @endif>
+                                        <span>{{ $account->name }}</span>
+                                        @if($account->isCurrent)
+                                            <x-badge variant="accent">Current</x-badge>
+                                        @endif
+                                    </button>
+                                </form>
+                            </li>
+                        @endforeach
+                    @endif
+
+                    @if($switcher->links !== [])
+                        <li role="none"><hr class="dropdown-divider"></li>
+                        @foreach($switcher->links as $link)
+                            <li role="none">
+                                <a role="menuitem" class="dropdown-item" href="{{ $link->url }}">{{ $link->label }}</a>
+                            </li>
+                        @endforeach
+                    @endif
                 </ul>
             </div>
-        @else
-            <span class="customer-context-identity fw-bolder" data-role="context-identity" aria-label="Current {{ $noun }}">
-                {{ $ctx->headerLabel() }}
-            </span>
+
+            <script>
+                (function () {
+                    var toggle = document.getElementById('customer-context-switcher-toggle');
+                    var dropdown = toggle ? toggle.closest('.dropdown') : null;
+                    var menu = document.querySelector('[data-role="context-switcher-menu"]');
+
+                    if (!toggle || !dropdown || !menu) {
+                        return;
+                    }
+
+                    // Escape must return focus to the control that opened the
+                    // menu, or a keyboard user is left on <body> with nothing
+                    // selected. Bootstrap does this itself only while focus sits
+                    // on the toggle or a menu item, so a focused search field
+                    // loses it; waiting for its own close event covers every
+                    // case, and the flag keeps an outside CLICK from stealing
+                    // focus back, which would be wrong.
+                    var closingWithEscape = false;
+
+                    dropdown.addEventListener('keydown', function (event) {
+                        if (event.key === 'Escape') {
+                            closingWithEscape = true;
+                        }
+                    });
+
+                    dropdown.addEventListener('hidden.bs.dropdown', function () {
+                        if (!closingWithEscape) {
+                            return;
+                        }
+
+                        closingWithEscape = false;
+                        toggle.focus();
+                    });
+
+                    var input = document.getElementById('customer-context-switcher-filter');
+
+                    if (!input) {
+                        return;
+                    }
+
+                    input.addEventListener('input', function () {
+                        var needle = input.value.trim().toLowerCase();
+
+                        // Selected by data-option-name, which only the Business
+                        // rows carry: the account rows and the links are never
+                        // filtered out from under the customer.
+                        menu.querySelectorAll('li[data-option-name]').forEach(function (option) {
+                            var name = option.getAttribute('data-option-name') || '';
+                            option.hidden = needle !== '' && name.indexOf(needle) === -1;
+                        });
+                    });
+
+                    input.addEventListener('keydown', function (event) {
+                        // Typing stays typing: the menu's own key handling must
+                        // not swallow letters meant for the field. Escape is
+                        // deliberately left to bubble so the menu closes.
+                        if (event.key !== 'Escape') {
+                            event.stopPropagation();
+                        }
+                    });
+                })();
+            </script>
         @endif
     </div>
 @endif

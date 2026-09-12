@@ -25,10 +25,15 @@ final class DashboardSnapshot
     public const KIND_CHOOSER = 'chooser';
     public const KIND_ZERO = 'zero';
 
+    /** Unified Business Home §2.2 row 0 — one actionable billing exception. */
+    public const BAND_BILLING_EXCEPTION = 'billing_exception';
+
+    /** Unified Business Home §2.3 — what changed since this customer's last visit. */
+    public const BAND_ACTIVITY = 'activity';
+
     public const BAND_ATTENTION = 'attention';
     public const BAND_RECOMMENDATIONS = 'recommendations';
     public const BAND_HEADLINES = 'headlines';
-    public const BAND_SPEND = 'spend';
     public const BAND_ACTIONS = 'actions';
     public const BAND_CLIENTS = 'clients';
     public const BAND_CAPACITY = 'capacity';

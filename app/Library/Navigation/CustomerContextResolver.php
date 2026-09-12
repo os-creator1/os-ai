@@ -24,7 +24,12 @@ use Illuminate\Http\Request;
  *  5. cross-Workspace combinations, inactive Workspaces, inactive
  *     memberships, non-active Businesses and inaccessible Businesses are
  *     never selected;
- *  6. when several authorized choices remain, NOTHING is chosen — the
+ *  6. a DELIBERATE account-frame choice (the context switcher's account
+ *     option, remembered by CustomerContextPreference::rememberAccount()) is
+ *     honoured until the actor picks a Business — re-authorized every request
+ *     against the same account-frame rule the account page enforces, and
+ *     dropped the moment it stops holding;
+ *  7. when several authorized choices remain, NOTHING is chosen — the
  *     Account frame asks for an explicit selection. No "first row" wins.
  *
  * There is no second tenancy algorithm here: the authorization decision is
@@ -99,7 +104,7 @@ final class CustomerContextResolver
 
             if ($selectedWorkspace === null) {
                 $this->preference->forget();
-                $remembered = ['workspace' => null, 'business' => null];
+                $remembered = ['workspace' => null, 'business' => null, 'accountFrame' => false];
                 $preferenceCleared = true;
             }
         }
@@ -118,6 +123,26 @@ final class CustomerContextResolver
             }
 
             // Stale or revoked: never silently substitute another Business.
+            $this->preference->forgetBusiness();
+            $preferenceCleared = true;
+        }
+
+        // 4a. A DELIBERATE account-frame choice (the context switcher's account
+        //     option) is honoured until the actor picks a Business, so the
+        //     sole-Business rule below does not undo it on the next request.
+        //     Re-authorized here like every other remembered preference: the
+        //     account must still be visible (it was resolved from the snapshot
+        //     above), active, and one whose own frame this actor may stand in.
+        //     A narrowed membership therefore drops the intent instead of
+        //     pinning the actor to a frame they no longer reach.
+        if ($remembered['accountFrame']) {
+            if ($selectedWorkspace !== null
+                && $remembered['workspace'] === $selectedWorkspace->uid
+                && $selectedWorkspace->isActive
+                && $selectedWorkspace->seesAccountFrame()) {
+                return $this->context($userId, $workspaces, $selectedWorkspace, null, ContextSource::AccountPreference, null, $preferenceCleared);
+            }
+
             $this->preference->forgetBusiness();
             $preferenceCleared = true;
         }

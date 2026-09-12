@@ -3,6 +3,8 @@
 namespace Tests\Feature\DesignSystem;
 
 use App\Enums\Entitlement\WorkspacePlanTier;
+use App\Enums\Workspace\WorkspaceBusinessAccessScope;
+use App\Enums\Workspace\WorkspaceMembershipRole;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Tests\Feature\Workspace\Concerns\CreatesCustomerContextFixtures;
@@ -111,7 +113,14 @@ class CustomerShellNavigationTest extends TestCase
         $this->assertStringContainsString('role="menu"', $shell);
         $this->assertStringContainsString('role="menuitem"', $shell);
         $this->assertStringContainsString('aria-labelledby="customer-context-switcher-toggle"', $shell);
-        $this->assertStringNotContainsString('aria-current="true"', $shell, 'Nothing is current before an explicit choice.');
+        // No client account is current before an explicit choice. The agency
+        // account itself IS current, because that is the frame the actor is
+        // standing in (Lane E), so exactly one option carries aria-current and
+        // it is the account one.
+        $this->assertSame(1, substr_count($shell, 'aria-current="true"'));
+        $this->assertStringNotContainsString('Client One', $this->currentOptionMarkup($shell));
+        $this->assertStringNotContainsString('Client Two', $this->currentOptionMarkup($shell));
+        $this->assertStringContainsString('Northwind Agency', $this->currentOptionMarkup($shell));
 
         $this->switchTo($workspace, $clientOne);
         $selected = $this->shellHtml($this->home()->assertOk()->getContent());
@@ -120,14 +129,55 @@ class CustomerShellNavigationTest extends TestCase
         $this->assertStringContainsString('Current', $selected);
     }
 
-    public function test_single_business_customers_get_a_labelled_identity_instead_of_a_switcher(): void
+    /**
+     * The switcher option that carries aria-current, from its <li> to the end
+     * of the button that marks it.
+     */
+    private function currentOptionMarkup(string $shell): string
+    {
+        $marker = strpos($shell, 'aria-current="true"');
+        $this->assertNotFalse($marker, 'An option must be marked current.');
+
+        $start = strrpos(substr($shell, 0, $marker), '<li ');
+        $this->assertNotFalse($start, 'The current option must sit in a list item.');
+
+        $end = strpos($shell, '</li>', $marker);
+
+        return substr($shell, $start, $end - $start);
+    }
+
+    public function test_a_single_business_owner_gets_a_simple_but_real_switcher(): void
     {
         [$customer, $business] = $this->tenant(WorkspacePlanTier::Core, 'Solo Business');
         $this->authenticateAs($customer);
         $shell = $this->shellHtml($this->home()->assertOk()->getContent());
 
-        $this->assertStringContainsString('data-role="context-identity" aria-label="Current business"', $shell);
+        // Lane E: the block is the control, and it is labelled and operable
+        // even with one Business, because the account is also a destination.
+        $this->assertStringContainsString('id="customer-context-switcher-toggle"', $shell);
+        $this->assertStringContainsString('aria-label="Current business: Solo Business. Switch business"', $shell);
         $this->assertStringContainsString('Solo Business', $shell);
+
+        // Simple, though: one Business row, one account row, no search box.
+        $this->assertSame(1, substr_count($shell, 'data-role="context-option-business"'));
+        $this->assertSame(1, substr_count($shell, 'data-role="context-option-account"'));
+        $this->assertStringNotContainsString('data-role="context-switcher-filter"', $shell);
+    }
+
+    public function test_an_actor_with_nothing_to_switch_to_gets_a_labelled_identity(): void
+    {
+        [$owner, $assigned, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Assigned Client', 'Northwind Agency');
+        $this->addBusiness($owner, $workspace, 'Other Client');
+        $staff = $this->createCustomer();
+        $membership = $this->member($workspace, $staff->user, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::Selected);
+        $this->assign($membership, $assigned);
+        $this->authenticateAs($staff, ['access_backend', 'view_contact']);
+
+        $shell = $this->shellHtml($this->home()->assertOk()->getContent());
+
+        // A selected-scope member reaches one Business and no account frame:
+        // a plain identity is the honest control, not an empty menu.
+        $this->assertStringContainsString('data-role="context-identity" aria-label="Current client account"', $shell);
         $this->assertStringNotContainsString('customer-context-switcher-toggle', $shell);
     }
 

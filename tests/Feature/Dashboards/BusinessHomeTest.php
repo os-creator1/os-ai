@@ -14,6 +14,7 @@ use App\Enums\Workspace\WorkspaceMembershipRole;
 use App\Library\Analytics\AnalyticsDateRange;
 use App\Library\Analytics\BusinessAnalyticsQueries;
 use App\Library\Dashboard\AttentionItem;
+use App\Library\Dashboard\BusinessHomePresenter;
 use App\Library\Dashboard\DashboardSnapshot;
 use App\Models\Business;
 use App\Models\User;
@@ -52,15 +53,24 @@ class BusinessHomeTest extends TestCase
     // #1, #2 — Core and Growth Business Home
     // =================================================================
 
-    public function test_core_business_home_renders_the_five_bands_in_order_for_the_selected_business(): void
+    public function test_core_business_home_renders_its_bands_in_order_for_the_selected_business(): void
     {
         [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Core, 'Main Street Bakery', 'Main Street');
         $this->populateAllFiveBands($business);
+        // A website in draft is the one non-billing attention item, and a
+        // previous visit yesterday gives the activity band its window.
+        $this->website($business, 'draft');
         $this->authenticateAs($customer);
+        $this->previousHomeVisit($business, (int) $customer->user_id, now()->subDay());
 
         $html = $this->home()->assertOk()->getContent();
 
-        $this->assertSame(['attention', 'recommendations', 'headlines', 'spend', 'actions'], $this->bandOrder($html));
+        $this->assertSame(
+            ['billing_exception', 'activity', 'attention', 'recommendations', 'headlines', 'actions'],
+            $this->bandOrder($html),
+            'Billing speaks first only when it is a real exception, then what changed, then what to do about it.'
+        );
+        $this->assertNotContains('spend', $this->bandOrder($html), 'Spend is a Settings destination, never a Home band.');
         $this->assertStringContainsString('data-kind="business"', $html);
         $this->assertMatchesRegularExpression('#<h1[^>]*>.*Business home.*Main Street Bakery.*</h1>#s', $html);
 
@@ -125,15 +135,15 @@ class BusinessHomeTest extends TestCase
     {
         [$agency, $clientA, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client Alpha', 'Northwind Agency');
         $clientB = $this->addBusiness($agency, $workspace, 'Client Bravo');
-        $this->sent($clientA, 7, '2026-09-01');
-        $this->sent($clientB, 4, '2026-09-01');
+        $this->contactsAdded($clientA, 7, '2026-09-01');
+        $this->contactsAdded($clientB, 4, '2026-09-01');
         $this->authenticateAs($agency);
 
         $this->switchTo($workspace, $clientB)->assertRedirect(route('user.home'));
         $html = $this->home()->assertOk()->getContent();
 
         $this->assertMatchesRegularExpression('#<h1[^>]*>.*Client account home.*Client Bravo.*</h1>#s', $html);
-        $this->assertSame('4', $this->headlineFigure($html, 'messages_sent'));
+        $this->assertSame('4', $this->headlineFigure($html, 'new_contacts'));
         $this->assertStringNotContainsString('Client Alpha', $this->mainText($html));
     }
 
@@ -145,8 +155,8 @@ class BusinessHomeTest extends TestCase
     {
         [$owner, $scoped, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Scoped Client', 'Northwind Agency');
         $other = $this->addBusiness($owner, $workspace, 'Other Client');
-        $this->sent($scoped, 2, '2026-09-01');
-        $this->sent($other, 9, '2026-09-01');
+        $this->contactsAdded($scoped, 2, '2026-09-01');
+        $this->contactsAdded($other, 9, '2026-09-01');
         $this->wallet($scoped, ['billing_status' => 'suspended']);
 
         $staff = $this->createCustomer();
@@ -158,10 +168,10 @@ class BusinessHomeTest extends TestCase
 
         $this->assertStringContainsString('data-kind="business"', $html);
         $this->assertMatchesRegularExpression('#<h1[^>]*>.*Scoped Client.*</h1>#s', $html);
-        $this->assertSame('2', $this->headlineFigure($html, 'messages_sent'));
+        $this->assertSame('2', $this->headlineFigure($html, 'new_contacts'));
         $this->assertStringNotContainsString('Other Client', $this->mainText($html));
-        $this->assertNotContains('spend', $this->bandOrder($html), 'Staff are never the payer side.');
-        $this->assertNotContains(AttentionType::WalletSuspended->value, $this->attentionTypes($html), 'No billing fix is reachable for staff, so no billing item.');
+        $this->assertNotContains('spend', $this->bandOrder($html), 'Spend is never a Home band for anyone.');
+        $this->assertNotContains('billing_exception', $this->bandOrder($html), 'No billing fix is reachable for staff, so no billing strip.');
 
         // Two scoped Businesses: the chooser — never the Agency account bands.
         $this->assign($membership, $other);
@@ -218,8 +228,8 @@ class BusinessHomeTest extends TestCase
     {
         [$agency, $ownClient, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Agency Own Client', 'Northwind Agency');
         $viewed = $this->addBusiness($agency, $workspace, 'Viewed Client');
-        $this->sent($ownClient, 7, '2026-09-01');
-        $this->sent($viewed, 2, '2026-09-01');
+        $this->contactsAdded($ownClient, 7, '2026-09-01');
+        $this->contactsAdded($viewed, 2, '2026-09-01');
         $this->wallet($viewed, ['available_balance_micro' => 3000000, 'billing_status' => 'suspended']);
         $this->website($viewed, 'draft');
         $this->authenticateAs($agency);
@@ -229,17 +239,19 @@ class BusinessHomeTest extends TestCase
 
         $this->assertStringContainsString('data-role="view-as-banner"', $html);
         $this->assertMatchesRegularExpression('#<h1[^>]*>.*Viewed Client.*</h1>#s', $html);
-        $this->assertSame('2', $this->headlineFigure($html, 'messages_sent'));
+        $this->assertSame('2', $this->headlineFigure($html, 'new_contacts'));
         $this->assertStringNotContainsString('Agency Own Client', $this->mainText($html));
+        $this->assertSame(0, DB::table('business_home_visits')->count(), 'Viewing a client never consumes that client\'s own activity window.');
 
         // No cost, funding, provider or identity action while viewing.
         $this->assertSame([], array_values(array_intersect($this->quickActionKeys($html), ['send', 'add_funds', 'reconnect_google', 'login_as_parent'])));
 
-        // The viewed client's own state and wallet — never the agent's. Usage &
-        // Billing is an allowed read while viewing, so its fix stays reachable.
-        $this->assertContains(AttentionType::WalletSuspended->value, $this->attentionTypes($html));
+        // The viewed client's own state — never the agent's. Usage & Billing
+        // is an allowed read while viewing, so the exception's fix stays
+        // reachable, and it renders as the strip rather than a spend figure.
+        $this->assertStringContainsString(AttentionType::WalletSuspended->value, $this->bandHtml($html, 'billing_exception'));
         $this->assertContains(AttentionType::WebsiteUnpublished->value, $this->attentionTypes($html));
-        $this->assertStringContainsString('USD 3.00', $this->bandHtml($html, 'spend'));
+        $this->assertStringNotContainsString('USD 3.00', $this->mainText($html), 'The wallet balance is a Settings figure, not a Home one.');
 
         foreach ($this->mainLinks($html) as $href) {
             if (str_contains($href, '/businesses/')) {
@@ -276,9 +288,9 @@ class BusinessHomeTest extends TestCase
         $this->assertNotContains('recommendations', $this->bandOrder($html));
         $this->assertStringNotContainsString('Stranger', $main);
         $this->assertStringNotContainsString('777', $main);
-        $this->assertStringContainsString('USD 5.00', $main);
+        $this->assertStringNotContainsString('USD 5.00', $main, 'No wallet figure renders on Home at all (H-1 §5).');
 
-        foreach (['messages_sent', 'new_contacts', 'conversations_started', 'automation_runs'] as $headline) {
+        foreach (['new_contacts', 'conversations_started', 'automation_runs'] as $headline) {
             $this->assertSame('0', $this->headlineFigure($html, $headline), "{$headline} must count only the selected Business.");
         }
     }
@@ -329,7 +341,7 @@ class BusinessHomeTest extends TestCase
         $this->assertNotContains('inbox', $this->quickActionKeys($html));
         $this->assertNotContains('send', $this->quickActionKeys($html));
         $this->assertNotContains('conversations_started', $this->headlineKeys($html));
-        $this->assertContains('messages_sent', $this->headlineKeys($html));
+        $this->assertContains('new_contacts', $this->headlineKeys($html));
 
         $this->authenticateAs($customer, []);
         $this->assertSame([], $this->headlineKeys($this->home()->assertOk()->getContent()), 'Without view_reports there are no Results figures.');
@@ -345,16 +357,24 @@ class BusinessHomeTest extends TestCase
         $this->authenticateAs($customer);
         $this->clearAllConditions($business);
 
-        $this->assertSame([], $this->attentionTypeValues($customer->user), 'Precondition: a clean Business raises nothing.');
+        $this->assertSame([], $this->raisedTypeValues($customer->user), 'Precondition: a clean Business raises nothing.');
 
         foreach (AttentionType::cases() as $type) {
             $this->raise($business, $type);
             Cache::flush();
-            $this->assertSame([$type->value], $this->attentionTypeValues($customer->user), "{$type->value} must appear on its condition, alone.");
+            $this->assertSame([$type->value], $this->raisedTypeValues($customer->user), "{$type->value} must appear on its condition, alone.");
+
+            // H-1 §5.2: the five billing cases are shown as the exception
+            // strip and never inside the attention band.
+            $this->assertSame(
+                BusinessHomePresenter::isBilling($type) ? [] : [$type->value],
+                $this->attentionTypeValues($customer->user),
+                "{$type->value} belongs to " . (BusinessHomePresenter::isBilling($type) ? 'the billing strip' : 'the attention band') . '.'
+            );
 
             $this->clearAllConditions($business);
             Cache::flush();
-            $this->assertSame([], $this->attentionTypeValues($customer->user), "{$type->value} must disappear when its condition clears.");
+            $this->assertSame([], $this->raisedTypeValues($customer->user), "{$type->value} must disappear when its condition clears.");
         }
 
         $this->assertSame(9, count(AttentionType::cases()), 'BusinessPhoneMissing is deliberately not a case (Correction 1, decision B).');
@@ -392,12 +412,22 @@ class BusinessHomeTest extends TestCase
 
         $snapshot = $this->dashboardFor($customer->user);
         $items = $snapshot->band(DashboardSnapshot::BAND_ATTENTION);
+        $billing = $snapshot->band(DashboardSnapshot::BAND_BILLING_EXCEPTION);
 
-        $this->assertCount(9, $items);
+        // Four non-billing items in the band, and the single most severe
+        // billing exception in the strip: nine conditions, one of which is
+        // represented by the strip (H-1 §5.2).
+        $this->assertCount(4, $items);
+        $this->assertInstanceOf(AttentionItem::class, $billing);
+        $this->assertTrue(BusinessHomePresenter::isBilling($billing->type));
+        $this->assertSame(AttentionSeverity::Blocking, $billing->severity, 'The strip shows the most severe billing exception.');
+
         $ranks = array_map(fn (AttentionItem $item) => $item->severity->rank(), $items);
         $sorted = $ranks;
         sort($sorted);
         $this->assertSame($sorted, $ranks, 'Ordered by severity.');
+
+        $items[] = $billing;
 
         foreach ($items as $item) {
             $this->assertInstanceOf(AttentionType::class, $item->type);
@@ -517,7 +547,7 @@ class BusinessHomeTest extends TestCase
             $html = $this->home()->assertOk()->getContent();
 
             $this->assertNotContains('automation_runs', $this->headlineKeys($html), "Absent when the {$nullPreset} period is null — never zeroed on one side.");
-            $this->assertContains('messages_sent', $this->headlineKeys($html), 'Every other headline still renders.');
+            $this->assertContains('new_contacts', $this->headlineKeys($html), 'Every other headline still renders.');
         }
     }
 
@@ -525,7 +555,7 @@ class BusinessHomeTest extends TestCase
     // #22, #23, #28, #29, #36 — vocabulary, no invented metric, no chart
     // =================================================================
 
-    public function test_the_page_says_provider_accepted_and_never_labels_a_metric_delivered_or_invents_one(): void
+    public function test_home_carries_no_outbound_provider_or_failed_send_figure_and_invents_no_metric(): void
     {
         [$customer, $business] = $this->tenant(WorkspacePlanTier::Growth, 'Words Venue', 'Words Account');
         $this->populateAllFiveBands($business);
@@ -535,8 +565,16 @@ class BusinessHomeTest extends TestCase
         $html = $this->home()->assertOk()->getContent();
         $main = $this->mainText($html);
 
-        $this->assertStringContainsString('Provider accepted', $main);
-        $this->assertStringContainsString('provider accepted', $main);
+        // H-1: sending volume, provider acceptance and failed sends are
+        // operational detail for Messages and Results. Home carries neither
+        // the figures nor the vocabulary.
+        foreach (['messages_sent', 'provider_accepted', 'confirmed_failed'] as $removed) {
+            $this->assertNotContains($removed, $this->headlineKeys($html), "{$removed} is not a Home figure.");
+        }
+
+        $this->assertDoesNotMatchRegularExpression('/\bprovider accepted\b/i', $main);
+        $this->assertDoesNotMatchRegularExpression('/\bmessages sent\b/i', $main);
+        $this->assertDoesNotMatchRegularExpression('/\bconfirmed failed\b/i', $main);
         $this->assertDoesNotMatchRegularExpression('/\bdelivered\b/i', $main);
         $this->assertDoesNotMatchRegularExpression('/\b(revenue|roi|reply rate|handset delivery|pipeline value|bookings?|conversions?)\b/i', $main);
         $this->assertStringNotContainsString('locale.', $main);
@@ -570,7 +608,8 @@ class BusinessHomeTest extends TestCase
         $actions = $this->quickActionKeys($html);
 
         $this->assertLessThanOrEqual(4, count($actions));
-        $this->assertSame(['inbox', 'add_contact', 'add_funds', 'publish_website'], $actions, 'No "Send a message" (Messages is Inbox only); the payer\'s Add funds comes before the setup action.');
+        $this->assertSame(['inbox', 'add_contact', 'publish_website'], $actions, 'No "Send a message" (Messages is Inbox only) and no "Add funds" (billing is a Settings destination, H-1 §5).');
+        $this->assertNotContains('add_funds', $actions);
         $this->assertStringNotContainsString('outreach', $this->bandHtml($html, 'actions'), 'Home never links the legacy Send or Campaigns pages.');
         $this->assertStringContainsString(
             'href="' . route('customer.workspaces.businesses.conversations.index', [$workspace->uid, $business->uid]) . '"',
@@ -610,7 +649,7 @@ class BusinessHomeTest extends TestCase
 
         $html = $this->home()->assertOk()->getContent();
 
-        $this->assertSame(['attention', 'recommendations', 'headlines', 'spend', 'actions'], $this->bandOrder($html));
+        $this->assertSame(['billing_exception', 'recommendations', 'headlines', 'actions'], $this->bandOrder($html));
         $this->assertStringContainsString('data-band="recommendations" data-band-state="failed"', $html);
         $this->assertStringContainsString('This section could not be loaded just now.', $this->bandHtml($html, 'recommendations'));
         $this->assertStringNotContainsString('data-band-state="failed"', $this->bandHtml($html, 'headlines'));
@@ -627,7 +666,7 @@ class BusinessHomeTest extends TestCase
 
         $this->assertStringContainsString('data-band="headlines" data-band-state="failed"', $html);
         $this->assertStringNotContainsString('data-band-state="failed"', $this->bandHtml($html, 'recommendations'));
-        $this->assertContains('attention', $this->bandOrder($html));
+        $this->assertContains('billing_exception', $this->bandOrder($html), 'The billing strip still renders while another band fails.');
         $this->assertContains('actions', $this->bandOrder($html));
     }
 
@@ -762,6 +801,28 @@ class BusinessHomeTest extends TestCase
     private function attentionTypeValues(User $user): array
     {
         $items = $this->dashboardFor($user)->band(DashboardSnapshot::BAND_ATTENTION) ?? [];
+        $values = array_map(fn (AttentionItem $item) => $item->type->value, $items);
+        sort($values);
+
+        return $values;
+    }
+
+    /**
+     * Every type Home raises for this actor, wherever it renders: the
+     * attention band plus the one billing exception strip.
+     *
+     * @return array<int, string>
+     */
+    private function raisedTypeValues(User $user): array
+    {
+        $snapshot = $this->dashboardFor($user);
+        $items = $snapshot->band(DashboardSnapshot::BAND_ATTENTION) ?? [];
+        $billing = $snapshot->band(DashboardSnapshot::BAND_BILLING_EXCEPTION);
+
+        if ($billing instanceof AttentionItem) {
+            $items[] = $billing;
+        }
+
         $values = array_map(fn (AttentionItem $item) => $item->type->value, $items);
         sort($values);
 

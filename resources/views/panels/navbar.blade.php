@@ -27,8 +27,16 @@
                         <ul class="nav navbar-nav d-xl-none">
                             <li class="nav-item"><a class="nav-link menu-toggle" href="javascript:void(0);" role="button" aria-label="Open navigation menu" aria-controls="main-menu-navigation"><x-ds-icon name="menu" class="ficon" aria-hidden="true" /></a></li>
                         </ul>
-                        {{-- Customer Experience Slice 1B: current context + Business switcher (contract §9.2). Renders nothing for the admin portal. --}}
-                        <x-customer-context-switcher />
+                        {{--
+                            Lane E: the context switcher is the block at the top
+                            of the vertical sidebar, so the navbar carries it
+                            ONLY in the horizontal layout, which has no sidebar
+                            to host it. One control per page, never two that
+                            could disagree. Renders nothing for the admin portal.
+                        --}}
+                        @if(($configData['mainLayoutType'] ?? 'vertical') !== 'vertical')
+                            <x-customer-context-switcher variant="navbar" />
+                        @endif
                         @if(config('app.stage') == 'demo')
                             <ul class="nav navbar-nav bookmark-icons d-sm-flex d-none">
 

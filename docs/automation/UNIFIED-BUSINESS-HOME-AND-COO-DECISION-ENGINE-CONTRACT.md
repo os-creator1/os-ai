@@ -1095,3 +1095,45 @@ production call (§19.3).
 - **Legacy AI tables:** `app/Models/ChatBoxMessage.php:20–54`
 - **Activity sources:** migrations `2026_09_07_120003` (automation_executions), `2026_09_09_120003` (business_google_operations), `2026_09_09_120004` (business_knowledge_profile_changes), `2026_09_07_130003` / `130004` (website_revisions, published_revision_id), `2026_07_19_120005` (opportunity_transitions); `app/Library/Website/WebsitePublisher.php`
 - **Cost invariants:** `docs/automation/CUSTOMER-EXPERIENCE-MANAGED-MESSAGING-AUTOMATIONS-CONTRACT.md` §11.5, §20
+
+---
+
+## Appendix B — implementation record: H-1 and H-2
+
+Delivered on `agent/unified-business-home-h1-h2`, from `origin/main`
+`3158260`. Slices H-3 to H-6, A-*, C-*, AI-* and T-1 are untouched, and no
+interactive COO surface exists.
+
+### H-1 — billing off the ordinary Business Home (§5)
+
+| Promise | Delivered by |
+|---|---|
+| Spend band and "Add funds" removed from the Business Home | `BusinessHomePresenter` (the band, its builder and the funding quick action are gone), `DashboardSnapshot::BAND_SPEND` removed, `bands/spend.blade.php` deleted |
+| Billing only as one actionable exception strip (§2.2 row 0) | `DashboardSnapshot::BAND_BILLING_EXCEPTION` + `bands/billing-exception.blade.php`; the five billing `AttentionType` cases are split out of the attention band and the most severe one renders, under Slice 4's unchanged audience rule (`remediationUrl()` must resolve for the actor) |
+| Strip copy is the type's sentence plus a consequence | `AttentionType::consequence()` (billing cases only); `sentence()` is unchanged, so every other surface reads as before |
+| No alert without something to do | A balance under the customer's own automatic top-up threshold is not an exception while automatic top-up is on: either it tops up, or `AutoRechargeFailing` — the thing the customer can actually fix — is raised instead (`BusinessHomePresenter::isActionable()`) |
+| Outbound volume, provider-accepted and failed-send figures leave Home | `headlines()` keeps only new contacts, conversations started and automation runs; the band is retitled **Business performance** |
+| Settings → Billing unchanged | No file under `app/Library/Usage/**`, `usage-billing` views or routes is touched |
+
+### H-2 — Business activity (§2.3, with the owner's 2026-09-12 correction)
+
+| Promise | Delivered by |
+|---|---|
+| A real per-user, per-Business visit baseline | Additive migration `2026_09_16_100001_create_business_home_visits_table`; `HomeVisitMarker` reads the window **before** writing, treats a view within `home.visit_gap_minutes` as the same visit, rewrites the "last seen" stamp at most once a minute, and writes through single conditional statements so two tabs agree |
+| An adaptive frame, not a hard-wired "Since your last visit" | `HomeActivityWindow`: a previous visit earlier today covers the whole **Business-local** day ("Today so far"), 1–6 days counts from that visit ("Since your last visit"), 7+ days becomes a bounded catch-up ("Last 7 days"). An hourly visitor therefore still sees a useful day |
+| Canonical figures only | New contacts and messages received: `BusinessAnalyticsQueries::countsBetween()` (ONE statement); new conversations: Slice 2B `startedCount()`; automations completed/failed: `BusinessAnalyticsQueries::automationCountsBetween()`, beside `automationKpis()` so Home never becomes a second reader of `automation_executions` (it moves with V2-H ownership) |
+| Nothing invented | No leads, bookings, revenue, visitors, rankings, SEO or conversion wording renders; zero-value items are omitted; a first visit shows no band at all |
+| Never consumed by someone else | View-as and impersonated sessions read the window and write nothing |
+
+**Deferred to their own slices, deliberately:** "Website published" and
+"Google connected/disconnected" items (H-5 owns `RecentWorkReader`, and Home
+must not open a parallel reader of `website_revisions` or
+`business_google_operations`), and "N recommendations done"
+(`opportunity_transitions`, C-2).
+
+**Tests:** `tests/Feature/Dashboards/BusinessHomeBillingTest.php` (T-BILL-1,
+T-BILL-2) and `BusinessHomeActivityTest.php` (T-SLV-1…7, the adaptive frame,
+per-seam equality, tenancy, and the band's query budget). The Slice 4 tests
+that asserted the Spend band, the outbound headlines or the old attention
+list are rewritten in this slice, never deleted without a replacement
+assertion (§19.7).
