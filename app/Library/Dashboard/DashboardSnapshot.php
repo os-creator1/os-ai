@@ -36,6 +36,9 @@ final class DashboardSnapshot
     public const BAND_HEADLINES = 'headlines';
     public const BAND_ACTIONS = 'actions';
     public const BAND_CLIENTS = 'clients';
+
+    /** Unified Home §3.1 (A-1) — per-client new contacts and conversations for the period. */
+    public const BAND_CROSS_CLIENT = 'cross_client';
     public const BAND_CAPACITY = 'capacity';
     public const BAND_PROSPECTING = 'prospecting';
     public const BAND_ACCOUNT = 'account';
