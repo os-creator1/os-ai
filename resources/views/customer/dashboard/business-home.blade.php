@@ -40,6 +40,24 @@
     @include('customer.dashboard.bands.headlines', ['headlines' => $dashboard->band(DashboardSnapshot::BAND_HEADLINES)])
 @endif
 
+@if($dashboard->failed(DashboardSnapshot::BAND_VISIBILITY))
+    @include('customer.dashboard.band-failed', ['band' => 'visibility', 'title' => 'Visibility'])
+@elseif($dashboard->has(DashboardSnapshot::BAND_VISIBILITY))
+    @include('customer.dashboard.bands.visibility', ['visibility' => $dashboard->band(DashboardSnapshot::BAND_VISIBILITY)])
+@endif
+
+@if($dashboard->failed(DashboardSnapshot::BAND_CONVERSATIONS))
+    @include('customer.dashboard.band-failed', ['band' => 'conversations', 'title' => 'Conversations'])
+@elseif($dashboard->has(DashboardSnapshot::BAND_CONVERSATIONS))
+    @include('customer.dashboard.bands.conversations', ['conversations' => $dashboard->band(DashboardSnapshot::BAND_CONVERSATIONS)])
+@endif
+
+@if($dashboard->failed(DashboardSnapshot::BAND_AUTOMATIONS))
+    @include('customer.dashboard.band-failed', ['band' => 'automations', 'title' => 'Automations'])
+@elseif($dashboard->has(DashboardSnapshot::BAND_AUTOMATIONS))
+    @include('customer.dashboard.bands.automations', ['automations' => $dashboard->band(DashboardSnapshot::BAND_AUTOMATIONS)])
+@endif
+
 @if($dashboard->has(DashboardSnapshot::BAND_ACTIONS) && $dashboard->band(DashboardSnapshot::BAND_ACTIONS)['items'] !== [])
     @include('customer.dashboard.bands.actions', ['actions' => $dashboard->band(DashboardSnapshot::BAND_ACTIONS)])
 @endif
