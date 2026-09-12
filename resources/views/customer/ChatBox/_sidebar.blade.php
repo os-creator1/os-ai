@@ -16,9 +16,9 @@
     <!-- Sidebar header start -->
     <div class="chat-fixed-search">
         <div class="d-flex align-items-center w-100">
-            <div class="input-group input-group-merge ms-1 w-100">
-                <span class="input-group-text round"><x-ds-icon name="search" class="text-muted" /></span>
-                <input type="text" class="form-control round" id="chat-search"
+            <div class="input-group input-group-merge round ms-1 w-100">
+                <span class="input-group-text"><x-ds-icon name="search" class="text-muted" /></span>
+                <input type="text" class="form-control" id="chat-search"
                        placeholder="{{ __('locale.labels.search') }}">
             </div>
             <div class="d-block d-md-none">

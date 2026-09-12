@@ -168,7 +168,8 @@ class CustomerShellTranslationTest extends TestCase
 
         $this->assertGreaterThanOrEqual(25, count($labels), 'The inventory covers the whole builder.');
 
-        foreach (['Website', 'Google Business Profile', 'Messaging provider', 'Prospecting', 'Campaigns', 'Conversations', 'Automations', 'Analytics', 'Usage & billing', 'Client accounts', 'Settings', 'Developers', 'Advanced', 'Plan & subscription'] as $required) {
+        // Campaigns is no longer emitted: Messages is Inbox only.
+        foreach (['Website', 'Google Business Profile', 'Messaging provider', 'Prospecting', 'Conversations', 'Automations', 'Analytics', 'Usage & billing', 'Client accounts', 'Settings', 'Developers', 'Advanced', 'Plan & subscription'] as $required) {
             $this->assertContains($required, $labels, "The builder no longer emits {$required}; update the inventory.");
         }
 

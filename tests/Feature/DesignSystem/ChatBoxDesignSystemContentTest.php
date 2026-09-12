@@ -189,6 +189,40 @@ class ChatBoxDesignSystemContentTest extends TestCase
         $this->assertSame(2, substr_count($contents, '@endif'));
     }
 
+    /**
+     * Regression for the inbox search double-focus/seam defect. The
+     * bootstrap-extended `.round` utility (_utilities.scss) sets a full
+     * border-radius on whatever element carries it; the theme's own
+     * `.input-group.round` rule (_input-group.scss) is what actually
+     * distributes that radius correctly across a merged icon+input pair
+     * and shapes the `:focus-within` ring to match. `round` must sit on
+     * the `.input-group` wrapper — putting it on the icon span and the
+     * input individually (the prior defect) produces two independently
+     * rounded shapes with a visible seam and a mismatched outer ring.
+     */
+    public function test_chat_search_round_modifier_sits_on_the_input_group_wrapper_not_its_children(): void
+    {
+        $sidebar = file_get_contents(base_path('resources/views/customer/ChatBox/_sidebar.blade.php'));
+
+        $this->assertMatchesRegularExpression(
+            '/<div class="input-group input-group-merge round[^"]*">/',
+            $sidebar,
+            'The .round modifier must be on the .input-group wrapper so the theme shapes one merged control and one matching focus ring.'
+        );
+
+        $this->assertDoesNotMatchRegularExpression(
+            '/<span class="input-group-text round"/',
+            $sidebar,
+            'round must not sit on the search icon span — it produces an independently rounded shape and a seam against the input.'
+        );
+
+        $this->assertDoesNotMatchRegularExpression(
+            '/<input[^>]*class="form-control round"[^>]*id="chat-search"/',
+            $sidebar,
+            'round must not sit on #chat-search directly — it produces a second, independently rounded border under focus.'
+        );
+    }
+
     public function test_load_more_and_chat_search_ajax_wiring_retained(): void
     {
         $sidebar = file_get_contents(base_path('resources/views/customer/ChatBox/_sidebar.blade.php'));
@@ -272,6 +306,17 @@ class ChatBoxDesignSystemContentTest extends TestCase
             $response->assertSee('ds-icon', false);
             $response->assertDontSee('data-feather=', false);
         }
+    }
+
+    public function test_chatbox_index_renders_the_merged_single_bordered_search_control(): void
+    {
+        [, , $business, $workspace] = $this->authenticatedCustomerWithChatBox();
+
+        $response = $this->get(route('customer.workspaces.businesses.conversations.index', [$workspace->uid, $business->uid]));
+
+        $response->assertOk();
+        $response->assertSee('input-group input-group-merge round', false);
+        $response->assertDontSee('input-group-text round', false);
     }
 
     public function test_chatbox_ajax_load_partial_renders_without_data_feather(): void
