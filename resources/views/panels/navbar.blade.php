@@ -337,15 +337,16 @@
                                     </a>
 
                                     @if(Auth::user()->active_portal == 'customer' && Auth::user()->is_customer == 1)
-                                        <a class="dropdown-item" href="{{route('customer.subscriptions.index')}}">
-                                            <x-ds-icon name="shopping-cart" class="me-50" />
-                                            {{ __('locale.labels.billing') }}
-                                        </a>
-
-                                        <a class="dropdown-item" href="{{route('user.account.pricing')}}">
-                                            <x-ds-icon name="tag" class="me-50" />
-                                            {{ __('locale.plans.pricing') }}
-                                        </a>
+                                        {{-- The account's AI Business OS plan, never the inherited SMS
+                                             subscriptions / "Pricing Plans" pages (a separate domain,
+                                             kept in code but no longer linked for customers). --}}
+                                        @php($planWorkspace = isset($customerContext) && $customerContext instanceof \App\Library\Navigation\CustomerContext && $customerContext->canManageWorkspace() ? $customerContext->frameWorkspace() : null)
+                                        @if($planWorkspace !== null)
+                                            <a class="dropdown-item" href="{{ route('customer.workspaces.plan.show', $planWorkspace->uid) }}">
+                                                <x-ds-icon name="tag" class="me-50" />
+                                                {{ __('locale.menu.Plan & subscription') }}
+                                            </a>
+                                        @endif
 
                                         <a class="dropdown-item" href="{{route('user.account.announcement')}}">
                                             <x-ds-icon name="tv" class="me-50" />
