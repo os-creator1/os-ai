@@ -468,12 +468,18 @@ class WorkspaceOverviewHttpTest extends TestCase
         }
 
         $plan = $this->get(route('customer.workspaces.plan.show', $workspace->uid))->assertOk();
-        // Core's Business capacity is not stated: RFC-004 §33 corrected the
-        // model to one Business per account, and the catalog's superseded
-        // Milestone 1 slot figures (3 included + 1 allocated here) are never
-        // shown in their place.
+        // The capacity row is the decision's own arithmetic — 3 included + 1
+        // allocated = 4 for this deliberately widened catalog row — printed
+        // as the presenter received it. Blade recomputes nothing, and the old
+        // slot-mechanics vocabulary is gone.
+        $this->assertMatchesRegularExpression(
+            '/<dt[^>]*>Businesses<\/dt>\s*<dd[^>]*>4 Businesses · 0 in use<\/dd>/',
+            $plan->getContent()
+        );
         $plan->assertDontSee('0 of 4 in use');
-        $plan->assertDontSee('data-role="plan-capacity"', false);
+        foreach (['Included slots', 'Additional slots', 'Effective capacity'] as $gone) {
+            $plan->assertDontSee($gone);
+        }
         // Customer names, never machine keys (crm, website_generation), and
         // nothing the Core packaging lists that is not built yet (calendar, forms…).
         foreach (['Client Management', 'Inbox &amp; Conversations', 'Automations', 'Website'] as $name) {

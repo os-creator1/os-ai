@@ -6,6 +6,7 @@ use App\Enums\Entitlement\WorkspacePlanTier;
 use App\Enums\Workspace\WorkspaceBusinessAccessScope;
 use App\Enums\Workspace\WorkspaceMembershipRole;
 use App\Library\Entitlement\EntitlementManager;
+use App\Library\Entitlement\WorkspacePlanCatalogSummary;
 use App\Models\Currency;
 use App\Models\Workspace;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -64,72 +65,117 @@ class WorkspacePlanPageTest extends TestCase
     }
 
     /**
-     * The corrected capacity model (RFC-004 §33): Core = 1 Business,
-     * Growth = 1 Business, Agency = unlimited Businesses, with the
-     * 3-included / 4-and-5-by-allocation / 6+-requires-Agency rule governing
-     * PHYSICAL locations. Core and Growth still carry Milestone 1's
-     * superseded Business-slot data (3 included, 5 max) until §33's additive
-     * migration lands, so the page shows no Business figure for them rather
-     * than the withdrawn limit — and never restates the rule itself.
+     * The corrected capacity model (RFC-004 §33, PR #251): Core and Growth
+     * carry 1 Business, and the 3-included / 4-and-5-by-allocation /
+     * 6+-requires-Agency rule governs PHYSICAL locations per Business. Every
+     * figure below is read back from the canonical decision and the canonical
+     * catalog row and compared with what the page printed — the page states
+     * the model, it does not own it.
      */
-    public function test_core_and_growth_never_show_the_superseded_business_slot_numbers(): void
+    public function test_core_and_growth_state_one_business_and_the_included_location_allowance(): void
     {
         foreach ([WorkspacePlanTier::Core, WorkspacePlanTier::Growth] as $tier) {
             [$owner, , $workspace] = $this->tenant($tier, 'Tier ' . $tier->value, 'Own Account');
             $this->authenticateAs($owner);
-            $decision = app(EntitlementManager::class)->decideBusinessSlotCapacity($workspace);
+            $manager = app(EntitlementManager::class);
+            $decision = $manager->decideBusinessSlotCapacity($workspace);
+            $catalog = $this->catalogFor($tier);
 
-            $section = $this->section($this->planPage($workspace));
+            $page = $this->planPage($workspace);
+            $rows = $this->capacityRows($page);
 
-            // The catalog still says 3 included / 5 max for this tier — proof
-            // the page is not simply echoing what it reads.
-            $this->assertFalse($decision->unlimited);
-            $this->assertSame(3, $decision->includedSlots);
-            $this->assertStringNotContainsString('of ' . $decision->effectiveCapacity . ' in use', $section);
-            $this->assertStringNotContainsString('data-role="plan-capacity"', $section);
+            $this->assertFalse($decision->unlimited, $tier->value . ' is not an unlimited tier.');
+            $this->assertSame(1, $decision->effectiveCapacity, $tier->value . ' allows exactly 1 Business.');
+            $this->assertSame('1 Business · ' . $decision->currentBusinessCount . ' in use', $rows['Businesses'] ?? null);
 
-            foreach (['1 of 3 Businesses', 'Businesses', 'Client accounts', 'Included slots', 'Additional slots', 'Effective capacity'] as $absent) {
-                $this->assertStringNotContainsString($absent, $section, $tier->value . ' must not state a Business limit.');
+            $this->assertFalse($catalog->unlimitedLocationSlots);
+            $this->assertSame(3, $catalog->locationSlotIncluded);
+            $this->assertSame(5, $catalog->locationSlotMax);
+            $this->assertSame('3 locations included · up to 5 with an add-on', $rows['Locations'] ?? null);
+
+            $note = $this->text($page, 'plan-capacity-note');
+            $this->assertStringContainsString('beyond the first 3, up to 5 per Business', $note);
+            $this->assertStringContainsString('move to the Agency plan, which includes unlimited locations', $note);
+
+            $section = $this->section($page);
+
+            foreach (['1 of 3 Businesses', 'of 3 Businesses', '3 Businesses', '5 Businesses'] as $absent) {
+                $this->assertStringNotContainsString($absent, $section, $tier->value . ' must not restate the withdrawn Business limit.');
             }
         }
     }
 
     /**
-     * Unlimited is the one Business figure the catalog states and §33 agrees
-     * with, so Agency shows it — read from the decision, never written here.
+     * Agency: unlimited Businesses (client accounts) and unlimited physical
+     * locations — both read from the canonical decision and catalog, with no
+     * ceiling sentence to show.
      */
-    public function test_agency_shows_unlimited_businesses_from_the_canonical_decision(): void
+    public function test_agency_shows_unlimited_businesses_and_unlimited_locations(): void
     {
         [$owner, , $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
         $this->addBusiness($owner, $workspace, 'Client Two');
         $this->authenticateAs($owner);
         $decision = app(EntitlementManager::class)->decideBusinessSlotCapacity($workspace);
+        $catalog = $this->catalogFor(WorkspacePlanTier::Agency);
 
         $page = $this->planPage($workspace);
+        $rows = $this->capacityRows($page);
 
         $this->assertTrue($decision->unlimited);
-        $this->assertMatchesRegularExpression(
-            '/<dt[^>]*>Client accounts<\/dt>\s*<dd[^>]*>' . $decision->currentBusinessCount . ' in use · no limit<\/dd>/',
-            $page->getContent()
-        );
+        $this->assertTrue($catalog->unlimitedLocationSlots);
+        $this->assertSame('Unlimited · ' . $decision->currentBusinessCount . ' in use', $rows['Client accounts'] ?? null);
+        $this->assertSame('Unlimited', $rows['Locations per client account'] ?? null);
+        $this->assertStringNotContainsString('data-role="plan-capacity-note"', $this->section($page));
         $this->assertStringNotContainsString(' of ', $this->between($page->getContent(), 'data-role="plan-capacity"', '</dl>'));
     }
 
     /**
-     * Physical-location capacity is not readable on main yet (§33 contracts
-     * the migration and the decision over it), so the page states nothing
-     * about locations and invents no location price.
+     * Proof the page owns none of the arithmetic: move the catalog's own
+     * capacity columns — the very columns EntitlementManager reads — and the
+     * page follows them, including which plan it names as the unlimited one.
      */
-    public function test_no_location_capacity_or_location_price_is_invented(): void
+    public function test_every_capacity_figure_follows_the_catalog_and_is_not_written_into_the_page(): void
+    {
+        [$owner, , $workspace] = $this->tenant(WorkspacePlanTier::Core, 'Only Business', 'Own Account');
+        $this->authenticateAs($owner);
+
+        DB::table('workspace_plan_catalog')->where('tier', WorkspacePlanTier::Core->value)->update([
+            'business_slot_included' => 2,
+            'business_slot_max' => 2,
+            'location_slot_included' => 4,
+            'location_slot_max' => 7,
+        ]);
+        DB::table('workspace_plan_catalog')->where('tier', WorkspacePlanTier::Agency->value)->update([
+            'display_name' => 'Partner',
+        ]);
+
+        $rows = $this->capacityRows($page = $this->planPage($workspace));
+
+        $this->assertSame('2 Businesses · 1 in use', $rows['Businesses'] ?? null);
+        $this->assertSame('4 locations included · up to 7 with an add-on', $rows['Locations'] ?? null);
+
+        $note = $this->text($page, 'plan-capacity-note');
+        $this->assertStringContainsString('beyond the first 4, up to 7 per Business', $note);
+        $this->assertStringContainsString('move to the Partner plan', $note);
+    }
+
+    /**
+     * The location add-on is a price ratio of a base price the catalog does
+     * not carry yet, so the page states the allowance and says nothing about
+     * cost — no ratio, no invented amount.
+     */
+    public function test_no_location_price_is_invented_while_the_catalog_has_none(): void
     {
         foreach ([WorkspacePlanTier::Core, WorkspacePlanTier::Growth, WorkspacePlanTier::Agency] as $tier) {
             [$owner, , $workspace] = $this->tenant($tier, 'Tier ' . $tier->value, 'Own Account');
             $this->authenticateAs($owner);
+            $catalog = $this->catalogFor($tier);
+            $this->assertNull($catalog->price, 'Fixture precondition: this tier has no configured price.');
 
-            $section = $this->visibleText($this->section($this->planPage($workspace)));
+            $capacity = $this->capacityText($this->planPage($workspace));
 
-            foreach (['Location', 'location', 'Included locations', 'branch', 'storefront'] as $absent) {
-                $this->assertStringNotContainsString($absent, $section, $tier->value . ' must say nothing about physical locations yet.');
+            foreach (['0.5', '50%', '$', 'per month', 'add-on costs', 'USD'] as $absent) {
+                $this->assertStringNotContainsString($absent, $capacity, $tier->value . ' must not price physical locations.');
             }
         }
     }
@@ -327,6 +373,57 @@ class WorkspacePlanPageTest extends TestCase
         return array_map('html_entity_decode', $names[1]);
     }
 
+    /**
+     * The canonical catalog row for a tier, exactly as EntitlementManager
+     * publishes it — the test reads capacity from the same source the page
+     * does instead of restating the model.
+     */
+    private function catalogFor(WorkspacePlanTier $tier): WorkspacePlanCatalogSummary
+    {
+        foreach (app(EntitlementManager::class)->listPlanCatalogSummaries() as $catalog) {
+            if ($catalog->tier === $tier) {
+                return $catalog;
+            }
+        }
+
+        $this->fail("No catalog row for [{$tier->value}].");
+    }
+
+    /**
+     * @return array<string, string> capacity label => rendered value
+     */
+    private function capacityRows(TestResponse $page): array
+    {
+        $rows = [];
+        preg_match_all(
+            '/<dt[^>]*>(.*?)<\/dt>\s*<dd[^>]*>(.*?)<\/dd>/s',
+            $this->between($page->getContent(), 'data-role="plan-capacity"', '</dl>'),
+            $matches,
+            PREG_SET_ORDER
+        );
+
+        foreach ($matches as $match) {
+            $rows[trim(html_entity_decode($match[1]))] = trim(html_entity_decode($match[2]));
+        }
+
+        return $rows;
+    }
+
+    /**
+     * Everything the Capacity card says: the rows and, when present, the
+     * sentence under them.
+     */
+    private function capacityText(TestResponse $page): string
+    {
+        $content = $page->getContent();
+        $text = $this->between($content, 'data-role="plan-capacity"', '</dl>');
+
+        if (str_contains($content, 'data-role="plan-capacity-note"')) {
+            $text .= ' ' . $this->text($page, 'plan-capacity-note');
+        }
+
+        return $this->visibleText($text);
+    }
     private function billingValue(TestResponse $page): string
     {
         $this->assertSame(1, preg_match('/data-role="plan-billing">.*?<dd[^>]*>([^<]+)<\/dd>/s', $page->getContent(), $match), 'Billing not rendered.');

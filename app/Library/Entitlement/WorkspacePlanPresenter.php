@@ -33,6 +33,7 @@ final class WorkspacePlanPresenter
      *     plan: array{name: string, status: string, status_variant: string, complimentary: bool}|null,
      *     included: list<array{name: string, description: string}>,
      *     capacity: list<array{label: string, value: string}>,
+     *     capacity_note: string|null,
      *     billing: list<array{label: string, value: string}>
      * }
      */
@@ -41,8 +42,10 @@ final class WorkspacePlanPresenter
         $summary = $this->entitlementManager->getWorkspaceEntitlementSummary($workspace);
 
         if (! $summary->isAssigned || $summary->tier === null) {
-            return ['plan' => null, 'included' => [], 'capacity' => [], 'billing' => []];
+            return ['plan' => null, 'included' => [], 'capacity' => [], 'capacity_note' => null, 'billing' => []];
         }
+
+        $catalogs = $this->entitlementManager->listPlanCatalogSummaries();
 
         return [
             'plan' => [
@@ -56,8 +59,9 @@ final class WorkspacePlanPresenter
                 'complimentary' => (bool) $summary->isComplimentary,
             ],
             'included' => $this->included($summary),
-            'capacity' => array_merge($this->businessCapacity($summary), $this->locationCapacity($workspace)),
-            'billing' => $this->billing($summary),
+            'capacity' => array_merge($this->businessCapacity($summary), $this->locationCapacity($summary, $catalogs)),
+            'capacity_note' => $this->capacityNote($summary, $catalogs),
+            'billing' => $this->billing($summary, $catalogs),
         ];
     }
 
@@ -82,71 +86,151 @@ final class WorkspacePlanPresenter
     }
 
     /**
-     * Business (Agency: client account) capacity.
+     * Business (Agency: client account) capacity, straight from
+     * EntitlementManager::decideBusinessSlotCapacity() — RFC-004 §33's
+     * corrected model (Core = 1, Growth = 1, Agency = unlimited) lives in the
+     * catalog and that decision, never in this page.
      *
-     * RFC-004 §33 (v1.4, on main) is the canonical model: Core = 1 Business,
-     * Growth = 1 Business, Agency = unlimited Businesses, while the
-     * 3-included / 4-and-5-by-allocation / 6+-requires-Agency rule governs
-     * PHYSICAL locations, not Businesses.
-     *
-     * Only "unlimited" is a figure the running catalog states and §33 agrees
-     * with, so only that is shown. Core and Growth still carry Milestone 1's
-     * superseded Business-slot numbers (business_slot_included = 3,
-     * business_slot_max = 5) because §33's additive migration — the one that
-     * corrects the data — has not landed, and §33 records that the merged M1
-     * seed is historical and is not edited. Printing those would state a
-     * limit the product has withdrawn ("1 of 3 Businesses"); printing "1"
-     * would make this page a second authority for a rule it cannot read. So
-     * no Business figure is shown until the canonical data says it — and this
-     * method needs no change when it does.
+     * A plan whose capacity is genuinely unavailable — no assignment, or a
+     * suspended/inactive one, where the decision carries neither `unlimited`
+     * nor an effective capacity — states no figure at all.
      *
      * @return list<array{label: string, value: string}>
      */
     private function businessCapacity(WorkspaceEntitlementSummary $summary): array
     {
         $capacity = $summary->capacity;
+        $label = $summary->tier === WorkspacePlanTier::Agency ? 'Client accounts' : 'Businesses';
 
-        if (! $capacity->unlimited) {
+        if ($capacity->unlimited) {
+            return [['label' => $label, 'value' => "Unlimited · {$capacity->currentBusinessCount} in use"]];
+        }
+
+        if ($capacity->effectiveCapacity === null) {
             return [];
         }
 
-        $label = $summary->tier === WorkspacePlanTier::Agency ? 'Client accounts' : 'Businesses';
+        $allowance = $capacity->effectiveCapacity === 1 ? '1 Business' : "{$capacity->effectiveCapacity} Businesses";
 
-        return [['label' => $label, 'value' => "{$capacity->currentBusinessCount} in use · no limit"]];
+        return [['label' => $label, 'value' => "{$allowance} · {$capacity->currentBusinessCount} in use"]];
     }
 
     /**
-     * Physical-location capacity, per Business.
+     * Physical-location capacity per Business — the tier's allowance, read
+     * from the same workspace_plan_catalog columns
+     * EntitlementManager::decideLocationSlotCapacity() reads (RFC-004 §33),
+     * carried here by listPlanCatalogSummaries(). How many locations a given
+     * Business is actually using belongs to that Business's own Locations
+     * page, which asks the decision directly.
      *
-     * Not readable on main yet: RFC-004 §33 contracts the additive migration
-     * that adds workspace_plan_catalog.location_slot_included /
-     * location_slot_max / unlimited_location_slots /
-     * additional_location_slot_price_ratio plus the per-Business allocation
-     * columns, and the decision over them. Until that lands there is nothing
-     * canonical to read, and the included / allocation / Agency rules are not
-     * restated here — this page never becomes a second authority for
-     * capacity, and never invents a location price the catalog does not
-     * carry. When it lands, this method asks that decision for each Business
-     * in the account and returns one row each; the page renders whatever rows
-     * it returns, so nothing else changes.
+     * Nothing is computed here: the included figure, the per-Business ceiling
+     * and "unlimited" are printed as the catalog states them, and the plan a
+     * customer moves to for unlimited locations is the catalog's own unlimited
+     * tier, not a name written into this page. A catalog row without a
+     * location allowance states nothing.
      *
+     * @param  array<int, WorkspacePlanCatalogSummary>  $catalogs
      * @return list<array{label: string, value: string}>
      */
-    private function locationCapacity(Workspace $workspace): array
+    private function locationCapacity(WorkspaceEntitlementSummary $summary, array $catalogs): array
     {
-        return [];
+        $catalog = $this->catalogFor($summary, $catalogs);
+
+        if ($catalog === null) {
+            return [];
+        }
+
+        $label = $summary->tier === WorkspacePlanTier::Agency ? 'Locations per client account' : 'Locations';
+
+        if ($catalog->unlimitedLocationSlots) {
+            return [['label' => $label, 'value' => 'Unlimited']];
+        }
+
+        if ($catalog->locationSlotIncluded < 1) {
+            return [];
+        }
+
+        $included = $catalog->locationSlotIncluded === 1 ? '1 location included' : "{$catalog->locationSlotIncluded} locations included";
+
+        if ($catalog->locationSlotMax === null || $catalog->locationSlotMax <= $catalog->locationSlotIncluded) {
+            return [['label' => $label, 'value' => $included]];
+        }
+
+        return [[
+            'label' => $label,
+            'value' => "{$included} · up to {$catalog->locationSlotMax} with an add-on",
+        ]];
     }
 
     /**
+     * The sentence under Capacity: what happens past the included locations,
+     * and which plan lifts the ceiling. Both figures and the plan name come
+     * from the catalog; no price is stated, because a tier's location add-on
+     * is a ratio of a base price the catalog does not carry yet.
+     *
+     * @param  array<int, WorkspacePlanCatalogSummary>  $catalogs
+     */
+    private function capacityNote(WorkspaceEntitlementSummary $summary, array $catalogs): ?string
+    {
+        $catalog = $this->catalogFor($summary, $catalogs);
+
+        if ($catalog === null || $catalog->unlimitedLocationSlots || $catalog->locationSlotIncluded < 1) {
+            return null;
+        }
+
+        if ($catalog->locationSlotMax === null || $catalog->locationSlotMax <= $catalog->locationSlotIncluded) {
+            return null;
+        }
+
+        $note = "Locations beyond the first {$catalog->locationSlotIncluded}, up to {$catalog->locationSlotMax} per Business, need an add-on you allocate to that Business.";
+        $unlimited = $this->unlimitedLocationCatalog($catalogs);
+
+        if ($unlimited !== null && $unlimited->tier !== $summary->tier) {
+            $note .= " To run more than {$catalog->locationSlotMax}, move to the {$unlimited->displayName} plan, which includes unlimited locations.";
+        }
+
+        return $note;
+    }
+
+    /**
+     * @param  array<int, WorkspacePlanCatalogSummary>  $catalogs
+     */
+    private function catalogFor(WorkspaceEntitlementSummary $summary, array $catalogs): ?WorkspacePlanCatalogSummary
+    {
+        foreach ($catalogs as $catalog) {
+            if ($catalog->tier === $summary->tier) {
+                return $catalog;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @param  array<int, WorkspacePlanCatalogSummary>  $catalogs
+     */
+    private function unlimitedLocationCatalog(array $catalogs): ?WorkspacePlanCatalogSummary
+    {
+        foreach ($catalogs as $catalog) {
+            if ($catalog->unlimitedLocationSlots && $catalog->isActive) {
+                return $catalog;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * @param  array<int, WorkspacePlanCatalogSummary>  $catalogs
      * @return list<array{label: string, value: string}>
      */
-    private function billing(WorkspaceEntitlementSummary $summary): array
+    private function billing(WorkspaceEntitlementSummary $summary, array $catalogs): array
     {
         if ($summary->isComplimentary) {
             return [['label' => 'Price', 'value' => 'Complimentary']];
         }
 
-        foreach ($this->entitlementManager->listPlanCatalogSummaries() as $catalog) {
+        foreach ($catalogs as $catalog) {
             if ($catalog->tier !== $summary->tier) {
                 continue;
             }
