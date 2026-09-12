@@ -237,6 +237,128 @@ trait CreatesDashboardFixtures
         }
     }
 
+    /**
+     * Messages this Business RECEIVED, at an exact storage instant — the
+     * canonical "messages received" source (reports, direction incoming).
+     */
+    protected function receivedAt(Business $business, int $count, string $storageTimestamp): void
+    {
+        for ($i = 0; $i < $count; $i++) {
+            DB::table('reports')->insert([
+                'uid' => uniqid('', true),
+                'user_id' => $business->customer_id,
+                'business_id' => $business->id,
+                'from' => '12025550100',
+                'to' => '18005550100',
+                'message' => 'Fixture inbound',
+                'sms_type' => 'plain',
+                'status' => 'Delivered',
+                'customer_status' => 'Delivered',
+                'direction' => 'incoming',
+                'cost' => '0',
+                'created_at' => $storageTimestamp,
+                'updated_at' => $storageTimestamp,
+            ]);
+        }
+    }
+
+    /** Contacts created at an exact storage instant. */
+    protected function contactsAt(Business $business, int $count, string $storageTimestamp): void
+    {
+        $group = $this->contactGroup($business);
+
+        for ($i = 0; $i < $count; $i++) {
+            $contact = Contacts::create([
+                'customer_id' => $group->customer_id,
+                'business_id' => $business->id,
+                'group_id' => $group->id,
+                'phone' => '1707555' . str_pad((string) (++$this->dashboardSequence), 4, '0', STR_PAD_LEFT),
+                'status' => Contacts::STATUS_SUBSCRIBE,
+            ]);
+
+            DB::table('contacts')->where('id', $contact->id)->update(['created_at' => $storageTimestamp]);
+        }
+    }
+
+    /** Conversations started at an exact storage instant (Slice 2B rows). */
+    protected function conversationsAt(Business $business, int $count, string $storageTimestamp): void
+    {
+        for ($i = 0; $i < $count; $i++) {
+            DB::table('chat_boxes')->insert([
+                'uid' => (string) Str::uuid(),
+                'user_id' => $business->customer_id,
+                'business_id' => $business->id,
+                'from' => '18005550100',
+                'to' => '1808555' . str_pad((string) (++$this->dashboardSequence), 4, '0', STR_PAD_LEFT),
+                'notification' => 0,
+                'created_at' => $storageTimestamp,
+                'updated_at' => $storageTimestamp,
+            ]);
+        }
+    }
+
+    /** Automation runs at an exact storage instant. */
+    protected function automationRunsAt(Business $business, int $count, string $storageTimestamp, string $status = 'succeeded'): void
+    {
+        $automation = Automation::create([
+            'business_id' => $business->id,
+            'user_id' => $business->customer_id,
+            'name' => 'Fixture automation',
+            'status' => Automation::STATUS_ACTIVE,
+            'trigger_type' => 'contact_created',
+            'trigger_config' => ['contact_group_id' => null],
+            'action_type' => 'update_contact_field',
+            'action_config' => ['field_id' => 1, 'value' => 'x'],
+        ]);
+
+        $group = $this->contactGroup($business);
+
+        for ($i = 0; $i < $count; $i++) {
+            $contact = Contacts::create([
+                'customer_id' => $group->customer_id,
+                'business_id' => $business->id,
+                'group_id' => $group->id,
+                'phone' => '1909555' . str_pad((string) (++$this->dashboardSequence), 4, '0', STR_PAD_LEFT),
+                'status' => Contacts::STATUS_SUBSCRIBE,
+            ]);
+            // Outside every activity window, so it is never a "new contact".
+            DB::table('contacts')->where('id', $contact->id)->update(['created_at' => '2020-01-01 00:00:00']);
+
+            DB::table('automation_executions')->insert([
+                'uid' => (string) Str::uuid(),
+                'business_id' => $business->id,
+                'automation_id' => $automation->id,
+                'contact_id' => $contact->id,
+                'trigger_type' => 'contact_created',
+                'idempotency_key' => 'activity:' . uniqid('', true),
+                'status' => $status,
+                'created_at' => $storageTimestamp,
+                'updated_at' => $storageTimestamp,
+            ]);
+        }
+    }
+
+    /**
+     * Unified Business Home §2.3 — an earlier visit for this user and
+     * Business, so the activity band has a window to count over. The stamp is
+     * the END of that visit, exactly as HomeVisitMarker records it.
+     */
+    protected function previousHomeVisit(Business $business, int $userId, $lastSeen, $windowStart = null): void
+    {
+        $lastSeen = CarbonImmutable::parse((string) $lastSeen);
+
+        DB::table("business_home_visits")->updateOrInsert(
+            ["user_id" => $userId, "business_id" => $business->id],
+            [
+                "window_start_at" => $windowStart === null ? null : CarbonImmutable::parse((string) $windowStart),
+                "current_visit_started_at" => $lastSeen,
+                "current_visit_last_seen_at" => $lastSeen,
+                "created_at" => $lastSeen,
+                "updated_at" => $lastSeen,
+            ]
+        );
+    }
+
     protected function website(Business $business, string $status): void
     {
         DB::table('websites')->updateOrInsert(['business_id' => $business->id], [

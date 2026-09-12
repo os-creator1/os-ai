@@ -7,7 +7,7 @@
 <section class="mb-2" aria-labelledby="dashboard-headlines-heading" data-band="headlines">
     <x-card>
         <div class="d-flex flex-wrap justify-content-between align-items-center gap-1 mb-50">
-            <h2 class="h4 text-section-heading mb-0" id="dashboard-headlines-heading">Last 30 days</h2>
+            <h2 class="h4 text-section-heading mb-0" id="dashboard-headlines-heading">Business performance</h2>
             @if($headlines['resultsUrl'])
                 <x-button variant="outline" size="sm" :href="$headlines['resultsUrl']" data-role="results-link">See full results</x-button>
             @endif
@@ -33,8 +33,5 @@
                 </div>
             @endforeach
         </div>
-        <p class="text-caption text-muted mt-2 mb-0" data-role="provider-accepted-note">
-            Provider accepted means the provider took the message when it was sent. It does not confirm that the message reached the phone.
-        </p>
     </x-card>
 </section>
