@@ -1452,6 +1452,29 @@
 
         }
 
+        /**
+         * The public opt-in page for a contact group. Anyone with the link
+         * may open it, so it must render for any owner the link belongs to.
+         *
+         * Country coverage keeps its existing precedence:
+         *  1. the customer's own configured coverage (CustomerBasedPricingPlan);
+         *  2. failing that, the coverage of the legacy Ultimate SMS plan the
+         *     customer is actively subscribed to;
+         *  3. failing both, nothing — an empty set.
+         *
+         * Only step 2 moved: the legacy plan id is now read from the active
+         * Subscription *if there is one*, the same way
+         * Campaigns::getCachedCoveragePlans() reads it. It used to be
+         * dereferenced unconditionally, so a Business OS customer on Core,
+         * Growth or Agency who has no legacy SMS subscription — which PR #260
+         * made an ordinary, supported state for Contacts — fataled the public
+         * page on `null->plan_id`, even when they had coverage of their own
+         * under step 1.
+         *
+         * No coverage is invented for step 3: collecting contacts is not a
+         * right to send to them, so an account with no configured coverage
+         * shows none. Sending itself is decided elsewhere, unchanged.
+         */
         public function subscribeURL(ContactGroups $contact): View|Factory|Application
         {
             $pageConfigs = [
@@ -1461,15 +1484,17 @@
 
             $user     = User::find($contact->customer_id);
             $coverage = null;
+
             if ($user) {
-                $plan_id = $user->customer->activeSubscription()->plan_id;
-
                 $coverage = CustomerBasedPricingPlan::where('user_id', $user->id)->where('status', true)->get();
-                if ($coverage->count() < 1) {
-                    $coverage = PlansCoverageCountries::where('plan_id', $plan_id)->where('status', true)->get();
-                }
 
-                return view('customer.Contacts.subscribe_form', compact('contact', 'pageConfigs', 'coverage'));
+                if ($coverage->count() < 1) {
+                    $plan_id = $user->customer?->activeSubscription()?->plan_id;
+
+                    if ($plan_id !== null) {
+                        $coverage = PlansCoverageCountries::where('plan_id', $plan_id)->where('status', true)->get();
+                    }
+                }
             }
 
             return view('customer.Contacts.subscribe_form', compact('contact', 'pageConfigs', 'coverage'));
