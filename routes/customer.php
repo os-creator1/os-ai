@@ -749,6 +749,29 @@
         | payload, throttled like the other polling routes.
         |----------------------------------------------------------------------
         */
+        /*
+        |----------------------------------------------------------------------
+        | Customer Experience Slice 1A — a Business's physical locations
+        |----------------------------------------------------------------------
+        | Settings → Business → Locations. A location is a place INSIDE this
+        | Business, never another account. Every write delegates to
+        | BusinessLocationManager, the one boundary that asserts location
+        | capacity (3 included on Core/Growth, a 4th/5th only with an add-on
+        | allocation, 6+ needs Agency) under the Business row lock. There is
+        | no purchase route: add-on capacity cannot be bought online while
+        | Core/Growth prices are unset.
+        */
+        Route::prefix('{workspaceUid}/businesses/{businessUid}/locations')->name('businesses.locations.')->group(function () {
+            Route::get('/', 'Business\BusinessLocationsController@index')->name('index');
+            Route::get('/create', 'Business\BusinessLocationsController@create')->name('create');
+            Route::post('/', 'Business\BusinessLocationsController@store')->name('store');
+            Route::get('/{locationUid}/edit', 'Business\BusinessLocationsController@edit')->name('edit');
+            Route::post('/{locationUid}/details', 'Business\BusinessLocationsController@update')->name('update');
+            Route::post('/{locationUid}/archive', 'Business\BusinessLocationsController@archive')->name('archive');
+            Route::post('/{locationUid}/reactivate', 'Business\BusinessLocationsController@reactivate')->name('reactivate');
+            Route::post('/{locationUid}/primary', 'Business\BusinessLocationsController@makePrimary')->name('primary');
+        });
+
         Route::prefix('{workspaceUid}/businesses/{businessUid}/analytics')->name('businesses.analytics.')->group(function () {
             Route::get('/', 'Business\AnalyticsController@overview')->name('overview');
             Route::get('/campaigns', 'Business\AnalyticsController@campaigns')->name('campaigns');

@@ -29,6 +29,12 @@ use Tests\TestCase;
  * needs committed rows, which an open RefreshDatabase transaction would
  * hide entirely. Fixture rows are inserted directly (auto-committed) and
  * explicitly cleaned up in tearDown().
+ *
+ * Customer Experience Slice 1A (RFC-004 §33) corrected the SEEDED Core
+ * Business capacity to exactly one. The four "racing the final slot"
+ * scenarios (1, 2, 10, 11) prove RFC-004 §17's lock serialization, not the
+ * product rule, so they pin an explicit bounded engine catalog (3 included /
+ * 5 max) with engineCatalog(); tearDown() restores the seeded values.
  */
 class EntitlementManagerConcurrencyTest extends TestCase
 {
@@ -68,6 +74,8 @@ class EntitlementManagerConcurrencyTest extends TestCase
                 'price' => $this->originalCoreCatalogState['price'],
                 'currency_id' => $this->originalCoreCatalogState['currency_id'],
                 'additional_business_slot_price_ratio' => $this->originalCoreCatalogState['additional_business_slot_price_ratio'],
+                'business_slot_included' => $this->originalCoreCatalogState['business_slot_included'],
+                'business_slot_max' => $this->originalCoreCatalogState['business_slot_max'],
             ]);
         }
 
@@ -132,6 +140,16 @@ class EntitlementManagerConcurrencyTest extends TestCase
         }
 
         parent::tearDown();
+    }
+
+    /**
+     * An explicit bounded Business-slot configuration for the engine's
+     * final-slot races (committed, so the child processes see it; restored
+     * by tearDown()).
+     */
+    private function engineCatalog(): void
+    {
+        DB::table('workspace_plan_catalog')->where('tier', 'core')->update(['business_slot_included' => 3, 'business_slot_max' => 5]);
     }
 
     private function phpBinary(): string
@@ -263,6 +281,7 @@ class EntitlementManagerConcurrencyTest extends TestCase
     // Scenario 1: create + create racing a destination Workspace's final slot.
     public function test_scenario_1_create_plus_create_racing_final_slot(): void
     {
+        $this->engineCatalog();
         $owner = $this->createOwnerUserId();
         $workspace = $this->createWorkspace($owner);
         $this->assignAtBoundary($workspace, 4);
@@ -288,6 +307,7 @@ class EntitlementManagerConcurrencyTest extends TestCase
     // Scenario 2: create + reassign racing the same destination Workspace's final slot.
     public function test_scenario_2_create_plus_reassign_racing_final_slot(): void
     {
+        $this->engineCatalog();
         $owner = $this->createOwnerUserId();
         $workspace = $this->createWorkspace($owner);
         $this->assignAtBoundary($workspace, 4);
@@ -570,6 +590,7 @@ class EntitlementManagerConcurrencyTest extends TestCase
     // observable "no source cleanup" proof (§6, RFC-004 §17.2).
     public function test_scenario_10_reassign_plus_reassign_racing_final_slot(): void
     {
+        $this->engineCatalog();
         $destOwner = $this->createOwnerUserId();
         $destWorkspace = $this->createWorkspace($destOwner);
         $this->assignAtBoundary($destWorkspace, 4);
@@ -644,6 +665,7 @@ class EntitlementManagerConcurrencyTest extends TestCase
     // (§13.C).
     public function test_scenario_11_legacy_onboarding_vs_ordinary_create_racing_final_slot(): void
     {
+        $this->engineCatalog();
         $owner = $this->createOwnerUserId();
         $workspace = $this->createWorkspace($owner);
         $this->assignAtBoundary($workspace, 4);

@@ -41,7 +41,7 @@ class EntitlementEnumsTest extends TestCase
         $this->assertCount(2, WorkspaceEntitlementOverrideState::cases());
     }
 
-    public function test_workspace_entitlement_transition_type_has_exactly_nine_cases(): void
+    public function test_workspace_entitlement_transition_type_has_exactly_eleven_cases(): void
     {
         $expected = [
             'plan_assigned',
@@ -53,11 +53,14 @@ class EntitlementEnumsTest extends TestCase
             'entitlement_override_allowed',
             'entitlement_override_denied',
             'entitlement_override_reverted',
+            // Customer Experience Slice 1A (RFC-004 §33.4) — physical-location capacity.
+            'additional_location_slots_changed',
+            'capacity_grandfathered',
         ];
 
         $actual = array_map(fn ($case) => $case->value, WorkspaceEntitlementTransitionType::cases());
 
-        $this->assertCount(9, WorkspaceEntitlementTransitionType::cases());
+        $this->assertCount(11, WorkspaceEntitlementTransitionType::cases());
         $this->assertSame($expected, $actual);
     }
 

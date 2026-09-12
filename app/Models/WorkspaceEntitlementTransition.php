@@ -39,6 +39,9 @@ class WorkspaceEntitlementTransition extends Model
         'to_status',
         'reason',
         'payment_idempotency_key',
+        // Slice 1A — the one nullable JSON record of affected Businesses and
+        // their location counts. NULL on every pre-Slice-1A row.
+        'payload',
     ];
 
     protected $casts = [
@@ -50,6 +53,7 @@ class WorkspaceEntitlementTransition extends Model
         'to_additional_business_slots' => 'integer',
         'from_status' => WorkspacePlanAssignmentStatus::class,
         'to_status' => WorkspacePlanAssignmentStatus::class,
+        'payload' => 'array',
         'created_at' => 'datetime',
     ];
 

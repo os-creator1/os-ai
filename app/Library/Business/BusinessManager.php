@@ -153,14 +153,16 @@ class BusinessManager
     }
 
     /**
-     * Upsert the business's single primary location. Delegates the
-     * one-primary invariant entirely to BusinessLocationRepository.
+     * Upsert the business's primary location. Customer Experience Slice 1A
+     * (contract §7.3b): the write goes through the one canonical location
+     * boundary, which asserts physical-location capacity before a location
+     * is created and adds no new authority requirement to this path.
      */
     public function upsertPrimaryLocation(Customer $customer, Business $business, array $attributes): BusinessLocation
     {
         $this->assertOwnership($customer, $business);
 
-        $location = DB::transaction(fn () => $this->locationRepository->upsertPrimary($business, $attributes));
+        $location = app(BusinessLocationManager::class)->upsertPrimaryLocation($business, $attributes);
 
         BusinessPrimaryLocationUpdated::dispatch($business->id, $location->id);
 

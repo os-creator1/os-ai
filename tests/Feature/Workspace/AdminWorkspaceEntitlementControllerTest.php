@@ -13,6 +13,7 @@ use App\Models\WorkspaceEntitlementOverride;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\Route;
 use Tests\Feature\Business\Concerns\CreatesBusinessTestData;
+use Tests\Feature\Entitlement\Concerns\PinsBoundedBusinessSlotCatalog;
 use Tests\Feature\Workspace\Concerns\CreatesWorkspaceTestData;
 use Tests\TestCase;
 
@@ -24,6 +25,7 @@ use Tests\TestCase;
  */
 class AdminWorkspaceEntitlementControllerTest extends TestCase
 {
+    use PinsBoundedBusinessSlotCatalog;
     use RefreshDatabase;
     use CreatesBusinessTestData;
     use CreatesWorkspaceTestData;
@@ -31,6 +33,9 @@ class AdminWorkspaceEntitlementControllerTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+
+        // The additional-slot forms below post to a bounded catalog: see PinsBoundedBusinessSlotCatalog.
+        $this->pinBoundedBusinessSlotCatalog();
 
         $this->ensureRequiredAppConfigRowsExist();
     }
