@@ -233,8 +233,16 @@ class BusinessHomePerformanceTest extends TestCase
             $this->assertNotContains($absent, $this->headlineKeys($html), "{$absent} is not a Business performance figure.");
         }
 
+        // H-4 gave Automations its own band, so "runs" is now a truthful
+        // word elsewhere on the page. What must stay true is that Business
+        // PERFORMANCE carries none of these, and that the page as a whole
+        // still invents no lead, booking, revenue or ranking.
         $this->assertDoesNotMatchRegularExpression(
-            '/\b(messages sent|provider accepted|confirmed failed|automation runs|leads?|bookings?|revenue|conversions?|google views|rankings?|SEO)\b/i',
+            '/\b(messages sent|provider accepted|confirmed failed|automation runs)\b/i',
+            strip_tags($this->bandHtml($html, 'headlines')),
+        );
+        $this->assertDoesNotMatchRegularExpression(
+            '/\b(leads?|bookings?|revenue|conversions?|google views|rankings?|SEO)\b/i',
             $this->mainText($html),
         );
     }

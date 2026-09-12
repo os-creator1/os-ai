@@ -63,8 +63,12 @@ class BusinessHomeTest extends TestCase
 
         $html = $this->home()->assertOk()->getContent();
 
+        // H-4 §2.6 added the three operating-health bands after Business
+        // performance. Automations is absent here because nothing ran, and
+        // the Google tile is absent because Core is not entitled to it — the
+        // Visibility band still renders for the website alone.
         $this->assertSame(
-            ['billing_exception', 'activity', 'attention', 'recommendations', 'headlines', 'actions'],
+            ['billing_exception', 'activity', 'attention', 'recommendations', 'headlines', 'visibility', 'conversations', 'actions'],
             $this->bandOrder($html),
             'Billing speaks first only when it is a real exception, then what changed, then what to do about it.'
         );
@@ -654,7 +658,7 @@ class BusinessHomeTest extends TestCase
 
         $html = $this->home()->assertOk()->getContent();
 
-        $this->assertSame(['billing_exception', 'recommendations', 'headlines', 'actions'], $this->bandOrder($html));
+        $this->assertSame(['billing_exception', 'recommendations', 'headlines', 'visibility', 'conversations', 'actions'], $this->bandOrder($html));
         $this->assertStringContainsString('data-band="recommendations" data-band-state="failed"', $html);
         $this->assertStringContainsString('This section could not be loaded just now.', $this->bandHtml($html, 'recommendations'));
         $this->assertStringNotContainsString('data-band-state="failed"', $this->bandHtml($html, 'headlines'));

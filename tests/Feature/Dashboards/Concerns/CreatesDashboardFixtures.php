@@ -297,6 +297,49 @@ trait CreatesDashboardFixtures
         }
     }
 
+    /**
+     * Unified Business Home §2.6 (H-4) — one conversation carrying an exact
+     * sequence of messages, in the order given, which is also the order their
+     * ids take.
+     *
+     * Each message is `[direction, storage timestamp]`; a null direction is a
+     * legacy row written before the column existed. `$touchedAt` is the
+     * conversation's own `updated_at`, which the awaiting-reply scan horizon
+     * reads — it defaults to the last message.
+     *
+     * @param  array<int, array{0: ?string, 1: string}>  $messages
+     */
+    protected function conversationWith(Business $business, array $messages, ?string $touchedAt = null): int
+    {
+        $first = $messages[0][1] ?? now()->format('Y-m-d H:i:s');
+        $last = $messages === [] ? $first : $messages[count($messages) - 1][1];
+
+        $boxId = (int) DB::table('chat_boxes')->insertGetId([
+            'uid' => (string) Str::uuid(),
+            'user_id' => $business->customer_id,
+            'business_id' => $business->id,
+            'from' => '18005550100',
+            'to' => '1909555' . str_pad((string) (++$this->dashboardSequence), 4, '0', STR_PAD_LEFT),
+            'notification' => 0,
+            'created_at' => $first,
+            'updated_at' => $touchedAt ?? $last,
+        ]);
+
+        foreach ($messages as [$direction, $at]) {
+            DB::table('chat_box_messages')->insert([
+                'box_id' => $boxId,
+                'message' => 'Fixture message',
+                'sms_type' => 'sms',
+                'send_by' => $direction === 'incoming' ? 'to' : ($direction === 'outgoing' ? 'from' : null),
+                'direction' => $direction,
+                'created_at' => $at,
+                'updated_at' => $at,
+            ]);
+        }
+
+        return $boxId;
+    }
+
     /** Automation runs at an exact storage instant. */
     protected function automationRunsAt(Business $business, int $count, string $storageTimestamp, string $status = 'succeeded'): void
     {

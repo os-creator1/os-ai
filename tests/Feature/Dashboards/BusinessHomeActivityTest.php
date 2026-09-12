@@ -357,11 +357,14 @@ class BusinessHomeActivityTest extends TestCase
         $this->assertLessThanOrEqual(2, count($marker), 'One marker read and at most one write: ' . implode(' | ', $marker));
         $this->assertSame(1, count($this->matching($sql, '/select.+new_contacts.+messages_received/is')), 'Contacts and received messages are ONE statement.');
         $this->assertLessThanOrEqual(1, count($this->matching($sql, '/from `automation_executions` where `business_id` = \? and `created_at` >= \? and `created_at` < \?$/i')));
-        $this->assertLessThanOrEqual(3, count($this->matching($sql, '/from `chat_boxes`/')), 'Two headline periods plus the activity window.');
+        // Two Business performance periods, the activity window, and H-4's
+        // two: the incoming/replied pair and the current awaiting-reply
+        // state. The contract's own conversation ceiling is 5 (§16).
+        $this->assertLessThanOrEqual(5, count($this->matching($sql, '/`chat_box/')), 'Conversation statements: ' . implode(' | ', $this->matching($sql, '/`chat_box/')));
 
         // The whole Business Home, activity band included, stays inside the
         // contract's ceiling for this state.
-        $product = $this->matching($sql, '/\b(reports|contacts|contact_groups|automation_executions|campaigns|chat_boxes|business_home_visits|businesses|business_usage_wallets|websites|business_google_connections|opportunities)\b/');
+        $product = $this->matching($sql, '/\b(reports|contacts|contact_groups|automation_executions|campaigns|chat_boxes|chat_box_messages|business_home_visits|businesses|business_usage_wallets|websites|business_google_connections|opportunities)\b/');
         $this->assertLessThanOrEqual(25, count($product), 'Business Home product-data ceiling: ' . count($product));
     }
 
