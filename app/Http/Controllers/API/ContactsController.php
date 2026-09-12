@@ -3,6 +3,7 @@
 
     namespace App\Http\Controllers\API;
 
+    use App\Enums\Automation\Workflow\ContactCreationSource;
     use App\Http\Requests\Contacts\NewContactGroup;
     use App\Http\Requests\Contacts\StoreContact;
     use App\Http\Requests\Contacts\UpdateContactGroup;
@@ -80,7 +81,7 @@
                 ]);
             }
 
-            [$validator, $subscriber] = $this->contactGroups->createContactFromRequest($group_id, $request->all());
+            [$validator, $subscriber] = $this->contactGroups->createContactFromRequest($group_id, $request->all(), ContactCreationSource::Api);
 
             if (is_null($subscriber)) {
                 return $this->error($validator->errors()->first(), 422);
