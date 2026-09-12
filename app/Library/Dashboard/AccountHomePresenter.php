@@ -349,15 +349,17 @@ final class AccountHomePresenter
      *  - contacted: campaign members with an outbound message actually sent
      *    in the period, counted once each however many were sent;
      *  - replies: inbound messages received in the period;
+     *  - positive replies (A-2): of those inbound messages, the ones whose
+     *    persisted `intent` is exactly `positive` — the value
+     *    `AgencyProspectingRespondJob` durably wrote from the existing
+     *    `AgencyProspectAiDecision`. Never derived from booking, scheduling
+     *    or any other intent, and never "all replies"; a null intent (no
+     *    decision was ever validated for that message) does not count;
      *  - booked: prospects whose `booked_at` falls in the period;
      *  - failures: outbound messages that failed. A failed send never gets a
      *    `sent_at` — the jobs write only `status` — so the attempt's own row
      *    timestamp is the only time it has, and it is what places the
      *    failure in the period.
-     *
-     * **Positive replies are deliberately absent.** Reply intent is not
-     * persisted anywhere yet, so any positive count here would be a guess;
-     * it arrives with A-2, which stores the intent first.
      *
      * The two pre-existing counts (active campaigns, prospects) stay as they
      * were — this band is extended, not replaced. No reply rate, booking
@@ -406,6 +408,17 @@ final class AccountHomePresenter
                 'replies',
             )
             ->selectSub(
+                AgencyProspectMessage::query()
+                    ->where('workspace_id', $workspace->id)
+                    ->where('direction', AgencyProspectMessage::DIRECTION_INBOUND)
+                    ->where('intent', 'positive')
+                    ->where('received_at', '>=', $start)
+                    ->where('received_at', '<', $end)
+                    ->selectRaw('COUNT(*)')
+                    ->toBase(),
+                'positive_replies',
+            )
+            ->selectSub(
                 AgencyProspect::query()
                     ->where('workspace_id', $workspace->id)
                     ->where('booked_at', '>=', $start)
@@ -430,6 +443,7 @@ final class AccountHomePresenter
             'prospects' => (int) ($row->prospects ?? 0),
             'contacted' => (int) ($row->contacted ?? 0),
             'replies' => (int) ($row->replies ?? 0),
+            'positiveReplies' => (int) ($row->positive_replies ?? 0),
             'booked' => (int) ($row->booked ?? 0),
             'failures' => (int) ($row->failures ?? 0),
             'rangeLabel' => $range->label(),
