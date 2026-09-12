@@ -52,6 +52,7 @@
             ClearCampaign::class,
             SendScheduleAPIMessage::class,
             RunAutomation::class,
+            \App\Console\Commands\Automation\RecoverStalledWorkflowEnrollments::class,
             SMPPDLRReports::class,
             RunEveryTenSeconds::class,
             CleanDatabase::class,
@@ -91,6 +92,11 @@
             $schedule->command('senderid:check')->daily();
             $schedule->command('user:preferences')->daily()->between('10:00', '18:00');
             $schedule->command('automation:run')->everyFiveMinutes();
+
+            // Automations V2 §7.4 — the lost/interrupted-work safety net ONLY.
+            // Resume re-dispatches held journeys immediately (§6.3) and never
+            // waits for this sweep; it deliberately skips paused workflows.
+            $schedule->command('automation:workflows-recover-stalled')->everyFiveMinutes();
             $schedule->command('app:clean-database')->monthly();
             // $schedule->command('jobs:cleanup-monitors')->everyThirtyMinutes();
 

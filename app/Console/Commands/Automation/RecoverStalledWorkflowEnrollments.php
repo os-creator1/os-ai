@@ -1,0 +1,43 @@
+<?php
+
+namespace App\Console\Commands\Automation;
+
+use App\Library\Automation\Workflow\Runtime\WorkflowRecoveryService;
+use App\Library\Automation\Workflow\WorkflowLimits;
+use Illuminate\Console\Command;
+
+/**
+ * Automations V2 §7.4/§8.2 — the lost-and-interrupted-work safety net.
+ *
+ * NAMING, DELIBERATELY DIFFERENT FROM THE CONTRACT. §8.2 describes one command,
+ * `automation:workflows-resume-due`, doing two jobs: waking `waiting` enrollments
+ * whose time has come, and recovering stalled `active` ones. The wait scheduler is
+ * not part of this slice, so shipping a command called "resume-due" that resumes
+ * nothing due would be misleading. This command is the recovery half only; the
+ * wake-up half arrives with the wait slice, either here or beside it.
+ *
+ * It is emphatically NOT how Resume works. Resume re-dispatches held journeys
+ * immediately through RedispatchHeldEnrollments, and this sweep skips paused
+ * workflows entirely so the two can never be confused.
+ */
+class RecoverStalledWorkflowEnrollments extends Command
+{
+    protected $signature = 'automation:workflows-recover-stalled';
+
+    protected $description = 'Recover workflow enrollments whose advance job was lost or interrupted';
+
+    public function handle(WorkflowRecoveryService $recovery): int
+    {
+        $counts = $recovery->recoverStalled();
+
+        $this->info(sprintf(
+            'Recovered stalled enrollments older than %d minutes: %d re-dispatched, %d failed as interrupted, %d expired.',
+            WorkflowLimits::STALE_ACTIVE_RECOVERY_MINUTES,
+            $counts['redispatched'],
+            $counts['failed'],
+            $counts['expired'],
+        ));
+
+        return self::SUCCESS;
+    }
+}
