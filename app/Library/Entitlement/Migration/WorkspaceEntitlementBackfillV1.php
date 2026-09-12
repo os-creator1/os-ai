@@ -104,6 +104,27 @@ class WorkspaceEntitlementBackfillV1
         return (int) $id;
     }
 
+    /**
+     * Customer Experience Slice 1A (RFC-004 §33.2): never allocate more
+     * additional Business slots than the Core row offers
+     * (business_slot_max − business_slot_included). Under the M1 3/5 row
+     * this is 2 — the derivation above is unchanged — and under the
+     * corrected 1/1 row it is 0, so no extra-Business counter is created.
+     * Existing Businesses are never touched either way.
+     */
+    private function additionalBusinessSlotCapacity(int $coreCatalogId): int
+    {
+        $catalog = DB::table('workspace_plan_catalog')->where('id', $coreCatalogId)->first(['business_slot_included', 'business_slot_max', 'unlimited_business_slots']);
+
+        if ($catalog === null || (bool) $catalog->unlimited_business_slots) {
+            return 0;
+        }
+
+        $included = (int) $catalog->business_slot_included;
+
+        return max(0, (int) ($catalog->business_slot_max ?? $included) - $included);
+    }
+
     private function unassignedWorkspaceQuery()
     {
         return DB::table('workspaces')
@@ -137,11 +158,14 @@ class WorkspaceEntitlementBackfillV1
             $now = now();
 
             $businessCount = DB::table('businesses')->where('workspace_id', $workspaceId)->count();
-            $additionalBusinessSlots = match (true) {
-                $businessCount >= 5 => 2,
-                $businessCount === 4 => 1,
-                default => 0,
-            };
+            $additionalBusinessSlots = min(
+                match (true) {
+                    $businessCount >= 5 => 2,
+                    $businessCount === 4 => 1,
+                    default => 0,
+                },
+                $this->additionalBusinessSlotCapacity($coreCatalogId),
+            );
 
             try {
                 DB::table('workspace_plan_assignments')->insert([

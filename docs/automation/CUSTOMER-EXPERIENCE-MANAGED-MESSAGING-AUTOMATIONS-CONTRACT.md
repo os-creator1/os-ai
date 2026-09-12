@@ -1409,7 +1409,7 @@ own acceptance criteria demand is a defect; §22.2 records the reconciliation.
 
 | Slice | Implementation paths | Test paths | Documentation paths |
 |---|---|---|---|
-| **1A** | `app/Library/Entitlement/EntitlementManager.php` (**additive location-capacity methods only** — existing `decide()`/`decideBusinessSlotCapacity()` semantics unchanged), `app/DTO/Entitlement/**`, `app/Enums/Entitlement/**`, `app/Enums/Business/BusinessLocationLifecycleState.php` (new), `app/Models/{WorkspacePlanCatalog,Business,BusinessLocation}.php`, `app/Repositories/Contracts/BusinessLocationRepository.php`, `app/Repositories/Eloquent/EloquentBusinessLocationRepository.php`, `app/Http/Controllers/Customer/Business/BusinessLocationsController.php` (new), `app/Http/Controllers/Customer/BusinessOnboardingController.php` (delegate onto the §7.3b boundary only), `app/Library/Business/BusinessLocationManager.php` (new), `app/Http/Requests/Business/UpsertBusinessLocationRequest.php`, `app/Http/Requests/Business/StoreBusinessLocationRequest.php` (new), `app/Http/Requests/Business/ArchiveBusinessLocationRequest.php` (new), `app/Exceptions/Entitlement/**`, `app/Events/Entitlement/**`, `resources/views/customer/business/locations/**` (new), `routes/customer.php`, `database/migrations/**` (additive only — see §23.2) | `tests/Feature/Entitlement/**`, `tests/Unit/Entitlement/**`, `tests/Feature/Business/**` | `docs/rfcs/RFC-004-PLANS-AND-BUSINESS-FEATURE-ENTITLEMENTS.md`, `docs/rfcs/RFC-004-PLANS-AND-BUSINESS-FEATURE-ENTITLEMENTS-DEPLOYMENT.md`, `docs/automation/CUSTOMER-EXPERIENCE-MANAGED-MESSAGING-AUTOMATIONS-CONTRACT.md`, the slice's own contract under `docs/automation/**` |
+| **1A** | `app/Library/Entitlement/EntitlementManager.php` (**additive location-capacity methods only** — existing `decide()`/`decideBusinessSlotCapacity()` semantics unchanged), `app/DTO/Entitlement/**`, `app/Enums/Entitlement/**`, `app/Enums/Business/BusinessLocationLifecycleState.php` (new), `app/Models/{WorkspacePlanCatalog,Business,BusinessLocation}.php`, `app/Repositories/Contracts/BusinessLocationRepository.php`, `app/Repositories/Eloquent/EloquentBusinessLocationRepository.php`, `app/Http/Controllers/Customer/Business/BusinessLocationsController.php` (new), `app/Http/Controllers/Customer/BusinessOnboardingController.php` (delegate onto the §7.3b boundary only), `app/Library/Business/BusinessLocationManager.php` (new), `app/Http/Requests/Business/UpsertBusinessLocationRequest.php`, `app/Http/Requests/Business/StoreBusinessLocationRequest.php` (new), `app/Http/Requests/Business/ArchiveBusinessLocationRequest.php` (new), `app/Exceptions/Entitlement/**`, `app/Events/Entitlement/**`, `resources/views/customer/business/locations/**` (new), `routes/customer.php`, `database/migrations/**` (additive only — see §23.2); **human decisions after reconnaissance (2026-09-11, recorded in Appendix C):** `app/Library/Business/BusinessManager.php` (`upsertPrimaryLocation()` body only — delegate onto the boundary), `app/Library/Navigation/CustomerMenuBuilder.php` (one Settings → Business → Locations leaf only), `resources/lang/en/locale.php` (the one `menu.Locations` key that leaf's existing translation invariant requires), `app/Models/WorkspaceEntitlementTransition.php` (the approved `payload` column's fillable/cast only), `app/Library/Entitlement/EntitlementManager.php::changePlan()` (one additive call re-evaluating location grandfathering in its own transaction); **correction round 1 (Appendix C):** `EntitlementManager.php` (the catalog-derived additional-Business-slot rule and `updateCatalogPricing()` ratio guard), `app/Library/Entitlement/Migration/WorkspaceEntitlementBackfillV1.php` (the same catalog-derived cap), `app/Library/Workspace/WorkspaceManager.php` (one call in `reassignBusiness()`), `app/Http/Controllers/Customer/Workspace/WorkspaceController.php` (one refusal message in `reassignBusiness()`) | `tests/Feature/Entitlement/**`, `tests/Unit/Entitlement/**`, `tests/Feature/Business/**`; **human decisions (Appendix C):** `tests/Feature/Navigation/CustomerNavigationTreeTest.php` (the Locations leaf), `tests/Feature/Usage/**` only where a test encodes the superseded 3/5 Business-slot catalog, and the `tests/Feature/Workspace/**` assertions that encoded it or the pre-Locations menu | `docs/rfcs/RFC-004-PLANS-AND-BUSINESS-FEATURE-ENTITLEMENTS.md`, `docs/rfcs/RFC-004-PLANS-AND-BUSINESS-FEATURE-ENTITLEMENTS-DEPLOYMENT.md`, `docs/automation/CUSTOMER-EXPERIENCE-MANAGED-MESSAGING-AUTOMATIONS-CONTRACT.md`, the slice's own contract under `docs/automation/**` |
 | **1B** | `app/Library/Navigation/**` (new), `app/Library/ViewAs/**` (new), `app/Providers/{MenuServiceProvider,AppServiceProvider}.php`, `app/Helpers/Helper.php` (customer menu branch only), `app/Http/Middleware/**` (context resolution, view-as), `app/Http/Kernel.php` (middleware registration only), `app/Models/ViewAsSession.php` (new), `app/Policies/**`, `resources/views/panels/{sidebar,submenu,navbar,breadcrumb}.blade.php`, `resources/views/components/**`, `routes/customer.php`, `database/migrations/**` (view-as audit table); **Correction Round 1 (narrow):** `app/Http/Controllers/Customer/Workspace/WorkspaceController.php` (account-frame access gate for `index()`/`show()` only) and `resources/views/customer/workspaces/{index,show}.blade.php` (account vocabulary only) — the direct-route leak fix of §5.4 | `tests/Feature/Workspace/**`, `tests/Feature/Security/**`, `tests/Feature/DesignSystem/**`; **Correction Round 1 (narrow):** exactly `tests/Feature/Analytics/AnalyticsCampaignTest.php` and `tests/Feature/Analytics/AnalyticsViewTest.php` (the two assertions that encoded the pre-1B static navigation; no other `tests/Feature/Analytics/**` path) | `docs/automation/CUSTOMER-EXPERIENCE-MANAGED-MESSAGING-AUTOMATIONS-CONTRACT.md`, the slice's own contract |
 | **2** | `resources/views/auth/**`, `resources/views/layouts/**`, `resources/views/components/branding-illustration.blade.php`, `app/Library/Branding/**`, `resources/lang/en/locale.php`, `public/images/branding/**` (new assets), `resources/sass/**` | `tests/Feature/Auth/**`, `tests/Feature/Branding/**`, `tests/Feature/Theme/**` | `docs/automation/DESIGN-SYSTEM-M2-*`, the slice's own contract |
 | **3** | `app/Library/Messaging/**` (new), `app/Library/Messaging/Contracts/**` (new), `app/Library/Messaging/DTO/**` (new), `app/Library/Messaging/Exceptions/**` (new), `app/Models/BusinessMessagingIdentity.php` (new), `app/Models/BusinessMessagingNumber.php` (new), `app/Models/BusinessUsageMeasurement.php` (new), `app/Models/MessagingWebhookRejection.php` (new), `app/Http/Controllers/Customer/Business/MessagingChannelsController.php`, `app/Enums/Messaging/**` (new), `resources/views/customer/business/MessagingChannels/**`, `resources/views/customer/settings/advanced/**` (new), `config/services.php`, `config/messaging.php` (new), `config/customer-permissions.php` (existing — one new array entry, `manage_advanced_provider`, only), `app/Providers/AppServiceProvider.php` (binding only), `database/migrations/**`; **Preimplementation executability correction, Round 2 (2026-09-09, superseding Round 1 and Round 0 of the same date — see `docs/automation/CUSTOMER-EXPERIENCE-SLICE-3-MESSAGING-PROVIDER-FOUNDATION.md` §3):** `app/Enums/Entitlement/PlatformFeature.php` (existing — one additive enum case, `MessagingTransport`, only), `app/Library/Usage/UsageWalletManager.php` (existing — one additive public method, `recordMeasurement()`, plus one additive constructor-injected dependency, `BusinessUsageMeasurementRepository`, added to the existing constructor's parameter list — no existing method, parameter, or behaviour modified), `app/Repositories/Contracts/BusinessUsageMeasurementRepository.php` (new), `app/Repositories/Eloquent/EloquentBusinessUsageMeasurementRepository.php` (new — the sole writer of the new RFC-005-owned `business_usage_measurements` table), `app/Http/Controllers/Customer/DLRController.php` (existing — one new method, `inboundTelnyxManaged()`; a narrow edit to the existing `inboundDLR()` method's fail-open `else` branch removing the default-to-user-1 write for every provider that shares it; a narrow edit to the existing `inboundTwilio()` method adding `Twilio\Security\RequestValidator` signature verification using the already-stored `auth_token`; a narrow edit to the existing `inboundTelnyx()` method disabling inbound processing for Business-facing BYO Telnyx connections — every one of `DLRController`'s other ~57 provider methods stays untouched), `routes/public.php` (existing — one new route line only), `routes/web.php` (existing — removal of exactly the two dead/duplicate legacy Telnyx lines, no other line touched), `routes/customer.php` (existing — new routes for the relocated advanced-settings surface, plus removal of the old `businesses/{businessUid}/channels` route block), `app/Repositories/Eloquent/EloquentCampaignRepository.php` (existing — the pre-dispatch managed-identity resolution/delegation call inserted immediately before the existing provider `switch` in `quickSend()` only), `app/Models/Campaigns.php` (existing — the same pre-dispatch call inserted before its own internal dispatch `switch` only), `tests/TestCase.php` (existing — one new line, `Http::preventStrayRequests()`, in the base test setup only), `app/Console/Commands/PurgeMessagingWebhookRejections.php` (new), `app/Console/Kernel.php` (existing — one new `$schedule->command(...)` line only) | `tests/Feature/Messaging/**` (new), `tests/Feature/Security/**`, `tests/Feature/Usage/**`; **Preimplementation executability correction:** `tests/Feature/Business/**` (narrowly, the existing `MessagingChannelsTest.php` and new production-delegation/relocation-integration tests) | the slice's own contract; **restate the superseded B2 docblock rules** (§27 C-5) |
@@ -1695,6 +1695,17 @@ active/archived distinction. If any row is `archived` at rollback time, `down()`
 resurrecting archived locations as active could push a Business over capacity
 and, on Core/Growth, past a paid allocation it no longer holds. The operator
 archives-or-deletes deliberately first.
+
+**Implementation note (Slice 1A, human decision 2026-09-11).** "Removes the
+transition type it added" is realised without ever deleting genuine history:
+`down()` removes **only** the migration-owned audit rows, uniquely identified
+by type `capacity_grandfathered`, a null actor and payload source
+`slice_1a_capacity_correction_v1`. A pristine rollback — migrate, no runtime
+use, rollback — therefore succeeds. `down()` fails closed only on
+post-migration runtime state: the two cases above, runtime allocation or
+grandfathering changes, Core/Growth locations above what the old schema can
+bound, runtime audit rows of the two new types (never deleted), or an
+operator edit of any value the migration wrote. See Appendix C.
 
 **Properties.** Makes no provider call; touches no wallet, phone number, GBP
 binding or website; leaves every existing Business and location fully accessible
@@ -2016,5 +2027,129 @@ BusinessScoped / Denied), enforced by the middleware and mirrored by the menu;
 an unclassified route fails `ViewAsRouteBoundaryTest`. (e) The prohibited
 inventory is complete for every current capability family and already names
 the Slice 1A `customer.workspaces.businesses.locations.allocations.*` family.
+
+---
+
+## 31. APPENDIX C — SLICE 1A IMPLEMENTATION RECORD
+
+**Slice 1A (§21 row 1A) is implemented** on
+`agent/customer-experience-slice-1a-location-capacity-v2`, from `origin/main`
+`c7ab88beb4f67955c5a8b63854b5b11fa4f3e1cf`. The earlier, unmerged
+`agent/customer-experience-slice-1a-location-capacity` branch was used only as
+evidence, never as ancestry, and was not force-pushed.
+
+| Promise | Delivered by |
+|---|---|
+| Additive catalog columns, per-Business counters, lifecycle, grandfathering (§7.1, §7.5, §23.2) | `database/migrations/2026_09_15_100001_add_physical_location_capacity_and_lifecycle.php` |
+| Corrected Business capacity (§7.4) | the same migration: Core/Growth `1`/`1`, `additional_business_slot_price_ratio = NULL`; enforced by the unchanged `decideBusinessSlotCapacity()` at every RFC-004 §17 seam |
+| Location capacity decision and assertion (§7.3) | `EntitlementManager::decideLocationSlotCapacity()` / `assertCanActivateAnotherLocation()`; `app/DTO/Entitlement/LocationSlotCapacityDecision.php` |
+| Allocation and cancellation (§7.3a rules 4–6) | `EntitlementManager::setAdditionalLocationSlots()` — platform administrator only, audited; a reduction only when active locations fit |
+| Grandfathered excess consumed on archive (§7.5.3) | `EntitlementManager::reconcileGrandfatheredLocationsAfterArchive()` |
+| Downgrade re-evaluation (§7.5.3, RFC-004 §33.7) | one additive call in `EntitlementManager::changePlan()`, same transaction |
+| Canonical boundary (§7.3b) | `app/Library/Business/BusinessLocationManager.php`; onboarding reaches it through `BusinessManager::upsertPrimaryLocation()` |
+| Multi-location UI (§7.6) | `BusinessLocationsController`, `resources/views/customer/business/locations/**`, eight `customer.workspaces.businesses.locations.*` routes, Settings → Business → Locations |
+
+**Tests (§24.1 ownership).** T-LOC-1..5, T-LOC-11..16 —
+`tests/Feature/Business/BusinessLocationCapacityTest.php`; T-LOC-6 —
+`BusinessLocationConcurrencyTest.php` (independent OS processes); T-LOC-7 —
+`BusinessLocationPlanChangeTest.php`; T-LOC-8 and forward / rollback / replay /
+idempotence — `BusinessLocationCapacityMigrationTest.php`; T-LOC-9 —
+`BusinessLocationBoundaryTest.php`; T-LOC-10, T-CTX-4 —
+`BusinessLocationHttpTest.php`; T-BIZ-1..2 — `BusinessAccountCapacityTest.php`.
+
+**Discrepancies found against this contract, and the human decisions taken
+on 2026-09-11 before implementation continued:**
+
+1. **A paid "extra Business slot" checkout already exists** (RFC-005 M4
+   agreements) and this contract never mentioned it. Decision: Core/Growth
+   `additional_business_slot_price_ratio` becomes NULL, so the existing
+   fail-closed code refuses every new paid quote and allocation; the
+   migration aborts before any change while a live agreement exists; no
+   RFC-005 production file is changed. Billing remediation of any such
+   agreement is separate Billing work. (`updateCatalogPricing()` now refuses
+   the ratio itself — correction round 1 below.)
+2. **The onboarding location write goes through `BusinessManager`**, not
+   directly from the controller as §7.3b assumed. Decision: the minimum
+   change to `BusinessManager::upsertPrimaryLocation()` only.
+3. **The audit table had no payload column.** Decision: one nullable JSON
+   `payload` column on the existing Workspace-scoped record, no scalar
+   Business/location columns. Old rows keep NULL.
+4. **§23.3's rollback wording would have deleted audit history.** Decision:
+   the rules in §23.3's implementation note above.
+5. **Downgrade re-evaluation needs `changePlan()`.** Decision: the minimum
+   change in its own transaction, delegating to the single location-capacity
+   algorithm (which lives in `EntitlementManager`, because RFC-004 §20 keeps
+   entitlement-table reads there and `EntitlementManager` never depends on a
+   Business-layer class).
+6. **The Locations page must be reachable.** Decision: one Settings →
+   Business → Locations leaf in `CustomerMenuBuilder`; it obeys the existing
+   view-as classification and needs no entitlement key or query. The existing
+   translation invariant (T-I18N-2) required its one `locale.menu` key.
+
+**Recorded implementation decisions.** (a) Location capacity comes from the
+tier only; operational plan status does not gate it, and a Business's first
+location is never refused — onboarding's first location stays included and
+normal. (b) Locations are read by anyone who can reach the Business and
+changed only by the Workspace owner or an active Admin; restricted staff read.
+(c) While Core/Growth prices are unset there is no customer purchase path;
+the 4th/5th state explains itself and the 6th points to the Agency plan.
+(d) A new location needs a name and a physical service mode. (e) A
+cross-Workspace reassignment re-evaluates grandfathering against the target
+plan — resolved by correction round 1 below.
+
+**Correction round 1 (2026-09-11, review of PR #251) — two merge blockers.**
+
+1. **Extra-Business billing stays dead.** A NULL ratio alone was not enough:
+   `updateCatalogPricing()` could write one back, and the hard-coded
+   Core/Growth `0..2` allocation rule still accepted extra Business slots.
+   Now (a) `updateCatalogPricing()` refuses a non-null
+   `additional_business_slot_price_ratio` for any catalog row that offers no
+   additional Business capacity (`business_slot_max <= business_slot_included`,
+   read from the row, not the tier name) before any update, audit row or
+   event; Agency keeps its own refusal. (b) Every path that can raise
+   `workspace_plan_assignments.additional_business_slots` —
+   `assignFirstPlan()`, `changePlan()`, `setAdditionalBusinessSlots()`,
+   `allocateAdditionalBusinessSlotsFromVerifiedPayment()` and the operator
+   backfill `WorkspaceEntitlementBackfillV1` — derives its limit from
+   `business_slot_max − business_slot_included`, so none can raise it on the
+   corrected Core/Growth rows. A reduction stays valid, so a counter left from
+   the 3/5 catalog can be brought to zero but never raised. RFC-005 checkout,
+   Stripe and payment code are unchanged; the checkout reaches allocation only
+   through the guarded method. Tests that prove the generic engine pin a
+   bounded 3/5 row in their own transaction
+   (`tests/Feature/Entitlement/Concerns/PinsBoundedBusinessSlotCatalog.php`);
+   fixtures that allocated two extra Business slots on Core now allocate none.
+2. **Cross-Workspace reassignment.** `WorkspaceManager::reassignBusiness()`
+   now calls `EntitlementManager::reconcileLocationCapacityForReassignment()`
+   in its own transaction, right after the target's Business-slot check and
+   before any mutation; the lock order stays every Workspace ascending →
+   Business → its location rows. A Business holding a paid
+   `additional_location_slots` allocation is refused
+   (`LocationAllocationNotPortableException`) before anything changes — the
+   allocation is neither cleared nor transferred. Against a bounded target the
+   complimentary allowance is recalculated fresh from the current active
+   locations (`max(0, active − target included)`, the same rule `changePlan()`
+   and archive use); every location is kept and none is added. An unlimited
+   target keeps the allowance unused. The target Workspace records a
+   `capacity_grandfathered` row with payload source `business_reassignment`
+   whenever the allowance changes or the Business arrives carrying one. The
+   customer reassignment action shows a plain refusal message instead of an
+   error. Tests: `tests/Feature/Business/BusinessLocationReassignmentTest.php`.
+
+**Correction round 2 (2026-09-12, review of PR #251).** (1) The branch was
+brought up to date with `origin/main` `25c6be8` by a merge (never a rebase or
+force-push). The one conflict was this contract's own navigation test: main's
+Messages cleanup (Inbox only, no Send or Campaigns) and this slice's
+Settings → Business → Locations leaf both changed the Core-tree expectation;
+resolved to main's list plus this slice's two keys, so Messages stays
+Inbox-only and Locations is still required. (2) The admin Workspace page no
+longer OFFERS an additional-Business-slot value the catalog cannot hold: all
+three choosers render from
+`EntitlementManager::additionalBusinessSlotOptionsByTier()`, so Core, Growth
+and Agency present 0 alone while a row with real capacity still presents its
+full range. The assign and change forms pick their tier in the same request,
+so they offer what EVERY tier allows; the update form knows the Workspace's
+own tier. The server-side guards are unchanged.
+(`tests/Feature/Workspace/AdminAdditionalBusinessSlotOptionsTest.php`.)
 
 **END OF CONTRACT**
