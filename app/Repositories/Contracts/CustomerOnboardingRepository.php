@@ -16,6 +16,14 @@ interface CustomerOnboardingRepository extends BaseRepository
     public function findByCustomer(Customer $customer): ?CustomerOnboarding;
 
     /**
+     * COO C-1 — read one onboarding record by its own primary key, for a
+     * listener that receives CustomerOnboardingCompleted (which announces an
+     * onboarding id, not a Business id) and must resolve the Business it
+     * belongs to from persistence.
+     */
+    public function findById(int $id): ?CustomerOnboarding;
+
+    /**
      * Equivalent to findByCustomer(), but scoped by the raw customer_id
      * (users.id) directly, for callers that don't already have a Customer
      * model materialized. Relies on the same database-level uniqueness on

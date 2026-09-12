@@ -1,9 +1,13 @@
 {{--
-    Customer Experience Slice 4 §7 — the Agency Account Home: which client
-    needs you, how many client accounts the plan allows, prospecting at a
-    glance, and the account's plan and Agency-wide controls. Flags and counts
-    only; a client's messages, contacts and results live in that client's own
-    home, one click away.
+    The Agency Account Home — Customer Experience Slice 4 §7, reshaped by
+    Unified Home §3.1 (A-1): which client needs you, how each client did over
+    the selected period, the outreach truth table, and — only when they need
+    an action — client-account capacity and an account billing problem.
+
+    A client's own messages, results and recommendations stay in that client's
+    Business Home, one click away; no Agency portfolio figure ever follows the
+    actor into it. Nothing on this page is generated: every number is a
+    persisted fact, and there is no AI call anywhere in this branch.
 --}}
 @php use App\Library\Dashboard\DashboardSnapshot; @endphp
 
@@ -81,6 +85,59 @@
     </section>
 @endif
 
+@if($dashboard->failed(DashboardSnapshot::BAND_CROSS_CLIENT))
+    @include('customer.dashboard.band-failed', ['band' => 'cross_client', 'title' => 'Client performance'])
+@elseif($dashboard->has(DashboardSnapshot::BAND_CROSS_CLIENT))
+    @php $performance = $dashboard->band(DashboardSnapshot::BAND_CROSS_CLIENT); @endphp
+    <section class="mb-2" aria-labelledby="dashboard-cross-client-heading" data-band="cross_client">
+        <x-card>
+            <div class="d-flex flex-wrap justify-content-between align-items-center gap-1 mb-25">
+                <h2 class="h4 text-section-heading mb-0" id="dashboard-cross-client-heading">Client performance</h2>
+                <nav class="d-flex flex-wrap gap-50" aria-label="Period" data-role="cross-client-periods">
+                    @foreach($performance['periods'] as $period)
+                        <x-button size="sm" :variant="$period['selected'] ? 'primary' : 'outline'" :href="$period['url']" data-role="cross-client-period" data-period="{{ $period['value'] }}" :aria-current="$period['selected'] ? 'true' : null">{{ $period['label'] }}</x-button>
+                    @endforeach
+                </nav>
+            </div>
+            <p class="text-caption text-muted mb-1" data-role="cross-client-span">{{ $performance['rangeLabel'] }} · {{ $performance['spanLabel'] }}</p>
+
+            {{-- Wider screens: a table. --}}
+            <div class="d-none d-md-block" data-role="cross-client-table">
+                <x-table :headers="['Client account', 'New contacts', 'New conversations']" class="mb-0">
+                    @foreach($performance['rows'] as $row)
+                        <tr data-role="cross-client-row">
+                            <td class="fw-bolder">{{ $row['name'] }}</td>
+                            <td data-role="cross-client-contacts">{{ number_format($row['newContacts']) }}</td>
+                            <td data-role="cross-client-conversations">{{ number_format($row['newConversations']) }}</td>
+                        </tr>
+                    @endforeach
+                    <tr data-role="cross-client-total">
+                        <td class="fw-bolder">All client accounts</td>
+                        <td class="fw-bolder">{{ number_format($performance['totals']['newContacts']) }}</td>
+                        <td class="fw-bolder">{{ number_format($performance['totals']['newConversations']) }}</td>
+                    </tr>
+                </x-table>
+            </div>
+
+            {{-- Narrow screens (375 px): the same rows, stacked. --}}
+            <ul class="list-unstyled d-md-none mb-0" data-role="cross-client-stacked">
+                @foreach($performance['rows'] as $row)
+                    <li class="py-1 border-bottom">
+                        <h3 class="h6 mb-25">{{ $row['name'] }}</h3>
+                        <p class="mb-0">{{ number_format($row['newContacts']) }} new {{ \Illuminate\Support\Str::plural('contact', $row['newContacts']) }}</p>
+                        <p class="mb-0">{{ number_format($row['newConversations']) }} new {{ \Illuminate\Support\Str::plural('conversation', $row['newConversations']) }}</p>
+                    </li>
+                @endforeach
+                <li class="py-1">
+                    <h3 class="h6 mb-25">All client accounts</h3>
+                    <p class="mb-0">{{ number_format($performance['totals']['newContacts']) }} new {{ \Illuminate\Support\Str::plural('contact', $performance['totals']['newContacts']) }}</p>
+                    <p class="mb-0">{{ number_format($performance['totals']['newConversations']) }} new {{ \Illuminate\Support\Str::plural('conversation', $performance['totals']['newConversations']) }}</p>
+                </li>
+            </ul>
+        </x-card>
+    </section>
+@endif
+
 @if($dashboard->failed(DashboardSnapshot::BAND_CAPACITY))
     @include('customer.dashboard.band-failed', ['band' => 'capacity', 'title' => 'Client account capacity'])
 @elseif($dashboard->has(DashboardSnapshot::BAND_CAPACITY))
@@ -104,12 +161,23 @@
 @endif
 
 @if($dashboard->failed(DashboardSnapshot::BAND_PROSPECTING))
-    @include('customer.dashboard.band-failed', ['band' => 'prospecting', 'title' => 'Prospecting'])
+    @include('customer.dashboard.band-failed', ['band' => 'prospecting', 'title' => 'Outreach'])
 @elseif($dashboard->has(DashboardSnapshot::BAND_PROSPECTING))
     @php $prospecting = $dashboard->band(DashboardSnapshot::BAND_PROSPECTING); @endphp
     <section class="mb-2" aria-labelledby="dashboard-prospecting-heading" data-band="prospecting">
         <x-card>
-            <h2 class="h4 text-section-heading mb-1" id="dashboard-prospecting-heading">Prospecting</h2>
+            <h2 class="h4 text-section-heading mb-25" id="dashboard-prospecting-heading">Outreach</h2>
+            <p class="text-caption text-muted mb-1" data-role="prospecting-range">{{ $prospecting['rangeLabel'] }}</p>
+            <dl class="row mb-1">
+                <dt class="col-6 col-md-4 text-label">Prospects contacted</dt>
+                <dd class="col-6 col-md-8" data-role="prospecting-contacted">{{ number_format($prospecting['contacted']) }}</dd>
+                <dt class="col-6 col-md-4 text-label">Replies</dt>
+                <dd class="col-6 col-md-8" data-role="prospecting-replies">{{ number_format($prospecting['replies']) }}</dd>
+                <dt class="col-6 col-md-4 text-label">Booked calls</dt>
+                <dd class="col-6 col-md-8" data-role="prospecting-booked">{{ number_format($prospecting['booked']) }}</dd>
+                <dt class="col-6 col-md-4 text-label">Failed sends</dt>
+                <dd class="col-6 col-md-8" data-role="prospecting-failures">{{ number_format($prospecting['failures']) }}</dd>
+            </dl>
             <dl class="row mb-1">
                 <dt class="col-6 col-md-4 text-label">Active campaigns</dt>
                 <dd class="col-6 col-md-8" data-role="prospecting-campaigns">{{ number_format($prospecting['activeCampaigns']) }}</dd>
@@ -122,29 +190,16 @@
 @endif
 
 @if($dashboard->failed(DashboardSnapshot::BAND_ACCOUNT))
-    @include('customer.dashboard.band-failed', ['band' => 'account', 'title' => 'Plan and spending'])
+    @include('customer.dashboard.band-failed', ['band' => 'account', 'title' => 'Account billing'])
 @elseif($dashboard->has(DashboardSnapshot::BAND_ACCOUNT))
     @php $account = $dashboard->band(DashboardSnapshot::BAND_ACCOUNT); @endphp
     <section class="mb-2" aria-labelledby="dashboard-account-heading" data-band="account">
         <x-card>
-            <h2 class="h4 text-section-heading mb-1" id="dashboard-account-heading">Plan and spending</h2>
-            <dl class="row mb-0">
-                <dt class="col-6 col-md-4 text-label">Plan</dt>
-                <dd class="col-6 col-md-8" data-role="account-plan">{{ $account['plan'] ?? 'No plan assigned' }}</dd>
-                @if($account['controls'] !== null)
-                    @if($account['controls']['mixedCurrencies'])
-                        <dt class="col-6 col-md-4 text-label">Spent this month</dt>
-                        <dd class="col-6 col-md-8" data-role="account-spent">Client accounts use more than one currency, so no combined figure is shown.</dd>
-                    @else
-                        <dt class="col-6 col-md-4 text-label">Spent this month</dt>
-                        <dd class="col-6 col-md-8" data-role="account-spent">{{ $account['controls']['spentThisPeriod'] }}</dd>
-                        <dt class="col-6 col-md-4 text-label">Agency-wide monthly limit</dt>
-                        <dd class="col-6 col-md-8" data-role="account-limit">{{ $account['controls']['spendLimit'] ?? 'No limit set' }}</dd>
-                    @endif
-                    <dt class="col-6 col-md-4 text-label">Paid activity</dt>
-                    <dd class="col-6 col-md-8 mb-0" data-role="account-paused">{{ $account['controls']['paused'] ? 'Paused across the agency account' : 'Running' }}</dd>
-                @endif
-            </dl>
+            <h2 class="h4 text-section-heading mb-1" id="dashboard-account-heading">Account billing</h2>
+            <p class="mb-1" data-role="account-paused">{{ $account['sentence'] }}</p>
+            @if($account['manageUrl'])
+                <x-button variant="outline" size="sm" :href="$account['manageUrl']">Open account settings</x-button>
+            @endif
         </x-card>
     </section>
 @endif
