@@ -127,4 +127,119 @@ class AnalyticsDateRangeTest extends TestCase
         $this->assertSame('2026-06-10 07:00:00', $la->startUtc->utc()->format('Y-m-d H:i:s'));
         $this->assertSame('2026-06-11 07:00:00', $la->endUtc->utc()->format('Y-m-d H:i:s'));
     }
+
+    // ---------------------------------------------------------------
+    // Results — calendar-month presets
+    // ---------------------------------------------------------------
+
+    public function test_this_month_runs_from_the_first_local_day_through_today(): void
+    {
+        $range = AnalyticsDateRange::preset(AnalyticsDateRange::PRESET_THIS_MONTH, self::TZ, $this->today());
+
+        $this->assertSame('2026-06-01', $range->startLocal->format('Y-m-d'));
+        $this->assertSame('2026-06-15', $range->endLocal->format('Y-m-d'));
+        $this->assertSame(15, $range->days());
+        $this->assertSame('2026-06-01 04:00:00', $range->startUtc->utc()->format('Y-m-d H:i:s'), 'Local midnight of the 1st, in New York.');
+        $this->assertSame('This month', $range->label());
+    }
+
+    public function test_this_month_on_the_first_is_a_single_day(): void
+    {
+        $range = AnalyticsDateRange::preset(AnalyticsDateRange::PRESET_THIS_MONTH, self::TZ, CarbonImmutable::parse('2026-07-01 16:00:00', 'UTC'));
+
+        $this->assertSame(1, $range->days());
+        $this->assertSame('2026-07-01', $range->startLocal->format('Y-m-d'));
+    }
+
+    public function test_this_month_follows_the_business_calendar_not_utc(): void
+    {
+        // 03:00 UTC on 1 July is still 30 June in New York: "this month" is June.
+        $range = AnalyticsDateRange::preset(AnalyticsDateRange::PRESET_THIS_MONTH, self::TZ, CarbonImmutable::parse('2026-07-01 03:00:00', 'UTC'));
+
+        $this->assertSame('2026-06-01', $range->startLocal->format('Y-m-d'));
+        $this->assertSame('2026-06-30', $range->endLocal->format('Y-m-d'));
+    }
+
+    public function test_last_month_is_the_whole_previous_calendar_month(): void
+    {
+        $range = AnalyticsDateRange::preset(AnalyticsDateRange::PRESET_LAST_MONTH, self::TZ, $this->today());
+
+        $this->assertSame('2026-05-01', $range->startLocal->format('Y-m-d'));
+        $this->assertSame('2026-05-31', $range->endLocal->format('Y-m-d'));
+        $this->assertSame(31, $range->days());
+        $this->assertSame('2026-06-01 04:00:00', $range->endUtc->utc()->format('Y-m-d H:i:s'), 'Half-open: ends at local midnight of the 1st.');
+        $this->assertSame('Last month', $range->label());
+    }
+
+    public function test_last_month_in_january_is_the_previous_december(): void
+    {
+        $range = AnalyticsDateRange::preset(AnalyticsDateRange::PRESET_LAST_MONTH, self::TZ, CarbonImmutable::parse('2026-01-20 12:00:00', 'UTC'));
+
+        $this->assertSame('2025-12-01', $range->startLocal->format('Y-m-d'));
+        $this->assertSame('2025-12-31', $range->endLocal->format('Y-m-d'));
+    }
+
+    public function test_last_month_after_a_31_day_month_never_overflows(): void
+    {
+        // subMonth() from 31 March would overflow into March again.
+        $range = AnalyticsDateRange::preset(AnalyticsDateRange::PRESET_LAST_MONTH, self::TZ, CarbonImmutable::parse('2026-03-31 18:00:00', 'UTC'));
+
+        $this->assertSame('2026-02-01', $range->startLocal->format('Y-m-d'));
+        $this->assertSame('2026-02-28', $range->endLocal->format('Y-m-d'));
+    }
+
+    public function test_a_month_containing_a_dst_change_is_still_exactly_its_own_dates(): void
+    {
+        // March 2026 in New York holds the spring-forward day.
+        $range = AnalyticsDateRange::preset(AnalyticsDateRange::PRESET_LAST_MONTH, self::TZ, CarbonImmutable::parse('2026-04-10 12:00:00', 'UTC'));
+
+        $this->assertSame(31, $range->days());
+        $this->assertCount(31, $range->dailyBuckets());
+        $this->assertSame('2026-03-01 05:00:00', $range->startUtc->utc()->format('Y-m-d H:i:s'), 'EST before the change.');
+        $this->assertSame('2026-04-01 04:00:00', $range->endUtc->utc()->format('Y-m-d H:i:s'), 'EDT after it.');
+    }
+
+    public function test_calendar_presets_carry_their_month_in_the_cache_key(): void
+    {
+        $lastDayOfJune = CarbonImmutable::parse('2026-06-30 16:00:00', 'UTC');
+        $firstOfJuly = CarbonImmutable::parse('2026-07-01 16:00:00', 'UTC');
+
+        $june = AnalyticsDateRange::preset(AnalyticsDateRange::PRESET_THIS_MONTH, self::TZ, $lastDayOfJune);
+        $july = AnalyticsDateRange::preset(AnalyticsDateRange::PRESET_THIS_MONTH, self::TZ, $firstOfJuly);
+
+        $this->assertSame('this_month_2026-06', $june->cacheKey());
+        $this->assertSame('this_month_2026-07', $july->cacheKey());
+        $this->assertNotSame($june->cacheKey(), $july->cacheKey(), 'June\'s figures can never be served as July\'s.');
+        $this->assertSame('last_month_2026-05', AnalyticsDateRange::preset(AnalyticsDateRange::PRESET_LAST_MONTH, self::TZ, $this->today())->cacheKey());
+    }
+
+    public function test_rolling_presets_keep_their_bare_cache_key(): void
+    {
+        foreach (array_keys(AnalyticsDateRange::PRESETS) as $preset) {
+            $this->assertSame($preset, AnalyticsDateRange::preset($preset, self::TZ, $this->today())->cacheKey());
+        }
+    }
+
+    public function test_every_selectable_preset_resolves(): void
+    {
+        foreach (AnalyticsDateRange::SELECTABLE_PRESETS as $preset) {
+            if ($preset === AnalyticsDateRange::PRESET_CUSTOM) {
+                continue;
+            }
+
+            $range = AnalyticsDateRange::preset($preset, self::TZ, $this->today());
+            $this->assertGreaterThan(0, $range->days(), $preset);
+            $this->assertLessThanOrEqual(AnalyticsDateRange::MAX_CUSTOM_DAYS, $range->days(), $preset);
+        }
+    }
+
+    public function test_span_label_is_a_short_human_date_span(): void
+    {
+        $today = $this->today();
+
+        $this->assertSame('May 17 – Jun 15', AnalyticsDateRange::preset(AnalyticsDateRange::PRESET_LAST_30_DAYS, self::TZ, $today)->spanLabel($today));
+        $this->assertSame('Jun 15', AnalyticsDateRange::fromInput(['range' => 'custom', 'start' => '2026-06-15', 'end' => '2026-06-15'], self::TZ)->spanLabel($today));
+        $this->assertSame('Dec 20, 2025 – Jan 5, 2026', AnalyticsDateRange::fromInput(['range' => 'custom', 'start' => '2025-12-20', 'end' => '2026-01-05'], self::TZ)->spanLabel($today));
+        $this->assertSame('Mar 1 – Mar 31, 2025', AnalyticsDateRange::fromInput(['range' => 'custom', 'start' => '2025-03-01', 'end' => '2025-03-31'], self::TZ)->spanLabel($today), 'A past year is named.');
+    }
 }

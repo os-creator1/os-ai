@@ -31,12 +31,7 @@ class AnalyticsRangeRequest extends FormRequest
     public static function ruleSet(): array
     {
         return [
-            'range' => ['nullable', 'string', Rule::in([
-                AnalyticsDateRange::PRESET_LAST_7_DAYS,
-                AnalyticsDateRange::PRESET_LAST_30_DAYS,
-                AnalyticsDateRange::PRESET_LAST_90_DAYS,
-                AnalyticsDateRange::PRESET_CUSTOM,
-            ])],
+            'range' => ['nullable', 'string', Rule::in(AnalyticsDateRange::SELECTABLE_PRESETS)],
             'start' => ['nullable', 'string', 'max:10', 'required_if:range,' . AnalyticsDateRange::PRESET_CUSTOM],
             'end' => ['nullable', 'string', 'max:10', 'required_if:range,' . AnalyticsDateRange::PRESET_CUSTOM],
             'page' => ['nullable', 'integer', 'min:1', 'max:100000'],
