@@ -43,6 +43,45 @@ final class BusinessConversationReadModel
     }
 
     /**
+     * Unified Home §3.1 (A-1) — startedCount() for SEVERAL Businesses, in
+     * ONE grouped statement, so the Agency Account Home's cross-client band
+     * never asks this seam once per client.
+     *
+     * Same table, same half-open bounds and the same rule that a
+     * NULL-business legacy conversation is never counted; the ids come from
+     * the caller already authorized, and each keeps its own figure. This
+     * stays the only door to chat_boxes: Dashboard and B5 still never query
+     * that table themselves.
+     *
+     * @param  array<int, int>  $businessIds  already authorized Business ids
+     * @return array<int, int>  business id => conversations started in [start, end)
+     */
+    public function startedCountsForBusinesses(array $businessIds, CarbonImmutable $startUtc, CarbonImmutable $endUtc): array
+    {
+        $ids = array_values(array_unique(array_map('intval', $businessIds)));
+
+        if ($ids === []) {
+            return [];
+        }
+
+        $counts = [];
+
+        $rows = ChatBox::query()
+            ->selectRaw('business_id, COUNT(*) AS started')
+            ->whereIn('business_id', $ids)
+            ->where('created_at', '>=', $startUtc)
+            ->where('created_at', '<', $endUtc)
+            ->groupBy('business_id')
+            ->get();
+
+        foreach ($rows as $row) {
+            $counts[(int) $row->business_id] = (int) $row->started;
+        }
+
+        return $counts;
+    }
+
+    /**
      * Conversations with at least one unread inbound message.
      */
     public function unreadCount(Business $business): int

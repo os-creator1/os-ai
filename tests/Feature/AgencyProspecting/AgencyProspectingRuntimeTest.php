@@ -9,6 +9,7 @@ use App\Enums\Workspace\WorkspaceMembershipRole;
 use App\Jobs\AgencyProspectingFollowUpJob;
 use App\Jobs\AgencyProspectingInitialSendJob;
 use App\Jobs\AgencyProspectingRespondJob;
+use App\Library\AgencyProspecting\AgencyProspectAiDecision;
 use App\Library\AgencyProspecting\AgencyProspectPhoneNormalizer;
 use App\Library\AgencyProspecting\AgencyProspectingWebhookToken;
 use App\Library\AgencyProspecting\Contracts\AgencyProspectingAiClient;
@@ -1505,6 +1506,145 @@ class AgencyProspectingRuntimeTest extends TestCase
         $this->assertSame('stopped', $member->prospect->fresh()->status->value);
         $this->assertSame(99, $member->fresh()->stage->value);
         $this->assertSame(0, count($this->sender->sentMessages), 'next_stage=99 must stop before any outbound sales copy is sent.');
+    }
+
+    // -----------------------------------------------------------------
+    // Reply intent (Unified Home contract A-2).
+    // -----------------------------------------------------------------
+
+    public function test_a_validated_positive_decision_persists_on_the_correct_inbound_message(): void
+    {
+        [$workspace, $member] = $this->activeConversation();
+        $inbound = $this->createInboundMessage($member);
+        $other = $this->createInboundMessage($member);
+        $this->aiClient->nextRawResponse = json_encode(['intent' => 'positive', 'reply' => 'Great!', 'next_stage' => 2, 'send_booking_link' => false, 'proposed_slot' => null]);
+
+        $this->runRespondForMessage($member->id, $inbound->id);
+
+        $this->assertSame('positive', $inbound->fresh()->intent);
+        $this->assertNull($other->fresh()->intent, 'Only the exact inbound message the job was dispatched for is classified.');
+    }
+
+    public function test_every_canonical_intent_can_persist(): void
+    {
+        foreach (AgencyProspectAiDecision::INTENTS as $intent) {
+            [$workspace, $member] = $this->activeConversation();
+            $inbound = $this->createInboundMessage($member);
+            $this->aiClient->nextRawResponse = json_encode(['intent' => $intent, 'reply' => 'Reply text', 'next_stage' => null, 'send_booking_link' => false, 'proposed_slot' => null]);
+
+            $this->runRespondForMessage($member->id, $inbound->id);
+
+            $this->assertSame($intent, $inbound->fresh()->intent, "Canonical intent [{$intent}] must persist.");
+        }
+    }
+
+    public function test_invalid_json_decision_persists_no_intent(): void
+    {
+        [$workspace, $member] = $this->activeConversation();
+        $inbound = $this->createInboundMessage($member);
+        $this->aiClient->nextRawResponse = 'not valid json {{{';
+
+        $this->runRespondForMessage($member->id, $inbound->id);
+
+        $this->assertNull($inbound->fresh()->intent);
+    }
+
+    public function test_an_unavailable_or_failed_ai_client_persists_no_fabricated_intent(): void
+    {
+        [$workspace, $member] = $this->activeConversation();
+        $inbound = $this->createInboundMessage($member);
+        // The fake's default: no configured response, exactly how a
+        // disabled/unconfigured/failed real client behaves (null).
+        $this->aiClient->nextRawResponse = null;
+
+        $this->runRespondForMessage($member->id, $inbound->id);
+
+        $this->assertNull($inbound->fresh()->intent);
+    }
+
+    public function test_hard_negative_decision_still_persists_its_intent_before_stopping(): void
+    {
+        [$workspace, $member] = $this->activeConversation();
+        $inbound = $this->createInboundMessage($member);
+        $this->aiClient->nextRawResponse = json_encode(['intent' => 'hard_negative', 'reply' => 'Understood.', 'next_stage' => null, 'send_booking_link' => false, 'proposed_slot' => null]);
+
+        $this->runRespondForMessage($member->id, $inbound->id);
+
+        $this->assertSame('hard_negative', $inbound->fresh()->intent);
+        $this->assertSame('stopped', $member->prospect->fresh()->status->value);
+    }
+
+    public function test_next_stage_99_decision_still_persists_its_intent_before_stopping(): void
+    {
+        [$workspace, $member] = $this->activeConversation();
+        $inbound = $this->createInboundMessage($member);
+        $this->aiClient->nextRawResponse = json_encode(['intent' => 'other', 'reply' => 'Goodbye', 'next_stage' => 99, 'send_booking_link' => false, 'proposed_slot' => null]);
+
+        $this->runRespondForMessage($member->id, $inbound->id);
+
+        $this->assertSame('other', $inbound->fresh()->intent);
+        $this->assertSame(99, $member->fresh()->stage->value);
+    }
+
+    /**
+     * Two overlapping executions for the SAME inbound message must never
+     * leave contradictory durable intent behind — first classification
+     * wins. `beforeReturn` fires at the exact moment this run's own model
+     * call returns, simulating another execution having already persisted
+     * a different intent for this exact message in that window (the AI is
+     * not deterministic, so a genuine retry could easily classify
+     * differently the second time).
+     */
+    public function test_a_retried_classification_cannot_overwrite_an_already_persisted_intent(): void
+    {
+        [$workspace, $member] = $this->activeConversation();
+        $inbound = $this->createInboundMessage($member);
+        $this->aiClient->nextRawResponse = json_encode(['intent' => 'other', 'reply' => 'Hi', 'next_stage' => null, 'send_booking_link' => false, 'proposed_slot' => null]);
+        $this->aiClient->beforeReturn = fn () => AgencyProspectMessage::where('id', $inbound->id)->update(['intent' => 'positive']);
+
+        $this->runRespondForMessage($member->id, $inbound->id);
+
+        $this->assertSame('positive', $inbound->fresh()->intent, 'First classification wins; a later run must never overwrite it.');
+    }
+
+    public function test_duplicate_webhook_delivery_persists_intent_exactly_once(): void
+    {
+        [$workspace, $member] = $this->activeConversation();
+        $channel = $member->campaign->channel;
+        $this->aiClient->nextRawResponse = json_encode(['intent' => 'positive', 'reply' => 'Great!', 'next_stage' => 2, 'send_booking_link' => false, 'proposed_slot' => null]);
+
+        $payload = [
+            'From' => '+' . $member->prospect->phone, 'To' => '+' . $channel->sender_number, 'Body' => 'Tell me more', 'MessageSid' => 'SM-INTENT-DUPE',
+        ];
+
+        $this->postTwilioInbound($channel, $payload)->assertOk();
+        $this->postTwilioInbound($channel, $payload)->assertOk();
+
+        $inbound = AgencyProspectMessage::where('provider_message_id', 'SM-INTENT-DUPE')->first();
+        $this->assertSame('positive', $inbound->intent);
+        $this->assertSame(1, count($this->aiClient->receivedMessages), 'The duplicate delivery must never trigger a second classification.');
+    }
+
+    public function test_a_message_row_with_no_intent_remains_valid(): void
+    {
+        [$workspace, $member] = $this->activeConversation();
+        $inbound = $this->createInboundMessage($member);
+
+        $this->assertNull($inbound->fresh()->intent, 'A row classified before this column existed (or never classified) keeps a null intent indefinitely.');
+    }
+
+    private function createInboundMessage(AgencyProspectCampaignMember $member): AgencyProspectMessage
+    {
+        return AgencyProspectMessage::create([
+            'workspace_id' => $member->workspace_id,
+            'campaign_member_id' => $member->id,
+            'channel_id' => $member->campaign?->channel_id,
+            'direction' => AgencyProspectMessage::DIRECTION_INBOUND,
+            'provider_message_id' => 'TEST-INBOUND-' . uniqid('', true),
+            'body' => 'Test inbound message',
+            'status' => AgencyProspectMessage::STATUS_RECEIVED,
+            'received_at' => now(),
+        ]);
     }
 
     // -----------------------------------------------------------------

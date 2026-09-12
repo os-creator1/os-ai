@@ -163,6 +163,7 @@
                 BusinessServiceRepository::class  => EloquentBusinessServiceRepository::class,
                 CustomerOnboardingRepository::class => EloquentCustomerOnboardingRepository::class,
                 OpportunityRunRepository::class => EloquentOpportunityRunRepository::class,
+                \App\Repositories\Contracts\OpportunityProducerDispatchRepository::class => \App\Repositories\Eloquent\EloquentOpportunityProducerDispatchRepository::class,
                 OpportunityRepository::class => EloquentOpportunityRepository::class,
                 OpportunityRunCandidateRepository::class => EloquentOpportunityRunCandidateRepository::class,
                 OpportunityActionExecutionRepository::class => EloquentOpportunityActionExecutionRepository::class,

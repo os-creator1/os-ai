@@ -30,6 +30,14 @@ use Illuminate\Support\Facades\DB;
  * (read-only, B4-owned). Nothing here touches chat_boxes, agency_prospect*,
  * business_usage_*, invoices, subscriptions or payment tables.
  *
+ * The one read that spans several Businesses is
+ * newContactsForBusinesses() (Unified Home §3.1, A-1). It is still not a
+ * cross-Business aggregate: the caller passes an explicit, already
+ * authorized id list, the statement groups BY business_id, and each id
+ * keeps its own separate figure. It exists because the alternative — the
+ * Agency Account Home asking this seam once per client — is exactly the
+ * fan-out §3.1 forbids.
+ *
  * Query budget (§11.2): the overview costs at most ONE query per method
  * below — M1–M6 (+ the message coverage count) 1, M7 1, C1+C2 1,
  * K1+K2+K4+K5 (+ the contact coverage count) 1, K3 1, O1–O4 1, A1–A4 1.
@@ -222,6 +230,44 @@ class BusinessAnalyticsQueries
             'newContacts' => (int) ($row->new_contacts ?? 0),
             'messagesReceived' => (int) ($row->messages_received ?? 0),
         ];
+    }
+
+    /**
+     * Unified Home §3.1 (A-1) — K4's figure for SEVERAL Businesses, in ONE
+     * grouped statement, for the Agency Account Home's cross-client band.
+     *
+     * The column, the window and the half-open comparison are K4's exactly,
+     * so a client's figure here equals the figure that client's own overview
+     * reports for the same instants. Ids the caller did not authorize are
+     * never added by this method, and an id with no contacts is simply
+     * absent from the result rather than guessed at.
+     *
+     * @param  array<int, int>  $businessIds  already authorized Business ids
+     * @return array<int, int>  business id => new contacts in [start, end)
+     */
+    public function newContactsForBusinesses(array $businessIds, CarbonImmutable $start, CarbonImmutable $end): array
+    {
+        $ids = array_values(array_unique(array_map('intval', $businessIds)));
+
+        if ($ids === []) {
+            return [];
+        }
+
+        $counts = [];
+
+        $rows = DB::table('contacts')
+            ->selectRaw('business_id, COUNT(*) AS new_contacts')
+            ->whereIn('business_id', $ids)
+            ->where('created_at', '>=', $this->ts($start))
+            ->where('created_at', '<', $this->ts($end))
+            ->groupBy('business_id')
+            ->get();
+
+        foreach ($rows as $row) {
+            $counts[(int) $row->business_id] = (int) $row->new_contacts;
+        }
+
+        return $counts;
     }
 
     /** K3 — new contacts per local date, one query. */

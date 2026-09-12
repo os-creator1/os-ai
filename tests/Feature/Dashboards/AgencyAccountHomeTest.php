@@ -15,10 +15,11 @@ use Tests\Feature\Dashboards\Concerns\CreatesDashboardFixtures;
 use Tests\TestCase;
 
 /**
- * Customer Experience Slice 4 §7, §18 #3, #31 — the Agency Account Home:
- * which client needs the owner, the plan's client-account capacity,
- * prospecting at a glance, the plan and the Agency-wide controls. Flags and
- * counts only; no client's messages, contacts, results or recommendations.
+ * Customer Experience Slice 4 §7, §18 #3, #31, as reshaped by Unified Home
+ * §3.1 (A-1) — the Agency Account Home: which client needs the owner, how
+ * each client did over the selected period, the outreach truth table, and —
+ * only when they need an action — client-account capacity and an account
+ * billing problem. No client's messages, results or recommendations.
  */
 class AgencyAccountHomeTest extends TestCase
 {
@@ -33,7 +34,7 @@ class AgencyAccountHomeTest extends TestCase
         config(['opportunity.enabled' => true]);
     }
 
-    public function test_the_agency_account_home_shows_flags_capacity_prospecting_and_plan_but_no_client_content(): void
+    public function test_the_agency_account_home_shows_flags_performance_and_outreach_but_no_client_content(): void
     {
         [$agency, $alpha, $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Alpha Dental', 'Northwind Agency');
         $bravo = $this->addBusiness($agency, $workspace, 'Bravo Bistro');
@@ -62,7 +63,9 @@ class AgencyAccountHomeTest extends TestCase
 
         $this->assertStringContainsString('data-kind="agency"', $html);
         $this->assertMatchesRegularExpression('#<h1[^>]*>.*Agency account home.*Northwind Agency.*</h1>#s', $html);
-        $this->assertSame(['clients', 'capacity', 'prospecting', 'account'], $this->bandOrder($html));
+        // A-1 band order. Capacity and account billing are absent because
+        // this Agency has room for more clients and no billing problem.
+        $this->assertSame(['clients', 'cross_client', 'prospecting'], $this->bandOrder($html));
 
         // Client list — the one needing attention first; flags as words.
         $table = $this->between($html, 'data-role="clients-table"', '</table>');
@@ -75,12 +78,21 @@ class AgencyAccountHomeTest extends TestCase
         $this->assertStringContainsString('Not active', $table);
         $this->assertSame(2, substr_count($table, 'name="business"'), 'Only active clients can be opened.');
 
-        // Capacity, prospecting, plan.
-        $this->assertMatchesRegularExpression('/data-role="capacity-figure">\s*3 (of \d+ )?in use/', $html);
+        // Cross-client performance: the period's figures, per client.
+        $performance = $this->between($html, 'data-role="cross-client-table"', '</table>');
+        $this->assertStringContainsString('Bravo Bistro', $performance);
+        $this->assertStringContainsString('New contacts', $performance);
+        $this->assertStringContainsString('New conversations', $performance);
+
+        // Outreach, still with the two counts the band already carried.
         $this->assertMatchesRegularExpression('/data-role="prospecting-campaigns">2</', $html);
         $this->assertMatchesRegularExpression('/data-role="prospecting-prospects">3</', $html);
-        $this->assertStringContainsString('data-role="account-plan"', $html);
-        $this->assertStringContainsString('data-role="account-spent"', $html, 'The owner sees the Agency-wide aggregate.');
+
+        // Capacity is healthy and routine billing is fine, so neither takes
+        // Home space; both stay on Settings → Account.
+        $this->assertStringNotContainsString('data-band="capacity"', $html);
+        $this->assertStringNotContainsString('data-band="account"', $html);
+        $this->assertStringNotContainsString('Spent this month', $main);
 
         // No client content, no KPI, no invented metric.
         $this->assertStringNotContainsString('data-band="headlines"', $html);
@@ -88,8 +100,7 @@ class AgencyAccountHomeTest extends TestCase
         $this->assertStringNotContainsString('data-band="actions"', $html);
         $this->assertStringNotContainsString('Alpha private recommendation', $html);
         $this->assertStringNotContainsString('Messages sent', $main);
-        $this->assertStringNotContainsString('Conversations started', $main);
-        $this->assertDoesNotMatchRegularExpression('/\b(revenue|roi|reply rate|handset delivery|pipeline value|bookings?|booked|conversions?)\b/i', $main);
+        $this->assertDoesNotMatchRegularExpression('/\b(revenue|roi|reply rate|handset delivery|pipeline value|conversions?)\b/i', $main);
         $this->assertStringNotContainsString('locale.', $main);
     }
 
@@ -144,8 +155,14 @@ class AgencyAccountHomeTest extends TestCase
 
         $this->assertStringContainsString('data-kind="agency"', $html);
         $this->assertStringNotContainsString('Hidden Client', $this->mainText($html), 'Only the clients in the admin\'s scope are listed.');
-        $this->assertStringContainsString('data-role="account-plan"', $html);
-        $this->assertStringNotContainsString('data-role="account-spent"', $html, 'A total over clients outside the admin\'s scope is never shown.');
+        $this->assertStringNotContainsString('data-band="account"', $html, 'A state covering clients outside the admin\'s scope is never shown.');
+
+        // The scoped admin's own portfolio band covers their scope and
+        // nothing else.
+        $rows = $this->between($html, 'data-role="cross-client-table"', '</table>');
+        $this->assertStringContainsString('Alpha Dental', $rows);
+        $this->assertStringContainsString('Bravo Bistro', $rows);
+        $this->assertStringNotContainsString('Hidden Client', $rows);
     }
 
     public function test_an_agency_with_no_client_yet_is_offered_its_first_client_account(): void

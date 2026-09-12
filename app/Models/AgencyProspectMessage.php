@@ -32,6 +32,7 @@ class AgencyProspectMessage extends Model
         'operation_key',
         'body',
         'status',
+        'intent',
         'sent_at',
         'received_at',
     ];

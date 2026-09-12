@@ -36,8 +36,16 @@ class DashboardQueryBudgetTest extends TestCase
 
     private const BUSINESS_HOME_CONVERSATIONS = 2;
 
-    /** Observed: status read, Workspace, three capacity reads, prospecting, two Agency-wide control reads. */
+    /** Observed: status read, Workspace, three capacity reads, outreach, two Agency-wide control reads. */
     private const AGENCY_HOME_DASHBOARD_OWNED = 8;
+
+    /**
+     * Unified Home §3.1 (A-1) — cross-client performance costs exactly one
+     * grouped statement per seam, for any number of clients.
+     */
+    private const AGENCY_HOME_ANALYTICS = 1;
+
+    private const AGENCY_HOME_CONVERSATIONS = 1;
 
     private const B5_TABLES = '/\b(reports|contacts|contact_groups|automation_executions|campaigns)\b/';
 
@@ -168,8 +176,10 @@ class DashboardQueryBudgetTest extends TestCase
 
         $two = $this->agencyHomeCost($agency->user);
 
-        $this->assertSame(0, $two['analytics'], 'No N × B5 fan-out: no client KPI at all.');
-        $this->assertSame(0, $two['conversations']);
+        // A-1: the portfolio band reads each seam exactly once, grouped over
+        // the client ids — never once per client.
+        $this->assertSame(self::AGENCY_HOME_ANALYTICS, $two['analytics'], 'One grouped B5 statement, not a fan-out.');
+        $this->assertSame(self::AGENCY_HOME_CONVERSATIONS, $two['conversations'], 'One grouped 2B statement, not a fan-out.');
         $this->assertSame(0, $two['entitlement'], 'The Account frame carries no Business, so no Business snapshot.');
         $this->assertSame(self::AGENCY_HOME_DASHBOARD_OWNED, $two['dashboard'], 'Agency-owned: ' . implode(' | ', $two['dashboardSql']));
         $this->assertLessThanOrEqual(12, $two['dashboard']);
@@ -179,12 +189,15 @@ class DashboardQueryBudgetTest extends TestCase
             $this->wallet($client, ['debt_balance_micro' => 5]);
             $this->website($client, 'draft');
             $this->sent($client, 3, '2026-09-01');
+            $this->contactsAdded($client, 4, '2026-09-02');
+            $this->conversationsStarted($client, 2, '2026-09-02');
         }
 
         $six = $this->agencyHomeCost($agency->user);
 
         $this->assertSame($two['dashboard'], $six['dashboard'], 'Per-client flags are one statement for any number of clients.');
-        $this->assertSame(0, $six['analytics']);
+        $this->assertSame($two['analytics'], $six['analytics'], 'Tripling the clients must not add a B5 statement.');
+        $this->assertSame($two['conversations'], $six['conversations'], 'Tripling the clients must not add a 2B statement.');
     }
 
     // =================================================================
