@@ -20,6 +20,7 @@ use App\Models\AiUsagePeriod;
 use App\Models\Business;
 use App\Models\Workspace;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Str;
 use Symfony\Component\Process\PhpExecutableFinder;
@@ -85,6 +86,64 @@ class AiGatewayTest extends TestCase
         );
     }
 
+    // =================================================================
+    // Idempotency — the same work can never be charged twice
+    // =================================================================
+
+    /**
+     * §10.1 — `idempotency_key` is unique on the ledger, and that is what
+     * makes a redelivered job or a retried request incapable of spending
+     * twice. The queued prospecting reply derives its key from the inbound
+     * message it answers, so a second delivery of the same message presents
+     * the same key.
+     *
+     * What is asserted is the guarantee rather than its mechanism: whatever
+     * shape the second attempt takes, it must move no counter and must not
+     * reach the provider a second time. The first call's committed cost is
+     * still the only cost.
+     */
+    public function test_a_repeated_idempotency_key_can_never_charge_the_budget_twice(): void
+    {
+        [, , $workspace] = $this->tenant(WorkspacePlanTier::Growth);
+        config(['ai.enforce_budgets_for_existing_categories' => true]);
+
+        $key = 'agency_prospect_reply:' . Str::uuid();
+
+        $first = $this->gateway()->complete($this->buildRequest($workspace, idempotencyKey: $key));
+        $this->assertTrue($first->ok, 'The first call must succeed, so there is a real charge to compare against.');
+
+        $periodAfterFirst = DB::table('ai_usage_periods')
+            ->where('scope_type', 'workspace')->where('scope_id', $workspace->id)->first();
+        $committedAfterFirst = (int) $periodAfterFirst->committed_microusd;
+        $reservedAfterFirst = (int) $periodAfterFirst->reserved_microusd;
+        $providerCallsAfterFirst = $this->fakeClient->callCount();
+
+        $this->assertGreaterThan(0, $committedAfterFirst, 'The first call really did spend.');
+
+        // The same work, presented again.
+        try {
+            $this->gateway()->complete($this->buildRequest($workspace, idempotencyKey: $key));
+        } catch (\Throwable $e) {
+            // A duplicate key is rejected by the database inside reserve()'s
+            // own transaction, so the attempt rolls back whole. Surfacing as
+            // a throw is acceptable — the caller's queue retries or fails the
+            // job — but it must never leave budget moved behind it.
+            $this->assertInstanceOf(\Illuminate\Database\UniqueConstraintViolationException::class, $e);
+        }
+
+        $periodAfterSecond = DB::table('ai_usage_periods')
+            ->where('scope_type', 'workspace')->where('scope_id', $workspace->id)->first();
+
+        $this->assertSame($committedAfterFirst, (int) $periodAfterSecond->committed_microusd, 'The second attempt charged nothing.');
+        $this->assertSame($reservedAfterFirst, (int) $periodAfterSecond->reserved_microusd, 'And it left no reservation standing.');
+        $this->assertSame($providerCallsAfterFirst, $this->fakeClient->callCount(), 'And it never reached the provider a second time.');
+
+        $this->assertSame(
+            1,
+            DB::table('ai_usage_ledger')->where('idempotency_key', $key)->count(),
+            'One piece of work, one ledger entry.'
+        );
+    }
     // =================================================================
     // T-BUD-1 — reservation at the exact cap boundary
     // =================================================================
