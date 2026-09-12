@@ -29,10 +29,23 @@ class DashboardQueryBudgetTest extends TestCase
     use RefreshDatabase;
     use CreatesDashboardFixtures;
 
-    /** Observed on this base: Business re-read, status read, payer assignment + Workspace (payer authority), Advisor page count + rows. */
-    private const BUSINESS_HOME_DASHBOARD_OWNED = 6;
+    /**
+     * Observed on this base: Business re-read, status read, payer assignment +
+     * Workspace (payer authority), Advisor page count + rows — and H-5's four
+     * Recent work sources (website revisions, completed recommendations,
+     * Google operations, Business detail changes). Its fifth source, automation
+     * failures, is counted in the analytics layer because the seam that owns
+     * the ledger issues it.
+     */
+    private const BUSINESS_HOME_DASHBOARD_OWNED = 10;
 
-    private const BUSINESS_HOME_ANALYTICS = 6;
+    /**
+     * Observed: three B5 methods per Business performance period, plus
+     * H-5's one bounded read of the automation ledger — issued by the seam
+     * that owns it, which is why it counts here rather than as a
+     * Dashboard-owned read.
+     */
+    private const BUSINESS_HOME_ANALYTICS = 7;
 
     /**
      * Observed: the two Business performance periods (H-3), then H-4's two —
@@ -88,14 +101,18 @@ class DashboardQueryBudgetTest extends TestCase
         $this->assertSame(self::BUSINESS_HOME_ANALYTICS, $cost['analytics']);
         $this->assertSame(self::BUSINESS_HOME_CONVERSATIONS, $cost['conversations']);
 
-        $this->assertLessThanOrEqual(10, $cost['dashboard']);
-        $this->assertLessThanOrEqual(6, $cost['analytics']);
+        $this->assertLessThanOrEqual(18, $cost['dashboard'], 'Contract §16: the dashboard-owned ceiling, Recent work included.');
+        $this->assertLessThanOrEqual(7, $cost['analytics'], 'Contract §16: two periods (≤6) plus the instant read.');
         $this->assertLessThanOrEqual(5, $cost['conversations'], 'Contract §16: started ×2, incoming/replied, awaiting, since-visit started.');
-        $this->assertLessThanOrEqual(18, $cost['dashboard'] + $cost['analytics'] + $cost['conversations'], 'Total Business Home product-data ceiling.');
+        $this->assertLessThanOrEqual(31, $cost['dashboard'] + $cost['analytics'] + $cost['conversations'], 'Contract §16 total product-data ceiling.');
 
-        // Within the TTL the Analytics seam costs nothing (B5's own cache).
+        // Within the TTL the CACHED Business performance figures cost nothing.
+        // What remains is the one read deliberately never cached: Recent work
+        // asks the automation ledger what just failed, and a timeline of what
+        // happened must not be served from a five-minute-old answer. Contract
+        // §16 budgets exactly this (warm ≤ 1).
         $warm = $this->businessHomeCost($customer->user, flush: false);
-        $this->assertSame(0, $warm['analytics']);
+        $this->assertSame(1, $warm['analytics'], 'Only the uncached Recent work read survives a warm cache.');
     }
 
     /**
