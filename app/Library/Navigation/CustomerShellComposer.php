@@ -39,6 +39,7 @@ final class CustomerShellComposer
         private readonly CustomerMenuBuilder $menuBuilder,
         private readonly ViewAsManager $viewAs,
         private readonly EntitlementManager $entitlements,
+        private readonly ContextSwitcherPresenter $contextSwitcher,
     ) {
     }
 
@@ -47,7 +48,7 @@ final class CustomerShellComposer
         $user = Auth::user();
 
         if (! $user instanceof User || ! $this->isCustomerPortal($user)) {
-            $view->with(['customerContext' => null, 'customerMenu' => []]);
+            $view->with(['customerContext' => null, 'customerMenu' => [], 'contextSwitcher' => null]);
 
             return;
         }
@@ -57,6 +58,10 @@ final class CustomerShellComposer
         $view->with([
             'customerContext' => $context,
             'customerMenu' => $this->menuBuilder->build($context, $user, $this->currentMenuEntitlements($context)),
+            // The one context switcher, built from the context this request
+            // already resolved. Pure, so composing it for each shell partial
+            // costs no query.
+            'contextSwitcher' => $this->contextSwitcher->present($context),
         ]);
     }
 

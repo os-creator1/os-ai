@@ -15,6 +15,12 @@ namespace App\Library\Navigation;
  *   WorkspaceManager::userCanAccessBusiness() on this request.
  * - Sole: exactly one selectable Business exists, so the choice is
  *   unambiguous; it is still re-authorized canonically.
+ * - AccountPreference: no Business is selected because the actor DELIBERATELY
+ *   chose the account's own frame in the context switcher. The difference from
+ *   None matters: with None the resolver may still enter the only Business it
+ *   finds, while a deliberate account choice is kept until the actor picks a
+ *   Business. The account is re-authorized on every request through the same
+ *   account-frame rule the account page enforces.
  * - None: no Business is selected — the Account frame is shown and an
  *   explicit selection is required when more than one choice exists.
  */
@@ -24,5 +30,6 @@ enum ContextSource: string
     case ViewAs = 'view_as';
     case Preference = 'preference';
     case Sole = 'sole';
+    case AccountPreference = 'account_preference';
     case None = 'none';
 }

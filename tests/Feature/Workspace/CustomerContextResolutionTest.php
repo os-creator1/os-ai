@@ -56,9 +56,15 @@ class CustomerContextResolutionTest extends TestCase
             $this->assertNotContains($forbidden, $keys, "Core/Growth must never see {$forbidden} (§8.2, §8.6).");
         }
 
-        // Compact identity, no pointless switcher (§9.2).
-        $response->assertSee('data-role="context-identity"', false);
-        $response->assertDontSee('customer-context-switcher-toggle', false);
+        // Lane E: the context block is the one control that changes context,
+        // so a single-Business OWNER gets it too — their Business is listed as
+        // current and their own account is the other destination. It stays
+        // simple: no second account, and no search box over one row. A member
+        // who cannot reach the account frame still gets the plain identity
+        // (test_selected_scope_staff_land_in_their_sole_assigned_business...).
+        $response->assertSee('id="customer-context-switcher-toggle"', false);
+        $response->assertDontSee('data-role="context-identity"', false);
+        $response->assertDontSee('data-role="context-switcher-filter"', false);
         $this->assertStringContainsString($business->name, $this->shellText($html));
 
         // E-11 is moot now that Messages is Inbox only: neither the canonical

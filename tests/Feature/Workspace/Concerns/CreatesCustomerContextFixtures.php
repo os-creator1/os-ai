@@ -175,6 +175,17 @@ trait CreatesCustomerContextFixtures
         ]);
     }
 
+    /**
+     * The context switcher's account option (Lane E): the server-authorized
+     * move into an account's own frame.
+     */
+    protected function switchToAccount(Workspace|string $workspace): TestResponse
+    {
+        return $this->post(route('customer.context.account.switch'), [
+            'workspace' => $workspace instanceof Workspace ? $workspace->uid : $workspace,
+        ]);
+    }
+
     protected function startViewAs(Workspace|string $workspace, Business|string $business, ?string $reason = null): TestResponse
     {
         return $this->post(route('customer.view-as.start'), array_filter([

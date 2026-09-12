@@ -37,6 +37,7 @@ use App\Library\Entitlement\BusinessFeatureSettings;
 use App\Library\Entitlement\EntitlementManager;
 use App\Library\Entitlement\PlatformFeatureRegistry;
 use App\Library\Usage\BillingProfileManager;
+use App\Library\Workspace\AccountFrameAccess;
 use App\Library\Workspace\WorkspaceManager;
 use App\Models\Business;
 use App\Models\User;
@@ -1128,7 +1129,12 @@ class WorkspaceController extends CustomerBaseController
      */
     private function membershipSeesTheAccountFrame(WorkspaceMembership $membership): bool
     {
-        return $membership->business_access_scope === WorkspaceBusinessAccessScope::All;
+        // The rule itself now lives in App\Library\Workspace\AccountFrameAccess,
+        // so the context switcher and SwitchAccountAction ask the same question
+        // this page does rather than carrying their own copy of it. Behaviour is
+        // unchanged: callers here have already rejected an inactive membership,
+        // which the shared predicate also refuses.
+        return AccountFrameAccess::membershipAllows($membership);
     }
 
     /**

@@ -28,6 +28,7 @@ final class ViewAsProhibitedActions
         // starting or switching view-as / context
         'customer.view-as.start',
         'customer.context.business.switch',
+        'customer.context.account.switch',
         'user.switch_view',
         'user.account.login_as',
         // Workspace / account structure, plan, slots
