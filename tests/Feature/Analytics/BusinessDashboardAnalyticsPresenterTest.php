@@ -21,8 +21,13 @@ use Tests\TestCase;
  * Customer Experience Slice 4 §4.2–§4.6, §18 #39–#43, #45, #55, #56 — the
  * Analytics-owned comparison seam behind the Business Home headline row.
  * Composes B5's own messageKpis(), contactKpis() and automationKpis(), once
- * per range, for the current last-30-days preset and the 30 Business-local
- * dates immediately before it.
+ * per range.
+ *
+ * H-3 generalized the two windows. The current one is whatever the customer
+ * selected — any Results preset or a custom range of up to 92 local dates —
+ * and defaults to This month; the previous one is always the SAME NUMBER of
+ * Business-local calendar dates immediately before it. The seam still writes
+ * no KPI formula and no timezone arithmetic of its own.
  */
 class BusinessDashboardAnalyticsPresenterTest extends TestCase
 {
@@ -43,23 +48,68 @@ class BusinessDashboardAnalyticsPresenterTest extends TestCase
     // #38, #39 — the two windows
     // =================================================================
 
-    public function test_current_is_b5s_last_30_days_preset_and_previous_is_the_30_local_dates_before_it(): void
+    public function test_the_default_window_is_this_month_and_the_previous_one_is_the_equal_length_window_before_it(): void
     {
         ['current' => $current, 'previous' => $previous] = BusinessDashboardAnalyticsPresenter::ranges(self::TZ);
 
-        $this->assertSame(AnalyticsDateRange::PRESET_LAST_30_DAYS, $current->preset);
-        $this->assertSame(AnalyticsDateRange::DEFAULT_PRESET, $current->preset, 'Dashboard and Results agree by construction.');
-        $this->assertSame('2026-08-12', $current->startLocal->format('Y-m-d'));
+        $this->assertSame(AnalyticsDateRange::PRESET_THIS_MONTH, $current->preset);
+        $this->assertSame(BusinessDashboardAnalyticsPresenter::DEFAULT_PRESET, $current->preset, 'Home opens on the month the customer is living in (H-3).');
+        $this->assertSame('2026-09-01', $current->startLocal->format('Y-m-d'));
         $this->assertSame('2026-09-10', $current->endLocal->format('Y-m-d'));
 
         $this->assertSame(AnalyticsDateRange::PRESET_CUSTOM, $previous->preset);
-        $this->assertSame('2026-07-13', $previous->startLocal->format('Y-m-d'));
-        $this->assertSame('2026-08-11', $previous->endLocal->format('Y-m-d'));
-        $this->assertSame(30, $previous->days());
-        $this->assertSame(30, $current->days());
+        $this->assertSame('2026-08-22', $previous->startLocal->format('Y-m-d'));
+        $this->assertSame('2026-08-31', $previous->endLocal->format('Y-m-d'));
+        $this->assertSame(10, $current->days());
+        $this->assertSame(10, $previous->days());
 
         // Adjacent half-open windows: no gap, no overlap.
         $this->assertTrue($previous->endUtc->equalTo($current->startUtc));
+    }
+
+    /**
+     * @return array<string, array{0: string, 1: array<string, string>, 2: string, 3: string, 4: int}>
+     */
+    public static function selectedWindows(): array
+    {
+        // [frozen now (UTC), the customer's selection, previous start, previous end, local dates]
+        return [
+            'this month' => ['2026-09-10 15:00:00', ['range' => 'this_month'], '2026-08-22', '2026-08-31', 10],
+            'last month' => ['2026-09-10 15:00:00', ['range' => 'last_month'], '2026-07-01', '2026-07-31', 31],
+            'last 7 days' => ['2026-09-10 15:00:00', ['range' => 'last_7_days'], '2026-08-28', '2026-09-03', 7],
+            'last 30 days' => ['2026-09-10 15:00:00', ['range' => 'last_30_days'], '2026-07-13', '2026-08-11', 30],
+            'last 90 days' => ['2026-09-10 15:00:00', ['range' => 'last_90_days'], '2026-03-15', '2026-06-12', 90],
+            'a custom fortnight' => ['2026-09-10 15:00:00', ['range' => 'custom', 'start' => '2026-07-02', 'end' => '2026-07-15'], '2026-06-18', '2026-07-01', 14],
+            'a single day' => ['2026-09-10 15:00:00', ['range' => 'custom', 'start' => '2026-09-07', 'end' => '2026-09-07'], '2026-09-06', '2026-09-06', 1],
+            'a custom range at the 92-day maximum' => ['2026-09-10 15:00:00', ['range' => 'custom', 'start' => '2026-06-01', 'end' => '2026-08-31'], '2026-03-01', '2026-05-31', 92],
+            'this month in January' => ['2027-01-05 16:00:00', ['range' => 'this_month'], '2026-12-27', '2026-12-31', 5],
+            'a custom range across a year boundary' => ['2027-01-20 16:00:00', ['range' => 'custom', 'start' => '2027-01-01', 'end' => '2027-01-10'], '2026-12-22', '2026-12-31', 10],
+        ];
+    }
+
+    /**
+     * @param  array<string, string>  $input
+     */
+    #[DataProvider('selectedWindows')]
+    public function test_any_selected_window_is_compared_with_an_equal_length_window_immediately_before_it(string $now, array $input, string $previousStart, string $previousEnd, int $days): void
+    {
+        $this->freeze($now);
+        $selected = AnalyticsDateRange::fromInput($input, self::TZ);
+
+        ['current' => $current, 'previous' => $previous] = BusinessDashboardAnalyticsPresenter::ranges(self::TZ, null, $selected);
+
+        $this->assertSame($selected, $current, 'The window the customer selected is used exactly as Results built it.');
+        $this->assertSame($days, $current->days());
+        $this->assertSame($days, $previous->days(), 'The previous window covers the same number of local dates.');
+        $this->assertSame($previousStart, $previous->startLocal->format('Y-m-d'));
+        $this->assertSame($previousEnd, $previous->endLocal->format('Y-m-d'));
+        $this->assertSame($current->startLocal->subDay()->format('Y-m-d'), $previous->endLocal->format('Y-m-d'));
+        $this->assertTrue($previous->endUtc->equalTo($current->startUtc), 'Adjacent half-open windows.');
+        $this->assertNotSame(
+            $current->cacheKey(),
+            $previous->cacheKey(),
+            'Two windows of one view never share a cache identity.',
+        );
     }
 
     // =================================================================
@@ -84,8 +134,9 @@ class BusinessDashboardAnalyticsPresenterTest extends TestCase
     public function test_both_windows_cover_thirty_local_dates_across_dst_with_correct_half_open_bounds(string $now, string $label, int $currentHours, int $previousHours): void
     {
         $this->freeze($now);
+        $selected = AnalyticsDateRange::preset(AnalyticsDateRange::PRESET_LAST_30_DAYS, self::TZ);
 
-        ['current' => $current, 'previous' => $previous] = BusinessDashboardAnalyticsPresenter::ranges(self::TZ);
+        ['current' => $current, 'previous' => $previous] = BusinessDashboardAnalyticsPresenter::ranges(self::TZ, null, $selected);
 
         foreach (['current' => [$current, $currentHours], 'previous' => [$previous, $previousHours]] as $which => [$range, $hours]) {
             $this->assertCount(30, $range->dailyBuckets(), "{$label}: the {$which} window is 30 local dates.");
@@ -153,7 +204,10 @@ class BusinessDashboardAnalyticsPresenterTest extends TestCase
         $this->execution($business, $automation, $contact, 'succeeded', 'contact_created', $at('2026-07-30 10:00:00'));
         $this->execution($business, $automation, $contact, 'succeeded', 'contact_created', $at('2026-07-31 10:00:00'));
 
-        $comparison = app(BusinessDashboardAnalyticsPresenter::class)->comparison($business);
+        // The fixtures above sit in the last-30-days window and the 30 dates
+        // before it, so that is the window selected here.
+        $comparison = app(BusinessDashboardAnalyticsPresenter::class)
+            ->comparison($business, AnalyticsDateRange::preset(AnalyticsDateRange::PRESET_LAST_30_DAYS, self::TZ));
         $queries = app(BusinessAnalyticsQueries::class);
 
         foreach (['current', 'previous'] as $period) {
@@ -221,13 +275,13 @@ class BusinessDashboardAnalyticsPresenterTest extends TestCase
 
             $this->assertNotSame($currentKey, $previousKey, 'Current and previous periods never share one entry.');
             $this->assertStringContainsString('_' . $business->id . '_', $currentKey);
-            $this->assertStringContainsString('last_30_days', $currentKey);
-            $this->assertStringContainsString('custom_2026-07-13_2026-08-11', $previousKey);
+            $this->assertStringContainsString('this_month_2026-09', $currentKey);
+            $this->assertStringContainsString('custom_2026-08-22_2026-08-31', $previousKey);
             $this->assertTrue(Cache::has($currentKey));
             $this->assertTrue(Cache::has($previousKey));
         }
 
-        foreach (['dashboard_headlines', 'b5_dashboard_headlines', 'b5_dashboard_headlines_last_30_days', BusinessDashboardAnalyticsPresenter::CACHE_PREFIX . 'last_30_days'] as $global) {
+        foreach (['dashboard_headlines', 'b5_dashboard_headlines', 'b5_dashboard_headlines_this_month', BusinessDashboardAnalyticsPresenter::CACHE_PREFIX . 'this_month'] as $global) {
             $this->assertFalse(Cache::has($global), "No global key: {$global}");
         }
 
@@ -235,6 +289,37 @@ class BusinessDashboardAnalyticsPresenterTest extends TestCase
         $this->report($businessA, $u, ['created_at' => $this->utcFromLocal('2026-09-02 12:00:00', self::TZ)]);
         $this->assertSame(1, $seam->comparison($businessA)['current']['messages']->outbound);
         $this->assertSame(300, BusinessAnalyticsPresenter::CACHE_TTL_SECONDS);
+    }
+
+    /**
+     * H-3 — the customer can now choose the window, so the key must carry the
+     * window itself. Two equally long windows, and a preset and the custom
+     * range that happens to cover the same dates, are all separate entries.
+     */
+    public function test_one_business_never_serves_one_window_the_figures_of_another(): void
+    {
+        [, $business] = $this->tenant(self::TZ);
+        $u = $business->customer_id;
+        $this->report($business, $u, ['created_at' => $this->utcFromLocal('2026-07-10 12:00:00', self::TZ)]);
+        $seam = app(BusinessDashboardAnalyticsPresenter::class);
+
+        $july = AnalyticsDateRange::fromInput(['range' => 'custom', 'start' => '2026-07-01', 'end' => '2026-07-31'], self::TZ);
+        $august = AnalyticsDateRange::fromInput(['range' => 'custom', 'start' => '2026-08-01', 'end' => '2026-08-31'], self::TZ);
+        $thisMonth = AnalyticsDateRange::preset(AnalyticsDateRange::PRESET_THIS_MONTH, self::TZ);
+        $sameDatesAsThisMonth = AnalyticsDateRange::fromInput(['range' => 'custom', 'start' => '2026-09-01', 'end' => '2026-09-10'], self::TZ);
+
+        $this->assertSame(1, $seam->comparison($business, $july)['current']['messages']->outbound);
+        $this->assertSame(0, $seam->comparison($business, $august)['current']['messages']->outbound, 'August is never served July.');
+        $this->assertSame(1, $seam->comparison($business, $july)['current']['messages']->outbound, 'And July is still July afterwards.');
+
+        $keys = array_map(
+            fn (AnalyticsDateRange $range) => BusinessDashboardAnalyticsPresenter::cacheKey($business, $range),
+            [$july, $august, $thisMonth, $sameDatesAsThisMonth],
+        );
+
+        $this->assertSame($keys, array_values(array_unique($keys)), 'Every distinct window has its own entry.');
+        $this->assertSame(31, $august->days(), 'Precondition: July and August are equally long.');
+        $this->assertSame($july->days(), $august->days());
     }
 
     public function test_a_window_cached_before_local_midnight_is_never_paired_with_the_next_days_window(): void
