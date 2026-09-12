@@ -2995,9 +2995,26 @@
                 ));
 
                 if (! $result->ok) {
+                    // Correction 5 / §11.4 — "the button is disabled with the
+                    // same sentence". A used-up allowance is a state that
+                    // lasts until the period resets, so the builder is told
+                    // so explicitly and stops offering a retry that cannot
+                    // succeed. Any other refusal or provider failure keeps
+                    // the ordinary try-again-later behaviour.
+                    //
+                    // Writing and sending a campaign by hand is untouched by
+                    // either case.
+                    $exhausted = in_array($result->refusalReason, [
+                        \App\Library\Ai\Enums\AiRefusalReason::BudgetExhausted,
+                        \App\Library\Ai\Enums\AiRefusalReason::InteractiveShareExhausted,
+                    ], true);
+
                     return response()->json([
                         'success' => false,
-                        'message' => 'AI drafting is paused until next month. You can write the message yourself.',
+                        'budget_exhausted' => $exhausted,
+                        'message' => $exhausted
+                            ? 'AI drafting is paused until ' . \Carbon\CarbonImmutable::now('UTC')->addMonthNoOverflow()->startOfMonth()->format('j F') . '. You can keep writing your message yourself.'
+                            : 'AI drafting is unavailable right now. You can write the message yourself.',
                     ]);
                 }
 

@@ -31,7 +31,7 @@ class FakeAgencyProspectingAiClient implements AgencyProspectingAiClient
 
     public array $receivedWorkspaceIds = [];
 
-    public function complete(array $messages, Workspace $workspace, ?int $actorUserId = null): ?string
+    public function complete(array $messages, Workspace $workspace, ?int $actorUserId = null, ?string $idempotencyKey = null): ?string
     {
         $this->receivedMessages[] = $messages;
         $this->receivedWorkspaceIds[] = $workspace->id;

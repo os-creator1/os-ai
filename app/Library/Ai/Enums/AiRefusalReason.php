@@ -13,6 +13,7 @@ enum AiRefusalReason: string
     case EntitlementMissing = 'entitlement_missing';
     case PlanUnavailable = 'plan_unavailable';
     case Dormant = 'dormant';
+    case InputTooLarge = 'input_too_large';
     case RequestTooExpensive = 'request_too_expensive';
     case BudgetExhausted = 'budget_exhausted';
     case InteractiveShareExhausted = 'interactive_share_exhausted';

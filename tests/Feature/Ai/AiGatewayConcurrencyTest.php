@@ -35,14 +35,18 @@ use Tests\TestCase;
 class AiGatewayConcurrencyTest extends TestCase
 {
     /**
-     * `coo_diagnosis` is one of the three categories
-     * `AiUsageCategory::isAlwaysHardEnforced()` returns true for (§19.3
-     * rule 2) — its cap is enforced unconditionally, regardless of
-     * `ai.enforce_budgets_for_existing_categories`. Racing a hard-enforced
-     * category is what actually proves the reservation lock, rather than
-     * incidentally depending on that flag's default.
+     * The race must be against a category whose cap is genuinely enforced,
+     * because a bypassed cap proves nothing about the reservation lock.
+     *
+     * It used to use `coo_diagnosis`, which is always hard-enforced. After
+     * Correction 1 the COO categories sit behind the `ai_coo_basic`
+     * entitlement, which stays Planned until AI-3 — so every child would
+     * now be refused for entitlement and the race would never reach the
+     * lock at all. `website_generation` is used instead, with the child
+     * processes turning enforcement ON for the pre-existing categories
+     * (§19.3 rule 3), which makes its cap every bit as hard.
      */
-    private const CATEGORY = 'coo_diagnosis';
+    private const CATEGORY = 'website_generation';
 
     /**
      * routine's own per-request cap (`max_request_cost_microusd`,
@@ -53,38 +57,52 @@ class AiGatewayConcurrencyTest extends TestCase
     private const MAX_OUTPUT_TOKENS = 800;
 
     /**
-     * Chosen so that `AiModelRouter::estimateCostMicrousd()` for the
-     * `routine` route's *default* prices (input $0.15, output $0.60 per
-     * million tokens) comes out to exactly 1_000 microUSD:
-     *   - outputCost = ceil(800 * 600_000 / 1_000_000)      = 480
-     *   - inputCost  = ceil(3465 * 150_000 / 1_000_000)     = 520
-     *   - estimate   = 480 + 520                            = 1_000
-     * INPUT_CHARS = 10_395 so that ceil(10_395 / 3) = 3_465 exactly (no
-     * partial-character rounding to reason about).
+     * One fixed prompt size for every racing child.
      *
-     * The FakeAiCompletionClient response each child process queues below
-     * reports exactly inputTokens=3465, outputTokens=800 — the same
-     * token counts the estimate itself used — so
-     * `AiModelRouter::actualCostMicrousd()` recomputes the identical
-     * 1_000 microUSD at settlement (§10.1 step 6). Estimate and actual
-     * are therefore equal by construction: releasing the reservation and
-     * adding the committed amount is a wash for the period's running
-     * total, so accepting one request never creates headroom for
-     * another beyond the cap.
+     * The cost it produces is no longer hardcoded. Correction 9 made the
+     * estimator account for per-message and per-request framing as well as
+     * content, and pinning arithmetic that the estimator owns would mean
+     * this proof silently stops testing the real reservation the day that
+     * policy changes again. The exact figures are therefore derived from
+     * AiModelRouter itself (see fixedCostMicrousd() below), and each child
+     * reports back precisely the token counts the estimate was built from —
+     * so estimate and actual are equal by construction, releasing the
+     * reservation and committing the actual is a wash, and accepting one
+     * request never creates headroom for another beyond the cap.
      */
     private const INPUT_CHARS = 10_395;
-
-    private const FIXED_COST_MICROUSD = 1_000;
-
-    /**
-     * Five times FIXED_COST_MICROUSD — exactly enough for 5 of the 8
-     * racing requests below to be accepted.
-     */
-    private const WORKSPACE_CAP_MICROUSD = 5_000;
 
     private const RACING_PROCESS_COUNT = 8;
 
     private const EXPECTED_ACCEPTED_COUNT = 5;
+
+    /** The exact messages every racing child sends. */
+    private function racingMessages(): array
+    {
+        return [['role' => 'user', 'content' => str_repeat('a', self::INPUT_CHARS)]];
+    }
+
+    /** The input tokens the estimator will bill this request's shape at. */
+    private function estimatedInputTokens(): int
+    {
+        return app(\App\Library\Ai\AiModelRouter::class)->estimateInputTokens($this->racingMessages());
+    }
+
+    /** What one racing request costs, at both estimate and settlement. */
+    private function fixedCostMicrousd(): int
+    {
+        return app(\App\Library\Ai\AiModelRouter::class)->estimateCostMicrousd(
+            \App\Library\Ai\Enums\AiModelRoute::Routine,
+            $this->racingMessages(),
+            self::MAX_OUTPUT_TOKENS,
+        );
+    }
+
+    /** Exactly enough for EXPECTED_ACCEPTED_COUNT of the racing requests. */
+    private function workspaceCapMicrousd(): int
+    {
+        return $this->fixedCostMicrousd() * self::EXPECTED_ACCEPTED_COUNT;
+    }
 
     private array $createdWorkspaceIds = [];
 
@@ -167,7 +185,7 @@ class AiGatewayConcurrencyTest extends TestCase
             'DB_DATABASE' => $database,
             'EXPECTED_TEST_DATABASE' => $database,
             'OPENAI_ACTIVE' => 'true',
-            'AI_BUDGET_CORE_WORKSPACE_CAP_MICROUSD' => (string) self::WORKSPACE_CAP_MICROUSD,
+            'AI_BUDGET_CORE_WORKSPACE_CAP_MICROUSD' => (string) $this->workspaceCapMicrousd(),
         ];
     }
 
@@ -185,6 +203,9 @@ class AiGatewayConcurrencyTest extends TestCase
         $inputChars = self::INPUT_CHARS;
         $maxOutputTokens = self::MAX_OUTPUT_TOKENS;
         $category = self::CATEGORY;
+        // The child reports exactly the tokens the estimate was built from,
+        // so estimate and actual settle to the same figure (see INPUT_CHARS).
+        $reportedInputTokens = $this->estimatedInputTokens();
 
         return <<<PHP
 <?php
@@ -228,11 +249,15 @@ function waitForSignal(string \$path): void
 \$signalPath = \$argv[2];
 \$idempotencyKey = \$argv[3];
 
+// §19.3 rule 3 — enforce the pre-existing categories inside the child, so
+// the raced category's cap is genuinely hard rather than observation-only.
+config(['ai.enforce_budgets_for_existing_categories' => true]);
+
 \$fake = new App\Library\Ai\Providers\FakeAiCompletionClient();
 \$fake->setDefaultResult(App\Library\Ai\AiCompletionResult::success(
     content: '{"summary":"race"}',
     providerModel: 'gpt-4o-mini',
-    inputTokens: 3465,
+    inputTokens: {$reportedInputTokens},
     outputTokens: {$maxOutputTokens},
 ));
 app()->instance(App\Library\Ai\Contracts\AiCompletionClient::class, \$fake);
@@ -368,12 +393,12 @@ PHP;
         $this->assertNotNull($period, 'The workspace usage period row must exist after the race.');
         $this->assertSame(0, (int) $period->reserved_microusd, 'No reservation may remain outstanding once every racing request has settled.');
         $this->assertSame(
-            self::EXPECTED_ACCEPTED_COUNT * self::FIXED_COST_MICROUSD,
+            self::EXPECTED_ACCEPTED_COUNT * $this->fixedCostMicrousd(),
             (int) $period->committed_microusd,
             'Committed spend must equal exactly the accepted requests worth, never more than the cap.'
         );
         $this->assertLessThanOrEqual(
-            self::WORKSPACE_CAP_MICROUSD,
+            $this->workspaceCapMicrousd(),
             (int) $period->reserved_microusd + (int) $period->committed_microusd,
             'reserved + committed must never exceed the period cap at settlement, the core T-BUD-4 invariant.'
         );

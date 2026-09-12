@@ -21,6 +21,18 @@ use Illuminate\Support\Carbon;
  * Lock order is always Workspace row before Business row, so two
  * concurrent calls against different Businesses in the same Workspace
  * never deadlock against each other.
+ *
+ * Correction 7 — every settlement path takes the SAME locks in the SAME
+ * order: the ledger entry first, then the Workspace period, then the
+ * Business period. Settlement used to adjust the period rows first while
+ * the expiry sweep locked the entry first, which is a textbook lock-order
+ * inversion; and settlement never re-checked the entry's status, so a
+ * provider call completing while the sweep released its reservation could
+ * adjust the same counters twice. Both paths now go through
+ * settle(), which claims the entry under lock, refuses to act on an entry
+ * that is no longer `reserved`, and only then touches the periods. That
+ * makes "commit once, release once" true no matter which side wins the
+ * race.
  */
 final class AiUsageLedgerManager
 {
@@ -43,6 +55,30 @@ final class AiUsageLedgerManager
         }
 
         return $period->reserved_microusd + $period->committed_microusd;
+    }
+
+    /**
+     * Correction 10 — the cap this Workspace period is actually enforced
+     * against.
+     *
+     * A period snapshots its cap when it opens, and reserve() checks
+     * against that snapshot for the rest of the period. Route headroom must
+     * therefore ask the same question: reading the freshly configured cap
+     * instead would let routing believe there is room reserve() will refuse
+     * when a cap was lowered mid-period, and withhold reasoning the period
+     * could still afford when one was raised. A period that has not opened
+     * yet has no snapshot, so the configured cap is the honest answer for
+     * it — and is what that period will snapshot when it opens.
+     */
+    public function enforcedWorkspaceCapMicrousd(int $workspaceId, AiBudgetPolicy $policy): int
+    {
+        $period = AiUsagePeriod::query()
+            ->where('scope_type', AiUsagePeriod::SCOPE_WORKSPACE)
+            ->where('scope_id', $workspaceId)
+            ->where('period_key', $policy->periodKey)
+            ->first();
+
+        return $period === null ? $policy->workspaceCapMicrousd : (int) $period->cap_microusd;
     }
 
     /**
@@ -156,40 +192,78 @@ final class AiUsageLedgerManager
 
     public function commitActual(AiUsageLedgerEntry $entry, string $providerModel, int $inputTokens, int $cachedInputTokens, int $outputTokens, int $actualCostMicrousd): AiUsageLedgerEntry
     {
-        return DB::transaction(function () use ($entry, $providerModel, $inputTokens, $cachedInputTokens, $outputTokens, $actualCostMicrousd): AiUsageLedgerEntry {
-            $this->adjustPeriods($entry, releaseReserved: $entry->estimated_cost_microusd, addCommitted: $actualCostMicrousd);
-
-            $entry->forceFill([
-                'status' => AiUsageEntryStatus::Committed,
-                'provider_model' => $providerModel,
-                'input_tokens' => $inputTokens,
-                'cached_input_tokens' => $cachedInputTokens,
-                'output_tokens' => $outputTokens,
-                'actual_cost_microusd' => $actualCostMicrousd,
-                'settled_at' => Carbon::now(),
-            ])->save();
-
-            return $entry;
-        });
+        return $this->settle($entry, AiUsageEntryStatus::Committed, $actualCostMicrousd, [
+            'provider_model' => $providerModel,
+            'input_tokens' => $inputTokens,
+            'cached_input_tokens' => $cachedInputTokens,
+            'output_tokens' => $outputTokens,
+        ]);
     }
 
     /**
-     * Provider failure: release the entire reservation, nothing is
-     * committed (§10.1 step 6 — "On provider failure, release everything
-     * unless the provider reported billable usage").
+     * Provider failure (§10.1 step 6 — "release everything unless the
+     * provider reported billable usage").
+     *
+     * Correction 3: usage the provider reported before failing is real
+     * money already spent, so it is committed exactly once and only the
+     * remainder of the reservation goes back. A failure that reported
+     * nothing releases the whole hold, as before.
      */
-    public function releaseAsFailed(AiUsageLedgerEntry $entry): AiUsageLedgerEntry
+    public function releaseAsFailed(
+        AiUsageLedgerEntry $entry,
+        int $actualCostMicrousd = 0,
+        ?string $providerModel = null,
+        int $inputTokens = 0,
+        int $cachedInputTokens = 0,
+        int $outputTokens = 0,
+    ): AiUsageLedgerEntry {
+        return $this->settle($entry, AiUsageEntryStatus::Failed, $actualCostMicrousd, [
+            'provider_model' => $providerModel ?? $entry->provider_model,
+            'input_tokens' => $inputTokens,
+            'cached_input_tokens' => $cachedInputTokens,
+            'output_tokens' => $outputTokens,
+        ]);
+    }
+
+    /**
+     * Correction 7 — the one path that ever settles an entry, and the one
+     * lock order every caller uses.
+     *
+     * The entry is claimed first, under `lockForUpdate`. An entry that is
+     * no longer `reserved` has already been settled or expired by somebody
+     * else, and is returned untouched: the counters must move exactly once
+     * whichever side wins. Only after that claim are the period rows
+     * locked, always Workspace before Business.
+     *
+     * The committed amount is bounded by what was reserved, so a provider
+     * that reported more than its own ceiling implied can never push a
+     * period past the cap the customer was promised.
+     *
+     * @param  array<string, mixed>  $usage
+     */
+    private function settle(AiUsageLedgerEntry $entry, AiUsageEntryStatus $status, int $actualCostMicrousd, array $usage): AiUsageLedgerEntry
     {
-        return DB::transaction(function () use ($entry): AiUsageLedgerEntry {
-            $this->adjustPeriods($entry, releaseReserved: $entry->estimated_cost_microusd, addCommitted: 0);
+        return DB::transaction(function () use ($entry, $status, $actualCostMicrousd, $usage): AiUsageLedgerEntry {
+            $claimed = AiUsageLedgerEntry::query()->lockForUpdate()->find($entry->id);
 
-            $entry->forceFill([
-                'status' => AiUsageEntryStatus::Failed,
-                'actual_cost_microusd' => 0,
+            if ($claimed === null || $claimed->status !== AiUsageEntryStatus::Reserved) {
+                // Already settled or already expired. Adjusting the periods
+                // again would release the same reservation twice.
+                return $claimed ?? $entry;
+            }
+
+            $reserved = (int) $claimed->estimated_cost_microusd;
+            $committed = max(0, min($actualCostMicrousd, $reserved));
+
+            $this->adjustPeriods($claimed, releaseReserved: $reserved, addCommitted: $committed);
+
+            $claimed->forceFill(array_merge($usage, [
+                'status' => $status,
+                'actual_cost_microusd' => $committed,
                 'settled_at' => Carbon::now(),
-            ])->save();
+            ]))->save();
 
-            return $entry;
+            return $claimed;
         });
     }
 
@@ -209,28 +283,24 @@ final class AiUsageLedgerManager
             ->limit($limit)
             ->get();
 
+        $released = 0;
+
         foreach ($stale as $entry) {
-            DB::transaction(function () use ($entry): void {
-                // Re-check under lock: another process may have already
-                // settled this exact entry between the query above and
-                // this transaction starting.
-                $fresh = AiUsageLedgerEntry::query()->lockForUpdate()->find($entry->id);
+            // Correction 7 — the same settle() path, and therefore the same
+            // lock order, as a provider call completing. Whichever of the
+            // two claims the entry first wins; the other finds it no longer
+            // `reserved` and changes nothing.
+            $settled = $this->settle($entry, AiUsageEntryStatus::Released, 0, []);
 
-                if ($fresh === null || $fresh->status !== AiUsageEntryStatus::Reserved) {
-                    return;
-                }
-
-                $this->adjustPeriods($fresh, releaseReserved: $fresh->estimated_cost_microusd, addCommitted: 0);
-
-                $fresh->forceFill([
-                    'status' => AiUsageEntryStatus::Released,
-                    'actual_cost_microusd' => 0,
-                    'settled_at' => Carbon::now(),
-                ])->save();
-            });
+            if ($settled->status === AiUsageEntryStatus::Released && $settled->settled_at !== null) {
+                $released++;
+            }
         }
 
-        return $stale->count();
+        // The number actually released, not the number that looked stale:
+        // a sweep racing live settlements releases fewer than it found, and
+        // saying otherwise would misreport the work done.
+        return $released;
     }
 
     private function adjustPeriods(AiUsageLedgerEntry $entry, int $releaseReserved, int $addCommitted): void

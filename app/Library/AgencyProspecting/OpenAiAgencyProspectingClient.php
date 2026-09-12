@@ -34,7 +34,7 @@ final class OpenAiAgencyProspectingClient implements AgencyProspectingAiClient
     ) {
     }
 
-    public function complete(array $messages, Workspace $workspace, ?int $actorUserId = null): ?string
+    public function complete(array $messages, Workspace $workspace, ?int $actorUserId = null, ?string $idempotencyKey = null): ?string
     {
         $category = AiUsageCategory::AgencyProspectReply;
         $route = $this->router->defaultRouteFor($category);
@@ -48,7 +48,12 @@ final class OpenAiAgencyProspectingClient implements AgencyProspectingAiClient
             route: $route,
             messages: $messages,
             maxOutputTokens: (int) $routeConfig['max_output_tokens'],
-            idempotencyKey: (string) Str::uuid(),
+            // Correction 8 — a random key made every redelivery a new,
+            // separately charged piece of work, which is exactly what the
+            // unique ledger key exists to prevent. The caller supplies the
+            // durable identity of the inbound message being answered; only
+            // a caller that truly has none falls back to a fresh key.
+            idempotencyKey: $idempotencyKey ?? (string) Str::uuid(),
             actorUserId: $actorUserId,
         );
 

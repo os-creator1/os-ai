@@ -28,5 +28,13 @@ interface AgencyProspectingAiClient
      *                      treat null as "fail closed: send nothing, advance
      *                      nothing", never fabricate a reply.
      */
-    public function complete(array $messages, Workspace $workspace, ?int $actorUserId = null): ?string;
+    /**
+     * @param  string|null  $idempotencyKey  Correction 8 — the durable
+     *         identity of the work this reply answers, so a redelivered job
+     *         or two concurrent executions for the same inbound message
+     *         reach the provider at most once and charge the budget at most
+     *         once. Callers that genuinely have no durable identity may
+     *         omit it, and each call is then its own work.
+     */
+    public function complete(array $messages, Workspace $workspace, ?int $actorUserId = null, ?string $idempotencyKey = null): ?string;
 }

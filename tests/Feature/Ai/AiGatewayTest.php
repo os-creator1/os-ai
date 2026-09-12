@@ -282,7 +282,13 @@ class AiGatewayTest extends TestCase
             'interactive_committed_microusd' => $interactiveCap,
         ]);
 
-        $interactiveRequest = $this->buildRequest($workspace, category: AiUsageCategory::CooInteractive, lane: AiLane::Interactive);
+        // Correction 1 put the COO categories behind `ai_coo_basic`, which
+        // is Planned until AI-3 — so a COO category would now be refused for
+        // entitlement before the lane was ever considered. The lane is an
+        // explicit property of the request, so the 30% share is proven here
+        // with a category that carries no entitlement of its own; the
+        // mechanism under test is unchanged.
+        $interactiveRequest = $this->buildRequest($workspace, category: AiUsageCategory::CampaignMessageDraft, lane: AiLane::Interactive);
         $interactiveResult = $this->gateway()->complete($interactiveRequest);
 
         $this->assertFalse($interactiveResult->ok, 'Interactive lane must refuse once its own share is spent.');
@@ -623,7 +629,7 @@ class AiGatewayTest extends TestCase
             'committed_microusd' => $coreCap - $requiredHeadroom + 1,
         ]);
 
-        $request = $this->buildRequest($workspace, category: AiUsageCategory::CooDiagnosis, route: AiModelRoute::Reasoning, maxOutputTokens: 10);
+        $request = $this->buildRequest($workspace, category: AiUsageCategory::CampaignMessageDraft, route: AiModelRoute::Reasoning, maxOutputTokens: 10);
         $result = $this->gateway()->complete($request);
 
         $this->assertTrue($result->ok);
@@ -634,7 +640,7 @@ class AiGatewayTest extends TestCase
     {
         [, , $workspace] = $this->tenant(WorkspacePlanTier::Agency);
 
-        $request = $this->buildRequest($workspace, category: AiUsageCategory::CooDiagnosis, route: AiModelRoute::Reasoning, maxOutputTokens: 10);
+        $request = $this->buildRequest($workspace, category: AiUsageCategory::CampaignMessageDraft, route: AiModelRoute::Reasoning, maxOutputTokens: 10);
         $result = $this->gateway()->complete($request);
 
         $this->assertTrue($result->ok);

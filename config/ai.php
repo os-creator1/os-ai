@@ -87,6 +87,29 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Estimator (§10.1 step 3)
+    |--------------------------------------------------------------------------
+    |
+    | The deterministic upper bound a reservation is taken at. A chat request
+    | is a sequence of messages, not a string: the provider tokenises each
+    | message's role and its structural delimiters as well as its content, so
+    | many short messages cost far more than their characters suggest. Each
+    | message therefore carries a framing allowance and the request carries
+    | one more for reply priming.
+    |
+    | Deliberately generous. An over-reservation is released the instant the
+    | provider reports real usage; an under-reservation is a cap breach that
+    | cannot be taken back.
+    |
+    */
+    'estimator' => [
+        'chars_per_token' => (int) env('AI_ESTIMATOR_CHARS_PER_TOKEN', 3),
+        'per_message_framing_tokens' => (int) env('AI_ESTIMATOR_PER_MESSAGE_FRAMING_TOKENS', 8),
+        'per_request_framing_tokens' => (int) env('AI_ESTIMATOR_PER_REQUEST_FRAMING_TOKENS', 8),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Model routing (contract §13, D-4)
     |--------------------------------------------------------------------------
     |

@@ -34,4 +34,39 @@ enum AiUsageCategory: string
             self::WebsiteGeneration, self::CampaignMessageDraft, self::AgencyProspectReply => false,
         };
     }
+
+    /**
+     * Correction 1 (§8.1, §10.1 step 1) — the COO categories are a product
+     * the Business must be entitled to (`ai_coo_basic`). The three that
+     * pre-date the gateway are deliberately absent: they shipped without
+     * that feature, and putting them behind it now would take working
+     * product away from customers who already have it.
+     */
+    public function requiresCooEntitlement(): bool
+    {
+        return match ($this) {
+            self::CooDiagnosis, self::CooInteractive, self::ConversationCompaction => true,
+            self::WebsiteGeneration, self::CampaignMessageDraft, self::AgencyProspectReply => false,
+        };
+    }
+
+    /**
+     * Correction 2 (§8.1, C-8) — which categories a dormant Business
+     * refuses. Scheduled COO work on a Business nobody is using costs real
+     * money for nothing, so it is gated.
+     *
+     * The three pre-existing categories are NOT gated: each one is a
+     * customer action happening right now (generating a website, drafting
+     * a campaign, answering a prospect who just replied), which is itself
+     * the activity dormancy is looking for. `coo_interactive` is likewise
+     * exempt — an explicit request is never refused for dormancy alone —
+     * and the gateway additionally only applies this to the product lane.
+     */
+    public function isDormancyGated(): bool
+    {
+        return match ($this) {
+            self::CooDiagnosis, self::ConversationCompaction => true,
+            self::CooInteractive, self::WebsiteGeneration, self::CampaignMessageDraft, self::AgencyProspectReply => false,
+        };
+    }
 }

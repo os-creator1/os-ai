@@ -64,14 +64,51 @@ final class AiModelRouter
     }
 
     /**
-     * ceil(input_chars / 3) tokens at the route's input price, plus
-     * maxOutputTokens at the route's output price (§10.1 step 3).
+     * Correction 9 — the deterministic upper bound on a request's input
+     * tokens, for the exact shape being sent.
+     *
+     * Content bytes alone under-count: a chat request is not a string, it
+     * is a sequence of messages, and the provider tokenises each message's
+     * role and its structural delimiters too. Twenty one-word messages cost
+     * far more than one twenty-word message, and an estimator that only
+     * divides total characters by three would reserve a fraction of what
+     * such a request is really billed — which, under concurrent
+     * hard-enforced calls, is exactly how committed + reserved creeps past
+     * a cap the customer was promised.
+     *
+     * So each message costs its own content plus a fixed framing
+     * allowance, and the whole request carries one more for the reply
+     * priming. The numbers are config, and deliberately generous: an
+     * over-reservation is released the moment the provider reports what it
+     * really used, while an under-reservation is a cap breach that cannot
+     * be taken back.
+     */
+    public function estimateInputTokens(array $messages): int
+    {
+        $charsPerToken = max(1, (int) config('ai.estimator.chars_per_token', 3));
+        $perMessageTokens = max(0, (int) config('ai.estimator.per_message_framing_tokens', 8));
+        $perRequestTokens = max(0, (int) config('ai.estimator.per_request_framing_tokens', 8));
+
+        $tokens = $perRequestTokens;
+
+        foreach ($messages as $message) {
+            $content = (string) ($message['content'] ?? '');
+            $role = (string) ($message['role'] ?? '');
+
+            $tokens += (int) ceil((strlen($content) + strlen($role)) / $charsPerToken) + $perMessageTokens;
+        }
+
+        return $tokens;
+    }
+
+    /**
+     * The estimated input tokens at the route's input price, plus
+     * maxOutputTokens at its output price (§10.1 step 3).
      */
     public function estimateCostMicrousd(AiModelRoute $route, array $messages, int $maxOutputTokens): int
     {
         $config = $this->config($route);
-        $inputChars = array_sum(array_map(static fn (array $m): int => strlen((string) ($m['content'] ?? '')), $messages));
-        $estimatedInputTokens = (int) ceil($inputChars / 3);
+        $estimatedInputTokens = $this->estimateInputTokens($messages);
 
         $inputCost = (int) ceil($estimatedInputTokens * $config['input_price_microusd_per_mtok'] / 1_000_000);
         $outputCost = (int) ceil($maxOutputTokens * $config['output_price_microusd_per_mtok'] / 1_000_000);

@@ -8,6 +8,14 @@ namespace App\Library\Ai;
  * credentials, HTTP/API error, malformed response) — an adapter never
  * throws for a provider-side failure, mirroring the existing three call
  * sites' own fail-closed shape.
+ *
+ * Correction 3: a failure carries whatever usage the provider reported.
+ * A model that read the whole prompt and then returned content we could
+ * not use was still billed for it, and recording that call as free would
+ * make the ledger quietly wrong in the provider's favour — and would let
+ * a Workspace exceed its cap by repeating calls that "cost nothing".
+ * `failure()` therefore takes the same usage fields as `success()`, and
+ * `billableUsage()` says whether anything was actually charged.
  */
 final readonly class AiCompletionResult
 {
@@ -33,8 +41,23 @@ final readonly class AiCompletionResult
         return new self(true, $content, $providerModel, $inputTokens, $cachedInputTokens, $outputTokens, $finishReason);
     }
 
-    public static function failure(): self
+    public static function failure(
+        ?string $providerModel = null,
+        int $inputTokens = 0,
+        int $outputTokens = 0,
+        int $cachedInputTokens = 0,
+        ?string $finishReason = null,
+    ): self {
+        return new self(false, null, $providerModel, $inputTokens, $cachedInputTokens, $outputTokens, $finishReason);
+    }
+
+    /**
+     * Did the provider report usage it will charge for? Only then does a
+     * failed call commit anything; otherwise the whole reservation goes
+     * back.
+     */
+    public function billableUsage(): bool
     {
-        return new self(false, null, null, 0, 0, 0, null);
+        return $this->inputTokens > 0 || $this->cachedInputTokens > 0 || $this->outputTokens > 0;
     }
 }

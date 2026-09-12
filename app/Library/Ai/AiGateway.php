@@ -2,8 +2,11 @@
 
 namespace App\Library\Ai;
 
+use App\Enums\Entitlement\PlatformFeature;
 use App\Library\Ai\Contracts\AiCompletionClient;
+use App\Library\Ai\Enums\AiLane;
 use App\Library\Ai\Enums\AiRefusalReason;
+use App\Library\Entitlement\EntitlementManager;
 
 /**
  * Contract §10.1 — `AiGateway::complete(AiRequest): AiResult` is the
@@ -19,6 +22,8 @@ final class AiGateway
         private readonly AiModelRouter $router,
         private readonly AiUsageLedgerManager $ledger,
         private readonly AiCompletionClient $completionClient,
+        private readonly EntitlementManager $entitlements,
+        private readonly AiBusinessActivityGate $activityGate,
     ) {
     }
 
@@ -46,14 +51,74 @@ final class AiGateway
             return AiResult::refused(AiRefusalReason::BudgetExhausted);
         }
 
+        // Gate 2a (§8.1, §10.1 step 1) — Correction 1. The COO categories
+        // are a product the Business must actually be entitled to, and the
+        // canonical entitlement system is the only thing that may say so.
+        // Refused here, before any reservation and before any provider
+        // call. The three categories that pre-date the gateway are
+        // deliberately NOT put behind this feature: they shipped without
+        // it, and moving them behind it would remove working product.
+        if ($request->category->requiresCooEntitlement()) {
+            if ($request->business === null) {
+                // `ai_coo_basic` is a Business-scoped feature; COO work with
+                // no Business has nothing to entitle.
+                return AiResult::refused(AiRefusalReason::EntitlementMissing);
+            }
+
+            $decision = $this->entitlements->decide(
+                $request->workspace,
+                $request->business,
+                PlatformFeature::AiCooBasic->value,
+                $request->actorUserId ?? 0,
+            );
+
+            if (! $decision->allowed) {
+                return AiResult::refused(AiRefusalReason::EntitlementMissing);
+            }
+        }
+
+        // Gate 2b (§8.1, C-8) — Correction 2. Scheduled, Business-scoped
+        // product work is never spent on a dormant Business. A customer's
+        // own explicit request (the interactive lane) is exempt from
+        // dormancy alone, and Workspace-level work has no Business whose
+        // dormancy could be asked about.
+        if ($request->business !== null
+            && $request->lane === AiLane::Product
+            && $request->category->isDormancyGated()
+            && $this->activityGate->isDormant($request->business)) {
+            return AiResult::refused(AiRefusalReason::Dormant);
+        }
+
         // §11.2 downgrade heuristic — an unlocked peek, not the
         // authoritative check.
+        //
+        // Correction 10: the headroom is measured against the cap this
+        // period is actually being enforced against. An open period keeps
+        // the cap it snapshotted when it opened, so a config change must
+        // not make routing believe there is room that reserve() will then
+        // refuse — or, worse, withhold reasoning that the period could
+        // still afford. A period that does not exist yet has no snapshot,
+        // and the newly configured cap is the right answer for it.
+        $enforcedCap = $this->ledger->enforcedWorkspaceCapMicrousd($request->workspace->id, $policy);
         $peeked = $this->ledger->peekWorkspaceCommittedAndReserved($request->workspace->id, $policy->periodKey);
-        $remaining = max(0, $policy->workspaceCapMicrousd - $peeked);
+        $remaining = max(0, $enforcedCap - $peeked);
         $route = $this->router->resolveAffordableRoute($request->route, $remaining);
 
         $routeConfig = $this->router->config($route);
         $maxOutputTokens = min($request->maxOutputTokens, (int) $routeConfig['max_output_tokens']);
+
+        // Gate 3a (§11.2) — Correction 4. The route's own input ceiling is
+        // enforced before anything is reserved or sent. Oversized input is
+        // refused rather than silently truncated: these callers' prompts
+        // are structured (a website schema, a classification instruction,
+        // a campaign brief), and quietly cutting one produces a confidently
+        // wrong answer instead of an honest refusal. Trimming belongs to a
+        // caller whose own contract defines what may be dropped.
+        $estimatedInputTokens = $this->router->estimateInputTokens($request->messages);
+
+        if ($estimatedInputTokens > (int) $routeConfig['max_input_tokens']) {
+            return AiResult::refused(AiRefusalReason::InputTooLarge);
+        }
 
         // Gate 3 (§10.1 step 3): the request itself, at this route's
         // price, must fit under the route's own per-request cap.
@@ -100,9 +165,29 @@ final class AiGateway
         $completionResult = $this->completionClient->complete($completionRequest);
 
         if (! $completionResult->success) {
-            $this->ledger->releaseAsFailed($entry);
+            // Correction 3 — usage the provider reported before failing was
+            // really billed, so it is committed exactly once and only the
+            // remainder of the reservation is released. A failure that
+            // reported nothing releases the whole hold.
+            $failedCostMicrousd = $completionResult->billableUsage()
+                ? $this->router->actualCostMicrousd(
+                    $route,
+                    $completionResult->inputTokens,
+                    $completionResult->cachedInputTokens,
+                    $completionResult->outputTokens,
+                )
+                : 0;
 
-            return AiResult::providerFailure($entry);
+            $settled = $this->ledger->releaseAsFailed(
+                $entry,
+                $failedCostMicrousd,
+                $completionResult->providerModel,
+                $completionResult->inputTokens,
+                $completionResult->cachedInputTokens,
+                $completionResult->outputTokens,
+            );
+
+            return AiResult::providerFailure($settled);
         }
 
         // §10.1 step 6: commit actual usage x this call's own price

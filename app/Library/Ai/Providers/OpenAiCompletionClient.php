@@ -48,7 +48,16 @@ final class OpenAiCompletionClient implements AiCompletionClient
             $content = trim($result->choices[0]->message->content ?? '');
 
             if ($content === '') {
-                return AiCompletionResult::failure();
+                // Correction 3 — the provider answered, read the prompt and
+                // billed for it; the content is simply unusable. That usage
+                // is real and must be committed, not written off as free.
+                return AiCompletionResult::failure(
+                    providerModel: $result->model,
+                    inputTokens: $result->usage?->promptTokens ?? 0,
+                    outputTokens: $result->usage?->completionTokens ?? 0,
+                    cachedInputTokens: $result->usage?->promptTokensDetails?->cachedTokens ?? 0,
+                    finishReason: $result->choices[0]->finishReason ?? null,
+                );
             }
 
             return AiCompletionResult::success(
