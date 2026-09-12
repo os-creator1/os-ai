@@ -374,6 +374,10 @@
     | - POST /context/business   : the Business switcher. Re-authorized via
     |   WorkspaceManager::userCanAccessBusiness(); forged, cross-Workspace,
     |   inactive or foreign uids are 404.
+    | - POST /context/account    : the same switcher's account option, which
+    |   moves the shell into the account's own frame. Re-authorized via
+    |   AccountFrameAccess (owner or active scope-all membership, the account
+    |   page's own rule); unknown, inactive or foreign uids are 404.
     | - POST /view-as, /view-as/exit : View as client (§5.5), audited,
     |   TTL-bounded, narrowing only.
     */
@@ -381,6 +385,8 @@
         ->name('outreach.campaigns.entry');
     Route::post('context/business', '\\' . \App\Library\Navigation\Actions\SwitchBusinessAction::class)
         ->name('context.business.switch');
+    Route::post('context/account', '\\' . \App\Library\Navigation\Actions\SwitchAccountAction::class)
+        ->name('context.account.switch');
     Route::post('view-as', '\\' . \App\Library\ViewAs\Actions\StartViewAsAction::class)
         ->name('view-as.start');
     Route::post('view-as/exit', '\\' . \App\Library\ViewAs\Actions\ExitViewAsAction::class)

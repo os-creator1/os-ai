@@ -54,6 +54,32 @@ final class WorkspaceCandidate
     }
 
     /**
+     * Whether the actor may stand in this account's own frame — the account
+     * home, the account page and the account-level menu.
+     *
+     * The rule is App\Library\Workspace\AccountFrameAccess's, mirrored here
+     * for PRESENTATION from data the snapshot already resolved: the owner, or
+     * an active membership whose Business access scope is `all`. A
+     * selected-scope member works inside assigned Businesses only, which is
+     * also why an agency account's name is never disclosed to a client who is
+     * one (contract §5.4, S-6).
+     *
+     * Presentation only, like $accessible on BusinessCandidate:
+     * SwitchAccountAction re-reads the Workspace and re-applies the same rule
+     * through AccountFrameAccess on every switch, and the account page
+     * independently answers 404. Nothing is granted from this flag.
+     */
+    public function seesAccountFrame(): bool
+    {
+        if ($this->isOwner) {
+            return true;
+        }
+
+        return $this->membershipActive
+            && $this->membershipScope === WorkspaceBusinessAccessScope::All;
+    }
+
+    /**
      * @return array<int, BusinessCandidate>
      */
     public function selectableBusinesses(): array
