@@ -106,6 +106,16 @@
             $schedule->command('opportunity:sweep-expired-snoozes')
                 ->cron('*/' . $this->opportunitySnoozeSweepCronMinutes() . ' * * * *');
 
+            // COO C-1 — the daily Business Advisor producer sweep. Registered
+            // unconditionally for the same reason as the snooze sweep: the
+            // command owns opportunity.enabled no-op behavior. One run a day,
+            // bounded by its own --limit/--page, and idempotent per Business
+            // per day, so overlap or a manual re-run duplicates nothing.
+            $schedule->command('opportunity:dispatch-business-advisor', [
+                '--limit=' . (int) config('opportunity.sweep_limit', 500),
+                '--page=' . (int) config('opportunity.sweep_page', 100),
+            ])->dailyAt('03:10')->withoutOverlapping();
+
             // RFC-005 Milestone 3 (Correction Round 1, item 110) —
             // without these, both jobs are permanently unreachable
             // (unlike ProcessPaymentProviderEvent/EvaluateBusinessAutoRecharge,
