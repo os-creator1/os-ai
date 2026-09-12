@@ -5,6 +5,7 @@ namespace Tests\Feature\Analytics\Concerns;
 use App\Enums\Business\BusinessStatus;
 use App\Enums\Workspace\WorkspaceBusinessAccessScope;
 use App\Enums\Workspace\WorkspaceMembershipRole;
+use App\Library\Entitlement\EntitlementManager;
 use App\Models\AppConfig;
 use App\Models\Automation;
 use App\Models\Business;
@@ -292,6 +293,40 @@ trait CreatesAnalyticsFixtures
     {
         $sql = [];
         DB::listen(function ($query) use (&$sql): void {
+            $sql[] = $query->sql;
+        });
+
+        $callback();
+
+        return $sql;
+    }
+
+    /**
+     * capturedSql(), minus every read issued from inside
+     * EntitlementManager::snapshotBusinessFeatureDecisions().
+     *
+     * That snapshot is Slice 2A's shell menu-entitlement check. It runs on
+     * every Business-frame page, is shared page chrome rather than anything
+     * Analytics issues, and is already budgeted at six queries by its own
+     * tests (MenuEntitlementsRequestSnapshotTest). It is excluded here by
+     * CALLER, not by SQL: its first read is `select * from businesses where
+     * id = ?`, character-for-character the same statement the tenancy
+     * chain's WorkspaceManager::userCanAccessBusiness() issues, so no
+     * pattern over the SQL can separate the two — and matching on text
+     * would silently drop the tenancy read too. Nothing else is excluded.
+     *
+     * @return array<int, string>
+     */
+    protected function analyticsOwnedSql(callable $callback): array
+    {
+        $sql = [];
+        DB::listen(function ($query) use (&$sql): void {
+            foreach (debug_backtrace(DEBUG_BACKTRACE_IGNORE_ARGS) as $frame) {
+                if (($frame['class'] ?? null) === EntitlementManager::class && ($frame['function'] ?? null) === 'snapshotBusinessFeatureDecisions') {
+                    return;
+                }
+            }
+
             $sql[] = $query->sql;
         });
 

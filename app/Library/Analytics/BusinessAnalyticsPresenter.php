@@ -23,6 +23,14 @@ class BusinessAnalyticsPresenter
 {
     public const CACHE_TTL_SECONDS = 300;
 
+    /**
+     * Shape of the cached payload. Bumped whenever the payload gains a
+     * field the page depends on, so an entry written by the previous release
+     * is recomputed instead of rendering a missing figure as zero. Version 2
+     * added the daily `accepted` series to `message_volume`.
+     */
+    public const PAYLOAD_VERSION = 2;
+
     public function __construct(private readonly BusinessAnalyticsQueries $queries)
     {
     }
@@ -34,18 +42,27 @@ class BusinessAnalyticsPresenter
 
     public function buildOverview(Business $business, AnalyticsDateRange $range): BusinessAnalyticsViewModel
     {
-        $payload = Cache::remember(
-            self::cacheKey($business, $range),
-            self::CACHE_TTL_SECONDS,
-            fn (): array => $this->assemble($business, $range)->toArray(),
-        );
+        $key = self::cacheKey($business, $range);
+        $build = fn (): array => ['payload_version' => self::PAYLOAD_VERSION] + $this->assemble($business, $range)->toArray();
+
+        $payload = Cache::remember($key, self::CACHE_TTL_SECONDS, $build);
+
+        if (($payload['payload_version'] ?? null) !== self::PAYLOAD_VERSION) {
+            $payload = $build();
+            Cache::put($key, $payload, self::CACHE_TTL_SECONDS);
+        }
 
         return BusinessAnalyticsViewModel::fromArray($payload);
     }
 
     /**
      * Contract §12.1 — the bounded chart payload for `/series`: the range
-     * and the two daily series only. Served from the same cached payload.
+     * and the two daily series, served from the same cached payload.
+     *
+     * `charts` is the readable form of those same series (adaptive
+     * grouping, short axis labels, exact dates for the tooltip). It is
+     * derived from the cached daily series in PHP, so it costs no query.
+     * The raw daily arrays are kept unchanged beside it.
      *
      * @return array<string, mixed>
      */
@@ -57,6 +74,10 @@ class BusinessAnalyticsPresenter
             'range' => $overview->range,
             'contact_growth' => $overview->contactGrowth->toArray(),
             'message_volume' => $overview->messageVolume->toArray(),
+            'charts' => [
+                'new_contacts' => AnalyticsChartBuckets::fromDailySeries($overview->contactGrowth, ['new_contacts']),
+                'messages' => AnalyticsChartBuckets::fromDailySeries($overview->messageVolume, ['incoming', 'accepted']),
+            ],
         ];
     }
 

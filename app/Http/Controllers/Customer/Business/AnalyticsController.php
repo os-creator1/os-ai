@@ -6,6 +6,7 @@ use App\Http\Controllers\Customer\CustomerBaseController;
 use App\Http\Requests\Analytics\AnalyticsRangeRequest;
 use App\Library\Analytics\AnalyticsDateRange;
 use App\Library\Analytics\BusinessAnalyticsPresenter;
+use App\Library\Conversations\BusinessConversationReadModel;
 use App\Library\Workspace\WorkspaceManager;
 use App\Models\Business;
 use App\Repositories\Contracts\WorkspaceRepository;
@@ -34,6 +35,11 @@ use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
  *
  * Read-only by construction: no action writes anything except ordinary
  * range/pagination state carried in the query string.
+ *
+ * The Results page also shows how many conversations started in the range.
+ * That figure comes from Slice 2B's own read seam and is composed HERE,
+ * beside the B5 overview — never inside it: B5 must not query chat_boxes
+ * (AnalyticsSeparationTest), because Conversations owns that table.
  */
 class AnalyticsController extends CustomerBaseController
 {
@@ -41,6 +47,7 @@ class AnalyticsController extends CustomerBaseController
         private readonly WorkspaceRepository $workspaceRepository,
         private readonly WorkspaceManager $workspaceManager,
         private readonly BusinessAnalyticsPresenter $presenter,
+        private readonly BusinessConversationReadModel $conversations,
     ) {
     }
 
@@ -91,7 +98,13 @@ class AnalyticsController extends CustomerBaseController
             'businessUid' => $businessUid,
             'range' => $range,
             'analytics' => $this->presenter->buildOverview($business, $range),
+            // Same Business, same half-open interval as every B5 figure; the
+            // boundaries are in the storage timezone, as the seam expects.
+            'conversationsStarted' => $this->conversations->startedCount($business, $range->startUtc, $range->endUtc),
             'opportunityEnabled' => (bool) config('opportunity.enabled', false),
+            // The page owns its <h1>; the shared title bar's <h2> would
+            // otherwise precede it. Same arrangement as the customer home.
+            'pageConfigs' => ['pageHeader' => false],
         ]);
     }
 

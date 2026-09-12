@@ -31,15 +31,17 @@ class AnalyticsPerformanceTest extends TestCase
         $this->campaign($business);
         $this->authenticateAsCustomer($customer);
 
-        $sql = $this->capturedSql(fn () => $this->overview($workspace, $business)->assertOk());
+        $sql = $this->analyticsOwnedSql(fn () => $this->overview($workspace, $business)->assertOk());
 
         $kpiQueries = array_values(array_filter($sql, fn (string $s) => preg_match(self::SOURCE_TABLES, $s) === 1));
         $tenancyQueries = array_values(array_filter($sql, fn (string $s) => preg_match('/\b(workspaces|businesses|workspace_memberships|workspace_membership_businesses)\b/', $s) === 1));
 
         // Contract §11.2: the analytics-owned cost — the §2.2 tenancy chain
         // plus the batched KPI reads — is at most 12. The shared page chrome
-        // (plan card, notifications, theme preset, languages) is rendered by
-        // the layout for every customer page and is outside this budget.
+        // (plan card, notifications, theme preset, languages, and Slice 2A's
+        // menu-entitlement snapshot, excluded by caller in
+        // analyticsOwnedSql()) is rendered by the layout for every customer
+        // page and is outside this budget.
         $this->assertLessThanOrEqual(7, count($kpiQueries), 'KPI reads must be batched (M, M7, C, K, K3, O, A): ' . implode(' | ', $kpiQueries));
         $this->assertLessThanOrEqual(12, count($kpiQueries) + count($tenancyQueries), 'Overview budget: ' . (count($kpiQueries) + count($tenancyQueries)) . ' tenancy+KPI queries');
 

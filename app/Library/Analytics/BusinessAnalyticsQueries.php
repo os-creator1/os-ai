@@ -85,13 +85,27 @@ class BusinessAnalyticsQueries
         ];
     }
 
-    /** M7 — daily volume split by direction, one query. */
+    /**
+     * M7 — daily volume split by direction, plus the M4 subset of each
+     * day's outgoing messages, in ONE query.
+     *
+     * `accepted` is the same predicate messageKpis() uses for M4
+     * (ACCEPTED_SQL, restricted to `direction = 'outgoing'`), bucketed by
+     * the same local date, so the daily values sum to the overview's M4
+     * figure exactly. It exists so a chart labelled "Sent" charts the very
+     * number the page calls "Sent", rather than every outgoing attempt.
+     * `outgoing`, `incoming` and `api` are computed exactly as before.
+     */
     public function messageVolumeSeries(Business $business, AnalyticsDateRange $range): DailySeries
     {
         [$bucketSql, $bucketBindings] = $this->bucketExpression($range);
 
         $rows = DB::table('reports')
-            ->selectRaw($bucketSql . ' AS bucket, direction, COUNT(*) AS c', $bucketBindings)
+            ->selectRaw(
+                $bucketSql . ' AS bucket, direction, COUNT(*) AS c,'
+                . " SUM(CASE WHEN direction = 'outgoing' AND " . self::ACCEPTED_SQL . ' THEN 1 ELSE 0 END) AS accepted',
+                $bucketBindings
+            )
             ->where('business_id', $business->id)
             ->where('created_at', '>=', $this->ts($range->startUtc))
             ->where('created_at', '<', $this->ts($range->endUtc))
@@ -100,12 +114,21 @@ class BusinessAnalyticsQueries
             ->get();
 
         $dates = array_column($range->dailyBuckets(), 'date');
-        $series = ['outgoing' => array_fill(0, count($dates), 0), 'incoming' => array_fill(0, count($dates), 0), 'api' => array_fill(0, count($dates), 0)];
+        $zeros = array_fill(0, count($dates), 0);
+        $series = ['outgoing' => $zeros, 'incoming' => $zeros, 'api' => $zeros, 'accepted' => $zeros];
         $index = array_flip($dates);
 
         foreach ($rows as $row) {
-            if (isset($index[$row->bucket], $series[$row->direction])) {
+            if (! isset($index[$row->bucket])) {
+                continue;
+            }
+
+            if (isset($series[$row->direction])) {
                 $series[$row->direction][$index[$row->bucket]] = (int) $row->c;
+            }
+
+            if ($row->direction === 'outgoing') {
+                $series['accepted'][$index[$row->bucket]] = (int) $row->accepted;
             }
         }
 

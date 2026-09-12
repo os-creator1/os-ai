@@ -149,6 +149,13 @@ class AnalyticsAdvisorAutomationTest extends TestCase
         $this->assertNull($a->successRate());
 
         $this->authenticateAsCustomer($customer);
-        $this->overview($workspace, $business)->assertOk()->assertSee('data-role="automations-panel"', false)->assertSee('pending and skipped are excluded');
+
+        // Human outcomes, with the two non-outcomes explained rather than
+        // folded into a rate: skipped is not a failure, pending has not run.
+        $this->overview($workspace, $business)->assertOk()
+            ->assertSee('data-role="automations-panel"', false)
+            ->assertSeeInOrder(['Runs', 'Completed', 'Failed'])
+            ->assertSee('1 skipped on purpose, not a failure.')
+            ->assertSee('1 waiting to run.');
     }
 }
