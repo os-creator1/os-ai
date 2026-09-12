@@ -15,6 +15,9 @@
 
     <!-- Basic table -->
     <section id="datatables-basic">
+        {{-- Contacts → Groups: the secondary tab next to All contacts. --}}
+        @include('customer.people._tabs')
+
         <div class="mb-3 mt-2">
             @can('view_contact_group')
                 <div class="btn-group">
@@ -37,7 +40,7 @@
 
             @can('create_contact_group')
                 <div class="btn-group">
-                    <a href="{{\App\Library\CrmRouting::route('contacts.create')}}" class="btn btn-success waves-light waves-effect fw-bold mx-1"> {{__('locale.buttons.add_new')}} <x-ds-icon name="plus-circle" /></a>
+                    <a href="{{\App\Library\CrmRouting::route('contacts.create')}}" class="btn btn-success waves-light waves-effect fw-bold mx-1"><x-ds-icon name="plus-circle" /> New group</a>
                 </div>
             @endcan
 

@@ -981,6 +981,16 @@
                 ->name('businesses.contacts.download_failed');
         });
 
+        // Contacts, person first: "All contacts" (the Contacts destination)
+        // and each contact's profile. Groups stay under .../contacts above.
+        Route::prefix('{workspaceUid}/businesses/{businessUid}/people')->name('businesses.people.')->group(function () {
+            Route::get('/', 'Business\ContactDirectoryController@listing')->name('index');
+            Route::get('/add', 'Business\ContactDirectoryController@add')->name('add');
+            Route::get('/import', 'Business\ContactDirectoryController@import')->name('import');
+            Route::post('/first-list', 'Business\ContactDirectoryController@createFirstList')->name('first-list');
+            Route::get('/{contactUid}', 'Business\ContactDirectoryController@show')->name('show');
+        });
+
         /*
         |----------------------------------------------------------------
         | B2 — Business Messaging Channels (Twilio / Telnyx connect)

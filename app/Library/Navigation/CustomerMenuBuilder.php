@@ -126,8 +126,10 @@ final class CustomerMenuBuilder
             $items[] = new MenuItem('messages', 'Messages', null, 'message-square', false, $messages);
         }
 
-        $items[] = $this->item($user, 'contacts', 'Contacts', 'users', self::CONTACT_PERMISSIONS, 'customer.workspaces.businesses.contacts.index', $scoped, $current, [
-            'customer.workspaces.businesses.contacts.', 'customer.workspaces.businesses.contact.', 'customer.contacts.', 'customer.contact.',
+        // Contacts opens the people first ("All contacts"); groups are its
+        // secondary tab and keep the entry active too.
+        $items[] = $this->item($user, 'contacts', 'Contacts', 'users', self::CONTACT_PERMISSIONS, 'customer.workspaces.businesses.people.index', $scoped, $current, [
+            'customer.workspaces.businesses.people.', 'customer.workspaces.businesses.contacts.', 'customer.workspaces.businesses.contact.', 'customer.contacts.', 'customer.contact.',
         ]);
         $items[] = $this->entitled('automations', $this->item($user, 'automations', 'Automations', 'cpu', ['automations'], 'customer.workspaces.businesses.automations.index', $scoped, $current, [
             'customer.workspaces.businesses.automations.', 'customer.automations.',
