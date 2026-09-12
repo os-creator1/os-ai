@@ -34,7 +34,13 @@ class DashboardQueryBudgetTest extends TestCase
 
     private const BUSINESS_HOME_ANALYTICS = 6;
 
-    private const BUSINESS_HOME_CONVERSATIONS = 2;
+    /**
+     * Observed: the two Business performance periods (H-3), then H-4's two —
+     * ONE statement for Incoming and Replied together, and one for the
+     * current Awaiting reply state. The contract's own ceiling is 5, which
+     * leaves room for the since-visit count when the activity band renders.
+     */
+    private const BUSINESS_HOME_CONVERSATIONS = 4;
 
     /** Observed: status read, Workspace, three capacity reads, outreach, two Agency-wide control reads. */
     private const AGENCY_HOME_DASHBOARD_OWNED = 8;
@@ -84,7 +90,7 @@ class DashboardQueryBudgetTest extends TestCase
 
         $this->assertLessThanOrEqual(10, $cost['dashboard']);
         $this->assertLessThanOrEqual(6, $cost['analytics']);
-        $this->assertLessThanOrEqual(2, $cost['conversations']);
+        $this->assertLessThanOrEqual(5, $cost['conversations'], 'Contract §16: started ×2, incoming/replied, awaiting, since-visit started.');
         $this->assertLessThanOrEqual(18, $cost['dashboard'] + $cost['analytics'] + $cost['conversations'], 'Total Business Home product-data ceiling.');
 
         // Within the TTL the Analytics seam costs nothing (B5's own cache).
