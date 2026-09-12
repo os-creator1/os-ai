@@ -1137,3 +1137,44 @@ per-seam equality, tenancy, and the band's query budget). The Slice 4 tests
 that asserted the Spend band, the outbound headlines or the old attention
 list are rewritten in this slice, never deleted without a replacement
 assertion (§19.7).
+
+---
+
+## Appendix C — implementation record: H-3
+
+Delivered on `agent/unified-business-home-h3-performance`, from `origin/main`
+`917b5f0e`, and since merged forward to `origin/main` `78ef705` (A-1, A-2,
+C-1, C-3). H-3 changes no file those slices own: the Agency Account Home,
+its cross-client and outreach bands, the COO signal layer and the producer
+trigger arrive from main untouched, and the Business Home carries none of
+them. H-4 to H-6, AI-* and T-1 are not started; Results is neither
+redirected nor removed, and no interactive COO surface exists.
+
+### H-3 — Business performance (§2.5)
+
+| Promise | Delivered by |
+|---|---|
+| The customer's own period, through Results' range infrastructure and no second one | `bands/headlines.blade.php` includes Results' own `customer.business.analytics._range` partial; `BusinessHomePresenter::selectedRange()` validates the query string with `AnalyticsRangeRequest::ruleSet()` and then `AnalyticsDateRange::fromInput()` — the same presets, the same `MAX_CUSTOM_DAYS = 92`, the same Business-local calendar dates converted once by `localDayStartInStorageTz()` |
+| Home opens on This month | `BusinessDashboardAnalyticsPresenter::DEFAULT_PRESET`; Results keeps its own default, and a period chosen on either page means the same window on the other |
+| An unusable range is refused, never approximated | `selectedRange()` catches `ValidationException`, falls back to the default window and returns `rangeRejected`, which the band states in words (`data-role="range-rejected"`) |
+| The comparison is the equal-length window immediately before the selected one | `BusinessDashboardAnalyticsPresenter::ranges($timezone, $today, $current)` builds it from LOCAL DATES — it ends the day before the selection starts and covers the same number of dates — so a 23-hour spring-forward day and a 25-hour fall-back day are each still exactly one date, and a month, year or custom boundary is crossed by calendar arithmetic. The seam still adds no seconds and owns no timezone code (`AnalyticsSeparationTest`'s own forbidden-token test still passes) |
+| One cache entry per Business and per exact window | `cacheKey()` carries the Business id, the range key and both bounds; two equally long custom windows, and a calendar preset and the custom range covering its dates, are all distinct entries |
+| Exactly three canonical figures, in KPI-priority order | `headlines()` builds `new_contacts` (B5 `contactKpis()`), `new_conversations` (Slice 2B `startedCount()`, entitlement- and `chat_box`-gated) and `messages_received` (B5 `messageKpis()->inbound`) — and nothing else. Automation runs left Home with this slice: Automations keeps its own band and its own canonical source, and the legacy `automation_executions` activity definition is unchanged |
+| Nothing about sending, providers, leads, bookings, revenue, conversions, Google or SEO | Asserted over the rendered `<main>`, not merely over the band payload |
+| Every comparison is descriptive | `HeadlinePolarity::DescriptiveGrowth` / `Descriptive`, `judgement: null` throughout; `HeadlineComparison::sentence($previousNoun)` now takes the period it compared against, so the line can never claim a length the figures do not cover ("the previous 10 days" for a 10-day window) |
+| The chart costs the initial request nothing | `bands/headlines.blade.php` renders a placeholder carrying `data-series-url`; the script in `customer/dashboard.blade.php` fetches B5's **existing** `customer.workspaces.businesses.analytics.series` endpoint (`throttle:60,1`) for the same range and charts `charts.new_contacts` from `AnalyticsChartBuckets`. No second endpoint, no synchronous series, and a failed or malformed payload says so instead of drawing |
+| Results stays where it is | "See details" (`data-role="results-link"`) links to `analytics.overview` carrying the selected range; no redirect, no route or view removal (H-6 owns that) |
+| `view_reports` gates the whole band | The band is built only when the gate allows it, and the series URL is issued through `DashboardLinkGate::url(..., ['view_reports'])`, so an actor without it sees no band, no figure and no endpoint |
+| H-1 and H-2 unchanged | The billing exception strip, the absence of a routine spend figure, the adaptive activity window, the visit marker's write rules, and "a first visit synthesizes nothing" all hold for every selected period — the performance period never reaches the activity window |
+
+**Tests:** `tests/Feature/Dashboards/BusinessHomePerformanceTest.php` (the
+period selector including every preset, custom, the 92-day maximum, refusal
+of an unusable range, the year and DST boundaries, the three figures against
+their own seams, the 2B read-model origin, descriptive copy, cache identity,
+the async chart, "See details", `view_reports`, and H-1/H-2 preservation),
+plus the generalized `tests/Feature/Analytics/BusinessDashboardAnalyticsPresenterTest.php`
+and one added case in `DashboardQueryBudgetTest` proving no daily-bucket
+aggregate runs on a Home request for any period. The Slice 4 and H-1 tests
+that asserted a fixed 30-day window, the old headline keys or the absent
+chart are rewritten in this slice, never deleted without a replacement
+assertion (§19.7).

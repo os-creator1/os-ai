@@ -98,6 +98,12 @@
             // Resume re-dispatches held journeys immediately (§6.3) and never
             // waits for this sweep; it deliberately skips paused workflows.
             $schedule->command('automation:workflows-recover-stalled')->everyFiveMinutes();
+
+            // Automations V2-C — a date arriving is not an event anything
+            // emits, so something has to look. Five minutes matches B4's own
+            // cadence, and the command is bounded and idempotent by the
+            // enrollment claim, so an overlapping tick enrolls nobody twice.
+            $schedule->command('automation:workflows-date-sweep')->everyFiveMinutes();
             $schedule->command('app:clean-database')->monthly();
             // $schedule->command('jobs:cleanup-monitors')->everyThirtyMinutes();
 

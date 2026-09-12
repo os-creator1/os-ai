@@ -2,7 +2,6 @@
 
 namespace Tests\Feature\Dashboards;
 
-use App\DTO\Analytics\AutomationKpis;
 use App\Enums\Business\BusinessStatus;
 use App\Enums\Dashboard\AttentionSeverity;
 use App\Enums\Dashboard\AttentionType;
@@ -11,7 +10,6 @@ use App\Enums\Entitlement\WorkspacePlanTier;
 use App\Enums\GoogleBusinessProfile\GoogleConnectionState;
 use App\Enums\Workspace\WorkspaceBusinessAccessScope;
 use App\Enums\Workspace\WorkspaceMembershipRole;
-use App\Library\Analytics\AnalyticsDateRange;
 use App\Library\Analytics\BusinessAnalyticsQueries;
 use App\Library\Dashboard\AttentionItem;
 use App\Library\Dashboard\BusinessHomePresenter;
@@ -290,7 +288,7 @@ class BusinessHomeTest extends TestCase
         $this->assertStringNotContainsString('777', $main);
         $this->assertStringNotContainsString('USD 5.00', $main, 'No wallet figure renders on Home at all (H-1 §5).');
 
-        foreach (['new_contacts', 'conversations_started', 'automation_runs'] as $headline) {
+        foreach (['new_contacts', 'new_conversations', 'messages_received'] as $headline) {
             $this->assertSame('0', $this->headlineFigure($html, $headline), "{$headline} must count only the selected Business.");
         }
     }
@@ -309,8 +307,8 @@ class BusinessHomeTest extends TestCase
 
         $html = $this->home()->assertOk()->getContent();
         $this->assertContains('inbox', $this->quickActionKeys($html));
-        $this->assertContains('conversations_started', $this->headlineKeys($html));
-        $this->assertContains('automation_runs', $this->headlineKeys($html));
+        $this->assertContains('new_conversations', $this->headlineKeys($html));
+        $this->assertNotContains('automation_runs', $this->headlineKeys($html), 'Automation runs are not a Business performance figure (H-3 §2.5).');
         $this->assertContains(AttentionType::AutomationFailing->value, $this->attentionTypes($html));
         $this->assertContains(AttentionType::GoogleConnectionLost->value, $this->attentionTypes($html));
 
@@ -528,27 +526,33 @@ class BusinessHomeTest extends TestCase
     // #21 — automationKpis() null
     // =================================================================
 
-    public function test_the_automation_headline_is_absent_for_both_periods_when_either_period_is_null(): void
+    /**
+     * H-3 §2.5 — automation runs are no longer a Business performance figure,
+     * so an absent automation source can no longer fabricate one. What must
+     * still hold is that the source B5 reports as absent raises no attention
+     * item either, and that the canonical figures are unaffected by it.
+     */
+    public function test_an_absent_automation_source_fabricates_no_figure_and_no_attention_item(): void
     {
         [$customer, $business] = $this->tenant(WorkspacePlanTier::Growth, 'Null Venue', 'Null Account');
         $this->automationRuns($business, 3, '2026-09-01', 'failed');
+        $this->contactsAdded($business, 2, '2026-09-02');
         $this->authenticateAs($customer);
 
-        $this->assertContains('automation_runs', $this->headlineKeys($this->home()->assertOk()->getContent()));
+        $html = $this->home()->assertOk()->getContent();
+        $this->assertNotContains('automation_runs', $this->headlineKeys($html), 'Automation runs left Business performance with H-3.');
+        $this->assertContains(AttentionType::AutomationFailing->value, $this->attentionTypes($html), 'Failing runs are still an attention item, from the same legacy source.');
 
-        foreach ([AnalyticsDateRange::PRESET_CUSTOM, AnalyticsDateRange::PRESET_LAST_30_DAYS] as $nullPreset) {
-            Cache::flush();
-            $this->partialMock(BusinessAnalyticsQueries::class, function ($mock) use ($nullPreset) {
-                $mock->shouldReceive('automationKpis')->andReturnUsing(
-                    fn (Business $b, AnalyticsDateRange $range) => $range->preset === $nullPreset ? null : new AutomationKpis(3, ['failed' => 3], ['contact_created' => 3]),
-                );
-            });
+        Cache::flush();
+        $this->partialMock(BusinessAnalyticsQueries::class, function ($mock) {
+            $mock->shouldReceive('automationKpis')->andReturn(null);
+        });
 
-            $html = $this->home()->assertOk()->getContent();
+        $html = $this->home()->assertOk()->getContent();
 
-            $this->assertNotContains('automation_runs', $this->headlineKeys($html), "Absent when the {$nullPreset} period is null — never zeroed on one side.");
-            $this->assertContains('new_contacts', $this->headlineKeys($html), 'Every other headline still renders.');
-        }
+        $this->assertNotContains('automation_runs', $this->headlineKeys($html));
+        $this->assertNotContains(AttentionType::AutomationFailing->value, $this->attentionTypes($html), 'An absent source proves no failure.');
+        $this->assertContains('new_contacts', $this->headlineKeys($html), 'Every canonical figure still renders.');
     }
 
     // =================================================================
@@ -580,10 +584,11 @@ class BusinessHomeTest extends TestCase
         $this->assertStringNotContainsString('locale.', $main);
         $this->assertStringNotContainsString('locale.', $this->titleOf($html));
 
-        $this->assertStringNotContainsString('apexcharts', $html);
+        // H-3 gave Business performance one chart and the Results period
+        // control; neither brings a legacy reporting surface with it.
         $this->assertStringNotContainsString('<canvas', $html);
         $this->assertStringNotContainsString('id="sms-reports"', $html);
-        $this->assertStringNotContainsString('range', strtolower(implode(' ', $this->formFieldNames($html))), 'No range picker.');
+        $this->assertStringContainsString('range', strtolower(implode(' ', $this->formFieldNames($html))), 'The period control is the Results one (H-3 §2.5).');
 
         foreach (['customer.sms.quick_send', 'customer.sms.campaign_builder', 'customer.chatbox.index'] as $legacy) {
             if (Route::has($legacy)) {

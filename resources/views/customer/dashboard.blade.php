@@ -43,3 +43,76 @@
         @endswitch
     </div>
 @endsection
+
+@php $homeChart = $dashboard->kind === \App\Library\Dashboard\DashboardSnapshot::KIND_BUSINESS
+    && $dashboard->has(\App\Library\Dashboard\DashboardSnapshot::BAND_HEADLINES)
+    && ($dashboard->band(\App\Library\Dashboard\DashboardSnapshot::BAND_HEADLINES)['seriesUrl'] ?? null) !== null; @endphp
+
+@if($homeChart)
+    @section('vendor-style')
+        <link rel="stylesheet" href="{{ asset(mix('vendors/css/charts/apexcharts.css')) }}">
+    @endsection
+
+    @section('vendor-script')
+        <script src="{{ asset(mix('vendors/js/charts/apexcharts.min.js')) }}"></script>
+    @endsection
+
+    @section('page-script')
+        <script>
+            (function () {
+                // Unified Business Home §2.5 (H-3) — the new-contacts chart.
+                // The page ships without a series: the browser asks B5's own
+                // series endpoint for the SAME range the tiles above show,
+                // and charts only a genuine payload. Colours and grid come
+                // from the shared token namespace, exactly as Results does.
+                var mount = document.querySelector('[data-role="chart-new-contacts"]');
+
+                if (!mount || typeof ApexCharts === 'undefined' || !window.PlatformTheme) { return; }
+
+                var theme = window.PlatformTheme;
+                var palette = theme.chartPalette();
+                var LABEL_SPACING_PX = 110;
+
+                function unavailable() {
+                    mount.innerHTML = '<p class="text-caption mb-0">Chart data is unavailable right now.</p>';
+                }
+
+                fetch(mount.dataset.seriesUrl, { headers: { 'Accept': 'application/json' }, credentials: 'same-origin' })
+                    .then(function (response) { return response.ok ? response.json() : Promise.reject(response.status); })
+                    .then(function (payload) {
+                        var chart = payload && payload.charts ? payload.charts.new_contacts : null;
+
+                        if (!chart || !chart.series || !chart.series.new_contacts) { return Promise.reject('shape'); }
+
+                        var fitting = Math.max(2, Math.floor(mount.clientWidth / LABEL_SPACING_PX));
+                        mount.innerHTML = '';
+
+                        new ApexCharts(mount, {
+                            chart: { type: 'area', height: 220, toolbar: { show: false }, zoom: { enabled: false }, fontFamily: 'inherit' },
+                            colors: [palette[0]],
+                            series: [{ name: 'New contacts', data: chart.series.new_contacts }],
+                            grid: { borderColor: theme.chartGrid() },
+                            xaxis: {
+                                type: 'category',
+                                categories: chart.labels,
+                                tickAmount: chart.labels.length > fitting ? fitting : undefined,
+                                labels: { style: { colors: theme.chartAxis() }, rotate: 0, rotateAlways: false, hideOverlappingLabels: true, trim: false },
+                                tooltip: { enabled: false }
+                            },
+                            yaxis: { labels: { style: { colors: theme.chartAxis() } }, min: 0, forceNiceScale: true },
+                            tooltip: {
+                                theme: 'dark',
+                                style: { fontSize: '12px' },
+                                x: { formatter: function (value, opts) { return chart.tooltips[opts.dataPointIndex] || value; } }
+                            },
+                            dataLabels: { enabled: false },
+                            stroke: { curve: 'straight', width: 2 },
+                            fill: { opacity: 0.2 },
+                            legend: { show: false }
+                        }).render();
+                    })
+                    .catch(unavailable);
+            })();
+        </script>
+    @endsection
+@endif

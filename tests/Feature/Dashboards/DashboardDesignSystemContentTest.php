@@ -137,7 +137,12 @@ class DashboardDesignSystemContentTest extends TestCase
         $customerSource = file_get_contents(resource_path('views/customer/dashboard.blade.php'));
         $adminSource = file_get_contents(resource_path('views/admin/dashboard.blade.php'));
 
-        $this->assertStringNotContainsString('ApexCharts', $customerSource, 'The customer dashboard bears no chart since B5.');
+        // H-3 gave Business performance one chart: new contacts per bucket,
+        // loaded from B5's own series endpoint. Like every other chart in the
+        // application it draws its colours from the shared token namespace.
+        $this->assertStringContainsString('ApexCharts', $customerSource, 'The Business performance chart (H-3 §2.5).');
+        $this->assertStringContainsString('window.PlatformTheme', $customerSource, 'The customer dashboard chart reads the shared tokens.');
+        $this->assertDoesNotMatchRegularExpression('/#[0-9a-fA-F]{6}\b/', $customerSource, 'No literal hex colour on the customer dashboard.');
         $this->assertStringContainsString("PlatformTheme.color('color-chart-negative')", $adminSource);
         $this->assertStringContainsString("PlatformTheme.color('color-chart-6')", $adminSource);
         $this->assertStringContainsString("PlatformTheme.color('color-status-danger-border')", $adminSource);
