@@ -124,14 +124,14 @@
                 @foreach($performance['rows'] as $row)
                     <li class="py-1 border-bottom">
                         <h3 class="h6 mb-25">{{ $row['name'] }}</h3>
-                        <p class="mb-0">{{ number_format($row['newContacts']) }} new contacts</p>
-                        <p class="mb-0">{{ number_format($row['newConversations']) }} new conversations</p>
+                        <p class="mb-0">{{ number_format($row['newContacts']) }} new {{ \Illuminate\Support\Str::plural('contact', $row['newContacts']) }}</p>
+                        <p class="mb-0">{{ number_format($row['newConversations']) }} new {{ \Illuminate\Support\Str::plural('conversation', $row['newConversations']) }}</p>
                     </li>
                 @endforeach
                 <li class="py-1">
                     <h3 class="h6 mb-25">All client accounts</h3>
-                    <p class="mb-0">{{ number_format($performance['totals']['newContacts']) }} new contacts</p>
-                    <p class="mb-0">{{ number_format($performance['totals']['newConversations']) }} new conversations</p>
+                    <p class="mb-0">{{ number_format($performance['totals']['newContacts']) }} new {{ \Illuminate\Support\Str::plural('contact', $performance['totals']['newContacts']) }}</p>
+                    <p class="mb-0">{{ number_format($performance['totals']['newConversations']) }} new {{ \Illuminate\Support\Str::plural('conversation', $performance['totals']['newConversations']) }}</p>
                 </li>
             </ul>
         </x-card>
