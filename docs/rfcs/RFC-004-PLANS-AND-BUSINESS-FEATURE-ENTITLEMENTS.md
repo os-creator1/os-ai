@@ -1210,6 +1210,10 @@ the Customer Experience contract. What this RFC's own readers need:
   refused before any change. Against a bounded target the allowance is
   recalculated fresh from the current active locations; the target Workspace
   records it (payload source `business_reassignment`).
+* **No admin surface offers an impossible allocation.** The admin
+  Workspace page renders every additional-Business-slot chooser from
+  `additionalBusinessSlotOptionsByTier()`, so a value the rules below would
+  refuse is never presented in the first place.
 * **No extra Business can be priced or allocated on Core/Growth.**
   `updateCatalogPricing()` refuses a Business-slot ratio for any row with
   `business_slot_max <= business_slot_included`, and every path that raises

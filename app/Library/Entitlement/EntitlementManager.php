@@ -936,6 +936,30 @@ final class EntitlementManager
     // =====================================================================
 
     /**
+     * Customer Experience Slice 1A, correction round 2 (RFC-004 §33.2) — the
+     * additional-Business-slot counts an administrator may actually allocate,
+     * per tier, derived from the catalog rows themselves so no surface can
+     * offer a value this class would then refuse. The corrected Core and
+     * Growth rows (1/1) and Agency (unlimited Businesses, no additional-slot
+     * concept) all offer exactly [0]; a bounded row with room offers
+     * 0..(business_slot_max − business_slot_included).
+     *
+     * @return array<string, array<int, int>> tier value => ascending valid counts, always starting at 0
+     */
+    public function additionalBusinessSlotOptionsByTier(): array
+    {
+        $options = [];
+
+        foreach (WorkspacePlanTier::cases() as $tier) {
+            $catalog = $this->catalogRepository->findByTier($tier);
+
+            $options[$tier->value] = range(0, $this->additionalBusinessSlotCapacity($catalog));
+        }
+
+        return $options;
+    }
+
+    /**
      * @return array<int, WorkspacePlanCatalogSummary> exactly 3 entries, in Core/Growth/Agency order.
      */
     public function listPlanCatalogSummaries(): array

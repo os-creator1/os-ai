@@ -2136,4 +2136,20 @@ plan — resolved by correction round 1 below.
    customer reassignment action shows a plain refusal message instead of an
    error. Tests: `tests/Feature/Business/BusinessLocationReassignmentTest.php`.
 
+**Correction round 2 (2026-09-12, review of PR #251).** (1) The branch was
+brought up to date with `origin/main` `25c6be8` by a merge (never a rebase or
+force-push). The one conflict was this contract's own navigation test: main's
+Messages cleanup (Inbox only, no Send or Campaigns) and this slice's
+Settings → Business → Locations leaf both changed the Core-tree expectation;
+resolved to main's list plus this slice's two keys, so Messages stays
+Inbox-only and Locations is still required. (2) The admin Workspace page no
+longer OFFERS an additional-Business-slot value the catalog cannot hold: all
+three choosers render from
+`EntitlementManager::additionalBusinessSlotOptionsByTier()`, so Core, Growth
+and Agency present 0 alone while a row with real capacity still presents its
+full range. The assign and change forms pick their tier in the same request,
+so they offer what EVERY tier allows; the update form knows the Workspace's
+own tier. The server-side guards are unchanged.
+(`tests/Feature/Workspace/AdminAdditionalBusinessSlotOptionsTest.php`.)
+
 **END OF CONTRACT**

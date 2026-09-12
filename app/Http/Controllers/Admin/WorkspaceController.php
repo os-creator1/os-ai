@@ -73,7 +73,22 @@ class WorkspaceController extends AdminBaseController
         // permission is present; the explanation query is exclusively the
         // read card's own feature and stays gated to that one permission.
         if (Gate::allows('view workspace plans') || Gate::allows('manage workspace plans')) {
-            $viewData['entitlementSummary'] = $this->entitlementManager->getWorkspaceEntitlementSummary($workspace);
+            $summary = $this->entitlementManager->getWorkspaceEntitlementSummary($workspace);
+            $viewData['entitlementSummary'] = $summary;
+
+            // Customer Experience Slice 1A, correction round 2 (RFC-004
+            // §33.2): the additional-Business-slot chooser offers only what
+            // the catalog rows actually allow, so the form can never present
+            // a value EntitlementManager would refuse. The assign/change
+            // forms pick their tier in the same request, so they offer only
+            // what EVERY tier allows; the update form knows this Workspace's
+            // own tier.
+            $optionsByTier = $this->entitlementManager->additionalBusinessSlotOptionsByTier();
+            $viewData['additionalBusinessSlotOptionsByTier'] = $optionsByTier;
+            $viewData['additionalBusinessSlotOptionsForAnyTier'] = array_values(array_intersect(...array_values($optionsByTier)));
+            $viewData['additionalBusinessSlotOptionsForCurrentTier'] = $summary->tier === null
+                ? [0]
+                : ($optionsByTier[$summary->tier->value] ?? [0]);
         }
 
         if (Gate::allows('view workspace plans')) {

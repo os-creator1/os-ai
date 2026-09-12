@@ -346,7 +346,9 @@ Business and its counts.
 4. `EntitlementManager::updateCatalogPricing()` with a non-null
    `additional_business_slot_price_ratio` for Core or Growth is refused
    (the row offers no additional Business capacity), writing no pricing-change
-   row; `setAdditionalBusinessSlots()` refuses any increase on Core/Growth.
+   row; `setAdditionalBusinessSlots()` refuses any increase on Core/Growth. The
+   admin Workspace page offers only 0 additional Business slots on Core,
+   Growth and Agency, so no impossible value can be submitted at all.
 
 **Rollback.** A rollback immediately after deploy, before any location or
 allocation was changed, is safe and restores the M1 values exactly. Once the
