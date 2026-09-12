@@ -91,6 +91,17 @@
 
                         <dt class="col-sm-3">Your role</dt>
                         <dd class="col-sm-9">{{ $workspace['role'] }}</dd>
+
+                        {{-- The plan itself — what it includes, capacity, billing — is
+                             its own page (Settings → Plan & subscription); the account
+                             page only names it. --}}
+                        @isset($entitlement)
+                            <dt class="col-sm-3">Plan</dt>
+                            <dd class="col-sm-9" data-role="account-plan">
+                                {{ $entitlement['summary']->isAssigned ? $entitlement['summary']->tierDisplayName : 'Not set up yet' }}
+                                &middot; <a href="{{ route('customer.workspaces.plan.show', request()->route('workspaceUid')) }}">Plan &amp; subscription</a>
+                            </dd>
+                        @endisset
                     </dl>
 
                     @if (in_array($workspace['role'], ['Owner', 'Admin'], true))
@@ -122,56 +133,6 @@
                     @endif
                 </x-card>
             </div>
-
-            @isset($entitlement)
-                <div class="col-12">
-                    <div class="card" id="workspace-plan-capacity">
-                        <div class="card-header">
-                            <h4 class="card-title">Plan &amp; Capacity</h4>
-                        </div>
-                        <div class="card-body">
-                            <dl class="row mb-0">
-                                <dt class="col-sm-4">Assigned</dt>
-                                <dd class="col-sm-8">{{ $entitlement['summary']->isAssigned ? 'Yes' : 'No' }}</dd>
-
-                                @if ($entitlement['summary']->isAssigned)
-                                    <dt class="col-sm-4">Tier</dt>
-                                    <dd class="col-sm-8">{{ $entitlement['summary']->tierDisplayName }}</dd>
-
-                                    <dt class="col-sm-4">Status</dt>
-                                    <dd class="col-sm-8">{{ ucfirst($entitlement['summary']->status->value) }}</dd>
-
-                                    {{-- Customer names only (PlatformFeatureCopy); machine keys and
-                                         features not built yet are never listed. --}}
-                                    @php $planFeatureNames = \App\Library\Entitlement\PlatformFeatureCopy::names($entitlement['summary']->planFeatureKeys); @endphp
-                                    <dt class="col-sm-4">Plan features</dt>
-                                    <dd class="col-sm-8" data-role="plan-features">{{ $planFeatureNames === [] ? 'None' : implode(', ', $planFeatureNames) }}</dd>
-                                @endif
-
-                                <dt class="col-sm-4">Current Businesses</dt>
-                                <dd class="col-sm-8">{{ $entitlement['summary']->capacity->currentBusinessCount }}</dd>
-
-                                <dt class="col-sm-4">Included slots</dt>
-                                <dd class="col-sm-8">{{ $entitlement['summary']->capacity->includedSlots }}</dd>
-
-                                <dt class="col-sm-4">Additional slots</dt>
-                                <dd class="col-sm-8">{{ $entitlement['summary']->capacity->additionalSlotsAllocated }}</dd>
-
-                                <dt class="col-sm-4">Effective capacity</dt>
-                                <dd class="col-sm-8">
-                                    @if ($entitlement['summary']->capacity->unlimited)
-                                        Unlimited
-                                    @elseif ($entitlement['summary']->capacity->effectiveCapacity !== null)
-                                        {{ $entitlement['summary']->capacity->effectiveCapacity }}
-                                    @else
-                                        Unavailable ({{ $entitlement['summary']->capacity->denialReason }})
-                                    @endif
-                                </dd>
-                            </dl>
-                        </div>
-                    </div>
-                </div>
-            @endisset
 
             <div class="col-12">
                 <div class="card">

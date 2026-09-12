@@ -19,6 +19,16 @@ final class PlatformFeatureCopy
         'prospect_outreach' => ['Prospecting', 'Keep a list of prospective clients and reach them with outreach campaigns.'],
     ];
 
+    /**
+     * Feature keys that have customer copy, in display order.
+     *
+     * @return list<string>
+     */
+    public static function keys(): array
+    {
+        return array_keys(self::COPY);
+    }
+
     public static function has(string $featureKey): bool
     {
         return isset(self::COPY[$featureKey]);

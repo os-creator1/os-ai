@@ -21,6 +21,16 @@ final readonly class WorkspacePlanCatalogSummary
         public ?int $businessSlotMax,
         public bool $unlimitedBusinessSlots,
         public ?string $additionalBusinessSlotPriceRatio,
+        /**
+         * Physical-location capacity per Business (RFC-004 §33): the same
+         * catalog columns EntitlementManager::decideLocationSlotCapacity()
+         * reads, exposed here so a plan surface can state a tier's location
+         * allowance without re-deriving it.
+         */
+        public int $locationSlotIncluded,
+        public ?int $locationSlotMax,
+        public bool $unlimitedLocationSlots,
+        public ?string $additionalLocationSlotPriceRatio,
         public bool $isActive,
         public array $planFeatureKeys,
         public array $featureAvailability,
