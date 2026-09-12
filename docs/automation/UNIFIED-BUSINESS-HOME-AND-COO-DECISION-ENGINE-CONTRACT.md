@@ -1178,3 +1178,80 @@ aggregate runs on a Home request for any period. The Slice 4 and H-1 tests
 that asserted a fixed 30-day window, the old headline keys or the absent
 chart are rewritten in this slice, never deleted without a replacement
 assertion (§19.7).
+
+---
+
+## Appendix D — implementation record: H-4
+
+Delivered on `agent/unified-business-home-h4-operating-health`, from
+`origin/main` `4049a86` (H-3 merged as #273). H-5, H-6, C-2, AI-3 and the
+Results retirement are not started, no Lead, Booking, Revenue, Calendar,
+Forms or Payments concept is introduced, and Automations V2's runtime,
+executors, compiler, builder and triggers are untouched.
+
+### H-4 — Visibility, Conversations, Automations (§2.6)
+
+| Promise | Delivered by |
+|---|---|
+| Visibility costs no query of its own | `BusinessHomePresenter::visibility()` reads `websiteStatus`, `googleConnectionState` and `unhealthyGoogleLocations` off the `BusinessStatusRow` the request already loaded — one statement for the whole page, with the unhealthy-listing count as a grouped sub-select. Proven flat as listings grow from one to five |
+| Website: Published / Draft / Not created — and Archived | `websites.status` through `WebsiteStatus`. The enum has a fourth case, `archived`, which the contract's three-word list omits: it renders as **Archived** rather than being folded into "Draft", because a site deliberately taken down is not a draft and saying so would be untrue |
+| Google: Connected / Connection lost / Not connected | `business_google_connections.state`: `active` → Connected; `revoked` → **Connection lost** (the connection existed and broke — the GBP page's own "Google access needs to be reconnected"); `disconnected`, `pending` and no row at all → Not connected. This is the vocabulary those pages already use, not a new one |
+| "N listings need attention" | `unhealthy_google_locations`, the existing sub-select over `DashboardStatusReader::UNHEALTHY_GOOGLE_LOCATION_STATES`. Singular and plural are both written out |
+| No provider vocabulary, OAuth internals, raw errors, ranking scores or ungrounded "healthy" | Asserted over the band's rendered text |
+| Every conversation figure through the 2B read model | `incomingCount()`, `repliedCount()`, `periodCounts()` and `awaitingReplyCount()` are added to `BusinessConversationReadModel`, which stays the only door to the table: the Dashboard library, the band views and B5 contain no `chat_boxes` reference, and every `chat_box*` statement during a Home request is proven to originate in that one file |
+| Incoming | Conversations with at least one `incoming` message inside the selected half-open window. Conversations, never messages; no outbound, provider-accepted or send-attempt data; `chat_boxes.business_id = ?` throughout, so a NULL-business legacy conversation is never counted |
+| Replied | Of those, conversations where an `outgoing` message **follows the first incoming message of the window**, both inside it. Five outbound messages in one thread are one answered conversation, and a message sent before the customer wrote answers nothing. A manual reply and an automated one both count — this schema records no difference, and the tile says so rather than implying a person answered |
+| Awaiting reply is current state, not a period figure | `awaitingReplyCount(Business)` takes no window. Proven identical across This month, Last month and a custom January range, and the band says "Awaiting reply is right now" |
+| Grace period and scan horizon | `config('conversations.awaiting_reply_grace_minutes', 5)` and `awaiting_reply_scan_days` (30), in a new `config/conversations.php`. The exact boundary is pinned: at the cutoff it is not yet waiting, one second older it is |
+| Automations from the existing canonical seam | B5 `automationKpis()` for the selected period, read off the comparison the page already built — `succeeded()` and `failed()`. No second automation analytics implementation, no run semantics of this slice's own: `pending` and `skipped` are not completions because that seam does not count them as such, and drafts, definitions and enrolments are not runs at all. The band is absent when nothing ran and nothing failed; "Review" goes where `AttentionType::AutomationFailing` remediates |
+| Permissions unchanged | Each Visibility tile needs both its entitlement (`website_generation`, `google_business_profile_module`) and the permission that opens it (`website`, `view_google_business_profile`); Conversations needs the `conversations` entitlement and the `chat_box` gate; Automations needs the `automations` entitlement and gate. A Business opened by an Agency gets exactly these three bands and none of the Account Home's, and no other client's name or outreach figure reaches it |
+
+### The index decision, measured rather than assumed
+
+Slice 2B deferred one conditional index — `chat_box_messages(box_id,
+created_at)` — to "an EXPLAIN at implementation time". This was that time, and
+the answer is **no index is added**.
+
+Both new statements are driven from `chat_boxes` by `business_id` and reach
+messages through the existing `chat_box_messages_box_id_foreign` index. At
+1 619 conversations and 9 714 messages, EXPLAIN shows for both:
+
+```
+chat_boxes  type=ref  key=chat_boxes_business_id_index        rows=1619  Using index
+m           type=ref  key=chat_box_messages_box_id_foreign    rows=5     Using index
+```
+
+Adding `(box_id, created_at)` changed nothing but `Extra`, from `Using where`
+to `Using index condition` — no access-type change, no rows saved, no
+temporary table avoided. The contract's fallback, `(box_id, id)`, is not
+needed either: an InnoDB secondary index already carries the primary key, so
+`box_id` alone answers `MAX(id)` per conversation as a covering read.
+
+An earlier, grouped shape of these queries DID need an index, because MySQL
+drove it from `chat_box_messages` and scanned every tenant's rows. That shape
+was replaced rather than indexed around. Creating the composite index also
+made MySQL drop the foreign key's own index, which is a schema side-effect
+worth not imposing for no measured gain.
+
+### What this data model cannot say, stated rather than invented
+
+`chat_box_messages` records a direction and nothing else. There is no flag
+distinguishing a system, internal or provider-generated message from an
+ordinary one, so H-4 claims no such distinction: every `incoming` row is a
+message that reached the Business and every `outgoing` row is one it sent,
+whoever or whatever composed it. A row whose `direction` was never recorded —
+the column is nullable and legacy rows predate it — counts as neither, because
+it cannot be proven to be a customer waiting.
+
+**Query budget.** Conversations costs two statements more than H-3: one for
+Incoming and Replied together, one for Awaiting reply — four in total with the
+two Business performance periods, inside the contract's ceiling of five.
+Visibility and Automations cost nothing. `DashboardQueryBudgetTest` pins the
+observed figure and proves it flat as conversations grow from five to thirty.
+
+**Tests:** `tests/Feature/Dashboards/BusinessHomeOperatingHealthTest.php` (43)
+and the T-CONV-1 truth tables added to
+`tests/Feature/Conversations/BusinessConversationReadModelTest.php`. The Slice
+4 and H-3 tests that asserted the old band order, the old read-model surface
+or a page-wide absence of the words "automation runs" are rewritten in this
+slice, never deleted without a replacement assertion (§19.7).

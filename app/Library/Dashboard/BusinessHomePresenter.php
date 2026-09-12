@@ -3,6 +3,7 @@
 namespace App\Library\Dashboard;
 
 use App\DTO\Analytics\AutomationKpis;
+use App\Enums\Dashboard\AttentionSeverity;
 use App\Enums\Dashboard\AttentionType;
 use App\Enums\Dashboard\HeadlinePolarity;
 use App\Enums\Dashboard\HeadlineTrend;
@@ -213,12 +214,63 @@ final class BusinessHomePresenter
             }
         }
 
-        // 4 — Spend: gone from the Business Home entirely (§5). Balance,
+        // 4 — Visibility: is the website live, is Google connected (§2.6).
+        // It costs no query of its own: every fact is a column of the status
+        // row this request already read.
+        if ($statusFailed) {
+            $failed[] = DashboardSnapshot::BAND_VISIBILITY;
+        } elseif ($status !== null) {
+            try {
+                $visibility = $this->visibility($context, $user, $entitlements, $scoped, $status);
+
+                if ($visibility !== null) {
+                    $bands[DashboardSnapshot::BAND_VISIBILITY] = $visibility;
+                }
+            } catch (Throwable $e) {
+                report($e);
+                $failed[] = DashboardSnapshot::BAND_VISIBILITY;
+            }
+        }
+
+        // 5 — Conversations: are customers writing, are we answering, and is
+        // anyone waiting right now (§2.6). Every figure comes from Slice 2B's
+        // read model, the only reader of the conversation table.
+        if ($entitlements->allows('conversations') && Gate::forUser($user)->allows('chat_box')) {
+            try {
+                $bands[DashboardSnapshot::BAND_CONVERSATIONS] = $this->conversations($business, $context, $user, $entitlements, $scoped, $selectedRange);
+            } catch (Throwable $e) {
+                report($e);
+                $failed[] = DashboardSnapshot::BAND_CONVERSATIONS;
+            }
+        }
+
+        // 6 — Automations: completed and failed runs for the selected period,
+        // from the B5 comparison this request already built. No second
+        // automation analytics implementation, and no run semantics of its
+        // own — whatever automationKpis() currently counts is what shows.
+        if ($automationsShown) {
+            if ($comparisonFailed) {
+                $failed[] = DashboardSnapshot::BAND_AUTOMATIONS;
+            } elseif ($comparison !== null) {
+                try {
+                    $automations = $this->automations($context, $user, $entitlements, $scoped, $comparison);
+
+                    if ($automations !== null) {
+                        $bands[DashboardSnapshot::BAND_AUTOMATIONS] = $automations;
+                    }
+                } catch (Throwable $e) {
+                    report($e);
+                    $failed[] = DashboardSnapshot::BAND_AUTOMATIONS;
+                }
+            }
+        }
+
+        // Spend: gone from the Business Home entirely (§5). Balance,
         // spend, top-ups and invoices live in Settings → Billing, which is
         // unchanged; Home speaks about billing only through the exception
         // strip above.
 
-        // 5 — Quick actions
+        // 7 — Quick actions
         $bands[DashboardSnapshot::BAND_ACTIONS] = $this->actions($context, $user, $entitlements, $scoped, $status);
 
         return new DashboardSnapshot(
@@ -486,7 +538,7 @@ final class BusinessHomePresenter
         $currentRange = $comparison['current']['range'];
         /** @var AnalyticsDateRange $previousRange */
         $previousRange = $comparison['previous']['range'];
-        $window = strtolower($currentRange->label());
+        $window = self::windowPhrase($currentRange);
         $before = self::previousNoun($previousRange);
         $items = [];
 
@@ -567,6 +619,179 @@ final class BusinessHomePresenter
     }
 
     /**
+     * §2.6 (H-4) — Visibility: is the website live, and is Google connected?
+     *
+     * Two facts, each already on the status row this request read, so the
+     * band costs NO query of its own. Each tile needs both the entitlement
+     * that sells the surface and the permission that opens it: a role who may
+     * not see the Website page is not told about the website on Home either.
+     *
+     * The vocabulary is the one those pages already use, not a new one, and
+     * nothing is inferred beyond the column: no visitors, no traffic, no SEO
+     * score, no "healthy". A connection that was revoked is "Connection lost"
+     * — it existed and broke; one that was never made, is still mid-connect,
+     * or was switched off is "Not connected".
+     *
+     * @param  array<int, string>  $scoped
+     * @return array<string, mixed>|null
+     */
+    private function visibility(CustomerContext $context, User $user, MenuEntitlements $entitlements, array $scoped, BusinessStatusRow $status): ?array
+    {
+        $items = [];
+
+        if ($entitlements->allows('website_generation') && Gate::forUser($user)->allows('website')) {
+            $items[] = [
+                'key' => 'website',
+                'label' => 'Website',
+                'state' => match ($status->websiteStatus) {
+                    'published' => 'Published',
+                    'draft' => 'Draft',
+                    'archived' => 'Archived',
+                    default => 'Not created',
+                },
+                'note' => null,
+                'severity' => null,
+                'url' => $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.website.show', $scoped, ['website'], 'website_generation'),
+            ];
+        }
+
+        if ($entitlements->allows('google_business_profile_module') && Gate::forUser($user)->allows('view_google_business_profile')) {
+            $lost = $status->googleConnectionState === 'revoked';
+            $unhealthy = $status->unhealthyGoogleLocations;
+
+            $items[] = [
+                'key' => 'google',
+                'label' => 'Google',
+                'state' => match (true) {
+                    $status->googleConnectionState === 'active' => 'Connected',
+                    $lost => 'Connection lost',
+                    default => 'Not connected',
+                },
+                'note' => $unhealthy > 0
+                    ? $unhealthy . ' ' . ($unhealthy === 1 ? 'listing needs' : 'listings need') . ' attention'
+                    : null,
+                'severity' => $lost || $unhealthy > 0 ? AttentionSeverity::Warning : null,
+                'url' => $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.gbp.index', $scoped, ['view_google_business_profile'], 'google_business_profile_module'),
+            ];
+        }
+
+        return $items === [] ? null : ['items' => $items];
+    }
+
+    /**
+     * §2.6 (H-4) — Conversations: are customers writing, did we answer, and
+     * is anyone waiting right now?
+     *
+     * Incoming and Replied describe the SELECTED period, the same window
+     * Business performance shows. Awaiting reply is current state and is
+     * deliberately NOT tied to the period: "three people are waiting" would
+     * be a lie if it meant "three people were waiting last month".
+     *
+     * Every figure comes from Slice 2B's read model, which stays the only
+     * reader of the conversation table — this presenter issues no SQL of its
+     * own, and B5 still never touches it.
+     *
+     * @param  array<int, string>  $scoped
+     * @return array<string, mixed>
+     */
+    private function conversations(Business $business, CustomerContext $context, User $user, MenuEntitlements $entitlements, array $scoped, AnalyticsDateRange $range): array
+    {
+        $window = self::windowPhrase($range);
+        // One statement for the pair (§16), one for the current state.
+        ['incoming' => $incoming, 'replied' => $replied] = $this->conversations->periodCounts($business, $range->startUtc, $range->endUtc);
+        $awaiting = $this->conversations->awaitingReplyCount($business);
+        $grace = max(0, (int) config('conversations.awaiting_reply_grace_minutes', 5));
+
+        return [
+            'items' => [
+                [
+                    'key' => 'incoming',
+                    'label' => 'Incoming',
+                    'figure' => number_format($incoming),
+                    'caption' => 'Conversations a customer wrote in, ' . $window . '.',
+                    'severity' => null,
+                ],
+                [
+                    'key' => 'replied',
+                    'label' => 'Replied',
+                    'figure' => number_format($replied),
+                    'caption' => 'Of those, the ones this business answered. A person or an automation both count.',
+                    'severity' => null,
+                ],
+                [
+                    'key' => 'awaiting_reply',
+                    'label' => 'Awaiting reply',
+                    'figure' => number_format($awaiting),
+                    'caption' => $awaiting > 0
+                        ? 'Waiting right now — the customer wrote last, more than ' . $grace . ' minutes ago.'
+                        : 'Nobody is waiting for an answer right now.',
+                    'severity' => $awaiting > 0 ? AttentionSeverity::Warning : null,
+                ],
+            ],
+            'rangeLabel' => self::rangeLabel($range),
+            'inboxUrl' => $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.conversations.index', $scoped, ['chat_box'], 'conversations'),
+        ];
+    }
+
+    /**
+     * §2.6 (H-4) — Automations: completed and failed runs for the selected
+     * period, from the B5 figures this request already loaded.
+     *
+     * There is no second automation analytics implementation here and no run
+     * semantics of this slice's own: whatever `automationKpis()` currently
+     * counts as an execution is exactly what shows. Drafts, saved definitions
+     * and enrolments are not runs and are not counted, because that seam does
+     * not count them. The band is absent when nothing ran and nothing failed.
+     *
+     * @param  array<int, string>  $scoped
+     * @param  array{current: array<string, mixed>, previous: array<string, mixed>}  $comparison
+     * @return array<string, mixed>|null
+     */
+    private function automations(CustomerContext $context, User $user, MenuEntitlements $entitlements, array $scoped, array $comparison): ?array
+    {
+        $kpis = $comparison['current']['automations'];
+
+        if (! $kpis instanceof AutomationKpis) {
+            return null;
+        }
+
+        $completed = $kpis->succeeded();
+        $failed = $kpis->failed();
+
+        if ($kpis->executionsInRange === 0 && $failed === 0) {
+            return null;
+        }
+
+        /** @var AnalyticsDateRange $range */
+        $range = $comparison['current']['range'];
+        $window = self::windowPhrase($range);
+
+        return [
+            'items' => [
+                [
+                    'key' => 'completed',
+                    'label' => 'Completed',
+                    'figure' => number_format($completed),
+                    'caption' => 'Runs that finished, ' . $window . '.',
+                    'severity' => null,
+                ],
+                [
+                    'key' => 'failed',
+                    'label' => 'Failed',
+                    'figure' => number_format($failed),
+                    'caption' => $failed > 0 ? 'Runs that did not finish, ' . $window . '.' : 'Nothing failed, ' . $window . '.',
+                    'severity' => $failed > 0 ? AttentionSeverity::Warning : null,
+                ],
+            ],
+            'rangeLabel' => self::rangeLabel($range),
+            // The same destination AttentionType::AutomationFailing remediates to.
+            'reviewUrl' => $failed > 0
+                ? $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.automations.index', $scoped, ['automations'], 'automations')
+                : null,
+        ];
+    }
+
+    /**
      * The Business performance window, from the customer's own query string.
      *
      * Shape and semantics are the Results rules, unchanged and unduplicated:
@@ -597,6 +822,18 @@ final class BusinessHomePresenter
         } catch (ValidationException) {
             return [$default, true];
         }
+    }
+
+    /**
+     * The selected window as it reads INSIDE a sentence: "this month",
+     * "last 30 days" — but a custom range keeps its own capitalisation,
+     * because "aug 1, 2026 to aug 31, 2026" is not English.
+     */
+    private static function windowPhrase(AnalyticsDateRange $range): string
+    {
+        return $range->preset === AnalyticsDateRange::PRESET_CUSTOM
+            ? $range->label()
+            : strtolower($range->label());
     }
 
     /**
