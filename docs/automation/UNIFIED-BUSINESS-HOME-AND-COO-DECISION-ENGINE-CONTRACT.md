@@ -255,7 +255,7 @@ steps" list of up to 5.
 
 ### 2.6 Visibility, Conversations, Automations
 
-- **Visibility.** Website: Published / Draft / Not created, from `websites.status`. Google: Connected / Connection lost / Not connected, plus "N listings need attention" from `google_state` and `unhealthy_google_locations`. Each tile links to its settings. **No metric appears in this band until one is canonical.**
+- **Visibility.** Website: Published / Draft / Archived / Not created, from `websites.status` (the canonical `WebsiteStatus` enum has all three stored cases; a site deliberately taken down is not a draft, so `archived` reads as **Archived** rather than being folded into another state — H-4, owner-approved). Google: Connected / Connection lost / Not connected, plus "N listings need attention" from `google_state` and `unhealthy_google_locations`. Each tile links to its settings. **No metric appears in this band until one is canonical.**
 - **Conversations** (titled "Conversations" until a Lead model exists, K-7). Three new 2B methods, each a single statement scoped by `chat_boxes.business_id`:
   - `incomingCount(Business, startUtc, endUtc)`: conversations with at least one `incoming` `chat_box_messages` row in the window.
   - `repliedCount(Business, startUtc, endUtc)`: of those, conversations where an `outgoing` message followed the first `incoming` message in the window. A manual reply and an automated reply both count, and the tooltip says so.
@@ -1194,7 +1194,7 @@ executors, compiler, builder and triggers are untouched.
 | Promise | Delivered by |
 |---|---|
 | Visibility costs no query of its own | `BusinessHomePresenter::visibility()` reads `websiteStatus`, `googleConnectionState` and `unhealthyGoogleLocations` off the `BusinessStatusRow` the request already loaded — one statement for the whole page, with the unhealthy-listing count as a grouped sub-select. Proven flat as listings grow from one to five |
-| Website: Published / Draft / Not created — and Archived | `websites.status` through `WebsiteStatus`. The enum has a fourth case, `archived`, which the contract's three-word list omits: it renders as **Archived** rather than being folded into "Draft", because a site deliberately taken down is not a draft and saying so would be untrue |
+| Website: Published / Draft / Archived / Not created | `websites.status` through `WebsiteStatus`. The enum's third stored case, `archived`, renders as **Archived** rather than being folded into "Draft", because a site deliberately taken down is not a draft and saying so would be untrue. §2.6 named only three states when this slice began; the owner approved the fourth and §2.6 now says so, so the contract and this record agree |
 | Google: Connected / Connection lost / Not connected | `business_google_connections.state`: `active` → Connected; `revoked` → **Connection lost** (the connection existed and broke — the GBP page's own "Google access needs to be reconnected"); `disconnected`, `pending` and no row at all → Not connected. This is the vocabulary those pages already use, not a new one |
 | "N listings need attention" | `unhealthy_google_locations`, the existing sub-select over `DashboardStatusReader::UNHEALTHY_GOOGLE_LOCATION_STATES`. Singular and plural are both written out |
 | No provider vocabulary, OAuth internals, raw errors, ranking scores or ungrounded "healthy" | Asserted over the band's rendered text |
