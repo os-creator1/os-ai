@@ -883,7 +883,8 @@ class BusinessOnboardingHttpTest extends TestCase
                 }
                 break;
             case 'business_slot_limit_exceeded':
-                $entitlementManager->assignFirstPlan($workspace, WorkspacePlanTier::Core, $admin->id, 'Fixture.', true, 2);
+                // Customer Experience Slice 1A (RFC-004 §33.2): Core offers no additional Business slot.
+                $entitlementManager->assignFirstPlan($workspace, WorkspacePlanTier::Core, $admin->id, 'Fixture.', true, 0);
                 for ($i = 0; $i < 5; $i++) {
                     $businessRepository->createForCustomerInWorkspace($customer, $workspace, $this->businessAttributes(['name' => "Existing {$i}"]));
                 }

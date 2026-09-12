@@ -1020,6 +1020,12 @@ class WorkspaceManager
 
             $this->entitlementManager->assertCanCreateAnotherBusiness($lockedTargetWorkspace);
 
+            // Customer Experience Slice 1A (RFC-004 §33.7): the Business's
+            // physical-location allowance is re-evaluated against the TARGET
+            // plan in this same transaction — and a paid location allocation
+            // refuses the move — before anything below changes.
+            $this->entitlementManager->reconcileLocationCapacityForReassignment($lockedBusiness, $lockedSourceWorkspace, $lockedTargetWorkspace, $actorUserId);
+
             $removedGrants = $this->membershipBusinessRepository
                 ->removeAllForBusinessInWorkspace($lockedBusiness->id, $lockedSourceWorkspace->id)
                 ->sortBy([

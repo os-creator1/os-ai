@@ -17,6 +17,7 @@ use App\Repositories\Contracts\PaymentProviderCustomerRepository;
 use App\Repositories\Contracts\WorkspacePlanCatalogRepository;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Str;
+use Tests\Feature\Entitlement\Concerns\PinsBoundedBusinessSlotCatalog;
 use Tests\TestCase;
 
 /**
@@ -31,6 +32,7 @@ use Tests\TestCase;
  */
 class AdditionalBusinessSlotAgreementRepeatedIncreaseTest extends TestCase
 {
+    use PinsBoundedBusinessSlotCatalog;
     use RefreshDatabase;
 
     private FakePaymentProviderGateway $gateway;
@@ -40,6 +42,9 @@ class AdditionalBusinessSlotAgreementRepeatedIncreaseTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+
+        // Generic additional-Business-slot engine tests: see PinsBoundedBusinessSlotCatalog.
+        $this->pinBoundedBusinessSlotCatalog();
 
         $this->currencyId = Currency::create(['name' => 'US Dollar', 'code' => 'USD', 'format' => '$', 'status' => true])->id;
         $this->gateway = new FakePaymentProviderGateway();

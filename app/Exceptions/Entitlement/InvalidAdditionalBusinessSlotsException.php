@@ -7,8 +7,10 @@ use RuntimeException;
 /**
  * Thrown by EntitlementManager (RFC-004 §17/§17.1) when an
  * additionalBusinessSlots argument is outside the valid bound for the
- * tier involved — {0,1,2} for Core/Growth, or any non-zero value for
- * Agency (which has no additional-slot concept).
+ * tier involved — an increase beyond what the catalog row offers
+ * (business_slot_max − business_slot_included; none on the corrected
+ * Core/Growth rows, RFC-004 §33.2), a negative value, or any non-zero
+ * value for Agency (which has no additional-slot concept).
  *
  * Carries only the offending numeric value and tier identity — never
  * Customer, User or Business names, company, email, phone, or address.

@@ -90,6 +90,13 @@ class WorkspaceEntitlementSchemaTest extends TestCase
         $this->assertNull($row->currency_id);
     }
 
+    /**
+     * M1 seeded Core/Growth with 3 included / 5 max Business slots at a
+     * 0.5000 ratio. Customer Experience Slice 1A (RFC-004 §33.5) corrects
+     * that additively: those numbers belong to physical LOCATIONS, and
+     * Core/Growth hold exactly one Business with no priced additional
+     * Business slot. The M1 migration itself is untouched history.
+     */
     public function test_seeded_core_catalog_row_exact_structural_fields(): void
     {
         $row = DB::table('workspace_plan_catalog')->where('tier', 'core')->first();
@@ -98,10 +105,14 @@ class WorkspaceEntitlementSchemaTest extends TestCase
         $this->assertNull($row->price);
         $this->assertNull($row->currency_id);
         $this->assertSame('monthly', $row->billing_cycle);
-        $this->assertSame(3, (int) $row->business_slot_included);
-        $this->assertSame(5, (int) $row->business_slot_max);
+        $this->assertSame(1, (int) $row->business_slot_included);
+        $this->assertSame(1, (int) $row->business_slot_max);
         $this->assertSame(0, (int) $row->unlimited_business_slots);
-        $this->assertSame('0.5000', $row->additional_business_slot_price_ratio);
+        $this->assertNull($row->additional_business_slot_price_ratio);
+        $this->assertSame(3, (int) $row->location_slot_included);
+        $this->assertSame(5, (int) $row->location_slot_max);
+        $this->assertSame(0, (int) $row->unlimited_location_slots);
+        $this->assertSame('0.5000', $row->additional_location_slot_price_ratio);
         $this->assertSame(1, (int) $row->is_active);
     }
 
@@ -112,10 +123,14 @@ class WorkspaceEntitlementSchemaTest extends TestCase
         $this->assertNotNull($row);
         $this->assertNull($row->price);
         $this->assertNull($row->currency_id);
-        $this->assertSame(3, (int) $row->business_slot_included);
-        $this->assertSame(5, (int) $row->business_slot_max);
+        $this->assertSame(1, (int) $row->business_slot_included);
+        $this->assertSame(1, (int) $row->business_slot_max);
         $this->assertSame(0, (int) $row->unlimited_business_slots);
-        $this->assertSame('0.5000', $row->additional_business_slot_price_ratio);
+        $this->assertNull($row->additional_business_slot_price_ratio);
+        $this->assertSame(3, (int) $row->location_slot_included);
+        $this->assertSame(5, (int) $row->location_slot_max);
+        $this->assertSame(0, (int) $row->unlimited_location_slots);
+        $this->assertSame('0.5000', $row->additional_location_slot_price_ratio);
         $this->assertSame(1, (int) $row->is_active);
     }
 

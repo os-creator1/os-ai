@@ -21,6 +21,7 @@ use App\Repositories\Contracts\WorkspacePlanCatalogRepository;
 use Illuminate\Support\Facades\DB;
 use Symfony\Component\Process\PhpExecutableFinder;
 use Symfony\Component\Process\Process;
+use Tests\Feature\Entitlement\Concerns\PinsBoundedBusinessSlotCatalog;
 use Tests\Support\TestDatabaseSafety;
 use Tests\TestCase;
 
@@ -44,6 +45,8 @@ use Tests\TestCase;
  */
 class SlotAgreementConcurrencyTest extends TestCase
 {
+    use PinsBoundedBusinessSlotCatalog;
+
     private const RUNNER = __DIR__.'/Support/concurrent_slot_agreement_runner.php';
 
     private FakePaymentProviderGateway $gateway;
@@ -64,6 +67,11 @@ class SlotAgreementConcurrencyTest extends TestCase
 
         $this->originalCoreCatalogState = (array) DB::table('workspace_plan_catalog')->where('tier', 'core')->first();
 
+        // Generic additional-Business-slot engine tests: see
+        // PinsBoundedBusinessSlotCatalog. Committed here (no RefreshDatabase)
+        // so the child processes see it; tearDown() restores it.
+        $this->pinBoundedBusinessSlotCatalog(['core']);
+
         $this->currencyId = Currency::create(['name' => 'US Dollar', 'code' => 'USD', 'format' => '$', 'status' => true])->id;
         $this->gateway = new FakePaymentProviderGateway();
         app()->instance(PaymentProviderGateway::class, $this->gateway);
@@ -76,6 +84,8 @@ class SlotAgreementConcurrencyTest extends TestCase
                 'price' => $this->originalCoreCatalogState['price'],
                 'currency_id' => $this->originalCoreCatalogState['currency_id'],
                 'additional_business_slot_price_ratio' => $this->originalCoreCatalogState['additional_business_slot_price_ratio'],
+                'business_slot_included' => $this->originalCoreCatalogState['business_slot_included'],
+                'business_slot_max' => $this->originalCoreCatalogState['business_slot_max'],
             ]);
         }
 

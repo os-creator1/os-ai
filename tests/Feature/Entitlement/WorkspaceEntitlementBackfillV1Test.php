@@ -15,17 +15,27 @@ use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Str;
 use ReflectionClass;
 use Tests\Feature\Business\Concerns\CreatesBusinessTestData;
+use Tests\Feature\Entitlement\Concerns\PinsBoundedBusinessSlotCatalog;
 use Tests\Feature\Workspace\Concerns\CreatesWorkspaceTestData;
 use Tests\TestCase;
 
 class WorkspaceEntitlementBackfillV1Test extends TestCase
 {
+    use PinsBoundedBusinessSlotCatalog;
     use RefreshDatabase;
     use CreatesBusinessTestData;
     use CreatesWorkspaceTestData;
 
     private const COMPLIMENTARY_REASON =
         'Pre-RFC-004 Workspace — grandfathered complimentary assignment during Milestone 1 backfill';
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        // Generic additional-Business-slot engine tests: see PinsBoundedBusinessSlotCatalog.
+        $this->pinBoundedBusinessSlotCatalog();
+    }
 
     private function coreCatalogId(): int
     {

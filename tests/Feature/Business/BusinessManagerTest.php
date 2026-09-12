@@ -425,7 +425,7 @@ class BusinessManagerTest extends TestCase
             $admin->id,
             'Fixture.',
             true,
-            2,
+            0, // Customer Experience Slice 1A (RFC-004 §33.2): Core offers no additional Business slot.
         );
 
         $businessRepository = app(\App\Repositories\Contracts\BusinessRepository::class);

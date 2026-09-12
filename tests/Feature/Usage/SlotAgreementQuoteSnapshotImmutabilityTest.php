@@ -14,6 +14,7 @@ use App\Repositories\Contracts\AdditionalBusinessSlotAgreementRepository;
 use App\Repositories\Contracts\WorkspacePlanCatalogRepository;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
+use Tests\Feature\Entitlement\Concerns\PinsBoundedBusinessSlotCatalog;
 use Tests\TestCase;
 
 /**
@@ -27,6 +28,7 @@ use Tests\TestCase;
  */
 class SlotAgreementQuoteSnapshotImmutabilityTest extends TestCase
 {
+    use PinsBoundedBusinessSlotCatalog;
     use RefreshDatabase;
 
     private int $currencyId;
@@ -34,6 +36,9 @@ class SlotAgreementQuoteSnapshotImmutabilityTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+
+        // Generic additional-Business-slot engine tests: see PinsBoundedBusinessSlotCatalog.
+        $this->pinBoundedBusinessSlotCatalog();
 
         $this->currencyId = Currency::create(['name' => 'US Dollar', 'code' => 'USD', 'format' => '$', 'status' => true])->id;
         app()->instance(PaymentProviderGateway::class, new FakePaymentProviderGateway());

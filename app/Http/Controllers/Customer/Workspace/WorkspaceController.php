@@ -9,6 +9,7 @@ use App\Enums\Workspace\WorkspaceMembershipRole;
 use App\Exceptions\Entitlement\BusinessSlotAllocationRequiredException;
 use App\Exceptions\Entitlement\BusinessSlotLimitExceededException;
 use App\Exceptions\Entitlement\InactiveWorkspacePlanException;
+use App\Exceptions\Entitlement\LocationAllocationNotPortableException;
 use App\Exceptions\Entitlement\SuspendedWorkspacePlanException;
 use App\Exceptions\Entitlement\WorkspacePlanUnassignedException;
 use App\Exceptions\Workspace\BusinessWorkspaceMismatchException;
@@ -423,6 +424,8 @@ class WorkspaceController extends CustomerBaseController
             return redirect()->back()->with('flash_error', 'The target Workspace needs an additional Business slot allocated before this Business can be reassigned there.');
         } catch (BusinessSlotLimitExceededException) {
             return redirect()->back()->with('flash_error', 'The target Workspace has reached its Business slot limit.');
+        } catch (LocationAllocationNotPortableException) {
+            return redirect()->back()->with('flash_error', 'This Business has extra locations allocated under its current Workspace, so it cannot be moved to another Workspace yet. Contact support.');
         }
 
         return redirect()
