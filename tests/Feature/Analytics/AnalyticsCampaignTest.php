@@ -133,7 +133,10 @@ class AnalyticsCampaignTest extends TestCase
 
         $this->authenticateAsCustomer($customer);
 
-        $sql = $this->capturedSql(fn () => $this->campaignsPage($workspace, $business)->assertOk());
+        // Slice 2A's menu-entitlement snapshot is excluded by caller: it is
+        // shared chrome with its own six-query budget, and its Business
+        // re-read is textually identical to the tenancy chain's own.
+        $sql = $this->analyticsOwnedSql(fn () => $this->campaignsPage($workspace, $business)->assertOk());
         $aggregates = array_values(array_filter($sql, fn (string $s) => str_contains($s, 'group by')));
         $analyticsOwned = array_values(array_filter($sql, fn (string $s) => preg_match('/\b(reports|tracking_logs|campaigns|workspaces|businesses|workspace_memberships|workspace_membership_businesses)\b/', $s) === 1));
 
@@ -142,8 +145,9 @@ class AnalyticsCampaignTest extends TestCase
         // + exactly one shell statement: the canonical
         // CustomerContextSnapshot query the authenticated customer shell
         // issues on every page (Customer Experience Slice 1B). That single
-        // joined SELECT is the whole navigation read model; nothing else in
-        // the shell may touch these tables.
+        // joined SELECT is the whole navigation read model; the only other
+        // shell read of these tables is Slice 2A's entitlement snapshot,
+        // excluded above and budgeted by MenuEntitlementsRequestSnapshotTest.
         $this->assertLessThanOrEqual(9, count($analyticsOwned), 'Campaign page must stay bounded: ' . implode(' | ', $analyticsOwned));
         $this->assertCount(1, array_filter($analyticsOwned, fn (string $s) => str_contains($s, 'workspace_plan_catalog')), 'Exactly one shell context snapshot statement.');
     }

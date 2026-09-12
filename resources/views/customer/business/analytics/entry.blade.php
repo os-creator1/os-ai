@@ -5,12 +5,12 @@
     $accountNoun = $resolvedCustomerContext instanceof \App\Library\Navigation\CustomerContext ? $resolvedCustomerContext->accountNoun() : 'account';
 @endphp
 
-@section('title', 'Analytics')
+@section('title', 'Results')
 
 @section('content')
     <div class="row mb-2">
         <div class="col-12">
-            <h4 class="mb-0">Analytics</h4>
+            <h4 class="mb-0">Results</h4>
         </div>
     </div>
 
@@ -23,7 +23,7 @@
     @if(count($accessible) === 0)
         <x-card :padded="true">
             <x-empty-state icon="bar-chart-2" title="No Business available yet"
-                            description="Analytics are organized by Business. You don't have access to a Business yet — ask an {{ $accountNoun }} owner to add you, or create a Business to get started." />
+                            description="Results are organized by Business. You don't have access to a Business yet — ask an {{ $accountNoun }} owner to add you, or create a Business to get started." />
         </x-card>
     @else
         <x-card :padded="true">
