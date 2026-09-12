@@ -2,12 +2,14 @@
 
 namespace App\Library\Entitlement;
 
+use App\DTO\Entitlement\LocationSlotCapacityDecision;
 use App\Enums\Entitlement\PlatformFeature;
 use App\Enums\Entitlement\WorkspaceEntitlementOverrideState;
 use App\Enums\Entitlement\WorkspaceEntitlementTransitionType;
 use App\Enums\Entitlement\WorkspacePlanAssignmentStatus;
 use App\Enums\Entitlement\WorkspacePlanTier;
 use App\Enums\Workspace\WorkspaceMembershipRole;
+use App\Events\Entitlement\BusinessAdditionalLocationSlotsChanged;
 use App\Events\Entitlement\BusinessFeatureToggleChanged;
 use App\Events\Entitlement\WorkspaceAdditionalBusinessSlotsChanged;
 use App\Events\Entitlement\WorkspaceComplimentaryStatusChanged;
@@ -21,7 +23,12 @@ use App\Exceptions\Entitlement\BusinessSlotLimitExceededException;
 use App\Exceptions\Entitlement\ComplimentaryWorkspaceCannotAllocatePaidSlotsException;
 use App\Exceptions\Entitlement\InactiveWorkspacePlanException;
 use App\Exceptions\Entitlement\InvalidAdditionalBusinessSlotsException;
+use App\Exceptions\Entitlement\InvalidAdditionalLocationSlotsException;
 use App\Exceptions\Entitlement\InvalidPaymentAllocationEvidenceException;
+use App\Exceptions\Entitlement\LocationAllocationCancellationRefusedException;
+use App\Exceptions\Entitlement\LocationAllocationNotPortableException;
+use App\Exceptions\Entitlement\LocationSlotAllocationRequiredException;
+use App\Exceptions\Entitlement\LocationSlotLimitExceededException;
 use App\Exceptions\Entitlement\PaymentAllocationIdempotencyConflictException;
 use App\Exceptions\Entitlement\PaymentAllocationWorkspaceMismatchException;
 use App\Exceptions\Entitlement\PlanCatalogPricingInUseException;
@@ -43,6 +50,7 @@ use App\Models\WorkspaceEntitlementOverride;
 use App\Models\WorkspacePlanAssignment;
 use App\Models\WorkspacePlanCatalog;
 use App\Repositories\Contracts\BusinessFeatureToggleRepository;
+use App\Repositories\Contracts\BusinessLocationRepository;
 use App\Repositories\Contracts\BusinessRepository;
 use App\Repositories\Contracts\CurrencyRepository;
 use App\Repositories\Contracts\UserRepository;
@@ -95,6 +103,7 @@ final class EntitlementManager
         private readonly UsageAuthorizationGateway $usageAuthorizationGateway,
         private readonly CurrencyRepository $currencyRepository,
         private readonly WorkspacePlanCatalogPricingChangeRepository $pricingChangeRepository,
+        private readonly BusinessLocationRepository $locationRepository,
     ) {
     }
 
@@ -482,9 +491,473 @@ final class EntitlementManager
     }
 
     // =====================================================================
+    // Physical-location capacity — Customer Experience Slice 1A
+    // (RFC-004 §33; contract §7.3, §7.3a, §7.5)
+    //
+    // A Business's physical locations are a separate capacity from its
+    // Workspace's Business slots and never reuse business_slot_* or
+    // additional_business_slots. This section is the ONE home of the
+    // location-capacity arithmetic: BusinessLocationManager (the lifecycle
+    // write boundary) and changePlan() both call into it, never re-derive it.
+    // =====================================================================
+
+    /**
+     * Explainable, unlocked read of one Business's location capacity — the
+     * only source UI and tests read counts from.
+     */
+    public function decideLocationSlotCapacity(Business $business): LocationSlotCapacityDecision
+    {
+        $current = $this->businessRepository->findById($business->id);
+
+        if ($current === null) {
+            throw new WorkspaceBusinessNotFoundException($business->id);
+        }
+
+        $counts = $this->locationRepository->countByLifecycle((int) $current->id);
+
+        return $this->evaluateLocationCapacity($current, $counts['active'], $counts['archived']);
+    }
+
+    /**
+     * Contract §7.3/§33.8 — asserted at every active-location-count-
+     * increasing operation (create AND reactivate). Locks nothing itself:
+     * the caller already holds the Business row lock and passes that locked
+     * row, so the counters and the locking count below are the latest
+     * committed state.
+     */
+    public function assertCanActivateAnotherLocation(Business $lockedBusiness): void
+    {
+        $active = $this->locationRepository->countActiveForUpdate((int) $lockedBusiness->id);
+        $decision = $this->evaluateLocationCapacity($lockedBusiness, $active, 0);
+
+        if ($decision->allowed) {
+            return;
+        }
+
+        match ($decision->denialReason) {
+            'workspace_plan_unassigned' => throw new WorkspacePlanUnassignedException((int) $lockedBusiness->workspace_id),
+            'location_slot_allocation_required' => throw new LocationSlotAllocationRequiredException((int) $lockedBusiness->id),
+            'location_slot_limit_exceeded' => throw new LocationSlotLimitExceededException((int) $lockedBusiness->id),
+            default => throw new RuntimeException("Unexpected location capacity denial reason [{$decision->denialReason}] for Business [{$lockedBusiness->id}]."),
+        };
+    }
+
+    /**
+     * RFC-004 §33.4 — the authoritative, audited mutation of a Business's
+     * additional-location allocation (the 4th and 5th active locations on
+     * Core/Growth). Platform-administrator only, exactly like
+     * setAdditionalBusinessSlots() (§13): no customer can grant one.
+     *
+     *  - An increase for a NON-complimentary assignment requires the tier's
+     *    price, currency AND additional_location_slot_price_ratio (§12.5);
+     *    while Core/Growth prices are unset this is always refused, so no
+     *    paid location capacity can be activated for a paying account.
+     *    A complimentary assignment needs no pricing: nothing is charged.
+     *  - A reduction is permitted only when the Business's ACTIVE locations
+     *    fit the reduced capacity (contract §7.3a rule 6). Archiving never
+     *    reduces this counter: paid capacity is reusable (rules 4–5).
+     *
+     * RFC-004 performs no charge; a future billing slice that collects the
+     * 50% location charge is expected to call this same method after payment.
+     */
+    public function setAdditionalLocationSlots(Business $business, int $count, int $actorUserId, ?string $reason = null): Business
+    {
+        return DB::transaction(function () use ($business, $count, $actorUserId, $reason) {
+            [$lockedWorkspace, $lockedBusiness] = $this->lockWorkspaceAndBusinessForToggle($business);
+
+            $this->assertPlatformAdministrator($actorUserId);
+
+            $assignment = $this->assignmentRepository->findByWorkspaceId($lockedWorkspace->id);
+
+            if ($assignment === null) {
+                throw new WorkspacePlanUnassignedException($lockedWorkspace->id);
+            }
+
+            $catalog = $this->catalogRepository->findById($assignment->workspace_plan_catalog_id);
+            $tier = $catalog?->tier ?? WorkspacePlanTier::Core;
+            $fromCount = (int) $lockedBusiness->additional_location_slots;
+
+            $this->assertValidAdditionalLocationSlots($catalog, $tier, $count, $fromCount);
+
+            if ($count === $fromCount) {
+                return $lockedBusiness;
+            }
+
+            $active = $this->locationRepository->countActiveForUpdate($lockedBusiness->id);
+            $included = (int) ($catalog?->location_slot_included ?? 0);
+            $grandfathered = (int) $lockedBusiness->grandfathered_location_slots;
+
+            if ($count > $fromCount && ! $assignment->is_complimentary) {
+                $lockedCatalog = $this->catalogRepository->findForUpdate($assignment->workspace_plan_catalog_id);
+                $this->assertBasePricingDefined($lockedCatalog);
+                $this->assertLocationSlotRatioDefined($lockedCatalog);
+            }
+
+            if ($count < $fromCount && ! (bool) $catalog?->unlimited_location_slots) {
+                $capacityAfter = $included + $count + $grandfathered;
+
+                if ($active > $capacityAfter) {
+                    throw new LocationAllocationCancellationRefusedException($lockedBusiness->id, $active, $capacityAfter, $active - $capacityAfter);
+                }
+            }
+
+            $this->businessRepository->query()->whereKey($lockedBusiness->id)->update(['additional_location_slots' => $count]);
+
+            $this->transitionRepository->create([
+                'workspace_id' => $lockedWorkspace->id,
+                'transition_type' => WorkspaceEntitlementTransitionType::AdditionalLocationSlotsChanged,
+                'actor_user_id' => $actorUserId,
+                'reason' => $reason,
+                'payload' => [
+                    'source' => 'platform_admin_allocation',
+                    'business_id' => $lockedBusiness->id,
+                    'from_additional_location_slots' => $fromCount,
+                    'to_additional_location_slots' => $count,
+                    'active_locations' => $active,
+                    'included' => $included,
+                    'grandfathered_location_slots' => $grandfathered,
+                    'complimentary' => (bool) $assignment->is_complimentary,
+                ],
+            ]);
+
+            BusinessAdditionalLocationSlotsChanged::dispatch($lockedWorkspace->id, $lockedBusiness->id, $fromCount, $count, $actorUserId);
+
+            return $this->businessRepository->findById($lockedBusiness->id);
+        });
+    }
+
+    /**
+     * Contract §7.5.3 — after a location is archived (caller holds the
+     * Business row lock, inside the archive's own transaction): complimentary
+     * grandfathered excess is CONSUMED, never turned into a transferable free
+     * slot. The allowance shrinks to the Business's remaining excess over its
+     * normal entitlement (included + additional), and to zero once it is
+     * back within that. Paid additional slots are never touched here.
+     */
+    public function reconcileGrandfatheredLocationsAfterArchive(Business $lockedBusiness, int $actorUserId): void
+    {
+        $catalog = $this->locationCatalogFor($lockedBusiness);
+
+        if ($catalog === null || $catalog->unlimited_location_slots) {
+            // Agency: the allowance is retained but unused (§7.5.3), so a
+            // later downgrade is evaluated fresh rather than re-granted.
+            return;
+        }
+
+        $from = (int) $lockedBusiness->grandfathered_location_slots;
+
+        if ($from === 0) {
+            return;
+        }
+
+        $active = $this->locationRepository->countActiveForUpdate($lockedBusiness->id);
+        $to = min($from, $this->freshGrandfatheredLocations($active, (int) $catalog->location_slot_included, (int) $lockedBusiness->additional_location_slots));
+
+        if ($to === $from) {
+            return;
+        }
+
+        $this->businessRepository->query()->whereKey($lockedBusiness->id)->update(['grandfathered_location_slots' => $to]);
+
+        $this->transitionRepository->create([
+            'workspace_id' => $lockedBusiness->workspace_id,
+            'transition_type' => WorkspaceEntitlementTransitionType::CapacityGrandfathered,
+            'actor_user_id' => $actorUserId,
+            'reason' => 'A grandfathered location was archived; its complimentary allowance is consumed, not reusable.',
+            'payload' => [
+                'source' => 'location_archived',
+                'locations' => [[
+                    'business_id' => $lockedBusiness->id,
+                    'active_locations_after' => $active,
+                    'included' => (int) $catalog->location_slot_included,
+                    'additional_location_slots' => (int) $lockedBusiness->additional_location_slots,
+                    'from_grandfathered_location_slots' => $from,
+                    'to_grandfathered_location_slots' => $to,
+                ]],
+            ],
+        ]);
+    }
+
+    /**
+     * RFC-004 §33.7 — called ONLY by WorkspaceManager::reassignBusiness() for
+     * a real cross-Workspace move, inside that method's own transaction,
+     * after it locked both Workspace rows (ascending id) and then the
+     * Business row, and after the target's Business-slot capacity was
+     * asserted. The only lock added here is the Business's own location
+     * rows, so the order stays Workspace → Business → business_locations.
+     *
+     *  - A paid additional-location allocation belongs to the SOURCE
+     *    Workspace's plan and billing and never moves with the Business: the
+     *    move is refused before anything changes. The allocation is neither
+     *    cleared nor transferred.
+     *  - Against a TARGET tier with bounded locations, the complimentary
+     *    allowance is recalculated FRESH from the Business's current active
+     *    locations (never carried over from the source): exactly their excess
+     *    over the target's included capacity. Every location is kept; the
+     *    allowance never opens room for another. An unlimited target changes
+     *    nothing: the allowance is retained but unused.
+     */
+    public function reconcileLocationCapacityForReassignment(Business $lockedBusiness, Workspace $lockedSourceWorkspace, Workspace $lockedTargetWorkspace, int $actorUserId): void
+    {
+        $paid = (int) $lockedBusiness->additional_location_slots;
+
+        if ($paid > 0) {
+            throw new LocationAllocationNotPortableException((int) $lockedBusiness->id, $paid);
+        }
+
+        $assignment = $this->assignmentRepository->findByWorkspaceId($lockedTargetWorkspace->id);
+        $catalog = $assignment === null ? null : $this->catalogRepository->findById($assignment->workspace_plan_catalog_id);
+
+        if ($catalog === null) {
+            throw new WorkspacePlanUnassignedException($lockedTargetWorkspace->id);
+        }
+
+        if ($catalog->unlimited_location_slots) {
+            return;
+        }
+
+        $active = $this->locationRepository->countActiveForUpdate((int) $lockedBusiness->id);
+        $included = (int) $catalog->location_slot_included;
+        $from = (int) $lockedBusiness->grandfathered_location_slots;
+        $to = $this->freshGrandfatheredLocations($active, $included, $paid);
+
+        if ($to === $from && $to === 0) {
+            // Arrives inside the target's capacity with nothing grandfathered.
+            return;
+        }
+
+        if ($to !== $from) {
+            $this->businessRepository->query()->whereKey($lockedBusiness->id)->update(['grandfathered_location_slots' => $to]);
+
+            // Keep the caller's locked row truthful without marking it dirty.
+            $lockedBusiness->forceFill(['grandfathered_location_slots' => $to])->syncOriginalAttribute('grandfathered_location_slots');
+        }
+
+        $this->transitionRepository->create([
+            'workspace_id' => $lockedTargetWorkspace->id,
+            'transition_type' => WorkspaceEntitlementTransitionType::CapacityGrandfathered,
+            'actor_user_id' => $actorUserId,
+            'reason' => 'A Business moved to this Workspace; its physical-location allowance was recalculated against this plan.',
+            'payload' => [
+                'source' => 'business_reassignment',
+                'business_id' => (int) $lockedBusiness->id,
+                'source_workspace_id' => (int) $lockedSourceWorkspace->id,
+                'target_workspace_id' => (int) $lockedTargetWorkspace->id,
+                'target_plan_catalog_id' => (int) $catalog->id,
+                'active_locations' => $active,
+                'included' => $included,
+                'from_grandfathered_location_slots' => $from,
+                'to_grandfathered_location_slots' => $to,
+            ],
+        ]);
+    }
+
+    /**
+     * The single location-capacity algorithm (contract §7.3, §7.5.2).
+     *
+     * Capacity comes from the Workspace's TIER only. Operational plan status
+     * deliberately does not gate it: a location is part of the Business's
+     * own record and costs nothing, and paid capacity still needs an
+     * allocation. A Business's first location is always inside what every
+     * tier includes, so it is never refused — onboarding's location step
+     * stays exactly as it was. Grandfathered excess only protects locations
+     * that already exist — it is exactly their excess, so it never opens
+     * room for a new one — and the tier maximum is a hard ceiling no
+     * allocation raises.
+     */
+    private function evaluateLocationCapacity(Business $business, int $active, int $archived): LocationSlotCapacityDecision
+    {
+        $paid = (int) ($business->additional_location_slots ?? 0);
+        $grandfathered = (int) ($business->grandfathered_location_slots ?? 0);
+        $assignment = $this->assignmentRepository->findByWorkspaceId((int) $business->workspace_id);
+
+        if ($assignment === null) {
+            // No tier to read capacity from: only the first location, which
+            // every tier includes, is certain.
+            $allowed = $active === 0;
+
+            return new LocationSlotCapacityDecision($active, $archived, 0, $paid, $grandfathered, null, null, false, $allowed, $allowed ? null : 'workspace_plan_unassigned');
+        }
+
+        $catalog = $this->catalogRepository->findById($assignment->workspace_plan_catalog_id);
+        $included = (int) ($catalog?->location_slot_included ?? 0);
+
+        if ($catalog !== null && $catalog->unlimited_location_slots) {
+            return new LocationSlotCapacityDecision($active, $archived, $included, $paid, $grandfathered, null, null, true, true, null);
+        }
+
+        $maximum = $catalog?->location_slot_max ?? ($included + $paid);
+        $effective = $included + $paid + $grandfathered;
+
+        if ($active < $effective && $active < $maximum) {
+            return new LocationSlotCapacityDecision($active, $archived, $included, $paid, $grandfathered, $maximum, $effective, false, true, null);
+        }
+
+        $reason = $active >= $maximum ? 'location_slot_limit_exceeded' : 'location_slot_allocation_required';
+
+        return new LocationSlotCapacityDecision($active, $archived, $included, $paid, $grandfathered, $maximum, $effective, false, false, $reason);
+    }
+
+    /**
+     * Contract §7.5.3 / RFC-004 §33.7 — called by changePlan() inside its own
+     * transaction, after the tier row changed. Moving to a tier with bounded
+     * location capacity re-evaluates every Business's complimentary
+     * allowance FRESH against its current active locations (never restored
+     * from a pre-upgrade value). Every existing Business and location is
+     * kept; nothing is archived or hidden. Moving to an unlimited tier
+     * changes nothing: the allowance is retained but unused.
+     */
+    private function regrandfatherForPlanChange(Workspace $lockedWorkspace, ?WorkspacePlanCatalog $fromCatalog, WorkspacePlanCatalog $toCatalog, int $actorUserId, ?string $reason): void
+    {
+        if ($toCatalog->unlimited_location_slots) {
+            return;
+        }
+
+        $businesses = $this->businessRepository->query()
+            ->where('workspace_id', $lockedWorkspace->id)
+            ->orderBy('id')
+            ->lockForUpdate()
+            ->get();
+
+        $included = (int) $toCatalog->location_slot_included;
+        $locations = [];
+
+        foreach ($businesses as $business) {
+            $active = $this->locationRepository->countActiveForUpdate((int) $business->id);
+            $paid = (int) $business->additional_location_slots;
+            $from = (int) $business->grandfathered_location_slots;
+            $to = $this->freshGrandfatheredLocations($active, $included, $paid);
+
+            if ($to === $from) {
+                continue;
+            }
+
+            $this->businessRepository->query()->whereKey($business->id)->update(['grandfathered_location_slots' => $to]);
+
+            $locations[] = [
+                'business_id' => (int) $business->id,
+                'active_locations' => $active,
+                'included' => $included,
+                'additional_location_slots' => $paid,
+                'from_grandfathered_location_slots' => $from,
+                'to_grandfathered_location_slots' => $to,
+            ];
+        }
+
+        $businessCount = $businesses->count();
+        $overAt = fn (?WorkspacePlanCatalog $catalog) => $catalog !== null && ! $catalog->unlimited_business_slots && $businessCount > (int) $catalog->business_slot_included;
+        $overBusinessCapacity = $overAt($toCatalog);
+        $newlyOverBusinessCapacity = $overBusinessCapacity && ! $overAt($fromCatalog);
+
+        if ($locations === [] && ! $newlyOverBusinessCapacity) {
+            return;
+        }
+
+        $this->transitionRepository->create([
+            'workspace_id' => $lockedWorkspace->id,
+            'transition_type' => WorkspaceEntitlementTransitionType::CapacityGrandfathered,
+            'actor_user_id' => $actorUserId,
+            'reason' => $reason,
+            'payload' => [
+                'source' => 'plan_change',
+                'from_plan_catalog_id' => $fromCatalog?->id,
+                'to_plan_catalog_id' => $toCatalog->id,
+                'businesses' => [
+                    'business_ids' => $businesses->pluck('id')->map(fn ($id) => (int) $id)->all(),
+                    'count' => $businessCount,
+                    'included' => (int) $toCatalog->business_slot_included,
+                    'max' => $toCatalog->business_slot_max,
+                    'grandfathered_over_capacity' => $overBusinessCapacity,
+                ],
+                'locations' => $locations,
+            ],
+        ]);
+    }
+
+    /**
+     * Contract §7.5.3 — the one fresh grandfathering rule shared by a plan
+     * change, an archive and a cross-Workspace move: on a bounded tier the
+     * complimentary allowance is exactly the Business's active excess over
+     * its normal entitlement (included + paid), and zero once within it.
+     */
+    private function freshGrandfatheredLocations(int $active, int $included, int $paid): int
+    {
+        return max(0, $active - ($included + $paid));
+    }
+
+    private function locationCatalogFor(Business $business): ?WorkspacePlanCatalog
+    {
+        $assignment = $this->assignmentRepository->findByWorkspaceId((int) $business->workspace_id);
+
+        return $assignment === null ? null : $this->catalogRepository->findById($assignment->workspace_plan_catalog_id);
+    }
+
+    private function assertValidAdditionalLocationSlots(?WorkspacePlanCatalog $catalog, WorkspacePlanTier $tier, int $count, int $fromCount): void
+    {
+        if ($count < 0) {
+            throw new InvalidAdditionalLocationSlotsException($tier->value, $count);
+        }
+
+        if ($catalog === null) {
+            if ($count > 0) {
+                throw new InvalidAdditionalLocationSlotsException($tier->value, $count);
+            }
+
+            return;
+        }
+
+        if ($catalog->unlimited_location_slots) {
+            // No additional-location concept on an unlimited tier: only a
+            // reduction of a value carried over from a bounded tier is valid.
+            if ($count > $fromCount) {
+                throw new InvalidAdditionalLocationSlotsException($tier->value, $count);
+            }
+
+            return;
+        }
+
+        $allowed = max(0, (int) ($catalog->location_slot_max ?? $catalog->location_slot_included) - (int) $catalog->location_slot_included);
+
+        if ($count > $allowed) {
+            throw new InvalidAdditionalLocationSlotsException($tier->value, $count);
+        }
+    }
+
+    private function assertLocationSlotRatioDefined(WorkspacePlanCatalog $catalog): void
+    {
+        if ($catalog->additional_location_slot_price_ratio === null) {
+            throw new UndefinedPlanPricingException($catalog->id);
+        }
+    }
+
+    // =====================================================================
     // Read / presentation (M3 §8 — no repository outside this class's own
     // dependencies is ever queried directly by a controller or view)
     // =====================================================================
+
+    /**
+     * Customer Experience Slice 1A, correction round 2 (RFC-004 §33.2) — the
+     * additional-Business-slot counts an administrator may actually allocate,
+     * per tier, derived from the catalog rows themselves so no surface can
+     * offer a value this class would then refuse. The corrected Core and
+     * Growth rows (1/1) and Agency (unlimited Businesses, no additional-slot
+     * concept) all offer exactly [0]; a bounded row with room offers
+     * 0..(business_slot_max − business_slot_included).
+     *
+     * @return array<string, array<int, int>> tier value => ascending valid counts, always starting at 0
+     */
+    public function additionalBusinessSlotOptionsByTier(): array
+    {
+        $options = [];
+
+        foreach (WorkspacePlanTier::cases() as $tier) {
+            $catalog = $this->catalogRepository->findByTier($tier);
+
+            $options[$tier->value] = range(0, $this->additionalBusinessSlotCapacity($catalog));
+        }
+
+        return $options;
+    }
 
     /**
      * @return array<int, WorkspacePlanCatalogSummary> exactly 3 entries, in Core/Growth/Agency order.
@@ -644,7 +1117,7 @@ final class EntitlementManager
                 }
             }
 
-            $this->assertValidAdditionalBusinessSlots($tier, $additionalBusinessSlots);
+            $this->assertValidAdditionalBusinessSlots($catalog, $tier, $additionalBusinessSlots, 0);
 
             if (trim($reason) === '') {
                 throw new InvalidArgumentException('A non-empty reason is required to assign a first plan.');
@@ -763,7 +1236,7 @@ final class EntitlementManager
             $fromSlots = $assignment->additional_business_slots;
             $toSlots = $this->normalizeSlotsForDirection($currentTier, $newTier, $fromSlots, $additionalBusinessSlots);
 
-            $this->assertValidAdditionalBusinessSlots($newTier, $toSlots);
+            $this->assertValidAdditionalBusinessSlots($destinationCatalog, $newTier, $toSlots, $fromSlots);
 
             if (! $assignment->is_complimentary && $toSlots > $fromSlots) {
                 $this->assertSlotRatioDefined($destinationCatalog);
@@ -797,6 +1270,13 @@ final class EntitlementManager
                     'to_additional_business_slots' => $toSlots,
                     'reason' => $reason,
                 ]);
+            }
+
+            if ($planChanged) {
+                // Customer Experience Slice 1A (RFC-004 §33.7): physical-
+                // location grandfathering is normalized in THIS transaction,
+                // by the one location-capacity algorithm above.
+                $this->regrandfatherForPlanChange($lockedWorkspace, $currentCatalog, $destinationCatalog, $actorUserId, $reason);
             }
 
             if ($planChanged) {
@@ -974,10 +1454,9 @@ final class EntitlementManager
 
             $catalog = $this->catalogRepository->findById($assignment->workspace_plan_catalog_id);
             $tier = $catalog?->tier ?? WorkspacePlanTier::Core;
-
-            $this->assertValidAdditionalBusinessSlots($tier, $count);
-
             $fromCount = $assignment->additional_business_slots;
+
+            $this->assertValidAdditionalBusinessSlots($catalog, $tier, $count, $fromCount);
 
             if ($count > $fromCount && ! $assignment->is_complimentary) {
                 $lockedCatalog = $this->catalogRepository->findForUpdate($assignment->workspace_plan_catalog_id);
@@ -1090,7 +1569,7 @@ final class EntitlementManager
             $catalog = $this->catalogRepository->findById($assignment->workspace_plan_catalog_id);
             $tier = $catalog?->tier ?? WorkspacePlanTier::Core;
 
-            $this->assertValidAdditionalBusinessSlots($tier, $toCount);
+            $this->assertValidAdditionalBusinessSlots($catalog, $tier, $toCount, $fromCount);
 
             $lockedCatalog = $this->catalogRepository->findForUpdate($assignment->workspace_plan_catalog_id);
             $this->assertBasePricingDefined($lockedCatalog);
@@ -1415,6 +1894,16 @@ final class EntitlementManager
                 throw new InvalidArgumentException("Workspace plan catalog tier [{$lockedCatalog->tier->value}] does not support an additional-Business-slot price ratio.");
             }
 
+            // Customer Experience Slice 1A (RFC-004 §33.2): a price ratio for
+            // an extra Business is meaningless — and must never become
+            // purchasable — on a row that offers no additional Business
+            // capacity (business_slot_max <= business_slot_included), which
+            // is exactly the corrected Core and Growth. Read from the row, not
+            // the tier name, and refused before any update, audit row or event.
+            if ($normalizedRatio !== null && $this->additionalBusinessSlotCapacity($lockedCatalog) === 0) {
+                throw new InvalidArgumentException("Workspace plan catalog tier [{$lockedCatalog->tier->value}] offers no additional Business capacity, so it cannot carry an additional-Business-slot price ratio.");
+            }
+
             $fromPrice = $lockedCatalog->price;
             $fromCurrencyId = $lockedCatalog->currency_id;
             $fromRatio = $lockedCatalog->additional_business_slot_price_ratio;
@@ -1581,18 +2070,49 @@ final class EntitlementManager
         }
     }
 
-    private function assertValidAdditionalBusinessSlots(WorkspacePlanTier $tier, int $additionalBusinessSlots): void
+    /**
+     * Customer Experience Slice 1A (RFC-004 §33.2): how many additional
+     * Business slots a catalog row offers is read from the row itself —
+     * business_slot_max − business_slot_included — never from a hard-coded
+     * tier rule. The corrected Core/Growth rows (1/1) therefore offer none,
+     * an unlimited row (Agency) has no additional-slot concept at all, and a
+     * bounded row with no maximum fails closed at none.
+     */
+    private function additionalBusinessSlotCapacity(?WorkspacePlanCatalog $catalog): int
     {
-        if ($tier === WorkspacePlanTier::Agency) {
-            if ($additionalBusinessSlots !== 0) {
-                throw new InvalidAdditionalBusinessSlotsException($tier->value, $additionalBusinessSlots);
+        if ($catalog === null || $catalog->unlimited_business_slots) {
+            return 0;
+        }
+
+        $included = (int) $catalog->business_slot_included;
+
+        return max(0, (int) ($catalog->business_slot_max ?? $included) - $included);
+    }
+
+    /**
+     * An INCREASE is valid only up to what the catalog row offers
+     * (additionalBusinessSlotCapacity()). A reduction — or keeping a value
+     * unchanged, e.g. a Core<->Growth change preserving it — is always
+     * valid, so a stale counter left from the superseded 3/5 catalog can be
+     * brought down to zero but never raised. Agency keeps its exact rule:
+     * only 0 is valid.
+     */
+    private function assertValidAdditionalBusinessSlots(?WorkspacePlanCatalog $catalog, WorkspacePlanTier $tier, int $toSlots, int $fromSlots): void
+    {
+        if ($toSlots < 0) {
+            throw new InvalidAdditionalBusinessSlotsException($tier->value, $toSlots);
+        }
+
+        if ($tier === WorkspacePlanTier::Agency || (bool) $catalog?->unlimited_business_slots) {
+            if ($toSlots !== 0) {
+                throw new InvalidAdditionalBusinessSlotsException($tier->value, $toSlots);
             }
 
             return;
         }
 
-        if (! in_array($additionalBusinessSlots, [0, 1, 2], true)) {
-            throw new InvalidAdditionalBusinessSlotsException($tier->value, $additionalBusinessSlots);
+        if ($toSlots > $fromSlots && $toSlots > $this->additionalBusinessSlotCapacity($catalog)) {
+            throw new InvalidAdditionalBusinessSlotsException($tier->value, $toSlots);
         }
     }
 

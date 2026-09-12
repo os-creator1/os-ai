@@ -68,9 +68,13 @@ class WorkspacePlanCatalogRepositoryTest extends TestCase
 
         $this->assertNotNull($core);
         $this->assertSame(WorkspacePlanTier::Core, $core->tier);
-        $this->assertSame(3, $core->business_slot_included);
-        $this->assertSame(5, $core->business_slot_max);
+        // Customer Experience Slice 1A (RFC-004 §33.5): one Business on Core;
+        // 3 included / 5 max now describe physical locations.
+        $this->assertSame(1, $core->business_slot_included);
+        $this->assertSame(1, $core->business_slot_max);
         $this->assertFalse($core->unlimited_business_slots);
+        $this->assertSame(3, $core->location_slot_included);
+        $this->assertSame(5, $core->location_slot_max);
     }
 
     public function test_find_by_tier_casts_the_seeded_agency_row_as_unlimited(): void

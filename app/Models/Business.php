@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Enums\Business\BusinessIndustry;
+use App\Enums\Business\BusinessLocationLifecycleState;
 use App\Enums\Business\BusinessServiceStatus;
 use App\Enums\Business\BusinessStatus;
 use App\Library\Traits\HasUid;
@@ -32,11 +33,19 @@ class Business extends Model
         'currency_code',
     ];
 
+    /**
+     * additional_location_slots and grandfathered_location_slots (Customer
+     * Experience Slice 1A, §7.5.2) are deliberately NOT fillable: they are
+     * entitlement state, written only by EntitlementManager under the
+     * Business row lock and durably audited.
+     */
     protected $casts = [
         'status' => BusinessStatus::class,
         'industry' => BusinessIndustry::class,
         'is_primary' => 'boolean',
         'activated_at' => 'datetime',
+        'additional_location_slots' => 'integer',
+        'grandfathered_location_slots' => 'integer',
     ];
 
     public function customer(): BelongsTo
@@ -57,6 +66,15 @@ class Business extends Model
     public function primaryLocation(): HasOne
     {
         return $this->hasOne(BusinessLocation::class)->where('is_primary', true);
+    }
+
+    /**
+     * Slice 1A — the locations that consume physical-location capacity.
+     * Archived locations stay reachable through locations().
+     */
+    public function activeLocations(): HasMany
+    {
+        return $this->hasMany(BusinessLocation::class)->where('lifecycle_state', BusinessLocationLifecycleState::Active->value);
     }
 
     public function services(): HasMany

@@ -44,7 +44,7 @@ class NewBusinessPayerAssignmentInitializationTest extends TestCase
             'status' => true, 'is_admin' => true, 'is_customer' => false, 'active_portal' => 'admin',
         ]);
 
-        app(EntitlementManager::class)->assignFirstPlan($workspace, WorkspacePlanTier::Core, $admin->id, 'Fixture.', true, 2);
+        app(EntitlementManager::class)->assignFirstPlan($workspace, WorkspacePlanTier::Core, $admin->id, 'Fixture.', true, 0);
 
         return $workspace->fresh();
     }

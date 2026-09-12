@@ -21,6 +21,13 @@ class WorkspacePlanCatalog extends Model
         'business_slot_max',
         'unlimited_business_slots',
         'additional_business_slot_price_ratio',
+        // Customer Experience Slice 1A (RFC-004 §33.4) — PHYSICAL-LOCATION
+        // capacity, per Business. Never a reinterpretation of business_slot_*,
+        // which keeps meaning Business/client-account capacity.
+        'location_slot_included',
+        'location_slot_max',
+        'unlimited_location_slots',
+        'additional_location_slot_price_ratio',
         'is_active',
     ];
 
@@ -31,6 +38,10 @@ class WorkspacePlanCatalog extends Model
         'business_slot_max' => 'integer',
         'unlimited_business_slots' => 'boolean',
         'additional_business_slot_price_ratio' => 'decimal:4',
+        'location_slot_included' => 'integer',
+        'location_slot_max' => 'integer',
+        'unlimited_location_slots' => 'boolean',
+        'additional_location_slot_price_ratio' => 'decimal:4',
         'is_active' => 'boolean',
     ];
 

@@ -27,6 +27,8 @@ final class AnalyticsDateRange
     public const PRESET_LAST_7_DAYS = 'last_7_days';
     public const PRESET_LAST_30_DAYS = 'last_30_days';
     public const PRESET_LAST_90_DAYS = 'last_90_days';
+    public const PRESET_THIS_MONTH = 'this_month';
+    public const PRESET_LAST_MONTH = 'last_month';
     public const PRESET_CUSTOM = 'custom';
 
     public const DEFAULT_PRESET = self::PRESET_LAST_30_DAYS;
@@ -34,10 +36,32 @@ final class AnalyticsDateRange
     /** Contract §4.2 — inclusive maximum for a custom range. */
     public const MAX_CUSTOM_DAYS = 92;
 
+    /** Rolling windows ending today: preset => number of local days. */
     public const PRESETS = [
         self::PRESET_LAST_7_DAYS => 7,
         self::PRESET_LAST_30_DAYS => 30,
         self::PRESET_LAST_90_DAYS => 90,
+    ];
+
+    /**
+     * Calendar-month windows, kept apart from PRESETS because their length
+     * is not fixed (28-31 local days) and "this month" ends today rather
+     * than on the month's last day. Both are derived from the Business's
+     * own calendar with Carbon's month arithmetic, never a second count.
+     */
+    public const CALENDAR_PRESETS = [
+        self::PRESET_THIS_MONTH,
+        self::PRESET_LAST_MONTH,
+    ];
+
+    /** Every preset the range control offers, in display order. */
+    public const SELECTABLE_PRESETS = [
+        self::PRESET_LAST_7_DAYS,
+        self::PRESET_LAST_30_DAYS,
+        self::PRESET_LAST_90_DAYS,
+        self::PRESET_THIS_MONTH,
+        self::PRESET_LAST_MONTH,
+        self::PRESET_CUSTOM,
     ];
 
     private function __construct(
@@ -74,6 +98,19 @@ final class AnalyticsDateRange
             $days = self::PRESETS[$preset];
 
             return self::build($preset, $timezone, $todayLocal->subDays($days - 1), $todayLocal);
+        }
+
+        // Calendar months, in the Business's own calendar. startOfMonth() and
+        // endOfMonth() move by calendar date, so a month containing a DST
+        // change is still exactly its own dates; nothing here adds seconds.
+        if ($preset === self::PRESET_THIS_MONTH) {
+            return self::build($preset, $timezone, $todayLocal->startOfMonth(), $todayLocal);
+        }
+
+        if ($preset === self::PRESET_LAST_MONTH) {
+            $previousMonth = $todayLocal->startOfMonth()->subMonthNoOverflow();
+
+            return self::build($preset, $timezone, $previousMonth, $previousMonth->endOfMonth());
         }
 
         if ($preset !== self::PRESET_CUSTOM) {
@@ -184,6 +221,15 @@ final class AnalyticsDateRange
             return 'custom_' . $this->startLocal->format('Y-m-d') . '_' . $this->endLocal->format('Y-m-d');
         }
 
+        // A calendar-month preset names a different window every month, so
+        // its key carries the resolved month: an entry cached on the last day
+        // of one month can never be served as "this month" on the first of
+        // the next. The rolling presets keep their bare name, which the
+        // existing B5 and Dashboard cache keys already depend on.
+        if (in_array($this->preset, self::CALENDAR_PRESETS, true)) {
+            return $this->preset . '_' . $this->startLocal->format('Y-m');
+        }
+
         return $this->preset;
     }
 
@@ -193,8 +239,31 @@ final class AnalyticsDateRange
             self::PRESET_LAST_7_DAYS => 'Last 7 days',
             self::PRESET_LAST_30_DAYS => 'Last 30 days',
             self::PRESET_LAST_90_DAYS => 'Last 90 days',
+            self::PRESET_THIS_MONTH => 'This month',
+            self::PRESET_LAST_MONTH => 'Last month',
             default => $this->startLocal->format('M j, Y') . ' to ' . $this->endLocal->format('M j, Y'),
         };
+    }
+
+    /**
+     * The window as a short, human date span for the range caption —
+     * "Aug 13 – Sep 11", with the year only when the span crosses one or is
+     * not the current year. Calendar dates only; no timezone is displayed.
+     */
+    public function spanLabel(?CarbonImmutable $today = null): string
+    {
+        $currentYear = ($today ?? CarbonImmutable::now())->setTimezone($this->timezone)->year;
+        $sameYear = $this->startLocal->year === $this->endLocal->year;
+        $showYear = ! $sameYear || $this->endLocal->year !== $currentYear;
+
+        if ($this->startLocal->equalTo($this->endLocal)) {
+            return $this->startLocal->format($showYear ? 'M j, Y' : 'M j');
+        }
+
+        $start = $this->startLocal->format($showYear && ! $sameYear ? 'M j, Y' : 'M j');
+        $end = $this->endLocal->format($showYear ? 'M j, Y' : 'M j');
+
+        return $start . ' – ' . $end;
     }
 
     /** @return array<string, string> */

@@ -230,11 +230,15 @@
                                         <input type="text" name="reason" class="form-control" placeholder="Reason" required>
                                     </div>
                                     <div class="col-md-2">
+                                        {{-- Customer Experience Slice 1A (RFC-004 §33.2): only counts the catalog rows actually allow. The tier is chosen in this same form, so only what EVERY tier allows is offered. --}}
                                         <select name="additional_business_slots" class="form-select">
-                                            <option value="0">+0 slots</option>
-                                            <option value="1">+1 slot</option>
-                                            <option value="2">+2 slots</option>
+                                            @foreach ($additionalBusinessSlotOptionsForAnyTier as $slotOption)
+                                                <option value="{{ $slotOption }}">+{{ $slotOption }} {{ $slotOption === 1 ? 'slot' : 'slots' }}</option>
+                                            @endforeach
                                         </select>
+                                        @if ($additionalBusinessSlotOptionsForAnyTier === [0])
+                                            <small class="text-muted">No plan tier offers an additional Business slot.</small>
+                                        @endif
                                     </div>
                                     <div class="col-md-2 form-check mt-1">
                                         <input type="checkbox" class="form-check-input" id="assign-is-complimentary" name="is_complimentary" value="1">
@@ -259,11 +263,12 @@
                                         <input type="text" name="reason" class="form-control" placeholder="Reason (optional)">
                                     </div>
                                     <div class="col-md-3">
+                                        {{-- Customer Experience Slice 1A (RFC-004 §33.2): the destination tier is chosen in this same form, so only what EVERY tier allows is offered. --}}
                                         <select name="additional_business_slots" class="form-select">
                                             <option value="">Preserve current</option>
-                                            <option value="0">Set to 0</option>
-                                            <option value="1">Set to 1</option>
-                                            <option value="2">Set to 2</option>
+                                            @foreach ($additionalBusinessSlotOptionsForAnyTier as $slotOption)
+                                                <option value="{{ $slotOption }}">Set to {{ $slotOption }}</option>
+                                            @endforeach
                                         </select>
                                     </div>
                                     <div class="col-md-2">
@@ -318,11 +323,15 @@
                                 <form method="POST" action="{{ route('admin.workspaces.plan.additional-slots', $workspace) }}" class="row g-2 mb-3">
                                     @csrf
                                     <div class="col-md-3">
+                                        {{-- Customer Experience Slice 1A (RFC-004 §33.2): this Workspace's own tier decides what can be allocated; a value left from the superseded catalog can still be set back to 0. --}}
                                         <select name="additional_business_slots" class="form-select" required>
-                                            <option value="0">0</option>
-                                            <option value="1">1</option>
-                                            <option value="2">2</option>
+                                            @foreach ($additionalBusinessSlotOptionsForCurrentTier as $slotOption)
+                                                <option value="{{ $slotOption }}">{{ $slotOption }}</option>
+                                            @endforeach
                                         </select>
+                                        @if ($additionalBusinessSlotOptionsForCurrentTier === [0])
+                                            <small class="text-muted">This plan tier offers no additional Business slots.</small>
+                                        @endif
                                     </div>
                                     <div class="col-md-6">
                                         <input type="text" name="reason" class="form-control" placeholder="Reason (optional)">

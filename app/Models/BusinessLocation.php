@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Enums\Business\BusinessLocationLifecycleState;
 use App\Enums\Business\BusinessServiceMode;
 use App\Library\Traits\HasUid;
 use Illuminate\Database\Eloquent\Model;
@@ -47,10 +48,25 @@ class BusinessLocation extends Model
         'longitude' => 'decimal:7',
         'hours' => 'array',
         'hours_verified_at' => 'datetime',
+        // Customer Experience Slice 1A (§7.3a). Not fillable: lifecycle is
+        // changed only through BusinessLocationManager, which re-checks
+        // capacity on every activation under the Business row lock.
+        'lifecycle_state' => BusinessLocationLifecycleState::class,
+        'archived_at' => 'datetime',
     ];
 
     public function business(): BelongsTo
     {
         return $this->belongsTo(Business::class);
+    }
+
+    public function isActive(): bool
+    {
+        return ($this->lifecycle_state ?? BusinessLocationLifecycleState::Active) === BusinessLocationLifecycleState::Active;
+    }
+
+    public function isArchived(): bool
+    {
+        return $this->lifecycle_state === BusinessLocationLifecycleState::Archived;
     }
 }
