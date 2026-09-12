@@ -36,7 +36,13 @@ class BusinessConversationReadModelTest extends TestCase
         ]);
     }
 
-    public function test_the_public_surface_is_exactly_the_two_counts(): void
+    /**
+     * The seam stays deliberately small. Unified Home §3.1 (A-1) added the
+     * third method: startedCount() for several Businesses at once, so the
+     * Agency Account Home can show every client without asking this seam once
+     * per client. It is the same count, grouped — not a new kind of read.
+     */
+    public function test_the_public_surface_is_exactly_the_two_counts_and_the_grouped_variant(): void
     {
         $methods = array_map(
             fn (\ReflectionMethod $method) => $method->getName(),
@@ -45,7 +51,58 @@ class BusinessConversationReadModelTest extends TestCase
 
         sort($methods);
 
-        $this->assertSame(['startedCount', 'unreadCount'], $methods);
+        $this->assertSame(['startedCount', 'startedCountsForBusinesses', 'unreadCount'], $methods);
+    }
+
+    public function test_the_grouped_count_gives_each_business_its_own_figure_and_isolates_them(): void
+    {
+        [$businessA, $businessB] = $this->twoBusinessesOfOneCustomer();
+        $model = new BusinessConversationReadModel();
+        $start = CarbonImmutable::parse('2026-09-01 00:00:00', 'UTC');
+        $end = CarbonImmutable::parse('2026-09-30 00:00:00', 'UTC');
+
+        $this->box($businessA, CarbonImmutable::parse('2026-09-02 10:00:00', 'UTC'));
+        $this->box($businessA, CarbonImmutable::parse('2026-09-03 10:00:00', 'UTC'));
+        $this->box($businessB, CarbonImmutable::parse('2026-09-04 10:00:00', 'UTC'));
+
+        $counts = $model->startedCountsForBusinesses([$businessA->id, $businessB->id], $start, $end);
+
+        $this->assertSame(2, $counts[$businessA->id]);
+        $this->assertSame(1, $counts[$businessB->id]);
+
+        // Asking for one Business never returns another's rows.
+        $this->assertSame([$businessB->id => 1], $model->startedCountsForBusinesses([$businessB->id], $start, $end));
+
+        // Each figure equals what the single-Business count reports.
+        $this->assertSame($model->startedCount($businessA, $start, $end), $counts[$businessA->id]);
+        $this->assertSame($model->startedCount($businessB, $start, $end), $counts[$businessB->id]);
+    }
+
+    public function test_the_grouped_count_is_half_open_and_costs_one_query_for_any_number_of_businesses(): void
+    {
+        [$businessA, $businessB] = $this->twoBusinessesOfOneCustomer();
+        $model = new BusinessConversationReadModel();
+        $start = CarbonImmutable::parse('2026-09-01 00:00:00', 'UTC');
+        $end = CarbonImmutable::parse('2026-09-02 00:00:00', 'UTC');
+
+        $this->box($businessA, CarbonImmutable::parse('2026-09-01 00:00:00', 'UTC'));
+        $this->box($businessA, CarbonImmutable::parse('2026-09-02 00:00:00', 'UTC'));
+        $this->box($businessB, CarbonImmutable::parse('2026-08-31 23:59:59', 'UTC'));
+
+        DB::enableQueryLog();
+        DB::flushQueryLog();
+        $counts = $model->startedCountsForBusinesses([$businessA->id, $businessB->id], $start, $end);
+        $this->assertCount(1, DB::getQueryLog(), 'One grouped statement, whatever the number of ids.');
+        DB::disableQueryLog();
+
+        $this->assertSame([$businessA->id => 1], $counts, 'The start instant is inside the window and the end instant is not.');
+
+        // No ids, no query and nothing invented.
+        DB::enableQueryLog();
+        DB::flushQueryLog();
+        $this->assertSame([], $model->startedCountsForBusinesses([], $start, $end));
+        $this->assertCount(0, DB::getQueryLog());
+        DB::disableQueryLog();
     }
 
     public function test_started_count_is_isolated_to_the_business(): void

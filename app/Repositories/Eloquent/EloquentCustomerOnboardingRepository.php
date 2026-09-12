@@ -27,6 +27,11 @@ class EloquentCustomerOnboardingRepository extends EloquentBaseRepository implem
         return $this->query()->where('customer_id', $customerId)->first();
     }
 
+    public function findById(int $id): ?CustomerOnboarding
+    {
+        return $this->query()->whereKey($id)->first();
+    }
+
     /**
      * business_id has no unique database constraint — only customer_id does
      * (see the class-level migration) — so this orders by id descending

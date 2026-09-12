@@ -163,6 +163,7 @@
                 BusinessServiceRepository::class  => EloquentBusinessServiceRepository::class,
                 CustomerOnboardingRepository::class => EloquentCustomerOnboardingRepository::class,
                 OpportunityRunRepository::class => EloquentOpportunityRunRepository::class,
+                \App\Repositories\Contracts\OpportunityProducerDispatchRepository::class => \App\Repositories\Eloquent\EloquentOpportunityProducerDispatchRepository::class,
                 OpportunityRepository::class => EloquentOpportunityRepository::class,
                 OpportunityRunCandidateRepository::class => EloquentOpportunityRunCandidateRepository::class,
                 OpportunityActionExecutionRepository::class => EloquentOpportunityActionExecutionRepository::class,
@@ -258,6 +259,15 @@
 
                     $registry->register($app->make(\App\Library\Automation\Workflow\Executors\TriggerNodeExecutor::class));
                     $registry->register($app->make(\App\Library\Automation\Workflow\Executors\EndNodeExecutor::class));
+
+                    // V2-B action executors. Purely additive, exactly as the
+                    // note above anticipated: three register() calls and
+                    // nothing else. Wait and If/Else still have no executor,
+                    // so the advancer continues to HOLD those steps rather
+                    // than skip them, until their own slice ships.
+                    $registry->register($app->make(\App\Library\Automation\Workflow\Executors\SendSmsNodeExecutor::class));
+                    $registry->register($app->make(\App\Library\Automation\Workflow\Executors\UpdateContactFieldNodeExecutor::class));
+                    $registry->register($app->make(\App\Library\Automation\Workflow\Executors\InternalNotificationNodeExecutor::class));
 
                     return $registry;
                 },
