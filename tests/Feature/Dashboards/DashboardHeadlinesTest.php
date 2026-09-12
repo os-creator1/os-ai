@@ -31,7 +31,14 @@ class DashboardHeadlinesTest extends TestCase
     use RefreshDatabase;
     use CreatesDashboardFixtures;
 
-    private const KEYS = ['messages_sent', 'provider_accepted', 'confirmed_failed', 'new_contacts', 'conversations_started', 'automation_runs'];
+    /**
+     * Home's canonical headline keys after H-1: outbound volume,
+     * provider-accepted and failed-send figures left Home for Results.
+     */
+    private const KEYS = ['new_contacts', 'conversations_started', 'automation_runs'];
+
+    /** The three H-1 removed, asserted absent wherever Home renders. */
+    private const REMOVED_KEYS = ['messages_sent', 'provider_accepted', 'confirmed_failed'];
 
     protected function setUp(): void
     {
@@ -89,9 +96,6 @@ class DashboardHeadlinesTest extends TestCase
         $this->authenticateAs($customer);
         $headlines = $this->headlines($customer->user);
 
-        $this->assertSame(HeadlinePolarity::Descriptive, $headlines['messages_sent']->polarity);
-        $this->assertSame(HeadlinePolarity::Directional, $headlines['provider_accepted']->polarity);
-        $this->assertSame(HeadlinePolarity::Inverted, $headlines['confirmed_failed']->polarity);
         $this->assertSame(HeadlinePolarity::DescriptiveGrowth, $headlines['new_contacts']->polarity);
         $this->assertSame(HeadlinePolarity::Descriptive, $headlines['conversations_started']->polarity);
         $this->assertSame(HeadlinePolarity::Descriptive, $headlines['automation_runs']->polarity);
@@ -122,9 +126,6 @@ class DashboardHeadlinesTest extends TestCase
         $conversations = app(BusinessConversationReadModel::class);
 
         $expect = [
-            'messages_sent' => fn (AnalyticsDateRange $r) => $queries->messageKpis($business, $r)['kpis']->outbound,
-            'provider_accepted' => fn (AnalyticsDateRange $r) => $queries->messageKpis($business, $r)['kpis']->accepted,
-            'confirmed_failed' => fn (AnalyticsDateRange $r) => $queries->messageKpis($business, $r)['kpis']->confirmedFailed,
             'new_contacts' => fn (AnalyticsDateRange $r) => $queries->contactKpis($business, $r)['kpis']->newInRange,
             'conversations_started' => fn (AnalyticsDateRange $r) => $conversations->startedCount($business, $r->startUtc, $r->endUtc),
             'automation_runs' => fn (AnalyticsDateRange $r) => $queries->automationKpis($business, $r)->executionsInRange,
@@ -135,7 +136,7 @@ class DashboardHeadlinesTest extends TestCase
             $this->assertSame($source($previous), $headlines[$key]->comparison->previous, "{$key}: previous");
         }
 
-        $this->assertSame([6, 5], [$headlines['messages_sent']->comparison->current, $headlines['messages_sent']->comparison->previous]);
+        $this->assertSame(self::KEYS, array_keys($headlines), 'Home carries exactly the canonical figures, in KPI-priority order.');
         $this->assertSame([4, 6], [$headlines['new_contacts']->comparison->current, $headlines['new_contacts']->comparison->previous]);
         $this->assertSame([2, 7], [$headlines['conversations_started']->comparison->current, $headlines['conversations_started']->comparison->previous]);
         $this->assertSame([3, 1], [$headlines['automation_runs']->comparison->current, $headlines['automation_runs']->comparison->previous]);
@@ -248,8 +249,8 @@ class DashboardHeadlinesTest extends TestCase
         $this->authenticateAs($customer);
 
         $headlines = $this->headlines($customer->user);
-        $this->assertNull($headlines['messages_sent']->comparison->percentDelta);
-        $this->assertSame('Up from 0 in the previous 30 days.', $headlines['messages_sent']->comparisonSentence);
+        $this->assertNull($headlines['new_contacts']->comparison->percentDelta);
+        $this->assertSame('Up from 0 in the previous 30 days.', $headlines['new_contacts']->comparisonSentence);
 
         // Both zero.
         $this->assertSame([0, 0, null, HeadlineTrend::Unchanged], [
@@ -271,44 +272,37 @@ class DashboardHeadlinesTest extends TestCase
     // #51, #52, #53 — honest interpretation
     // =================================================================
 
-    public function test_directional_metrics_read_better_worse_or_no_change_by_their_own_polarity(): void
+    /**
+     * H-1 replaced Slice 4's directional metrics on Home: provider-accepted
+     * and confirmed-failed were the only two, and both left for Results. What
+     * must remain true is that Home now carries no judged metric at all —
+     * nothing on this page tells a customer they are doing better or worse.
+     */
+    public function test_home_carries_no_directional_metric_and_no_judgement_badge(): void
     {
-        // Previous: 1 of 2 accepted, 1 confirmed failure. Current: 3 of 3 accepted, none failed.
         [$customer, $business] = $this->tenant(WorkspacePlanTier::Growth, 'Share Venue', 'Share Account');
         $this->sent($business, 1, '2026-07-20');
         $this->sent($business, 1, '2026-07-20', 'Undelivered');
         $this->sent($business, 3, '2026-09-01');
+        $this->contactsAdded($business, 4, '2026-09-01');
         $this->authenticateAs($customer);
 
-        $h = $this->headlines($customer->user);
-        $this->assertSame('positive', $h['provider_accepted']->judgement, 'A rising provider-accepted rate reads positive.');
-        $this->assertSame('positive', $h['confirmed_failed']->judgement, 'Falling confirmed failures read positive.');
-        $this->assertSame('Better', $h['provider_accepted']->judgementWord());
-
-        [$customer2, $business2] = $this->tenant(WorkspacePlanTier::Growth, 'Failing Venue', 'Failing Account');
-        $this->sent($business2, 2, '2026-07-20');
-        $this->sent($business2, 2, '2026-09-01');
-        $this->sent($business2, 2, '2026-09-01', 'Rejected');
-        $this->authenticateAs($customer2);
-
-        $h = $this->headlines($customer2->user);
-        $this->assertSame('negative', $h['confirmed_failed']->judgement, 'A rising confirmed-failure count reads negative.');
-        $this->assertSame('negative', $h['provider_accepted']->judgement, 'A falling accepted rate reads negative.');
+        $headlines = $this->headlines($customer->user);
         $html = $this->home()->assertOk()->getContent();
-        $this->assertMatchesRegularExpression('#data-headline="confirmed_failed".*?data-role="headline-judgement">\s*Worse\s*<#s', $html, 'The judgement is a word, not a colour.');
 
-        [$customer3, $business3] = $this->tenant(WorkspacePlanTier::Growth, 'Steady Venue', 'Steady Account');
-        $this->sent($business3, 2, '2026-07-20');
-        $this->sent($business3, 1, '2026-07-20', 'Failed');
-        $this->sent($business3, 2, '2026-09-01');
-        $this->sent($business3, 1, '2026-09-01', 'Failed');
-        $this->authenticateAs($customer3);
+        foreach (self::REMOVED_KEYS as $key) {
+            $this->assertArrayNotHasKey($key, $headlines, "{$key} is no longer a Home figure.");
+            $this->assertDoesNotMatchRegularExpression('/data-headline="' . $key . '"/', $html);
+        }
 
-        $h = $this->headlines($customer3->user);
-        $this->assertSame('neutral', $h['provider_accepted']->judgement);
-        $this->assertSame('neutral', $h['confirmed_failed']->judgement);
-        $this->assertSame('No change', $h['confirmed_failed']->judgementWord());
+        foreach ($headlines as $key => $headline) {
+            $this->assertNull($headline->judgement, "{$key} carries no judgement.");
+        }
+
+        $this->assertStringNotContainsString('data-role="headline-judgement"', $html);
+        $this->assertDoesNotMatchRegularExpression('/\b(Better|Worse)\b/', $this->mainText($html));
     }
+
 
     public function test_volume_is_described_and_never_called_good_successful_or_healthy(): void
     {
@@ -319,19 +313,24 @@ class DashboardHeadlinesTest extends TestCase
         $headlines = $this->headlines($customer->user);
         $html = $this->home()->assertOk()->getContent();
 
-        foreach (['messages_sent', 'conversations_started', 'automation_runs', 'new_contacts'] as $key) {
+        foreach (['conversations_started', 'automation_runs', 'new_contacts'] as $key) {
             $this->assertSame(HeadlineTrend::Up, $headlines[$key]->comparison->trend, "Precondition: {$key} increased.");
             $this->assertNull($headlines[$key]->judgement, "{$key} carries no judgement.");
             $this->assertDoesNotMatchRegularExpression('/\b(good|great|successful|healthy|better|improved)\b/i', $headlines[$key]->interpretation, $key);
             $this->assertDoesNotMatchRegularExpression('/data-headline="' . $key . '"[^>]*data-judgement=/', $html, "{$key} renders no judgement badge.");
         }
 
-        $this->assertStringContainsString('Volume is activity, not a success measure.', $headlines['messages_sent']->interpretation);
+        $this->assertStringContainsString('Volume is activity, not a success measure.', $headlines['conversations_started']->interpretation);
         $this->assertStringContainsString('Runs are activity, not a success measure.', $headlines['automation_runs']->interpretation);
         $this->assertDoesNotMatchRegularExpression('/\b(revenue|lead quality|pipeline|leads?)\b/i', $headlines['new_contacts']->interpretation);
     }
 
-    public function test_the_acceptance_vocabulary_is_b5s_verbatim(): void
+    /**
+     * The acceptance vocabulary was B5's, and it goes with the tile: Home no
+     * longer speaks about providers, sending or delivery at all (T-HOME-4).
+     * Results keeps the vocabulary and its own test of it.
+     */
+    public function test_home_carries_no_provider_or_sending_vocabulary(): void
     {
         [$customer, $business] = $this->tenant(WorkspacePlanTier::Growth, 'Vocabulary Venue', 'Vocabulary Account');
         $this->sent($business, 2, '2026-09-01');
@@ -339,10 +338,12 @@ class DashboardHeadlinesTest extends TestCase
 
         $main = $this->mainText($this->home()->assertOk()->getContent());
 
-        $this->assertStringContainsString('Provider accepted', $main);
-        $this->assertStringContainsString('Provider accepted means the provider took the message when it was sent.', $main);
+        $this->assertDoesNotMatchRegularExpression('/\bprovider accepted\b/i', $main);
+        $this->assertDoesNotMatchRegularExpression('/\bmessages sent\b/i', $main);
+        $this->assertDoesNotMatchRegularExpression('/\bconfirmed failed\b/i', $main);
         $this->assertDoesNotMatchRegularExpression('/\bdeliver(ed|y rate)\b/i', $main);
     }
+
 
     // -----------------------------------------------------------------
 

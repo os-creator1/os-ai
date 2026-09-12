@@ -3,19 +3,18 @@
 namespace App\Library\Dashboard;
 
 use App\DTO\Analytics\AutomationKpis;
-use App\DTO\Analytics\MessageKpis;
 use App\Enums\Dashboard\AttentionType;
 use App\Enums\Dashboard\HeadlinePolarity;
 use App\Enums\Dashboard\HeadlineTrend;
 use App\Enums\Opportunity\OpportunityFreshness;
 use App\Enums\Opportunity\OpportunityStatus;
 use App\Library\Analytics\AnalyticsDateRange;
+use App\Library\Analytics\BusinessAnalyticsQueries;
 use App\Library\Analytics\BusinessDashboardAnalyticsPresenter;
 use App\Library\Conversations\BusinessConversationReadModel;
 use App\Library\Navigation\CustomerContext;
 use App\Library\Navigation\CustomerShellComposer;
 use App\Library\Navigation\MenuEntitlements;
-use App\Library\Usage\BillingProfileManager;
 use App\Models\Business;
 use App\Models\Opportunity;
 use App\Models\User;
@@ -26,10 +25,14 @@ use Illuminate\Support\Facades\Gate;
 use Throwable;
 
 /**
- * Customer Experience Slice 4 §4 — the Business Home: what needs attention,
- * what the Advisor recommends, what happened in the last 30 days, the
- * payer's spend, and at most four next actions — all for the ONE Business
- * the CustomerContext resolved (the viewed client's, while viewing as one).
+ * The Business Home: a billing exception only when one is real, what has
+ * actually changed since this customer was last here, what the Advisor
+ * recommends, how the last 30 days compare, and at most four next actions —
+ * all for the ONE Business the CustomerContext resolved (the viewed client's,
+ * while viewing as one).
+ *
+ * Customer Experience Slice 4 §4 built it; Unified Business Home H-1 took
+ * billing off it as a metric (§5), and H-2 added the activity window (§2.3).
  *
  * Auth::id() is never a tenant key here: the actor id is only ever the
  * capability actor (permissions, payer authority). Every figure comes from
@@ -43,7 +46,9 @@ use Throwable;
  *  - BusinessDashboardAnalyticsPresenter — B5's own KPI methods, two ranges;
  *  - BusinessConversationReadModel::startedCount() — Slice 2B's seam;
  *  - OpportunityRepository — open AND current recommendations;
- *  - BillingProfileManager::actorManagesPayerControls() — payer authority.
+ *  - BusinessAnalyticsQueries::countsBetween() / automationCountsBetween() —
+ *    B5's own instant-window counts for the activity band;
+ *  - HomeVisitMarker — the per-user, per-Business visit window (§2.3).
  *
  * Each band is built in its own try: one failing source degrades only its
  * own band (§12).
@@ -63,9 +68,10 @@ final class BusinessHomePresenter
         private readonly CustomerShellComposer $shell,
         private readonly DashboardStatusReader $statusReader,
         private readonly BusinessDashboardAnalyticsPresenter $analytics,
+        private readonly BusinessAnalyticsQueries $analyticsQueries,
         private readonly BusinessConversationReadModel $conversations,
         private readonly OpportunityRepository $opportunities,
-        private readonly BillingProfileManager $billing,
+        private readonly HomeVisitMarker $visits,
         private readonly DashboardLinkGate $links,
         private readonly ParentAccountSwitch $parentSwitch,
     ) {
@@ -125,18 +131,43 @@ final class BusinessHomePresenter
             }
         }
 
-        // 1 — Attention
+        // 0 — Billing exception strip, 1 — Attention
+        //
+        // Billing left the Business Home as a metric (§5): it appears here
+        // only as ONE compact exception a customer can actually act on, and
+        // only for an actor whose remediation route resolves. Everything else
+        // billing lives in Settings.
         if ($statusFailed) {
             $failed[] = DashboardSnapshot::BAND_ATTENTION;
         } else {
             $automationFailures = $automationsShown && $comparison !== null && $comparison['current']['automations'] instanceof AutomationKpis
                 ? $comparison['current']['automations']->failed()
                 : 0;
-            $attention = $this->attention($context, $user, $entitlements, $scoped, $candidate->name, $status, $automationFailures);
+            $items = $this->attention($context, $user, $entitlements, $scoped, $candidate->name, $status, $automationFailures);
+
+            $billing = array_values(array_filter($items, fn (AttentionItem $item) => self::isBilling($item->type)));
+            $attention = array_values(array_filter($items, fn (AttentionItem $item) => ! self::isBilling($item->type)));
+
+            if ($billing !== []) {
+                $bands[DashboardSnapshot::BAND_BILLING_EXCEPTION] = $billing[0];
+            }
 
             if ($attention !== []) {
                 $bands[DashboardSnapshot::BAND_ATTENTION] = $attention;
             }
+        }
+
+        // 1b — Business activity: what actually changed since this customer
+        // last used this Business (§2.3). Absent on a first visit.
+        try {
+            $activity = $this->businessActivity($business, $context, $user, $entitlements);
+
+            if ($activity !== null) {
+                $bands[DashboardSnapshot::BAND_ACTIVITY] = $activity;
+            }
+        } catch (Throwable $e) {
+            report($e);
+            $failed[] = DashboardSnapshot::BAND_ACTIVITY;
         }
 
         // 2 — Recommended next steps
@@ -167,30 +198,13 @@ final class BusinessHomePresenter
             }
         }
 
-        // 4 — Spend / account health: the payer side only (Correction 1,
-        // decision F). While viewing as a client the figures are still the
-        // viewed Business's own wallet and Usage & Billing stays an allowed
-        // read (ViewAsProhibitedActions::ALLOWED_READS); only the funding
-        // action is withheld, in the quick actions below.
-        $payer = false;
-
-        try {
-            $payer = $this->billing->actorManagesPayerControls($business, $context->userId);
-
-            if ($payer) {
-                if ($statusFailed || $status === null) {
-                    $failed[] = DashboardSnapshot::BAND_SPEND;
-                } else {
-                    $bands[DashboardSnapshot::BAND_SPEND] = $this->spend($context, $user, $entitlements, $scoped, $status);
-                }
-            }
-        } catch (Throwable $e) {
-            report($e);
-            $failed[] = DashboardSnapshot::BAND_SPEND;
-        }
+        // 4 — Spend: gone from the Business Home entirely (§5). Balance,
+        // spend, top-ups and invoices live in Settings → Billing, which is
+        // unchanged; Home speaks about billing only through the exception
+        // strip above.
 
         // 5 — Quick actions
-        $bands[DashboardSnapshot::BAND_ACTIONS] = $this->actions($context, $user, $entitlements, $scoped, $status, $payer);
+        $bands[DashboardSnapshot::BAND_ACTIONS] = $this->actions($context, $user, $entitlements, $scoped, $status);
 
         return new DashboardSnapshot(
             kind: DashboardSnapshot::KIND_BUSINESS,
@@ -221,16 +235,53 @@ final class BusinessHomePresenter
         $items = [];
 
         foreach ($types as $type) {
+            if (! $this->isActionable($type, $status)) {
+                continue;
+            }
+
             $url = $this->remediationUrl($type, $context, $user, $entitlements, $scoped);
 
             if ($url === null) {
                 continue;
             }
 
-            $items[] = new AttentionItem($type, $type->severity(), $scope, $type->sentence(), $type->actionLabel(), $url);
+            $text = $type->sentence();
+            $consequence = $type->consequence();
+
+            $items[] = new AttentionItem($type, $type->severity(), $scope, $consequence === null ? $text : $text . ' ' . $consequence, $type->actionLabel(), $url);
         }
 
         return self::ordered($items);
+    }
+
+    /**
+     * H-1 — Home speaks about billing only where the customer actually has
+     * something to do. A balance under the customer's own automatic top-up
+     * threshold is the NORMAL trigger for a top-up that then happens by
+     * itself, so while automatic top-up is on it is not an exception: either
+     * it works, or the top-up that stopped working is itself the exception
+     * (AutoRechargeFailing), which names the thing the customer can fix.
+     * Every other case is a real block or a debt, and still appears.
+     */
+    private function isActionable(AttentionType $type, BusinessStatusRow $status): bool
+    {
+        if ($type !== AttentionType::LowBalance) {
+            return true;
+        }
+
+        return ! $status->autoRechargeEnabled;
+    }
+
+    /** The five billing cases, which render only as the exception strip (§5.2). */
+    public static function isBilling(AttentionType $type): bool
+    {
+        return in_array($type, [
+            AttentionType::WalletSuspended,
+            AttentionType::OutstandingDebt,
+            AttentionType::PaidActivityPaused,
+            AttentionType::LowBalance,
+            AttentionType::AutoRechargeFailing,
+        ], true);
     }
 
     /**
@@ -264,6 +315,79 @@ final class BusinessHomePresenter
             AttentionType::GoogleConnectionLost, AttentionType::GoogleLocationUnhealthy => $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.gbp.index', $scoped, ['view_google_business_profile'], 'google_business_profile_module'),
             AttentionType::AutomationFailing => $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.automations.index', $scoped, ['automations'], 'automations'),
         };
+    }
+
+    /**
+     * §2.3 (H-2) — "what actually changed since this customer last used this
+     * Business", and nothing else.
+     *
+     * Every figure is a canonical count from the seam that owns it, over the
+     * one instant window the visit marker chose: new contacts and received
+     * messages from B5 in a single statement, new conversations from Slice
+     * 2B's read model, completed and failed automation runs from the B5/V2-H
+     * execution reader. Nothing here is a lead, a booking, a visitor, a
+     * ranking or a rate — none of those has a canonical source, so Home never
+     * claims one. Zero-value items are left out entirely; when nothing moved
+     * the band says so in one quiet line.
+     *
+     * The band is absent on a first visit: there is no earlier point to
+     * compare against, and inventing one would be a fabricated delta.
+     *
+     * @return array{window: HomeActivityWindow, items: array<int, array{key: string, text: string}>}|null
+     */
+    private function businessActivity(Business $business, CustomerContext $context, User $user, MenuEntitlements $entitlements): ?array
+    {
+        // Looking at someone else's Business never consumes their window:
+        // neither an agency viewing a client nor an impersonated session
+        // (`temp_user_id`, the same marker Slice 4's parent switch reads).
+        $writable = ! $context->isViewingAsClient() && ! session()->has('temp_user_id');
+        $window = $this->visits->observe($business, $context->userId, $writable);
+
+        if ($window === null) {
+            return null;
+        }
+
+        $counts = $this->analyticsQueries->countsBetween($business, $window->start, $window->end);
+        $items = [];
+
+        if ($counts['newContacts'] > 0) {
+            $items[] = ['key' => 'new_contacts', 'text' => self::plural($counts['newContacts'], 'new contact', 'new contacts')];
+        }
+
+        if ($entitlements->allows('conversations') && Gate::forUser($user)->allows('chat_box')) {
+            $conversations = $this->conversations->startedCount($business, $window->start, $window->end);
+
+            if ($conversations > 0) {
+                $items[] = ['key' => 'new_conversations', 'text' => self::plural($conversations, 'new conversation', 'new conversations')];
+            }
+        }
+
+        if ($counts['messagesReceived'] > 0) {
+            $items[] = ['key' => 'messages_received', 'text' => self::plural($counts['messagesReceived'], 'message received', 'messages received')];
+        }
+
+        if ($entitlements->allows('automations') && Gate::forUser($user)->allows('automations')) {
+            $automations = $this->analyticsQueries->automationCountsBetween($business, $window->start, $window->end);
+
+            if ($automations !== null && $automations['completed'] > 0) {
+                $items[] = ['key' => 'automations_completed', 'text' => self::plural($automations['completed'], 'automation completed', 'automations completed')];
+            }
+
+            if ($automations !== null && $automations['failed'] > 0) {
+                $items[] = ['key' => 'automations_failed', 'text' => self::plural($automations['failed'], 'automation failed', 'automations failed')];
+            }
+        }
+
+        return [
+            'window' => $window,
+            'items' => array_slice($items, 0, max(1, (int) config('home.activity_max_items', 5))),
+        ];
+    }
+
+    /** "1 new contact" / "3 new contacts" — the figure always leads. */
+    private static function plural(int $count, string $singular, string $plural): string
+    {
+        return number_format($count) . ' ' . ($count === 1 ? $singular : $plural);
     }
 
     /**
@@ -335,28 +459,11 @@ final class BusinessHomePresenter
         $currentRange = $comparison['current']['range'];
         /** @var AnalyticsDateRange $previousRange */
         $previousRange = $comparison['previous']['range'];
-        /** @var MessageKpis $messagesNow */
-        $messagesNow = $comparison['current']['messages'];
-        /** @var MessageKpis $messagesBefore */
-        $messagesBefore = $comparison['previous']['messages'];
-
+        // H-1 (§2.2, KPI priority): outbound volume, provider-accepted and
+        // failed-send figures have left Home. "More messages sent" was never
+        // a business outcome, and provider vocabulary belongs to Messages and
+        // Results, where those figures still live in full.
         $items = [];
-
-        $items[] = $this->volumeHeadline(
-            'messages_sent',
-            'Messages sent',
-            'Sent from this business in the last 30 days.',
-            new HeadlineComparison($messagesNow->outbound, $messagesBefore->outbound),
-            [
-                HeadlineTrend::Up->value => 'Message activity increased from the previous 30 days.',
-                HeadlineTrend::Down->value => 'Message activity decreased from the previous 30 days.',
-                HeadlineTrend::Unchanged->value => 'Message activity was the same as in the previous 30 days.',
-            ],
-            'Volume is activity, not a success measure.',
-        );
-
-        $items[] = $this->providerAcceptedHeadline($messagesNow, $messagesBefore);
-        $items[] = $this->confirmedFailedHeadline($messagesNow, $messagesBefore);
 
         $contacts = new HeadlineComparison($comparison['current']['contacts']->newInRange, $comparison['previous']['contacts']->newInRange);
         $items[] = new Headline(
@@ -449,96 +556,6 @@ final class BusinessHomePresenter
     }
 
     /**
-     * Provider accepted: the figure and its comparison are the accepted
-     * COUNT; the judgement is the directional one §4.5 declares for the
-     * accepted RATE, and only when both periods have a rate (B5 returns null
-     * when nothing was sent).
-     */
-    private function providerAcceptedHeadline(MessageKpis $now, MessageKpis $before): Headline
-    {
-        $comparison = new HeadlineComparison($now->accepted, $before->accepted);
-        $rateNow = $now->acceptedRate();
-        $rateBefore = $before->acceptedRate();
-        $judgement = null;
-
-        if ($rateNow === null || $rateBefore === null) {
-            $interpretation = 'No messages were sent in one of the two periods, so the provider-accepted share cannot be compared.';
-        } else {
-            $trend = HeadlineTrend::fromDelta(round($rateNow - $rateBefore, 1));
-            $judgement = HeadlinePolarity::Directional->judgement($trend);
-            $interpretation = match ($trend) {
-                HeadlineTrend::Up => 'A higher share of messages was provider accepted than in the previous 30 days (' . self::percent($rateBefore) . ' then, ' . self::percent($rateNow) . ' now).',
-                HeadlineTrend::Down => 'A lower share of messages was provider accepted than in the previous 30 days (' . self::percent($rateBefore) . ' then, ' . self::percent($rateNow) . ' now).',
-                HeadlineTrend::Unchanged => 'The provider-accepted share was the same as in the previous 30 days (' . self::percent($rateNow) . ').',
-            };
-        }
-
-        return new Headline(
-            key: 'provider_accepted',
-            label: 'Provider accepted',
-            figure: number_format($comparison->current),
-            figureCaption: $rateNow !== null ? self::percent($rateNow) . ' of messages sent in the last 30 days.' : 'No messages were sent in the last 30 days.',
-            comparison: $comparison,
-            polarity: HeadlinePolarity::Directional,
-            comparisonSentence: $comparison->sentence(),
-            interpretation: $interpretation,
-            judgement: $judgement,
-        );
-    }
-
-    /** Confirmed failed: directional and inverted, on the count itself (§4.5). */
-    private function confirmedFailedHeadline(MessageKpis $now, MessageKpis $before): Headline
-    {
-        $comparison = new HeadlineComparison($now->confirmedFailed, $before->confirmedFailed);
-        $rateNow = $now->confirmedFailedRate();
-
-        return new Headline(
-            key: 'confirmed_failed',
-            label: 'Confirmed failed',
-            figure: number_format($comparison->current),
-            figureCaption: $rateNow !== null ? self::percent($rateNow) . ' of messages sent in the last 30 days.' : 'No messages were sent in the last 30 days.',
-            comparison: $comparison,
-            polarity: HeadlinePolarity::Inverted,
-            comparisonSentence: $comparison->sentence(),
-            interpretation: match ($comparison->trend) {
-                HeadlineTrend::Up => 'More messages were confirmed as failed than in the previous 30 days.',
-                HeadlineTrend::Down => 'Fewer messages were confirmed as failed than in the previous 30 days.',
-                HeadlineTrend::Unchanged => 'As many messages were confirmed as failed as in the previous 30 days.',
-            },
-            judgement: HeadlinePolarity::Inverted->judgement($comparison->trend),
-        );
-    }
-
-    /**
-     * @param  array<int, string>  $scoped
-     * @return array<string, mixed>
-     */
-    private function spend(CustomerContext $context, User $user, MenuEntitlements $entitlements, array $scoped, BusinessStatusRow $status): array
-    {
-        $billingUrl = $context->canManageBilling()
-            ? $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.usage-billing.show', $scoped, ['access_backend'])
-            : null;
-
-        if (! $status->hasWallet) {
-            return ['configured' => false, 'billingUrl' => $billingUrl];
-        }
-
-        $currency = $status->currencyCode;
-
-        return [
-            'configured' => true,
-            'status' => $status->billingStatus === 'suspended' ? 'Suspended' : 'Active',
-            'paused' => $status->paidActivityPaused,
-            'available' => DashboardMoney::format($status->availableBalanceMicro, $currency),
-            'outstanding' => bccomp($status->debtBalanceMicro, '0') > 0 ? DashboardMoney::format($status->debtBalanceMicro, $currency) : null,
-            'spentThisPeriod' => DashboardMoney::format($status->spentThisPeriodMicro(), $currency),
-            'monthlyLimit' => $status->monthlySpendCapMicro !== null ? DashboardMoney::format($status->monthlySpendCapMicro, $currency) : null,
-            'autoTopUp' => $status->autoRechargeEnabled,
-            'billingUrl' => $billingUrl,
-        ];
-    }
-
-    /**
      * §11 — at most four, each through the four-way rule, only canonical
      * Business-scoped routes. While viewing as a client nothing that costs,
      * funds, touches a provider or switches identity is offered.
@@ -547,15 +564,15 @@ final class BusinessHomePresenter
      * a customer destination (the Messages menu offers Inbox only), so Home
      * does not promote it either. After Open inbox and Add contact, the
      * remaining places go, in order, to: the team member's "Login as Parent"
-     * (Correction 1, decision D), the payer's Add funds, then one setup action
-     * proven by the same status column that raised its attention item.
+     * (Correction 1, decision D), then one setup action proven by the same
+     * status column that raised its attention item. Funding is not offered
+     * here at all: billing is a Settings destination (H-1 §5).
      *
      * @param  array<int, string>  $scoped
      * @return array{items: array<int, DashboardAction>, parentMessage: ?string}
      */
-    private function actions(CustomerContext $context, User $user, MenuEntitlements $entitlements, array $scoped, ?BusinessStatusRow $status, bool $payer): array
+    private function actions(CustomerContext $context, User $user, MenuEntitlements $entitlements, array $scoped, ?BusinessStatusRow $status): array
     {
-        $viewingAs = $context->isViewingAsClient();
         $actions = [];
 
         if ($url = $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.conversations.index', $scoped, ['chat_box'], 'conversations')) {
@@ -573,10 +590,9 @@ final class BusinessHomePresenter
             $extras[] = new DashboardAction('login_as_parent', $parent['label'], $parent['url'], 'log-in', DashboardAction::KIND_ACCOUNT);
         }
 
-        if (! $viewingAs && $payer && $status !== null && $status->hasWallet && $context->canManageBilling()
-            && ($url = $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.usage-billing.show', $scoped, ['access_backend']))) {
-            $extras[] = new DashboardAction('add_funds', 'Add funds', $url . '#usage-billing-funding', 'wallet', DashboardAction::KIND_FUNDING);
-        }
+        // No "Add funds": funding is a Settings → Billing action, and Home
+        // promotes it only through the exception strip, when there is a real
+        // billing problem to fix (§5).
 
         if ($status !== null) {
             $setup = $this->setupAction($context, $user, $entitlements, $scoped, $status);

@@ -59,6 +59,25 @@ enum AttentionType: string
         };
     }
 
+    /**
+     * Unified Business Home §5.3 (H-1) — what happens to the business if the
+     * billing exception is left alone, so the strip says why it is worth a
+     * customer's attention rather than only what the state is. Only the
+     * billing cases carry one: every other type's sentence already names its
+     * own consequence.
+     */
+    public function consequence(): ?string
+    {
+        return match ($this) {
+            self::WalletSuspended => 'Messages that cost money will not go out until it is resolved.',
+            self::OutstandingDebt => 'Paid messaging can stop until it is settled.',
+            self::PaidActivityPaused => 'Automated replies and campaigns may stop going out.',
+            self::LowBalance => 'Paid messaging can stop once it runs out.',
+            self::AutoRechargeFailing => 'The balance will keep falling until the payment method is fixed.',
+            default => null,
+        };
+    }
+
     /** The label of the one action that fixes it. */
     public function actionLabel(): string
     {

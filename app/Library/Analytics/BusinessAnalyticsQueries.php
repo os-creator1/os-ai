@@ -10,6 +10,7 @@ use App\DTO\Analytics\ContactKpis;
 use App\DTO\Analytics\CoverageNotice;
 use App\DTO\Analytics\DailySeries;
 use App\DTO\Analytics\MessageKpis;
+use App\Enums\Automation\AutomationExecutionStatus;
 use App\Models\Business;
 use Carbon\CarbonImmutable;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
@@ -190,6 +191,39 @@ class BusinessAnalyticsQueries
         ];
     }
 
+    /**
+     * Unified Business Home §2.3 (H-2) — new contacts and received messages
+     * for one INSTANT window, in ONE statement.
+     *
+     * Home's activity band answers "what changed since you were last here",
+     * which is an instant window rather than a local-date range, so it takes
+     * bounds instead of an AnalyticsDateRange. The half-open interval and the
+     * Business scope are exactly K4's and M3's, so each figure equals the
+     * matching overview figure for the same instants; nothing is cached.
+     *
+     * @return array{newContacts: int, messagesReceived: int}
+     */
+    public function countsBetween(Business $business, CarbonImmutable $start, CarbonImmutable $end): array
+    {
+        $row = DB::query()
+            ->selectRaw(
+                '(SELECT COUNT(*) FROM ' . $this->table('contacts')
+                . ' WHERE business_id = ? AND created_at >= ? AND created_at < ?) AS new_contacts,'
+                . ' (SELECT COUNT(*) FROM ' . $this->table('reports')
+                . " WHERE business_id = ? AND direction = 'incoming' AND created_at >= ? AND created_at < ?) AS messages_received",
+                [
+                    (int) $business->id, $this->ts($start), $this->ts($end),
+                    (int) $business->id, $this->ts($start), $this->ts($end),
+                ]
+            )
+            ->first();
+
+        return [
+            'newContacts' => (int) ($row->new_contacts ?? 0),
+            'messagesReceived' => (int) ($row->messages_received ?? 0),
+        ];
+    }
+
     /** K3 — new contacts per local date, one query. */
     public function contactGrowthSeries(Business $business, AnalyticsDateRange $range): DailySeries
     {
@@ -281,6 +315,46 @@ class BusinessAnalyticsQueries
         ksort($byTrigger);
 
         return new AutomationKpis($total, $byStatus, $byTrigger);
+    }
+
+    /**
+     * Unified Business Home §2.3 (H-2) — completed and failed automation runs
+     * for one INSTANT window, in ONE statement.
+     *
+     * It sits beside automationKpis() deliberately: that method is already
+     * this application's reader of `automation_executions`, and Home must not
+     * become a second one (Automations V2 §15.4 gives the V2-H lane ownership
+     * of every execution read, so this method moves with it). Like its
+     * neighbour it returns null — the item is ABSENT, never a zero — when the
+     * B4-owned table does not exist.
+     *
+     * @return array{completed: int, failed: int}|null
+     */
+    public function automationCountsBetween(Business $business, CarbonImmutable $start, CarbonImmutable $end): ?array
+    {
+        try {
+            $row = DB::table('automation_executions')
+                ->selectRaw(
+                    'SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) AS completed,'
+                    . ' SUM(CASE WHEN status = ? THEN 1 ELSE 0 END) AS failed',
+                    [AutomationExecutionStatus::Succeeded->value, AutomationExecutionStatus::Failed->value]
+                )
+                ->where('business_id', $business->id)
+                ->where('created_at', '>=', $this->ts($start))
+                ->where('created_at', '<', $this->ts($end))
+                ->first();
+        } catch (QueryException $exception) {
+            if ((int) ($exception->errorInfo[1] ?? 0) === 1146) {
+                return null;
+            }
+
+            throw $exception;
+        }
+
+        return [
+            'completed' => (int) ($row->completed ?? 0),
+            'failed' => (int) ($row->failed ?? 0),
+        ];
     }
 
     /**

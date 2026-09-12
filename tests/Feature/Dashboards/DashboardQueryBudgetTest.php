@@ -176,7 +176,7 @@ class DashboardQueryBudgetTest extends TestCase
         $this->assertSame(DashboardSnapshot::KIND_BUSINESS, $businessSnapshot->kind);
 
         $failed = new DashboardSnapshot(DashboardSnapshot::KIND_BUSINESS, 'Business home', 'Alpha Dental', [DashboardSnapshot::BAND_ACTIONS => ['items' => [], 'parentMessage' => null]], [
-            DashboardSnapshot::BAND_ATTENTION, DashboardSnapshot::BAND_RECOMMENDATIONS, DashboardSnapshot::BAND_HEADLINES, DashboardSnapshot::BAND_SPEND,
+            DashboardSnapshot::BAND_ATTENTION, DashboardSnapshot::BAND_ACTIVITY, DashboardSnapshot::BAND_RECOMMENDATIONS, DashboardSnapshot::BAND_HEADLINES,
         ]);
         $chooser = new DashboardSnapshot(DashboardSnapshot::KIND_CHOOSER, 'Account home', 'Northwind Agency', [DashboardSnapshot::BAND_CHOOSER => [
             'noun' => 'business', 'showWorkspace' => true, 'switchUrl' => route('customer.context.business.switch'),
