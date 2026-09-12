@@ -314,27 +314,15 @@
          *
          * @throws AuthorizationException
          */
-        public function create(): View|Factory|RedirectResponse|Application
+        public function create(): View|Factory|Application
         {
             $this->currentBusinessContext();
 
-            if ( ! Auth::user()->customer->activeSubscription()) {
-                return redirect()->route('customer.subscriptions.index')->with([
-                    'status'  => 'error',
-                    'message' => __('locale.customer.no_active_subscription'),
-                ]);
-            }
-
+            // Groups are part of Contacts, so the same boundary applies as in
+            // createContact(): opening this form requires no legacy SMS
+            // subscription, and that plan's list_max is not a Business OS
+            // contact-group allowance.
             $this->authorize('create_contact_group');
-            $totalData = ContactGroups::where('customer_id', auth()->user()->id)->count();
-            $list_max  = Auth::user()->customer->getOption('list_max');
-
-            if ($list_max != '-1' && $list_max < $totalData) {
-                return CrmRouting::redirectRoute('contacts.index')->with([
-                    'status'  => 'error',
-                    'message' => __('locale.contacts.max_list_quota', ['max_list' => $list_max]),
-                ]);
-            }
 
             $breadcrumbs = [
                 ['link' => url('dashboard'), 'name' => __('locale.menu.Dashboard')],
@@ -482,34 +470,10 @@
                 ]);
             }
 
+            // Copying a group creates a group and contacts, so it asked the
+            // same inherited SMS quota; see createContact() for why Business
+            // OS Contacts no longer consult it.
             $this->authorize('create_contact_group');
-
-            $totalData = ContactGroups::where('customer_id', auth()->user()->id)->count();
-            $list_max  = Auth::user()->customer->getOption('list_max');
-
-            if ($list_max != '-1' && $list_max < $totalData) {
-                return response()->json([
-                    'status'  => 'error',
-                    'message' => __('locale.contacts.max_list_quota', ['max_list' => $list_max]),
-                ]);
-            }
-
-            $subscriber_per_list_max = Contacts::where('group_id', $contact->id)->count();
-
-            if (Auth::user()->customer->getOption('subscriber_per_list_max') != '-1' && $subscriber_per_list_max > Auth::user()->customer->getOption('subscriber_per_list_max')) {
-                $subscriber_max = Contacts::where('customer_id', Auth::user()->id)->count();
-                if (Auth::user()->customer->getOption('subscriber_max') != '-1' && $subscriber_max > Auth::user()->customer->getOption('subscriber_max')) {
-                    return response()->json([
-                        'status'  => 'error',
-                        'message' => __('locale.contacts.subscriber_max_quota', ['subscriber_max' => Auth::user()->customer->getOption('subscriber_max')]),
-                    ]);
-                }
-
-                return response()->json([
-                    'status'  => 'error',
-                    'message' => __('locale.contacts.subscriber_per_list_max_quota', ['subscriber_per_list_max' => Auth::user()->customer->getOption('subscriber_per_list_max')]),
-                ]);
-            }
 
             $new_group       = $contact->replicate();
             $new_group->name = $request->input('group_name');
@@ -811,31 +775,33 @@
         /**
          * add new contact in a group
          *
+         * Contacts are unlimited on every current Business OS plan — Core,
+         * Growth and Agency alike — so nothing here decides an allowance.
+         *
+         * What stood here was the inherited Ultimate SMS quota:
+         * subscriber_per_list_max / subscriber_max, read off the customer's
+         * SMS Plan through their active Subscription. Those options price an
+         * SMS plan's mailing lists; they are not a Business OS Contacts
+         * allowance, and a Business OS customer need not hold an SMS
+         * subscription at all — without one Customer::getOptions() returns
+         * [], every option reads null, and `null != '-1'` made the check
+         * treat an unlimited customer as over quota from their second
+         * contact onwards. Adding a contact now asks only the permission,
+         * exactly as it already did for the first one.
+         *
+         * Nothing is invented in its place: there is no CRM cap to state
+         * yet, and when the product sets one it belongs in the canonical
+         * plan catalog with the rest of Business OS capacity, not in this
+         * controller. Messaging and usage metering are a separate domain and
+         * keep their own limits untouched.
          *
          * @throws AuthorizationException
          */
-        public function createContact(string $contact): View|Factory|RedirectResponse|Application
+        public function createContact(string $contact): View|Factory|Application
         {
             $contact = $this->resolveOwnedContactGroup($contact);
 
             $this->authorize('create_contact');
-
-            $subscriber_per_list_max = Contacts::where('group_id', $contact->id)->count();
-
-            if (Auth::user()->customer->getOption('subscriber_per_list_max') != '-1' && $subscriber_per_list_max > Auth::user()->customer->getOption('subscriber_per_list_max')) {
-                $subscriber_max = Contacts::where('customer_id', Auth::user()->id)->count();
-                if (Auth::user()->customer->getOption('subscriber_max') != '-1' && $subscriber_max > Auth::user()->customer->getOption('subscriber_max')) {
-                    return CrmRouting::redirectRoute('contacts.show', $contact->uid)->with([
-                        'status'  => 'error',
-                        'message' => __('locale.contacts.subscriber_max_quota', ['subscriber_max' => Auth::user()->customer->getOption('subscriber_max')]),
-                    ]);
-                }
-
-                return CrmRouting::redirectRoute('contacts.show', $contact->uid)->withInput(['tab' => 'contact'])->with([
-                    'status'  => 'error',
-                    'message' => __('locale.contacts.subscriber_per_list_max_quota', ['subscriber_per_list_max' => Auth::user()->customer->getOption('subscriber_per_list_max')]),
-                ]);
-            }
 
             $breadcrumbs = [
                 ['link' => url('dashboard'), 'name' => __('locale.menu.Dashboard')],

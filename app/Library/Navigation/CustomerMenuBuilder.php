@@ -126,8 +126,10 @@ final class CustomerMenuBuilder
             $items[] = new MenuItem('messages', 'Messages', null, 'message-square', false, $messages);
         }
 
-        $items[] = $this->item($user, 'contacts', 'Contacts', 'users', self::CONTACT_PERMISSIONS, 'customer.workspaces.businesses.contacts.index', $scoped, $current, [
-            'customer.workspaces.businesses.contacts.', 'customer.workspaces.businesses.contact.', 'customer.contacts.', 'customer.contact.',
+        // Contacts opens the people first ("All contacts"); groups are its
+        // secondary tab and keep the entry active too.
+        $items[] = $this->item($user, 'contacts', 'Contacts', 'users', self::CONTACT_PERMISSIONS, 'customer.workspaces.businesses.people.index', $scoped, $current, [
+            'customer.workspaces.businesses.people.', 'customer.workspaces.businesses.contacts.', 'customer.workspaces.businesses.contact.', 'customer.contacts.', 'customer.contact.',
         ]);
         $items[] = $this->entitled('automations', $this->item($user, 'automations', 'Automations', 'cpu', ['automations'], 'customer.workspaces.businesses.automations.index', $scoped, $current, [
             'customer.workspaces.businesses.automations.', 'customer.automations.',
@@ -187,9 +189,11 @@ final class CustomerMenuBuilder
             ]);
         }
 
-        if ($context->canManageWorkspace() && (bool) $user->is_customer) {
-            $settings[] = $this->item($user, 'plan', 'Plan & subscription', 'tag', ['access_backend'], 'customer.subscriptions.index', [], $current, [
-                'customer.subscriptions.', 'customer.invoices.',
+        if ($context->canManageWorkspace() && (bool) $user->is_customer && $workspaceUid !== null) {
+            // This account's own AI Business OS plan (Workspace plan domain) —
+            // never the inherited SMS plans/subscriptions page.
+            $settings[] = $this->item($user, 'plan', 'Plan & subscription', 'tag', ['access_backend'], 'customer.workspaces.plan.show', [$workspaceUid], $current, [
+                'customer.workspaces.plan.',
             ]);
         }
 
@@ -247,10 +251,14 @@ final class CustomerMenuBuilder
         }
 
         $settings = [];
+        $planWorkspace = $context->frameWorkspace();
 
-        if ($context->canManageWorkspace() && (bool) $user->is_customer) {
-            $settings[] = $this->item($user, 'plan', 'Plan & subscription', 'tag', ['access_backend'], 'customer.subscriptions.index', [], $current, [
-                'customer.subscriptions.', 'customer.invoices.',
+        if ($planWorkspace !== null && $context->canManageWorkspace() && (bool) $user->is_customer) {
+            // The Agency (or only) account's own plan — explicit, never a
+            // client Business's and never the inherited SMS subscriptions page.
+            // With several accounts and none chosen there is no plan to name.
+            $settings[] = $this->item($user, 'plan', 'Plan & subscription', 'tag', ['access_backend'], 'customer.workspaces.plan.show', [$planWorkspace->uid], $current, [
+                'customer.workspaces.plan.',
             ]);
         }
 

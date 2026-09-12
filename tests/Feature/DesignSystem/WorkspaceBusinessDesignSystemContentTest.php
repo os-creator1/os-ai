@@ -72,15 +72,21 @@ class WorkspaceBusinessDesignSystemContentTest extends TestCase
     // Excluded billing/entitlement regions — zero adoption of any kind
     // -----------------------------------------------------------------
 
-    public function test_customer_workspaces_show_plan_and_capacity_region_carries_zero_adoption_markers(): void
+    /**
+     * The Plan & Capacity card (raw feature keys and slot mechanics) left the
+     * account page for Settings → Plan & subscription; what remains is one
+     * plain plan line, still free of Design System markers, linking there.
+     */
+    public function test_customer_workspaces_show_plan_line_carries_zero_adoption_markers(): void
     {
         $contents = file_get_contents(base_path('resources/views/customer/workspaces/show.blade.php'));
         $region = $this->extractBetween($contents, '@isset($entitlement)', '@endisset');
 
-        $this->assertNotNull($region, 'Expected to locate the Plan & Capacity excluded region.');
-        $this->assertSame(0, substr_count($region, '<x-'), 'Plan & Capacity region must carry zero Design System component markers.');
-        $this->assertStringContainsString('id="workspace-plan-capacity"', $region);
-        $this->assertStringContainsString('Plan &amp; Capacity', $region);
+        $this->assertNotNull($region, 'Expected to locate the account plan line.');
+        $this->assertSame(0, substr_count($region, '<x-'), 'The plan line must carry zero Design System component markers.');
+        $this->assertStringContainsString("route('customer.workspaces.plan.show'", $region);
+        $this->assertStringNotContainsString('id="workspace-plan-capacity"', $contents);
+        $this->assertStringNotContainsString('planFeatureKeys', $contents);
     }
 
     public function test_customer_workspaces_show_usage_billing_and_feature_preference_region_carries_zero_adoption_markers(): void
