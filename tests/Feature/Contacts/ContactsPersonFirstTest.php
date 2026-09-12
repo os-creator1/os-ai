@@ -9,6 +9,10 @@ use App\Models\ContactGroupFields;
 use App\Models\ContactGroups;
 use App\Models\Contacts;
 use App\Models\ContactsCustomField;
+use App\Models\Currency;
+use App\Models\Customer;
+use App\Models\Plan;
+use App\Models\Subscription;
 use App\Models\Workspace;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
@@ -312,6 +316,122 @@ class ContactsPersonFirstTest extends TestCase
         $this->assertSame($profileFew, $profileMany, 'The profile must not query per message or campaign.');
     }
 
+    /**
+     * The product blocker: Business OS Contacts do not depend on the legacy
+     * Ultimate SMS subscription. Contacts are unlimited on Core, Growth and
+     * Agency alike, so a customer who has never held an SMS subscription
+     * adds their second contact exactly as they added their first — which
+     * is where the inherited subscriber_per_list_max / subscriber_max check
+     * used to stop them, reading null options off a subscription that does
+     * not exist.
+     */
+    public function test_add_contact_needs_no_legacy_sms_subscription_on_any_plan(): void
+    {
+        foreach ([WorkspacePlanTier::Core, WorkspacePlanTier::Growth, WorkspacePlanTier::Agency] as $tier) {
+            [$owner, $business, $workspace] = $this->tenant($tier, 'Tier ' . $tier->value, 'Account ' . $tier->value);
+            $group = $this->group($business, 'Customers');
+            // The contact that used to exhaust the phantom quota.
+            $this->person($group, ['FIRST_NAME' => 'Ana']);
+            $this->authenticateAs($owner);
+
+            $this->assertNull($owner->activeSubscription(), 'Fixture precondition: no legacy SMS subscription.');
+
+            $create = route('customer.workspaces.businesses.contact.create', [$workspace->uid, $business->uid, $group->uid]);
+            $this->get(route('customer.workspaces.businesses.people.add', [$workspace->uid, $business->uid]))->assertRedirect($create);
+            $this->get($create)->assertOk();
+
+            $phone = '1202555' . str_pad((string) (++$this->phoneSequence), 4, '0', STR_PAD_LEFT);
+            $this->post(route('customer.workspaces.businesses.contact.store', [$workspace->uid, $business->uid, $group->uid]), ['PHONE' => $phone])
+                ->assertRedirect(route('customer.workspaces.businesses.contacts.show', [$workspace->uid, $business->uid, $group->uid]));
+
+            $this->assertDatabaseHas('contacts', ['group_id' => $group->id, 'business_id' => $business->id, 'phone' => $phone]);
+        }
+    }
+
+    /**
+     * Import is the same boundary: reaching the per-group import screen asks
+     * nothing of the legacy subscription.
+     */
+    public function test_import_is_not_blocked_by_the_legacy_sms_contact_quota(): void
+    {
+        [$owner, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
+        $group = $this->group($business, 'Customers');
+        $this->person($group, ['FIRST_NAME' => 'Ana']);
+        $this->authenticateAs($owner);
+
+        $import = route('customer.workspaces.businesses.contact.import', [$workspace->uid, $business->uid, $group->uid]);
+        $this->get(route('customer.workspaces.businesses.people.import', [$workspace->uid, $business->uid]))->assertRedirect($import);
+        $this->get($import)->assertOk();
+    }
+
+    /**
+     * Groups are part of Contacts: creating one no longer sends a customer
+     * without an SMS subscription to the legacy subscriptions page.
+     */
+    public function test_a_new_group_needs_no_legacy_sms_subscription(): void
+    {
+        [$owner, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
+        $this->group($business, 'Customers');
+        $this->authenticateAs($owner);
+
+        $this->get(route('customer.workspaces.businesses.contacts.create', [$workspace->uid, $business->uid]))
+            ->assertOk()
+            ->assertDontSee(route('customer.subscriptions.index'), false);
+    }
+
+    /**
+     * And the old rules are not merely unreachable — they are not consulted.
+     * This customer holds an active SMS subscription whose plan sets every
+     * contact quota to 1 and has already used it up; Contacts carry on,
+     * because that plan prices mailing lists, not the CRM.
+     */
+    public function test_an_exhausted_legacy_sms_contact_quota_does_not_govern_contacts(): void
+    {
+        [$owner, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
+        $group = $this->group($business, 'Customers');
+        $this->person($group, ['FIRST_NAME' => 'Ana']);
+        $this->person($group, ['FIRST_NAME' => 'Bruno']);
+        $this->giveActiveSmsSubscriptionWithExhaustedContactQuota($owner);
+        $this->authenticateAs($owner);
+
+        // Precondition: the legacy plan really does say one of everything.
+        $this->assertSame('1', $owner->fresh()->getOption('subscriber_max'));
+        $this->assertSame('1', $owner->fresh()->getOption('list_max'));
+
+        $phone = '1202555' . str_pad((string) (++$this->phoneSequence), 4, '0', STR_PAD_LEFT);
+        $this->get(route('customer.workspaces.businesses.contact.create', [$workspace->uid, $business->uid, $group->uid]))->assertOk();
+        $this->post(route('customer.workspaces.businesses.contact.store', [$workspace->uid, $business->uid, $group->uid]), ['PHONE' => $phone]);
+        $this->assertDatabaseHas('contacts', ['group_id' => $group->id, 'phone' => $phone]);
+
+        $this->get(route('customer.workspaces.businesses.contacts.create', [$workspace->uid, $business->uid]))->assertOk();
+
+        $this->post(route('customer.workspaces.businesses.contacts.copy', [$workspace->uid, $business->uid, $group->uid]), ['group_name' => 'Customers copy'])
+            ->assertOk()
+            ->assertJsonPath('status', 'success');
+        $this->assertSame(2, ContactGroups::query()->where('business_id', $business->id)->count());
+    }
+
+    /**
+     * The legacy quota model itself is untouched — this change removed the
+     * Contacts paths that consulted it, not the SMS plan options. Messaging
+     * and usage metering read those same options and keep their own limits.
+     */
+    public function test_the_legacy_sms_plan_quota_model_is_left_intact(): void
+    {
+        [$owner] = $this->tenant(WorkspacePlanTier::Growth);
+        $this->giveActiveSmsSubscriptionWithExhaustedContactQuota($owner);
+        $customer = $owner->fresh();
+
+        $this->assertSame('1', $customer->getOption('subscriber_per_list_max'));
+        $this->assertSame('1', $customer->maxSubscribers());
+        $this->assertSame('1', $customer->maxLists());
+
+        // Sending limits are a different domain and still come through.
+        $this->assertSame('1000', $customer->getOption('sending_quota'));
+        $this->assertSame('1000_per_hour', $customer->getOption('sending_limit'));
+        $this->assertArrayHasKey('subscriber_max', Plan::defaultOptions());
+    }
+
     // -----------------------------------------------------------------
 
     private function peopleUrl(Workspace $workspace, Business $business): string
@@ -322,6 +442,39 @@ class ContactsPersonFirstTest extends TestCase
     private function profile(Workspace $workspace, Business $business, Contacts $contact): TestResponse
     {
         return $this->get(route('customer.workspaces.businesses.people.show', [$workspace->uid, $business->uid, $contact->uid]))->assertOk();
+    }
+
+    /**
+     * An active legacy Ultimate SMS subscription whose plan allows exactly
+     * one contact group, one contact per group and one contact in total —
+     * the quota the Contacts paths used to enforce, already used up by the
+     * fixtures that call this.
+     */
+    private function giveActiveSmsSubscriptionWithExhaustedContactQuota(Customer $customer): void
+    {
+        $currency = Currency::query()->where('code', 'CPF')->first()
+            ?? Currency::create(['name' => 'Contacts Test Dollar', 'code' => 'CPF', 'format' => '$', 'status' => true]);
+
+        $plan = Plan::create([
+            'user_id' => $customer->user->id,
+            'name' => 'Legacy SMS Plan',
+            'price' => 10,
+            'billing_cycle' => 'monthly',
+            'frequency_amount' => 1,
+            'frequency_unit' => 'month',
+            'currency_id' => $currency->id,
+            'options' => json_encode(['list_max' => '1', 'subscriber_max' => '1', 'subscriber_per_list_max' => '1']),
+            'status' => true,
+        ]);
+
+        Subscription::create([
+            'user_id' => $customer->user->id,
+            'plan_id' => $plan->id,
+            'status' => Subscription::STATUS_ACTIVE,
+            'paid' => true,
+            'start_at' => now(),
+            'end_at' => null,
+        ]);
     }
 
     private function group(Business $business, string $name): ContactGroups
