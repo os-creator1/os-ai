@@ -276,6 +276,23 @@
                 },
             );
 
+            // Automations V2-C — which source feeds which trigger. The same
+            // per-lane registration shape as the executor registry above: this
+            // slice registers the three sources it owns, and V2-F's
+            // message-received source adds one more line here.
+            $this->app->singleton(
+                \App\Library\Automation\Workflow\Triggers\TriggerSourceRegistry::class,
+                function ($app): \App\Library\Automation\Workflow\Triggers\TriggerSourceRegistry {
+                    $registry = new \App\Library\Automation\Workflow\Triggers\TriggerSourceRegistry();
+
+                    $registry->register($app->make(\App\Library\Automation\Workflow\Triggers\ContactCreatedTriggerSource::class));
+                    $registry->register($app->make(\App\Library\Automation\Workflow\Triggers\DateReachedTriggerSource::class));
+                    $registry->register($app->make(\App\Library\Automation\Workflow\Triggers\ManualEnrollmentTriggerSource::class));
+
+                    return $registry;
+                },
+            );
+
             // Google Business Profile Slice A (correction pass item 6).
             // The call budget MUST be a singleton: withinOperation() sets
             // the reservation context on it, and the provider client — a

@@ -8,6 +8,7 @@
     use App\Library\Navigation\CustomerShellComposer;
     use App\Models\User;
     use Illuminate\Contracts\View\View;
+    use Illuminate\Http\Request;
     use Illuminate\Support\Facades\Auth;
 
     /**
@@ -31,6 +32,7 @@
     class UserController extends Controller
     {
         public function index(
+            Request $request,
             CustomerShellComposer $shell,
             BusinessHomePresenter $businessHome,
             AccountHomePresenter $accountHome,
@@ -39,7 +41,12 @@
             $user = Auth::user();
             $context = $shell->currentContext($user);
 
-            $dashboard = $businessHome->present($context, $user) ?? $accountHome->present($context, $user);
+            // H-3 — the Business performance period is the customer's own
+            // query string, read with the Results range rules inside the
+            // presenter (which refuses an unusable one). The controller still
+            // resolves the context, asks the presenter and returns the view.
+            $dashboard = $businessHome->present($context, $user, $request->query())
+                ?? $accountHome->present($context, $user);
 
             return view('customer.dashboard', [
                 'dashboard' => $dashboard,

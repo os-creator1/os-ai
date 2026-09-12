@@ -35,26 +35,30 @@ final class HeadlineComparison
      * The plain comparison line shown beside the figure, e.g. "Up 12 (25.0%)
      * from 48 in the previous 30 days." A previous value of 0 is said in
      * words, never as a percentage.
+     *
+     * H-3: the window is no longer fixed, so the caller names the period it
+     * compared against — "the previous 30 days", "the previous 10 days" —
+     * and the sentence can never claim a length the figures do not cover.
      */
-    public function sentence(): string
+    public function sentence(string $previousNoun = 'the previous period'): string
     {
         $previous = number_format($this->previous);
 
         if ($this->current === 0 && $this->previous === 0) {
-            return 'No change: 0 in both the last 30 days and the previous 30 days.';
+            return "No change: 0 in this period and in {$previousNoun}.";
         }
 
         if ($this->trend === HeadlineTrend::Unchanged) {
-            return "The same as the previous 30 days ({$previous}).";
+            return "The same as {$previousNoun} ({$previous}).";
         }
 
         $direction = $this->trend === HeadlineTrend::Up ? 'Up' : 'Down';
         $amount = number_format(abs($this->absoluteDelta));
 
         if ($this->percentDelta === null) {
-            return "{$direction} from {$previous} in the previous 30 days.";
+            return "{$direction} from {$previous} in {$previousNoun}.";
         }
 
-        return "{$direction} {$amount} (" . number_format(abs($this->percentDelta), 1) . "%) from {$previous} in the previous 30 days.";
+        return "{$direction} {$amount} (" . number_format(abs($this->percentDelta), 1) . "%) from {$previous} in {$previousNoun}.";
     }
 }

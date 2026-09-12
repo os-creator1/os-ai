@@ -20,14 +20,15 @@ use Illuminate\Support\Facades\Cache;
  * Results pages (buildOverview(), buildSeries() and buildCampaignsPage()
  * are untouched).
  *
- * THE TWO PERIODS (§4.2). Current is B5's own PRESET_LAST_30_DAYS — the same
- * default Results opens on, so the two agree by construction. Previous is the
- * 30 Business-local calendar dates immediately before it, built through
+ * THE TWO PERIODS (§4.2, generalized by H-3). Current is the window the
+ * customer selected — any Results preset or a custom range of up to 92 local
+ * dates — and defaults to This month. Previous is the SAME NUMBER of
+ * Business-local calendar dates immediately before it, built through
  * AnalyticsDateRange::fromInput() from local DATES, so its storage-timezone
  * bounds come from the same localDayStartInStorageTz() B5 uses. No fixed
- * 30 × 86 400-second offset, and no timezone arithmetic of its own: a
- * 23-hour spring-forward day and a 25-hour fall-back day are each exactly one
- * date, exactly as in Results.
+ * 86 400-second offset, and no timezone arithmetic of its own: a 23-hour
+ * spring-forward day and a 25-hour fall-back day are each exactly one date,
+ * exactly as in Results.
  *
  * CACHE (§4.6). Per Business and per range, B5's own strategy and TTL: the key
  * carries the Business id, the range key and the window's bounds (see
@@ -39,19 +40,36 @@ final class BusinessDashboardAnalyticsPresenter
 {
     public const CACHE_PREFIX = 'b5_dashboard_headlines_';
 
+    /**
+     * Home opens on the month the customer is living in (H-3 §2.5). Results
+     * keeps its own default; both read the same presets, so a period chosen
+     * on either page means the same window on the other.
+     */
+    public const DEFAULT_PRESET = AnalyticsDateRange::PRESET_THIS_MONTH;
+
     public function __construct(private readonly BusinessAnalyticsQueries $queries)
     {
     }
 
     /**
+     * The selected window and the equal-length window immediately before it.
+     *
+     * `$current` is whatever the customer selected — any Results preset or a
+     * custom range — and defaults to Home's own default, This month (H-3).
+     * The previous window is built from LOCAL CALENDAR DATES: it ends the day
+     * before the selected window starts and covers the same number of local
+     * dates, so a 23-hour spring-forward day and a 25-hour fall-back day are
+     * each still exactly one date, and a month, a year or a custom boundary
+     * is crossed by Carbon's own calendar arithmetic rather than by seconds.
+     *
      * @return array{current: AnalyticsDateRange, previous: AnalyticsDateRange}
      */
-    public static function ranges(string $timezone, ?CarbonImmutable $today = null): array
+    public static function ranges(string $timezone, ?CarbonImmutable $today = null, ?AnalyticsDateRange $current = null): array
     {
-        $current = AnalyticsDateRange::preset(AnalyticsDateRange::PRESET_LAST_30_DAYS, $timezone, $today);
+        $current ??= AnalyticsDateRange::preset(self::DEFAULT_PRESET, $timezone, $today);
 
         $previousEndLocal = $current->startLocal->subDay();
-        $previousStartLocal = $previousEndLocal->subDays(29);
+        $previousStartLocal = $previousEndLocal->subDays($current->days() - 1);
 
         $previous = AnalyticsDateRange::fromInput([
             'range' => AnalyticsDateRange::PRESET_CUSTOM,
@@ -114,10 +132,10 @@ final class BusinessDashboardAnalyticsPresenter
      *     previous: array{range: AnalyticsDateRange, messages: MessageKpis, contacts: ContactKpis, automations: ?AutomationKpis},
      * }
      */
-    public function comparison(Business $business, ?CarbonImmutable $today = null): array
+    public function comparison(Business $business, ?AnalyticsDateRange $current = null, ?CarbonImmutable $today = null): array
     {
         $timezone = (string) ($business->timezone ?: config('app.timezone', 'UTC'));
-        $ranges = self::ranges($timezone, $today);
+        $ranges = self::ranges($timezone, $today, $current);
 
         return [
             'current' => ['range' => $ranges['current']] + $this->period($business, $ranges['current']),

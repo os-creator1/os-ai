@@ -2,6 +2,7 @@
 
     namespace App\Http\Controllers\Customer;
 
+    use App\Enums\Automation\Workflow\ContactCreationSource;
     use App\Http\Requests\Contacts\ImportContact;
     use App\Http\Requests\Contacts\NewContactGroup;
     use App\Http\Requests\Contacts\UpdateContactGroup;
@@ -829,7 +830,11 @@
 
             $this->authorize('create_contact');
 
-            [$validator, $subscriber] = $this->contactGroups->createContactFromRequest($contact, $request->all());
+            // Automations V2-C — this is the in-app "Add contact" form, behind
+            // the create_contact permission. It is NOT an opt-in, so it must
+            // never match an opt-in-filtered workflow, and the source says so
+            // explicitly rather than being inferred downstream.
+            [$validator, $subscriber] = $this->contactGroups->createContactFromRequest($contact, $request->all(), ContactCreationSource::Manual);
 
             if (is_null($subscriber)) {
                 return back()->withInput()->withErrors($validator);
@@ -1530,7 +1535,11 @@
                 return redirect()->route('contacts.subscribe_url', $contact->uid)->withInput($request->all())->withErrors($validation->errors());
             }
 
-            [$validator, $subscriber] = $this->contactGroups->createContactFromRequest($contact, $request->all());
+            // Automations V2-C — the PUBLIC subscribe page: no authenticated
+            // actor, recaptcha-gated, the person filling it in is the contact.
+            // This is the one creation path that is genuinely an opt-in, and
+            // the only one an opt-in-filtered workflow may fire from.
+            [$validator, $subscriber] = $this->contactGroups->createContactFromRequest($contact, $request->all(), ContactCreationSource::OptInForm);
 
             if (is_null($subscriber)) {
                 return back()->withInput()->withErrors($validator);

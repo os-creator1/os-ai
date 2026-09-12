@@ -8,6 +8,7 @@ use App\Enums\Dashboard\HeadlinePolarity;
 use App\Enums\Dashboard\HeadlineTrend;
 use App\Enums\Opportunity\OpportunityFreshness;
 use App\Enums\Opportunity\OpportunityStatus;
+use App\Http\Requests\Analytics\AnalyticsRangeRequest;
 use App\Library\Analytics\AnalyticsDateRange;
 use App\Library\Analytics\BusinessAnalyticsQueries;
 use App\Library\Analytics\BusinessDashboardAnalyticsPresenter;
@@ -22,17 +23,21 @@ use App\Repositories\Contracts\OpportunityRepository;
 use Illuminate\Pagination\PaginationState;
 use Illuminate\Pagination\Paginator;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\ValidationException;
 use Throwable;
 
 /**
  * The Business Home: a billing exception only when one is real, what has
  * actually changed since this customer was last here, what the Advisor
- * recommends, how the last 30 days compare, and at most four next actions —
+ * recommends, how the selected period compares with the one before it, and
+ * at most four next actions —
  * all for the ONE Business the CustomerContext resolved (the viewed client's,
  * while viewing as one).
  *
  * Customer Experience Slice 4 §4 built it; Unified Business Home H-1 took
- * billing off it as a metric (§5), and H-2 added the activity window (§2.3).
+ * billing off it as a metric (§5), H-2 added the activity window (§2.3), and
+ * H-3 gave Business performance its own period selector and chart (§2.5).
  *
  * Auth::id() is never a tenant key here: the actor id is only ever the
  * capability actor (permissions, payer authority). Every figure comes from
@@ -80,8 +85,12 @@ final class BusinessHomePresenter
     /**
      * Null only when the context's Business no longer exists inside its
      * Workspace, in which case the caller renders the Account frame instead.
+     *
+     * @param  array<string, mixed>  $rangeInput  the Business performance
+     *   period, as the customer's own query string ("range", "start", "end").
+     *   Invalid input is refused and the default window renders instead (H-3).
      */
-    public function present(CustomerContext $context, User $user): ?DashboardSnapshot
+    public function present(CustomerContext $context, User $user, array $rangeInput = []): ?DashboardSnapshot
     {
         $candidate = $context->selectedBusiness;
         $workspace = $context->frameWorkspace();
@@ -122,9 +131,15 @@ final class BusinessHomePresenter
         $comparison = null;
         $comparisonFailed = false;
 
+        // H-3 — the customer's own period, through the Results range rules.
+        // An unusable range (a preset that does not exist, a reversed range,
+        // one longer than the 92-day maximum) is refused rather than
+        // approximated: Home renders its default window and says so.
+        [$selectedRange, $rangeRejected] = $this->selectedRange($business, $rangeInput);
+
         if ($canSeeResults || $automationsShown) {
             try {
-                $comparison = $this->analytics->comparison($business);
+                $comparison = $this->analytics->comparison($business, $selectedRange);
             } catch (Throwable $e) {
                 report($e);
                 $comparisonFailed = true;
@@ -190,7 +205,7 @@ final class BusinessHomePresenter
                 $failed[] = DashboardSnapshot::BAND_HEADLINES;
             } else {
                 try {
-                    $bands[DashboardSnapshot::BAND_HEADLINES] = $this->headlines($business, $context, $user, $entitlements, $scoped, $comparison, $automationsShown);
+                    $bands[DashboardSnapshot::BAND_HEADLINES] = $this->headlines($business, $context, $user, $entitlements, $scoped, $comparison, $rangeRejected);
                 } catch (Throwable $e) {
                     report($e);
                     $failed[] = DashboardSnapshot::BAND_HEADLINES;
@@ -446,23 +461,33 @@ final class BusinessHomePresenter
     }
 
     /**
-     * §4.1 — the restrained headline row, every figure beside its comparison
-     * and an honest interpretation.
+     * §4.1, H-3 §2.5 — Business performance: the period the customer
+     * selected, and exactly three canonical figures in KPI-priority order.
+     *
+     * New contacts and messages received are B5's own K4 and M3 for the
+     * selected window; new conversations is Slice 2B's read model, which
+     * remains the only reader of the conversation table. Each is compared
+     * with the equal-length window immediately before it, and every
+     * comparison is DESCRIPTIVE: a rise in any of these is a factual change,
+     * never a win. No outbound volume, provider acceptance, failed send,
+     * automation run, lead, booking or conversion figure appears here,
+     * because none of them is either canonical or an outcome.
+     *
+     * The chart is loaded afterwards, by the browser, from B5's own series
+     * endpoint for the same range: this request calculates no series.
      *
      * @param  array<int, string>  $scoped
      * @param  array{current: array<string, mixed>, previous: array<string, mixed>}  $comparison
-     * @return array{items: array<int, Headline>, currentLabel: string, previousLabel: string, resultsUrl: ?string}
+     * @return array<string, mixed>
      */
-    private function headlines(Business $business, CustomerContext $context, User $user, MenuEntitlements $entitlements, array $scoped, array $comparison, bool $automationsShown): array
+    private function headlines(Business $business, CustomerContext $context, User $user, MenuEntitlements $entitlements, array $scoped, array $comparison, bool $rangeRejected): array
     {
         /** @var AnalyticsDateRange $currentRange */
         $currentRange = $comparison['current']['range'];
         /** @var AnalyticsDateRange $previousRange */
         $previousRange = $comparison['previous']['range'];
-        // H-1 (§2.2, KPI priority): outbound volume, provider-accepted and
-        // failed-send figures have left Home. "More messages sent" was never
-        // a business outcome, and provider vocabulary belongs to Messages and
-        // Results, where those figures still live in full.
+        $window = strtolower($currentRange->label());
+        $before = self::previousNoun($previousRange);
         $items = [];
 
         $contacts = new HeadlineComparison($comparison['current']['contacts']->newInRange, $comparison['previous']['contacts']->newInRange);
@@ -470,14 +495,14 @@ final class BusinessHomePresenter
             key: 'new_contacts',
             label: 'New contacts',
             figure: number_format($contacts->current),
-            figureCaption: 'Added to this business in the last 30 days.',
+            figureCaption: 'Added to this business, ' . $window . '.',
             comparison: $contacts,
             polarity: HeadlinePolarity::DescriptiveGrowth,
-            comparisonSentence: $contacts->sentence(),
+            comparisonSentence: $contacts->sentence($before),
             interpretation: match ($contacts->trend) {
-                HeadlineTrend::Up => number_format($contacts->absoluteDelta) . ' more ' . ($contacts->absoluteDelta === 1 ? 'contact was' : 'contacts were') . ' added than in the previous 30 days.',
-                HeadlineTrend::Down => number_format(abs($contacts->absoluteDelta)) . ' fewer ' . (abs($contacts->absoluteDelta) === 1 ? 'contact was' : 'contacts were') . ' added than in the previous 30 days.',
-                HeadlineTrend::Unchanged => 'The same number of contacts were added as in the previous 30 days.',
+                HeadlineTrend::Up => number_format($contacts->absoluteDelta) . ' more ' . ($contacts->absoluteDelta === 1 ? 'contact was' : 'contacts were') . ' added than in ' . $before . '.',
+                HeadlineTrend::Down => number_format(abs($contacts->absoluteDelta)) . ' fewer ' . (abs($contacts->absoluteDelta) === 1 ? 'contact was' : 'contacts were') . ' added than in ' . $before . '.',
+                HeadlineTrend::Unchanged => 'The same number of contacts were added as in ' . $before . '.',
             },
             judgement: null,
         );
@@ -486,7 +511,8 @@ final class BusinessHomePresenter
         // built them: startUtc/endUtc are already the storage-timezone bounds
         // localDayStartInStorageTz() produced, which is the timezone the
         // conversation rows' created_at is written in — so no second
-        // conversion here (Correction 1, decision C).
+        // conversion here (Correction 1, decision C). B5 never reads this
+        // table, and Home never queries it directly.
         if ($entitlements->allows('conversations') && Gate::forUser($user)->allows('chat_box')) {
             $started = new HeadlineComparison(
                 $this->conversations->startedCount($business, $currentRange->startUtc, $currentRange->endUtc),
@@ -494,45 +520,95 @@ final class BusinessHomePresenter
             );
 
             $items[] = $this->volumeHeadline(
-                'conversations_started',
-                'Conversations started',
-                "New conversations in this business's inbox in the last 30 days.",
+                'new_conversations',
+                'New conversations',
+                "Started in this business's inbox, " . $window . '.',
                 $started,
                 [
-                    HeadlineTrend::Up->value => 'More conversations started than in the previous 30 days.',
-                    HeadlineTrend::Down->value => 'Fewer conversations started than in the previous 30 days.',
-                    HeadlineTrend::Unchanged->value => 'The same number of conversations started as in the previous 30 days.',
+                    HeadlineTrend::Up->value => 'More conversations started than in ' . $before . '.',
+                    HeadlineTrend::Down->value => 'Fewer conversations started than in ' . $before . '.',
+                    HeadlineTrend::Unchanged->value => 'The same number of conversations started as in ' . $before . '.',
                 ],
-                'Volume is activity, not a success measure.',
+                'A change in volume is a fact, not a result.',
+                $before,
             );
         }
 
-        // §4.3 — absent for BOTH periods when either is null: a zero on one
-        // side would fabricate a delta.
-        $automationsNow = $comparison['current']['automations'];
-        $automationsBefore = $comparison['previous']['automations'];
+        $received = new HeadlineComparison($comparison['current']['messages']->inbound, $comparison['previous']['messages']->inbound);
+        $items[] = $this->volumeHeadline(
+            'messages_received',
+            'Messages received',
+            'Received by this business, ' . $window . '.',
+            $received,
+            [
+                HeadlineTrend::Up->value => 'More messages came in than in ' . $before . '.',
+                HeadlineTrend::Down->value => 'Fewer messages came in than in ' . $before . '.',
+                HeadlineTrend::Unchanged->value => 'As many messages came in as in ' . $before . '.',
+            ],
+            'A change in volume is a fact, not a result.',
+            $before,
+        );
 
-        if ($automationsShown && $automationsNow instanceof AutomationKpis && $automationsBefore instanceof AutomationKpis) {
-            $items[] = $this->volumeHeadline(
-                'automation_runs',
-                'Automation runs',
-                'Automation runs for this business in the last 30 days.',
-                new HeadlineComparison($automationsNow->executionsInRange, $automationsBefore->executionsInRange),
-                [
-                    HeadlineTrend::Up->value => 'Automations ran more often than in the previous 30 days.',
-                    HeadlineTrend::Down->value => 'Automations ran less often than in the previous 30 days.',
-                    HeadlineTrend::Unchanged->value => 'Automations ran as often as in the previous 30 days.',
-                ],
-                'Runs are activity, not a success measure.',
-            );
-        }
+        $rangeParameters = $currentRange->queryParameters();
 
         return [
             'items' => $items,
+            'range' => $currentRange,
+            'previousRange' => $previousRange,
+            'rangeRejected' => $rangeRejected,
             'currentLabel' => self::rangeLabel($currentRange),
             'previousLabel' => self::rangeLabel($previousRange),
-            'resultsUrl' => $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.analytics.overview', $scoped, ['view_reports']),
+            'formAction' => route('user.home'),
+            // B5's own series endpoint, for the very range shown above. The
+            // browser fetches it after the page; Home loads no series itself.
+            'seriesUrl' => $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.analytics.series', array_merge($scoped, $rangeParameters), ['view_reports']),
+            'resultsUrl' => $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.analytics.overview', array_merge($scoped, $rangeParameters), ['view_reports']),
         ];
+    }
+
+    /**
+     * The Business performance window, from the customer's own query string.
+     *
+     * Shape and semantics are the Results rules, unchanged and unduplicated:
+     * AnalyticsRangeRequest::ruleSet() for the shape, then
+     * AnalyticsDateRange::fromInput() for the calendar semantics (strict
+     * dates, no reversed range, at most MAX_CUSTOM_DAYS local dates). Home
+     * never approximates a range it cannot honour: it falls back to its
+     * default window and says so.
+     *
+     * @param  array<string, mixed>  $input
+     * @return array{0: AnalyticsDateRange, 1: bool}  the window, and whether the request was refused
+     */
+    private function selectedRange(Business $business, array $input): array
+    {
+        $timezone = (string) ($business->timezone ?: config('app.timezone', 'UTC'));
+        $default = AnalyticsDateRange::preset(BusinessDashboardAnalyticsPresenter::DEFAULT_PRESET, $timezone);
+
+        $input = array_intersect_key($input, array_flip(['range', 'start', 'end']));
+
+        if ($input === [] || ($input['range'] ?? null) === null) {
+            return [$default, false];
+        }
+
+        try {
+            $validated = Validator::make($input, AnalyticsRangeRequest::ruleSet())->validate();
+
+            return [AnalyticsDateRange::fromInput($validated, $timezone), false];
+        } catch (ValidationException) {
+            return [$default, true];
+        }
+    }
+
+    /**
+     * What the figures are compared against, always by its real length:
+     * "the previous 10 days" for a 10-day window, whatever preset produced
+     * it. Nothing ever says "30 days" about a window that is not 30 days.
+     */
+    private static function previousNoun(AnalyticsDateRange $previous): string
+    {
+        $days = $previous->days();
+
+        return 'the previous ' . $days . ($days === 1 ? ' day' : ' days');
     }
 
     /**
@@ -540,7 +616,7 @@ final class BusinessHomePresenter
      *
      * @param  array<string, string>  $copy  trend value => sentence
      */
-    private function volumeHeadline(string $key, string $label, string $caption, HeadlineComparison $comparison, array $copy, string $note): Headline
+    private function volumeHeadline(string $key, string $label, string $caption, HeadlineComparison $comparison, array $copy, string $note, string $previousNoun = 'the previous period'): Headline
     {
         return new Headline(
             key: $key,
@@ -549,7 +625,7 @@ final class BusinessHomePresenter
             figureCaption: $caption,
             comparison: $comparison,
             polarity: HeadlinePolarity::Descriptive,
-            comparisonSentence: $comparison->sentence(),
+            comparisonSentence: $comparison->sentence($previousNoun),
             interpretation: $copy[$comparison->trend->value] . ' ' . $note,
             judgement: null,
         );
