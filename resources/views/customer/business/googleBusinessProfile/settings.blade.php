@@ -24,11 +24,7 @@
         </div>
     </div>
 
-    @if(session('message'))
-        <x-alert :variant="session('status') === 'error' ? 'danger' : 'success'" class="mb-2">
-            {{ session('message') }}
-        </x-alert>
-    @endif
+    <x-flash-alert class="mb-2" />
 
     <x-card :padded="true" class="mb-2">
         <p class="text-section-heading mb-1">Connection</p>

@@ -244,8 +244,19 @@
     Route::post('subscriptions/{subscription}/preferences', 'SubscriptionController@preferences')->name('subscriptions.preferences');
 
     Route::post('invoices/search', 'InvoiceController@search')->name('invoices.search');
-    Route::get('invoices/{invoice}/view', 'InvoiceController@view')->name('invoices.view');
-    Route::get('invoices/{invoice}/print', 'InvoiceController@print')->name('invoices.print');
+    // Billing Security — Customer Invoice Ownership. Each route's own
+    // ->missing() callback fires when implicit {invoice} route-model
+    // binding fails to resolve a row, letting it abort(404) directly
+    // instead of letting the unresolved ModelNotFoundException reach the
+    // global exception Handler (which maps that exception to a 500
+    // response outside the local environment, per its own pre-existing,
+    // unmodified behavior) — mirroring routes/admin.php's identical
+    // {business} precedent, so a nonexistent invoice uid is 404, exactly
+    // like a foreign one (InvoiceController@view / @print).
+    Route::get('invoices/{invoice}/view', 'InvoiceController@view')->name('invoices.view')
+        ->missing(fn () => abort(404));
+    Route::get('invoices/{invoice}/print', 'InvoiceController@print')->name('invoices.print')
+        ->missing(fn () => abort(404));
 
     /*Version 3.4*/
     Route::post('payment/{type}/offline', 'PaymentController@offlinePayment')->name('payment.offline');

@@ -96,6 +96,7 @@ class InvoiceController extends Controller
 
     public function view(Invoices $invoice)
     {
+        abort_unless($invoice->user_id === Auth::id(), 404);
 
         $breadcrumbs = [
                 ['link' => url('dashboard'), 'name' => __('locale.menu.Dashboard')],
@@ -108,6 +109,7 @@ class InvoiceController extends Controller
 
     public function print(Invoices $invoice)
     {
+        abort_unless($invoice->user_id === Auth::id(), 404);
 
         $pageConfigs = ['pageHeader' => false];
 

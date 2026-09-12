@@ -62,14 +62,23 @@ class WorkspaceOverviewHttpTest extends TestCase
         $this->assertFalse(Route::has('customer.workspaces.businesses.index'));
     }
 
-    public function test_overview_links_back_to_the_workspace_index(): void
+    /**
+     * The way back to the account chooser exists only when there is a
+     * choice: a second (invited) account. With one account there is nothing
+     * to go back to.
+     */
+    public function test_overview_links_back_to_the_workspace_index_only_when_there_is_a_choice(): void
     {
         $customer = $this->actingAsHttpCustomer();
         $workspace = $this->createWorkspace($customer->user);
 
-        $response = $this->get(route('customer.workspaces.show', ['workspaceUid' => $workspace->uid]))->assertOk();
+        $this->get(route('customer.workspaces.show', ['workspaceUid' => $workspace->uid]))->assertOk()
+            ->assertDontSee('href="' . route('customer.workspaces.index') . '"', false);
 
-        $response->assertSee('href="' . route('customer.workspaces.index') . '"', false);
+        $this->createMembership($this->createWorkspace($this->createCustomer()->user), $customer->user, ['is_active' => true]);
+
+        $this->get(route('customer.workspaces.show', ['workspaceUid' => $workspace->uid]))->assertOk()
+            ->assertSee('href="' . route('customer.workspaces.index') . '"', false);
     }
 
     public function test_unknown_uid_returns_not_found(): void
@@ -451,7 +460,9 @@ class WorkspaceOverviewHttpTest extends TestCase
 
         $response = $this->get(route('customer.workspaces.show', ['workspaceUid' => $workspace->uid]))->assertOk();
 
-        $response->assertSee('crm');
+        // Customer names, never machine keys (crm, website_generation), and
+        // nothing the Core packaging lists that is not built yet (calendar, forms…).
+        $response->assertSee('<dd class="col-sm-8" data-role="plan-features">Client Management, Inbox &amp; Conversations, Automations, Website</dd>', false);
         $response->assertSee('Included slots');
         $response->assertSee('3'); // business_slot_included seeded for Core
         $response->assertSee('Additional slots');

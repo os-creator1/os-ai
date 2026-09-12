@@ -37,10 +37,19 @@ class WorkspaceBusinessComponentAdoptionTest extends TestCase
             '<x-card' => 10,
             '<x-alert' => 10,
             '<x-badge' => 12,
-            '<x-button' => 15,
-            '<x-input' => 34,
-            '<x-select' => 8,
-            '<x-table' => 8,
+            // One x-button and one x-table left the customer account page with
+            // the Business-reassignment control (Workspace mechanics).
+            '<x-button' => 14,
+            // One x-input (new owner) and one x-select (previous-owner
+            // disposition) left the customer account page with the
+            // ownership-transfer form (account settings cleanup). Country,
+            // timezone and currency left the Create Business and Business
+            // profile forms as x-inputs: both pages now include the shared
+            // customer/business/partials/locale-fields partial, which renders
+            // them as three x-selects of canonical values.
+            '<x-input' => 27,
+            '<x-select' => 7,
+            '<x-table' => 7,
             '<x-empty-state' => 6,
             '<x-pagination' => 2,
         ];
@@ -58,12 +67,12 @@ class WorkspaceBusinessComponentAdoptionTest extends TestCase
                 '<x-input' => 1, '<x-select' => 0, '<x-table' => 1, '<x-empty-state' => 0, '<x-pagination' => 0,
             ],
             'resources/views/customer/workspaces/show.blade.php' => [
-                '<x-card' => 2, '<x-alert' => 3, '<x-badge' => 4, '<x-button' => 6,
-                '<x-input' => 9, '<x-select' => 2, '<x-table' => 3, '<x-empty-state' => 2, '<x-pagination' => 0,
+                '<x-card' => 2, '<x-alert' => 3, '<x-badge' => 4, '<x-button' => 5,
+                '<x-input' => 5, '<x-select' => 1, '<x-table' => 2, '<x-empty-state' => 2, '<x-pagination' => 0,
             ],
             'resources/views/customer/business/edit.blade.php' => [
                 '<x-card' => 1, '<x-alert' => 2, '<x-badge' => 0, '<x-button' => 1,
-                '<x-input' => 11, '<x-select' => 1, '<x-table' => 0, '<x-empty-state' => 0, '<x-pagination' => 0,
+                '<x-input' => 8, '<x-select' => 1, '<x-table' => 0, '<x-empty-state' => 0, '<x-pagination' => 0,
             ],
             'resources/views/admin/workspaces/index.blade.php' => [
                 '<x-card' => 1, '<x-alert' => 0, '<x-badge' => 2, '<x-button' => 1,
@@ -124,17 +133,18 @@ class WorkspaceBusinessComponentAdoptionTest extends TestCase
         $this->assertStringContainsString('<input type="text" class="form-control" id="business-name" name="name"', $contents);
         $this->assertSame(0, preg_match('/<x-input\s+name="name"/', $contents), 'The repeated "name" field must never adopt x-input.');
 
-        // "target_workspace_uid": one native <select> per manageable Business row.
-        $this->assertStringContainsString('<select name="target_workspace_uid"', $contents);
-        $this->assertSame(0, substr_count($contents, '<x-select name="target_workspace_uid"'));
+        // "target_workspace_uid": the Business-reassignment control (moving a
+        // Business into another Workspace) is no longer a customer control.
+        $this->assertStringNotContainsString('name="target_workspace_uid"', $contents);
 
         // "role": add-member field + per-member-row field.
         $this->assertStringContainsString('id="member-role" name="role"', $contents);
         $this->assertStringContainsString('<select name="role" class="form-control form-control-sm', $contents);
         $this->assertSame(0, preg_match('/<x-select\s+name="role"/', $contents));
 
-        // "business_access_scope": ownership-transfer field + add-member field + per-member-row field.
-        $this->assertStringContainsString('id="ownership-transfer-scope" name="business_access_scope"', $contents);
+        // "business_access_scope": add-member field + per-member-row field (the
+        // ownership-transfer field left the customer page with its form).
+        $this->assertStringNotContainsString('id="ownership-transfer-scope"', $contents);
         $this->assertStringContainsString('id="member-scope" name="business_access_scope"', $contents);
         $this->assertStringContainsString('<select name="business_access_scope" class="form-control form-control-sm', $contents);
         $this->assertSame(0, preg_match('/<x-select\s+name="business_access_scope"/', $contents));
@@ -233,14 +243,17 @@ class WorkspaceBusinessComponentAdoptionTest extends TestCase
 
         foreach ([
             // Slice 1B Correction Round 1 (contract §5.3): templated noun.
-            '<button type="submit" class="btn btn-outline-danger">Deactivate {{ $accountNoun }}</button>',
             '<button type="submit" class="btn btn-outline-success">Reactivate {{ $accountNoun }}</button>',
-            '<button type="submit" class="btn btn-outline-warning">Transfer ownership</button>',
             '<button type="submit" class="btn btn-sm btn-outline-danger">Deactivate</button>',
             '<button type="submit" class="btn btn-sm btn-outline-success">Reactivate</button>',
         ] as $needle) {
             $this->assertStringContainsString($needle, $contents);
         }
+
+        // Account settings cleanup: no account-deactivation or ownership-transfer
+        // button on the customer page.
+        $this->assertStringNotContainsString('Deactivate {{ $accountNoun }}', $contents);
+        $this->assertStringNotContainsString('Transfer ownership', $contents);
     }
 
     public function test_no_shared_component_source_file_was_modified(): void

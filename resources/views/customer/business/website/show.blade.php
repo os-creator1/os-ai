@@ -12,9 +12,7 @@
         </div>
     </div>
 
-    @if (session('status'))
-        <x-alert :variant="session('status') === 'success' ? 'success' : 'danger'" class="mb-3">{{ session('message') }}</x-alert>
-    @endif
+    <x-flash-alert class="mb-3" />
 
     @if ($website->status->value === 'published')
         <x-alert variant="accent" class="mb-3">

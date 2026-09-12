@@ -11,6 +11,7 @@ use App\Models\Workspace;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
+use Illuminate\Testing\TestResponse;
 use Tests\Feature\Business\Concerns\CreatesBusinessTestData;
 use Tests\Feature\Workspace\Concerns\CreatesWorkspaceTestData;
 use Tests\TestCase;
@@ -19,7 +20,9 @@ use Tests\TestCase;
  * RFC-003 Milestone 3 Slice 3A: GET customer.workspaces.index. Population is
  * exactly WorkspaceRepository::allForUser() (§14 of the M3 preflight) —
  * these tests prove the HTTP boundary, the effective-role presentation, and
- * that nothing beyond that read-only switcher exists yet.
+ * that nothing beyond that read-only switcher exists yet. Since the account
+ * creation boundary the list is a chooser only when there is a choice: one
+ * account redirects straight to it (assertAccountChoices()).
  */
 class WorkspaceSwitcherHttpTest extends TestCase
 {
@@ -52,9 +55,7 @@ class WorkspaceSwitcherHttpTest extends TestCase
         $customer = $this->actingAsHttpCustomer();
         $workspace = $this->createWorkspace($customer->user, ['name' => 'Owner Co']);
 
-        $response = $this->get(route('customer.workspaces.index'))->assertOk();
-
-        $this->assertRowsFor($response, [
+        $response = $this->assertAccountChoices([
             ['uid' => $workspace->uid, 'name' => 'Owner Co', 'is_active' => true, 'role' => 'Owner'],
         ]);
     }
@@ -69,9 +70,7 @@ class WorkspaceSwitcherHttpTest extends TestCase
             'is_active' => true,
         ]);
 
-        $response = $this->get(route('customer.workspaces.index'))->assertOk();
-
-        $this->assertRowsFor($response, [
+        $response = $this->assertAccountChoices([
             ['uid' => $workspace->uid, 'name' => 'Admin Co', 'is_active' => true, 'role' => 'Admin'],
         ]);
     }
@@ -86,9 +85,7 @@ class WorkspaceSwitcherHttpTest extends TestCase
             'is_active' => true,
         ]);
 
-        $response = $this->get(route('customer.workspaces.index'))->assertOk();
-
-        $this->assertRowsFor($response, [
+        $response = $this->assertAccountChoices([
             ['uid' => $workspace->uid, 'name' => 'Staff Co', 'is_active' => true, 'role' => 'Staff'],
         ]);
     }
@@ -135,9 +132,7 @@ class WorkspaceSwitcherHttpTest extends TestCase
         $customer = $this->actingAsHttpCustomer();
         $workspace = $this->createWorkspace($customer->user, ['name' => 'Dormant Co', 'is_active' => false]);
 
-        $response = $this->get(route('customer.workspaces.index'))->assertOk();
-
-        $this->assertRowsFor($response, [
+        $response = $this->assertAccountChoices([
             ['uid' => $workspace->uid, 'name' => 'Dormant Co', 'is_active' => false, 'role' => 'Owner'],
         ]);
         $response->assertSee('Inactive');
@@ -153,9 +148,7 @@ class WorkspaceSwitcherHttpTest extends TestCase
             'is_active' => true,
         ]);
 
-        $response = $this->get(route('customer.workspaces.index'))->assertOk();
-
-        $this->assertRowsFor($response, [
+        $response = $this->assertAccountChoices([
             ['uid' => $workspace->uid, 'name' => 'Dormant Member Co', 'is_active' => false, 'role' => 'Staff'],
         ]);
     }
@@ -171,9 +164,7 @@ class WorkspaceSwitcherHttpTest extends TestCase
             'is_active' => true,
         ]);
 
-        $response = $this->get(route('customer.workspaces.index'))->assertOk();
-
-        $this->assertRowsFor($response, [
+        $response = $this->assertAccountChoices([
             ['uid' => $workspace->uid, 'name' => 'Anomaly Co', 'is_active' => true, 'role' => 'Owner'],
         ]);
     }
@@ -184,9 +175,7 @@ class WorkspaceSwitcherHttpTest extends TestCase
         $workspace = $this->createWorkspace($customer->user);
         $this->createMembership($workspace, $customer->user, ['is_active' => true]);
 
-        $response = $this->get(route('customer.workspaces.index'))->assertOk();
-
-        $this->assertRowsFor($response, [
+        $response = $this->assertAccountChoices([
             ['uid' => $workspace->uid, 'name' => $workspace->name, 'is_active' => true, 'role' => 'Owner'],
         ]);
     }
@@ -246,12 +235,13 @@ class WorkspaceSwitcherHttpTest extends TestCase
     public function test_response_excludes_internal_identifiers_and_email(): void
     {
         $customer = $this->actingAsHttpCustomer();
-        $workspace = $this->createWorkspace($customer->user);
+        $this->createWorkspace($customer->user);
+        $this->createMembership($this->createWorkspace($this->createCustomer()->user), $customer->user, ['is_active' => true]);
 
         $response = $this->get(route('customer.workspaces.index'))->assertOk();
 
         $rows = $this->viewData($response);
-        $this->assertCount(1, $rows);
+        $this->assertCount(2, $rows);
         $this->assertSame(['uid', 'name', 'is_active', 'role'], array_keys($rows->first()));
 
         // The view receives only the four keys asserted above, so the HTML
@@ -287,7 +277,7 @@ class WorkspaceSwitcherHttpTest extends TestCase
         $tables = ['workspaces', 'workspace_memberships', 'workspace_membership_businesses', 'businesses', 'users', 'customers'];
         $before = collect($tables)->mapWithKeys(fn (string $table) => [$table => $this->tableFingerprint($table)]);
 
-        $this->get(route('customer.workspaces.index'))->assertOk();
+        $this->get(route('customer.workspaces.index'))->assertRedirect(route('customer.workspaces.show', $workspace->uid));
 
         foreach ($tables as $table) {
             $this->assertSame(
@@ -324,6 +314,7 @@ class WorkspaceSwitcherHttpTest extends TestCase
     {
         $customer = $this->actingAsHttpCustomer();
         $workspace = $this->createWorkspace($customer->user, ['name' => 'Linked Co']);
+        $this->createMembership($this->createWorkspace($this->createCustomer()->user), $customer->user, ['is_active' => true]);
 
         $response = $this->get(route('customer.workspaces.index'))->assertOk();
 
@@ -350,6 +341,35 @@ class WorkspaceSwitcherHttpTest extends TestCase
         $rows = DB::table($table)->orderBy('id')->get(['id', 'updated_at']);
 
         return $rows->map(fn ($row) => "{$row->id}:{$row->updated_at}")->implode('|');
+    }
+
+    /**
+     * Which accounts this person can open. One account has no chooser:
+     * index() goes straight to it, and that page shows the same name,
+     * status and role the chooser row would. Several get the chooser list.
+     *
+     * @param  array<int, array{uid: string, name: string, is_active: bool, role: string}>  $expected
+     */
+    private function assertAccountChoices(array $expected): TestResponse
+    {
+        $index = $this->get(route('customer.workspaces.index'));
+
+        if (count($expected) !== 1) {
+            $index->assertOk();
+            $this->assertRowsFor($index, $expected);
+
+            return $index;
+        }
+
+        $index->assertRedirect(route('customer.workspaces.show', $expected[0]['uid']));
+        $account = $this->get(route('customer.workspaces.show', $expected[0]['uid']))->assertOk();
+
+        $this->assertSame(
+            ['name' => $expected[0]['name'], 'is_active' => $expected[0]['is_active'], 'role' => $expected[0]['role']],
+            $account->original->getData()['workspace']
+        );
+
+        return $account;
     }
 
     /**

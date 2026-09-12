@@ -85,13 +85,17 @@ class WorkspaceBusinessExistingBehaviorPreservedTest extends TestCase
         $response = $this->get(route('customer.workspaces.show', $workspace->uid))->assertOk();
 
         $response->assertSee('data-workspace-action="rename"', false);
-        $response->assertSee('data-workspace-action="deactivate"', false);
-        $response->assertSee('data-workspace-action="ownership/transfer"', false);
         $response->assertSee('data-workspace-action="businesses"', false);
         $response->assertSee('data-workspace-action="members"', false);
         $response->assertSee("document.querySelectorAll('form[data-workspace-action]')", false);
         $response->assertSee("document.querySelectorAll('select[name=\"business_access_scope\"]')", false);
-        $response->assertSee("document.querySelectorAll('select[name=\"previous_owner_disposition\"]')", false);
+
+        // Account settings cleanup: deactivating the account and the technical
+        // ownership-transfer form are no longer customer controls (the backend
+        // actions remain for support), and their script went with them.
+        $response->assertDontSee('data-workspace-action="deactivate"', false);
+        $response->assertDontSee('data-workspace-action="ownership/transfer"', false);
+        $response->assertDontSee("document.querySelectorAll('select[name=\"previous_owner_disposition\"]')", false);
     }
 
     public function test_inactive_workspace_still_shows_read_only_overview_with_zero_business_list(): void

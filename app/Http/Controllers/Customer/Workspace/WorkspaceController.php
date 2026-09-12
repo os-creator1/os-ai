@@ -34,6 +34,7 @@ use App\Http\Requests\Customer\Workspace\TransferWorkspaceOwnershipRequest;
 use App\Http\Requests\Customer\Workspace\UpdateWorkspaceMemberAccessRequest;
 use App\Http\Requests\Customer\Workspace\UpdateWorkspaceMemberRoleRequest;
 use App\Enums\Entitlement\WorkspacePlanTier;
+use App\Library\Entitlement\BusinessFeatureSettings;
 use App\Library\Entitlement\EntitlementManager;
 use App\Library\Entitlement\PlatformFeatureRegistry;
 use App\Library\Usage\BillingProfileManager;
@@ -46,9 +47,11 @@ use App\Repositories\Contracts\WorkspaceMembershipBusinessRepository;
 use App\Repositories\Contracts\WorkspaceMembershipRepository;
 use App\Repositories\Contracts\WorkspaceRepository;
 use Illuminate\Contracts\View\View;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\DB;
 use RuntimeException;
 
 class WorkspaceController extends CustomerBaseController
@@ -58,6 +61,25 @@ class WorkspaceController extends CustomerBaseController
         'admin' => 'Admin',
         'staff' => 'Staff',
     ];
+
+    /**
+     * One message for every "this person can't be added" outcome — no account
+     * for that address, an account that isn't an active customer account, the
+     * account's owner, or someone already on it — so the answer never tells an
+     * account manager which of those it was.
+     */
+    private const MEMBER_CANNOT_BE_ADDED = 'We couldn\'t add that person. Check the email address: they need an existing Business OS account, and can\'t already be on this account or be its owner.';
+
+    private const FEATURE_SWITCH_NOT_ALLOWED = 'You don\'t have permission to change this Business\'s features.';
+
+    private const FEATURE_SWITCH_ACCOUNT_INACTIVE = 'This account is inactive, so its features can\'t be changed.';
+
+    /**
+     * The manager refuses to turn off a feature the Business cannot use right
+     * now — one the plan leaves out, or one already turned off in another tab
+     * — so the message covers both honestly.
+     */
+    private const FEATURE_SWITCH_NOT_AVAILABLE = 'This feature can\'t be changed right now. Refresh the page to see its current setting.';
 
     public function __construct(
         private readonly WorkspaceRepository $workspaceRepository,
@@ -75,17 +97,28 @@ class WorkspaceController extends CustomerBaseController
      * membership, is_active-agnostic) — no Business query, no mutation, no
      * additional repository call beyond the one per-row membership reread
      * needed to resolve the effective role.
+     *
+     * A chooser only where there is a choice: someone with one account goes
+     * straight to it, several (their own plus invited memberships) get the
+     * list, and only someone who owns no account at all is offered to create
+     * their first one — never a second one (see store()).
      */
-    public function index(): View
+    public function index(): View|RedirectResponse
     {
         $userId = (int) Auth::id();
+        $workspaces = $this->accountChoices($userId);
 
-        $workspaces = $this->workspaceRepository->allForUser($userId)
-            ->map(fn (Workspace $workspace) => $this->presentationRow($workspace, $userId))
-            ->filter()
-            ->values();
+        if ($workspaces->count() === 1) {
+            return redirect()->route('customer.workspaces.show', $workspaces->first()['uid']);
+        }
 
-        return view('customer.workspaces.index', ['workspaces' => $workspaces]);
+        // The first-account form is for someone with nothing yet: no account
+        // of their own and no membership anywhere (an invited client is not
+        // offered to start a separate account here).
+        return view('customer.workspaces.index', [
+            'workspaces' => $workspaces,
+            'canCreateFirstAccount' => $workspaces->isEmpty() && $this->workspaceRepository->allForUser($userId)->isEmpty(),
+        ]);
     }
 
     /**
@@ -133,14 +166,6 @@ class WorkspaceController extends CustomerBaseController
             $viewData['directory'] = $this->membershipDirectory($workspace);
             $viewData['manageableBusinesses'] = $this->manageableBusinesses($workspace, $userId);
 
-            // RFC-003 Milestone 4 Slice 4E: UI-only transport for the
-            // reassignment control's target-Workspace candidates -- a
-            // request attribute, not a view-data key, so this Milestone 3
-            // show() response's top-level shape (workspace, businesses,
-            // directory, manageableBusinesses) stays exactly as it already
-            // was for every existing caller/test.
-            request()->attributes->set('reassignTargetWorkspaces', $this->manageableTargetWorkspaces($userId));
-
             // Customer Experience Slice 5, Correction Round 1 §8 — the Agency
             // payer control lives here (Client accounts → [Business] →
             // Billing responsibility), for the Agency owner or an active
@@ -152,6 +177,10 @@ class WorkspaceController extends CustomerBaseController
                 $viewData['billingResponsibility'] = $billingResponsibility;
             }
         }
+
+        // UI-only, so the view-data shape stays as it is: the way back to
+        // the account chooser is offered only when index() would show one.
+        request()->attributes->set('showsAccountChooser', $this->accountChoices($userId)->count() > 1);
 
         return view('customer.workspaces.show', $viewData);
     }
@@ -199,17 +228,43 @@ class WorkspaceController extends CustomerBaseController
      * RFC-003 Milestone 4 Slice 4A: creates a Workspace owned by the
      * authenticated user via WorkspaceManager::createWorkspace(). No
      * Business is created here -- that remains outside this slice.
+     *
+     * Customer boundary: this creates a customer's own FIRST account only
+     * (the zero-account bootstrap/recovery path). A customer has one account
+     * — Core/Growth hold one Business, Agency client accounts are Businesses
+     * inside it — so anyone who already owns a Workspace, active or not, is
+     * sent back to it and nothing is created; a hand-made POST cannot do what
+     * the page no longer offers. Invited memberships are not ownership. The
+     * owner's users row is locked first (the same lock createWorkspace()
+     * takes), so two simultaneous requests cannot both pass the check.
+     * createWorkspace() stays the unrestricted domain capability for
+     * platform/internal provisioning.
      */
     public function store(StoreWorkspaceRequest $request): RedirectResponse
     {
-        $workspace = $this->workspaceManager->createWorkspace(
-            (int) Auth::id(),
-            $request->validated('name'),
-        );
+        $userId = (int) Auth::id();
+
+        $workspace = DB::transaction(function () use ($userId, $request) {
+            DB::table('users')->where('id', $userId)->lockForUpdate()->first();
+
+            if ($this->workspaceRepository->findOwnedBy($userId)->isNotEmpty()) {
+                return null;
+            }
+
+            return $this->workspaceManager->createWorkspace($userId, $request->validated('name'));
+        });
+
+        if ($workspace === null) {
+            $ownedWorkspace = $this->workspaceRepository->findOwnedBy($userId)->sortBy('id')->first();
+
+            return redirect()
+                ->route('customer.workspaces.show', $ownedWorkspace->uid)
+                ->with('flash_error', 'You already have an account.');
+        }
 
         return redirect()
             ->route('customer.workspaces.show', $workspace->uid)
-            ->with('flash_success', 'Workspace created.');
+            ->with('flash_success', 'Account created.');
     }
 
     /**
@@ -226,14 +281,15 @@ class WorkspaceController extends CustomerBaseController
         try {
             $this->workspaceManager->renameWorkspace($userId, $workspace, $request->validated('name'));
         } catch (UnauthorizedWorkspaceManagementException) {
-            return redirect()->back()->with('flash_error', 'You are not authorized to rename this Workspace.');
+            return redirect()->back()->with('flash_error', 'You don\'t have permission to rename this account.');
         } catch (InactiveWorkspaceMutationException) {
-            return redirect()->back()->with('flash_error', 'An inactive Workspace cannot be renamed.');
+            return redirect()->back()->with('flash_error', 'This account is inactive, so it can\'t be renamed.');
         }
 
+        // Shown as the page's compact "Saved" toast, not a full-width alert.
         return redirect()
             ->route('customer.workspaces.show', $workspaceUid)
-            ->with('flash_success', 'Workspace renamed.');
+            ->with('flash_success', 'Saved');
     }
 
     /**
@@ -443,30 +499,36 @@ class WorkspaceController extends CustomerBaseController
 
     /**
      * RFC-003 Milestone 4 Slice 4B: adds an existing User as an active
-     * member via a nullable User uid lookup + WorkspaceManager::addMember() —
-     * unknown user uid fails closed with 404, matching resolveAccessibleMembership()'s
-     * unknown/inaccessible-target boundary. Business selection is resolved
-     * and access-checked entirely by resolveManageableBusinessIds() before
-     * any WorkspaceManager call, so an invalid selection never reaches the
-     * manager and never partially writes; an invalid selection resolves to
-     * the same 404 as an unauthorized actor or unknown target, not a
-     * flash-message redirect, so this pre-check can't be used as an oracle
-     * either. An UnauthorizedWorkspaceManagementException from the manager
-     * itself also resolves to 404 for the same reason.
+     * member through WorkspaceManager::addMember(). The person is identified
+     * by EMAIL ADDRESS (resolved here, server-side; only the numeric id goes
+     * to the manager), never by an internal User uid.
+     *
+     * Order matters, so nothing about an address is revealed to an actor who
+     * may not add members:
+     *  1. the Workspace and the actor's standing in it (unknown or
+     *     inaccessible → 404, unchanged);
+     *  2. the actor's authority over the requested role — the manager's own
+     *     rule, mirrored read-only — BEFORE the address is looked at (no
+     *     authority → 404, the same answer as before);
+     *  3. the Business selection (invalid → 404, unchanged, so it can't be
+     *     used as an oracle either);
+     *  4. only then the address: an unknown or ineligible address, the
+     *     owner, or an existing member → back to this page with one generic
+     *     message on the email field. The manager stays authoritative and
+     *     fail-closed; UnauthorizedWorkspaceManagementException is still 404.
      */
     public function storeMember(StoreWorkspaceMemberRequest $request, string $workspaceUid): RedirectResponse
     {
         $actorUserId = (int) Auth::id();
         $workspace = $this->resolveAccessibleWorkspace($workspaceUid, $actorUserId);
 
-        $targetUser = User::query()->where('uid', $request->validated('user_uid'))->first();
+        $role = WorkspaceMembershipRole::from($request->validated('role'));
+        $scope = WorkspaceBusinessAccessScope::from($request->validated('business_access_scope'));
 
-        if ($targetUser === null) {
+        if (! $this->hasAuthorityOverRole($workspace, $actorUserId, $role)) {
             abort(404);
         }
 
-        $role = WorkspaceMembershipRole::from($request->validated('role'));
-        $scope = WorkspaceBusinessAccessScope::from($request->validated('business_access_scope'));
         $businessIds = [];
 
         if ($scope === WorkspaceBusinessAccessScope::Selected) {
@@ -479,22 +541,20 @@ class WorkspaceController extends CustomerBaseController
             abort(404);
         }
 
+        $targetUser = $this->findAddableUserByEmail((string) $request->validated('member_email'));
+
+        if ($targetUser === null) {
+            return $this->memberCannotBeAdded($workspaceUid);
+        }
+
         try {
             $this->workspaceManager->addMember($actorUserId, $workspace, (int) $targetUser->id, $role, $scope, $businessIds);
         } catch (UnauthorizedWorkspaceManagementException) {
             abort(404);
         } catch (InactiveWorkspaceMutationException) {
-            $hasAuthorityOverRole = $role === WorkspaceMembershipRole::Admin
-                ? $this->effectiveRoleKey($workspace, $actorUserId) === 'owner'
-                : in_array($this->effectiveRoleKey($workspace, $actorUserId), ['owner', 'admin'], true);
-
-            if (! $hasAuthorityOverRole) {
-                abort(404);
-            }
-
             return redirect()->back()->with('flash_error', 'An inactive Workspace cannot receive new members.');
         } catch (OwnerCannotBeMemberException|WorkspaceMembershipAlreadyExistsException) {
-            return redirect()->back()->with('flash_error', 'This user cannot be added as a member.');
+            return $this->memberCannotBeAdded($workspaceUid);
         } catch (InvalidBusinessAccessScopeAssignmentException) {
             return redirect()->back()->with('flash_error', 'Business selections are not valid for the "All Businesses" scope.');
         }
@@ -502,6 +562,44 @@ class WorkspaceController extends CustomerBaseController
         return redirect()
             ->route('customer.workspaces.show', $workspaceUid)
             ->with('flash_success', 'Member added.');
+    }
+
+    /**
+     * WorkspaceManager::addMember()'s own authority rule, mirrored read-only
+     * so it can be checked before anything else: adding an Admin needs the
+     * owner; adding Staff needs the owner or an active Admin. The manager
+     * still enforces it on write.
+     */
+    private function hasAuthorityOverRole(Workspace $workspace, int $actorUserId, WorkspaceMembershipRole $role): bool
+    {
+        $effectiveRole = $this->effectiveRoleKey($workspace, $actorUserId);
+
+        return $role === WorkspaceMembershipRole::Admin
+            ? $effectiveRole === 'owner'
+            : in_array($effectiveRole, ['owner', 'admin'], true);
+    }
+
+    /**
+     * The active customer account with this email address, matched exactly
+     * as sign-in matches it (the same `users.email` equality, so the same
+     * case-insensitive collation). Anything else — no account, a disabled
+     * account, a platform-only account — is null.
+     */
+    private function findAddableUserByEmail(string $email): ?User
+    {
+        return User::query()
+            ->where('email', trim($email))
+            ->where('is_customer', true)
+            ->where('status', true)
+            ->first();
+    }
+
+    private function memberCannotBeAdded(string $workspaceUid): RedirectResponse
+    {
+        return redirect()
+            ->route('customer.workspaces.show', $workspaceUid)
+            ->withErrors(['member_email' => self::MEMBER_CANNOT_BE_ADDED])
+            ->withInput(['member_email' => (string) request()->input('member_email')]);
     }
 
     /**
@@ -847,31 +945,39 @@ class WorkspaceController extends CustomerBaseController
      * per-Business feature view data, assembled entirely from
      * EntitlementManager's own presentation API (§8) -- never a repository
      * read here. One decideAvailableFeaturesForBusiness() call per Business
-     * already shown by effectiveBusinesses() for this role.
+     * already shown by effectiveBusinesses() for this role. `featureSettings`
+     * is the customer's switch list built from those same decisions: only
+     * the features BusinessFeatureSettings says a customer can see are ever
+     * sent to the page.
      *
-     * @return array{summary: \App\Library\Entitlement\WorkspaceEntitlementSummary, features: array<string, array<string, array{decision: \App\Library\Entitlement\EntitlementDecision, disablePreferenceRecorded: bool}>>}
+     * @return array{summary: \App\Library\Entitlement\WorkspaceEntitlementSummary, features: array<string, array<string, array{decision: \App\Library\Entitlement\EntitlementDecision, disablePreferenceRecorded: bool}>>, featureSettings: array<string, list<array{key: string, name: string, description: string, enabled: bool}>>}
      */
     private function entitlementViewData(Workspace $workspace, int $userId): array
     {
         $features = [];
+        $featureSettings = [];
 
         foreach ($this->accessibleBusinesses($workspace, $userId) as $business) {
             $features[$business->uid] = $this->entitlementManager->decideAvailableFeaturesForBusiness($workspace, $business, $userId);
+            $featureSettings[$business->uid] = BusinessFeatureSettings::fromDecisions($features[$business->uid]);
         }
 
         return [
             'summary' => $this->entitlementManager->getWorkspaceEntitlementSummary($workspace),
             'features' => $features,
+            'featureSettings' => $featureSettings,
         ];
     }
 
     /**
-     * RFC-004 Milestone 3 §12/§13: records a Business-level disable
-     * preference for a currently-entitled feature. This is a stored
-     * preference, never claimed runtime enforcement (§13) -- the legacy
-     * CRM/Conversations/Automations modules do not yet consult it.
+     * RFC-004 Milestone 3 §12/§13: turns a currently-entitled feature off for
+     * one Business (records its disable preference). EntitlementManager stays
+     * the only authority: it checks the actor, the Workspace and the
+     * entitlement. The account page's switches call this with
+     * `Accept: application/json` and get the saved state back; any other
+     * request keeps the redirect.
      */
-    public function disableBusinessFeature(string $workspaceUid, string $businessUid, string $featureKey): RedirectResponse
+    public function disableBusinessFeature(string $workspaceUid, string $businessUid, string $featureKey): RedirectResponse|JsonResponse
     {
         $actorUserId = (int) Auth::id();
         $workspace = $this->resolveAccessibleWorkspace($workspaceUid, $actorUserId);
@@ -893,24 +999,23 @@ class WorkspaceController extends CustomerBaseController
         } catch (WorkspaceBusinessNotFoundException|BusinessWorkspaceMismatchException) {
             abort(404);
         } catch (UnauthorizedWorkspaceManagementException) {
-            return redirect()->back()->with('flash_error', 'You are not authorized to change this Business\'s feature preferences.');
+            return $this->featureSwitchRefused(self::FEATURE_SWITCH_NOT_ALLOWED, 403);
         } catch (InactiveWorkspaceMutationException) {
-            return redirect()->back()->with('flash_error', 'An inactive Workspace cannot have its feature preferences changed.');
+            return $this->featureSwitchRefused(self::FEATURE_SWITCH_ACCOUNT_INACTIVE, 409);
         } catch (RuntimeException) {
-            return redirect()->back()->with('flash_error', 'This Business is not currently entitled to this feature.');
+            return $this->featureSwitchRefused(self::FEATURE_SWITCH_NOT_AVAILABLE, 409);
         }
 
-        return redirect()
-            ->route('customer.workspaces.show', $workspaceUid)
-            ->with('flash_success', 'Disable preference recorded.');
+        return $this->featureSwitchSaved($workspaceUid, false);
     }
 
     /**
-     * RFC-004 Milestone 3 §12/§13: removes a previously-recorded disable
-     * preference, regardless of the feature's current effective decision
-     * (§13's exact case 1 rule).
+     * RFC-004 Milestone 3 §12/§13: turns a feature back on for one Business
+     * (removes its disable preference), regardless of the feature's current
+     * effective decision (§13's exact case 1 rule). Same negotiation as
+     * disableBusinessFeature().
      */
-    public function enableBusinessFeature(string $workspaceUid, string $businessUid, string $featureKey): RedirectResponse
+    public function enableBusinessFeature(string $workspaceUid, string $businessUid, string $featureKey): RedirectResponse|JsonResponse
     {
         $actorUserId = (int) Auth::id();
         $workspace = $this->resolveAccessibleWorkspace($workspaceUid, $actorUserId);
@@ -928,36 +1033,59 @@ class WorkspaceController extends CustomerBaseController
         } catch (WorkspaceBusinessNotFoundException|BusinessWorkspaceMismatchException) {
             abort(404);
         } catch (UnauthorizedWorkspaceManagementException) {
-            return redirect()->back()->with('flash_error', 'You are not authorized to change this Business\'s feature preferences.');
+            return $this->featureSwitchRefused(self::FEATURE_SWITCH_NOT_ALLOWED, 403);
         } catch (InactiveWorkspaceMutationException) {
-            return redirect()->back()->with('flash_error', 'An inactive Workspace cannot have its feature preferences changed.');
+            return $this->featureSwitchRefused(self::FEATURE_SWITCH_ACCOUNT_INACTIVE, 409);
+        }
+
+        return $this->featureSwitchSaved($workspaceUid, true);
+    }
+
+    /**
+     * The saved state, as the account page's switch expects it; `enabled` is
+     * what the manager just stored, so the switch never shows a state the
+     * server did not accept.
+     */
+    private function featureSwitchSaved(string $workspaceUid, bool $enabled): RedirectResponse|JsonResponse
+    {
+        if (request()->wantsJson()) {
+            return response()->json(['status' => 'success', 'enabled' => $enabled]);
         }
 
         return redirect()
             ->route('customer.workspaces.show', $workspaceUid)
-            ->with('flash_success', 'Disable preference removed.');
+            ->with('flash_success', 'Saved.');
     }
 
     /**
-     * RFC-003 Milestone 4 Slice 4E: candidate target Workspaces for the
-     * Business-reassignment control -- every Workspace this actor can see
-     * (WorkspaceRepository::allForUser(), already used by index()),
-     * filtered to rows where the existing effectiveRoleKey() resolves to
-     * owner or admin. Reuses existing primitives only; not a new
-     * algorithm. UI convenience only -- a stale or hand-crafted
-     * target_workspace_uid outside this list is still independently and
-     * correctly enforced by resolveAccessibleWorkspace() and
-     * WorkspaceManager at submission time.
-     *
-     * @return array<int, array{uid: string, name: string}>
+     * A refusal after the Workspace, Business and feature were all resolved.
+     * `customer_message` is the only text the switch shows; anything else a
+     * JSON error carries (the global handler's exception message) is not
+     * customer copy and is never displayed.
      */
-    private function manageableTargetWorkspaces(int $actorUserId): array
+    private function featureSwitchRefused(string $message, int $status): RedirectResponse|JsonResponse
     {
-        return $this->workspaceRepository->allForUser($actorUserId)
-            ->filter(fn (Workspace $workspace) => in_array($this->effectiveRoleKey($workspace, $actorUserId), ['owner', 'admin'], true))
-            ->map(fn (Workspace $workspace) => ['uid' => $workspace->uid, 'name' => $workspace->name])
-            ->values()
-            ->all();
+        if (request()->wantsJson()) {
+            return response()->json(['status' => 'error', 'customer_message' => $message], $status);
+        }
+
+        return redirect()->back()->with('flash_error', $message);
+    }
+
+    /**
+     * The accounts this actor can open: every Workspace
+     * WorkspaceRepository::allForUser() returns that presentationRow() can
+     * render (owner, or an active membership that sees the account frame).
+     * index() and the chooser back link read the same list.
+     *
+     * @return Collection<int, array{uid: string, name: string, is_active: bool, role: string}>
+     */
+    private function accountChoices(int $userId): Collection
+    {
+        return $this->workspaceRepository->allForUser($userId)
+            ->map(fn (Workspace $workspace) => $this->presentationRow($workspace, $userId))
+            ->filter()
+            ->values();
     }
 
     /**
