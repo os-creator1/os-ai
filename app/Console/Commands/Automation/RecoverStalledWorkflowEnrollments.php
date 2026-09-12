@@ -11,10 +11,14 @@ use Illuminate\Console\Command;
  *
  * NAMING, DELIBERATELY DIFFERENT FROM THE CONTRACT. §8.2 describes one command,
  * `automation:workflows-resume-due`, doing two jobs: waking `waiting` enrollments
- * whose time has come, and recovering stalled `active` ones. The wait scheduler is
- * not part of this slice, so shipping a command called "resume-due" that resumes
- * nothing due would be misleading. This command is the recovery half only; the
- * wake-up half arrives with the wait slice, either here or beside it.
+ * whose time has come, and recovering stalled `active` ones. This command is the
+ * recovery half only.
+ *
+ * The wake half now exists beside it, as `automation:workflows-resume-due`
+ * (ResumeDueWorkflowEnrollments), and the two were kept apart rather than merged.
+ * They select disjoint sets — that command takes `status = waiting`, this one
+ * takes `status = active` — so no enrollment is ever eligible for both, and none
+ * of the semantics below had to change to make waiting journeys wake.
  *
  * It is emphatically NOT how Resume works. Resume re-dispatches held journeys
  * immediately through RedispatchHeldEnrollments, and this sweep skips paused

@@ -2,9 +2,11 @@
 
 namespace App\Library\Automation\Workflow;
 
+use App\Enums\Automation\Workflow\ConditionOperator;
 use App\Enums\Automation\Workflow\WorkflowEdgeKind;
 use App\Enums\Automation\Workflow\WorkflowNodeType;
 use App\Enums\Automation\Workflow\WorkflowTriggerType;
+use App\Library\Automation\Workflow\Conditions\ConditionSubjectRegistry;
 use App\Models\AutomationWorkflowVersion;
 use App\Models\ContactGroupFields;
 use App\Models\ContactGroups;
@@ -267,6 +269,94 @@ class WorkflowCompiler
 
             if (! $this->fieldBelongsToGroup($fieldId, $triggerGroupId, $businessId)) {
                 $errors[$entry['key']][] = 'That field does not belong to the contact group this workflow watches.';
+            }
+        }
+
+        foreach ($flattened as $entry) {
+            if ($entry['type'] !== WorkflowNodeType::IfElse) {
+                continue;
+            }
+
+            foreach ($this->conditionReferenceErrors($entry['config'] ?? [], $businessId) as $error) {
+                $errors[$entry['key']][] = $error;
+            }
+        }
+
+        return $errors;
+    }
+
+    /**
+     * §11 — every group and field an If/Else points at must belong to THIS
+     * Business, checked here against real rows.
+     *
+     * NodeTypeRegistry has already refused unknown subjects and illegal
+     * operators; it is pure and cannot ask whether a referenced row exists. This
+     * is the other half, and it is not the last one either — IfElseNodeExecutor
+     * re-derives the same chains at evaluation, because a pinned version outlives
+     * whatever was true when it was published.
+     *
+     * A custom field also fixes its own operator family, so a date field asked
+     * `contains` is refused here rather than quietly reading as text.
+     *
+     * @return list<string>
+     */
+    private function conditionReferenceErrors(array $config, int $businessId): array
+    {
+        $errors = [];
+        $conditions = is_array($config['conditions'] ?? null) ? array_values($config['conditions']) : [];
+
+        foreach ($conditions as $index => $condition) {
+            if (! is_array($condition)) {
+                continue;
+            }
+
+            $position = $index + 1;
+            $subject = is_string($condition['subject'] ?? null) ? $condition['subject'] : '';
+
+            if ($subject === ConditionSubjectRegistry::IN_GROUP) {
+                $operand = $condition['operand'] ?? null;
+                $groupId = is_int($operand) || (is_string($operand) && ctype_digit($operand)) ? (int) $operand : 0;
+
+                if ($groupId <= 0 || ! $this->groupBelongsToBusiness($groupId, $businessId)) {
+                    $errors[] = sprintf('Condition %d checks a contact group that does not belong to this business.', $position);
+                }
+
+                continue;
+            }
+
+            $fieldId = ConditionSubjectRegistry::customFieldId($subject);
+
+            if ($fieldId === null) {
+                continue;
+            }
+
+            $field = ContactGroupFields::query()
+                ->whereKey($fieldId)
+                ->whereExists(fn ($query) => $query
+                    ->selectRaw('1')
+                    ->from('contact_groups')
+                    ->whereColumn('contact_groups.id', 'contact_group_fields.contact_group_id')
+                    ->where('contact_groups.business_id', $businessId))
+                ->first();
+
+            if ($field === null) {
+                $errors[] = sprintf('Condition %d checks a contact field that does not belong to this business.', $position);
+
+                continue;
+            }
+
+            $operator = ConditionOperator::tryFrom((string) ($condition['operator'] ?? ''));
+
+            if ($operator === null) {
+                continue;
+            }
+
+            $allowed = ContactGroupFields::getControlNameByType((string) $field->type) === 'date'
+                ? ConditionOperator::forDate()
+                : ConditionOperator::forText();
+
+            if (! in_array($operator, $allowed, true)) {
+                $errors[] = sprintf('Condition %d uses a comparison that does not apply to that field.', $position);
             }
         }
 
