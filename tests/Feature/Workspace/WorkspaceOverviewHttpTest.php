@@ -436,12 +436,13 @@ class WorkspaceOverviewHttpTest extends TestCase
     }
 
     /**
-     * RFC-004 Milestone 3 correction round 1, item 3: the Plan & Capacity
-     * card must render the plan feature list and the full included/
-     * additional/effective capacity breakdown directly from the summary
-     * object, never recomputed in Blade.
+     * RFC-004 Milestone 3 correction round 1, item 3, moved with the plan to
+     * Settings → Plan & subscription: the account page only names the plan
+     * and links to it (no raw feature keys, no slot mechanics), and the plan
+     * page's capacity is the summary's own decision — included 3 +
+     * additional 1 = 4 here — never recomputed in Blade.
      */
-    public function test_plan_capacity_card_renders_feature_list_and_full_capacity_breakdown(): void
+    public function test_account_page_names_the_plan_and_the_plan_page_carries_the_capacity(): void
     {
         $customer = $this->actingAsHttpCustomer();
         $workspace = $this->createWorkspace($customer->user);
@@ -458,32 +459,53 @@ class WorkspaceOverviewHttpTest extends TestCase
             1,
         );
 
-        $response = $this->get(route('customer.workspaces.show', ['workspaceUid' => $workspace->uid]))->assertOk();
+        $account = $this->get(route('customer.workspaces.show', ['workspaceUid' => $workspace->uid]))->assertOk();
 
+        $account->assertSee('href="' . route('customer.workspaces.plan.show', $workspace->uid) . '"', false);
+        $this->assertMatchesRegularExpression('/data-role="account-plan">\s*Core\s/', $account->getContent());
+        foreach (['Plan &amp; Capacity', 'Included slots', 'Effective capacity', 'id="workspace-plan-capacity"', 'data-role="plan-features"'] as $gone) {
+            $account->assertDontSee($gone, false);
+        }
+
+        $plan = $this->get(route('customer.workspaces.plan.show', $workspace->uid))->assertOk();
+        // The capacity row is the decision's own arithmetic — 3 included + 1
+        // allocated = 4 for this deliberately widened catalog row — printed
+        // as the presenter received it. Blade recomputes nothing, and the old
+        // slot-mechanics vocabulary is gone.
+        $this->assertMatchesRegularExpression(
+            '/<dt[^>]*>Businesses<\/dt>\s*<dd[^>]*>4 Businesses · 0 in use<\/dd>/',
+            $plan->getContent()
+        );
+        $plan->assertDontSee('0 of 4 in use');
+        foreach (['Included slots', 'Additional slots', 'Effective capacity'] as $gone) {
+            $plan->assertDontSee($gone);
+        }
         // Customer names, never machine keys (crm, website_generation), and
         // nothing the Core packaging lists that is not built yet (calendar, forms…).
-        $response->assertSee('<dd class="col-sm-8" data-role="plan-features">Client Management, Inbox &amp; Conversations, Automations, Website</dd>', false);
-        $response->assertSee('Included slots');
-        $response->assertSee('3'); // business_slot_included seeded for Core
-        $response->assertSee('Additional slots');
-        $response->assertSee('1');
-        $response->assertSee('Effective capacity');
-        $response->assertSee('4'); // included 3 + additional 1
+        foreach (['Client Management', 'Inbox &amp; Conversations', 'Automations', 'Website'] as $name) {
+            $plan->assertSee($name, false);
+        }
+        foreach (['website_generation', 'Calendar', 'Forms'] as $absent) {
+            $plan->assertDontSee($absent);
+        }
     }
 
     /**
-     * An unassigned Workspace's capacity decision has a null
-     * effectiveCapacity ('workspace_plan_unassigned') -- the card must
-     * render a meaningful unavailable state, never a blank denominator.
+     * An unassigned Workspace has no plan to describe: both pages say so
+     * plainly instead of rendering a blank or a machine reason.
      */
-    public function test_plan_capacity_card_renders_meaningful_unavailable_state_for_an_unassigned_workspace(): void
+    public function test_an_unassigned_workspace_says_no_plan_is_set_up(): void
     {
         $customer = $this->actingAsHttpCustomer();
         $workspace = $this->createWorkspace($customer->user);
 
-        $response = $this->get(route('customer.workspaces.show', ['workspaceUid' => $workspace->uid]))->assertOk();
+        $this->get(route('customer.workspaces.show', ['workspaceUid' => $workspace->uid]))->assertOk()
+            ->assertSee('Not set up yet')
+            ->assertDontSee('workspace_plan_unassigned');
 
-        $response->assertSee('Unavailable (workspace_plan_unassigned)');
+        $this->get(route('customer.workspaces.plan.show', $workspace->uid))->assertOk()
+            ->assertSee('No plan is set up for')
+            ->assertDontSee('workspace_plan_unassigned');
     }
 
     private function fixturePlatformAdminId(): int
