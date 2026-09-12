@@ -61,34 +61,77 @@ class WorkspacePlanPageTest extends TestCase
         $this->assertSame('Agency', $this->text($page, 'plan-name'));
         $page->assertSee('Northwind Agency');
         $this->assertContains('Prospecting', $this->includedNames($page));
-        $this->assertMatchesRegularExpression('/<dt[^>]*>Client accounts<\/dt>\s*<dd[^>]*>2 in use · no limit<\/dd>/', $page->getContent());
     }
 
     /**
-     * Capacity is whatever the canonical decision says — never a number
-     * written into the page.
+     * The corrected capacity model (RFC-004 §33): Core = 1 Business,
+     * Growth = 1 Business, Agency = unlimited Businesses, with the
+     * 3-included / 4-and-5-by-allocation / 6+-requires-Agency rule governing
+     * PHYSICAL locations. Core and Growth still carry Milestone 1's
+     * superseded Business-slot data (3 included, 5 max) until §33's additive
+     * migration lands, so the page shows no Business figure for them rather
+     * than the withdrawn limit — and never restates the rule itself.
      */
-    public function test_business_capacity_is_the_canonical_decision(): void
+    public function test_core_and_growth_never_show_the_superseded_business_slot_numbers(): void
     {
-        [$owner, , $workspace] = $this->tenant(WorkspacePlanTier::Growth);
+        foreach ([WorkspacePlanTier::Core, WorkspacePlanTier::Growth] as $tier) {
+            [$owner, , $workspace] = $this->tenant($tier, 'Tier ' . $tier->value, 'Own Account');
+            $this->authenticateAs($owner);
+            $decision = app(EntitlementManager::class)->decideBusinessSlotCapacity($workspace);
+
+            $section = $this->section($this->planPage($workspace));
+
+            // The catalog still says 3 included / 5 max for this tier — proof
+            // the page is not simply echoing what it reads.
+            $this->assertFalse($decision->unlimited);
+            $this->assertSame(3, $decision->includedSlots);
+            $this->assertStringNotContainsString('of ' . $decision->effectiveCapacity . ' in use', $section);
+            $this->assertStringNotContainsString('data-role="plan-capacity"', $section);
+
+            foreach (['1 of 3 Businesses', 'Businesses', 'Client accounts', 'Included slots', 'Additional slots', 'Effective capacity'] as $absent) {
+                $this->assertStringNotContainsString($absent, $section, $tier->value . ' must not state a Business limit.');
+            }
+        }
+    }
+
+    /**
+     * Unlimited is the one Business figure the catalog states and §33 agrees
+     * with, so Agency shows it — read from the decision, never written here.
+     */
+    public function test_agency_shows_unlimited_businesses_from_the_canonical_decision(): void
+    {
+        [$owner, , $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Client One', 'Northwind Agency');
+        $this->addBusiness($owner, $workspace, 'Client Two');
         $this->authenticateAs($owner);
         $decision = app(EntitlementManager::class)->decideBusinessSlotCapacity($workspace);
 
         $page = $this->planPage($workspace);
 
-        $this->assertNotNull($decision->effectiveCapacity);
+        $this->assertTrue($decision->unlimited);
         $this->assertMatchesRegularExpression(
-            '/<dt[^>]*>Businesses<\/dt>\s*<dd[^>]*>' . $decision->currentBusinessCount . ' of ' . $decision->effectiveCapacity . ' in use<\/dd>/',
+            '/<dt[^>]*>Client accounts<\/dt>\s*<dd[^>]*>' . $decision->currentBusinessCount . ' in use · no limit<\/dd>/',
             $page->getContent()
         );
+        $this->assertStringNotContainsString(' of ', $this->between($page->getContent(), 'data-role="plan-capacity"', '</dl>'));
+    }
 
-        // A change to the canonical decision (additional slots allocated) is
-        // what the page shows next — nothing is fixed in the page.
-        app(EntitlementManager::class)->setAdditionalBusinessSlots($workspace->fresh(), 2, $this->platformAdminId(), 'Fixture allocation.');
-        $changed = app(EntitlementManager::class)->decideBusinessSlotCapacity($workspace->fresh());
+    /**
+     * Physical-location capacity is not readable on main yet (§33 contracts
+     * the migration and the decision over it), so the page states nothing
+     * about locations and invents no location price.
+     */
+    public function test_no_location_capacity_or_location_price_is_invented(): void
+    {
+        foreach ([WorkspacePlanTier::Core, WorkspacePlanTier::Growth, WorkspacePlanTier::Agency] as $tier) {
+            [$owner, , $workspace] = $this->tenant($tier, 'Tier ' . $tier->value, 'Own Account');
+            $this->authenticateAs($owner);
 
-        $this->assertNotSame($decision->effectiveCapacity, $changed->effectiveCapacity);
-        $this->planPage($workspace)->assertSee($changed->currentBusinessCount . ' of ' . $changed->effectiveCapacity . ' in use');
+            $section = $this->visibleText($this->section($this->planPage($workspace)));
+
+            foreach (['Location', 'location', 'Included locations', 'branch', 'storefront'] as $absent) {
+                $this->assertStringNotContainsString($absent, $section, $tier->value . ' must say nothing about physical locations yet.');
+            }
+        }
     }
 
     public function test_features_that_do_not_exist_yet_are_not_listed_and_no_machine_key_is_shown(): void
@@ -289,6 +332,17 @@ class WorkspacePlanPageTest extends TestCase
         $this->assertSame(1, preg_match('/data-role="plan-billing">.*?<dd[^>]*>([^<]+)<\/dd>/s', $page->getContent(), $match), 'Billing not rendered.');
 
         return trim(html_entity_decode($match[1]));
+    }
+
+    private function between(string $haystack, string $start, string $end): string
+    {
+        $from = strpos($haystack, $start);
+        $this->assertNotFalse($from, "Missing [{$start}].");
+        $from += strlen($start);
+        $to = strpos($haystack, $end, $from);
+        $this->assertNotFalse($to, "Missing [{$end}].");
+
+        return substr($haystack, $from, $to - $from);
     }
 
     /**

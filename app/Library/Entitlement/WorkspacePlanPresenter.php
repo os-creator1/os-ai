@@ -82,35 +82,53 @@ final class WorkspacePlanPresenter
     }
 
     /**
-     * Business (Agency: client account) capacity, from the canonical
-     * EntitlementManager::decideBusinessSlotCapacity() decision the summary
-     * carries — whatever the catalog and allocations say today.
+     * Business (Agency: client account) capacity.
+     *
+     * RFC-004 §33 (v1.4, on main) is the canonical model: Core = 1 Business,
+     * Growth = 1 Business, Agency = unlimited Businesses, while the
+     * 3-included / 4-and-5-by-allocation / 6+-requires-Agency rule governs
+     * PHYSICAL locations, not Businesses.
+     *
+     * Only "unlimited" is a figure the running catalog states and §33 agrees
+     * with, so only that is shown. Core and Growth still carry Milestone 1's
+     * superseded Business-slot numbers (business_slot_included = 3,
+     * business_slot_max = 5) because §33's additive migration — the one that
+     * corrects the data — has not landed, and §33 records that the merged M1
+     * seed is historical and is not edited. Printing those would state a
+     * limit the product has withdrawn ("1 of 3 Businesses"); printing "1"
+     * would make this page a second authority for a rule it cannot read. So
+     * no Business figure is shown until the canonical data says it — and this
+     * method needs no change when it does.
      *
      * @return list<array{label: string, value: string}>
      */
     private function businessCapacity(WorkspaceEntitlementSummary $summary): array
     {
         $capacity = $summary->capacity;
-        $label = $summary->tier === WorkspacePlanTier::Agency ? 'Client accounts' : 'Businesses';
 
-        if ($capacity->unlimited) {
-            return [['label' => $label, 'value' => "{$capacity->currentBusinessCount} in use · no limit"]];
-        }
-
-        if ($capacity->effectiveCapacity === null) {
+        if (! $capacity->unlimited) {
             return [];
         }
 
-        return [['label' => $label, 'value' => "{$capacity->currentBusinessCount} of {$capacity->effectiveCapacity} in use"]];
+        $label = $summary->tier === WorkspacePlanTier::Agency ? 'Client accounts' : 'Businesses';
+
+        return [['label' => $label, 'value' => "{$capacity->currentBusinessCount} in use · no limit"]];
     }
 
     /**
-     * Physical-location capacity. It is not canonical on main yet: the
-     * Customer Experience Slice 1A capacity correction introduces it, decided
-     * per Business. When that lands, its per-Business decision is added here
-     * as rows like the Business row above — the page renders whatever rows
-     * this returns, so nothing else changes. Until then nothing is shown
-     * rather than an old or guessed number.
+     * Physical-location capacity, per Business.
+     *
+     * Not readable on main yet: RFC-004 §33 contracts the additive migration
+     * that adds workspace_plan_catalog.location_slot_included /
+     * location_slot_max / unlimited_location_slots /
+     * additional_location_slot_price_ratio plus the per-Business allocation
+     * columns, and the decision over them. Until that lands there is nothing
+     * canonical to read, and the included / allocation / Agency rules are not
+     * restated here — this page never becomes a second authority for
+     * capacity, and never invents a location price the catalog does not
+     * carry. When it lands, this method asks that decision for each Business
+     * in the account and returns one row each; the page renders whatever rows
+     * it returns, so nothing else changes.
      *
      * @return list<array{label: string, value: string}>
      */
