@@ -438,12 +438,17 @@ trait CreatesDashboardFixtures
         return $context;
     }
 
-    /** The snapshot the dashboard would render for this actor. */
-    protected function dashboardFor(User $user): DashboardSnapshot
+    /**
+     * The snapshot the dashboard would render for this actor, for the period
+     * its query string selected (H-3: `range`, `start`, `end`).
+     *
+     * @param  array<string, mixed>  $rangeInput
+     */
+    protected function dashboardFor(User $user, array $rangeInput = []): DashboardSnapshot
     {
         $context = $this->resolvedContext($user);
 
-        return app(BusinessHomePresenter::class)->present($context, $user)
+        return app(BusinessHomePresenter::class)->present($context, $user, $rangeInput)
             ?? app(AccountHomePresenter::class)->present($context, $user);
     }
 

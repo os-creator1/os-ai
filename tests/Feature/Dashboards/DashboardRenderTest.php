@@ -85,7 +85,9 @@ class DashboardRenderTest extends TestCase
         $response->assertSee(route('customer.workspaces.businesses.analytics.overview', [$workspaceUid, $business->uid]), false);
         $response->assertDontSee(route('customer.analytics.entry'), false);
         $response->assertDontSee('id="sms-reports"', false);
-        $response->assertDontSee('apexcharts', false);
+        // H-3: the one chart Home now carries is the Business performance
+        // series, loaded from B5's own endpoint — never the legacy pie.
+        $response->assertDontSee('sms-reports', false);
     }
 
     public function test_admin_home_returns_200(): void

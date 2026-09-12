@@ -32,13 +32,17 @@ class DashboardHeadlinesTest extends TestCase
     use CreatesDashboardFixtures;
 
     /**
-     * Home's canonical headline keys after H-1: outbound volume,
-     * provider-accepted and failed-send figures left Home for Results.
+     * Home's canonical Business performance figures after H-3, in KPI
+     * priority order and no others (§2.5).
      */
-    private const KEYS = ['new_contacts', 'conversations_started', 'automation_runs'];
+    private const KEYS = ['new_contacts', 'new_conversations', 'messages_received'];
 
-    /** The three H-1 removed, asserted absent wherever Home renders. */
-    private const REMOVED_KEYS = ['messages_sent', 'provider_accepted', 'confirmed_failed'];
+    /**
+     * Removed from Home and asserted absent wherever it renders: outbound
+     * volume, provider acceptance and failed sends (H-1), and automation runs
+     * (H-3 — Automations keeps its own band and its own canonical source).
+     */
+    private const REMOVED_KEYS = ['messages_sent', 'provider_accepted', 'confirmed_failed', 'automation_runs'];
 
     protected function setUp(): void
     {
@@ -55,11 +59,12 @@ class DashboardHeadlinesTest extends TestCase
     {
         $up = new HeadlineComparison(15, 12);
         $this->assertSame([3, 25.0, HeadlineTrend::Up], [$up->absoluteDelta, $up->percentDelta, $up->trend]);
-        $this->assertSame('Up 3 (25.0%) from 12 in the previous 30 days.', $up->sentence());
+        $this->assertSame('Up 3 (25.0%) from 12 in the previous 30 days.', $up->sentence('the previous 30 days'));
 
         $down = new HeadlineComparison(2, 3);
         $this->assertSame([-1, -33.3, HeadlineTrend::Down], [$down->absoluteDelta, $down->percentDelta, $down->trend]);
-        $this->assertSame('Down 1 (33.3%) from 3 in the previous 30 days.', $down->sentence());
+        $this->assertSame('Down 1 (33.3%) from 3 in the previous 30 days.', $down->sentence('the previous 30 days'));
+        $this->assertSame('Down 1 (33.3%) from 3 in the previous 10 days.', $down->sentence('the previous 10 days'), 'The sentence never claims a length the window does not cover.');
 
         $same = new HeadlineComparison(7, 7);
         $this->assertSame([0, 0.0, HeadlineTrend::Unchanged], [$same->absoluteDelta, $same->percentDelta, $same->trend]);
@@ -67,12 +72,12 @@ class DashboardHeadlinesTest extends TestCase
         // #48 — previous = 0: no percentage at all, plain words.
         $fromZero = new HeadlineComparison(4, 0);
         $this->assertSame([4, null, HeadlineTrend::Up], [$fromZero->absoluteDelta, $fromZero->percentDelta, $fromZero->trend]);
-        $this->assertSame('Up from 0 in the previous 30 days.', $fromZero->sentence());
+        $this->assertSame('Up from 0 in the previous 30 days.', $fromZero->sentence('the previous 30 days'));
 
         // #49 — both = 0.
         $zeros = new HeadlineComparison(0, 0);
         $this->assertSame([0, null, HeadlineTrend::Unchanged], [$zeros->absoluteDelta, $zeros->percentDelta, $zeros->trend]);
-        $this->assertSame('No change: 0 in both the last 30 days and the previous 30 days.', $zeros->sentence());
+        $this->assertSame('No change: 0 in this period and in the previous 30 days.', $zeros->sentence('the previous 30 days'));
 
         // One decimal place, B5's own precedent.
         $this->assertSame(14.3, (new HeadlineComparison(8, 7))->percentDelta);
@@ -97,8 +102,8 @@ class DashboardHeadlinesTest extends TestCase
         $headlines = $this->headlines($customer->user);
 
         $this->assertSame(HeadlinePolarity::DescriptiveGrowth, $headlines['new_contacts']->polarity);
-        $this->assertSame(HeadlinePolarity::Descriptive, $headlines['conversations_started']->polarity);
-        $this->assertSame(HeadlinePolarity::Descriptive, $headlines['automation_runs']->polarity);
+        $this->assertSame(HeadlinePolarity::Descriptive, $headlines['new_conversations']->polarity);
+        $this->assertSame(HeadlinePolarity::Descriptive, $headlines['messages_received']->polarity);
     }
 
     // =================================================================
@@ -108,16 +113,17 @@ class DashboardHeadlinesTest extends TestCase
     public function test_every_headline_equals_the_b5_or_slice_2b_figure_for_both_periods(): void
     {
         [$customer, $business] = $this->tenant(WorkspacePlanTier::Growth, 'Equal Venue', 'Equal Account');
-        $this->sent($business, 5, '2026-09-01');
-        $this->sent($business, 1, '2026-09-02', 'Undelivered');
-        $this->sent($business, 3, '2026-07-20');
-        $this->sent($business, 2, '2026-07-21', 'Expired');
-        $this->contactsAdded($business, 4, '2026-08-30');
-        $this->contactsAdded($business, 6, '2026-07-25');
+        // Default window (This month on 10 Sep 2026): 1–10 Sep, compared with
+        // the 10 days before it, 22–31 Aug.
+        $this->contactsAdded($business, 4, '2026-09-02');
+        $this->contactsAdded($business, 6, '2026-08-25');
         $this->conversationsStarted($business, 2, '2026-09-09');
-        $this->conversationsStarted($business, 7, '2026-08-01');
-        $this->automationRuns($business, 3, '2026-08-15');
-        $this->automationRuns($business, 1, '2026-07-15', 'failed');
+        $this->conversationsStarted($business, 7, '2026-08-24');
+        $this->receivedAt($business, 5, $this->localNoon('2026-09-03', $business->timezone));
+        $this->receivedAt($business, 3, $this->localNoon('2026-08-27', $business->timezone));
+        // Outside both windows, and outbound: never counted by any tile.
+        $this->contactsAdded($business, 9, '2026-07-25');
+        $this->sent($business, 9, '2026-09-04');
         $this->authenticateAs($customer);
 
         $headlines = $this->headlines($customer->user);
@@ -127,8 +133,8 @@ class DashboardHeadlinesTest extends TestCase
 
         $expect = [
             'new_contacts' => fn (AnalyticsDateRange $r) => $queries->contactKpis($business, $r)['kpis']->newInRange,
-            'conversations_started' => fn (AnalyticsDateRange $r) => $conversations->startedCount($business, $r->startUtc, $r->endUtc),
-            'automation_runs' => fn (AnalyticsDateRange $r) => $queries->automationKpis($business, $r)->executionsInRange,
+            'new_conversations' => fn (AnalyticsDateRange $r) => $conversations->startedCount($business, $r->startUtc, $r->endUtc),
+            'messages_received' => fn (AnalyticsDateRange $r) => $queries->messageKpis($business, $r)['kpis']->inbound,
         ];
 
         foreach ($expect as $key => $source) {
@@ -138,28 +144,33 @@ class DashboardHeadlinesTest extends TestCase
 
         $this->assertSame(self::KEYS, array_keys($headlines), 'Home carries exactly the canonical figures, in KPI-priority order.');
         $this->assertSame([4, 6], [$headlines['new_contacts']->comparison->current, $headlines['new_contacts']->comparison->previous]);
-        $this->assertSame([2, 7], [$headlines['conversations_started']->comparison->current, $headlines['conversations_started']->comparison->previous]);
-        $this->assertSame([3, 1], [$headlines['automation_runs']->comparison->current, $headlines['automation_runs']->comparison->previous]);
+        $this->assertSame([2, 7], [$headlines['new_conversations']->comparison->current, $headlines['new_conversations']->comparison->previous]);
+        $this->assertSame([5, 3], [$headlines['messages_received']->comparison->current, $headlines['messages_received']->comparison->previous]);
     }
+
 
     public function test_conversations_are_counted_by_the_slice_2b_seam_with_the_ranges_bounds_unconverted(): void
     {
         [$customer, $business] = $this->tenant(WorkspacePlanTier::Growth, 'Seam Venue', 'Seam Account');
-        // New York local midnight that opens the current window is 04:00 UTC.
-        // The rows sit asymmetrically around it, so bounds shifted by the
-        // four-hour offset (a second conversion) would change the counts.
-        $this->conversationAt($business, '2026-08-12 02:00:00'); // 22:00 on 11 Aug: previous window
-        $this->conversationAt($business, '2026-08-12 03:59:59'); // 23:59:59 on 11 Aug: previous window
-        $this->conversationAt($business, '2026-08-12 04:00:00'); // 00:00:00 on 12 Aug: current window
-        $this->conversationAt($business, '2026-09-10 12:00:00'); // 08:00 on 10 Sep: current window
-        $this->conversationAt($business, '2026-09-11 04:00:00'); // 11 Sep: after both windows
+        ['current' => $current, 'previous' => $previous] = BusinessDashboardAnalyticsPresenter::ranges($business->timezone);
+
+        // The rows sit around the window's own boundaries, so bounds shifted
+        // by any second conversion would change the counts.
+        $stamp = fn ($instant) => $instant->setTimezone((string) config('app.timezone', 'UTC'))->format('Y-m-d H:i:s');
+        $this->conversationAt($business, $stamp($current->startUtc->subSeconds(2)));   // previous window
+        $this->conversationAt($business, $stamp($current->startUtc->subSecond()));     // previous window
+        $this->conversationAt($business, $stamp($current->startUtc));                  // current window opens here
+        $this->conversationAt($business, $stamp($current->endUtc->subHour()));         // last hour of the window
+        $this->conversationAt($business, $stamp($current->endUtc));                    // after it: half-open
+        $this->conversationAt($business, $stamp($previous->startUtc->subSecond()));    // before both
         $this->authenticateAs($customer);
 
-        $headline = $this->headlines($customer->user)['conversations_started'];
+        $headline = $this->headlines($customer->user)['new_conversations'];
 
         $this->assertSame(2, $headline->comparison->current);
         $this->assertSame(2, $headline->comparison->previous);
     }
+
 
     public function test_no_chat_boxes_query_originates_in_dashboard_code_or_views(): void
     {
@@ -198,19 +209,36 @@ class DashboardHeadlinesTest extends TestCase
     // #38 — one fixed period, no picker
     // =================================================================
 
-    public function test_the_page_uses_the_last_30_days_preset_and_offers_no_range_picker(): void
+    /**
+     * H-3 replaced Slice 4's fixed window: Home opens on This month and
+     * offers the SAME period control Results does, so a period chosen on
+     * either page means the same window on the other.
+     */
+    public function test_the_page_opens_on_this_month_and_offers_the_results_period_control(): void
     {
         [$customer, $business] = $this->tenant(WorkspacePlanTier::Growth, 'Fixed Venue', 'Fixed Account');
         $this->authenticateAs($customer);
 
-        $html = $this->get(route('user.home', ['range' => 'last_7_days', 'start' => '2026-01-01', 'end' => '2026-01-31']))->assertOk()->getContent();
-        $band = $this->between($html, 'data-band="headlines"', '</section>');
+        $band = $this->between($this->home()->assertOk()->getContent(), 'data-band="headlines"', '</section>');
 
-        $this->assertStringContainsString('Aug 12 – Sep 10, compared with the previous 30 days (Jul 13 – Aug 11).', html_entity_decode($band));
-        $this->assertStringNotContainsString('<select', $band);
-        $this->assertStringNotContainsString('<input', $band);
-        $this->assertStringNotContainsString('range=', $band);
+        $this->assertStringContainsString('Sep 1 – Sep 10, compared with the 10 days before it (Aug 22 – Aug 31).', html_entity_decode($band));
+        $this->assertStringContainsString('data-role="analytics-range"', $band, 'The Results range control itself, not a second implementation.');
+        $this->assertStringContainsString('data-role="range-preset"', $band);
+
+        foreach (AnalyticsDateRange::SELECTABLE_PRESETS as $preset) {
+            $this->assertStringContainsString('value="' . $preset . '"', $band, "{$preset} is offered.");
+        }
+
+        // A chosen preset is honoured, and the window moves with it.
+        $chosen = $this->between(
+            $this->get(route('user.home', ['range' => AnalyticsDateRange::PRESET_LAST_7_DAYS]))->assertOk()->getContent(),
+            'data-band="headlines"',
+            '</section>',
+        );
+
+        $this->assertStringContainsString('Sep 4 – Sep 10, compared with the 7 days before it (Aug 28 – Sep 3).', html_entity_decode($chosen));
     }
+
 
     // =================================================================
     // #48, #49, #50 — rendered directions and zeros
@@ -250,20 +278,20 @@ class DashboardHeadlinesTest extends TestCase
 
         $headlines = $this->headlines($customer->user);
         $this->assertNull($headlines['new_contacts']->comparison->percentDelta);
-        $this->assertSame('Up from 0 in the previous 30 days.', $headlines['new_contacts']->comparisonSentence);
+        $this->assertSame('Up from 0 in the previous 10 days.', $headlines['new_contacts']->comparisonSentence);
 
         // Both zero.
         $this->assertSame([0, 0, null, HeadlineTrend::Unchanged], [
-            $headlines['conversations_started']->comparison->current,
-            $headlines['conversations_started']->comparison->absoluteDelta,
-            $headlines['conversations_started']->comparison->percentDelta,
-            $headlines['conversations_started']->comparison->trend,
+            $headlines['new_conversations']->comparison->current,
+            $headlines['new_conversations']->comparison->absoluteDelta,
+            $headlines['new_conversations']->comparison->percentDelta,
+            $headlines['new_conversations']->comparison->trend,
         ]);
 
         $main = $this->mainText($this->home()->assertOk()->getContent());
 
-        $this->assertStringContainsString('Up from 0 in the previous 30 days.', $main);
-        $this->assertStringContainsString('No change: 0 in both the last 30 days and the previous 30 days.', $main);
+        $this->assertStringContainsString('Up from 0 in the previous 10 days.', $main);
+        $this->assertStringContainsString('No change: 0 in this period and in the previous 10 days.', $main);
         $this->assertDoesNotMatchRegularExpression('/\b(INF|NAN)\b|∞|Infinity/i', $main);
         $this->assertStringNotContainsString('(100.0%) from 0', $main);
     }
@@ -313,15 +341,15 @@ class DashboardHeadlinesTest extends TestCase
         $headlines = $this->headlines($customer->user);
         $html = $this->home()->assertOk()->getContent();
 
-        foreach (['conversations_started', 'automation_runs', 'new_contacts'] as $key) {
+        foreach (self::KEYS as $key) {
             $this->assertSame(HeadlineTrend::Up, $headlines[$key]->comparison->trend, "Precondition: {$key} increased.");
             $this->assertNull($headlines[$key]->judgement, "{$key} carries no judgement.");
             $this->assertDoesNotMatchRegularExpression('/\b(good|great|successful|healthy|better|improved)\b/i', $headlines[$key]->interpretation, $key);
             $this->assertDoesNotMatchRegularExpression('/data-headline="' . $key . '"[^>]*data-judgement=/', $html, "{$key} renders no judgement badge.");
         }
 
-        $this->assertStringContainsString('Volume is activity, not a success measure.', $headlines['conversations_started']->interpretation);
-        $this->assertStringContainsString('Runs are activity, not a success measure.', $headlines['automation_runs']->interpretation);
+        $this->assertStringContainsString('A change in volume is a fact, not a result.', $headlines['new_conversations']->interpretation);
+        $this->assertStringContainsString('A change in volume is a fact, not a result.', $headlines['messages_received']->interpretation);
         $this->assertDoesNotMatchRegularExpression('/\b(revenue|lead quality|pipeline|leads?)\b/i', $headlines['new_contacts']->interpretation);
     }
 
@@ -350,16 +378,13 @@ class DashboardHeadlinesTest extends TestCase
     /** Every headline figure with `current` in the current window and `previous` in the previous one. */
     private function shape(Business $business, int $current, int $previous): void
     {
-        $this->sent($business, $current, '2026-09-01');
-        $this->sent($business, $previous, '2026-07-20');
-        $this->sent($business, $current, '2026-09-01', 'Undelivered');
-        $this->sent($business, $previous, '2026-07-20', 'Undelivered');
+        // Inside the default window (1–10 Sep 2026) and the 10 days before it.
         $this->contactsAdded($business, $current, '2026-09-01');
-        $this->contactsAdded($business, $previous, '2026-07-20');
+        $this->contactsAdded($business, $previous, '2026-08-25');
         $this->conversationsStarted($business, $current, '2026-09-01');
-        $this->conversationsStarted($business, $previous, '2026-07-20');
-        $this->automationRuns($business, $current, '2026-09-01');
-        $this->automationRuns($business, $previous, '2026-07-20');
+        $this->conversationsStarted($business, $previous, '2026-08-25');
+        $this->receivedAt($business, $current, $this->localNoon('2026-09-01', $business->timezone));
+        $this->receivedAt($business, $previous, $this->localNoon('2026-08-25', $business->timezone));
     }
 
     private function conversationAt(Business $business, string $storageTimestamp): void
