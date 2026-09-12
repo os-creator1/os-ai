@@ -173,6 +173,8 @@
                 <dd class="col-6 col-md-8" data-role="prospecting-contacted">{{ number_format($prospecting['contacted']) }}</dd>
                 <dt class="col-6 col-md-4 text-label">Replies</dt>
                 <dd class="col-6 col-md-8" data-role="prospecting-replies">{{ number_format($prospecting['replies']) }}</dd>
+                <dt class="col-6 col-md-4 text-label">Positive replies</dt>
+                <dd class="col-6 col-md-8" data-role="prospecting-positive">{{ number_format($prospecting['positiveReplies']) }}</dd>
                 <dt class="col-6 col-md-4 text-label">Booked calls</dt>
                 <dd class="col-6 col-md-8" data-role="prospecting-booked">{{ number_format($prospecting['booked']) }}</dd>
                 <dt class="col-6 col-md-4 text-label">Failed sends</dt>
