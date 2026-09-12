@@ -16,16 +16,50 @@
 
 @section('title', ucfirst($accountNoun) . ' overview')
 
+@section('vendor-style')
+    <link rel="stylesheet" href="{{ asset(mix('vendors/css/forms/select/select2.min.css')) }}">
+@endsection
+
+@section('vendor-script')
+    <script src="{{ asset(mix('vendors/js/forms/select/select2.full.min.js')) }}"></script>
+@endsection
+
 @section('content')
     <section id="workspace-overview">
         <div class="row">
-            <div class="col-12">
-                <a href="{{ route('customer.workspaces.index') }}">Back to {{ $accountNounPlural }}</a>
-            </div>
+            @if (request()->attributes->get('showsAccountChooser', false))
+                <div class="col-12">
+                    <a href="{{ route('customer.workspaces.index') }}">Back to {{ $accountNounPlural }}</a>
+                </div>
+            @endif
 
             <div class="col-12">
+                {{-- A successful change is confirmed by the product's compact toast
+                     (toastr, loaded on every page: auto-dismissing, announced
+                     politely to assistive technology). The alert below is only
+                     the fallback when toastr is unavailable; errors stay as
+                     full, persistent alerts. --}}
                 @if (session('flash_success'))
-                    <x-alert variant="success">{{ session('flash_success') }}</x-alert>
+                    <div data-role="flash-success-fallback" hidden>
+                        <x-alert variant="success">{{ session('flash_success') }}</x-alert>
+                    </div>
+                    <script>
+                        document.addEventListener('DOMContentLoaded', function () {
+                            if (window.toastr) {
+                                window.toastr.success(@json(session('flash_success')), '', {
+                                    closeButton: true,
+                                    positionClass: 'toast-top-right',
+                                    progressBar: true,
+                                    newestOnTop: true,
+                                    rtl: typeof isRtl !== 'undefined' && isRtl
+                                });
+
+                                return;
+                            }
+
+                            document.querySelector('[data-role="flash-success-fallback"]').hidden = false;
+                        });
+                    </script>
                 @endif
 
                 @if (session('flash_error'))
@@ -72,53 +106,18 @@
                         </form>
                     @endif
 
-                    @if ($workspace['role'] === 'Owner')
-                        @if ($workspace['is_active'])
-                            <form method="POST" data-workspace-action="deactivate" class="mt-1">
-                                @csrf
-
-                                <button type="submit" class="btn btn-outline-danger">Deactivate {{ $accountNoun }}</button>
-                            </form>
-                        @else
-                            <form method="POST" data-workspace-action="reactivate" class="mt-1">
-                                @csrf
-
-                                <button type="submit" class="btn btn-outline-success">Reactivate {{ $accountNoun }}</button>
-                            </form>
-                        @endif
-
-                        <form method="POST" data-workspace-action="ownership/transfer" class="mt-1">
+                    {{-- Account settings are the account name and the team. Deactivating
+                         the account and transferring ownership are not customer
+                         controls here: cancellation belongs to Plan & subscription,
+                         and a real ownership handover needs its own designed flow
+                         (identity by email, explicit confirmation, audit). The
+                         backend actions stay in place for support. An account that
+                         is already inactive can still be reactivated. --}}
+                    @if ($workspace['role'] === 'Owner' && ! $workspace['is_active'])
+                        <form method="POST" data-workspace-action="reactivate" class="mt-1">
                             @csrf
 
-                            <x-input name="new_owner_user_uid" label="New owner User UID" type="text" value="{{ old('new_owner_user_uid') }}" required />
-
-                            <x-select
-                                name="previous_owner_disposition"
-                                label="Previous owner disposition"
-                                :options="['deactivate' => 'Deactivate previous owner', 'convert_to_admin' => 'Convert previous owner to Admin']"
-                                :selected="old('previous_owner_disposition', 'deactivate')"
-                            />
-
-                            <div class="mb-1" data-ownership-transfer-admin-fields>
-                                <label class="form-label" for="ownership-transfer-scope">Business access</label>
-                                <select class="form-control" id="ownership-transfer-scope" name="business_access_scope">
-                                    <option value="all">All Businesses</option>
-                                    <option value="selected">Selected Businesses</option>
-                                </select>
-
-                                @if (! empty($manageableBusinesses))
-                                    <div class="mt-1">
-                                        @foreach ($manageableBusinesses as $business)
-                                            <div class="form-check form-check-inline">
-                                                <input class="form-check-input" type="checkbox" name="business_uids[]" value="{{ $business['uid'] }}" id="ownership-transfer-business-{{ $business['uid'] }}">
-                                                <label class="form-check-label" for="ownership-transfer-business-{{ $business['uid'] }}">{{ $business['name'] }}</label>
-                                            </div>
-                                        @endforeach
-                                    </div>
-                                @endif
-                            </div>
-
-                            <button type="submit" class="btn btn-outline-warning">Transfer ownership</button>
+                            <button type="submit" class="btn btn-outline-success">Reactivate {{ $accountNoun }}</button>
                         </form>
                     @endif
                 </x-card>
@@ -142,14 +141,11 @@
                                     <dt class="col-sm-4">Status</dt>
                                     <dd class="col-sm-8">{{ ucfirst($entitlement['summary']->status->value) }}</dd>
 
+                                    {{-- Customer names only (PlatformFeatureCopy); machine keys and
+                                         features not built yet are never listed. --}}
+                                    @php $planFeatureNames = \App\Library\Entitlement\PlatformFeatureCopy::names($entitlement['summary']->planFeatureKeys); @endphp
                                     <dt class="col-sm-4">Plan features</dt>
-                                    <dd class="col-sm-8">
-                                        @if (empty($entitlement['summary']->planFeatureKeys))
-                                            None
-                                        @else
-                                            {{ implode(', ', $entitlement['summary']->planFeatureKeys) }}
-                                        @endif
-                                    </dd>
+                                    <dd class="col-sm-8" data-role="plan-features">{{ $planFeatureNames === [] ? 'None' : implode(', ', $planFeatureNames) }}</dd>
                                 @endif
 
                                 <dt class="col-sm-4">Current Businesses</dt>
@@ -213,45 +209,14 @@
 
                                 <x-input name="website_url" label="Website" type="text" value="{{ old('website_url') }}" />
 
-                                <div class="row">
-                                    <div class="col-md-4">
-                                        <x-input name="country_code" label="Country code" type="text" maxlength="2" value="{{ old('country_code') }}" required />
-                                    </div>
-                                    <div class="col-md-4">
-                                        <x-input name="timezone" label="Timezone" type="text" value="{{ old('timezone') }}" required />
-                                    </div>
-                                    <div class="col-md-4">
-                                        <x-input name="currency_code" label="Currency code" type="text" maxlength="3" value="{{ old('currency_code') }}" required />
-                                    </div>
-                                </div>
+                                @include('customer.business.partials.locale-fields', ['suggestDefaults' => true])
 
                                 <x-button type="submit" variant="outline">Create Business</x-button>
                             </form>
 
-                            @php
-                                $reassignTargetWorkspaces = request()->attributes->get('reassignTargetWorkspaces', []);
-                            @endphp
-
-                            @if (! empty($manageableBusinesses) && ! empty($reassignTargetWorkspaces))
-                                <x-table :headers="['Business', 'Reassign to']" class="mb-2">
-                                    @foreach ($manageableBusinesses as $business)
-                                        <tr>
-                                            <td>{{ $business['name'] }}</td>
-                                            <td>
-                                                <form method="POST" data-business-action="reassign" data-business-uid="{{ $business['uid'] }}" class="d-flex">
-                                                    @csrf
-                                                    <select name="target_workspace_uid" class="form-control form-control-sm d-inline-block w-auto me-1">
-                                                        @foreach ($reassignTargetWorkspaces as $targetWorkspace)
-                                                            <option value="{{ $targetWorkspace['uid'] }}">{{ $targetWorkspace['name'] }}</option>
-                                                        @endforeach
-                                                    </select>
-                                                    <x-button type="submit" variant="outline" size="sm">Reassign</x-button>
-                                                </form>
-                                            </td>
-                                        </tr>
-                                    @endforeach
-                                </x-table>
-                            @endif
+                            {{-- Moving a Business into another Workspace is Workspace
+                                 mechanics, not an account setting: no customer control
+                                 here (the reassignment route stays for support). --}}
                         @endif
 
                         @if (empty($businesses))
@@ -311,56 +276,40 @@
                                         </div>
                                     @endif
 
-                                    <h5>Platform feature preferences</h5>
-                                    @foreach ($manageableBusinesses as $business)
-                                        @php $businessFeatures = $entitlement['features'][$business['uid']] ?? []; @endphp
-                                        @if (! empty($businessFeatures))
-                                            <h6>{{ $business['name'] }}</h6>
-                                            <div class="table-responsive mb-2">
-                                                <table class="table table-sm">
-                                                    <thead>
-                                                        <tr>
-                                                            <th>Feature</th>
-                                                            <th>Effective entitlement</th>
-                                                            <th>Platform feature preference</th>
-                                                            <th></th>
-                                                        </tr>
-                                                    </thead>
-                                                    <tbody>
-                                                        @foreach ($businessFeatures as $featureKey => $row)
-                                                            <tr>
-                                                                <td>{{ $featureKey }}</td>
-                                                                <td>
-                                                                    @if ($row['decision']->allowed)
-                                                                        <span class="badge badge-light-success">Allowed</span>
-                                                                    @else
-                                                                        <span class="badge badge-light-secondary">Denied ({{ $row['decision']->reason }})</span>
-                                                                    @endif
-                                                                </td>
-                                                                <td>
-                                                                    {{ $row['disablePreferenceRecorded'] ? 'Disable preference recorded' : 'No disable preference recorded' }}
-                                                                    <div class="text-muted small">Runtime enforcement pending. This preference is stored at the Business level but the legacy module does not yet consult it.</div>
-                                                                </td>
-                                                                <td>
-                                                                    @if ($row['disablePreferenceRecorded'])
-                                                                        <form method="POST" data-business-action="features/{{ $featureKey }}/enable" data-business-uid="{{ $business['uid'] }}">
-                                                                            @csrf
-                                                                            <button type="submit" class="btn btn-sm btn-outline-secondary">Remove disable preference</button>
-                                                                        </form>
-                                                                    @elseif ($row['decision']->allowed)
-                                                                        <form method="POST" data-business-action="features/{{ $featureKey }}/disable" data-business-uid="{{ $business['uid'] }}">
-                                                                            @csrf
-                                                                            <button type="submit" class="btn btn-sm btn-outline-secondary">Record disable preference</button>
-                                                                        </form>
-                                                                    @endif
-                                                                </td>
-                                                            </tr>
+                                    {{-- Business features: only what the server says this customer
+                                         can switch (BusinessFeatureSettings) is ever sent here —
+                                         nothing the plan leaves out, no locked rows. Each switch saves
+                                         straight away through the existing enable/disable routes. --}}
+                                    @php $featureSettings = $entitlement['featureSettings'] ?? []; @endphp
+                                    @if (collect($featureSettings)->flatten(1)->isNotEmpty())
+                                        <div id="business-feature-settings" class="mt-2">
+                                            <h5>Features</h5>
+                                            <p class="text-caption mb-1">Turn features on or off for each Business. Changes are saved straight away.</p>
+                                            @foreach ($manageableBusinesses as $business)
+                                                @if (! empty($featureSettings[$business['uid']] ?? []))
+                                                    <h6 class="mt-1">{{ $business['name'] }}</h6>
+                                                    <ul class="list-group mb-2" data-role="business-features">
+                                                        @foreach ($featureSettings[$business['uid']] as $setting)
+                                                            @php $switchId = 'business-feature-' . $business['uid'] . '-' . $loop->index; @endphp
+                                                            <li class="list-group-item d-flex justify-content-between align-items-start" data-role="business-feature">
+                                                                <div class="me-2">
+                                                                    <div class="fw-bolder" id="{{ $switchId }}-name">{{ $setting['name'] }}</div>
+                                                                    <div class="text-caption" id="{{ $switchId }}-description">{{ $setting['description'] }}</div>
+                                                                    <div class="text-danger small mt-25" data-role="business-feature-error" role="alert" hidden></div>
+                                                                </div>
+                                                                <div class="form-check form-switch flex-shrink-0 mb-0">
+                                                                    <input class="form-check-input" type="checkbox" role="switch" id="{{ $switchId }}" data-business-feature-switch data-business-uid="{{ $business['uid'] }}" data-feature="{{ $setting['key'] }}" aria-describedby="{{ $switchId }}-description" @checked($setting['enabled'])>
+                                                                    {{-- The switch is named after the feature; its on/off state is
+                                                                         the switch's own, so the visible word is not read twice. --}}
+                                                                    <label class="form-check-label" for="{{ $switchId }}"><span class="visually-hidden">{{ $setting['name'] }}</span><span aria-hidden="true" data-role="business-feature-state">{{ $setting['enabled'] ? 'Enabled' : 'Disabled' }}</span></label>
+                                                                </div>
+                                                            </li>
                                                         @endforeach
-                                                    </tbody>
-                                                </table>
-                                            </div>
-                                        @endif
-                                    @endforeach
+                                                    </ul>
+                                                @endif
+                                            @endforeach
+                                        </div>
+                                    @endif
                                 </div>
                             @endif
                         @endisset
@@ -374,7 +323,7 @@
                         <form method="POST" data-workspace-action="members" class="mb-2">
                             @csrf
 
-                            <x-input name="user_uid" label="User UID" type="text" value="{{ old('user_uid') }}" required />
+                            <x-input name="member_email" label="Email address" type="email" value="{{ old('member_email') }}" autocomplete="off" help="They need an existing Business OS account before you can add them." :error="$errors->first('member_email')" required />
 
                             <div class="mb-1">
                                 <label class="form-label" for="member-role">Role</label>
@@ -386,23 +335,36 @@
                                 </select>
                             </div>
 
-                            <div class="mb-1">
-                                <label class="form-label" for="member-scope">Business access</label>
-                                <select class="form-control" id="member-scope" name="business_access_scope">
-                                    <option value="all">All Businesses</option>
-                                    <option value="selected">Selected Businesses</option>
-                                </select>
-                            </div>
+                            @php
+                                // Exactly one Business this person can grant: nothing to choose, so
+                                // the new member gets access to that one Business only (selected
+                                // scope — least privilege, never a hidden "all Businesses" grant).
+                                $singleManageableBusiness = count($manageableBusinesses ?? []) === 1 ? $manageableBusinesses[0] : null;
+                            @endphp
 
-                            @if (! empty($manageableBusinesses))
+                            @if ($singleManageableBusiness !== null)
+                                <input type="hidden" name="business_access_scope" value="selected">
+                                <input type="hidden" name="business_uids[]" value="{{ $singleManageableBusiness['uid'] }}">
+                                <p class="text-caption mb-1" data-role="member-single-business">They'll get access to {{ $singleManageableBusiness['name'] }}.</p>
+                            @else
                                 <div class="mb-1">
-                                    @foreach ($manageableBusinesses as $business)
-                                        <div class="form-check form-check-inline">
-                                            <input class="form-check-input" type="checkbox" name="business_uids[]" value="{{ $business['uid'] }}" id="add-member-business-{{ $business['uid'] }}">
-                                            <label class="form-check-label" for="add-member-business-{{ $business['uid'] }}">{{ $business['name'] }}</label>
-                                        </div>
-                                    @endforeach
+                                    <label class="form-label" for="member-scope">Business access</label>
+                                    <select class="form-control" id="member-scope" name="business_access_scope">
+                                        <option value="all">All Businesses</option>
+                                        <option value="selected">Selected Businesses</option>
+                                    </select>
                                 </div>
+
+                                @if (! empty($manageableBusinesses))
+                                    <div class="mb-1">
+                                        @foreach ($manageableBusinesses as $business)
+                                            <div class="form-check form-check-inline">
+                                                <input class="form-check-input" type="checkbox" name="business_uids[]" value="{{ $business['uid'] }}" id="add-member-business-{{ $business['uid'] }}">
+                                                <label class="form-check-label" for="add-member-business-{{ $business['uid'] }}">{{ $business['name'] }}</label>
+                                            </div>
+                                        @endforeach
+                                    </div>
+                                @endif
                             @endif
 
                             <x-button type="submit" variant="outline">Add member</x-button>
@@ -542,37 +504,80 @@
                         syncBusinessCheckboxes();
                     });
 
-                    document.querySelectorAll('select[name="previous_owner_disposition"]').forEach(function (select) {
-                        var form = select.closest('form');
-                        var adminFields = form ? form.querySelector('[data-ownership-transfer-admin-fields]') : null;
+                    // Business feature switches: each change is saved at once through the
+                    // existing enable/disable route (same CSRF, auth and entitlement checks),
+                    // without leaving the page. The switch shows only what the server
+                    // confirms; on any failure it returns to its previous state.
+                    (function () {
+                        var basePath = window.location.pathname.replace(/\/+$/, '');
+                        var csrfMeta = document.querySelector('meta[name="csrf-token"]');
+                        var genericError = 'We couldn\'t save that change. Please try again.';
 
-                        if (! adminFields) {
-                            return;
-                        }
+                        document.querySelectorAll('input[data-business-feature-switch]').forEach(function (input) {
+                            var row = input.closest('[data-role="business-feature"]');
+                            var state = row.querySelector('[data-role="business-feature-state"]');
+                            var error = row.querySelector('[data-role="business-feature-error"]');
+                            var saving = false;
 
-                        var scopeSelect = adminFields.querySelector('select[name="business_access_scope"]');
+                            var show = function (enabled) {
+                                input.checked = enabled;
+                                state.textContent = enabled ? 'Enabled' : 'Disabled';
+                            };
 
-                        var syncAdminFields = function () {
-                            var isConvertToAdmin = select.value === 'convert_to_admin';
-                            adminFields.style.display = isConvertToAdmin ? '' : 'none';
-
-                            if (scopeSelect) {
-                                scopeSelect.disabled = ! isConvertToAdmin;
-                            }
-
-                            adminFields.querySelectorAll('input[name="business_uids[]"]').forEach(function (checkbox) {
-                                checkbox.disabled = ! isConvertToAdmin || (scopeSelect && scopeSelect.value === 'all');
+                            // A second click while a change is being saved does nothing.
+                            input.addEventListener('click', function (event) {
+                                if (saving) {
+                                    event.preventDefault();
+                                }
                             });
-                        };
 
-                        select.addEventListener('change', syncAdminFields);
+                            input.addEventListener('change', function () {
+                                var wanted = input.checked;
+                                var previous = ! wanted;
+                                var url = [basePath, 'businesses', encodeURIComponent(input.getAttribute('data-business-uid')), 'features', encodeURIComponent(input.getAttribute('data-feature')), wanted ? 'enable' : 'disable'].join('/');
 
-                        if (scopeSelect) {
-                            scopeSelect.addEventListener('change', syncAdminFields);
-                        }
+                                saving = true;
+                                input.setAttribute('aria-disabled', 'true');
+                                row.setAttribute('aria-busy', 'true');
+                                error.hidden = true;
+                                error.textContent = '';
 
-                        syncAdminFields();
-                    });
+                                fetch(url, {
+                                    method: 'POST',
+                                    credentials: 'same-origin',
+                                    headers: {
+                                        'Accept': 'application/json',
+                                        'X-Requested-With': 'XMLHttpRequest',
+                                        'X-CSRF-TOKEN': csrfMeta ? csrfMeta.getAttribute('content') : ''
+                                    }
+                                }).then(function (response) {
+                                    return response.json().catch(function () {
+                                        return null;
+                                    }).then(function (body) {
+                                        return { ok: response.ok, body: body };
+                                    });
+                                }).then(function (result) {
+                                    if (result.ok && result.body && result.body.status === 'success' && typeof result.body.enabled === 'boolean') {
+                                        show(result.body.enabled);
+
+                                        return;
+                                    }
+
+                                    show(previous);
+                                    error.textContent = (result.body && typeof result.body.customer_message === 'string') ? result.body.customer_message : genericError;
+                                    error.hidden = false;
+                                }).catch(function () {
+                                    show(previous);
+                                    error.textContent = genericError;
+                                    error.hidden = false;
+                                }).then(function () {
+                                    saving = false;
+                                    input.removeAttribute('aria-disabled');
+                                    row.removeAttribute('aria-busy');
+                                });
+                            });
+                        });
+                    })();
                 </script>
             @endif
         </div>

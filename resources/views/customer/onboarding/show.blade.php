@@ -2,6 +2,16 @@
 
 @section('title', 'Business Setup')
 
+@if ($step->value === 'business')
+    @section('vendor-style')
+        <link rel="stylesheet" href="{{ asset(mix('vendors/css/forms/select/select2.min.css')) }}">
+    @endsection
+
+    @section('vendor-script')
+        <script src="{{ asset(mix('vendors/js/forms/select/select2.full.min.js')) }}"></script>
+    @endsection
+@endif
+
 @section('content')
     <section id="business-onboarding">
         <div class="row">

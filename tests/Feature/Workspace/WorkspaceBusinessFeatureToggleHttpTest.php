@@ -3,7 +3,6 @@
 namespace Tests\Feature\Workspace;
 
 use App\Enums\Entitlement\PlatformFeature;
-use App\Enums\Entitlement\WorkspaceEntitlementOverrideState;
 use App\Enums\Entitlement\WorkspacePlanTier;
 use App\Enums\Workspace\WorkspaceMembershipRole;
 use App\Library\Entitlement\EntitlementManager;
@@ -22,9 +21,9 @@ use Tests\TestCase;
 /**
  * RFC-004 Milestone 3 (docs/automation/RFC-004-M3-CONTRACT.md §12/§13): the
  * customer HTTP surface for recording/removing a Business-level feature
- * disable preference. The mechanism is a stored preference, never claimed
- * runtime enforcement -- every rendered response must carry the fixed
- * enforcement-pending notice and never a live on/off implication.
+ * disable preference. The routes and their authority are unchanged; the page
+ * now shows the switches only for features whose switch the product honours,
+ * as Enabled / Disabled (see WorkspaceBusinessFeatureSettingsTest).
  */
 class WorkspaceBusinessFeatureToggleHttpTest extends TestCase
 {
@@ -216,9 +215,13 @@ class WorkspaceBusinessFeatureToggleHttpTest extends TestCase
             ->assertNotFound();
     }
 
-    // --- Toggle UX (§13) ---------------------------------------------------
+    // --- Toggle UX ----------------------------------------------------------
+    // The switches now change what the product does (every listed feature's
+    // switch is honoured where it runs), so the page speaks in Enabled /
+    // Disabled; the old stored-preference wording is gone. The full surface
+    // is covered by WorkspaceBusinessFeatureSettingsTest.
 
-    public function test_show_page_carries_the_enforcement_pending_notice_and_no_live_control_language(): void
+    public function test_show_page_offers_enabled_disabled_switches_without_implementation_wording(): void
     {
         $customer = $this->actingAsHttpCustomer();
         $workspace = $this->entitledWorkspace($customer->user);
@@ -226,40 +229,39 @@ class WorkspaceBusinessFeatureToggleHttpTest extends TestCase
 
         $response = $this->get(route('customer.workspaces.show', $workspace->uid))->assertOk();
 
-        $response->assertSee('Runtime enforcement pending. This preference is stored at the Business level but the legacy module does not yet consult it.');
-        $response->assertDontSee('Feature enabled');
-        $response->assertDontSee('Feature disabled');
-        $response->assertSee('Platform feature preference');
+        $response->assertSee('Inbox & Conversations');
+        $this->assertSame(3, preg_match_all('/<input [^>]*data-business-feature-switch/', $response->getContent()));
+        $response->assertSee('Enabled');
+        $response->assertDontSee('Runtime enforcement pending');
+        $response->assertDontSee('Platform feature preference');
+        $response->assertDontSee('Record disable preference');
     }
 
-    public function test_remove_disable_preference_still_renders_when_the_feature_is_denied_by_an_unrelated_workspace_override(): void
+    public function test_a_switched_off_feature_stays_listed_so_it_can_be_turned_back_on(): void
     {
         $customer = $this->actingAsHttpCustomer();
         $workspace = $this->entitledWorkspace($customer->user);
         $business = $this->createBusinessForCustomer($customer->user->id, $workspace->id);
 
-        app(EntitlementManager::class)->disableBusinessFeature($business, PlatformFeature::Crm, (int) $customer->user_id);
-        app(EntitlementManager::class)->createOrChangeOverride(
-            $workspace, PlatformFeature::Crm, WorkspaceEntitlementOverrideState::Deny, $this->fixtureAdminId(), 'Unrelated deny override.'
-        );
+        app(EntitlementManager::class)->disableBusinessFeature($business, PlatformFeature::Automations, (int) $customer->user_id);
 
         $response = $this->get(route('customer.workspaces.show', $workspace->uid))->assertOk();
 
-        $response->assertSee('Remove disable preference');
+        $this->assertMatchesRegularExpression('/>Automations<.*?<input [^>]*data-feature="automations"(?![^>]* checked)[^>]*>.*?data-role="business-feature-state">Disabled</s', $response->getContent());
     }
 
-    public function test_record_disable_preference_never_renders_when_there_is_no_preference_and_the_feature_is_denied(): void
+    public function test_no_switch_renders_when_the_account_has_no_plan(): void
     {
         $customer = $this->actingAsHttpCustomer();
         $workspace = $this->createWorkspace($customer->user);
         // Intentionally left unassigned -- every Available feature decides
-        // 'workspace_plan_unassigned' (denied), and no toggle row exists.
-        $business = $this->createBusinessForCustomer($customer->user->id, $workspace->id);
+        // 'workspace_plan_unassigned' (denied), so nothing is switchable.
+        $this->createBusinessForCustomer($customer->user->id, $workspace->id);
 
         $response = $this->get(route('customer.workspaces.show', $workspace->uid))->assertOk();
 
-        $response->assertSee('No disable preference recorded');
-        $response->assertDontSee('Record disable preference');
+        $this->assertSame(0, preg_match_all('/<input [^>]*data-business-feature-switch/', $response->getContent()));
+        $response->assertDontSee('id="business-feature-settings"', false);
     }
 
     private function ensureRequiredAppConfigRowsExist(): void

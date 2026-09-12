@@ -76,7 +76,8 @@ class WorkspaceAccountFrameAccessTest extends TestCase
         $this->member($workspace, $staff->user, WorkspaceMembershipRole::Staff, WorkspaceBusinessAccessScope::All);
         $this->authenticateAs($staff);
         $this->get(route('customer.workspaces.show', $workspace->uid))->assertOk()->assertSee('Northwind Agency');
-        $this->assertStringContainsString(route('customer.workspaces.show', $workspace->uid), $this->get(route('customer.workspaces.index'))->assertOk()->getContent());
+        // Their one account: the chooser goes straight to it.
+        $this->get(route('customer.workspaces.index'))->assertRedirect(route('customer.workspaces.show', $workspace->uid));
     }
 
     public function test_strangers_and_inactive_members_receive_not_found(): void
@@ -102,17 +103,17 @@ class WorkspaceAccountFrameAccessTest extends TestCase
             [$owner, , $workspace] = $this->tenant($tier, 'Tier ' . $tier->value, 'Owner Account');
             $this->authenticateAs($owner);
 
-            foreach ([route('customer.workspaces.show', $workspace->uid), route('customer.workspaces.index')] as $url) {
-                $page = $this->get($url)->assertOk();
-                // Rendered text only: script/style bodies and attributes are
-                // not what the reader sees.
-                $rendered = preg_replace('/<(script|style)\b[^>]*>.*?<\/\1>/is', '', $page->getContent()) ?? '';
-                $text = html_entity_decode(strip_tags(preg_replace('/\s[a-zA-Z-]+="[^"]*"/', '', $rendered) ?? ''));
-                $this->assertStringNotContainsStringIgnoringCase('workspace', $text, $tier->value . ': ' . $url . ' must not say Workspace.');
-            }
+            $url = route('customer.workspaces.show', $workspace->uid);
+            $page = $this->get($url)->assertOk();
+            // Rendered text only: script/style bodies and attributes are
+            // not what the reader sees.
+            $rendered = preg_replace('/<(script|style)\b[^>]*>.*?<\/\1>/is', '', $page->getContent()) ?? '';
+            $text = html_entity_decode(strip_tags(preg_replace('/\s[a-zA-Z-]+="[^"]*"/', '', $rendered) ?? ''));
+            $this->assertStringNotContainsStringIgnoringCase('workspace', $text, $tier->value . ': ' . $url . ' must not say Workspace.');
 
-            $this->get(route('customer.workspaces.show', $workspace->uid))->assertSee('Account overview')->assertSee('Rename account');
-            $this->get(route('customer.workspaces.index'))->assertSee('Create account');
+            $page->assertSee('Account overview')->assertSee('Rename account')->assertDontSee('Create account');
+            // One account: the account list is never shown, the page opens directly.
+            $this->get(route('customer.workspaces.index'))->assertRedirect($url);
         }
     }
 
@@ -130,8 +131,10 @@ class WorkspaceAccountFrameAccessTest extends TestCase
         $showResponse = $this->get(route('customer.workspaces.show', $workspace->uid))->assertOk()->assertSee('Agency account overview')->assertSee('Rename Agency account');
         $this->assertStringNotContainsStringIgnoringCase('workspace', $this->renderedTextOnly($showResponse->getContent()));
 
-        $indexResponse = $this->get(route('customer.workspaces.index'))->assertOk()->assertSee('Create Agency account');
-        $this->assertStringNotContainsStringIgnoringCase('workspace', $this->renderedTextOnly($indexResponse->getContent()));
+        // Client accounts are Businesses inside this one Agency account: no
+        // account list and no "create another account" for the Agency either.
+        $showResponse->assertDontSee('Create Agency account');
+        $this->get(route('customer.workspaces.index'))->assertRedirect(route('customer.workspaces.show', $workspace->uid));
     }
 
     /**

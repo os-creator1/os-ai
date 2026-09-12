@@ -84,7 +84,8 @@ class CustomerShellTranslationTest extends TestCase
             $this->authenticateAs($owner);
 
             $pages = $this->businessFramePages($workspace->uid, $business->uid);
-            $pages['account-list'] = $this->get(route('customer.workspaces.index'))->assertOk()->getContent();
+            // One account: the account list redirects straight to it.
+            $this->get(route('customer.workspaces.index'))->assertRedirect(route('customer.workspaces.show', $workspace->uid));
             $pages['account'] = $this->get(route('customer.workspaces.show', $workspace->uid))->assertOk()->getContent();
 
             $this->assertNoRawKey($pages, $tier->value . ' owner');
@@ -99,7 +100,8 @@ class CustomerShellTranslationTest extends TestCase
         $this->authenticateAs($owner);
         $pages = $this->businessFramePages($workspace->uid, $business->uid);
         $pages['account-frame'] = $this->get(route('customer.workspaces.show', $workspace->uid))->assertOk()->getContent();
-        $pages['account-list'] = $this->get(route('customer.workspaces.index'))->assertOk()->getContent();
+        // One Agency account: the account list redirects straight to it.
+        $this->get(route('customer.workspaces.index'))->assertRedirect(route('customer.workspaces.show', $workspace->uid));
         $this->assertNoRawKey($pages, 'agency owner');
 
         $admin = $this->createCustomer();
@@ -166,7 +168,8 @@ class CustomerShellTranslationTest extends TestCase
 
         $this->assertGreaterThanOrEqual(25, count($labels), 'The inventory covers the whole builder.');
 
-        foreach (['Website', 'Google Business Profile', 'Messaging provider', 'Prospecting', 'Campaigns', 'Conversations', 'Automations', 'Analytics', 'Usage & billing', 'Client accounts', 'Settings', 'Developers', 'Advanced', 'Plan & subscription'] as $required) {
+        // Campaigns is no longer emitted: Messages is Inbox only.
+        foreach (['Website', 'Google Business Profile', 'Messaging provider', 'Prospecting', 'Conversations', 'Automations', 'Analytics', 'Usage & billing', 'Client accounts', 'Settings', 'Developers', 'Advanced', 'Plan & subscription'] as $required) {
             $this->assertContains($required, $labels, "The builder no longer emits {$required}; update the inventory.");
         }
 

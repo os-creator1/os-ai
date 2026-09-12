@@ -325,6 +325,10 @@ class WorkspaceMutationHttpTest extends TestCase
 
         $this->post(route('customer.workspaces.rename', $workspace->uid), ['name' => 'After Co'])->assertRedirect();
 
+        // A second (invited) account gives the chooser something to choose;
+        // with one account the chooser goes straight to it.
+        $this->createMembership($this->createWorkspace($this->createCustomer()->user), $customer->user, ['is_active' => true]);
+
         $indexResponse = $this->get(route('customer.workspaces.index'))->assertOk();
         $this->assertSame(
             'After Co',
@@ -344,6 +348,11 @@ class WorkspaceMutationHttpTest extends TestCase
 
         $showResponse = $this->get(route('customer.workspaces.show', $workspace->uid))->assertOk();
         $this->assertFalse($showResponse->original->getData()['workspace']['is_active']);
+
+        // With one account the chooser goes straight to it; a second
+        // (invited) account shows the list, where it is still listed.
+        $this->get(route('customer.workspaces.index'))->assertRedirect(route('customer.workspaces.show', $workspace->uid));
+        $this->createMembership($this->createWorkspace($this->createCustomer()->user), $customer->user, ['is_active' => true]);
 
         $indexResponse = $this->get(route('customer.workspaces.index'))->assertOk();
         $this->assertFalse(
