@@ -226,11 +226,37 @@
                 \App\Repositories\Contracts\BusinessGoogleConnectionRepository::class => \App\Repositories\Eloquent\EloquentBusinessGoogleConnectionRepository::class,
                 \App\Repositories\Contracts\BusinessGoogleLocationRepository::class => \App\Repositories\Eloquent\EloquentBusinessGoogleLocationRepository::class,
                 \App\Repositories\Contracts\BusinessGoogleOperationRepository::class => \App\Repositories\Eloquent\EloquentBusinessGoogleOperationRepository::class,
+
+                // Automations V2 runtime core. V2-0 declared these interfaces so
+                // the runtime, trigger, action and HTTP lanes could be built in
+                // parallel; this is where the runtime lane supplies them.
+                \App\Library\Automation\Workflow\Contracts\EnrollmentService::class => \App\Library\Automation\Workflow\Runtime\WorkflowEnrollmentService::class,
+                \App\Library\Automation\Workflow\Contracts\WorkflowLifecycle::class => \App\Library\Automation\Workflow\Runtime\WorkflowLifecycleService::class,
             ];
 
             foreach ($bindings as $interface => $implementation) {
                 $this->app->bind($interface, $implementation);
             }
+
+            // Automations V2 §5.2 — the step-executor registry MUST be a
+            // singleton: each slice registers its own node types into it, and a
+            // per-resolution binding would hand the advancer an empty registry
+            // that silently refuses to run every step.
+            //
+            // This slice owns the two structural executors. The wait and If/Else
+            // executors arrive with their slice, and the action executors with
+            // theirs, each adding one register() call here and nothing else.
+            $this->app->singleton(
+                \App\Library\Automation\Workflow\Runtime\NodeExecutorRegistry::class,
+                function ($app): \App\Library\Automation\Workflow\Runtime\NodeExecutorRegistry {
+                    $registry = new \App\Library\Automation\Workflow\Runtime\NodeExecutorRegistry();
+
+                    $registry->register($app->make(\App\Library\Automation\Workflow\Executors\TriggerNodeExecutor::class));
+                    $registry->register($app->make(\App\Library\Automation\Workflow\Executors\EndNodeExecutor::class));
+
+                    return $registry;
+                },
+            );
 
             // Google Business Profile Slice A (correction pass item 6).
             // The call budget MUST be a singleton: withinOperation() sets
