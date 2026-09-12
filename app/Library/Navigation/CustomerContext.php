@@ -221,6 +221,33 @@ final class CustomerContext
     }
 
     /**
+     * What names the context the actor is standing in, for the sidebar block
+     * and the document title alike.
+     *
+     * The Business frame names the Business. The ACCOUNT frame names the
+     * account — for every tier, not only Agency. Until the context switcher
+     * existed a Core or Growth actor could not stand in the account frame at
+     * all, so headerLabel()'s "no Business yet" fallback was unreachable for
+     * them; reached, it tells someone who has a Business that they have none.
+     *
+     * The fallback still answers wherever it is still true: an account with
+     * nothing reachable in it (inactive, or only a draft Business) keeps
+     * saying so, because that is the fact the customer needs.
+     */
+    public function contextName(): string
+    {
+        $workspace = $this->frameWorkspace();
+
+        if (! $this->isBusinessFrame()
+            && $workspace !== null
+            && ($this->selectableBusinessCount() > 0 || $workspace->isAgency())) {
+            return $workspace->name;
+        }
+
+        return $this->headerLabel();
+    }
+
+    /**
      * Human label for the header: the selected Business, else the agency
      * account, else an honest placeholder.
      */

@@ -57,8 +57,11 @@ class ContextSwitcherTest extends TestCase
         $this->assertSame(1, substr_count($shell, 'aria-current="true"'));
 
         // No search box over one Business, and no invented multi-account UI.
+        // (The block still ships the small focus-return script every actor
+        // needs for Escape; what a one-Business customer must not get is the
+        // filter.)
         $this->assertStringNotContainsString('data-role="context-switcher-filter"', $shell);
-        $this->assertStringNotContainsString('<script', $shell);
+        $this->assertStringNotContainsString('Search business', $shell);
     }
 
     public function test_the_switcher_never_offers_to_create_an_account(): void
@@ -93,6 +96,20 @@ class ContextSwitcherTest extends TestCase
         $accountShell = $this->shellHtml($account->getContent());
         $this->assertMatchesRegularExpression('/customer-context-frame[^>]*>\s*Account\s*</', $accountShell);
         $this->assertStringContainsString('Jazmin Media', $accountShell);
+
+        // The block names the account it is standing in — never "No business
+        // yet" to someone who has one. That fallback was unreachable before
+        // this switcher could enter the account frame.
+        $this->assertMatchesRegularExpression(
+            '/customer-context-current-name[^>]*>\s*Jazmin Media\s*</',
+            $accountShell,
+            'The account frame names the account.'
+        );
+        $this->assertStringNotContainsString('No business yet', $accountShell);
+        $this->assertStringNotContainsString('No client account yet', $accountShell);
+
+        // The document title names the same context the block does.
+        $this->assertStringContainsString('<title>Dashboard · Jazmin Media', $account->getContent());
         $this->assertContains('accounts', $this->menuKeys($account->getContent()));
 
         // A second request keeps the choice (the preference, not a one-off).

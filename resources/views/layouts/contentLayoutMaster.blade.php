@@ -28,7 +28,7 @@
     @php
         $shellContext = request()->attributes->get('customerContext');
         $shellContextLabel = $shellContext instanceof \App\Library\Navigation\CustomerContext && ($shellContext->isBusinessFrame() || $shellContext->frameWorkspace() !== null)
-            ? trim((string) $shellContext->headerLabel())
+            ? trim((string) $shellContext->contextName())
             : '';
     @endphp
     <title>@yield('title')@if($shellContextLabel !== '') · {{ $shellContextLabel }}@endif - {{config('app.title')}}</title>

@@ -145,50 +145,68 @@
                 </ul>
             </div>
 
-            @if($switcher->showsFilter)
-                {{-- Only shipped for an account with enough Businesses to need it. --}}
-                <script>
-                    (function () {
-                        var input = document.getElementById('customer-context-switcher-filter');
+            <script>
+                (function () {
+                    var toggle = document.getElementById('customer-context-switcher-toggle');
+                    var dropdown = toggle ? toggle.closest('.dropdown') : null;
+                    var menu = document.querySelector('[data-role="context-switcher-menu"]');
 
-                        if (!input) {
+                    if (!toggle || !dropdown || !menu) {
+                        return;
+                    }
+
+                    // Escape must return focus to the control that opened the
+                    // menu, or a keyboard user is left on <body> with nothing
+                    // selected. Bootstrap does this itself only while focus sits
+                    // on the toggle or a menu item, so a focused search field
+                    // loses it; waiting for its own close event covers every
+                    // case, and the flag keeps an outside CLICK from stealing
+                    // focus back, which would be wrong.
+                    var closingWithEscape = false;
+
+                    dropdown.addEventListener('keydown', function (event) {
+                        if (event.key === 'Escape') {
+                            closingWithEscape = true;
+                        }
+                    });
+
+                    dropdown.addEventListener('hidden.bs.dropdown', function () {
+                        if (!closingWithEscape) {
                             return;
                         }
 
-                        var menu = input.closest('[data-role="context-switcher-menu"]');
+                        closingWithEscape = false;
+                        toggle.focus();
+                    });
 
-                        input.addEventListener('input', function () {
-                            var needle = input.value.trim().toLowerCase();
+                    var input = document.getElementById('customer-context-switcher-filter');
 
-                            menu.querySelectorAll('[data-role="context-option-business"]').forEach(function (option) {
-                                var name = option.getAttribute('data-option-name') || '';
-                                option.hidden = needle !== '' && name.indexOf(needle) === -1;
-                            });
+                    if (!input) {
+                        return;
+                    }
+
+                    input.addEventListener('input', function () {
+                        var needle = input.value.trim().toLowerCase();
+
+                        // Selected by data-option-name, which only the Business
+                        // rows carry: the account rows and the links are never
+                        // filtered out from under the customer.
+                        menu.querySelectorAll('li[data-option-name]').forEach(function (option) {
+                            var name = option.getAttribute('data-option-name') || '';
+                            option.hidden = needle !== '' && name.indexOf(needle) === -1;
                         });
+                    });
 
-                        input.addEventListener('keydown', function (event) {
-                            // Typing stays typing: the menu's own key handling
-                            // must not swallow letters meant for the field.
-                            if (event.key !== 'Escape') {
-                                event.stopPropagation();
-
-                                return;
-                            }
-
-                            // Escape closes the menu (Bootstrap's own handler)
-                            // and returns focus to the control that opened it,
-                            // so a keyboard user is never stranded.
-                            var toggle = document.getElementById('customer-context-switcher-toggle');
-
-                            if (toggle) {
-                                window.setTimeout(function () {
-                                    toggle.focus();
-                                }, 0);
-                            }
-                        });
-                    })();
-                </script>
-            @endif
+                    input.addEventListener('keydown', function (event) {
+                        // Typing stays typing: the menu's own key handling must
+                        // not swallow letters meant for the field. Escape is
+                        // deliberately left to bubble so the menu closes.
+                        if (event.key !== 'Escape') {
+                            event.stopPropagation();
+                        }
+                    });
+                })();
+            </script>
         @endif
     </div>
 @endif

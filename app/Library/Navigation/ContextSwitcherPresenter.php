@@ -51,7 +51,7 @@ final class ContextSwitcherPresenter
         return new ContextSwitcherView(
             interactive: $this->isInteractive($context, $businesses, $accounts, $links),
             frameLabel: $this->frameLabel($context),
-            currentName: $context->headerLabel(),
+            currentName: $context->contextName(),
             toggleAriaLabel: $this->toggleAriaLabel($context),
             identityAriaLabel: $this->identityAriaLabel($context),
             businessesHeading: $context->businessesNoun(),
