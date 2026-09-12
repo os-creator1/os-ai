@@ -72,8 +72,7 @@ class WorkflowCompiler
      */
     public function compile(AutomationWorkflowVersion $version): int
     {
-        $flattened = [];
-        $this->flatten($version->definition['root'], 0, $flattened);
+        $flattened = $this->plan($version);
 
         $now = Carbon::now();
         $businessId = (int) $version->business_id;
@@ -134,6 +133,38 @@ class WorkflowCompiler
         }
 
         return $nodeCount;
+    }
+
+    /**
+     * The graph this version WOULD compile to, built in memory and written
+     * nowhere.
+     *
+     * `compile()` is this plus the two inserts, so there is exactly one
+     * traversal of a workflow document in this codebase and nothing can drift
+     * from it. That matters for WorkflowSimulator (§16, "Test workflow"), which
+     * must walk precisely the graph a real enrollment would walk — including for
+     * a DRAFT, which by definition has no compiled rows to read — while writing
+     * nothing at all.
+     *
+     * Requires a document that has already passed validation: an unregistered
+     * node type or a missing root is a malformed document, and this throws
+     * rather than inventing a shape. Callers that accept unvalidated input
+     * (the simulator does) handle that.
+     *
+     * @return array<int, array{key: string, type: WorkflowNodeType, config: array<string, mixed>, depth: int, edges: array<string, string>}>
+     */
+    public function plan(AutomationWorkflowVersion $version): array
+    {
+        $definition = $version->definition ?? [];
+
+        if (! is_array($definition['root'] ?? null)) {
+            throw new \RuntimeException('This workflow has no trigger to start from.');
+        }
+
+        $flattened = [];
+        $this->flatten($definition['root'], 0, $flattened);
+
+        return $flattened;
     }
 
     /**
