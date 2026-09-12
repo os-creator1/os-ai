@@ -173,6 +173,21 @@
             return $this->hasOne(Customer::class);
         }
 
+        /**
+         * Where Laravel's `database` notification channel writes for a user.
+         *
+         * The framework would otherwise use `$this->notifications()`, whose table
+         * is `notifications` — in this repository an unrelated 2021 product table
+         * with none of the columns the channel needs. This routes the channel to
+         * the correctly-shaped `platform_database_notifications` table instead,
+         * using the framework's own documented hook, and leaves the legacy table
+         * and every feature that reads it completely untouched.
+         */
+        public function routeNotificationForDatabase(): \Illuminate\Database\Eloquent\Relations\MorphMany
+        {
+            return $this->morphMany(PlatformDatabaseNotification::class, 'notifiable')->latest();
+        }
+
         public function admin(): HasOne
         {
             return $this->hasOne(Admin::class);
