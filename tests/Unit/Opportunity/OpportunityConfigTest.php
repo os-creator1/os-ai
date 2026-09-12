@@ -20,6 +20,14 @@ class OpportunityConfigTest extends TestCase
         $this->assertSame(15, config('opportunity.snooze_sweep_minutes'));
         $this->assertSame(1, config('opportunity.fingerprint_version'));
         $this->assertSame(1, config('opportunity.scoring_version'));
+
+        // COO C-1 automatic triggering. These shape the two automatic paths;
+        // 'enabled' above still decides whether either path does anything, and
+        // it is still false by default.
+        $this->assertSame(15, config('opportunity.trigger_debounce_minutes'));
+        $this->assertSame(24, config('opportunity.sweep_stale_hours'));
+        $this->assertSame(500, config('opportunity.sweep_limit'));
+        $this->assertSame(100, config('opportunity.sweep_page'));
     }
 
     public function test_config_can_be_overridden_at_runtime(): void
@@ -63,7 +71,13 @@ class OpportunityConfigTest extends TestCase
 
         $this->assertIsArray($config);
         $this->assertSame(
-            ['enabled', 'queue', 'run_timeout_minutes', 'max_candidates_per_run', 'snooze_sweep_minutes', 'fingerprint_version', 'scoring_version'],
+            [
+                'enabled', 'queue', 'run_timeout_minutes', 'max_candidates_per_run', 'snooze_sweep_minutes',
+                'fingerprint_version', 'scoring_version',
+                // COO C-1 — the automatic trigger's own knobs. This list is a
+                // closed inventory: a slice that adds a key adds it here too.
+                'trigger_debounce_minutes', 'sweep_stale_hours', 'sweep_limit', 'sweep_page',
+            ],
             array_keys($config)
         );
         $this->assertIsBool($config['enabled']);
@@ -73,5 +87,9 @@ class OpportunityConfigTest extends TestCase
         $this->assertIsInt($config['snooze_sweep_minutes']);
         $this->assertIsInt($config['fingerprint_version']);
         $this->assertIsInt($config['scoring_version']);
+        $this->assertIsInt($config['trigger_debounce_minutes']);
+        $this->assertIsInt($config['sweep_stale_hours']);
+        $this->assertIsInt($config['sweep_limit']);
+        $this->assertIsInt($config['sweep_page']);
     }
 }
