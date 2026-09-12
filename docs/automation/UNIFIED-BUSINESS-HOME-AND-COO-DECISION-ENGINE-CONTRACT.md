@@ -1143,8 +1143,12 @@ assertion (§19.7).
 ## Appendix C — implementation record: H-3
 
 Delivered on `agent/unified-business-home-h3-performance`, from `origin/main`
-`917b5f0e`. Slices H-4 to H-6, A-*, C-*, AI-* and T-1 are untouched; Results
-is neither redirected nor removed, and no interactive COO surface exists.
+`917b5f0e`, and since merged forward to `origin/main` `78ef705` (A-1, A-2,
+C-1, C-3). H-3 changes no file those slices own: the Agency Account Home,
+its cross-client and outreach bands, the COO signal layer and the producer
+trigger arrive from main untouched, and the Business Home carries none of
+them. H-4 to H-6, AI-* and T-1 are not started; Results is neither
+redirected nor removed, and no interactive COO surface exists.
 
 ### H-3 — Business performance (§2.5)
 
