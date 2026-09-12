@@ -94,7 +94,7 @@ class AiGatewayBypassArchitectureTest extends TestCase
         $offenders = [];
 
         foreach ((new Finder())->files()->in($configDir)->name('*.php') as $file) {
-            $relative = 'config/' . $file->getRelativePathname();
+            $relative = 'config/' . str_replace(DIRECTORY_SEPARATOR, '/', $file->getRelativePathname());
 
             if ($relative === 'config/ai.php' || in_array($relative, $exempt, true)) {
                 continue;
@@ -118,7 +118,12 @@ class AiGatewayBypassArchitectureTest extends TestCase
         $offenders = [];
 
         foreach ((new Finder())->files()->in($appDir)->name('*.php') as $file) {
-            $relative = 'app/' . $file->getRelativePathname();
+            // Finder returns the platform's own separator, so a Windows
+            // checkout would otherwise read 'app/Library\Ai\Providers\...'
+            // and never match the allowed prefix — reporting the one
+            // adapter that IS allowed as the bypass. The guard must mean
+            // the same thing on every machine that runs it.
+            $relative = 'app/' . str_replace(DIRECTORY_SEPARATOR, '/', $file->getRelativePathname());
             $offender = $check($relative, $file->getContents());
 
             if ($offender !== null) {

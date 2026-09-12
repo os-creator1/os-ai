@@ -133,6 +133,68 @@ class AiCallSiteIntegrationTest extends TestCase
         );
     }
 
+    /**
+     * Where AI-1 and A-2 (#272) actually meet.
+     *
+     * A-2 persists the reply intent of one inbound message, and its own
+     * frozen runtime suite already proves what the job does when the seam
+     * answers null: no reply, no stage change, no intent — a classification
+     * nobody made must never be stored. AI-1 adds a second way for that seam
+     * to answer null: the budget refused before any provider call.
+     *
+     * What neither suite could check on its own is that the two halves are
+     * really connected — that the job's seam resolves to the gateway-backed
+     * client, and that a budget refusal produces exactly the null value
+     * A-2's decision parser already treats as "do nothing". Both are
+     * asserted here, so the composition cannot quietly come apart.
+     */
+    public function test_the_prospecting_seam_the_job_resolves_is_the_gateway_and_a_refusal_yields_the_null_a2_already_handles(): void
+    {
+        [, , $workspace] = $this->tenant(WorkspacePlanTier::Growth);
+
+        // The job type-hints the contract; the container must hand it the
+        // gateway-backed client and nothing else.
+        $seam = app(\App\Library\AgencyProspecting\Contracts\AgencyProspectingAiClient::class);
+        $this->assertInstanceOf(OpenAiAgencyProspectingClient::class, $seam);
+
+        // Exhaust this Workspace's whole included allowance for the period.
+        \Illuminate\Support\Facades\DB::table('ai_usage_periods')->insert([
+            'scope_type' => 'workspace',
+            'scope_id' => $workspace->id,
+            'workspace_id' => $workspace->id,
+            'period_key' => now()->utc()->format('Y-m'),
+            'policy_key' => 'growth',
+            'policy_version' => 1,
+            'cap_microusd' => 1,
+            'reserved_microusd' => 0,
+            'committed_microusd' => 1,
+            'interactive_reserved_microusd' => 0,
+            'interactive_committed_microusd' => 0,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        config(['ai.enforce_budgets_for_existing_categories' => true]);
+
+        $raw = $seam->complete([['role' => 'user', 'content' => 'Are you free Tuesday?']], $workspace, null);
+
+        $this->assertNull($raw, 'A refused budget answers exactly as an unconfigured or failed provider does.');
+        $this->assertSame(0, $this->fakeClient->callCount(), 'The refusal happened before any provider call.');
+
+        // And that null is precisely what A-2's parser turns into "no
+        // decision", which is the job's documented do-nothing path: no
+        // reply, no stage change, and no fabricated intent.
+        $this->assertNull(
+            \App\Library\AgencyProspecting\AgencyProspectAiDecision::fromRawJson($raw),
+            'A null from the seam must yield no decision, so nothing downstream can classify or send.'
+        );
+
+        // The refusal is still accounted for: it reached the authoritative
+        // reserve gate, so it is on the ledger as refused.
+        $entry = AiUsageLedgerEntry::where('workspace_id', $workspace->id)->latest('id')->first();
+        $this->assertNotNull($entry);
+        $this->assertSame('refused', $entry->status->value);
+        $this->assertSame('agency_prospect_reply', $entry->category->value);
+    }
     // =================================================================
     // Website AI draft
     // =================================================================
