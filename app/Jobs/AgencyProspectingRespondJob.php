@@ -102,6 +102,18 @@ class AgencyProspectingRespondJob extends Base
             return;
         }
 
+        // Unified Home contract A-2 — the durable classification of this
+        // EXACT inbound message, independent of whatever the decision goes
+        // on to do (reply, stop, nothing). Reuses AgencyProspectAiDecision's
+        // own validated ::INTENTS vocabulary verbatim; never a second
+        // classifier, never a guess. The `WHERE intent IS NULL` guard makes
+        // the write idempotent: once any value lands, a retried job's
+        // decision (the AI is not deterministic, so a retry may classify
+        // differently) can never overwrite it — first classification wins,
+        // so this inbound message can never acquire contradictory durable
+        // intent from a retry.
+        $this->persistIntent($inbound, $decision->intent);
+
         if ($decision->isHardNegative() || $decision->nextStage === 99) {
             $stopAction->apply($snapshot['prospect']);
 
@@ -318,6 +330,11 @@ class AgencyProspectingRespondJob extends Base
     private function operationClaimed(string $operationKey): bool
     {
         return AgencyProspectMessage::where('operation_key', $operationKey)->exists();
+    }
+
+    private function persistIntent(AgencyProspectMessage $inbound, string $intent): void
+    {
+        AgencyProspectMessage::where('id', $inbound->id)->whereNull('intent')->update(['intent' => $intent]);
     }
 
     /**

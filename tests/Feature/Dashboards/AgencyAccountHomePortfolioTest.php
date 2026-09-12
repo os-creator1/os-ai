@@ -102,10 +102,11 @@ class AgencyAccountHomePortfolioTest extends TestCase
     }
 
     /**
-     * Reply intent is not persisted anywhere yet, so a positive count would
-     * be a guess. It arrives with A-2, which stores the intent first.
+     * A-2 — the intent is now persisted, so a truthful Positive replies
+     * count can appear. A reply with no persisted intent (never
+     * classified, or classification failed) never counts.
      */
-    public function test_positive_replies_are_absent_until_the_intent_is_persisted(): void
+    public function test_positive_replies_counts_only_persisted_positive_intent(): void
     {
         [$agency, , $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Alpha Dental', 'Northwind Agency');
         $this->addBusiness($agency, $workspace, 'Bravo Bistro');
@@ -118,11 +119,135 @@ class AgencyAccountHomePortfolioTest extends TestCase
         $html = $this->home()->assertOk()->getContent();
         $main = $this->mainText($html);
 
-        $this->assertStringContainsString('Replies', $main);
-        $this->assertDoesNotMatchRegularExpression('/positive\s+repl/i', $main);
-        $this->assertStringNotContainsString('data-role="prospecting-positive"', $html);
-        // Nor any rate derived from the replies it does show.
+        $this->assertStringContainsString('Positive replies', $main);
+        $this->assertMatchesRegularExpression('/data-role="prospecting-positive">0</', $html, 'A reply with no persisted intent never counts.');
+        // Still no rate derived from the figures it shows.
         $this->assertDoesNotMatchRegularExpression('/\b(reply rate|response rate|conversion)\b/i', $main);
+    }
+
+    /**
+     * Every non-positive canonical intent, plus a never-classified reply,
+     * must be excluded — the metric is never "all replies", never
+     * "booking or scheduling implies positive", and never a guess.
+     */
+    public function test_only_the_positive_intent_counts_every_other_intent_is_excluded(): void
+    {
+        [$agency, , $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Alpha Dental', 'Northwind Agency');
+        $this->addBusiness($agency, $workspace, 'Bravo Bistro');
+        $campaign = $this->campaign($workspace);
+        $member = $this->member($workspace, $campaign, $this->prospect($workspace));
+
+        $nonPositiveIntents = ['question', 'qualification', 'booking', 'scheduling', 'soft_negative', 'hard_negative', 'other'];
+
+        foreach ($nonPositiveIntents as $intent) {
+            $this->inboundWithIntent($workspace, $member, receivedAt: '2026-09-05 10:00:00', intent: $intent);
+        }
+        $this->inbound($workspace, $member, receivedAt: '2026-09-05 10:00:00'); // null intent, never classified
+        $this->inboundWithIntent($workspace, $member, receivedAt: '2026-09-06 10:00:00', intent: 'positive');
+        $this->inboundWithIntent($workspace, $member, receivedAt: '2026-09-07 10:00:00', intent: 'positive');
+
+        $this->authenticateAs($agency);
+        $html = $this->home()->assertOk()->getContent();
+
+        $this->assertMatchesRegularExpression('/data-role="prospecting-positive">2</', $html);
+        $this->assertMatchesRegularExpression('/data-role="prospecting-replies">10</', $html, 'Every inbound message still counts toward Replies, whatever its intent.');
+    }
+
+    /**
+     * The positive count follows the same selected period as every other
+     * outreach figure, with the same half-open boundaries A-1 already
+     * proved for the rest of the band.
+     */
+    public function test_positive_replies_follows_the_selected_period_with_half_open_boundaries(): void
+    {
+        [$agency, , $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Alpha Dental', 'Northwind Agency');
+        $this->addBusiness($agency, $workspace, 'Bravo Bistro');
+        $campaign = $this->campaign($workspace);
+        $member = $this->member($workspace, $campaign, $this->prospect($workspace));
+
+        $this->inboundWithIntent($workspace, $member, receivedAt: '2026-09-01 00:00:00', intent: 'positive'); // first instant of the month: in
+        $this->inboundWithIntent($workspace, $member, receivedAt: '2026-08-31 23:59:59', intent: 'positive'); // last instant of August: out
+
+        $this->authenticateAs($agency);
+        $thisMonth = $this->home()->assertOk()->getContent();
+        $this->assertMatchesRegularExpression('/data-role="prospecting-positive">1</', $thisMonth, 'The first instant of the month is inside it.');
+
+        $lastMonth = $this->get(route('user.home', ['range' => 'last_month']))->assertOk()->getContent();
+        $this->assertMatchesRegularExpression('/data-role="prospecting-positive">1</', $lastMonth, 'The last instant of August belongs to August.');
+    }
+
+    /** A rival Agency's positive replies must never leak into this count. */
+    public function test_a_rival_agencys_positive_replies_are_never_counted(): void
+    {
+        [$mine, , $myWorkspace] = $this->tenant(WorkspacePlanTier::Agency, 'Alpha Dental', 'Northwind Agency');
+        $this->addBusiness($mine, $myWorkspace, 'Zulu Zoo');
+        $myCampaign = $this->campaign($myWorkspace);
+        $myMember = $this->member($myWorkspace, $myCampaign, $this->prospect($myWorkspace));
+        $this->inboundWithIntent($myWorkspace, $myMember, receivedAt: '2026-09-05 10:00:00', intent: 'positive');
+
+        [$theirs, , $theirWorkspace] = $this->tenant(WorkspacePlanTier::Agency, 'Rival Clinic', 'Rival Agency');
+        $theirCampaign = $this->campaign($theirWorkspace);
+        $theirMember = $this->member($theirWorkspace, $theirCampaign, $this->prospect($theirWorkspace));
+        $this->inboundWithIntent($theirWorkspace, $theirMember, receivedAt: '2026-09-05 10:00:00', intent: 'positive');
+        $this->inboundWithIntent($theirWorkspace, $theirMember, receivedAt: '2026-09-05 11:00:00', intent: 'positive');
+
+        $this->authenticateAs($mine);
+        $html = $this->home()->assertOk()->getContent();
+
+        $this->assertMatchesRegularExpression('/data-role="prospecting-positive">1</', $html, "The rival's two positive replies are not in this total.");
+    }
+
+    /**
+     * The outreach statement stays exactly one query regardless of how many
+     * messages exist — the new filter is an extra column on the same
+     * statement, never an extra round trip.
+     */
+    public function test_positive_replies_adds_no_query_and_stays_flat_as_messages_multiply(): void
+    {
+        [$agency, , $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Alpha Dental', 'Northwind Agency');
+        $this->addBusiness($agency, $workspace, 'Bravo Bistro');
+        $campaign = $this->campaign($workspace);
+        $member = $this->member($workspace, $campaign, $this->prospect($workspace));
+
+        for ($i = 0; $i < 5; $i++) {
+            $this->inboundWithIntent($workspace, $member, receivedAt: '2026-09-05 10:00:00', intent: 'positive');
+        }
+
+        $this->authenticateAs($agency);
+        $few = $this->portfolioSql($agency->user);
+
+        for ($i = 0; $i < 50; $i++) {
+            $this->inboundWithIntent($workspace, $member, receivedAt: '2026-09-05 10:00:00', intent: 'positive');
+        }
+
+        $many = $this->portfolioSql($agency->user);
+
+        $this->assertSame(1, $this->countMatching($few, '/agency_prospect_messages/'), 'The outreach truth table is one statement.');
+        $this->assertSame(1, $this->countMatching($many, '/agency_prospect_messages/'), 'Fifty times the messages: still one statement.');
+        $this->assertSame(count($few), count($many), 'The whole Agency Home must cost the same regardless of message volume.');
+
+        $html = $this->home()->assertOk()->getContent();
+        $this->assertMatchesRegularExpression('/data-role="prospecting-positive">55</', $html);
+    }
+
+    /** No AI call is ever made just to render the Positive replies figure. */
+    public function test_positive_replies_never_triggers_an_ai_call(): void
+    {
+        [$agency, , $workspace] = $this->tenant(WorkspacePlanTier::Agency, 'Alpha Dental', 'Northwind Agency');
+        $this->addBusiness($agency, $workspace, 'Bravo Bistro');
+        $campaign = $this->campaign($workspace);
+        $member = $this->member($workspace, $campaign, $this->prospect($workspace));
+        $this->inboundWithIntent($workspace, $member, receivedAt: '2026-09-05 10:00:00', intent: 'positive');
+
+        Http::fake();
+        $this->app->bind(AgencyProspectingAiClient::class, function () {
+            $this->fail('Rendering Positive replies must never resolve an AI client.');
+        });
+
+        $this->authenticateAs($agency);
+        $this->home()->assertOk();
+
+        Http::assertNothingSent();
     }
 
     // =================================================================
@@ -578,6 +703,12 @@ class AgencyAccountHomePortfolioTest extends TestCase
     private function inbound(Workspace $workspace, int $memberId, string $receivedAt): void
     {
         $this->message($workspace, $memberId, 'inbound', 'received', ['received_at' => $receivedAt, 'created_at' => $receivedAt]);
+    }
+
+    /** A-2 — an inbound message with a persisted reply intent. */
+    private function inboundWithIntent(Workspace $workspace, int $memberId, string $receivedAt, string $intent): void
+    {
+        $this->message($workspace, $memberId, 'inbound', 'received', ['received_at' => $receivedAt, 'created_at' => $receivedAt, 'intent' => $intent]);
     }
 
     /** @param  array<string, mixed>  $columns */
