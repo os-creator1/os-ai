@@ -543,10 +543,12 @@ final class BusinessHomePresenter
      * Business-scoped routes. While viewing as a client nothing that costs,
      * funds, touches a provider or switches identity is offered.
      *
-     * The fourth place goes, in order, to: the team member's "Login as
-     * Parent" (Correction 1, decision D — it replaces an action that cannot
-     * apply to them), the payer's Add funds, then one setup action proven by
-     * the same status column that raised its attention item.
+     * There is no "Send a message": the legacy outbound Send page is no longer
+     * a customer destination (the Messages menu offers Inbox only), so Home
+     * does not promote it either. After Open inbox and Add contact, the
+     * remaining places go, in order, to: the team member's "Login as Parent"
+     * (Correction 1, decision D), the payer's Add funds, then one setup action
+     * proven by the same status column that raised its attention item.
      *
      * @param  array<int, string>  $scoped
      * @return array{items: array<int, DashboardAction>, parentMessage: ?string}
@@ -555,10 +557,6 @@ final class BusinessHomePresenter
     {
         $viewingAs = $context->isViewingAsClient();
         $actions = [];
-
-        if (! $viewingAs && ($url = $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.outreach.index', $scoped, DashboardLinkGate::OUTREACH_PERMISSIONS))) {
-            $actions[] = new DashboardAction('send', 'Send a message', $url, 'send', DashboardAction::KIND_COST);
-        }
 
         if ($url = $this->links->url($context, $user, $entitlements, 'customer.workspaces.businesses.conversations.index', $scoped, ['chat_box'], 'conversations')) {
             $actions[] = new DashboardAction('inbox', 'Open inbox', $url, 'inbox');

@@ -45,6 +45,8 @@ class CustomerNavigationTreeTest extends TestCase
     private const BUSINESS_ONLY_KEYS = [
         'messages', 'inbox', 'send', 'campaigns', 'contacts',
         'automations', 'website', 'gbp', 'analytics', 'business', 'blocked-numbers',
+        // Customer Experience Slice 1A — a Business's physical locations.
+        'locations',
     ];
 
     // =================================================================
@@ -58,12 +60,40 @@ class CustomerNavigationTreeTest extends TestCase
 
         $keys = $this->menuKeys($this->home()->assertOk()->getContent());
 
-        foreach (['home', 'messages', 'inbox', 'send', 'campaigns', 'contacts', 'automations', 'website', 'analytics', 'settings'] as $expected) {
+        foreach (['home', 'messages', 'inbox', 'contacts', 'automations', 'website', 'analytics', 'settings', 'business', 'locations'] as $expected) {
             $this->assertContains($expected, $keys, "A Core Business must offer [{$expected}].");
+        }
+
+        foreach (['send', 'campaigns'] as $legacyOutbound) {
+            $this->assertNotContains($legacyOutbound, $keys, "Messages is Inbox only: no [{$legacyOutbound}].");
         }
 
         // The D-20 exemplar: Core's catalog excludes the GBP module.
         $this->assertNotContains('gbp', $keys, 'Core has no Get found.');
+    }
+
+    /**
+     * Customer Experience Slice 1A — Settings → Business → Locations: the
+     * selected Business's physical locations, nested under Business and
+     * pointing at that Business's own scoped route. No entitlement key and
+     * no entitlement query are involved.
+     */
+    public function test_locations_sits_under_settings_business_for_the_selected_business(): void
+    {
+        [$customer, $business, $workspace] = $this->tenant(WorkspacePlanTier::Growth);
+        $this->authenticateAs($customer);
+
+        $html = $this->home()->assertOk()->getContent();
+        $keys = $this->menuKeys($html);
+
+        $settings = array_search('settings', $keys, true);
+        $businessGroup = array_search('business', $keys, true);
+        $locations = array_search('locations', $keys, true);
+
+        $this->assertNotFalse($locations);
+        $this->assertGreaterThan($settings, $businessGroup, 'Business sits inside Settings.');
+        $this->assertGreaterThan($businessGroup, $locations, 'Locations sits inside Settings → Business.');
+        $this->assertContains(route('customer.workspaces.businesses.locations.index', [$workspace->uid, $business->uid]), $this->menuLinks($html));
     }
 
     public function test_a_growth_business_gets_get_found_because_its_plan_includes_it(): void
@@ -74,14 +104,22 @@ class CustomerNavigationTreeTest extends TestCase
         $html = $this->home()->assertOk()->getContent();
         $keys = $this->menuKeys($html);
 
-        foreach (['home', 'messages', 'inbox', 'send', 'campaigns', 'contacts', 'automations', 'website', 'gbp', 'analytics', 'settings'] as $expected) {
+        foreach (['home', 'messages', 'inbox', 'contacts', 'automations', 'website', 'gbp', 'analytics', 'settings'] as $expected) {
             $this->assertContains($expected, $keys, "A Growth Business must offer [{$expected}].");
+        }
+
+        foreach (['send', 'campaigns'] as $legacyOutbound) {
+            $this->assertNotContains($legacyOutbound, $keys, "Messages is Inbox only: no [{$legacyOutbound}].");
         }
 
         $this->assertStringContainsString('Get found', $this->shellText($html));
     }
 
-    public function test_the_messages_group_carries_inbox_send_and_campaigns_in_order(): void
+    /**
+     * Messages is Inbox only: the legacy outbound Send and Campaigns pages
+     * are no longer customer destinations (their routes stay registered).
+     */
+    public function test_the_messages_group_carries_inbox_only(): void
     {
         [$customer] = $this->tenant(WorkspacePlanTier::Growth);
         $this->authenticateAs($customer);
@@ -89,14 +127,10 @@ class CustomerNavigationTreeTest extends TestCase
         $keys = $this->menuKeys($this->home()->assertOk()->getContent());
 
         $messages = array_search('messages', $keys, true);
-        $inbox = array_search('inbox', $keys, true);
-        $send = array_search('send', $keys, true);
-        $campaigns = array_search('campaigns', $keys, true);
+        $contacts = array_search('contacts', $keys, true);
 
         $this->assertNotFalse($messages);
-        $this->assertGreaterThan($messages, $inbox, 'Inbox sits inside Messages.');
-        $this->assertGreaterThan($inbox, $send, 'Send follows Inbox.');
-        $this->assertGreaterThan($send, $campaigns, 'Campaigns follows Send.');
+        $this->assertSame(['inbox'], array_slice($keys, $messages + 1, $contacts - $messages - 1), 'Messages holds Inbox and nothing else.');
     }
 
     // =================================================================
@@ -642,7 +676,7 @@ class CustomerNavigationTreeTest extends TestCase
         $html = $this->home()->assertOk()->getContent();
 
         // The vertical sidebar.
-        foreach (['messages', 'inbox', 'send', 'campaigns'] as $key) {
+        foreach (['messages', 'inbox'] as $key) {
             $this->assertContains($key, $this->menuKeys($html));
         }
 
@@ -650,8 +684,12 @@ class CustomerNavigationTreeTest extends TestCase
         // keys appear in the document outside the sidebar region too.
         $horizontal = view('panels.horizontalMenu')->render();
 
-        foreach (['Messages', 'Inbox', 'Send', 'Campaigns'] as $label) {
+        foreach (['Messages', 'Inbox'] as $label) {
             $this->assertStringContainsString($label, $horizontal, "The horizontal shell must render [{$label}].");
+        }
+
+        foreach (['Send', 'Campaigns'] as $legacyOutbound) {
+            $this->assertStringNotContainsString('>' . $legacyOutbound . '<', $horizontal, "The horizontal shell must not render [{$legacyOutbound}].");
         }
 
         $this->assertStringNotContainsString('Developers', $horizontal);

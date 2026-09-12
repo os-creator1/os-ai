@@ -32,6 +32,7 @@ use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Notification;
 use Tests\Feature\Business\Concerns\CreatesBusinessTestData;
+use Tests\Feature\Entitlement\Concerns\PinsBoundedBusinessSlotCatalog;
 use Tests\TestCase;
 
 /**
@@ -44,6 +45,7 @@ use Tests\TestCase;
  */
 class ReceiptBoundaryTest extends TestCase
 {
+    use PinsBoundedBusinessSlotCatalog;
     use RefreshDatabase;
     use CreatesBusinessTestData;
 
@@ -52,6 +54,9 @@ class ReceiptBoundaryTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+
+        // Generic additional-Business-slot engine tests: see PinsBoundedBusinessSlotCatalog.
+        $this->pinBoundedBusinessSlotCatalog();
 
         Currency::create(['name' => 'US Dollar', 'code' => 'USD', 'format' => '$', 'status' => true]);
         $this->gateway = new FakePaymentProviderGateway();

@@ -31,8 +31,6 @@ final class CustomerMenuBuilder
         'view_contact', 'create_contact', 'update_contact', 'delete_contact',
     ];
 
-    private const OUTREACH_PERMISSIONS = ['sms_quick_send', 'sms_campaign_builder', 'mms_quick_send', 'mms_campaign_builder'];
-
     private const BLACKLIST_PERMISSIONS = ['view_blacklist', 'create_blacklist', 'update_blacklist', 'delete_blacklist'];
 
     /**
@@ -111,22 +109,17 @@ final class CustomerMenuBuilder
             $items[] = $this->item($user, 'advisor', 'Advisor', 'compass', ['access_backend'], 'customer.opportunities.index', [], $current, ['customer.opportunities.']);
         }
 
-        // Messages — the one group that gathers what was three unrelated
-        // top-level entries. Every entry in it is scoped to the selected
-        // Business; Inbox joined them in Slice 2B.
+        // Messages — the selected Business's Inbox, and only that. The legacy
+        // outbound surfaces (Send, Campaigns) are not a local-business workflow
+        // and are no longer offered here; their routes stay registered for now.
+        // Agency outbound prospecting lives in the Agency account frame
+        // (Prospecting), never in a client Business's Messages.
         $messages = array_values(array_filter([
             // Slice 2B §16 — the selected Business's own inbox, shown only when
             // that Business is entitled to Conversations.
             $this->entitled('conversations', $this->item($user, 'inbox', 'Inbox', 'inbox', ['chat_box'], 'customer.workspaces.businesses.conversations.index', $scoped, $current, [
                 'customer.workspaces.businesses.conversations.',
             ])),
-            $this->item($user, 'send', 'Send', 'send', self::OUTREACH_PERMISSIONS, 'customer.workspaces.businesses.outreach.index', $scoped, $current, [
-                'customer.workspaces.businesses.outreach.index', 'customer.outreach.index',
-            ]),
-            $this->item($user, 'campaigns', 'Campaigns', 'layers', self::OUTREACH_PERMISSIONS, 'customer.workspaces.businesses.outreach.campaigns', $scoped, $current, [
-                'customer.workspaces.businesses.outreach.campaigns', 'customer.workspaces.businesses.outreach.campaigns.',
-                'customer.outreach.campaigns.entry', 'customer.sms.', 'customer.mms.',
-            ]),
         ]));
 
         if ($messages !== []) {
@@ -166,6 +159,13 @@ final class CustomerMenuBuilder
             // Business; it is only offered when that is the selected one.
             $businessSettings[] = $this->item($user, 'business-details', 'Business details', 'briefcase', ['access_backend'], 'customer.business.edit', [], $current, ['customer.business.']);
         }
+
+        // Customer Experience Slice 1A — the selected Business's physical
+        // locations. A location is part of the Business, never an account or
+        // a switcher level; the destination enforces its own tenancy.
+        $businessSettings[] = $this->item($user, 'locations', 'Locations', 'map', ['access_backend'], 'customer.workspaces.businesses.locations.index', $scoped, $current, [
+            'customer.workspaces.businesses.locations.',
+        ]);
 
         $businessSettings[] = $this->item($user, 'blocked-numbers', 'Blocked numbers', 'shield', self::BLACKLIST_PERMISSIONS, 'customer.blacklists.index', [], $current, ['customer.blacklists.']);
 

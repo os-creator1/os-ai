@@ -446,6 +446,10 @@ class WorkspaceOverviewHttpTest extends TestCase
     {
         $customer = $this->actingAsHttpCustomer();
         $workspace = $this->createWorkspace($customer->user);
+        // The breakdown is proven against a bounded catalog with room for an
+        // additional slot (3 included / 5 max): Customer Experience Slice 1A
+        // (RFC-004 §33.2) corrected the seeded Core row to one Business.
+        \Illuminate\Support\Facades\DB::table('workspace_plan_catalog')->where('tier', 'core')->update(['business_slot_included' => 3, 'business_slot_max' => 5]);
         app(\App\Library\Entitlement\EntitlementManager::class)->assignFirstPlan(
             $workspace,
             \App\Enums\Entitlement\WorkspacePlanTier::Core,
@@ -464,7 +468,18 @@ class WorkspaceOverviewHttpTest extends TestCase
         }
 
         $plan = $this->get(route('customer.workspaces.plan.show', $workspace->uid))->assertOk();
-        $plan->assertSee('0 of 4 in use');
+        // The capacity row is the decision's own arithmetic — 3 included + 1
+        // allocated = 4 for this deliberately widened catalog row — printed
+        // as the presenter received it. Blade recomputes nothing, and the old
+        // slot-mechanics vocabulary is gone.
+        $this->assertMatchesRegularExpression(
+            '/<dt[^>]*>Businesses<\/dt>\s*<dd[^>]*>4 Businesses · 0 in use<\/dd>/',
+            $plan->getContent()
+        );
+        $plan->assertDontSee('0 of 4 in use');
+        foreach (['Included slots', 'Additional slots', 'Effective capacity'] as $gone) {
+            $plan->assertDontSee($gone);
+        }
         // Customer names, never machine keys (crm, website_generation), and
         // nothing the Core packaging lists that is not built yet (calendar, forms…).
         foreach (['Client Management', 'Inbox &amp; Conversations', 'Automations', 'Website'] as $name) {

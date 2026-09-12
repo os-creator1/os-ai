@@ -47,6 +47,8 @@ class WorkspaceEntitlementTransitionSchemaTest extends TestCase
             'from_status' => 'YES',
             'to_status' => 'YES',
             'reason' => 'YES',
+            // Customer Experience Slice 1A — one nullable JSON record per row.
+            'payload' => 'YES',
             'payment_idempotency_key' => 'YES',
             'created_at' => 'NO',
         ];

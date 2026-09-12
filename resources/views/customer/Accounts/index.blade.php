@@ -87,31 +87,13 @@
             function showResponseMessage(data) {
 
                 if (data.status === 'success') {
-                    toastr['success'](data.message, '{{__('locale.labels.success')}}!!', {
-                        closeButton: true,
-                        positionClass: 'toast-top-right',
-                        progressBar: true,
-                        newestOnTop: true,
-                        rtl: isRtl
-                    });
+                    toastr['success'](data.message);
                     dataListView.draw(false);
                 } else if (data.status === 'error') {
-                    toastr['error'](data.message, '{{ __('locale.labels.opps') }}!', {
-                        closeButton: true,
-                        positionClass: 'toast-top-right',
-                        progressBar: true,
-                        newestOnTop: true,
-                        rtl: isRtl
-                    });
+                    toastr['error'](data.message);
                     dataListView.draw(false);
                 } else {
-                    toastr['warning']("{{__('locale.exceptions.something_went_wrong')}}", '{{ __('locale.labels.warning') }}!', {
-                        closeButton: true,
-                        positionClass: 'toast-top-right',
-                        progressBar: true,
-                        newestOnTop: true,
-                        rtl: isRtl
-                    });
+                    toastr['warning']("{{__('locale.exceptions.something_went_wrong')}}");
                 }
 
 

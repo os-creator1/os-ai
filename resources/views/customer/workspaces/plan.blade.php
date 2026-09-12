@@ -51,6 +51,9 @@
                                     <dd class="col-sm-7">{{ $row['value'] }}</dd>
                                 @endforeach
                             </dl>
+                            @if ($capacity_note !== null)
+                                <p class="text-caption mt-1 mb-0" data-role="plan-capacity-note">{{ $capacity_note }}</p>
+                            @endif
                         </x-card>
                     @endif
 

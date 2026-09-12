@@ -1,40 +1,56 @@
-{{-- B5 contract §4 / §13.1 — the range control. Presets plus a custom
-     range bounded at 92 inclusive days; every date is a Business-local
-     calendar date. Shared by the overview and the campaign table. --}}
+{{-- Results — the date range control, shared by the overview and the
+     campaign table. Human presets plus a custom range of up to
+     MAX_CUSTOM_DAYS; every date is a calendar date in the Business's own
+     timezone. The timezone is stated once, in a tooltip, rather than in
+     the main line: it explains the figures, it is not one of them. --}}
 @php
-    $presets = [
-        \App\Library\Analytics\AnalyticsDateRange::PRESET_LAST_7_DAYS => 'Last 7 days',
-        \App\Library\Analytics\AnalyticsDateRange::PRESET_LAST_30_DAYS => 'Last 30 days',
-        \App\Library\Analytics\AnalyticsDateRange::PRESET_LAST_90_DAYS => 'Last 90 days',
-        \App\Library\Analytics\AnalyticsDateRange::PRESET_CUSTOM => 'Custom',
+    use App\Library\Analytics\AnalyticsDateRange;
+
+    $presetLabels = [
+        AnalyticsDateRange::PRESET_LAST_7_DAYS => 'Last 7 days',
+        AnalyticsDateRange::PRESET_LAST_30_DAYS => 'Last 30 days',
+        AnalyticsDateRange::PRESET_LAST_90_DAYS => 'Last 90 days',
+        AnalyticsDateRange::PRESET_THIS_MONTH => 'This month',
+        AnalyticsDateRange::PRESET_LAST_MONTH => 'Last month',
+        AnalyticsDateRange::PRESET_CUSTOM => 'Custom range',
     ];
-    $isCustom = $range->preset === \App\Library\Analytics\AnalyticsDateRange::PRESET_CUSTOM;
+    $isCustom = $range->preset === AnalyticsDateRange::PRESET_CUSTOM;
+    $businessName = $businessName ?? null;
+    $timezoneNote = 'Days follow ' . ($businessName ? $businessName . "'s" : "this Business's") . ' local time (' . $range->timezone . ').';
 @endphp
 
 <form method="get" action="{{ $formAction }}" class="row g-1 align-items-end" data-role="analytics-range">
     <div class="col-md-3 col-sm-6">
         <label class="form-label" for="range">Date range</label>
         <select id="range" name="range" class="form-select" data-role="range-preset">
-            @foreach($presets as $value => $label)
-                <option value="{{ $value }}" @selected($range->preset === $value)>{{ $label }}</option>
+            @foreach(AnalyticsDateRange::SELECTABLE_PRESETS as $value)
+                <option value="{{ $value }}" @selected($range->preset === $value)>{{ $presetLabels[$value] }}</option>
             @endforeach
         </select>
     </div>
     <div class="col-md-3 col-sm-6" data-role="custom-dates" @unless($isCustom) hidden @endunless>
-        <label class="form-label" for="start">Start</label>
+        <label class="form-label" for="start">From</label>
         <input type="date" id="start" name="start" class="form-control" value="{{ old('start', $isCustom ? $range->startLocal->format('Y-m-d') : '') }}">
     </div>
     <div class="col-md-3 col-sm-6" data-role="custom-dates" @unless($isCustom) hidden @endunless>
-        <label class="form-label" for="end">End</label>
+        <label class="form-label" for="end">To</label>
         <input type="date" id="end" name="end" class="form-control" value="{{ old('end', $isCustom ? $range->endLocal->format('Y-m-d') : '') }}">
     </div>
     <div class="col-md-3 col-sm-6">
         <x-button type="submit" variant="primary" size="sm">Apply</x-button>
     </div>
     <div class="col-12">
-        <p class="text-caption mb-0">
-            Showing <strong>{{ $range->label() }}</strong> · {{ $range->days() }} local day{{ $range->days() === 1 ? '' : 's' }} in the
-            <strong>{{ $range->timezone }}</strong> timezone. Custom ranges may cover up to {{ \App\Library\Analytics\AnalyticsDateRange::MAX_CUSTOM_DAYS }} days.
+        <p class="text-caption mb-0" data-role="range-caption">
+            Showing <strong>{{ $range->label() }}</strong>
+            @unless($isCustom)
+                <span class="text-muted">· {{ $range->spanLabel() }}</span>
+            @endunless
+            <x-tooltip :text="$timezoneNote" tabindex="0" role="note" aria-label="{{ $timezoneNote }}" data-role="timezone-note">
+                <x-ds-icon name="info" size="14" class="text-muted align-text-bottom" aria-hidden="true" />
+            </x-tooltip>
+        </p>
+        <p class="text-caption text-muted mb-0" data-role="custom-dates" @unless($isCustom) hidden @endunless>
+            A custom range can cover up to {{ AnalyticsDateRange::MAX_CUSTOM_DAYS }} days.
         </p>
     </div>
 </form>

@@ -32,8 +32,6 @@ use Illuminate\Support\Facades\Route;
  */
 final class DashboardLinkGate
 {
-    public const OUTREACH_PERMISSIONS = ['sms_quick_send', 'sms_campaign_builder', 'mms_quick_send', 'mms_campaign_builder'];
-
     public const CONTACT_PERMISSIONS = [
         'view_contact_group', 'create_contact_group', 'update_contact_group', 'delete_contact_group',
         'view_contact', 'create_contact', 'update_contact', 'delete_contact',
