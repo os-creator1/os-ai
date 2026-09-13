@@ -4,6 +4,7 @@ namespace App\Library\Ai;
 
 use App\Library\Ai\Enums\AiLane;
 use App\Library\Ai\Enums\AiRefusalReason;
+use App\Library\Ai\Enums\AiRefusalScope;
 use App\Library\Ai\Enums\AiUsageEntryStatus;
 use App\Models\AiUsageLedgerEntry;
 use App\Models\AiUsagePeriod;
@@ -144,6 +145,20 @@ final class AiUsageLedgerManager
                     ? AiRefusalReason::InteractiveShareExhausted
                     : AiRefusalReason::BudgetExhausted;
 
+                // Whose allowance was the limit — decided here, from the same
+                // locked figures that made the refusal, because nothing later
+                // can tell. A Business-scoped call is refused by the Workspace
+                // cap as readily as by its own, and only the first means the
+                // account's AI is used up (§11.3). Where a broader cap and the
+                // interactive share are both spent, the broader cap is named:
+                // freeing the interactive lane would not let the call through.
+                $scope = match (true) {
+                    $exceedsWorkspace && $exceedsBusiness => AiRefusalScope::WorkspaceAndBusiness,
+                    $exceedsWorkspace => AiRefusalScope::Workspace,
+                    $exceedsBusiness => AiRefusalScope::Business,
+                    default => AiRefusalScope::InteractiveShare,
+                };
+
                 $entry = AiUsageLedgerEntry::create([
                     'workspace_id' => $request->workspace->id,
                     'business_id' => $request->business?->id,
@@ -155,6 +170,7 @@ final class AiUsageLedgerManager
                     'price_version' => $estimate->priceVersion,
                     'status' => AiUsageEntryStatus::Refused,
                     'refusal_reason' => $reason,
+                    'refusal_scope' => $scope,
                     'estimated_cost_microusd' => $estimate->costMicrousd,
                     'actual_cost_microusd' => null,
                     'period_key' => $policy->periodKey,
