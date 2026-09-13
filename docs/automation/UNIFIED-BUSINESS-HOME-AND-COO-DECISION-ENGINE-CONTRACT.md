@@ -1255,3 +1255,51 @@ and the T-CONV-1 truth tables added to
 4 and H-3 tests that asserted the old band order, the old read-model surface
 or a page-wide absence of the words "automation runs" are rewritten in this
 slice, never deleted without a replacement assertion (§19.7).
+
+---
+
+## Appendix E — implementation record: H-5
+
+Delivered on `agent/unified-business-home-h5-recent-work`, from `origin/main`
+`e7432c1` (H-4 merged as #276). H-6, C-2 and AI-3 are not started, Results is
+untouched, and no Lead, Booking, Revenue, Calendar, Forms or Payments concept
+is introduced.
+
+### H-5 — Recent work (§14)
+
+| Promise | Delivered by |
+|---|---|
+| One canonical reader, no projection table | `App\Library\Dashboard\RecentWorkReader::recent(Business, int $limit = 10)`. No `business_activity_events` table exists and none was added — asserted |
+| Website versions | `website_revisions` joined to `websites` on `business_id` (unique, so the join cannot multiply rows) → "Website version {n} published" |
+| A rollback invents nothing | A rollback repoints the website and writes no revision row, so no item appears. The test repoints one and proves the list does not change. A known gap, stated rather than filled |
+| Completed recommendations | `opportunity_transitions` joined to `opportunities`, `to_status = completed` only → "Completed: {title}". The title is `OpportunityTypeRegistry`'s own `title_template`; an opportunity whose type the registry does not define falls back to the title stored on its row, and one with neither is skipped rather than described by its raw type name |
+| Automation failures, through the owning seam | `BusinessAnalyticsQueries::recentAutomationFailures()` — the class that already owns `automation_executions` (V2-H moves with it). `RecentWorkReader` names neither ledger table in its code, and the one execution statement during a Home request is proven to originate in the analytics seam. Grouped per automation per **Business-local** day → "{name} failed {n} times" |
+| No premature V2-H | Only the reader that exists today is consumed. `automation_step_runs` is not read, and no run parity is claimed |
+| Google work, without the machinery | `business_google_operations` limited to `connect_completed`, `disconnected`, `location_bound`, `location_unbound`, **and** `status = succeeded` — a pending or failed attempt is not a thing that happened → "Google connected", "Google disconnected", "Google listing linked", "Google listing unlinked". `token_refreshed`, `mirror_refreshed`, enumerations and OAuth internals never appear |
+| Business details, grouped, without payloads | `business_knowledge_profile_changes` grouped per actor per Business-local day → "Business details updated". No field key, no old or new value reaches the customer |
+| Bounded, merged, capped | Each source runs ONE Business-scoped query, `ORDER BY created_at DESC LIMIT 10`; the results merge in PHP, newest first, and the top 10 survive. No union, no query per row, and the statement count is proven flat as rows double |
+| Every destination through the gate | The reader returns a destination INTENT (route, parameters, permissions, feature); `BusinessHomePresenter` resolves it through `DashboardLinkGate`. An actor who may open it gets a link; one who may not gets the same factual line as plain text, because the event happened either way and hiding it would make the timeline lie by omission |
+| Tenancy | Every read is `business_id = ?` on the resolved Business. A sibling client's work, Agency outreach, prospecting and billing are not sources at all, and the Agency Account Home has no Recent work band |
+| Absent when empty | No supported event, no band — no heading and no placeholder row |
+
+**Local-day grouping, and why it is done in PHP.** Two sources group by the
+Business's own day. A SQL date function would have to assume a fixed offset,
+which daylight saving breaks, and this repository already forbids `CONVERT_TZ`
+and `DATE()` in analytics. So each grouped source takes ONE bounded read of its
+newest rows and groups them in PHP by the Business-local date; when that read
+fills its bound, the oldest group is dropped rather than reported with a count
+that might be short.
+
+**Query budget.** Recent work costs five statements: four Dashboard-owned
+(website revisions, completed recommendations, Google operations, Business
+detail changes) and one analytics-owned (automation failures, issued by the
+seam that owns the ledger). `DashboardQueryBudgetTest` pins the new observed
+figures — dashboard-owned 10, analytics 7 — inside §16's ceilings of 18 and 7,
+and the warm figure is now 1 rather than 0: the automation read is deliberately
+never cached, because a timeline of what just happened must not be served from
+a five-minute-old answer. §16 already budgets exactly that (warm ≤ 1).
+
+**Tests:** `tests/Feature/Dashboards/BusinessHomeRecentWorkTest.php` (20). The
+H-4 and Slice 4 tests that pinned the earlier query counts are rewritten to say
+what they always meant — that the Visibility and Automations bands add no read
+of their own — never deleted without a replacement assertion (§19.7).

@@ -404,6 +404,68 @@ class BusinessAnalyticsQueries
     }
 
     /**
+     * Unified Business Home §14 (H-5) — the newest automation FAILURES,
+     * grouped per automation per Business-local day.
+     *
+     * It lives here for the same reason automationCountsBetween() does: this
+     * class is already this application's reader of `automation_executions`,
+     * and Home must not become a second one (Automations V2 §15.4 gives the
+     * V2-H lane ownership of every execution read, so this method moves with
+     * it). Like its neighbours it returns null — the item is ABSENT, never an
+     * empty list — when the B4-owned table does not exist.
+     *
+     * ONE statement: the newest failed runs for this Business, joined to the
+     * automation only for its name. The grouping is done here in PHP because
+     * the day is the BUSINESS's own, and a SQL date function would have to
+     * assume a fixed offset that daylight saving breaks. When the read fills
+     * its bound the oldest group is dropped rather than reported with a count
+     * that might be short.
+     *
+     * @return array<int, array{automation: string, failures: int, at: CarbonImmutable}>|null
+     */
+    public function recentAutomationFailures(Business $business, int $limit = 10): ?array
+    {
+        $fanOut = max(1, $limit) * 20;
+
+        try {
+            $rows = DB::table('automation_executions as e')
+                ->join('automations as a', 'a.id', '=', 'e.automation_id')
+                ->where('e.business_id', $business->id)
+                ->where('e.status', AutomationExecutionStatus::Failed->value)
+                ->orderByDesc('e.created_at')
+                ->orderByDesc('e.id')
+                ->limit($fanOut)
+                ->get(['e.automation_id', 'e.created_at', 'a.name']);
+        } catch (QueryException $exception) {
+            if ((int) ($exception->errorInfo[1] ?? 0) === 1146) {
+                return null;
+            }
+
+            throw $exception;
+        }
+
+        $timezone = (string) ($business->timezone ?: config('app.timezone', 'UTC'));
+        $groups = [];
+
+        foreach ($rows as $row) {
+            $at = CarbonImmutable::parse((string) $row->created_at);
+            $key = (int) $row->automation_id . '@' . $at->setTimezone($timezone)->format('Y-m-d');
+
+            if (! isset($groups[$key])) {
+                $groups[$key] = ['automation' => (string) $row->name, 'failures' => 0, 'at' => $at];
+            }
+
+            $groups[$key]['failures']++;
+        }
+
+        if ($rows->count() === $fanOut && count($groups) > 1) {
+            array_pop($groups);
+        }
+
+        return array_values(array_slice($groups, 0, $limit));
+    }
+
+    /**
      * C3 — one page of campaigns created in range (most recent first),
      * then exactly two grouped aggregates over that page's ids, both
      * additionally constrained by business_id (§6, §11.2).
