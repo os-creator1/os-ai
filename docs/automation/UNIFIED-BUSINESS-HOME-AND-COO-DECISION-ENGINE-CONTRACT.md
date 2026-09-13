@@ -1303,3 +1303,84 @@ a five-minute-old answer. §16 already budgets exactly that (warm ≤ 1).
 H-4 and Slice 4 tests that pinned the earlier query counts are rewritten to say
 what they always meant — that the Visibility and Automations bands add no read
 of their own — never deleted without a replacement assertion (§19.7).
+
+---
+
+## Appendix F — implementation record: C-2
+
+Delivered on `agent/coo-c2-next-best-move`, from `origin/main` `93e4526` (H-5
+merged as #278). H-6 and AI-3 are not started, Results is untouched, and no AI
+is called anywhere on this path.
+
+### C-2 — Your next best move (§2.4, §6.4, §6.5, §7.2)
+
+| Promise | Delivered by |
+|---|---|
+| One move, fixed order, pure | `App\Library\Coo\NextBestMoveSelector::select(array $attention, ?Opportunity $queueHead): ?NextBestMove` — no I/O, no container, no clock. The order is two constants (`BEFORE_OPPORTUNITIES`, `AFTER_OPPORTUNITIES`) around the queue head, exactly §6.4 steps 1–6; `null` is step 7 |
+| Billing is never a candidate | The selector drops every type `BusinessHomePresenter::isBilling()` names, even when billing is all there is. The billing strip (row 0) is unchanged |
+| The new attention type | `AttentionType::ConversationsAwaitingReply`: Warning, "1 customer is waiting for a reply." / "{N} customers are waiting for a reply.", action "Reply", linked to the Business's Conversations with the same gate arguments the Conversations band already uses. Raised when Slice 2B's `awaitingReplyCount() > 0`. The Dashboard reads no conversation table of its own |
+| One count, shared | The waiting count is read ONCE per request and shared by the move and the Conversations band, so ranking a waiting customer first costs no extra statement |
+| The Opportunity head is RFC-002's | `OpportunityRepository::topForCustomer(Business, 20)` — current freshness, actionable statuses, then priority, impact, urgency, first detection, id. The selector takes its first row as given and never re-scores it. No second scoring model and no AI priority exists |
+| "See all recommendations (N)" | N counts that same capped read and reads "20+" at the cap, so the move and its count never come from two queries that could disagree. It links to `customer.opportunities.index` through `DashboardLinkGate` |
+| "Why this?" is deterministic | `App\Library\Coo\WhyThis`. **Attention:** the type's sentence, then one fact from values the page already holds — the waiting count and grace minutes; the lost authorization (and that the listing is kept); the failed-run count for the selected period; the unhealthy listing count; the saved-but-unpublished draft. **Opportunity:** the registry-rendered evidence `summary` strings stored on the row, then "High impact · Quick to do" from impact ≥ 4 and effort ≤ 2. Never a score, a fact key, an action key or a hash |
+| One action | The move carries one action link. Attention: its `actionLabel()`. Opportunity: "Open recommendation" to `customer.opportunities.show`, where the existing configure, approve and execute flow runs unchanged. The Opportunity engine defines no customer action verb, so none is invented beyond that label |
+| All caught up | No candidate → "You're all caught up." The band is never absent while a Business Home renders |
+
+**Scope decision — both Slice 4 lists are replaced.** §2.1 and §2.2 give the
+Business Home no attention list at all: row 2 is the one move over non-billing
+Attention plus the queue. So C-2 removes BOTH Slice 4 list bands — "Needs
+attention" and "Recommended next steps" — and their views, and puts the one
+move in their place. Nothing factual is lost: every non-billing condition still
+reads in its own factual band (Visibility, Conversations, Automations), and the
+billing strip is untouched.
+
+**Deterministic fallback when the destination cannot be opened (T-NBM-4).**
+Two rules, both from rules this contract already states:
+
+1. *An attention move* is only ever built for an actor who can reach its fix.
+   Slice 4 §5.1 drops an attention item whose remediation does not resolve
+   through `DashboardLinkGate`, so an unreachable condition never enters the
+   pool and the next candidate in the order is chosen instead.
+2. *An Opportunity move* is kept whenever the queue has one, because hiding it
+   would turn real work into a false "all caught up". Its action and the
+   "See all" link are linked only when the Advisor pages would open **this**
+   Business — they resolve the actor's own primary Business, the rule Slice 4
+   already applied. Otherwise the title and "Why this?" render as plain text
+   with no action and "{N} recommendations" is unlinked, exactly as Recent
+   work treats a destination the actor cannot open (§2.2 row 7). A customer's
+   secondary Business is the case the tests pin.
+
+**Behaviour a reviewer should notice.**
+
+- *The actionable set widened.* Slice 4's list read `status = open` only. The
+  move reads RFC-002's work queue, so a recommendation **awaiting approval** or
+  **in progress** can now be the move, ordered by the same priority, impact,
+  urgency and first detection as an open one. Snoozed, completed, dismissed
+  and stale still never appear.
+- *The failing-automations sentence* no longer says "in the last 30 days". The
+  period has been selectable since H-3, so the fixed window in the sentence was
+  already untrue on any other period; "Why this?" now names the selected period.
+- *§6.5's example fact* ("the oldest since 10:42") needs a timestamp that
+  `awaitingReplyCount()` does not return. C-2 states the count and the grace
+  window, adds no second conversation read, and invents no time.
+- *A source failure is not "all caught up".* If the status row or the waiting
+  count cannot be read, the band degrades to Slice 4's one-line `band-failed`;
+  if only the queue read fails, the same. It never claims there is nothing to do.
+- *No interface change.* `OpportunityRepository` gains no method, so every
+  decorator of it in the test suite is untouched.
+
+**Query budget.** The Business Home's dashboard-owned statements fall from 10
+to 9, as §16 anticipated: Slice 4's Advisor page count + rows become one
+bounded queue read, and the waiting count is shared with the Conversations
+band. Analytics statements and the warm figure are unchanged.
+`DashboardQueryBudgetTest` pins the new observed figure.
+
+**Tests:** `tests/Unit/Coo/NextBestMoveSelectorTest.php` (21 — T-NBM-1, every
+pair of the six candidates in both arrival orders, billing never a candidate)
+and `tests/Feature/Dashboards/BusinessHomeNextBestMoveTest.php` (17 — T-NBM-2
+through T-NBM-4, zero AI and zero outbound HTTP, tenancy, cost). The Slice 4,
+H-1 and RFC-002 dashboard tests that asserted the attention list, the list of
+five or its open-only reading (`BusinessHomeTest`, `BusinessHomeBillingTest`,
+`DashboardQueryBudgetTest`, `DashboardComponentAdoptionTest`,
+`OpportunityDashboardHttpTest`) are rewritten in this slice to the one move,
+never deleted without a replacement assertion (§19.7).
