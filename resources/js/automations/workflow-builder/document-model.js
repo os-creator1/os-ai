@@ -96,6 +96,22 @@ export function insertAt(list, index, node) {
     return node
 }
 
+/**
+ * Insert an If / Else in the middle of a path without breaking it.
+ *
+ * An If / Else must be the last step of its path, so inserting one ahead of
+ * existing steps moves those steps into its Yes lane: the journey still runs
+ * them, now only when the condition is true, and the No lane starts empty. The
+ * picker says so before the person chooses.
+ */
+export function insertBranchAt(list, index, node) {
+    node.yes = list.splice(index, list.length - index)
+    node.no = node.no || []
+    list.push(node)
+
+    return node
+}
+
 export function removeFrom(list, node) {
     const index = list.indexOf(node)
 

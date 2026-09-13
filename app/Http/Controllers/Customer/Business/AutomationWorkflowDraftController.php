@@ -11,6 +11,7 @@ use App\Library\Automation\Workflow\WorkflowCompiler;
 use App\Library\Automation\Workflow\WorkflowDraftService;
 use App\Library\Automation\Workflow\WorkflowPublisher;
 use App\Library\Automation\Workflow\WorkflowSimulator;
+use App\Library\Contacts\ContactDirectory;
 use App\Models\AutomationWorkflow;
 use App\Models\AutomationWorkflowVersion;
 use App\Models\Contacts;
@@ -42,11 +43,15 @@ class AutomationWorkflowDraftController extends CustomerBaseController
 {
     use ResolvesAutomationWorkflows;
 
+    /** How many matches the Test workflow picker shows at once. */
+    private const TEST_CONTACT_LIMIT = 8;
+
     public function __construct(
         private readonly WorkflowDraftService $drafts,
         private readonly WorkflowCompiler $compiler,
         private readonly WorkflowPublisher $publisher,
         private readonly WorkflowSimulator $simulator,
+        private readonly ContactDirectory $directory,
     ) {
     }
 
@@ -168,6 +173,41 @@ class AutomationWorkflowDraftController extends CustomerBaseController
             // reads `body.path`. It is the same list as `steps`, named the way
             // the builder already consumes it, rather than a second shape.
             return response()->json($result + ['path' => $result['steps']]);
+        });
+    }
+
+    /**
+     * The contact picker behind "Test workflow": this Business's contacts,
+     * searched by name, email or phone, so a person chooses WHO to test with and
+     * never types an identifier.
+     *
+     * It is ContactDirectory's own Business-scoped search — the same one the
+     * Contacts page runs — so it cannot surface a contact the Contacts page would
+     * not. Seeing contacts is its own permission, checked after tenancy so a
+     * caller outside this Business still learns nothing but 404. The uid it hands
+     * back is only ever sent to simulate(), which resolves it inside this Business
+     * again.
+     */
+    public function testContacts(string $workspaceUid, string $businessUid, string $workflowUid): JsonResponse
+    {
+        return $this->respond(function () use ($workspaceUid, $businessUid, $workflowUid): JsonResponse {
+            [, $business] = $this->resolveEntitledBusiness($workspaceUid, $businessUid);
+            $this->resolveWorkflow($business, $workflowUid);
+
+            $this->authorize('view_contact');
+
+            $search = mb_substr(trim((string) request()->query('q', '')), 0, 100);
+
+            $contacts = collect($this->directory->page($business, $search)->items())
+                ->take(self::TEST_CONTACT_LIMIT)
+                ->map(static fn (array $row): array => [
+                    'uid' => $row['uid'],
+                    'name' => $row['name'],
+                    'phone' => $row['phone'],
+                ])
+                ->values();
+
+            return response()->json(['contacts' => $contacts]);
         });
     }
 
