@@ -31,6 +31,8 @@ class TriggerArchitectureTest extends TestCase
         'app/Library/Automation/Workflow/Triggers/ContactCreatedTriggerSource.php',
         'app/Library/Automation/Workflow/Triggers/DateReachedTriggerSource.php',
         'app/Library/Automation/Workflow/Triggers/ManualEnrollmentTriggerSource.php',
+        // V2-F — held to exactly the same architectural rules.
+        'app/Library/Automation/Workflow/Triggers/MessageReceivedTriggerSource.php',
     ];
 
     // 22 — every source enrolls through the canonical service
@@ -40,6 +42,7 @@ class TriggerArchitectureTest extends TestCase
             ContactCreatedTriggerSource::class,
             DateReachedTriggerSource::class,
             ManualEnrollmentTriggerSource::class,
+            \App\Library\Automation\Workflow\Triggers\MessageReceivedTriggerSource::class,
         ] as $class) {
             $constructor = (new \ReflectionClass($class))->getConstructor();
             $this->assertNotNull($constructor, $class . ' must take its dependencies explicitly.');
@@ -113,10 +116,14 @@ class TriggerArchitectureTest extends TestCase
             'The sweep must ask EnrollmentPolicy for the key, not assemble one.',
         );
 
-        // And the other two have no reason to know a key at all.
+        // And the sources that do not exclude by key have no reason to know one
+        // at all. (Message received never reads an enrollment key: its
+        // duplicate protection is EnrollmentService's own claim, and its
+        // cooldown reads enrollments by workflow, contact and trigger type.)
         foreach ([
             'app/Library/Automation/Workflow/Triggers/ContactCreatedTriggerSource.php',
             'app/Library/Automation/Workflow/Triggers/ManualEnrollmentTriggerSource.php',
+            'app/Library/Automation/Workflow/Triggers/MessageReceivedTriggerSource.php',
         ] as $path) {
             $this->assertStringNotContainsString(
                 'enrollmentKey',
@@ -141,7 +148,7 @@ class TriggerArchitectureTest extends TestCase
     }
 
     // The registry, wired the canonical way
-    public function test_the_three_sources_are_registered_for_their_trigger_types(): void
+    public function test_the_four_sources_are_registered_for_their_trigger_types(): void
     {
         $registry = app(TriggerSourceRegistry::class);
 
@@ -149,6 +156,7 @@ class TriggerArchitectureTest extends TestCase
             WorkflowTriggerType::ContactCreated->value => ContactCreatedTriggerSource::class,
             WorkflowTriggerType::ContactDateReached->value => DateReachedTriggerSource::class,
             WorkflowTriggerType::ManualEnrollment->value => ManualEnrollmentTriggerSource::class,
+            WorkflowTriggerType::MessageReceived->value => \App\Library\Automation\Workflow\Triggers\MessageReceivedTriggerSource::class,
         ];
 
         foreach ($expected as $type => $class) {
@@ -162,15 +170,22 @@ class TriggerArchitectureTest extends TestCase
         $this->assertSame(array_keys($expected), $registry->registeredTypes());
     }
 
-    public function test_message_received_has_no_source_until_its_own_slice_ships(): void
+    /**
+     * V2-F shipped. This asserted `message_received` had no source while its
+     * producer did not exist; it is inverted rather than deleted, because the
+     * invariant is the same in both directions — the registry, the ingestable
+     * flag and the validator must agree about whether this trigger can fire.
+     */
+    public function test_message_received_has_its_source_now_its_slice_has_shipped(): void
     {
         $registry = app(TriggerSourceRegistry::class);
 
-        // V2-F owns it. Reporting it unavailable is what keeps the validator's
-        // refusal to publish such a workflow honest.
-        $this->assertNull($registry->for(WorkflowTriggerType::MessageReceived));
-        $this->assertFalse($registry->available(WorkflowTriggerType::MessageReceived));
-        $this->assertFalse(WorkflowTriggerType::MessageReceived->isIngestableInThisSlice());
+        $this->assertInstanceOf(
+            \App\Library\Automation\Workflow\Triggers\MessageReceivedTriggerSource::class,
+            $registry->for(WorkflowTriggerType::MessageReceived),
+        );
+        $this->assertTrue($registry->available(WorkflowTriggerType::MessageReceived));
+        $this->assertTrue(WorkflowTriggerType::MessageReceived->isIngestableInThisSlice());
     }
 
     public function test_the_registry_is_a_singleton_so_registrations_are_shared(): void

@@ -119,6 +119,7 @@ class DashboardComponentAdoptionTest extends TestCase
         $response->assertOk();
         $response->assertSee('data-kind="chooser"', false);
         $response->assertDontSee('data-band="recommendations"', false);
+        $response->assertDontSee('data-band="next_best_move"', false);
         $response->assertDontSee('View all opportunities');
     }
 

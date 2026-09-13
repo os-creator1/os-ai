@@ -4,6 +4,7 @@ namespace App\Library\Ai;
 
 use App\Library\Ai\Enums\AiLane;
 use App\Library\Ai\Enums\AiRefusalReason;
+use App\Library\Ai\Enums\AiRefusalScope;
 use App\Library\Ai\Enums\AiUsageEntryStatus;
 use App\Models\AiUsageLedgerEntry;
 use App\Models\AiUsagePeriod;
@@ -76,6 +77,41 @@ final class AiUsageLedgerManager
      * yet has no snapshot, so the configured cap is the honest answer for
      * it — and is what that period will snapshot when it opens.
      */
+    /**
+     * Slice AI-3 — what the ledger already holds for one durable idempotency
+     * family (every key starting with `$keyPrefix`), so a caller whose work
+     * has a stable identity can tell, before asking the gateway again:
+     *
+     *  - `paid`: an attempt was committed, or failed after the provider billed
+     *    it — the same work must never be paid for twice;
+     *  - `in_flight`: an attempt still holds a reservation;
+     *  - `attempts`: how many keys the family has used, so the next attempt
+     *    after an unpaid outcome (a refusal, a release) gets a fresh key.
+     *
+     * One indexed prefix read on the unique `idempotency_key`, bounded.
+     *
+     * @return array{paid: bool, in_flight: bool, attempts: int}
+     */
+    public function idempotencyFamily(string $keyPrefix): array
+    {
+        $rows = AiUsageLedgerEntry::query()
+            ->where('idempotency_key', 'like', addcslashes($keyPrefix, '%_\\') . '%')
+            ->limit(100)
+            ->get(['status', 'actual_cost_microusd']);
+
+        $paid = false;
+        $inFlight = false;
+
+        foreach ($rows as $row) {
+            $paid = $paid
+                || $row->status === AiUsageEntryStatus::Committed
+                || ($row->status === AiUsageEntryStatus::Failed && (int) $row->actual_cost_microusd > 0);
+            $inFlight = $inFlight || $row->status === AiUsageEntryStatus::Reserved;
+        }
+
+        return ['paid' => $paid, 'in_flight' => $inFlight, 'attempts' => $rows->count()];
+    }
+
     public function enforcedWorkspaceCapMicrousd(int $workspaceId, AiBudgetPolicy $policy): int
     {
         $period = AiUsagePeriod::query()
@@ -144,6 +180,20 @@ final class AiUsageLedgerManager
                     ? AiRefusalReason::InteractiveShareExhausted
                     : AiRefusalReason::BudgetExhausted;
 
+                // Whose allowance was the limit — decided here, from the same
+                // locked figures that made the refusal, because nothing later
+                // can tell. A Business-scoped call is refused by the Workspace
+                // cap as readily as by its own, and only the first means the
+                // account's AI is used up (§11.3). Where a broader cap and the
+                // interactive share are both spent, the broader cap is named:
+                // freeing the interactive lane would not let the call through.
+                $scope = match (true) {
+                    $exceedsWorkspace && $exceedsBusiness => AiRefusalScope::WorkspaceAndBusiness,
+                    $exceedsWorkspace => AiRefusalScope::Workspace,
+                    $exceedsBusiness => AiRefusalScope::Business,
+                    default => AiRefusalScope::InteractiveShare,
+                };
+
                 $entry = AiUsageLedgerEntry::create([
                     'workspace_id' => $request->workspace->id,
                     'business_id' => $request->business?->id,
@@ -155,6 +205,7 @@ final class AiUsageLedgerManager
                     'price_version' => $estimate->priceVersion,
                     'status' => AiUsageEntryStatus::Refused,
                     'refusal_reason' => $reason,
+                    'refusal_scope' => $scope,
                     'estimated_cost_microusd' => $estimate->costMicrousd,
                     'actual_cost_microusd' => null,
                     'period_key' => $policy->periodKey,

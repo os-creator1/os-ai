@@ -31,11 +31,23 @@ class DashboardQueryBudgetTest extends TestCase
 
     /**
      * Observed on this base: Business re-read, status read, payer assignment +
-     * Workspace (payer authority), Advisor page count + rows — and H-5's four
-     * Recent work sources (website revisions, completed recommendations,
-     * Google operations, Business detail changes). Its fifth source, automation
-     * failures, is counted in the analytics layer because the seam that owns
-     * the ledger issues it.
+     * Workspace (payer authority), ONE bounded read of the actionable
+     * Opportunity queue — and H-5's four Recent work sources (website
+     * revisions, completed recommendations, Google operations, Business detail
+     * changes). Its fifth source, automation failures, is counted in the
+     * analytics layer because the seam that owns the ledger issues it.
+     *
+     * C-2 lowered this from 10 to 9, as §16 anticipated: Slice 4's list of up
+     * to five recommendations paid an Advisor page count + rows; the next best
+     * move reads the RFC-002 queue once, capped, and takes both its head and
+     * the "See all recommendations (N)" count from that one read. The waiting
+     * reply count it ranks first is the Conversations band's own read, shared,
+     * so it adds nothing here or to the analytics layer.
+     *
+     * AI-3 raised it from 9 to 10 with exactly the read §16 budgets: ONE
+     * indexed, LIMIT 1 statement for the cached "What we notice" insight.
+     * Its entitlement comes from the request's existing snapshot, and the
+     * "Explain this change" control costs no query at all.
      */
     private const BUSINESS_HOME_DASHBOARD_OWNED = 10;
 
@@ -243,7 +255,7 @@ class DashboardQueryBudgetTest extends TestCase
         $this->assertSame(DashboardSnapshot::KIND_BUSINESS, $businessSnapshot->kind);
 
         $failed = new DashboardSnapshot(DashboardSnapshot::KIND_BUSINESS, 'Business home', 'Alpha Dental', [DashboardSnapshot::BAND_ACTIONS => ['items' => [], 'parentMessage' => null]], [
-            DashboardSnapshot::BAND_ATTENTION, DashboardSnapshot::BAND_ACTIVITY, DashboardSnapshot::BAND_RECOMMENDATIONS, DashboardSnapshot::BAND_HEADLINES,
+            DashboardSnapshot::BAND_NEXT_BEST_MOVE, DashboardSnapshot::BAND_ACTIVITY, DashboardSnapshot::BAND_HEADLINES,
         ]);
         $chooser = new DashboardSnapshot(DashboardSnapshot::KIND_CHOOSER, 'Account home', 'Northwind Agency', [DashboardSnapshot::BAND_CHOOSER => [
             'noun' => 'business', 'showWorkspace' => true, 'switchUrl' => route('customer.context.business.switch'),

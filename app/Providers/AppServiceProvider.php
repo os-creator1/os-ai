@@ -111,6 +111,15 @@
          */
         public function register()
         {
+            // Shared customer request query-budget optimization (Automations
+            // V2 §18, the V2-E blocker on PR #280) — bound as a singleton so
+            // every resolution within one request/container shares the same
+            // instance. See App\Library\Support\RequestScopedCache's own
+            // docblock for why this is safe: a fresh container per request
+            // (no Octane) and per test (refreshApplication()) means nothing
+            // cached here ever survives past the request/test that wrote it.
+            $this->app->singleton(\App\Library\Support\RequestScopedCache::class);
+
             // Customer Experience Slice 3 §4.13 step 4 — the default
             // messaging-adapter binding, behind the adapter's own
             // fail-closed constructor check.
@@ -294,9 +303,19 @@
                     $registry->register($app->make(\App\Library\Automation\Workflow\Triggers\DateReachedTriggerSource::class));
                     $registry->register($app->make(\App\Library\Automation\Workflow\Triggers\ManualEnrollmentTriggerSource::class));
 
+                    // Automations V2-F — the one line the note above anticipated.
+                    $registry->register($app->make(\App\Library\Automation\Workflow\Triggers\MessageReceivedTriggerSource::class));
+
                     return $registry;
                 },
             );
+
+            // Automations V2-F §10.1 — MUST be a singleton. SendSmsNodeExecutor
+            // opens the send scope on it, and the Reports model's creating hook
+            // — a separately resolved object — reads the same instance. A
+            // per-resolution binding would hand the hook an empty context and
+            // every automation send would go out unmarked.
+            $this->app->singleton(\App\Library\Automation\Workflow\Runtime\AutomationSendContext::class);
 
             // Google Business Profile Slice A (correction pass item 6).
             // The call budget MUST be a singleton: withinOperation() sets

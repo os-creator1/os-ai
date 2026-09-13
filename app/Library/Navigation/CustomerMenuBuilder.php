@@ -52,6 +52,10 @@ final class CustomerMenuBuilder
         'website_generation',
         'google_business_profile_module',
         'conversations',
+        // Not a menu entry: AI-3's Business Home "What we notice" line reads
+        // this answer from the same one bulk snapshot, so checking it costs
+        // the page no entitlement query of its own (§16).
+        'ai_coo_basic',
     ];
 
     /**

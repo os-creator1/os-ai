@@ -155,7 +155,7 @@ class BusinessHomeBillingTest extends TestCase
         }
     }
 
-    public function test_several_billing_problems_are_still_one_strip_and_never_enter_the_attention_band(): void
+    public function test_several_billing_problems_are_still_one_strip_and_never_become_the_next_best_move(): void
     {
         [$customer, $business] = $this->tenant(WorkspacePlanTier::Growth, 'Many Venue', 'Many Account');
         $this->wallet($business, [
@@ -170,13 +170,13 @@ class BusinessHomeBillingTest extends TestCase
         $this->authenticateAs($customer);
 
         $snapshot = $this->dashboardFor($customer->user);
-        $attention = $snapshot->band(DashboardSnapshot::BAND_ATTENTION);
+        $move = $snapshot->band(DashboardSnapshot::BAND_NEXT_BEST_MOVE)['move'];
 
         $this->assertInstanceOf(AttentionItem::class, $snapshot->band(DashboardSnapshot::BAND_BILLING_EXCEPTION));
         $this->assertSame(
-            [AttentionType::WebsiteUnpublished->value],
-            array_map(fn (AttentionItem $item) => $item->type->value, $attention),
-            'Billing never appears twice: the attention band keeps only what is not billing.'
+            AttentionType::WebsiteUnpublished->value,
+            $move['key'],
+            'Billing never appears twice: five billing problems stay in the strip, and the move is the one thing that is not billing (C-2 §6.4).'
         );
     }
 

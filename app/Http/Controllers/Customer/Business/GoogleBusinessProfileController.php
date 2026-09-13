@@ -11,6 +11,7 @@ use App\Exceptions\GoogleBusinessProfile\GoogleBusinessProfileProviderException;
 use App\Exceptions\GoogleBusinessProfile\GoogleLocationAlreadyClaimedException;
 use App\Exceptions\Workspace\BusinessWorkspaceMismatchException;
 use App\Exceptions\Workspace\WorkspaceBusinessNotFoundException;
+use App\Http\Controllers\Customer\Business\Concerns\ResolvesBusinessTenancy;
 use App\Http\Controllers\Customer\CustomerBaseController;
 use App\Http\Requests\GoogleBusinessProfile\GoogleBusinessProfileBindRequest;
 use App\Http\Requests\GoogleBusinessProfile\GoogleBusinessProfileUnbindRequest;
@@ -66,6 +67,8 @@ use LogicException;
  */
 class GoogleBusinessProfileController extends CustomerBaseController
 {
+    use ResolvesBusinessTenancy;
+
     /** The heading shown above customerMessage() when the platform cannot connect to Google at all. */
     private const CONNECTION_UNAVAILABLE_TITLE = 'Google connection unavailable';
 
@@ -731,24 +734,7 @@ class GoogleBusinessProfileController extends CustomerBaseController
      */
     private function resolveEntitledBusiness(string $workspaceUid, string $businessUid): array
     {
-        [$workspace, $business] = $this->resolveAccessibleBusiness($workspaceUid, $businessUid);
-
-        try {
-            $decision = $this->entitlementManager->decide(
-                $workspace,
-                $business,
-                PlatformFeature::GoogleBusinessProfileModule->value,
-                (int) Auth::id(),
-            );
-        } catch (WorkspaceBusinessNotFoundException|BusinessWorkspaceMismatchException) {
-            abort(404);
-        }
-
-        if (! $decision->allowed) {
-            abort(404);
-        }
-
-        return [$workspace, $business];
+        return $this->resolveEntitledBusinessTenancy($workspaceUid, $businessUid, PlatformFeature::GoogleBusinessProfileModule->value);
     }
 
     /**
@@ -759,23 +745,7 @@ class GoogleBusinessProfileController extends CustomerBaseController
      */
     private function resolveAccessibleBusiness(string $workspaceUid, string $businessUid): array
     {
-        $workspace = $this->workspaceRepository->findByUid($workspaceUid);
-
-        if ($workspace === null || ! $workspace->is_active) {
-            abort(404);
-        }
-
-        $business = $this->workspaceRepository->businessesForWorkspace($workspace)->firstWhere('uid', $businessUid);
-
-        if ($business === null || ! $this->workspaceManager->userCanAccessBusiness((int) Auth::id(), $business)) {
-            abort(404);
-        }
-
-        if ($business->status !== BusinessStatus::Active) {
-            abort(404);
-        }
-
-        return [$workspace, $business];
+        return $this->resolveBusinessTenancy($workspaceUid, $businessUid, requireActive: true);
     }
 
     /**

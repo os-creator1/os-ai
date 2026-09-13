@@ -160,6 +160,13 @@
             // above exactly.
             $schedule->job(new ExpireStaleAiReservations())->everyFiveMinutes();
 
+            // Unified Business Home and COO Decision Engine Contract §8.2
+            // (slice AI-3) — the scheduled COO insight triggers. Both only
+            // queue GenerateCooInsight, whose off-request gates decide whether
+            // anything is paid for; with AI switched off both queue nothing.
+            $schedule->command('coo:dispatch-insight-reviews')->dailyAt('04:10')->withoutOverlapping();
+            $schedule->command('coo:dispatch-insight-reviews', ['--monthly'])->monthlyOn(1, '05:10')->withoutOverlapping();
+
             // Google Business Profile Slice A (contract §13.2, §24.2).
             //
             // The purge is HOURLY and is the enforcement half of Google's

@@ -1,8 +1,9 @@
 {{--
     The Business Home's bands, in the parent's order: one billing exception
     when there is a real one (Unified Business Home §2.2 row 0), what changed
-    since this customer was last here (§2.3), what needs attention, what the
-    Advisor recommends, how the last 30 days compare, and the quick actions.
+    since this customer was last here (§2.3), the one next best move (§2.4,
+    C-2), how the selected period compares, the operating facts, and recent
+    work.
     A band with nothing to say is absent; a band whose source failed says so
     in one line.
 
@@ -22,16 +23,10 @@
     @include('customer.dashboard.bands.activity', ['activity' => $dashboard->band(DashboardSnapshot::BAND_ACTIVITY)])
 @endif
 
-@if($dashboard->failed(DashboardSnapshot::BAND_ATTENTION))
-    @include('customer.dashboard.band-failed', ['band' => 'attention', 'title' => 'Needs attention'])
-@elseif($dashboard->has(DashboardSnapshot::BAND_ATTENTION))
-    @include('customer.dashboard.bands.attention', ['items' => $dashboard->band(DashboardSnapshot::BAND_ATTENTION)])
-@endif
-
-@if($dashboard->failed(DashboardSnapshot::BAND_RECOMMENDATIONS))
-    @include('customer.dashboard.band-failed', ['band' => 'recommendations', 'title' => 'Recommended next steps'])
-@elseif($dashboard->has(DashboardSnapshot::BAND_RECOMMENDATIONS))
-    @include('customer.dashboard.bands.recommendations', ['recommendations' => $dashboard->band(DashboardSnapshot::BAND_RECOMMENDATIONS)])
+@if($dashboard->failed(DashboardSnapshot::BAND_NEXT_BEST_MOVE))
+    @include('customer.dashboard.band-failed', ['band' => 'next_best_move', 'title' => 'Your next best move'])
+@elseif($dashboard->has(DashboardSnapshot::BAND_NEXT_BEST_MOVE))
+    @include('customer.dashboard.bands.next-best-move', ['nextBestMove' => $dashboard->band(DashboardSnapshot::BAND_NEXT_BEST_MOVE)])
 @endif
 
 @if($dashboard->failed(DashboardSnapshot::BAND_HEADLINES))

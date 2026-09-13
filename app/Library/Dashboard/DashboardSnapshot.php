@@ -31,8 +31,12 @@ final class DashboardSnapshot
     /** Unified Business Home §2.3 — what changed since this customer's last visit. */
     public const BAND_ACTIVITY = 'activity';
 
-    public const BAND_ATTENTION = 'attention';
-    public const BAND_RECOMMENDATIONS = 'recommendations';
+    /**
+     * Unified Business Home §2.4 (C-2) — exactly one recommended move. It
+     * replaced Slice 4's attention list and its list of five recommendations.
+     */
+    public const BAND_NEXT_BEST_MOVE = 'next_best_move';
+
     public const BAND_HEADLINES = 'headlines';
 
     /** Unified Business Home §2.6 (H-4) — the three operating-health bands. */

@@ -26,9 +26,19 @@ class EloquentBusinessRepository extends EloquentBaseRepository implements Busin
         parent::__construct($business);
     }
 
+    /**
+     * Shared customer request query-budget optimization (Automations V2
+     * §18) — a Business is re-read by id several times over the course of
+     * one Business-scoped request (tenancy check, entitlement decision,
+     * menu/shell resolution); this memoizes it for the life of the current
+     * request only. Every write method below invalidates this same key.
+     */
     public function findById(int $id): ?Business
     {
-        return $this->query()->find($id);
+        return $this->rememberForRequest(
+            "business:find:{$id}",
+            fn () => $this->query()->find($id),
+        );
     }
 
     public function findForUpdate(int $id): ?Business
@@ -108,6 +118,7 @@ class EloquentBusinessRepository extends EloquentBaseRepository implements Busin
             $business->is_primary = $isFirst;
             $business->status = BusinessStatus::Draft;
             $business->save();
+            $this->forgetRequestCache("workspace:businesses:{$workspace->id}");
 
             return $business;
         });
@@ -121,14 +132,22 @@ class EloquentBusinessRepository extends EloquentBaseRepository implements Busin
 
         $business->fill($attributes);
         $business->save();
+        $this->forgetRequestCache("business:find:{$business->id}");
 
         return $business;
     }
 
     public function reassignWorkspace(Business $business, Workspace $workspace): Business
     {
+        $previousWorkspaceId = $business->workspace_id;
         $business->workspace_id = $workspace->id;
         $business->save();
+        $this->forgetRequestCache("business:find:{$business->id}");
+        $this->forgetRequestCache("workspace:businesses:{$workspace->id}");
+
+        if ($previousWorkspaceId !== null) {
+            $this->forgetRequestCache("workspace:businesses:{$previousWorkspaceId}");
+        }
 
         return $business;
     }
@@ -144,6 +163,13 @@ class EloquentBusinessRepository extends EloquentBaseRepository implements Busin
             $business->is_primary = true;
             $business->save();
 
+            // The bulk UPDATE above touches every OTHER Business owned by
+            // this customer by a foreign key, not by its own primary key,
+            // so their individually cached ids are not cheaply enumerable
+            // here — forget the whole namespace rather than risk leaving
+            // one of them stale for the rest of this request.
+            $this->forgetRequestCachePrefixed('business:find:');
+
             return $business;
         });
     }
@@ -157,6 +183,7 @@ class EloquentBusinessRepository extends EloquentBaseRepository implements Busin
         }
 
         $business->save();
+        $this->forgetRequestCache("business:find:{$business->id}");
 
         return $business;
     }
@@ -165,6 +192,7 @@ class EloquentBusinessRepository extends EloquentBaseRepository implements Busin
     {
         $business->canonical_domain = $canonicalDomain;
         $business->save();
+        $this->forgetRequestCache("business:find:{$business->id}");
 
         return $business;
     }

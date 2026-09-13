@@ -943,6 +943,7 @@
             'Theme Presets'           => 'Theme Presets',
             'Usage Billing'           => 'Usage Billing',
             'Safety Limits'           => 'Safety Limits',
+            'AI Usage'                => 'AI Usage',
             'Provider Events'         => 'Provider Events',
             'Additional Slot Agreements' => 'Additional Slot Agreements',
             'Workspace'               => 'Workspace',
@@ -2455,6 +2456,26 @@ on ',
                 'monthly_cap_above_maximum' => 'The monthly automatic top-up limit cannot be more than $500.00.',
                 'monthly_cap_below_preset' => 'The monthly automatic top-up limit cannot be lower than the amount added each time.',
                 'workspace_recharge_cap_above_maximum' => 'The agency-wide monthly automatic top-up limit cannot be more than $500.00.',
+            ],
+
+            // Unified Business Home & COO contract §11.3 (slice AI-2). The state
+            // sentences are the contract's own words; the page shows no tokens,
+            // amounts, provider, model or percentage.
+            'ai_usage'                     => [
+                'title'            => 'AI usage',
+                'businesses_title' => 'By business',
+                'states'           => [
+                    'normal'              => 'Included AI usage — Normal.',
+                    'nearing_limit'       => 'You\'ve used most of this month\'s included AI. Everything else keeps working.',
+                    'limit_reached'       => 'This month\'s included AI is used up. Your Home, results and automations keep working; AI summaries return on :date.',
+                    'limit_reached_trial' => 'Your trial\'s included AI is used up. Everything else keeps working.',
+                ],
+                'trial_line'       => 'Your trial includes a smaller AI allowance.',
+                'row_states'       => [
+                    'normal'        => 'Normal',
+                    'nearing_limit' => 'Nearing limit',
+                    'limit_reached' => 'Limit reached',
+                ],
             ],
 
             'messages'                     => [

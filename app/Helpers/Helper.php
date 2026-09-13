@@ -888,6 +888,15 @@
                                 'icon'   => 'shield',
                             ],
                             [
+                                // Slice AI-2 — the admin AI usage ledger summary.
+                                'url'    => url(config('app.admin_path') . '/ai-usage'),
+                                'slug'   => config('app.admin_path') . '/ai-usage',
+                                'name'   => 'AI Usage',
+                                'i18n'   => 'AI Usage',
+                                'access' => 'access backend',
+                                'icon'   => 'cpu',
+                            ],
+                            [
                                 'url'    => url(config('app.admin_path') . '/provider-events'),
                                 'slug'   => config('app.admin_path') . '/provider-events',
                                 'name'   => 'Provider Events',
@@ -1106,22 +1115,26 @@
             ];
         }
 
+        // Shared customer request query-budget optimization (Automations V2
+        // §18) — this used to run a COUNT query to decide whether the
+        // session-cached list was stale, then (on every fresh session, and
+        // on every RefreshDatabase-backed test) a second query for the
+        // list itself: two reads of the identical `status = 1` scope. One
+        // read now always serves both the list and the session cache, and
+        // also stops a language RENAME with an unchanged row count from
+        // ever serving a stale cached name (the row-count comparison could
+        // not have caught that either way).
         public static function languages()
         {
-            $lang_count  = Language::where('status', 1)->count();
-            $availLocale = Session::get('available_languages');
+            $availLocale = Language::where('status', 1)->get()->map(function ($lang) {
+                return [
+                    'name'     => $lang->name,
+                    'code'     => $lang->code,
+                    'iso_code' => $lang->iso_code,
+                ];
+            })->toArray();
 
-            if ( ! isset($availLocale) || count($availLocale) !== $lang_count) {
-                $availLocale = Language::where('status', 1)->cursor()->map(function ($lang) {
-                    return [
-                        'name'     => $lang->name,
-                        'code'     => $lang->code,
-                        'iso_code' => $lang->iso_code,
-                    ];
-                })->toArray();
-
-                Session::put('available_languages', $availLocale);
-            }
+            Session::put('available_languages', $availLocale);
 
             return $availLocale;
         }

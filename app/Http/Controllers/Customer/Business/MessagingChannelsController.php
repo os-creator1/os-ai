@@ -6,6 +6,7 @@ use App\Enums\Business\BusinessStatus;
 use App\Enums\Entitlement\PlatformFeature;
 use App\Exceptions\Workspace\BusinessWorkspaceMismatchException;
 use App\Exceptions\Workspace\WorkspaceBusinessNotFoundException;
+use App\Http\Controllers\Customer\Business\Concerns\ResolvesBusinessTenancy;
 use App\Http\Controllers\Customer\CustomerBaseController;
 use App\Library\Entitlement\EntitlementManager;
 use App\Library\Navigation\CustomerContext;
@@ -64,6 +65,8 @@ use Illuminate\Support\Facades\DB;
  */
 class MessagingChannelsController extends CustomerBaseController
 {
+    use ResolvesBusinessTenancy;
+
     /**
      * B2's entire customer-facing provider allowlist. Server-side
      * authoritative: a submitted provider outside this list is always
@@ -526,17 +529,7 @@ class MessagingChannelsController extends CustomerBaseController
      */
     private function resolveAccessibleBusiness(string $workspaceUid, string $businessUid): Business
     {
-        $workspace = $this->workspaceRepository->findByUid($workspaceUid);
-
-        if ($workspace === null) {
-            abort(404);
-        }
-
-        $business = $this->workspaceRepository->businessesForWorkspace($workspace)->firstWhere('uid', $businessUid);
-
-        if ($business === null || ! $this->workspaceManager->userCanAccessBusiness((int) Auth::id(), $business)) {
-            abort(404);
-        }
+        [, $business] = $this->resolveBusinessTenancy($workspaceUid, $businessUid, requireActive: false);
 
         return $business;
     }

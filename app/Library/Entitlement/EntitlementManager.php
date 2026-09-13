@@ -116,83 +116,25 @@ final class EntitlementManager
      * key converted to a validated PlatformFeature first, and a defensive
      * Workspace/Business consistency check (steps 3-4) before any
      * entitlement-table read.
+     *
+     * Shared customer request query-budget optimization (Automations V2
+     * §18) — this is now a single-feature call onto
+     * snapshotBusinessFeatureDecisions() rather than its own, second
+     * implementation of the same 8 steps. That method's own docblock
+     * already documents the two as deliberately identical policy,
+     * evaluated over data "loaded once instead of per feature"; the two
+     * having separate code was itself a standing duplication risk (its own
+     * comment warns "if decide()'s policy changes, this must change with
+     * it"), and every read it performs is now cached per-request at the
+     * repository layer, so a caller of decide() for one feature and a
+     * caller of snapshotBusinessFeatureDecisions() for several — the exact
+     * shape of the controller-vs-menu duplication this optimization
+     * targets — now share the same underlying reads instead of each
+     * re-deriving them from scratch.
      */
     public function decide(Workspace $workspace, Business $business, string $featureKey, int $actorUserId): EntitlementDecision
     {
-        $feature = PlatformFeature::tryFrom($featureKey);
-
-        if ($feature === null) {
-            return new EntitlementDecision(false, 'platform_feature_unknown');
-        }
-
-        if (! PlatformFeatureRegistry::isAvailable($feature->value)) {
-            return new EntitlementDecision(false, 'platform_feature_unavailable');
-        }
-
-        // Correction 1 — a Workspace-scoped feature (ProspectOutreach) has
-        // no owning Business at all; it must never be treated as an
-        // ordinary Business-entitled feature just because it is
-        // Available. This denies before the Business is even looked up,
-        // so a Workspace-scoped feature can never surface a Business-
-        // existence/mismatch exception either.
-        if (! PlatformFeatureRegistry::isBusinessScoped($feature->value)) {
-            return new EntitlementDecision(false, 'wrong_feature_scope');
-        }
-
-        $currentBusiness = $this->businessRepository->findById($business->id);
-
-        if ($currentBusiness === null) {
-            throw new WorkspaceBusinessNotFoundException($business->id);
-        }
-
-        if ((int) $currentBusiness->workspace_id !== (int) $workspace->id) {
-            throw new BusinessWorkspaceMismatchException(
-                $currentBusiness->id,
-                (int) $workspace->id,
-                (int) $currentBusiness->workspace_id,
-            );
-        }
-
-        $assignment = $this->assignmentRepository->findByWorkspaceId((int) $workspace->id);
-
-        if ($assignment === null) {
-            return new EntitlementDecision(false, 'workspace_plan_unassigned');
-        }
-
-        $catalog = $this->catalogRepository->findById($assignment->workspace_plan_catalog_id);
-        $override = $this->overrideRepository->findByWorkspaceAndFeature((int) $workspace->id, $feature->value);
-
-        if ($override !== null) {
-            $workspaceEntitled = $override->state === WorkspaceEntitlementOverrideState::Allow;
-            $denialReasonIfNot = 'denied_by_workspace_override';
-        } else {
-            $workspaceEntitled = $catalog !== null && $this->planFeatureRepository->includesFeature($catalog, $feature->value);
-            $denialReasonIfNot = 'not_entitled_by_plan';
-        }
-
-        if (! $workspaceEntitled) {
-            return new EntitlementDecision(false, $denialReasonIfNot);
-        }
-
-        if ($this->toggleRepository->findByBusinessAndFeature($currentBusiness->id, $feature->value) !== null) {
-            return new EntitlementDecision(false, 'disabled_for_business');
-        }
-
-        if ($assignment->status === WorkspacePlanAssignmentStatus::Suspended) {
-            return new EntitlementDecision(false, 'plan_suspended');
-        }
-
-        if ($assignment->status === WorkspacePlanAssignmentStatus::Inactive) {
-            return new EntitlementDecision(false, 'plan_inactive');
-        }
-
-        $usageResult = $this->usageAuthorizationGateway->check($currentBusiness, $feature);
-
-        if (! $usageResult->authorized) {
-            return new EntitlementDecision(false, $usageResult->reason ?? 'usage_unauthorized');
-        }
-
-        return new EntitlementDecision(true, null);
+        return $this->snapshotBusinessFeatureDecisions($workspace, $business, [$featureKey], $actorUserId)[$featureKey];
     }
 
     /**
@@ -1004,15 +946,27 @@ final class EntitlementManager
         return $summaries;
     }
 
+    /**
+     * Shared customer request query-budget optimization (Automations V2
+     * §18) — this used to ask findByWorkspaceAndFeature() once per
+     * PlatformFeature case (one query per case, unconditionally, even
+     * though this Workspace almost always has zero or a handful of
+     * overrides). allForWorkspace() is the pre-existing bulk seam
+     * (already used by snapshotBusinessFeatureDecisions()) that returns
+     * the exact same rows in one query; no behavior changes, since a
+     * feature absent from the bulk result is exactly a feature
+     * findByWorkspaceAndFeature() would have returned null for.
+     */
     public function getWorkspaceEntitlementSummary(Workspace $workspace): WorkspaceEntitlementSummary
     {
         $assignment = $this->assignmentRepository->findByWorkspaceId((int) $workspace->id);
         $capacity = $this->decideBusinessSlotCapacity($workspace);
 
+        $allOverrides = $this->overrideRepository->allForWorkspace((int) $workspace->id);
         $overrides = [];
 
         foreach (PlatformFeature::cases() as $feature) {
-            $override = $this->overrideRepository->findByWorkspaceAndFeature((int) $workspace->id, $feature->value);
+            $override = $allOverrides->get($feature->value);
 
             if ($override !== null) {
                 $overrides[$feature->value] = $override->state;
