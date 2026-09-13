@@ -130,11 +130,23 @@ class AutomationWorkflowEnrollmentsController extends CustomerBaseController
     /**
      * Enroll up to 500 of this Business's contacts by hand.
      *
-     * THE LIST IS ALL OR NOTHING. Every uid must resolve to a contact of THIS
-     * Business. If any does not — unknown, or another Business's — nothing is
-     * queued, and the unmatched uids are named. Enrolling the matches and quietly
-     * dropping the rest would leave the customer believing a list was enrolled
-     * when part of it was not.
+     * THREE DIFFERENT FAILURES, THREE DIFFERENT ANSWERS (T-WF-21):
+     *
+     *   A MALFORMED body — not a list, over the limit, unconfirmed — is 422.
+     *   That is a statement about the request, and says nothing about any
+     *   contact.
+     *
+     *   A uid that names no contact of THIS Business is 404 — and it is the
+     *   SAME 404 whether the contact does not exist at all or belongs to another
+     *   Business. §14.1: a foreign identifier fails exactly like a nonexistent
+     *   one. The response is byte-for-byte the not-found answer every V2-E
+     *   endpoint gives, names no uid and offers no hint, so it cannot be used to
+     *   discover that some other Business holds a contact with that uid.
+     *
+     *   Nothing else is ever partly honoured: the list is ALL OR NOTHING. If any
+     *   uid fails to resolve, NO contact is enqueued, including the ones that did
+     *   resolve — enrolling the matches and dropping the rest would leave the
+     *   customer believing a list was enrolled when part of it was not.
      */
     public function manual(string $workspaceUid, string $businessUid, string $workflowUid): JsonResponse
     {
@@ -160,13 +172,10 @@ class AutomationWorkflowEnrollmentsController extends CustomerBaseController
                 ->whereIn('uid', $uids)
                 ->get(['id', 'uid']);
 
-            $unmatched = array_values(array_diff($uids, $contacts->pluck('uid')->all()));
-
-            if ($unmatched !== []) {
-                return response()->json([
-                    'message' => 'Some contacts could not be found in this business, so nobody was enrolled.',
-                    'errors' => ['contact_uids' => $unmatched],
-                ], 422);
+            if ($contacts->count() !== count($uids)) {
+                // Unknown and foreign are deliberately indistinguishable, and
+                // nothing has been enqueued yet, so nothing is partly honoured.
+                return $this->notFound();
             }
 
             // One server-derived identity for this deliberate request. It becomes

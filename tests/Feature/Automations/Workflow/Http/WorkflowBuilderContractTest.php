@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\Automations\Workflow\Http;
 
+use App\Http\Controllers\Customer\Business\Concerns\WorkflowFeatureQueryScope;
 use App\Library\Automation\Workflow\Contracts\WorkflowLifecycle;
 use App\Models\ContactGroupFields;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -219,129 +220,216 @@ class WorkflowBuilderContractTest extends TestCase
 
         $this->get($this->routeUrl('index', $t['workspace'], $t['business']))->assertStatus(401);
     }
-
     // ---------------------------------------------------------------
     // §18 query budgets
     // ---------------------------------------------------------------
 
     /*
-     * THE CONTRACT, VERBATIM (§18):
+     * THE RULE (§18, owner decision on PR #280):
      *
-     *   | Workflow list | ≤ 8 queries for any page size        | One query with withCount / latest-run subselect; paginated |
-     *   | Builder load  | ≤ 10 queries independent of node count | The draft document is one row; the published graph is two queries |
+     *   V2-E FEATURE-OWNED budgets — workflow list ≤ 2 queries, Builder ≤ 4.
+     *   Shared platform request overhead (customer context, Account/Business
+     *   authorization, the entitlement snapshot, app_config, and the customer
+     *   shell: theme, languages, notifications) is measured independently and is
+     *   NOT charged against the feature budget. Whole-request totals are still
+     *   measured and reported as diagnostics; they are not V2-E pass/fail
+     *   thresholds.
      *
-     *   "Each budget is asserted with a query-count test in its slice."
-     *
-     * §18 does not exclude the customer shell, the context resolution or the
-     * tenancy and entitlement chain from those numbers. So these tests count the
-     * WHOLE request, every statement the database sees, and hold §18's own
-     * numbers unchanged. Nothing below is filtered, reclassified or renumbered.
+     * HOW A STATEMENT IS CLASSIFIED — never by its text. Production code marks the
+     * boundary explicitly (WorkflowFeatureQueryScope): the scope opens when the
+     * canonical tenancy chain has finished and closes when the controller action
+     * returns. A statement is FEATURE-OWNED if and only if it executes while the
+     * scope is open, and SHARED otherwise. That classification can overstate the
+     * feature's cost — any SQL a workflow action runs is charged to it, whatever
+     * table it reads — but it can never file feature SQL under shared, which is
+     * what a table-name match would eventually do.
      */
 
-    /** §18 "Workflow list — ≤ 8 queries for any page size". Never edited to fit. */
-    private const LIST_BUDGET = 8;
+    /** §18 "workflow list ≤ 2", feature-owned. */
+    private const FEATURE_LIST_BUDGET = 2;
 
-    /** §18 "Builder load — ≤ 10 queries independent of node count". Never edited to fit. */
-    private const BUILDER_BUDGET = 10;
+    /** §18 "workflow Builder ≤ 4", feature-owned. */
+    private const FEATURE_BUILDER_BUDGET = 4;
 
     /**
-     * Every statement issued by one whole request.
+     * Every statement one whole request issues, each tagged with the ownership
+     * the production seam assigned it at the instant it ran.
      *
      * The FIRST request in a test pays one-time costs — session, permission and
-     * config rows warming — so each measurement follows an unmeasured warm-up of
-     * the same URL; otherwise the reading measures warm-up, not the endpoint.
+     * config rows warming, and a draft being created on first open — so each
+     * measurement follows an unmeasured warm-up of the same URL.
      *
-     * @return list<string>
+     * @return array{shared: list<string>, feature: list<string>, total: int}
      */
-    private function statementsFor(string $method, string $url, bool $json): array
+    private function classifiedStatements(string $method, string $url, bool $json): array
     {
         $json ? $this->json($method, $url)->assertOk() : $this->call($method, $url)->assertOk();
 
-        $statements = [];
-        DB::listen(function ($query) use (&$statements): void {
-            $statements[] = preg_replace('/\s+/', ' ', (string) $query->sql);
+        $shared = [];
+        $feature = [];
+        $seen = 0;
+
+        DB::listen(function ($query) use (&$shared, &$feature, &$seen): void {
+            $seen++;
+            $sql = preg_replace('/\s+/', ' ', (string) $query->sql);
+
+            if (WorkflowFeatureQueryScope::isActive()) {
+                $feature[] = $sql;
+            } else {
+                $shared[] = $sql;
+            }
         });
 
         $json ? $this->json($method, $url)->assertOk() : $this->call($method, $url)->assertOk();
 
-        return $statements;
+        return ['shared' => $shared, 'feature' => $feature, 'total' => $seen];
     }
 
     /**
-     * Assert a whole request is within its §18 budget — or, where it is not,
-     * say so as an INCOMPLETE test carrying the measured count and every
-     * statement, instead of passing.
+     * Record a request's diagnostic totals where every run shows them. They are
+     * reported, not asserted against a number: shared overhead has its own
+     * independent budget (tests/Feature/QueryBudget), and §18 no longer charges it
+     * to V2-E.
      *
-     * Incomplete rather than a hard failure, and never a pass: V2-E has removed
-     * every duplicate read its own code owns (see ResolvesAutomationWorkflows),
-     * and what remains above the number is issued by shared platform services
-     * this slice does not own — the context middleware, the app-config helper,
-     * WorkspaceManager's and EntitlementManager's own re-reads, and the customer
-     * layout. Meeting §18 as a request total needs a contract-owner decision or a
-     * platform change; this keeps that gap visible on every run until one lands.
-     *
-     * @param list<string> $statements
+     * @param array{shared: list<string>, feature: list<string>, total: int} $measured
      */
-    private function assertWithinSection18(string $operation, int $budget, array $statements): void
+    private function recordDiagnostic(string $request, array $measured): void
     {
-        $count = count($statements);
+        fwrite(STDERR, sprintf(
+            "\n[§18 diagnostic] %s: whole request %d = shared %d + V2-E feature-owned %d\n",
+            $request,
+            $measured['total'],
+            count($measured['shared']),
+            count($measured['feature']),
+        ));
+    }
 
-        if ($count > $budget) {
-            $this->markTestIncomplete(sprintf(
-                "§18 NOT MET — %s: %d queries measured for the whole request, budget %d.\n  %s",
-                $operation,
-                $count,
+    /**
+     * @param array{shared: list<string>, feature: list<string>, total: int} $measured
+     */
+    private function assertFeatureOwnedWithin(string $request, int $budget, array $measured): void
+    {
+        // Exhaustive: no statement escaped classification.
+        $this->assertSame(
+            $measured['total'],
+            count($measured['shared']) + count($measured['feature']),
+            "{$request}: every statement must be classified exactly once.",
+        );
+
+        // The feature did real work, so an empty feature set would mean the seam
+        // never opened — a broken boundary passing vacuously.
+        $this->assertNotEmpty($measured['feature'], "{$request}: the feature-owned scope never opened.");
+
+        $this->assertLessThanOrEqual(
+            $budget,
+            count($measured['feature']),
+            sprintf(
+                "%s: V2-E feature-owned SQL is %d, budget %d.\n  %s",
+                $request,
+                count($measured['feature']),
                 $budget,
-                implode("\n  ", $statements),
-            ));
+                implode("\n  ", $measured['feature']),
+            ),
+        );
+    }
+
+    /** A — feature-owned: the list page a person loads. */
+    public function test_the_list_page_feature_owned_sql_is_within_budget(): void
+    {
+        $t = $this->signedInTenant();
+        $measured = $this->classifiedStatements('GET', $this->routeUrl('index', $t['workspace'], $t['business']), false);
+
+        $this->assertFeatureOwnedWithin('Workflow list (page)', self::FEATURE_LIST_BUDGET, $measured);
+        $this->recordDiagnostic('Workflow list (page)', $measured);
+    }
+
+    /** A — feature-owned: the list JSON the builder fetches. */
+    public function test_the_list_json_feature_owned_sql_is_within_budget(): void
+    {
+        $t = $this->signedInTenant();
+        $measured = $this->classifiedStatements('GET', $this->routeUrl('index', $t['workspace'], $t['business']), true);
+
+        $this->assertFeatureOwnedWithin('Workflow list (JSON)', self::FEATURE_LIST_BUDGET, $measured);
+        $this->recordDiagnostic('Workflow list (JSON)', $measured);
+    }
+
+    /**
+     * A — feature-owned: the Builder, for a workflow whose steps reference no
+     * contact group or field.
+     *
+     * SCOPE, STATED RATHER THAN IMPLIED. Opening the Builder also reports the
+     * draft's errors through WorkflowCompiler::validate(), which currently checks
+     * each contact-group and contact-field reference with its own query. So a
+     * workflow with N field-referencing steps costs 4 + 1 (its trigger group) + N
+     * feature-owned statements — measured: 6 for one such step, 15 for ten. That
+     * N+1 lives in the compiler, outside V2-E's allowlist, and is recorded in §18
+     * as a known limitation rather than tested around. This assertion is the
+     * budget for the shape it names, not a claim about every workflow.
+     */
+    public function test_the_builder_feature_owned_sql_is_within_budget(): void
+    {
+        $t = $this->signedInTenant();
+        $measured = $this->classifiedStatements('GET', $this->routeUrl('show', $t['workspace'], $t['business'], $t['workflow']), false);
+
+        $this->assertFeatureOwnedWithin('Builder', self::FEATURE_BUILDER_BUDGET, $measured);
+        $this->recordDiagnostic('Builder', $measured);
+    }
+
+    /**
+     * B — the classification is real, not a label. The shared portion contains the
+     * canonical tenancy and shell work and none of the workflow tables; the
+     * feature portion contains the workflow reads. Checked here against the
+     * measured statements, AFTER classification, so it verifies the seam rather
+     * than defining it.
+     */
+    public function test_the_ownership_seam_separates_shared_and_feature_sql_correctly(): void
+    {
+        $t = $this->signedInTenant();
+        $measured = $this->classifiedStatements('GET', $this->routeUrl('show', $t['workspace'], $t['business'], $t['workflow']), false);
+
+        $sharedSql = implode("\n", $measured['shared']);
+        $featureSql = implode("\n", $measured['feature']);
+
+        // Shared carries the canonical chain and the shell…
+        $this->assertStringContainsString('workspace_plan_assignments', $sharedSql, 'The entitlement snapshot is shared.');
+        $this->assertStringContainsString('platform_theme_presets', $sharedSql, 'The shell is shared.');
+        // …and never the workflow feature's own reads.
+        $this->assertStringNotContainsString('automation_workflows', $sharedSql, 'No workflow read may be filed as shared.');
+        $this->assertStringNotContainsString('automation_workflow_versions', $sharedSql);
+
+        // Feature carries the workflow reads, and none of the shell.
+        $this->assertStringContainsString('automation_workflows', $featureSql);
+        $this->assertStringNotContainsString('platform_theme_presets', $featureSql, 'Layout rendering happens after the action returns.');
+        $this->assertStringNotContainsString('workspace_plan_assignments', $featureSql, 'Tenancy completes before the scope opens.');
+    }
+
+    /** B — diagnostic, not a threshold: the scope is always closed after a response. */
+    public function test_the_feature_scope_never_leaks_past_a_response(): void
+    {
+        $t = $this->signedInTenant();
+
+        foreach ([
+            ['GET', $this->routeUrl('index', $t['workspace'], $t['business']), true],
+            ['GET', $this->routeUrl('show', $t['workspace'], $t['business'], $t['workflow']), false],
+        ] as [$method, $url, $json]) {
+            $json ? $this->json($method, $url)->assertOk() : $this->call($method, $url)->assertOk();
+            $this->assertFalse(WorkflowFeatureQueryScope::isActive(), "The feature scope stayed open after {$url}.");
         }
 
-        $this->assertLessThanOrEqual($budget, $count);
+        // A denied request closes it too — the scope is opened only after tenancy,
+        // but must never survive any exit path.
+        [, , $otherWorkspace] = $this->entitledTenant();
+        $this->json('GET', $this->routeUrl('index', $otherWorkspace, $t['business']))->assertNotFound();
+        $this->assertFalse(WorkflowFeatureQueryScope::isActive());
     }
 
-    /** §18 "Workflow list — ≤ 8 queries", the page a person loads. */
-    public function test_the_list_page_request_is_within_the_section_18_budget(): void
-    {
-        $t = $this->signedInTenant();
-
-        $this->assertWithinSection18(
-            'Workflow list (page)',
-            self::LIST_BUDGET,
-            $this->statementsFor('GET', $this->routeUrl('index', $t['workspace'], $t['business']), false),
-        );
-    }
-
-    /** §18 "Workflow list — ≤ 8 queries", the JSON the builder fetches. */
-    public function test_the_list_json_request_is_within_the_section_18_budget(): void
-    {
-        $t = $this->signedInTenant();
-
-        $this->assertWithinSection18(
-            'Workflow list (JSON)',
-            self::LIST_BUDGET,
-            $this->statementsFor('GET', $this->routeUrl('index', $t['workspace'], $t['business']), true),
-        );
-    }
-
-    /** §18 "Builder load — ≤ 10 queries". */
-    public function test_the_builder_request_is_within_the_section_18_budget(): void
-    {
-        $t = $this->signedInTenant();
-
-        $this->assertWithinSection18(
-            'Builder load (page)',
-            self::BUILDER_BUDGET,
-            $this->statementsFor('GET', $this->routeUrl('show', $t['workspace'], $t['business'], $t['workflow']), false),
-        );
-    }
-
-    /** §18 "for any page size" — met exactly: the count does not move. */
-    public function test_the_list_query_count_does_not_grow_with_page_size(): void
+    /** §18 "for any page size" — on the feature-owned budget, the count does not move. */
+    public function test_the_list_feature_owned_sql_does_not_grow_with_page_size(): void
     {
         $t = $this->signedInTenant();
         $url = $this->routeUrl('index', $t['workspace'], $t['business']);
 
-        $small = count($this->statementsFor('GET', $url, true));
+        $small = count($this->classifiedStatements('GET', $url, true)['feature']);
 
         for ($i = 0; $i < 12; $i++) {
             $this->publishWorkflow($t['business'], [$this->endStep()], name: 'Extra ' . $i);
@@ -352,17 +440,24 @@ class WorkflowBuilderContractTest extends TestCase
             app(\App\Library\Automation\Workflow\WorkflowDraftService::class)->ensureDraft($w);
         }
 
-        $large = count($this->statementsFor('GET', $url, true));
+        $large = count($this->classifiedStatements('GET', $url, true)['feature']);
 
-        $this->assertSame($small, $large, "The list must not grow with its page size ({$small} for 1 row, {$large} for 13).");
+        $this->assertSame($small, $large, "Feature-owned list SQL must not grow with page size ({$small} for 1 row, {$large} for 13).");
     }
 
-    /** §18 "independent of node count" — met exactly: the count does not move. */
-    public function test_the_builder_load_query_count_does_not_grow_with_node_count(): void
+    /**
+     * §18 "independent of node count" — for steps that reference no contact data
+     * (here, forty SMS steps), the feature-owned count does not move.
+     *
+     * Field- and group-referencing steps are NOT covered by this claim: each adds
+     * one compiler reference query on load (see the Builder budget test above and
+     * §18's known limitation).
+     */
+    public function test_the_builder_feature_owned_sql_does_not_grow_with_node_count(): void
     {
         $t = $this->signedInTenant();
 
-        $small = count($this->statementsFor('GET', $this->routeUrl('show', $t['workspace'], $t['business'], $t['workflow']), false));
+        $small = count($this->classifiedStatements('GET', $this->routeUrl('show', $t['workspace'], $t['business'], $t['workflow']), false)['feature']);
 
         $steps = [];
         for ($i = 0; $i < 40; $i++) {
@@ -371,17 +466,16 @@ class WorkflowBuilderContractTest extends TestCase
         $steps[] = $this->endStep();
         [$big] = $this->publishWorkflow($t['business'], $steps, name: 'Forty steps');
 
-        $large = count($this->statementsFor('GET', $this->routeUrl('show', $t['workspace'], $t['business'], $big), false));
+        $large = count($this->classifiedStatements('GET', $this->routeUrl('show', $t['workspace'], $t['business'], $big), false)['feature']);
 
-        $this->assertSame($small, $large, "Builder load must not grow with node count ({$small} vs {$large}).");
+        $this->assertSame($small, $large, "Feature-owned Builder SQL must not grow with node count ({$small} vs {$large}).");
     }
 
     /**
-     * The shell must reuse the controller's entitlement decision, not repeat it.
-     *
-     * Before the §18 correction a page asked EntitlementManager twice for the
-     * same Business — once in the controller, once for the menu. Now it is one
-     * bulk snapshot shared by both; a regression would bring the second back.
+     * Shared-overhead regression guard that already existed on this file: a page
+     * must resolve entitlement for its Business once, not once in the controller
+     * and again for the menu. It asserts a SHARED property, so it matches on the
+     * entitlement table by name — it never classifies feature SQL.
      */
     public function test_a_page_resolves_entitlement_for_its_business_only_once(): void
     {
@@ -391,8 +485,9 @@ class WorkflowBuilderContractTest extends TestCase
             $this->routeUrl('index', $t['workspace'], $t['business']),
             $this->routeUrl('show', $t['workspace'], $t['business'], $t['workflow']),
         ] as $url) {
+            $measured = $this->classifiedStatements('GET', $url, false);
             $assignmentReads = array_filter(
-                $this->statementsFor('GET', $url, false),
+                [...$measured['shared'], ...$measured['feature']],
                 static fn (string $sql): bool => str_contains($sql, 'from `workspace_plan_assignments`'),
             );
 

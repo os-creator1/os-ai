@@ -85,14 +85,23 @@ class WorkflowHttpBehaviourTest extends TestCase
         $this->assertSame((int) $t['business']->id, (int) $workflow->business_id, 'Created inside the resolved Business.');
     }
 
-    public function test_creating_with_an_unavailable_trigger_is_refused(): void
+    /**
+     * The trigger rule follows WorkflowTriggerType::isIngestableInThisSlice(), not
+     * a list written here. When this test was first written `message_received` was
+     * refused because nothing reported it; V2-F (#281) shipped its producer, so it
+     * is now accepted — and a value that is no trigger at all is still refused.
+     */
+    public function test_the_trigger_rule_follows_what_the_product_can_report(): void
     {
         $t = $this->signedInTenant();
 
-        // message_received belongs to V2-F: nothing reports it yet.
-        $this->callJson('POST', $this->url($t, 'store'), ['name' => 'Replies', 'trigger_type' => 'message_received'])
+        $this->callJson('POST', $this->url($t, 'store'), ['name' => 'Nonsense', 'trigger_type' => 'not_a_trigger'])
             ->assertStatus(422)
             ->assertJsonValidationErrors('trigger_type');
+
+        $this->assertTrue(\App\Enums\Automation\Workflow\WorkflowTriggerType::MessageReceived->isIngestableInThisSlice());
+        $this->callJson('POST', $this->url($t, 'store'), ['name' => 'Replies', 'trigger_type' => 'message_received'])
+            ->assertCreated();
 
         $this->callJson('POST', $this->url($t, 'store'), ['trigger_type' => 'contact_created'])
             ->assertStatus(422)
@@ -544,21 +553,113 @@ class WorkflowHttpBehaviourTest extends TestCase
         Bus::assertNotDispatched(EnrollWorkflowContact::class);
     }
 
-    /** A list naming another Business's contact enrolls nobody, and says which. */
-    public function test_a_foreign_contact_in_the_list_enrolls_nobody(): void
+    // ---------------------------------------------------------------
+    // T-WF-21 — unknown and foreign contacts are 404-equivalent
+    // ---------------------------------------------------------------
+
+    /** @param array<string, mixed> $body */
+    private function enrollByHand(array $t, array $body): \Illuminate\Testing\TestResponse
+    {
+        return $this->callJson('POST', $this->url($t, 'enrollments.manual', $t['workflow']), $body);
+    }
+
+    /** A contact that exists nowhere: not found, nothing enqueued. */
+    public function test_an_unknown_contact_is_not_found_and_enrolls_nobody(): void
     {
         $t = $this->signedInTenant();
-        [$mine] = $this->contactsFor($t, 1);
+
+        Bus::fake([EnrollWorkflowContact::class]);
+
+        $this->enrollByHand($t, ['contact_uids' => [(string) Str::uuid()], 'confirmed' => true])
+            ->assertNotFound()
+            ->assertExactJson(['message' => 'Not found.']);
+
+        Bus::assertNotDispatched(EnrollWorkflowContact::class);
+    }
+
+    /** Another Business's contact: the same not-found, nothing enqueued. */
+    public function test_a_foreign_business_contact_is_not_found_and_enrolls_nobody(): void
+    {
+        $t = $this->signedInTenant();
         $other = $this->tenantWithWorkflow();
 
         Bus::fake([EnrollWorkflowContact::class]);
 
-        $response = $this->callJson('POST', $this->url($t, 'enrollments.manual', $t['workflow']), [
-            'contact_uids' => [$mine->uid, $other['contact']->uid],
-            'confirmed' => true,
-        ])->assertStatus(422);
+        $this->enrollByHand($t, ['contact_uids' => [$other['contact']->uid], 'confirmed' => true])
+            ->assertNotFound()
+            ->assertExactJson(['message' => 'Not found.']);
 
-        $this->assertSame([$other['contact']->uid], $response->json('errors.contact_uids'));
+        Bus::assertNotDispatched(EnrollWorkflowContact::class);
+        $this->assertSame(
+            0,
+            AutomationEnrollment::query()->where('contact_id', $other['contact']->id)->where('workflow_id', $t['workflow']->id)->count(),
+        );
+    }
+
+    /**
+     * The existence-leak proof: an unknown uid and a real contact of another
+     * Business produce BYTE-IDENTICAL responses, so the answer cannot be used to
+     * learn that some other Business holds a contact with that uid.
+     */
+    public function test_unknown_and_foreign_contacts_are_indistinguishable(): void
+    {
+        $t = $this->signedInTenant();
+        $other = $this->tenantWithWorkflow();
+
+        Bus::fake([EnrollWorkflowContact::class]);
+
+        $unknown = $this->enrollByHand($t, ['contact_uids' => [(string) Str::uuid()], 'confirmed' => true]);
+        $foreign = $this->enrollByHand($t, ['contact_uids' => [$other['contact']->uid], 'confirmed' => true]);
+
+        $this->assertSame($unknown->status(), $foreign->status());
+        $this->assertSame($unknown->getContent(), $foreign->getContent(), 'The two must not be told apart by body.');
+        $this->assertStringNotContainsString($other['contact']->uid, (string) $foreign->getContent(), 'The foreign uid must not be echoed.');
+    }
+
+    /** All or nothing: one foreign contact in a valid batch enrolls NOBODY. */
+    public function test_a_batch_with_one_foreign_contact_enrolls_none_of_the_valid_ones(): void
+    {
+        $t = $this->signedInTenant();
+        $mine = $this->contactsFor($t, 3);
+        $other = $this->tenantWithWorkflow();
+
+        Bus::fake([EnrollWorkflowContact::class]);
+
+        $this->enrollByHand($t, [
+            'contact_uids' => [$mine[0]->uid, $other['contact']->uid, $mine[1]->uid, $mine[2]->uid],
+            'confirmed' => true,
+        ])->assertNotFound();
+
+        Bus::assertNotDispatched(EnrollWorkflowContact::class);
+
+        foreach ($mine as $contact) {
+            $this->assertSame(
+                0,
+                AutomationEnrollment::query()->where('contact_id', $contact->id)->where('workflow_id', $t['workflow']->id)->count(),
+                'A valid contact in a batch that failed must not be enrolled.',
+            );
+        }
+    }
+
+    /** A malformed body is a statement about the request: 422, not 404. */
+    public function test_a_malformed_manual_enrollment_body_is_a_validation_error(): void
+    {
+        $t = $this->signedInTenant();
+
+        Bus::fake([EnrollWorkflowContact::class]);
+
+        $this->enrollByHand($t, ['contact_uids' => 'not-a-list', 'confirmed' => true])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('contact_uids');
+
+        $this->enrollByHand($t, ['contact_uids' => [], 'confirmed' => true])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('contact_uids');
+
+        $this->enrollByHand($t, ['confirmed' => true])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors('contact_uids');
+
         Bus::assertNotDispatched(EnrollWorkflowContact::class);
     }
 
