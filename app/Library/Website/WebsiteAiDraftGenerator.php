@@ -3,6 +3,7 @@
 namespace App\Library\Website;
 
 use App\Models\Website;
+use Illuminate\Support\Facades\Auth;
 use Illuminate\Validation\ValidationException;
 
 /**
@@ -28,6 +29,13 @@ final class WebsiteAiDraftGenerator
 {
     private const MAX_PAGES = 20;
 
+    /**
+     * §11.4 — the last generate() stopped because the included AI is used
+     * up, which is a different fact from "generation failed" and needs a
+     * different sentence.
+     */
+    private bool $pausedByBudget = false;
+
     public function __construct(
         private readonly WebsiteAiGenerationClient $client,
         private readonly WebsiteSectionValidator $sectionValidator,
@@ -51,12 +59,20 @@ final class WebsiteAiDraftGenerator
 
         $context = $this->buildContext($website);
         $messages = $this->buildMessages($context);
+        $business = $website->business;
+        $actorUserId = Auth::id();
 
-        $pages = $this->requestAndValidate($messages);
+        $this->pausedByBudget = false;
 
-        if ($pages === null) {
+        $pages = $this->requestAndValidate($messages, $business, $actorUserId);
+
+        // Correction 6 — the one bounded retry exists to correct a malformed
+        // response. A refused budget is not malformed, and asking again
+        // cannot make the allowance reappear: retrying would burn a second
+        // refusal and delay the honest answer.
+        if ($pages === null && ! $this->pausedByBudget) {
             $messages[] = ['role' => 'user', 'content' => 'The previous response was not valid JSON matching the required schema. Please respond again with ONLY a valid JSON object matching the schema.'];
-            $pages = $this->requestAndValidate($messages);
+            $pages = $this->requestAndValidate($messages, $business, $actorUserId);
         }
 
         if ($pages === null) {
@@ -70,9 +86,36 @@ final class WebsiteAiDraftGenerator
         return true;
     }
 
-    private function requestAndValidate(array $messages): ?array
+    /**
+     * §11.4 — did the last generate() stop because the budget is exhausted,
+     * rather than because the provider or the response failed? Editing the
+     * website by hand is unaffected either way; only the sentence differs.
+     */
+    public function lastRunWasPausedByBudget(): bool
     {
-        $raw = $this->client->complete($messages);
+        return $this->pausedByBudget;
+    }
+
+    /**
+     * §11.4 — when the included AI comes back. The allowance is a UTC
+     * calendar month for every current policy, so the next period begins
+     * on the first of next month; the sentence names a date the customer
+     * can act on rather than a vague 'later'.
+     */
+    public function budgetResetsOnLabel(): string
+    {
+        return \Carbon\CarbonImmutable::now('UTC')->addMonthNoOverflow()->startOfMonth()->format('j F');
+    }
+
+    private function requestAndValidate(array $messages, \App\Models\Business $business, ?int $actorUserId): ?array
+    {
+        $raw = $this->client->complete($messages, $business, $actorUserId);
+
+        if ($this->client->lastCallWasBudgetExhausted()) {
+            $this->pausedByBudget = true;
+
+            return null;
+        }
 
         if ($raw === null) {
             return null;

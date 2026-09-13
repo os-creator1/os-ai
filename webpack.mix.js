@@ -71,6 +71,7 @@ mix
     .js('resources/js/core/theme-tokens.js', 'public/js/core')
     .js('resources/js/core/app.js', 'public/js/core')
     .js('resources/assets/js/scripts.js', 'public/js/core')
+    .js('resources/js/automations/workflow-builder/index.js', 'public/js/automations/workflow-builder.js')
     .sass('resources/scss/base/themes/dark-layout.scss', 'public/css/base/themes', { sassOptions })
     .sass('resources/scss/base/themes/bordered-layout.scss', 'public/css/base/themes', { sassOptions })
     .sass('resources/scss/base/themes/semi-dark-layout.scss', 'public/css/base/themes', { sassOptions })

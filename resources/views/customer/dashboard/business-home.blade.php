@@ -58,6 +58,12 @@
     @include('customer.dashboard.bands.automations', ['automations' => $dashboard->band(DashboardSnapshot::BAND_AUTOMATIONS)])
 @endif
 
+@if($dashboard->failed(DashboardSnapshot::BAND_RECENT_WORK))
+    @include('customer.dashboard.band-failed', ['band' => 'recent_work', 'title' => 'Recent work'])
+@elseif($dashboard->has(DashboardSnapshot::BAND_RECENT_WORK))
+    @include('customer.dashboard.bands.recent-work', ['recentWork' => $dashboard->band(DashboardSnapshot::BAND_RECENT_WORK)])
+@endif
+
 @if($dashboard->has(DashboardSnapshot::BAND_ACTIONS) && $dashboard->band(DashboardSnapshot::BAND_ACTIONS)['items'] !== [])
     @include('customer.dashboard.bands.actions', ['actions' => $dashboard->band(DashboardSnapshot::BAND_ACTIONS)])
 @endif
