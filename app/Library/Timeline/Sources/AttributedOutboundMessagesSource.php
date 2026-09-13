@@ -14,8 +14,9 @@ use Illuminate\Database\Query\JoinClause;
 use Illuminate\Support\Facades\DB;
 
 /**
- * Texts this Business sent the person OUTSIDE the inbox — by an automation or a
- * campaign — read from `reports`, the canonical record of every sent message.
+ * Texts this Business sent the person OUTSIDE the conversation's own history —
+ * by an automation or a campaign — read from `reports`, the canonical record of
+ * every sent message.
  *
  * WHY ONLY THESE, AND WHY NEVER TWICE. An inbox send writes a `reports` row AND
  * a conversation message; reading every outbound report would show each inbox
@@ -30,15 +31,31 @@ use Illuminate\Support\Facades\DB;
  *   campaign_id              a real campaign — an inbox or quick send runs on an
  *                            unsaved Campaigns instance and records no id.
  *
- * None of those paths writes `chat_box_messages`, so nothing here duplicates a
- * conversation bubble. Anything else — an Outreach quick send from a Sender ID,
- * an API send — carries no such mark and is not attributed to this person.
+ * A managed campaign send ALSO gets a conversation message now
+ * (ConversationHistoryWriter), linked to this report through its managed
+ * operation. When that message is in the open conversation it `represents`
+ * this report's key (ConversationMessagesSource), so the timeline shows the
+ * one bubble and drops this copy — by the operation link, never by comparing
+ * text or times.
  *
  * Every join is pinned to the same Business, so a stamp that no longer resolves
  * inside it names nothing (the message still shows, attributed generically).
  */
 final class AttributedOutboundMessagesSource implements TimelineSource
 {
+    public static function reportKey(int $reportId): string
+    {
+        return 'sent_report:' . $reportId;
+    }
+
+    /** "Sent by automation: Welcome flow", or the kind alone when the name is gone. */
+    public static function sentBy(string $kind, ?string $name): string
+    {
+        $name = trim((string) $name);
+
+        return $name === '' ? 'Sent by ' . $kind : 'Sent by ' . $kind . ': ' . $name;
+    }
+
     public function recent(TimelineSubject $subject, int $limit): array
     {
         $variants = $subject->numberVariants();
@@ -85,7 +102,7 @@ final class AttributedOutboundMessagesSource implements TimelineSource
                 $undelivered = self::isUndelivered($row->customer_status ?? $row->status);
 
                 return new TimelineItem(
-                    key: 'sent_report:' . $row->id,
+                    key: self::reportKey((int) $row->id),
                     kind: TimelineItemKind::Message,
                     at: CarbonImmutable::parse((string) $row->created_at, config('app.timezone')),
                     body: trim((string) $row->message) === '' ? null : (string) $row->message,
@@ -104,21 +121,14 @@ final class AttributedOutboundMessagesSource implements TimelineSource
     private function via(object $row): string
     {
         if ($row->automation_step_run_id !== null) {
-            return self::named('Automation', $row->workflow_name);
+            return self::sentBy('automation', $row->workflow_name);
         }
 
         if ($row->automation_id !== null) {
-            return self::named('Automation', $row->automation_name);
+            return self::sentBy('automation', $row->automation_name);
         }
 
-        return self::named('Campaign', $row->campaign_name);
-    }
-
-    private static function named(string $label, ?string $name): string
-    {
-        $name = trim((string) $name);
-
-        return $name === '' ? $label : $label . ' · ' . $name;
+        return self::sentBy('campaign', $row->campaign_name);
     }
 
     /**

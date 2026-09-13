@@ -91,7 +91,7 @@ class ContactActivityTimelineTest extends TestCase
         $this->assertSame([
             'activity: Added to contacts — Group: Clients',
             'activity: Added to automation “Welcome flow”',
-            'out: Welcome to Harbor Lane! [Automation · Welcome flow]',
+            'out: Welcome to Harbor Lane! [Sent by automation: Welcome flow]',
             'activity: Finished automation “Welcome flow”',
             'out: Thanks for reaching out',
         ], $this->describe($this->timeline($business, $box)));
@@ -121,9 +121,9 @@ class ContactActivityTimelineTest extends TestCase
         $page = $this->timeline($business, $box);
 
         $this->assertSame([
-            'out: Fall promo: 20% off [Campaign · Fall promo]',
-            'out: Happy birthday! [Automation · Birthday wishes]',
-            'out: Last call [Campaign · Fall promo] — Not delivered',
+            'out: Fall promo: 20% off [Sent by campaign: Fall promo]',
+            'out: Happy birthday! [Sent by automation: Birthday wishes]',
+            'out: Last call [Sent by campaign: Fall promo] — Not delivered',
         ], $this->describe($page));
     }
 
@@ -226,7 +226,7 @@ class ContactActivityTimelineTest extends TestCase
         $this->assertSame([
             'activity: Added to contacts — Group: Clients',
             'in: Mine',
-            'out: Stamped oddly [Automation]',
+            'out: Stamped oddly [Sent by automation]',
         ], $this->describe($this->timeline($business, $box)));
     }
 
@@ -297,6 +297,14 @@ class ContactActivityTimelineTest extends TestCase
                 $journey = $this->journey($business, $contact, 'Flow ' . Str::random(6), EnrollmentStatus::Completed, $at, $at->copy()->addMinute(), 2);
                 $this->stepRun($business, $journey['enrollment'], $journey['nodes'][0], 'send_sms', StepRunStatus::Failed, $at, 'send_failed');
                 $this->b4Execution($business, $welcome, $contact, AutomationExecutionStatus::Succeeded, $at);
+
+                // Managed history with full provenance — the attribution joins
+                // must not turn into a query per message.
+                $sent = $this->stepRun($business, $journey['enrollment'], $journey['nodes'][1], 'send_sms', StepRunStatus::Succeeded, $at);
+                $this->managedMessage($business, $box, 'Managed automation ' . Str::random(6), $at, stepRunId: $sent, source: 'quick_send');
+                $campaignReport = $this->sentReport($business, self::PHONE, 'Managed promo ' . Str::random(6), $at, ['campaign_id' => $campaign->id]);
+                $this->managedMessage($business, $box, 'Managed promo copy', $at, reportId: $campaignReport, source: 'campaign');
+                $this->managedMessage($business, $box, 'Managed reply ' . Str::random(6), $at, source: 'conversations');
             }
         };
 

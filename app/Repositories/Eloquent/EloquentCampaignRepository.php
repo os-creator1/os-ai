@@ -553,6 +553,11 @@
                 isset($input['media_url']) ? [(string) $input['media_url']] : [],
                 (string) $sms_count,
                 $sms_type,
+                // Recorded on the conversation history row the accepted send
+                // gets: a person in Conversations, or any other single send.
+                $conversationContext
+                    ? \App\Library\Conversations\ConversationHistoryWriter::SOURCE_CONVERSATIONS
+                    : \App\Library\Conversations\ConversationHistoryWriter::SOURCE_QUICK_SEND,
             );
 
             if ($managedResult !== null) {

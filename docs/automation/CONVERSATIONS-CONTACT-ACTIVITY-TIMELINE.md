@@ -87,10 +87,83 @@ reads the same in both "no contact" and "several contacts" cases.
 
 | Source | Reads | Shows | Why it is never a duplicate or an inference |
 |---|---|---|---|
-| `ConversationMessagesSource` | `chat_box_messages` of the resolved conversation | Inbound and outbound bubbles, with media | The canonical conversation history (legacy inbound, managed inbound since #285, two-way inbox sends) |
-| `AttributedOutboundMessagesSource` | `reports` for this Business and number, **outgoing**, carrying `automation_step_run_id`, `automation_id` or `campaign_id` | Outbound bubbles: "Automation · {workflow}", "Campaign · {name}", and "Not delivered" when the status says so | Those marks prove the row did not come from the inbox: V2 automation and legacy automation sends use a Sender ID originator or the campaign path, a campaign runs on a saved campaign, and none of those paths writes `chat_box_messages`. An inbox send's own unmarked report is never read. Every attribution join is pinned to the same Business |
+| `ConversationMessagesSource` | `chat_box_messages` of the resolved conversation, joined (in the same statement, each join pinned to the Business) to its managed operation, that operation's campaign report, and the sending automation step | Inbound and outbound bubbles, with media. An outbound bubble says who sent it when the row proves it: "Sent by automation: {workflow}", "Sent by campaign: {name}", "Sent manually" (a person in Conversations); and "Not delivered" when its managed operation failed | The canonical conversation history (legacy inbound, managed inbound since #285, two-way inbox sends, every accepted managed send — §3A). A legacy outbound row with no provenance claims nothing. A managed row `represents` its automation step and its campaign report, so neither appears again |
+| `AttributedOutboundMessagesSource` | `reports` for this Business and number, **outgoing**, carrying `automation_step_run_id`, `automation_id` or `campaign_id` | Outbound bubbles: "Sent by automation: {workflow}", "Sent by campaign: {name}", and "Not delivered" when the status says so | Those marks prove the row did not come from the inbox. An inbox send's own unmarked report is never read. A managed campaign send's report is dropped when its conversation message is in the open conversation (that message `represents` it). Every attribution join is pinned to the same Business |
 | `AutomationActivitySource` (contact-keyed) | `automation_enrollments`, `automation_step_runs`, `automation_executions` | "Added to automation …", how the journey ended, and the outcome of steps that act on the person or the team: sent / did not send a text, updated contact details, notified the team — with a plain-words reason for known codes | Wait, If/Else, End and the trigger never appear. A V2 text stamped on its report shows as that message (the report `represents` the step). A failed or skipped step always ends the journey, so its card `represents` the ending. Unknown reason codes are left out, never shown raw |
 | `ContactRecordSource` | `contacts.created_at` (contact-keyed); `blacklists` for this Business and number | "Added to contacts · Group", "Opted out of texts" (inbound STOP / opt-out keyword), "Blocked from Conversations", "Added to the block list" | Dated rows only. The block list is keyed by number, so an opt-out still shows after STOP deleted the conversation it arrived on |
+
+### 3A. Managed outbound history — one canonical writer
+
+Conversations is the canonical history of what happened with a person, so an
+accepted managed send must be in it with its text — never only optimistic,
+never gone on reopen, never only operational metadata.
+
+**The seam.** Every managed send crosses `ManagedDispatchDelegate::attempt()`
+(both convergence points: `EloquentCampaignRepository::quickSend()` and
+`Campaigns::sendSMS()`). After the dispatcher returns an **accepted** result it
+calls `App\Library\Conversations\ConversationHistoryWriter::recordManagedOutbound()`.
+A refused or failed send records nothing.
+
+| Path | Now recorded | `source` | Attribution on the bubble |
+|---|---|---|---|
+| Reply or new conversation from Conversations | yes | `conversations` | Sent manually |
+| Automations V2 Send SMS (managed) | yes, on the person's conversation | `quick_send` | Sent by automation: {workflow} (from `automation_step_run_id`, read from `AutomationSendContext` exactly as the `reports` stamp is) |
+| B4 Send message (managed), Outreach quick send, other single sends | yes | `quick_send` | none claimed |
+| Campaign / Outreach bulk (managed) | yes | `campaign` | Sent by campaign: {name} (through the operation's `report_id`) |
+
+**One conversation identity.** The writer owns the managed conversation key #285
+introduced — (Business owner, Business, the Business's number, the person's
+number), both normalized by `MessageReceivedTriggerSource::normalizePhone()` —
+and the managed inbound bridge now calls the same writer. A reply and the
+message it answers always share one thread. The Business's number is its single
+active primary managed number, resolved as the dispatcher resolves it.
+
+**The text.** The final body the dispatcher sent — spintax already resolved by
+the caller (`quickSend()` before dispatch; `Campaigns::send()` before
+`sendSMS()`).
+
+**Exactly once.** `chat_box_messages.business_messaging_operation_id` (nullable,
+**unique**) holds the send's own operation id. A replayed request, a double
+click or a retried job reaches the dispatcher with the same operation key, gets
+the recorded result back with no second provider call, and the writer finds the
+existing row (or the unique index refuses a racing copy). Never deduplicated by
+body, time or number. Two new nullable references sit beside it:
+`automation_step_run_id` and `source`. Nothing is backfilled; every existing row
+stays valid.
+
+**When the provider accepted but history could not be written.** The send is
+still reported as successful — a failure here must not invite a second send. The
+exception is caught and logged as `conversation_history.managed_outbound_not_recorded`
+(Business id, a hash of the operation key, the exception class — never the
+number or the text). It reconciles: the same logical send replayed returns the
+recorded result without a provider call and the writer records it once.
+
+**Unchanged:** usage measurement and wallet behaviour, `reports` (a managed
+quick send still writes none; a campaign send still writes its report),
+`business_messaging_operations`, the provider adapter, DLR handling, STOP and
+the block list, consent checks, and every legacy sending-server path.
+
+**One correction on the reply path.** Sender verification in
+`ChatBoxController::reply()` checks that the customer owns the number they chose,
+in `phone_numbers`. A managed Business chooses no number — the dispatcher
+resolves its own primary number from the Business — and a managed number is
+never a `phone_numbers` row, so with verification on (the plan default) every
+managed reply was refused before it could be sent. The check is now skipped for
+a managed Business only; every other Business is verified exactly as before
+(`ManagedOutboundConversationHistoryTest` proves both).
+
+**Consequences to know about.**
+- An accepted managed automation or campaign text to someone with no
+  conversation yet **creates** that conversation, exactly as a legacy two-way
+  send does. For a managed Business this raises the conversation list and the
+  Home's "conversations started" count (`BusinessConversationReadModel::startedCount()`
+  counts `chat_boxes`) by the recipients of those sends.
+- Calling `Campaigns::sendSMS()` again for the same send writes another `reports`
+  row, as it always has (only the first is linked to the operation). History
+  stays one row; the unlinked duplicate report is still read by the reports
+  source. Reports accounting is deliberately not changed here.
+- Automations V2 self-reply protection reads the `reports` stamp, which a managed
+  quick send still does not write. Recorded, not changed.
 
 ### Not shown, on purpose
 
@@ -150,16 +223,9 @@ the rest of the family. `messages` keeps serving the raw thread unchanged.
 These are existing behaviours outside this read model's scope, recorded so they
 are not mistaken for timeline defects:
 
-1. **A managed Business's own outbound quick sends are not persisted as
-   messages.** `EloquentCampaignRepository::quickSend()` returns straight after
-   `ManagedDispatchDelegate::attempt()`, before the conversation write, and the
-   managed dispatcher stores no body (only a `business_messaging_operations`
-   row). So an inbox reply — and a V2 automation text — sent through managed
-   messaging has no `chat_box_messages` row and no `reports` row: it shows as the
-   optimistic bubble after sending, and is absent when the timeline reloads. #285
-   bridged managed **inbound** into conversation history; the outbound
-   counterpart is a producer change in a billing-sensitive path and needs its
-   own authorization.
+1. ~~A managed Business's own outbound sends were not persisted as messages.~~
+   **Resolved in §3A** (PR #299 blocker): every accepted managed send is now
+   recorded, once, by `ConversationHistoryWriter`.
 2. Outreach quick sends and API sends from a **Sender ID** carry no mark on their
    report and write no conversation message, so they cannot be attributed to a
    person.
@@ -181,6 +247,7 @@ now includes `NULL`, grouped inside the Business filter.
 | File | Proves |
 |---|---|
 | `tests/Feature/Conversations/ContactActivityTimelineTest.php` | Oldest-first merge of messages and activity; an automation text shown once and an inbox reply never doubled; campaign and legacy automation attribution and "Not delivered"; only human-useful automation outcomes, no raw codes; B4 outcomes; contact-keyed activity needs exactly one contact; nothing from another Business, even on the same number or via a foreign stamp; the window is cut at one moment; a future source joins; a flat 7-statement cost |
+| `tests/Feature/Conversations/ManagedOutboundConversationHistoryTest.php` | Through the real send core and managed dispatcher (fake provider only): a managed reply from Conversations is recorded with its exact text and shows once on reopen, "Sent manually"; a refused reply records nothing; a replayed reply sends once and records once; when history cannot be written the accepted send is still a success, is logged without number or text, and a replay records it once with no second provider call; an Automations V2 text over managed transport lands on the person's conversation, stamped with its step, one bubble "Sent by automation"; a managed campaign send is one bubble "Sent by campaign" and a retry records nothing more; one person in two Businesses never shares history; sender verification still refuses a Business that is not managed |
 | `tests/Feature/Conversations/ConversationTimelineScreenTest.php` | Three panes and an SMS-only composer; the timeline action returns both panes; server-side escaping (including non-http media URLs); a shared number shows the number alone; block-list status; the profile link needs `view_contact`; every tenancy failure is the same 404; the list leads with the name and `messages` is unchanged; the Read filter includes never-unread conversations and stays inside the Business |
 | `tests/Feature/DesignSystem/ChatBox*.php` | Updated in place, each change stated in its docblock: one more button and icon (the panel toggle), the shared row partial, the `timeline` action, and server rendering in place of the client-side history and Echo builders |
 | `tests/Feature/Security/ChatBoxSecurityTest.php` | Sections E–G updated in place to where safe rendering now lives: no stored message field is read by the page script, the only response fields inserted as HTML are the two server-rendered panes and the unread count, the partials never echo raw, and a real timeline response escapes hostile text and refuses `javascript:` and attribute-breaking media URLs. The optimistic send keeps `safeMessageParagraph()` and its 200px attribute-only image |

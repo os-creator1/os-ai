@@ -1032,6 +1032,7 @@
                 isset($preparedData['media_url']) ? [(string) $preparedData['media_url']] : [],
                 (string) ($preparedData['sms_count'] ?? 1),
                 $preparedData['sms_type'] ?? $this->sms_type,
+                \App\Library\Conversations\ConversationHistoryWriter::SOURCE_CAMPAIGN,
             );
 
             if ($managedResult !== null) {

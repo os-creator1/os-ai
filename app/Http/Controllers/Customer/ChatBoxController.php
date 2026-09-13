@@ -430,13 +430,15 @@
                 return $this->notFound();
             }
 
-            // The same query shape as before, so the thread's JSON — including
-            // how `created_at` serialises for the client — is unchanged. Only
-            // the box it is scoped to changed: resolved Business-first above.
+            // The same rows, order and fields as before, so the thread's JSON —
+            // including how `created_at` serialises for the client — is
+            // unchanged. Only the box it is scoped to changed: resolved
+            // Business-first above. The columns are named so the send-provenance
+            // references later added for conversation history stay out of it.
             $messages = \DB::table('chat_box_messages')
                 ->where('box_id', $box->id)
                 ->orderBy('created_at', 'asc')
-                ->get();
+                ->get(['id', 'box_id', 'message', 'media_url', 'sms_type', 'send_by', 'sending_server_id', 'created_at', 'updated_at', 'direction']);
 
             return response()->json([
                 'status' => 'success',
@@ -613,7 +615,16 @@
                 }
             }
 
-            if ($owner->customer->getOption('sender_id_verification') == 'yes') {
+            // Sender verification proves the customer owns the number THEY chose
+            // to send from, in `phone_numbers`. A managed Business chooses no
+            // number: the managed dispatcher resolves the Business's own single
+            // active primary number from the tenancy-verified Business itself
+            // (Slice 3 §4.5), and a managed number is never a `phone_numbers`
+            // row — so on every plan with verification on (the plan default)
+            // this refused every managed reply before it could be sent. The
+            // check stays exactly as it was for every other Business.
+            if ($owner->customer->getOption('sender_id_verification') == 'yes'
+                && ! \App\Library\Messaging\ManagedDispatchDelegate::isManaged((int) $business->id)) {
                 $number = PhoneNumbers::where('business_id', $business->id)
                     ->where('number', $sender_id)
                     ->where('status', 'assigned')

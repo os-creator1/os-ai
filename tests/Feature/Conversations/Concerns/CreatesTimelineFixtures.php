@@ -117,6 +117,42 @@ trait CreatesTimelineFixtures
         ], $marks));
     }
 
+    /**
+     * A managed outbound message as ConversationHistoryWriter records it: the
+     * managed operation row it is the history of (linked to a campaign report
+     * when there is one), and the message carrying that operation, the sending
+     * automation step and its source.
+     */
+    protected function managedMessage(Business $business, ChatBox $box, string $text, Carbon $at, ?int $reportId = null, ?int $stepRunId = null, ?string $source = null): int
+    {
+        $operationId = DB::table('business_messaging_operations')->insertGetId([
+            'business_id' => $business->id,
+            'transport_mode' => 'managed',
+            'provider' => 'telnyx',
+            'direction' => 'outbound',
+            'message_type' => 'sms',
+            'operation_key' => (string) Str::uuid(),
+            'status' => 'accepted',
+            'report_id' => $reportId,
+            'occurred_at' => $at,
+            'created_at' => $at,
+            'updated_at' => $at,
+        ]);
+
+        return DB::table('chat_box_messages')->insertGetId([
+            'box_id' => $box->id,
+            'message' => $text,
+            'sms_type' => 'plain',
+            'direction' => Reports::DIRECTION_OUTGOING,
+            'send_by' => 'from',
+            'business_messaging_operation_id' => $operationId,
+            'automation_step_run_id' => $stepRunId,
+            'source' => $source,
+            'created_at' => $at,
+            'updated_at' => $at,
+        ]);
+    }
+
     protected function campaignNamed(Business $business, string $name): Campaigns
     {
         return Campaigns::create([

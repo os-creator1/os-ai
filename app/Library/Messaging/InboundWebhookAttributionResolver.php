@@ -8,7 +8,7 @@ use App\Enums\Messaging\MessagingOperationStatus;
 use App\Enums\Messaging\MessagingProvider;
 use App\Enums\Messaging\MessagingTransportMode;
 use App\Enums\Messaging\WebhookRejectionReason;
-use App\Library\Automation\Workflow\Triggers\MessageReceivedTriggerSource;
+use App\Library\Conversations\ConversationHistoryWriter;
 use App\Library\Messaging\Contracts\MessagingProviderAdapter;
 use App\Library\Messaging\DTO\InboundWebhookEvent;
 use App\Library\Messaging\Exceptions\MessagingProviderNotConfiguredException;
@@ -16,15 +16,12 @@ use App\Library\SMSCounter;
 use App\Library\Usage\UsageWalletManager;
 use App\Models\Business;
 use App\Models\BusinessMessagingIdentity;
-use App\Models\ChatBox;
-use App\Models\ChatBoxMessage;
 use App\Models\Reports;
 use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Str;
 
 /**
  * Slice 3 §4.6 — fail-closed attribution for managed Telnyx inbound traffic.
@@ -81,6 +78,7 @@ class InboundWebhookAttributionResolver
         private readonly BusinessMessagingIdentityResolver $resolver,
         private readonly MessagingWebhookRejectionRecorder $rejections,
         private readonly UsageWalletManager $walletManager,
+        private readonly ConversationHistoryWriter $history,
     ) {
     }
 
@@ -591,47 +589,10 @@ class InboundWebhookAttributionResolver
         array $mediaUrls,
         string $messageType,
     ): void {
-        $from = MessageReceivedTriggerSource::normalizePhone($businessNumber);
-        $to = MessageReceivedTriggerSource::normalizePhone($contactNumber);
-
-        if ($from === '' || $to === '') {
-            return;
-        }
-
-        $chatBox = ChatBox::query()->firstOrNew([
-            'user_id' => $business->customer_id,
-            'business_id' => (int) $business->id,
-            'from' => $from,
-            'to' => $to,
-        ]);
-
-        if (! $chatBox->exists) {
-            $chatBox->uid = (string) Str::uuid();
-        }
-
-        $chatBox->reply_by_customer = true;
-        $chatBox->save();
-
-        $chatBox->update([
-            'notification' => $chatBox->notification + 1,
-        ]);
-
-        // `ai_replied` is deliberately not $fillable (see ChatBox::$fillable),
-        // exactly like the legacy writer this mirrors — raw, for the same
-        // reason: resetting "has AI already answered this thread" is not a
-        // mass-assignable conversation attribute.
-        DB::table('chat_boxes')->where('id', $chatBox->id)->update([
-            'reply_by_customer' => true,
-            'ai_replied' => false,
-        ]);
-
-        ChatBoxMessage::create([
-            'box_id' => $chatBox->id,
-            'message' => $body,
-            'media_url' => $mediaUrls === [] ? null : implode(',', $mediaUrls),
-            'sms_type' => $messageType,
-            'direction' => Reports::DIRECTION_INCOMING,
-        ]);
+        // The conversation identity and the inbound write now live in the one
+        // canonical writer, which managed OUTBOUND history shares — so a reply
+        // and the message it answers can never key two different threads.
+        $this->history->recordManagedInbound($business, $businessNumber, $contactNumber, $body, $mediaUrls, $messageType);
     }
 
     /**
