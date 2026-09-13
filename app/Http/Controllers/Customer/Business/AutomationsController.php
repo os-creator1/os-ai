@@ -8,6 +8,7 @@ use App\Enums\Business\BusinessStatus;
 use App\Enums\Entitlement\PlatformFeature;
 use App\Exceptions\Workspace\BusinessWorkspaceMismatchException;
 use App\Exceptions\Workspace\WorkspaceBusinessNotFoundException;
+use App\Http\Controllers\Customer\Business\Concerns\ResolvesBusinessTenancy;
 use App\Http\Controllers\Customer\CustomerBaseController;
 use App\Http\Requests\Automations\AutomationDefinitionRequest;
 use App\Library\Automation\AutomationDefinitionValidator;
@@ -51,6 +52,8 @@ use Illuminate\Validation\ValidationException;
  */
 class AutomationsController extends CustomerBaseController
 {
+    use ResolvesBusinessTenancy;
+
     public function __construct(
         private readonly AutomationsRepository $automations,
         private readonly WorkspaceRepository $workspaceRepository,
@@ -234,35 +237,7 @@ class AutomationsController extends CustomerBaseController
      */
     private function resolveEntitledBusiness(string $workspaceUid, string $businessUid): array
     {
-        $workspace = $this->workspaceRepository->findByUid($workspaceUid);
-
-        if ($workspace === null || ! $workspace->is_active) {
-            abort(404);
-        }
-
-        $business = $this->workspaceRepository->businessesForWorkspace($workspace)->firstWhere('uid', $businessUid);
-
-        if ($business === null || ! $this->workspaceManager->userCanAccessBusiness((int) Auth::id(), $business)) {
-            abort(404);
-        }
-
-        if ($business->status !== BusinessStatus::Active) {
-            abort(404);
-        }
-
-        try {
-            // (int) Auth::id() here is the audit/actor argument the
-            // decision signature requires — never a tenancy decision.
-            $decision = $this->entitlementManager->decide($workspace, $business, PlatformFeature::Automations->value, (int) Auth::id());
-        } catch (WorkspaceBusinessNotFoundException|BusinessWorkspaceMismatchException) {
-            abort(404);
-        }
-
-        if (! $decision->allowed) {
-            abort(404);
-        }
-
-        return [$workspace, $business];
+        return $this->resolveEntitledBusinessTenancy($workspaceUid, $businessUid, PlatformFeature::Automations->value);
     }
 
     /**
